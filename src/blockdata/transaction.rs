@@ -26,8 +26,7 @@
 use prelude::*;
 
 use io;
-use core::{fmt, str, default::Default};
-use std::convert::TryInto;
+use core::{fmt, str, default::Default, convert::TryInto};
 #[cfg(feature = "std")] use std::error;
 
 use hashes::{self, Hash, sha256d};
