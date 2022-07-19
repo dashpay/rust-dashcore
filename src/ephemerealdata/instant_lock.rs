@@ -6,7 +6,7 @@ use ::{OutPoint, Txid};
 use consensus::{Decodable, Encodable, encode};
 use consensus::encode::MAX_VEC_SIZE;
 use io;
-use core::fmt::Debug;
+use core::fmt::{Debug, Formatter};
 #[cfg(all(not(feature = "std"), not(test)))]
 use alloc::vec::Vec;
 #[cfg(any(feature = "std", test))]
@@ -14,7 +14,7 @@ pub use std::vec::Vec;
 //#[cfg(feature = "use-serde")]
 //use serde_big_array::BigArray;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 // #[cfg_attr(feature = "use-serde", derive(Serialize, Deserialize))]
 /// Instant send lock is a mechanism used by the Dash network to
 /// confirm transaction within 1 or 2 seconds. This data structure
@@ -43,6 +43,18 @@ impl Default for InstantLock {
             cyclehash: Default::default(),
             signature: [0; 96]
         }
+    }
+}
+
+impl Debug for InstantLock {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("InstantLock")
+            .field("version", &self.version)
+            .field("inputs", &format_args!("{:?}", self.inputs))
+            .field("txid", &format_args!("{}", self.txid))
+            .field("cyclehash", &format_args!("{:?}", self.cyclehash))
+            .field("signature", &format_args!("{:?}", self.signature.to_vec()))
+            .finish()
     }
 }
 
