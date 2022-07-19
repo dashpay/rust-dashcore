@@ -13,7 +13,9 @@ pub use std::vec::Vec;
 //#[cfg(feature = "use-serde")]
 //use serde_big_array::BigArray;
 
-#[derive(Clone)]
+use core::fmt::Debug;
+
+#[derive(Clone, Debug)]
 // #[cfg_attr(feature = "use-serde", derive(Serialize, Deserialize))]
 /// Instant send lock is a mechanism used by the Dash network to
 /// confirm transaction within 1 or 2 seconds. This data structure
