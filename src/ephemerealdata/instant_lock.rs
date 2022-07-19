@@ -6,14 +6,13 @@ use ::{OutPoint, Txid};
 use consensus::{Decodable, Encodable, encode};
 use consensus::encode::MAX_VEC_SIZE;
 use io;
+use core::fmt::Debug;
 #[cfg(all(not(feature = "std"), not(test)))]
 use alloc::vec::Vec;
 #[cfg(any(feature = "std", test))]
 pub use std::vec::Vec;
 //#[cfg(feature = "use-serde")]
 //use serde_big_array::BigArray;
-
-use core::fmt::Debug;
 
 #[derive(Clone, Debug)]
 // #[cfg_attr(feature = "use-serde", derive(Serialize, Deserialize))]
