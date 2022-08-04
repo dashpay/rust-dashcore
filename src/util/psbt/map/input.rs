@@ -20,7 +20,7 @@ use core::str::FromStr;
 use secp256k1;
 use blockdata::script::Script;
 use blockdata::witness::Witness;
-use blockdata::transaction::{Transaction, TxOut, NonStandardSighashType, SighashTypeParseError};
+use blockdata::transaction::{Transaction, txout::TxOut, NonStandardSighashType, SighashTypeParseError};
 use consensus::encode;
 use hashes::{self, hash160, ripemd160, sha256, sha256d};
 use secp256k1::XOnlyPublicKey;

@@ -24,7 +24,7 @@ use io;
 
 use blockdata::script::Script;
 use blockdata::witness::Witness;
-use blockdata::transaction::{Transaction, TxOut};
+use blockdata::transaction::{Transaction, txout::TxOut};
 use consensus::encode::{self, serialize, Decodable, Encodable, deserialize_partial};
 use secp256k1::{self, XOnlyPublicKey};
 use util::bip32::{ChildNumber, Fingerprint, KeySource};

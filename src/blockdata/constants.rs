@@ -30,10 +30,13 @@ use hashes::hex::{self, HexIterator};
 use hashes::sha256d;
 use blockdata::opcodes;
 use blockdata::script;
-use blockdata::transaction::{OutPoint, Transaction, TxOut, TxIn};
 use blockdata::block::{Block, BlockHeader};
+use blockdata::transaction::outpoint::OutPoint;
+use blockdata::transaction::txin::TxIn;
+use blockdata::transaction::txout::TxOut;
 use blockdata::witness::Witness;
 use network::constants::Network;
+use Transaction;
 use util::uint::Uint256;
 
 /// The maximum allowable sequence number

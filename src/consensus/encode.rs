@@ -45,7 +45,7 @@ use util::psbt;
 use util::taproot::TapLeafHash;
 use hashes::hex::ToHex;
 
-use blockdata::transaction::{TxOut, Transaction, TxIn, OutPoint};
+use blockdata::transaction::{txout::TxOut, Transaction, txin::TxIn, outpoint::OutPoint};
 #[cfg(feature = "std")]
 use network::{message_blockdata::Inventory, address::{Address, AddrV2Message}};
 

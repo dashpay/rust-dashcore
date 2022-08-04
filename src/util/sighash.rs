@@ -29,10 +29,10 @@ use core::{str, fmt};
 use core::ops::{Deref, DerefMut};
 use core::borrow::Borrow;
 use hashes::{sha256, sha256d, Hash};
-use io;
+use ::{io, Transaction};
+use blockdata::transaction::txout::TxOut;
 use util::taproot::{TapLeafHash, TAPROOT_ANNEX_PREFIX, TapSighashHash};
-use Sighash;
-use {Script, Transaction, TxOut};
+use ::{Script, Sighash};
 
 use super::taproot::LeafVersion;
 
@@ -800,7 +800,8 @@ mod tests {
     use secp256k1::{self, SecretKey, XOnlyPublicKey};
     extern crate serde_json;
 
-    use {Script, Transaction, TxIn, TxOut};
+
+    use blockdata::transaction::txin::TxIn;
 
     #[test]
     fn test_tap_sighash_hash() {

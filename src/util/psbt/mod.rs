@@ -318,7 +318,7 @@ mod tests {
     use secp256k1::{Secp256k1, self};
 
     use blockdata::script::Script;
-    use blockdata::transaction::{Transaction, TxIn, TxOut, OutPoint};
+    use blockdata::transaction::{Transaction, txin::TxIn, txout::TxOut, outpoint::OutPoint};
     use network::constants::Network::Bitcoin;
     use consensus::encode::{deserialize, serialize, serialize_hex};
     use util::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, Fingerprint, KeySource};
@@ -572,7 +572,7 @@ mod tests {
         use hash_types::Txid;
 
         use blockdata::script::Script;
-        use blockdata::transaction::{EcdsaSighashType, Transaction, TxIn, TxOut, OutPoint};
+        use blockdata::transaction::{EcdsaSighashType, Transaction, txin::TxIn, txout::TxOut, outpoint::OutPoint};
         use consensus::encode::serialize_hex;
         use util::psbt::map::{Map, Input, Output};
         use util::psbt::raw;

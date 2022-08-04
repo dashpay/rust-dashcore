@@ -1,8 +1,5 @@
 // Rust Dash Library
-// Originally written in 2014 by
-//     Andrew Poelstra <apoelstra@wpsoftware.net>
-//     For Bitcoin
-// Updated for Dash in 2022 by
+// Written for Dash in 2022 by
 //     The Dash Core Developers
 //
 // To the extent possible under law, the author(s) have dedicated all
@@ -15,17 +12,9 @@
 // If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 //
 
-//! Bitcoin block data.
+//! Dash Special Transaction.
 //!
-//! This module defines structures and functions for storing the blocks and
-//! transactions which make up the Bitcoin system.
+//! A dash special transaction's purpose is to relay more data than just economic information.
+//! They are defined in DIP2 https://github.com/dashpay/dips/blob/master/dip-0002.md.
+//! The list of special transactions can be found here: https://github.com/dashpay/dips/blob/master/dip-0002-special-transactions.md
 //!
-
-pub mod constants;
-pub mod opcodes;
-pub mod script;
-pub mod transaction;
-pub mod block;
-pub mod witness;
-pub mod special_transaction;
-

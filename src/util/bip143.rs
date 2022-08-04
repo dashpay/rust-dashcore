@@ -23,11 +23,12 @@ use hashes::Hash;
 use hash_types::Sighash;
 use blockdata::script::Script;
 use blockdata::witness::Witness;
-use blockdata::transaction::{Transaction, TxIn, EcdsaSighashType};
+use blockdata::transaction::{Transaction, EcdsaSighashType};
 use consensus::{encode, Encodable};
 
 use io;
 use core::ops::{Deref, DerefMut};
+use blockdata::transaction::txin::TxIn;
 use util::sighash;
 
 /// Parts of a sighash which are common across inputs or signatures, and which are

@@ -26,24 +26,29 @@
 //! This module provides the structures and functions needed to support transactions.
 //!
 
+pub mod txin;
+pub mod txout;
+pub mod outpoint;
+
 use prelude::*;
 
-use io;
-use core::{fmt, str, default::Default, convert::TryInto};
+use ::{io};
+use core::{fmt, str, default::Default};
 #[cfg(feature = "std")] use std::error;
 
-use hashes::{self, Hash, sha256d};
-use hashes::hex::FromHex;
+use hashes::{Hash, sha256d};
 
 use util::endian;
 use blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature="bitcoinconsensus")] use blockdata::script;
 use blockdata::script::Script;
+use blockdata::transaction::txin::TxIn;
+use blockdata::transaction::txout::TxOut;
 use blockdata::witness::Witness;
 use consensus::{encode, Decodable, Encodable};
 use consensus::encode::MAX_VEC_SIZE;
 use hash_types::{Sighash, Txid, Wtxid};
-use VarInt;
+use ::{VarInt};
 
 #[cfg(doc)]
 use util::sighash::SchnorrSighashType;
@@ -56,202 +61,8 @@ const UINT256_ONE: [u8; 32] = [
     0, 0, 0, 0, 0, 0, 0, 0
 ];
 
-/// A reference to a transaction output.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
-pub struct OutPoint {
-    /// The referenced transaction's txid.
-    pub txid: Txid,
-    /// The index of the referenced output in its transaction's vout.
-    pub vout: u32,
-}
-serde_struct_human_string_impl!(OutPoint, "an OutPoint", txid, vout);
 
-impl OutPoint {
-    /// Creates a new [`OutPoint`].
-    #[inline]
-    pub fn new(txid: Txid, vout: u32) -> OutPoint {
-        OutPoint { txid, vout }
-    }
-
-    /// Creates a "null" `OutPoint`.
-    ///
-    /// This value is used for coinbase transactions because they don't have any previous outputs.
-    #[inline]
-    pub fn null() -> OutPoint {
-        OutPoint {
-            txid: Default::default(),
-            vout: u32::max_value(),
-        }
-    }
-
-    /// Checks if an `OutPoint` is "null".
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use dashcore::blockdata::constants::genesis_block;
-    /// use dashcore::network::constants::Network;
-    ///
-    /// let block = genesis_block(Network::Bitcoin);
-    /// let tx = &block.txdata[0];
-    ///
-    /// // Coinbase transactions don't have any previous output.
-    /// assert!(tx.input[0].previous_output.is_null());
-    /// ```
-    #[inline]
-    pub fn is_null(&self) -> bool {
-        *self == OutPoint::null()
-    }
-}
-
-impl From<[u8; 36]> for OutPoint {
-    fn from(buffer: [u8; 36]) -> Self {
-        let tx_id: [u8; 32] = buffer[0..32].try_into().unwrap();
-        let index: [u8; 4] = buffer[32..36].try_into().unwrap();
-
-        Self {
-            txid: Txid::from_inner(tx_id),
-            vout: u32::from_le_bytes(index)
-        }
-    }
-}
-
-impl Default for OutPoint {
-    fn default() -> Self {
-        OutPoint::null()
-    }
-}
-
-impl fmt::Display for OutPoint {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.txid, self.vout)
-    }
-}
-
-/// An error in parsing an OutPoint.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum ParseOutPointError {
-    /// Error in TXID part.
-    Txid(hashes::hex::Error),
-    /// Error in vout part.
-    Vout(::core::num::ParseIntError),
-    /// Error in general format.
-    Format,
-    /// Size exceeds max.
-    TooLong,
-    /// Vout part is not strictly numeric without leading zeroes.
-    VoutNotCanonical,
-}
-
-impl fmt::Display for ParseOutPointError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            ParseOutPointError::Txid(ref e) => write!(f, "error parsing TXID: {}", e),
-            ParseOutPointError::Vout(ref e) => write!(f, "error parsing vout: {}", e),
-            ParseOutPointError::Format => write!(f, "OutPoint not in <txid>:<vout> format"),
-            ParseOutPointError::TooLong => write!(f, "vout should be at most 10 digits"),
-            ParseOutPointError::VoutNotCanonical => write!(f, "no leading zeroes or + allowed in vout part"),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl error::Error for ParseOutPointError {
-    fn cause(&self) -> Option<&dyn  error::Error> {
-        match *self {
-            ParseOutPointError::Txid(ref e) => Some(e),
-            ParseOutPointError::Vout(ref e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-/// Parses a string-encoded transaction index (vout).
-/// Does not permit leading zeroes or non-digit characters.
-fn parse_vout(s: &str) -> Result<u32, ParseOutPointError> {
-    if s.len() > 1 {
-        let first = s.chars().next().unwrap();
-        if first == '0' || first == '+' {
-            return Err(ParseOutPointError::VoutNotCanonical);
-        }
-    }
-    s.parse().map_err(ParseOutPointError::Vout)
-}
-
-impl ::core::str::FromStr for OutPoint {
-    type Err = ParseOutPointError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.len() > 75 { // 64 + 1 + 10
-            return Err(ParseOutPointError::TooLong);
-        }
-        let find = s.find(':');
-        if find == None || find != s.rfind(':') {
-            return Err(ParseOutPointError::Format);
-        }
-        let colon = find.unwrap();
-        if colon == 0 || colon == s.len() - 1 {
-            return Err(ParseOutPointError::Format);
-        }
-        Ok(OutPoint {
-            txid: Txid::from_hex(&s[..colon]).map_err(ParseOutPointError::Txid)?,
-            vout: parse_vout(&s[colon+1..])?,
-        })
-    }
-}
-
-/// A transaction input, which defines old coins to be consumed
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct TxIn {
-    /// The reference to the previous output that is being used an an input.
-    pub previous_output: OutPoint,
-    /// The script which pushes values on the stack which will cause
-    /// the referenced output's script to be accepted.
-    pub script_sig: Script,
-    /// The sequence number, which suggests to miners which of two
-    /// conflicting transactions should be preferred, or 0xFFFFFFFF
-    /// to ignore this feature. This is generally never used since
-    /// the miner behaviour cannot be enforced.
-    pub sequence: u32,
-    /// Witness data: an array of byte-arrays.
-    /// Note that this field is *not* (de)serialized with the rest of the TxIn in
-    /// Encodable/Decodable, as it is (de)serialized at the end of the full
-    /// Transaction. It *is* (de)serialized with the rest of the TxIn in other
-    /// (de)serialization routines.
-    pub witness: Witness
-}
-
-impl Default for TxIn {
-    fn default() -> TxIn {
-        TxIn {
-            previous_output: OutPoint::default(),
-            script_sig: Script::new(),
-            sequence: u32::max_value(),
-            witness: Witness::default(),
-        }
-    }
-}
-
-/// A transaction output, which defines new coins to be created from old ones.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct TxOut {
-    /// The value of the output, in satoshis.
-    pub value: u64,
-    /// The script which must be satisfied for the output to be spent.
-    pub script_pubkey: Script
-}
-
-// This is used as a "null txout" in consensus signing code.
-impl Default for TxOut {
-    fn default() -> TxOut {
-        TxOut { value: 0xffffffffffffffff, script_pubkey: Script::new() }
-    }
-}
-
-/// A Bitcoin transaction, which describes an authenticated movement of coins.
+/// A Dash transaction, which describes an authenticated movement of coins.
 ///
 /// If any inputs have nonempty witnesses, the entire transaction is serialized
 /// in the post-BIP141 Segwit format which includes a list of witnesses. If all
@@ -652,43 +463,6 @@ impl Transaction {
     }
 }
 
-impl_consensus_encoding!(TxOut, value, script_pubkey);
-
-impl Encodable for OutPoint {
-    fn consensus_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
-        let len = self.txid.consensus_encode(&mut s)?;
-        Ok(len + self.vout.consensus_encode(s)?)
-    }
-}
-impl Decodable for OutPoint {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        Ok(OutPoint {
-            txid: Decodable::consensus_decode(&mut d)?,
-            vout: Decodable::consensus_decode(d)?,
-        })
-    }
-}
-
-impl Encodable for TxIn {
-    fn consensus_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
-        let mut len = 0;
-        len += self.previous_output.consensus_encode(&mut s)?;
-        len += self.script_sig.consensus_encode(&mut s)?;
-        len += self.sequence.consensus_encode(s)?;
-        Ok(len)
-    }
-}
-impl Decodable for TxIn {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        Ok(TxIn {
-            previous_output: Decodable::consensus_decode(&mut d)?,
-            script_sig: Decodable::consensus_decode(&mut d)?,
-            sequence: Decodable::consensus_decode(d)?,
-            witness: Witness::default(),
-        })
-    }
-}
-
 impl Encodable for Transaction {
     fn consensus_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
         let mut len = 0;
@@ -945,57 +719,9 @@ mod tests {
     use hashes::hex::FromHex;
 
     use hash_types::*;
+    use OutPoint;
     use super::EcdsaSighashType;
     use util::sighash::SighashCache;
-
-    #[test]
-    fn test_outpoint() {
-        assert_eq!(OutPoint::from_str("i don't care"),
-                   Err(ParseOutPointError::Format));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:1:1"),
-                   Err(ParseOutPointError::Format));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:"),
-                   Err(ParseOutPointError::Format));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:11111111111"),
-                   Err(ParseOutPointError::TooLong));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:01"),
-                   Err(ParseOutPointError::VoutNotCanonical));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:+42"),
-                   Err(ParseOutPointError::VoutNotCanonical));
-        assert_eq!(OutPoint::from_str("i don't care:1"),
-                   Err(ParseOutPointError::Txid(Txid::from_hex("i don't care").unwrap_err())));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c945X:1"),
-                   Err(ParseOutPointError::Txid(Txid::from_hex("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c945X").unwrap_err())));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:lol"),
-                   Err(ParseOutPointError::Vout(u32::from_str("lol").unwrap_err())));
-
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:42"),
-                   Ok(OutPoint{
-                       txid: Txid::from_hex("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456").unwrap(),
-                       vout: 42,
-                   }));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:0"),
-                   Ok(OutPoint{
-                       txid: Txid::from_hex("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456").unwrap(),
-                       vout: 0,
-                   }));
-    }
-
-    #[test]
-    fn test_txin() {
-        let txin: Result<TxIn, _> = deserialize(&Vec::from_hex("a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff").unwrap());
-        assert!(txin.is_ok());
-    }
-
-    #[test]
-    fn test_txin_default() {
-        let txin = TxIn::default();
-        assert_eq!(txin.previous_output, OutPoint::default());
-        assert_eq!(txin.script_sig, Script::new());
-        assert_eq!(txin.sequence, 0xFFFFFFFF);
-        assert_eq!(txin.previous_output, OutPoint::default());
-        assert_eq!(txin.witness.len(), 0 as usize);
-    }
 
     #[test]
     fn test_is_coinbase () {
