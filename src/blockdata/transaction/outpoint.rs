@@ -192,6 +192,7 @@ fn parse_vout(s: &str) -> Result<u32, ParseOutPointError> {
 #[cfg(test)]
 mod tests {
     use core::str::FromStr;
+    use Transaction;
     use super::*;
 
     #[test]
@@ -225,5 +226,67 @@ mod tests {
                        txid: Txid::from_hex("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456").unwrap(),
                        vout: 0,
                    }));
+    }
+
+
+    #[test]
+    fn out_point_buffer() {
+        let mut tx = Transaction {
+            version: 0,
+            lock_time: 0,
+            input: vec![],
+            output: vec![]
+        };
+
+        let pk_data = Vec::from_hex("b8e2d839dd21088b78bebfea3e3e632181197982").unwrap();
+
+        let mut pk_array: [u8; 20] = [0; 20];
+        for (index, kek) in pk_array.iter_mut().enumerate() {
+            *kek = *pk_data.get(index).unwrap();
+        }
+
+        tx.add_burn_output(10000, &pk_array);
+
+        let mut expected_buf = tx.txid().as_inner().to_vec();
+        let mut expected_index = vec![0,0,0,0];
+        // 0 serialized as 32 bits
+        expected_buf.append(&mut expected_index);
+
+        let out_point_buffer = tx.out_point_buffer(0).unwrap();
+
+        assert_eq!(out_point_buffer.to_vec(), expected_buf);
+
+        assert!(tx.out_point_buffer(1).is_none());
+    }
+
+    #[test]
+    fn out_point_parse() {
+        let mut tx = Transaction {
+            version: 0,
+            lock_time: 0,
+            input: vec![],
+            output: vec![]
+        };
+
+        let pk_data = Vec::from_hex("b8e2d839dd21088b78bebfea3e3e632181197982").unwrap();
+
+        let mut pk_array: [u8; 20] = [0; 20];
+        for (index, kek) in pk_array.iter_mut().enumerate() {
+            *kek = *pk_data.get(index).unwrap();
+        }
+
+        tx.add_burn_output(10000, &pk_array);
+
+        let mut expected_buf = tx.txid().as_inner().to_vec();
+        let mut expected_index = vec![0,0,0,0];
+        // 0 serialized as 32 bits
+        expected_buf.append(&mut expected_index);
+
+        let out_point_buffer = tx.out_point_buffer(0).unwrap();
+
+        let out_point = OutPoint::from(out_point_buffer);
+
+        assert_eq!(out_point.vout, 0);
+        assert_eq!(out_point.txid, tx.txid());
     }
 }
