@@ -15,9 +15,9 @@
 // If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 //
 
-//! Bitcoin keys.
+//! Dash keys.
 //!
-//! This module provides keys used in Bitcoin that can be roundtrip
+//! This module provides keys used in Dash that can be roundtrip
 //! (de)serialized.
 
 pub use secp256k1::{XOnlyPublicKey, KeyPair};

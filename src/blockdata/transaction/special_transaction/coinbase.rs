@@ -12,9 +12,18 @@
 // If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 //
 
-//! Dash Special Transaction.
+//! Dash Coinbase Special Transaction.
 //!
-//! A dash special transaction's purpose is to relay more data than just economic information.
-//! They are defined in DIP2 https://github.com/dashpay/dips/blob/master/dip-0002.md.
-//! The list of special transactions can be found here: https://github.com/dashpay/dips/blob/master/dip-0002-special-transactions.md
+//! Each time a block is mined it includes a coinbase special transaction.
+//! It is defined in DIP4 https://github.com/dashpay/dips/blob/master/dip-0004.md.
 //!
+
+use ::{OutPoint, Script};
+use ::{MerkleRootMasternodeList, MerkleRootQuorums, VarInt};
+
+pub struct CoinbasePayload {
+    version: u16,
+    height: u32,
+    merkle_root_masternode_list: MerkleRootMasternodeList,
+    merkle_root_quorums: MerkleRootQuorums,
+}

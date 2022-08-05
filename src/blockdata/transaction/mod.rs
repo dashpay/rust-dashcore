@@ -36,6 +36,7 @@ use prelude::*;
 
 use ::{io};
 use core::{default::Default};
+use std::convert::TryFrom;
 
 use hashes::{Hash, sha256d};
 
@@ -51,6 +52,8 @@ use consensus::encode::MAX_VEC_SIZE;
 use hash_types::{Sighash, Txid, Wtxid};
 use ::{VarInt};
 use blockdata::transaction::hash_type::EcdsaSighashType;
+use blockdata::transaction::special_transaction::TransactionType;
+use OutPoint;
 
 #[cfg(doc)]
 use util::sighash::SchnorrSighashType;
@@ -98,13 +101,15 @@ const UINT256_ONE: [u8; 32] = [
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Transaction {
     /// The protocol version, is currently expected to be 1 or 2 (BIP 68).
-    pub version: i32,
+    pub version: i16,
     /// Block number before which this transaction is valid, or 0 for valid immediately.
     pub lock_time: u32,
     /// List of transaction inputs.
     pub input: Vec<TxIn>,
     /// List of transaction outputs.
     pub output: Vec<TxOut>,
+    /// Special Transaction Payload
+    pub special_transaction_payload: Option<SpecialTransactionPayload>,
 }
 
 impl Transaction {
@@ -117,6 +122,7 @@ impl Transaction {
             lock_time: self.lock_time,
             input: self.input.iter().map(|txin| TxIn { script_sig: Script::new(), witness: Witness::default(), .. *txin }).collect(),
             output: self.output.clone(),
+            special_transaction_payload: self.special_transaction_payload.clone()
         };
         cloned_tx.txid().into()
     }
@@ -131,6 +137,10 @@ impl Transaction {
         self.input.consensus_encode(&mut enc).expect("engines don't error");
         self.output.consensus_encode(&mut enc).expect("engines don't error");
         self.lock_time.consensus_encode(&mut enc).expect("engines don't error");
+        if let Some(payload) = self.special_transaction_payload {
+            payload.consensus_encode(&mut enc).expect("engines don't error");
+        }
+        
         Txid::from_engine(enc)
     }
 
@@ -192,6 +202,7 @@ impl Transaction {
             lock_time: self.lock_time,
             input: vec![],
             output: vec![],
+            special_transaction_payload: None
         };
         // Add all inputs necessary..
         if anyone_can_pay {
@@ -498,7 +509,9 @@ impl Encodable for Transaction {
 impl Decodable for Transaction {
     fn consensus_decode<D: io::Read>(d: D) -> Result<Self, encode::Error> {
         let mut d = d.take(MAX_VEC_SIZE as u64);
-        let version = i32::consensus_decode(&mut d)?;
+        let version = i16::consensus_decode(&mut d)?;
+        let special_transaction_type_u16 = u16::consensus_decode(&mut d)?;
+        let special_transaction_type = TransactionType::try_from(special_transaction_type_u16).map_err(|_| encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16))?;
         let input = Vec::<TxIn>::consensus_decode(&mut d)?;
         // segwit
         if input.is_empty() {
@@ -518,7 +531,8 @@ impl Decodable for Transaction {
                             version,
                             input,
                             output,
-                            lock_time: Decodable::consensus_decode(d)?,
+                            lock_time: Decodable::consensus_decode(&mut d)?,
+                            special_transaction_payload: None
                         })
                     }
                 }
@@ -532,6 +546,7 @@ impl Decodable for Transaction {
                 input,
                 output: Decodable::consensus_decode(&mut d)?,
                 lock_time: Decodable::consensus_decode(d)?,
+                special_transaction_payload: None
             })
         }
     }
@@ -540,7 +555,7 @@ impl Decodable for Transaction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use blockdata::constants::WITNESS_SCALE_FACTOR;
     use blockdata::script::Script;
     use consensus::encode::serialize;

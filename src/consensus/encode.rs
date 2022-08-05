@@ -85,6 +85,8 @@ pub enum Error {
     ParseFailed(&'static str),
     /// Unsupported Segwit flag
     UnsupportedSegwitFlag(u8),
+    /// The Transaction type was not identified
+    UnknownSpecialTransactionType(u16),
 }
 
 impl fmt::Display for Error {
@@ -103,6 +105,8 @@ impl fmt::Display for Error {
             Error::ParseFailed(ref e) => write!(f, "parse failed: {}", e),
             Error::UnsupportedSegwitFlag(ref swflag) => write!(f,
                 "unsupported segwit version: {}", swflag),
+            Error::UnknownSpecialTransactionType(ref stt) => write!(f,
+                                                               "unknown special transaction type: {}", stt),
         }
     }
 }
@@ -178,6 +182,8 @@ pub fn deserialize_partial<T: Decodable>(data: &[u8]) -> Result<(T, usize), Erro
 
 /// Extensions of `Write` to encode data as per Bitcoin consensus
 pub trait WriteExt {
+    /// Output a 128-bit uint
+    fn emit_u128(&mut self, v: u128) -> Result<(), io::Error>;
     /// Output a 64-bit uint
     fn emit_u64(&mut self, v: u64) -> Result<(), io::Error>;
     /// Output a 32-bit uint
@@ -252,6 +258,7 @@ macro_rules! decoder_fn {
 }
 
 impl<W: io::Write> WriteExt for W {
+    encoder_fn!(emit_u128, u128, u128_to_array_le);
     encoder_fn!(emit_u64, u64, u64_to_array_le);
     encoder_fn!(emit_u32, u32, u32_to_array_le);
     encoder_fn!(emit_u16, u16, u16_to_array_le);
@@ -260,12 +267,12 @@ impl<W: io::Write> WriteExt for W {
     encoder_fn!(emit_i16, i16, i16_to_array_le);
 
     #[inline]
-    fn emit_i8(&mut self, v: i8) -> Result<(), io::Error> {
-        self.write_all(&[v as u8])
-    }
-    #[inline]
     fn emit_u8(&mut self, v: u8) -> Result<(), io::Error> {
         self.write_all(&[v])
+    }
+    #[inline]
+    fn emit_i8(&mut self, v: i8) -> Result<(), io::Error> {
+        self.write_all(&[v as u8])
     }
     #[inline]
     fn emit_bool(&mut self, v: bool) -> Result<(), io::Error> {
@@ -278,6 +285,7 @@ impl<W: io::Write> WriteExt for W {
 }
 
 impl<R: Read> ReadExt for R {
+    decoder_fn!(read_u128, u128, slice_to_u128_le, 16);
     decoder_fn!(read_u64, u64, slice_to_u64_le, 8);
     decoder_fn!(read_u32, u32, slice_to_u32_le, 4);
     decoder_fn!(read_u16, u16, slice_to_u16_le, 2);
@@ -356,6 +364,7 @@ impl_int_encodable!(u8,  read_u8,  emit_u8);
 impl_int_encodable!(u16, read_u16, emit_u16);
 impl_int_encodable!(u32, read_u32, emit_u32);
 impl_int_encodable!(u64, read_u64, emit_u64);
+impl_int_encodable!(u128, read_u128, emit_u128);
 impl_int_encodable!(i8,  read_i8,  emit_i8);
 impl_int_encodable!(i16, read_i16, emit_i16);
 impl_int_encodable!(i32, read_i32, emit_i32);
