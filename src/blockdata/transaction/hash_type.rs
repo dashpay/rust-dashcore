@@ -1,5 +1,28 @@
+// Rust Dash Library
+// Originally written in 2014 by
+//     Andrew Poelstra <apoelstra@wpsoftware.net>
+//     For Bitcoin
+// Refactored for Dash in 2022 by
+//     The Dash Core Developers
+//
+// To the extent possible under law, the author(s) have dedicated all
+// copyright and related and neighboring rights to this software to
+// the public domain worldwide. This software is distributed without
+// any warranty.
+//
+// You should have received a copy of the CC0 Public Domain Dedication
+// along with this software.
+// If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+//
+
+//! Dash Signature Hash Types.
+//!
+//! Various Signature Hash Types for Outputs.
+//!
+
 #[cfg(feature = "std")] use std::error;
 use std::{fmt};
+#[cfg(feature = "std")] use std::str::FromStr;
 
 /// This type is consensus valid but an input including it would prevent the transaction from
 /// being relayed on today's Dash network.
@@ -58,7 +81,7 @@ impl fmt::Display for EcdsaSighashType {
     }
 }
 
-impl str::FromStr for EcdsaSighashType {
+impl FromStr for EcdsaSighashType {
     type Err = SighashTypeParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -88,12 +111,6 @@ impl EcdsaSighashType {
     }
 
     /// Creates a [`EcdsaSighashType`] from a raw `u32`.
-    #[deprecated(since="0.28.0", note="please use `from_consensus`")]
-    pub fn from_u32_consensus(n: u32) -> EcdsaSighashType {
-        EcdsaSighashType::from_consensus(n)
-    }
-
-    /// Creates a [`EcdsaSighashType`] from a raw `u32`.
     ///
     /// **Note**: this replicates consensus behaviour, for current standardness rules correctness
     /// you probably want [`Self::from_standard`].
@@ -120,12 +137,6 @@ impl EcdsaSighashType {
             x if x & 0x80 == 0x80 => EcdsaSighashType::AllPlusAnyoneCanPay,
             _ => EcdsaSighashType::All
         }
-    }
-
-    /// Creates a [`EcdsaSighashType`] from a raw `u32`.
-    #[deprecated(since="0.28.0", note="please use `from_standard`")]
-    pub fn from_u32_standard(n: u32) -> Result<EcdsaSighashType, NonStandardSighashType> {
-        EcdsaSighashType::from_standard(n)
     }
 
     /// Creates a [`EcdsaSighashType`] from a raw `u32`.

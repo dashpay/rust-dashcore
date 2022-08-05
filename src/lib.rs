@@ -96,7 +96,7 @@ extern crate hashbrown;
 #[cfg_attr(docsrs, doc(cfg(feature = "base64")))]
 pub extern crate base64;
 
-#[cfg(feature="dashconsensus")] extern crate dashconsensus;
+#[cfg(feature="bitcoinconsensus")] extern crate bitcoinconsensus;
 #[cfg(feature = "serde")] #[macro_use] extern crate serde;
 #[cfg(all(test, feature = "serde"))] extern crate serde_json;
 #[cfg(all(test, feature = "serde"))] extern crate serde_test;
@@ -134,7 +134,7 @@ pub use blockdata::transaction::Transaction;
 pub use blockdata::transaction::txin::TxIn;
 pub use blockdata::transaction::txout::TxOut;
 pub use blockdata::transaction::outpoint::OutPoint;
-pub use blockdata::transaction::EcdsaSighashType;
+pub use blockdata::transaction::hash_type::EcdsaSighashType;
 pub use blockdata::witness::Witness;
 pub use ephemerealdata::instant_lock::InstantLock;
 pub use consensus::encode::VarInt;
@@ -156,7 +156,7 @@ pub use util::schnorr::{self, SchnorrSig, SchnorrSigError};
 pub use util::key::{PrivateKey, PublicKey, XOnlyPublicKey, KeyPair};
 pub use util::psbt;
 #[allow(deprecated)]
-pub use blockdata::transaction::SigHashType;
+pub use blockdata::transaction::hash_type::SigHashType;
 
 #[cfg(feature = "std")]
 use std::io;

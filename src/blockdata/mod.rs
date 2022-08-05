@@ -27,5 +27,4 @@ pub mod script;
 pub mod transaction;
 pub mod block;
 pub mod witness;
-pub mod special_transaction;
 

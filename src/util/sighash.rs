@@ -22,7 +22,7 @@
 
 use prelude::*;
 
-pub use blockdata::transaction::{EcdsaSighashType, SighashTypeParseError};
+pub use blockdata::transaction::{hash_type::EcdsaSighashType};
 use blockdata::witness::Witness;
 use consensus::{encode, Encodable};
 use core::{str, fmt};
@@ -33,6 +33,7 @@ use ::{io, Transaction};
 use blockdata::transaction::txout::TxOut;
 use util::taproot::{TapLeafHash, TAPROOT_ANNEX_PREFIX, TapSighashHash};
 use ::{Script, Sighash};
+use blockdata::transaction::hash_type::SighashTypeParseError;
 
 use super::taproot::LeafVersion;
 
@@ -735,7 +736,7 @@ impl<R: DerefMut<Target=Transaction>> SighashCache<R> {
     ///
     /// This allows in-line signing such as
     /// ```
-    /// use dashcore::blockdata::transaction::{Transaction, EcdsaSighashType};
+    /// use dashcore::blockdata::transaction::{Transaction, hash_type::EcdsaSighashType};
     /// use dashcore::util::sighash::SighashCache;
     /// use dashcore::Script;
     ///

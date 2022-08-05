@@ -35,14 +35,13 @@ pub mod special_transaction;
 use prelude::*;
 
 use ::{io};
-use core::{fmt, str, default::Default};
-#[cfg(feature = "std")] use std::error;
+use core::{default::Default};
 
 use hashes::{Hash, sha256d};
 
 use util::endian;
 use blockdata::constants::WITNESS_SCALE_FACTOR;
-#[cfg(feature="dashconsensus")] use blockdata::script;
+#[cfg(feature="bitcoinconsensus")] use blockdata::script;
 use blockdata::script::Script;
 use blockdata::transaction::txin::TxIn;
 use blockdata::transaction::txout::TxOut;
@@ -51,6 +50,7 @@ use consensus::{encode, Decodable, Encodable};
 use consensus::encode::MAX_VEC_SIZE;
 use hash_types::{Sighash, Txid, Wtxid};
 use ::{VarInt};
+use blockdata::transaction::hash_type::EcdsaSighashType;
 
 #[cfg(doc)]
 use util::sighash::SchnorrSighashType;
@@ -395,20 +395,20 @@ impl Transaction {
         }
     }
 
-    /// Shorthand for [`Self::verify_with_flags`] with flag [`dashconsensus::VERIFY_ALL`].
-    #[cfg(feature="dashconsensus")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "dashconsensus")))]
+    /// Shorthand for [`Self::verify_with_flags`] with flag [`bitcoinconsensus::VERIFY_ALL`].
+    #[cfg(feature="bitcoinconsensus")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bitcoinconsensus")))]
     pub fn verify<S>(&self, spent: S) -> Result<(), script::Error>
     where
         S: FnMut(&OutPoint) -> Option<TxOut>
     {
-        self.verify_with_flags(spent, ::dashconsensus::VERIFY_ALL)
+        self.verify_with_flags(spent, ::bitcoinconsensus::VERIFY_ALL)
     }
 
     /// Verify that this transaction is able to spend its inputs.
     /// The `spent` closure should not return the same [`TxOut`] twice!
-    #[cfg(feature="dashconsensus")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "dashconsensus")))]
+    #[cfg(feature="bitcoinconsensus")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "bitcoinconsensus")))]
     pub fn verify_with_flags<S, F>(&self, mut spent: S, flags: F) -> Result<(), script::Error>
     where
         S: FnMut(&OutPoint) -> Option<TxOut>,
@@ -549,10 +549,10 @@ mod tests {
 
     use hashes::Hash;
     use hashes::hex::FromHex;
+    use blockdata::transaction::hash_type::EcdsaSighashType;
 
     use hash_types::*;
     use OutPoint;
-    use super::EcdsaSighashType;
     use util::sighash::SighashCache;
 
     #[test]
@@ -799,9 +799,9 @@ mod tests {
     fn test_sighashtype_standard() {
         let nonstandard_hashtype = 0x04;
         // This type is not well defined, by consensus it becomes ALL
-        assert_eq!(EcdsaSighashType::from_u32_consensus(nonstandard_hashtype), EcdsaSighashType::All);
+        assert_eq!(EcdsaSighashType::from_consensus(nonstandard_hashtype), EcdsaSighashType::All);
         // But it's policy-invalid to use it!
-        assert_eq!(EcdsaSighashType::from_u32_standard(nonstandard_hashtype), Err(NonStandardSighashType(0x04)));
+        assert_eq!(EcdsaSighashType::from_standard(nonstandard_hashtype), Err(hash_type::NonStandardSighashType(0x04)));
     }
 
     #[test]
@@ -1143,7 +1143,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature="dashconsensus")]
+    #[cfg(feature="bitcoinconsensus")]
     fn test_transaction_verify () {
         use hashes::hex::FromHex;
         use std::collections::HashMap;

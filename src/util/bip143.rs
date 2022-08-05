@@ -23,7 +23,7 @@ use hashes::Hash;
 use hash_types::Sighash;
 use blockdata::script::Script;
 use blockdata::witness::Witness;
-use blockdata::transaction::{Transaction, EcdsaSighashType};
+use blockdata::transaction::{Transaction, hash_type::EcdsaSighashType};
 use consensus::{encode, Encodable};
 
 use io;
@@ -165,7 +165,7 @@ impl<R: DerefMut<Target = Transaction>> SigHashCache<R> {
     /// panics if `input_index` is out of bounds with respect of the number of inputs
     ///
     /// ```
-    /// use dashcore::blockdata::transaction::{Transaction, EcdsaSighashType};
+    /// use dashcore::blockdata::transaction::{Transaction, hash_type::EcdsaSighashType};
     /// use dashcore::util::bip143::SigHashCache;
     /// use dashcore::Script;
     ///
@@ -212,7 +212,7 @@ mod tests {
         let raw_expected = Sighash::from_hex(expected_result).unwrap();
         let expected_result = Sighash::from_slice(&raw_expected[..]).unwrap();
         let mut cache = SigHashCache::new(&tx);
-        let sighash_type = EcdsaSighashType::from_u32_consensus(hash_type);
+        let sighash_type = EcdsaSighashType::from_consensus(hash_type);
         let actual_result = cache.signature_hash(input_index, &script, value, sighash_type);
         assert_eq!(actual_result, expected_result);
     }

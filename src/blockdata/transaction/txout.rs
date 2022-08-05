@@ -20,7 +20,8 @@
 //! A TxOut is an output of a transaction.
 //!
 
-#[cfg(feature="dashconsensus")] use blockdata::script;
+#[cfg(feature="bitcoinconsensus")] use blockdata::script;
+use Script;
 
 /// A transaction output, which defines new coins to be created from old ones.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]

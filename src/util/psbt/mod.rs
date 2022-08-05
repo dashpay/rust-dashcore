@@ -572,7 +572,7 @@ mod tests {
         use hash_types::Txid;
 
         use blockdata::script::Script;
-        use blockdata::transaction::{EcdsaSighashType, Transaction, txin::TxIn, txout::TxOut, outpoint::OutPoint};
+        use blockdata::transaction::{hash_type::EcdsaSighashType, Transaction, txin::TxIn, txout::TxOut, outpoint::OutPoint};
         use consensus::encode::serialize_hex;
         use util::psbt::map::{Map, Input, Output};
         use util::psbt::raw;
