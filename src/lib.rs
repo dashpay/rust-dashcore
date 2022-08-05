@@ -96,7 +96,7 @@ extern crate hashbrown;
 #[cfg_attr(docsrs, doc(cfg(feature = "base64")))]
 pub extern crate base64;
 
-#[cfg(feature="bitcoinconsensus")] extern crate bitcoinconsensus;
+#[cfg(feature="dashconsensus")] extern crate dashconsensus;
 #[cfg(feature = "serde")] #[macro_use] extern crate serde;
 #[cfg(all(test, feature = "serde"))] extern crate serde_json;
 #[cfg(all(test, feature = "serde"))] extern crate serde_test;

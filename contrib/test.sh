@@ -1,6 +1,6 @@
 #!/bin/sh -ex
 
-FEATURES="base64 bitcoinconsensus use-serde rand secp-recovery"
+FEATURES="base64 dashconsensus use-serde rand secp-recovery"
 
 # Use toolchain if explicitly specified
 if [ -n "$TOOLCHAIN" ]

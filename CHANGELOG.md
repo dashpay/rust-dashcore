@@ -166,7 +166,7 @@ the case and how we broke both `rust-miniscript` and BDK.
 # 0.23.0 - 2020-01-07
 
 - Update `secp256k1` dependency to `0.17.1`.
-- Update `bitcoinconsensus` dependency to `0.19.0-1`.
+- Update `dashconsensus` dependency to `0.19.0-1`.
 - Update `bech32` dependency to `0.7.2`.
 
 # 0.22.0 - 2020-01-07
@@ -207,7 +207,7 @@ the case and how we broke both `rust-miniscript` and BDK.
 
 # 0.20.0 - 2019-08-23
 
-* Update `secp256k1` 0.15 and `bitcoinconsensus` 0.17
+* Update `secp256k1` 0.15 and `dashconsensus` 0.17
 
 # 0.19.0 - 2019-08-16
 
@@ -341,7 +341,7 @@ the case and how we broke both `rust-miniscript` and BDK.
 
 * The in-memory blockchain was moved into a dedicated project rust-bitcoin-chain.
 * Removed old script interpreter
-* A new optional feature "bitcoinconsensus" lets this library use Bitcoin Core's native
+* A new optional feature "dashconsensus" lets this library use Bitcoin Core's native
 script verifier, wrappend into Rust by the rust-bitcoinconsenus project.
 See `Transaction::verify` and `Script::verify` methods.
 * Replaced Base58 traits with `encode_slice`, `check_encode_slice`, from and `from_check` functions in the base58 module.

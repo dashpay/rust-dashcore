@@ -20,8 +20,9 @@
 //! An outpoint is a reference to one of the indexed destinations of a transaction.
 //!
 
+#[cfg(feature = "std")] use std::error;
 use std::convert::TryInto;
-use std::{error, fmt, io};
+use std::{fmt, io};
 use hashes::Hash;
 use hashes::hex::FromHex;
 use consensus::{Decodable, Encodable, encode};
