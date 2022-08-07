@@ -940,6 +940,7 @@ mod tests {
             lock_time: 0,
             input: vec![TxIn::default()],
             output: vec![],
+            special_transaction_payload: None
         };
         let mut c = SighashCache::new(&dumb_tx);
 

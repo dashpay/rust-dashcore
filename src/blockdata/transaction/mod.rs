@@ -53,7 +53,6 @@ use hash_types::{Sighash, Txid, Wtxid};
 use ::{VarInt};
 use blockdata::transaction::hash_type::EcdsaSighashType;
 use blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
-use OutPoint;
 
 #[cfg(doc)]
 use util::sighash::SchnorrSighashType;
@@ -513,7 +512,7 @@ impl Encodable for Transaction {
 impl Decodable for Transaction {
     fn consensus_decode<D: io::Read>(d: D) -> Result<Self, encode::Error> {
         let mut d = d.take(MAX_VEC_SIZE as u64);
-        let version = i16::consensus_decode(&mut d)?;
+        let version = u16::consensus_decode(&mut d)?;
         let special_transaction_type_u16 = u16::consensus_decode(&mut d)?;
         let special_transaction_type = TransactionType::try_from(special_transaction_type_u16).map_err(|_| encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16))?;
         let input = Vec::<TxIn>::consensus_decode(&mut d)?;
@@ -572,7 +571,7 @@ mod tests {
         use network::constants::Network;
         use blockdata::constants;
 
-        let genesis = constants::genesis_block(Network::Bitcoin);
+        let genesis = constants::genesis_block(Network::Dash);
         assert! (genesis.txdata[0].is_coin_base());
         let tx_bytes = Vec::from_hex("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000").unwrap();
         let tx: Transaction = deserialize(&tx_bytes).unwrap();

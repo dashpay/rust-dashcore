@@ -18,13 +18,13 @@
 //!
 
 use std::io;
-use ::{OutPoint, Script};
-use ::{QuorumHash, VarInt};
+use std::io::{Error, Write};
+use ::{QuorumHash};
 use bls_sig_utils::{BLSPublicKey, BLSSignature};
-use consensus::{Decodable, encode};
+use consensus::{Decodable, Encodable, encode};
 use QuorumVVecHash;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct QuorumFinalizationCommitment {
     version: u16,
     llmq_type: u8,
@@ -35,6 +35,22 @@ pub struct QuorumFinalizationCommitment {
     quorum_vvec_hash: QuorumVVecHash,
     quorum_sig: BLSSignature,
     sig: BLSSignature,
+}
+
+impl Encodable for QuorumFinalizationCommitment {
+    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+        let mut len = 0;
+        len += self.version.consensus_encode(&mut s)?;
+        len += self.llmq_type.consensus_encode(&mut s)?;
+        len += self.quorum_hash.consensus_encode(&mut s)?;
+        len += self.signers.consensus_encode(&mut s)?;
+        len += self.valid_members.consensus_encode(&mut s)?;
+        len += self.quorum_public_key.consensus_encode(&mut s)?;
+        len += self.quorum_vvec_hash.consensus_encode(&mut s)?;
+        len += self.quorum_sig.consensus_encode(&mut s)?;
+        len += self.sig.consensus_encode(&mut s)?;
+        Ok(len)
+    }
 }
 
 impl Decodable for QuorumFinalizationCommitment {
@@ -63,22 +79,32 @@ impl Decodable for QuorumFinalizationCommitment {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct QuorumCommitmentPayload {
     version: u16,
     height: u32,
-    commitment: QuorumFinalizationCommitment,
+    finalization_commitment: QuorumFinalizationCommitment,
+}
+
+impl Encodable for QuorumCommitmentPayload {
+    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+        let mut len = 0;
+        len += self.version.consensus_encode(&mut s)?;
+        len += self.height.consensus_encode(&mut s)?;
+        len += self.finalization_commitment.consensus_encode(&mut s)?;
+        Ok(len)
+    }
 }
 
 impl Decodable for QuorumCommitmentPayload {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode(&mut d)?;
         let height = u32::consensus_decode(&mut d)?;
-        let commitment = QuorumFinalizationCommitment::consensus_decode(d)?;
+        let finalization_commitment = QuorumFinalizationCommitment::consensus_decode(d)?;
         Ok(QuorumCommitmentPayload {
             version,
             height,
-            commitment
+            finalization_commitment
         })
     }
 }

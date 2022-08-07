@@ -29,23 +29,57 @@
 //!
 //! The special transaction type used for ProUpRegTx Transactions is 3.
 
+use std::io::Error;
 use std::io;
+use std::io::Write;
+use hashes::Hash;
 use ::{Script};
-use consensus::{Decodable, encode};
+use consensus::{Decodable, Encodable, encode};
 use ::{ProTxHash};
-use ::{InputsHash, VotingKeyHash};
+use ::{InputsHash};
+use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use bls_sig_utils::BLSPublicKey;
+use ::{PubkeyHash, SpecialTransactionPayloadHash};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct ProviderUpdateRegistrarPayload {
     version: u16,
     pro_tx_hash: ProTxHash,
     operator_public_key: BLSPublicKey,
-    voting_key_hash: VotingKeyHash,
+    voting_key_hash: PubkeyHash,
     operator_reward: u16,
     script_payout: Script,
     inputs_hash: InputsHash,
     payload_sig: Vec<u8>,
+}
+
+impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRegistrarPayload {
+    fn base_payload_data_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+        let mut len = 0;
+        len += self.version.consensus_encode(&mut s)?;
+        len += self.pro_tx_hash.consensus_encode(&mut s)?;
+        len += self.operator_public_key.consensus_encode(&mut s)?;
+        len += self.voting_key_hash.consensus_encode(&mut s)?;
+        len += self.operator_reward.consensus_encode(&mut s)?;
+        len += self.script_payout.consensus_encode(&mut s)?;
+        len += self.inputs_hash.consensus_encode(&mut s)?;
+        Ok(len)
+    }
+
+    fn base_payload_hash(&self) -> SpecialTransactionPayloadHash {
+        let mut engine = SpecialTransactionPayloadHash::engine();
+        self.base_payload_data_encode(&mut engine).expect("engines don't error");
+        SpecialTransactionPayloadHash::from_engine(engine)
+    }
+}
+
+impl Encodable for ProviderUpdateRegistrarPayload {
+    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+        let mut len = 0;
+        len += self.base_payload_data_encode(&mut s)?;
+        len += self.payload_sig.consensus_encode(&mut s)?;
+        Ok(len)
+    }
 }
 
 impl Decodable for ProviderUpdateRegistrarPayload {
@@ -53,7 +87,7 @@ impl Decodable for ProviderUpdateRegistrarPayload {
         let version = u16::consensus_decode(&mut d)?;
         let pro_tx_hash = ProTxHash::consensus_decode(&mut d)?;
         let operator_public_key = BLSPublicKey::consensus_decode(&mut d)?;
-        let voting_key_hash = VotingKeyHash::consensus_decode(&mut d)?;
+        let voting_key_hash = PubkeyHash::consensus_decode(&mut d)?;
         let operator_reward = u16::consensus_decode(&mut d)?;
         let script_payout = Script::consensus_decode(&mut d)?;
         let inputs_hash = InputsHash::consensus_decode(&mut d)?;

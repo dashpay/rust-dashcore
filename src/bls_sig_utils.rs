@@ -1,24 +1,35 @@
-use std::io::Read;
-use consensus::Decodable;
+use std::convert::TryFrom;
+use std::io::{Read, Write};
+use consensus::{Decodable, Encodable};
 use consensus::encode::Error;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct BLSPublicKey([u8;48]);
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct BLSSignature([u8;96]);
+
+impl Encodable for BLSPublicKey {
+    fn consensus_encode<S: Write>(&self, s: S) -> Result<usize, std::io::Error> {
+        Ok(hex::encode(s)?)
+    }
+}
 
 impl Decodable for BLSPublicKey {
     fn consensus_decode<D: Read>(d: D) -> Result<Self, Error> {
-        Ok(hashes::hex::FromHex(d)?)
-        // Ok(Self::from_inner($element::hex::FromHex::consensus_decode(d)?))
+        Ok(BLSPublicKey::try_from(hex::decode(d))?)
+    }
+}
+
+impl Encodable for BLSSignature {
+    fn consensus_encode<S: Write>(&self, s: S) -> Result<usize, std::io::Error> {
+        Ok(hex::encode(s)?)
     }
 }
 
 impl Decodable for BLSSignature {
     fn consensus_decode<D: Read>(d: D) -> Result<Self, Error> {
-        Ok(hashes::hex::FromHex(d)?)
-        // Ok(Self::from_inner($element::hex::FromHex::consensus_decode(d)?))
+        Ok(BLSSignature::try_from(hex::decode(d))?)
     }
 }
 

@@ -36,13 +36,16 @@
 
 
 use std::io;
+use std::io::{Error, Write};
+use hashes::Hash;
 use ::{Script};
 use ::{ProTxHash};
+use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use bls_sig_utils::BLSSignature;
-use consensus::{Decodable, encode};
-use InputsHash;
+use consensus::{Decodable, Encodable, encode};
+use ::{InputsHash, SpecialTransactionPayloadHash};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct ProviderUpdateServicePayload {
     version: u16,
     pro_tx_hash: ProTxHash,
@@ -51,6 +54,34 @@ pub struct ProviderUpdateServicePayload {
     script_payout: Script,
     inputs_hash: InputsHash,
     payload_sig: BLSSignature,
+}
+
+impl SpecialTransactionBasePayloadEncodable for ProviderUpdateServicePayload {
+    fn base_payload_data_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+        let mut len = 0;
+        len += self.version.consensus_encode(&mut s)?;
+        len += self.pro_tx_hash.consensus_encode(&mut s)?;
+        len += self.ip_address.consensus_encode(&mut s)?;
+        len += self.port.consensus_encode(&mut s)?;
+        len += self.script_payout.consensus_encode(&mut s)?;
+        len += self.inputs_hash.consensus_encode(&mut s)?;
+        Ok(len)
+    }
+
+    fn base_payload_hash(&self) -> SpecialTransactionPayloadHash {
+        let mut engine = SpecialTransactionPayloadHash::engine();
+        self.base_payload_data_encode(&mut engine).expect("engines don't error");
+        SpecialTransactionPayloadHash::from_engine(engine)
+    }
+}
+
+impl Encodable for ProviderUpdateServicePayload {
+    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+        let mut len = 0;
+        len += self.base_payload_data_encode(&mut s)?;
+        len += self.payload_sig.consensus_encode(&mut s)?;
+        Ok(len)
+    }
 }
 
 impl Decodable for ProviderUpdateServicePayload {

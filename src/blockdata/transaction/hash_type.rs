@@ -252,6 +252,7 @@ mod tests {
             lock_time: 0,
             input: input,
             output: output,   // TODO: Use Vec::from([TxOut]) once we bump MSRV.
+            special_transaction_payload: None
         };
         let script = Script::new();
         let got = tx.signature_hash(1, &script, SIGHASH_SINGLE);

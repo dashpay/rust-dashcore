@@ -206,7 +206,7 @@ mod tests {
 
     fn p2pkh_hex(pk: &str) -> Script {
         let pk: PublicKey = PublicKey::from_str(pk).unwrap();
-        let witness_script = Address::p2pkh(&pk, Network::Bitcoin).script_pubkey();
+        let witness_script = Address::p2pkh(&pk, Network::Dash).script_pubkey();
         witness_script
     }
 
@@ -250,6 +250,7 @@ mod tests {
                 hash_outputs: hex_hash!(
                     Sighash, "863ef3e1a92afbfdb97f31ad0fc7683ee943e9abcf2501590ff8f6551f47e5e5"
                 ),
+                special_transaction_payload: None
             }
         );
 
@@ -286,6 +287,7 @@ mod tests {
                 hash_outputs: hex_hash!(
                     Sighash, "de984f44532e2173ca0d64314fcefe6d30da6f8cf27bafa706da61df8a226c83"
                 ),
+                special_transaction_payload: None
             }
         );
 
@@ -329,6 +331,7 @@ mod tests {
                 hash_outputs: hex_hash!(
                     Sighash, "bc4d309071414bed932f98832b27b4d76dad7e6c1346f487a8fdbb8eb90307cc"
                 ),
+                special_transaction_payload: None
             }
         );
 

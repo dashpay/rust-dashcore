@@ -19,15 +19,27 @@
 //!
 
 use std::io;
+use std::io::{Error, Write};
 use ::{MerkleRootMasternodeList, MerkleRootQuorums};
-use consensus::{Decodable, encode};
+use consensus::{Decodable, Encodable, encode};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct CoinbasePayload {
     version: u16,
     height: u32,
     merkle_root_masternode_list: MerkleRootMasternodeList,
     merkle_root_quorums: MerkleRootQuorums,
+}
+
+impl Encodable for CoinbasePayload {
+    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+        let mut len = 0;
+        len += self.version.consensus_encode(&mut s)?;
+        len += self.height.consensus_encode(&mut s)?;
+        len += self.merkle_root_masternode_list.consensus_encode(&mut s)?;
+        len += self.merkle_root_quorums.consensus_encode(&mut s)?;
+        Ok(len)
+    }
 }
 
 impl Decodable for CoinbasePayload {

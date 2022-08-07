@@ -37,13 +37,15 @@
 //! The special transaction type used for Provider Update Revoking Transactions is 4.
 
 use std::io;
-use ::{Script};
+use std::io::{Error, Write};
+use hashes::Hash;
 use ::{ProTxHash};
+use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use bls_sig_utils::BLSSignature;
-use consensus::{Decodable, encode};
-use InputsHash;
+use consensus::{Decodable, Encodable, encode};
+use ::{InputsHash, SpecialTransactionPayloadHash};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct ProviderUpdateRevocationPayload {
     version: u16,
     pro_tx_hash: ProTxHash,
@@ -52,6 +54,31 @@ pub struct ProviderUpdateRevocationPayload {
     payload_sig: BLSSignature,
 }
 
+impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRevocationPayload {
+    fn base_payload_data_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+        let mut len = 0;
+        len += self.version.consensus_encode(&mut s)?;
+        len += self.pro_tx_hash.consensus_encode(&mut s)?;
+        len += self.reason.consensus_encode(&mut s)?;
+        len += self.inputs_hash.consensus_encode(&mut s)?;
+        Ok(len)
+    }
+
+    fn base_payload_hash(&self) -> SpecialTransactionPayloadHash {
+        let mut engine = SpecialTransactionPayloadHash::engine();
+        self.base_payload_data_encode(&mut engine).expect("engines don't error");
+        SpecialTransactionPayloadHash::from_engine(engine)
+    }
+}
+
+impl Encodable for ProviderUpdateRevocationPayload {
+    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+        let mut len = 0;
+        len += self.base_payload_data_encode(&mut s)?;
+        len += self.payload_sig.consensus_encode(&mut s)?;
+        Ok(len)
+    }
+}
 
 impl Decodable for ProviderUpdateRevocationPayload {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {

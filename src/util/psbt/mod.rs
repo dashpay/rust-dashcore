@@ -319,7 +319,6 @@ mod tests {
 
     use blockdata::script::Script;
     use blockdata::transaction::{Transaction, txin::TxIn, txout::TxOut, outpoint::OutPoint};
-    use network::constants::Network::Bitcoin;
     use consensus::encode::{deserialize, serialize, serialize_hex};
     use util::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, Fingerprint, KeySource};
     use util::psbt::map::{Output, Input};
@@ -327,6 +326,7 @@ mod tests {
 
     use std::collections::BTreeMap;
     use blockdata::witness::Witness;
+    use Network::Dash;
 
     #[test]
     fn trivial_psbt() {
@@ -336,6 +336,7 @@ mod tests {
                 lock_time: 0,
                 input: vec![],
                 output: vec![],
+                special_transaction_payload: None
             },
             xpub: Default::default(),
             version: 0,
@@ -365,7 +366,7 @@ mod tests {
 
         let mut hd_keypaths: BTreeMap<secp256k1::PublicKey, KeySource> = Default::default();
 
-        let mut sk: ExtendedPrivKey = ExtendedPrivKey::new_master(Bitcoin, &seed).unwrap();
+        let mut sk: ExtendedPrivKey = ExtendedPrivKey::new_master(Dash, &seed).unwrap();
 
         let fprint: Fingerprint = sk.fingerprint(&secp);
 
@@ -429,6 +430,7 @@ mod tests {
                         ),
                     },
                 ],
+                special_transaction_payload: None
             },
             xpub: Default::default(),
             version: 0,
@@ -683,6 +685,7 @@ mod tests {
                             script_pubkey: hex_script!("a9143545e6e33b832c47050f24d3eeb93c9c03948bc787"),
                         },
                     ],
+                    special_transaction_payload: None
                 },
                 xpub: Default::default(),
                 version: 0,
@@ -731,6 +734,7 @@ mod tests {
                                 script_pubkey: hex_script!("a914339725ba21efd62ac753a9bcd067d6c7a6a39d0587"),
                             },
                         ],
+                        special_transaction_payload: None
                     }),
                     ..Default::default()
                 },],
@@ -992,6 +996,7 @@ mod tests {
                         script_pubkey: hex_script!("a9143545e6e33b832c47050f24d3eeb93c9c03948bc787"),
                     },
                 ],
+                special_transaction_payload: None
             },
             version: 0,
             xpub: Default::default(),
@@ -1040,6 +1045,7 @@ mod tests {
                             script_pubkey: hex_script!("a914339725ba21efd62ac753a9bcd067d6c7a6a39d0587"),
                         },
                     ],
+                    special_transaction_payload: None
                 }),
                 ..Default::default()
             },],

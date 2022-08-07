@@ -63,8 +63,7 @@ hash_newtype!(FilterHeader, sha256d::Hash, 32, doc="Filter header, as defined in
 hash_newtype!(MerkleRootMasternodeList, sha256d::Hash, 32, doc="The merkle root of the masternode list");
 hash_newtype!(MerkleRootQuorums, sha256d::Hash, 32, doc="The merkle root of the quorums");
 
-hash_newtype!(OwnerKeyHash, hash160::Hash, 20, doc="An owner key hash");
-hash_newtype!(VotingKeyHash, hash160::Hash, 20, doc="A voting key hash");
+hash_newtype!(SpecialTransactionPayloadHash, sha256d::Hash, 32, doc="A special transaction payload hash");
 hash_newtype!(InputsHash, sha256d::Hash, 32, doc="A hash of all transaction inputs");
 
 hash_newtype!(ProTxHash, sha256d::Hash, 32, doc="A hash of a provider registration transaction, used to identify a masternode");
@@ -77,6 +76,8 @@ impl_hashencode!(Wtxid);
 impl_hashencode!(BlockHash);
 impl_hashencode!(Sighash);
 
+impl_hashencode!(PubkeyHash);
+
 impl_hashencode!(TxMerkleNode);
 impl_hashencode!(WitnessMerkleNode);
 
@@ -86,8 +87,7 @@ impl_hashencode!(FilterHeader);
 impl_hashencode!(MerkleRootMasternodeList);
 impl_hashencode!(MerkleRootQuorums);
 
-impl_hashencode!(OwnerKeyHash);
-impl_hashencode!(VotingKeyHash);
+impl_hashencode!(SpecialTransactionPayloadHash);
 impl_hashencode!(InputsHash);
 
 impl_hashencode!(ProTxHash);

@@ -292,8 +292,8 @@ impl PrivateKey {
     pub fn fmt_wif(&self, fmt: &mut dyn fmt::Write) -> fmt::Result {
         let mut ret = [0; 34];
         ret[0] = match self.network {
-            Network::Bitcoin => 128,
-            Network::Testnet | Network::Signet | Network::Regtest => 239,
+            Network::Dash => 128,
+            Network::Testnet | Network::Devnet | Network::Regtest => 239,
         };
         ret[1..33].copy_from_slice(&self.inner[..]);
         let privkey = if self.compressed {
@@ -326,7 +326,7 @@ impl PrivateKey {
         };
 
         let network = match data[0] {
-            128 => Network::Bitcoin,
+            128 => Network::Dash,
             239 => Network::Testnet,
             x   => {
                 return Err(Error::Base58(base58::Error::InvalidAddressVersion(x)));
@@ -492,7 +492,7 @@ mod tests {
     use std::str::FromStr;
     use hashes::hex::ToHex;
     use network::constants::Network::Testnet;
-    use network::constants::Network::Bitcoin;
+    use network::constants::Network::Dash;
     use util::address::Address;
 
     #[test]
@@ -515,7 +515,7 @@ mod tests {
 
         // mainnet uncompressed
         let sk = PrivateKey::from_wif("5JYkZjmN7PVMjJUfJWfRFwtuXTGB439XV6faajeHPAM9Z2PT2R3").unwrap();
-        assert_eq!(sk.network, Bitcoin);
+        assert_eq!(sk.network, Dash);
         assert_eq!(sk.compressed, false);
         assert_eq!(&sk.to_wif(), "5JYkZjmN7PVMjJUfJWfRFwtuXTGB439XV6faajeHPAM9Z2PT2R3");
 

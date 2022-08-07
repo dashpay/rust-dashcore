@@ -46,8 +46,10 @@ use util::taproot::TapLeafHash;
 use hashes::hex::ToHex;
 
 use blockdata::transaction::{txout::TxOut, Transaction, txin::TxIn, outpoint::OutPoint};
+use blockdata::transaction::special_transaction::TransactionType;
 #[cfg(feature = "std")]
 use network::{message_blockdata::Inventory, address::{Address, AddrV2Message}};
+use Script;
 
 /// Encoding error
 #[derive(Debug)]
@@ -87,6 +89,14 @@ pub enum Error {
     UnsupportedSegwitFlag(u8),
     /// The Transaction type was not identified
     UnknownSpecialTransactionType(u16),
+    /// We tried to convert the payload to the wrong type
+    WrongSpecialTransactionPayloadConversion {
+        /// The expected transaction type
+        expected: TransactionType,
+        /// The invalid transaction type
+        actual: TransactionType,
+    },
+    NonStandardScriptPayout(Script),
 }
 
 impl fmt::Display for Error {
@@ -107,6 +117,10 @@ impl fmt::Display for Error {
                 "unsupported segwit version: {}", swflag),
             Error::UnknownSpecialTransactionType(ref stt) => write!(f,
                                                                "unknown special transaction type: {}", stt),
+            Error::WrongSpecialTransactionPayloadConversion { expected: ref e, actual: ref a } => write!(f,
+                                                                                           "wrong special transaction payload conversion expected: {} got: {}", e, a),
+            Error::NonStandardScriptPayout(script) => write!(f,
+                                                        "non standard script payout: {}", hex::encode(script.as_bytes())),
         }
     }
 }
