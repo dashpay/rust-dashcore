@@ -42,7 +42,7 @@ pub mod provider_update_revocation;
 pub mod coinbase;
 pub mod quorum_commitment;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum TransactionPayload {
     ProviderRegistrationPayloadType(ProviderRegistrationPayload),
     ProviderUpdateServicePayloadType(ProviderUpdateServicePayload),

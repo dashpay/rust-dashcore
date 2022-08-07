@@ -46,7 +46,7 @@ use bls_sig_utils::BLSPublicKey;
 use ::{PubkeyHash, SpecialTransactionPayloadHash};
 use util::address::Payload;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct ProviderRegistrationPayload {
     version: u16,
     provider_type: u16,

@@ -24,7 +24,7 @@ use bls_sig_utils::{BLSPublicKey, BLSSignature};
 use consensus::{Decodable, Encodable, encode};
 use QuorumVVecHash;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct QuorumFinalizationCommitment {
     version: u16,
     llmq_type: u8,
@@ -79,7 +79,7 @@ impl Decodable for QuorumFinalizationCommitment {
 }
 
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct QuorumCommitmentPayload {
     version: u16,
     height: u32,

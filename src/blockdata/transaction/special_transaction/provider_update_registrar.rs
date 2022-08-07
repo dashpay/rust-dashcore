@@ -41,7 +41,7 @@ use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEn
 use bls_sig_utils::BLSPublicKey;
 use ::{PubkeyHash, SpecialTransactionPayloadHash};
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct ProviderUpdateRegistrarPayload {
     version: u16,
     pro_tx_hash: ProTxHash,

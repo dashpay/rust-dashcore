@@ -23,7 +23,7 @@ use std::io::{Error, Write};
 use ::{MerkleRootMasternodeList, MerkleRootQuorums};
 use consensus::{Decodable, Encodable, encode};
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct CoinbasePayload {
     version: u16,
     height: u32,

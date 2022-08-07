@@ -45,7 +45,7 @@ use bls_sig_utils::BLSSignature;
 use consensus::{Decodable, Encodable, encode};
 use ::{InputsHash, SpecialTransactionPayloadHash};
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct ProviderUpdateRevocationPayload {
     version: u16,
     pro_tx_hash: ProTxHash,

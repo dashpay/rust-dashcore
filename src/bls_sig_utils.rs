@@ -1,35 +1,40 @@
-use std::convert::TryFrom;
 use std::io::{Read, Write};
 use consensus::{Decodable, Encodable};
 use consensus::encode::Error;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct BLSPublicKey([u8;48]);
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct BLSSignature([u8;96]);
 
 impl Encodable for BLSPublicKey {
-    fn consensus_encode<S: Write>(&self, s: S) -> Result<usize, std::io::Error> {
-        Ok(hex::encode(s)?)
+    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, std::io::Error> {
+        s.write(self.0.as_slice())?;
+        Ok(48)
     }
 }
 
 impl Decodable for BLSPublicKey {
-    fn consensus_decode<D: Read>(d: D) -> Result<Self, Error> {
-        Ok(BLSPublicKey::try_from(hex::decode(d))?)
+    fn consensus_decode<D: Read>(mut d: D) -> Result<Self, Error> {
+        let mut data :[u8;48] = [0u8; 48];
+        d.read_exact(&mut data)?;
+        Ok(BLSPublicKey(data))
     }
 }
 
 impl Encodable for BLSSignature {
-    fn consensus_encode<S: Write>(&self, s: S) -> Result<usize, std::io::Error> {
-        Ok(hex::encode(s)?)
+    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, std::io::Error> {
+        s.write(self.0.as_slice())?;
+        Ok(96)
     }
 }
 
 impl Decodable for BLSSignature {
-    fn consensus_decode<D: Read>(d: D) -> Result<Self, Error> {
-        Ok(BLSSignature::try_from(hex::decode(d))?)
+    fn consensus_decode<D: Read>(mut d: D) -> Result<Self, Error> {
+        let mut data :[u8;96] = [0u8; 96];
+        d.read_exact(&mut data)?;
+        Ok(BLSSignature(data))
     }
 }
 

@@ -666,7 +666,7 @@ mod tests {
         let tx2: Result<Transaction, _> = deserialize(&tx2_bytes);
         assert!(tx2.is_ok());
         let realtx2 = tx2.unwrap();
-        assert_eq!(realtx2.version, -2147483648);
+        assert_eq!(realtx2.version, 2147483648);
     }
 
     #[test]
@@ -839,7 +839,8 @@ mod tests {
             version: 0,
             lock_time: 0,
             input: vec![],
-            output: vec![]
+            output: vec![],
+            special_transaction_payload: None
         };
 
         let pk_data = Vec::from_hex("b8e2d839dd21088b78bebfea3e3e632181197982").unwrap();
