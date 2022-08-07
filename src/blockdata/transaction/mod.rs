@@ -52,7 +52,7 @@ use consensus::encode::MAX_VEC_SIZE;
 use hash_types::{Sighash, Txid, Wtxid};
 use ::{VarInt};
 use blockdata::transaction::hash_type::EcdsaSighashType;
-use blockdata::transaction::special_transaction::TransactionType;
+use blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
 use OutPoint;
 
 #[cfg(doc)]
@@ -101,7 +101,7 @@ const UINT256_ONE: [u8; 32] = [
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Transaction {
     /// The protocol version, is currently expected to be 1 or 2 (BIP 68).
-    pub version: i16,
+    pub version: u16,
     /// Block number before which this transaction is valid, or 0 for valid immediately.
     pub lock_time: u32,
     /// List of transaction inputs.
@@ -109,7 +109,7 @@ pub struct Transaction {
     /// List of transaction outputs.
     pub output: Vec<TxOut>,
     /// Special Transaction Payload
-    pub special_transaction_payload: Option<SpecialTransactionPayload>,
+    pub special_transaction_payload: Option<TransactionPayload>,
 }
 
 impl Transaction {
@@ -137,11 +137,15 @@ impl Transaction {
         self.input.consensus_encode(&mut enc).expect("engines don't error");
         self.output.consensus_encode(&mut enc).expect("engines don't error");
         self.lock_time.consensus_encode(&mut enc).expect("engines don't error");
-        if let Some(payload) = self.special_transaction_payload {
+        if let Some(payload) = &self.special_transaction_payload {
             payload.consensus_encode(&mut enc).expect("engines don't error");
         }
         
         Txid::from_engine(enc)
+    }
+
+    pub fn tx_type(&self) -> TransactionType {
+        TransactionType::from_optional_payload(&self.special_transaction_payload)
     }
 
     /// Computes SegWit-version of the transaction id (wtxid). For transaction with the witness

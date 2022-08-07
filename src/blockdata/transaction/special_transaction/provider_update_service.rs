@@ -36,11 +36,13 @@
 
 
 use std::io;
-use ::{OutPoint, Script};
-use ::{ProTxHash, VarInt};
+use ::{Script};
+use ::{ProTxHash};
+use bls_sig_utils::BLSSignature;
 use consensus::{Decodable, encode};
 use InputsHash;
 
+#[derive(Clone)]
 pub struct ProviderUpdateServicePayload {
     version: u16,
     pro_tx_hash: ProTxHash,
@@ -48,7 +50,7 @@ pub struct ProviderUpdateServicePayload {
     port: u16,
     script_payout: Script,
     inputs_hash: InputsHash,
-    payload_sig: [u8; 96],
+    payload_sig: BLSSignature,
 }
 
 impl Decodable for ProviderUpdateServicePayload {
@@ -59,7 +61,7 @@ impl Decodable for ProviderUpdateServicePayload {
         let port = u16::consensus_decode(&mut d)?;
         let script_payout = Script::consensus_decode(&mut d)?;
         let inputs_hash = InputsHash::consensus_decode(&mut d)?;
-        let payload_sig = Vec::<u8>::consensus_decode(&mut d)?;
+        let payload_sig = BLSSignature::consensus_decode(&mut d)?;
 
         Ok(ProviderUpdateServicePayload {
             version,
@@ -68,7 +70,12 @@ impl Decodable for ProviderUpdateServicePayload {
             port,
             script_payout,
             inputs_hash,
-            payload_sig: []
+            payload_sig,
         })
     }
+}
+
+#[cfg(test)]
+mod tests {
+
 }

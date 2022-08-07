@@ -125,6 +125,7 @@ pub mod consensus;
 pub mod hash_types;
 pub mod policy;
 pub mod ephemerealdata;
+pub mod bls_sig_utils;
 
 pub use hash_types::*;
 pub use blockdata::block::Block;

@@ -18,12 +18,34 @@
 //! It is defined in DIP4 https://github.com/dashpay/dips/blob/master/dip-0004.md.
 //!
 
-use ::{OutPoint, Script};
-use ::{MerkleRootMasternodeList, MerkleRootQuorums, VarInt};
+use std::io;
+use ::{MerkleRootMasternodeList, MerkleRootQuorums};
+use consensus::{Decodable, encode};
 
+#[derive(Clone)]
 pub struct CoinbasePayload {
     version: u16,
     height: u32,
     merkle_root_masternode_list: MerkleRootMasternodeList,
     merkle_root_quorums: MerkleRootQuorums,
+}
+
+impl Decodable for CoinbasePayload {
+    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+        let version = u16::consensus_decode(&mut d)?;
+        let height = u32::consensus_decode(&mut d)?;
+        let merkle_root_masternode_list = MerkleRootMasternodeList::consensus_decode(&mut d)?;
+        let merkle_root_quorums = MerkleRootQuorums::consensus_decode(&mut d)?;
+        Ok(CoinbasePayload {
+            version,
+            height,
+            merkle_root_masternode_list,
+            merkle_root_quorums
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
 }

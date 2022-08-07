@@ -285,7 +285,6 @@ impl<W: io::Write> WriteExt for W {
 }
 
 impl<R: Read> ReadExt for R {
-    decoder_fn!(read_u128, u128, slice_to_u128_le, 16);
     decoder_fn!(read_u64, u64, slice_to_u64_le, 8);
     decoder_fn!(read_u32, u32, slice_to_u32_le, 4);
     decoder_fn!(read_u16, u16, slice_to_u16_le, 2);

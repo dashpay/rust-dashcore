@@ -70,6 +70,7 @@ hash_newtype!(InputsHash, sha256d::Hash, 32, doc="A hash of all transaction inpu
 hash_newtype!(ProTxHash, sha256d::Hash, 32, doc="A hash of a provider registration transaction, used to identify a masternode");
 
 hash_newtype!(QuorumHash, sha256d::Hash, 32, doc="A hash used to identify a quorum");
+hash_newtype!(QuorumVVecHash, sha256d::Hash, 32, doc="A hash of a quorum verification vector");
 
 impl_hashencode!(Txid);
 impl_hashencode!(Wtxid);
@@ -91,3 +92,4 @@ impl_hashencode!(InputsHash);
 
 impl_hashencode!(ProTxHash);
 impl_hashencode!(QuorumHash);
+impl_hashencode!(QuorumVVecHash);

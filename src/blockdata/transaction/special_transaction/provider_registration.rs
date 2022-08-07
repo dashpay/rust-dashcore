@@ -39,7 +39,9 @@ use ::{OutPoint, Script};
 use consensus::{Decodable, encode};
 use ::{VarInt, VotingKeyHash};
 use ::{InputsHash, OwnerKeyHash};
+use bls_sig_utils::BLSPublicKey;
 
+#[derive(Clone)]
 pub struct ProviderRegistrationPayload {
     version: u16,
     provider_type: u16,
@@ -48,7 +50,7 @@ pub struct ProviderRegistrationPayload {
     ip_address: u128,
     port: u16,
     owner_key_hash: OwnerKeyHash,
-    operator_public_key: [u8; 48],
+    operator_public_key: BLSPublicKey,
     voting_key_hash: VotingKeyHash,
     operator_reward: u16,
     script_payout: Script,
@@ -65,7 +67,7 @@ impl Decodable for ProviderRegistrationPayload {
         let ip_address = u128::consensus_decode(&mut d)?;
         let port = u16::consensus_decode(&mut d)?;
         let owner_key_hash = OwnerKeyHash::consensus_decode(&mut d)?;
-        let operator_public_key: [u8; 48],
+        let operator_public_key = BLSPublicKey::consensus_decode(&mut d)?;
         let voting_key_hash = VotingKeyHash::consensus_decode(&mut d)?;
         let operator_reward = u16::consensus_decode(&mut d)?;
         let script_payout = Script::consensus_decode(&mut d)?;
@@ -88,4 +90,9 @@ impl Decodable for ProviderRegistrationPayload {
             payload_sig
         })
     }
+}
+
+#[cfg(test)]
+mod tests {
+
 }

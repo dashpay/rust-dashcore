@@ -36,14 +36,42 @@
 
 //! The special transaction type used for Provider Update Revoking Transactions is 4.
 
-use ::{OutPoint, Script};
-use ::{ProTxHash, VarInt};
+use std::io;
+use ::{Script};
+use ::{ProTxHash};
+use bls_sig_utils::BLSSignature;
+use consensus::{Decodable, encode};
 use InputsHash;
 
+#[derive(Clone)]
 pub struct ProviderUpdateRevocationPayload {
     version: u16,
     pro_tx_hash: ProTxHash,
     reason: u16,
     inputs_hash: InputsHash,
-    payload_sig: [u8; 96],
+    payload_sig: BLSSignature,
+}
+
+
+impl Decodable for ProviderUpdateRevocationPayload {
+    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+        let version = u16::consensus_decode(&mut d)?;
+        let pro_tx_hash = ProTxHash::consensus_decode(&mut d)?;
+        let reason = u16::consensus_decode(&mut d)?;
+        let inputs_hash = InputsHash::consensus_decode(&mut d)?;
+        let payload_sig = BLSSignature::consensus_decode(&mut d)?;
+
+        Ok(ProviderUpdateRevocationPayload {
+            version,
+            pro_tx_hash,
+            reason,
+            inputs_hash,
+            payload_sig
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
 }

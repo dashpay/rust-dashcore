@@ -30,15 +30,17 @@
 //! The special transaction type used for ProUpRegTx Transactions is 3.
 
 use std::io;
-use ::{OutPoint, Script};
+use ::{Script};
 use consensus::{Decodable, encode};
-use ::{ProTxHash, VarInt};
+use ::{ProTxHash};
 use ::{InputsHash, VotingKeyHash};
+use bls_sig_utils::BLSPublicKey;
 
+#[derive(Clone)]
 pub struct ProviderUpdateRegistrarPayload {
     version: u16,
     pro_tx_hash: ProTxHash,
-    operator_public_key: [u8; 48],
+    operator_public_key: BLSPublicKey,
     voting_key_hash: VotingKeyHash,
     operator_reward: u16,
     script_payout: Script,
@@ -50,7 +52,7 @@ impl Decodable for ProviderUpdateRegistrarPayload {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode(&mut d)?;
         let pro_tx_hash = ProTxHash::consensus_decode(&mut d)?;
-        let operator_public_key = ;
+        let operator_public_key = BLSPublicKey::consensus_decode(&mut d)?;
         let voting_key_hash = VotingKeyHash::consensus_decode(&mut d)?;
         let operator_reward = u16::consensus_decode(&mut d)?;
         let script_payout = Script::consensus_decode(&mut d)?;
@@ -60,7 +62,7 @@ impl Decodable for ProviderUpdateRegistrarPayload {
         Ok(ProviderUpdateRegistrarPayload {
             version,
             pro_tx_hash,
-            operator_public_key: [],
+            operator_public_key,
             voting_key_hash,
             operator_reward,
             script_payout,
@@ -68,4 +70,9 @@ impl Decodable for ProviderUpdateRegistrarPayload {
             payload_sig
         })
     }
+}
+
+#[cfg(test)]
+mod tests {
+
 }

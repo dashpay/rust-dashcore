@@ -28,6 +28,7 @@ use consensus::{encode, Encodable};
 
 use io;
 use core::ops::{Deref, DerefMut};
+use blockdata::transaction::special_transaction::TransactionPayload;
 use blockdata::transaction::txin::TxIn;
 use util::sighash;
 
@@ -36,7 +37,7 @@ use util::sighash;
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[deprecated(since = "0.24.0", note = "please use [sighash::SighashCache] instead")]
 pub struct SighashComponents {
-    tx_version: i32,
+    tx_version: u16,
     tx_locktime: u32,
     /// Hash of all the previous outputs
     pub hash_prevouts: Sighash,
@@ -44,6 +45,8 @@ pub struct SighashComponents {
     pub hash_sequence: Sighash,
     /// Hash of all the outputs in this transaction
     pub hash_outputs: Sighash,
+    /// Transaction payload for special transactions
+    pub special_transaction_payload: Option<TransactionPayload>,
 }
 
 #[allow(deprecated)]
@@ -83,6 +86,7 @@ impl SighashComponents {
             hash_prevouts,
             hash_sequence,
             hash_outputs,
+            special_transaction_payload: tx.special_transaction_payload.clone(),
         }
     }
 
