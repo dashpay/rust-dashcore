@@ -35,7 +35,7 @@ use prelude::*;
 use core::{fmt, mem, u32, convert::From};
 #[cfg(feature = "std")] use std::error;
 
-use hashes::{sha256d, Hash, sha256};
+use hashes::{sha256d, Hash, sha256, hash160};
 use hash_types::{BlockHash, FilterHash, TxMerkleNode, FilterHeader};
 
 use io::{self, Cursor, Read};
@@ -119,7 +119,7 @@ impl fmt::Display for Error {
                                                                "unknown special transaction type: {}", stt),
             Error::WrongSpecialTransactionPayloadConversion { expected: ref e, actual: ref a } => write!(f,
                                                                                            "wrong special transaction payload conversion expected: {} got: {}", e, a),
-            Error::NonStandardScriptPayout(script) => write!(f,
+            Error::NonStandardScriptPayout(ref script) => write!(f,
                                                         "non standard script payout: {}", hex::encode(script.as_bytes())),
         }
     }
@@ -138,7 +138,10 @@ impl ::std::error::Error for Error {
             | Error::NonMinimalVarInt
             | Error::UnknownNetworkMagic(..)
             | Error::ParseFailed(..)
-            | Error::UnsupportedSegwitFlag(..) => None,
+            | Error::UnsupportedSegwitFlag(..)
+            | Error::UnknownSpecialTransactionType(..)
+            | Error::WrongSpecialTransactionPayloadConversion{..}
+            | Error::NonStandardScriptPayout(..)=> None,
         }
     }
 }
@@ -546,6 +549,7 @@ impl_array!(8);
 impl_array!(10);
 impl_array!(12);
 impl_array!(16);
+impl_array!(20);
 impl_array!(32);
 impl_array!(33);
 impl_array!(96);
@@ -762,6 +766,18 @@ tuple_encode!(T0, T1, T2, T3, T4);
 tuple_encode!(T0, T1, T2, T3, T4, T5);
 tuple_encode!(T0, T1, T2, T3, T4, T5, T6);
 tuple_encode!(T0, T1, T2, T3, T4, T5, T6, T7);
+
+impl Encodable for hash160::Hash {
+    fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {
+        self.into_inner().consensus_encode(s)
+    }
+}
+
+impl Decodable for hash160::Hash {
+    fn consensus_decode<D: io::Read>(d: D) -> Result<Self, Error> {
+        Ok(Self::from_inner(<<Self as Hash>::Inner>::consensus_decode(d)?))
+    }
+}
 
 impl Encodable for sha256d::Hash {
     fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {

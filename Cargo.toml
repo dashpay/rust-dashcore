@@ -13,14 +13,14 @@ exclude = ["./test_data"]
 
 # Please don't forget to add relevant features to docs.rs below
 [features]
-default = [ "std", "secp-recovery" ]
+default = [ "std", "secp-recovery", "hex" ]
 base64 = [ "base64-compat" ]
 unstable = []
 rand = ["secp256k1/rand-std"]
 use-serde = ["serde", "bitcoin_hashes/serde", "secp256k1/serde"]
 secp-lowmemory = ["secp256k1/lowmemory"]
 secp-recovery = ["secp256k1/recovery"]
-signer = ["secp-recovery", "rand", "hex", "anyhow"]
+signer = ["secp-recovery", "rand", "anyhow"]
 
 # At least one of std, no-std must be enabled.
 #

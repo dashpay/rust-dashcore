@@ -105,7 +105,6 @@ pub extern crate base64;
 
 #[cfg(feature = "signer")]
 pub extern crate anyhow;
-extern crate bip39;
 extern crate hex;
 
 #[cfg(target_pointer_width = "16")]

@@ -55,12 +55,12 @@ pub enum TransactionPayload {
 impl Encodable for TransactionPayload {
     fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
         match self {
-            ProviderRegistrationPayloadType(p) => { p.consensus_encode(s)}
-            ProviderUpdateServicePayloadType(p) => { p.consensus_encode(s)}
-            ProviderUpdateRegistrarPayloadType(p) => {p.consensus_encode(s)}
-            ProviderUpdateRevocationPayloadType(p) => {p.consensus_encode(s)}
-            CoinbasePayloadType(p) => {p.consensus_encode(s)}
-            QuorumCommitmentPayloadType(p) => {p.consensus_encode(s)}
+            ProviderRegistrationPayloadType(p) => { p.consensus_encode(&mut s)}
+            ProviderUpdateServicePayloadType(p) => { p.consensus_encode(&mut s)}
+            ProviderUpdateRegistrarPayloadType(p) => {p.consensus_encode(&mut s)}
+            ProviderUpdateRevocationPayloadType(p) => {p.consensus_encode(&mut s)}
+            CoinbasePayloadType(p) => {p.consensus_encode(&mut s)}
+            QuorumCommitmentPayloadType(p) => {p.consensus_encode(&mut s)}
         }
     }
 }

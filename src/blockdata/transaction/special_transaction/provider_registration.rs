@@ -64,25 +64,25 @@ pub struct ProviderRegistrationPayload {
 }
 
 impl ProviderRegistrationPayload {
-    fn payout_address(&self, network: Network) -> Result<Address, encode::Error> {
+    pub fn payout_address(&self, network: Network) -> Result<Address, encode::Error> {
         Address::from_script(&self.script_payout, network).ok_or(encode::Error::NonStandardScriptPayout(self.script_payout.clone()))
     }
-    fn owner_address(&self, network: Network) -> Address {
+    pub fn owner_address(&self, network: Network) -> Address {
         Address {
             payload: Payload::PubkeyHash(self.owner_key_hash),
             network
         }
     }
-    fn voting_address(&self, network: Network) -> Address {
+    pub fn voting_address(&self, network: Network) -> Address {
         Address {
             payload: Payload::PubkeyHash(self.voting_key_hash),
             network
         }
     }
-    fn payload_collateral_string(&self, network: Network) -> Result<String, encode::Error> {
-        let mut base_payload_hash = self.base_payload_hash();
+    pub fn payload_collateral_string(&self, network: Network) -> Result<String, encode::Error> {
+        let mut base_payload_hash = self.base_payload_hash().to_vec();
         base_payload_hash.reverse();
-        Ok(format!("{}|{}|{}|{}|{}", self.payout_address(network)?, self.operator_reward, self.owner_address(network), self.voting_address(network), base_payload_hash))
+        Ok(format!("{}|{}|{}|{}|{}", self.payout_address(network)?, self.operator_reward, self.owner_address(network), self.voting_address(network), hex::encode(base_payload_hash)))
     }
 }
 
@@ -165,6 +165,7 @@ mod tests {
     use hex;
     use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 
+    #[test]
     fn test_collateral_provider_registration_transaction() {
     // This is a test for testnet
         let network = Network::Testnet;
