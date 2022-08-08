@@ -195,7 +195,7 @@ mod tests {
     use blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
     use blockdata::transaction::special_transaction::TransactionPayload::ProviderRegistrationPayloadType;
     use bls_sig_utils::BLSPublicKey;
-    use PubkeyHash;
+    use ::{PubkeyHash};
 
     #[test]
     fn test_collateral_provider_registration_transaction() {
@@ -214,7 +214,7 @@ mod tests {
 
         let expected_transaction: Transaction = deserialize(expected_transaction_bytes.as_slice()).expect("expected a transaction");
 
-        let expected_provider_registration_payload = expected_transaction.special_transaction_payload.unwrap().to_provider_registration_payload().expect("expected to get a provider registration payload");
+        let expected_provider_registration_payload = expected_transaction.special_transaction_payload.clone().unwrap().to_provider_registration_payload().expect("expected to get a provider registration payload");
         //    protx register_prepare
         //    58ab8ba7dce591c745f8b78ee49156d13277fff20880855f7cda501705439aca
         //    0
@@ -230,11 +230,11 @@ mod tests {
         let input_address0 = "yQxPwSSicYgXiU22k4Ysq464VxRtgbnvpJ";
         let input_private_key0 = "cVfGhHY18Dx1EfZxFRkrvzVpB3wPtJGJWW6QvEtzMcfXSShoZyWV";
         let output_address0 = "yTWY6DsS4HBGs2JwDtnvVcpykLkbvtjUte";
-        let collateral_address = "yeNVS6tFeQNXJVkjv6nm6gb7PtTERV5dGh";
+        let collateral_address = Address::from_str("yeNVS6tFeQNXJVkjv6nm6gb7PtTERV5dGh").expect("expected to be able to get collateral address");
         let collateral_private_key = PrivateKey::from_wif("cTVm7EkgzNBPcwAKGYHfvyK8cyrRAC8n3SUUw8qjLqCg2rpcczfo").expect("expected valid base 58");
         let collateral_hash = Txid::from_hex("58ab8ba7dce591c745f8b78ee49156d13277fff20880855f7cda501705439aca").expect("expected to decode collateral hash");
         let collateral_index = 0;
-        let reversed_collateral = OutPoint::new(collateral_hash, collateral_index);
+        let collateral_outpoint = OutPoint::new(collateral_hash, collateral_index);
         let payout_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs").expect("expected a valid address");
 
         let payload_collateral_string = expected_provider_registration_payload.payload_collateral_string(network).expect("expected to produce a payload collateral string");
@@ -270,19 +270,12 @@ mod tests {
         let voting_key_hash_hex = "d38a30fafe61575db40f05ab0a08d55119b0aad3";
         assert_eq!(voting_key_hash_hex, expected_provider_registration_payload.voting_key_hash.to_hex());
 
-        assert_eq!(expected_provider_registration_payload.inputs_hash.to_hex(), "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734", "inputs hash calculation has issues");
+        let inputs_hash_hex = "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734";
+        assert_eq!(inputs_hash_hex, expected_provider_registration_payload.inputs_hash.to_hex(), "inputs hash calculation has issues");
+
         assert_eq!(expected_provider_registration_payload.base_payload_hash().to_hex(), "71e973f79003accd202b9a2ab2613ac6ced601b26684e82f561f6684fef2f102", "Payload hash calculation has issues");
 
         assert_eq!("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs|0|yRxHYGLf9G4UVYdtAoB2iAzR3sxxVaZB6y|yfbxyP4ctRJR1rs3A8C3PdXA4Wtcrw7zTi|71e973f79003accd202b9a2ab2613ac6ced601b26684e82f561f6684fef2f102", payload_collateral_string, "provider transaction collateral string doesn't match");
-
-
-        let expected_base64_signature = "H7N+ScH/K4BXcTk5pVE+bnEacc/y5RfmIk33JO11Cu8bf5rZ7GErSnJQIy4eQA2nGKlQHh2aVWVSbksf9owCh2M=";
-        let signature = sign_hash(message_digest.as_inner().as_slice(), collateral_private_key.to_bytes().as_slice()).expect("expected to sign message digest");
-        let base64_signature = base64::encode(signature.as_slice());
-
-        assert_eq!(expected_base64_signature, base64_signature, "message digest signatures don't match");
-
-        assert_eq!(expected_provider_registration_payload.payload_sig, signature.to_vec());
 
         let operator_reward = 0;
 
@@ -292,13 +285,21 @@ mod tests {
         let script_payout = payout_address.script_pubkey();
         assert_eq!(script_payout, expected_provider_registration_payload.script_payout);
 
+        let expected_base64_signature = "H7N+ScH/K4BXcTk5pVE+bnEacc/y5RfmIk33JO11Cu8bf5rZ7GErSnJQIy4eQA2nGKlQHh2aVWVSbksf9owCh2M=";
+        let signature = sign_hash(message_digest.as_inner().as_slice(), collateral_private_key.to_bytes().as_slice()).expect("expected to sign message digest");
+        let base64_signature = base64::encode(signature.as_slice());
+
+        assert_eq!(expected_base64_signature, base64_signature, "message digest signatures don't match");
+
+        assert_eq!(expected_provider_registration_payload.payload_sig, signature.to_vec());
+
         let transaction = Transaction {
-            version: 1,
+            version: 3,
             lock_time: 0,
             input: vec![TxIn{
-                previous_output: Default::default(),
-                script_sig: Default::default(),
-                sequence: 0,
+                previous_output: OutPoint::new(collateral_hash, 1),
+                script_sig: collateral_address.script_pubkey(),
+                sequence: 4294967295,
                 witness: Default::default()
             }],
             output: vec![TxOut{ value: 0, script_pubkey: Default::default() }],
@@ -314,49 +315,13 @@ mod tests {
                 voting_key_hash: PubkeyHash::from_hex(voting_key_hash_hex).unwrap(),
                 operator_reward,
                 script_payout,
-                inputs_hash: Default::default(),
-                payload_sig: vec![]
+                inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
+                payload_sig: signature.to_vec()
             }))
         };
 
+        assert_eq!(transaction.special_transaction_payload, expected_transaction.special_transaction_payload);
         //assert_eq!(transaction, expected_transaction);
-
-//
-//     NSMutableData *inputScript = [NSMutableData data];
-//
-//     [inputScript appendScriptPubKeyForAddress:inputAddress0 forChain:chain];
-//
-//     DSProviderRegistrationTransaction *providerRegistrationTransaction = [[DSProviderRegistrationTransaction alloc] initWithInputHashes:@[input_transaction_hash_value] inputIndexes:@[@1] inputScripts:@[inputScript] inputSequences:@[@(TXIN_SEQUENCE)] outputAddresses:@[output_address0] outputAmounts:@[@40777037710] providerRegistrationTransactionVersion:1 type:0 mode:0 collateralOutpoint:reversedCollateral ipAddress:ipAddress port:19999 ownerKeyHash:ownerKey.publicKeyData.hash160 operatorKey:operatorKey votingKeyHash:votingKeyHash operatorReward:0 scriptPayout:scriptPayout onChain:chain];
-//
-//
-//     providerRegistrationTransaction.payloadSignature = signatureData;
-//
-//     [providerRegistrationTransaction signWithPrivateKeys:@[inputPrivateKey]];
-//
-//     [providerRegistrationTransactionFromMessage setInputAddress:inputAddress0 atIndex:0];
-//
-//         assert_eq!(providerRegistrationTransaction.payloadData, providerRegistrationTransactionFromMessage.payloadData, "Provider payload data doesn't match up");
-//
-//         assert_eq!(providerRegistrationTransaction.payloadCollateralString, providerRegistrationTransactionFromMessage.payloadCollateralString, "Provider payload collateral strings don't match up");
-//
-//         assert_eq!(providerRegistrationTransaction.port, providerRegistrationTransactionFromMessage.port, "Provider transaction port doesn't match up");
-//
-//         assert_eq!(providerRegistrationTransaction.inputs, providerRegistrationTransactionFromMessage.inputs, "Provider transaction inputs are having an issue");
-//         assert_eq!(providerRegistrationTransaction.outputs, providerRegistrationTransactionFromMessage.outputs, "Provider transaction outputs are having an issue");
-//
-//         assert_eq!(uint384_hex(providerRegistrationTransaction.operatorKey), uint384_hex(providerRegistrationTransactionFromMessage.operatorKey), "Provider transaction operator key is having an issue");
-//
-//         assert_eq!(providerRegistrationTransaction.operatorReward, providerRegistrationTransactionFromMessage.operatorReward, "Provider transaction operator Address is having an issue");
-//
-//         assert_eq!(providerRegistrationTransaction.ownerAddress, providerRegistrationTransactionFromMessage.ownerAddress, "Provider transaction owner Address is having an issue");
-//
-//         assert_eq!(providerRegistrationTransaction.votingAddress, providerRegistrationTransactionFromMessage.votingAddress, "Provider transaction voting Address is having an issue");
-//
-//         assert_eq!(providerRegistrationTransaction.toData, hexData, "Provider transaction does not match it's data");
-//
-//         assert_eq!(providerRegistrationTransactionFromMessage.toData, hexData, "Provider transaction does not match it's data");
-//
-//         assert_eq!(uint256_reverse_hex(providerRegistrationTransactionFromMessage.txHash), tx_id_string, "Provider transaction hashes aren't correct");
     }
 
 //
