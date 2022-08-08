@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn test_signed_msg_hash() {
         let hash = signed_msg_hash("test");
-        assert_eq!(hash.to_hex(), "a6f87fe6d58a032c320ff8d1541656f0282c2c7bfcc69d61af4c8e8ed528e49c");
+        assert_eq!(hash.to_hex(), "9534c129a0eec7aaec6b6145d5014c2867d573f23a9827089ff09d5c357597dc");
     }
 
     #[test]
@@ -327,7 +327,7 @@ mod tests {
         use ::AddressType;
 
         let secp = secp256k1::Secp256k1::new();
-        let message = "rust-bitcoin MessageSignature test";
+        let message = "rust-dashcore MessageSignature test";
         let msg_hash = super::signed_msg_hash(&message);
         let msg = secp256k1::Message::from_slice(&msg_hash).expect("message");
 
