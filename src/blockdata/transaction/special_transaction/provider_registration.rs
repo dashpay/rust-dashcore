@@ -47,6 +47,18 @@ use ::{PubkeyHash, SpecialTransactionPayloadHash};
 use util::address::Payload;
 use VarInt;
 
+/// A Provider Registration Payload used in a Provider Registration Special Transaction.
+/// This is used to register a Masternode on the network.
+/// The current version is 0.
+/// Interesting Fields:
+/// *Provider type refers to the type of Masternode. Currently only valid value is 0.
+/// *Provider mode refers to the mode of the Masternode. Currently only valid value is 0.
+/// *The collateral outpoint links to a transaction with a 1000 Dash unspent (at registration)
+/// outpoint.
+/// *The operator reward defines the ratio when divided by 10000 of the amount going to the operator.
+/// The max value for the operator reward is 10000.
+/// *The script payout is the script to which one wants to have the masternode pay out.
+/// *The inputs hash is used to guarantee the uniqueness of the payload sig.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProviderRegistrationPayload {

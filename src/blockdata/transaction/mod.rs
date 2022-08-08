@@ -53,7 +53,7 @@ use hash_types::{Sighash, Txid, Wtxid};
 use ::{VarInt};
 use blockdata::transaction::hash_type::EcdsaSighashType;
 use blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
-use OutPoint;
+#[cfg(feature="bitcoinconsensus")] use OutPoint;
 
 #[cfg(doc)]
 use util::sighash::SchnorrSighashType;

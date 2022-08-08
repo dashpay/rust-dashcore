@@ -23,6 +23,9 @@ use std::io::{Error, Write};
 use ::{MerkleRootMasternodeList, MerkleRootQuorums};
 use consensus::{Decodable, Encodable, encode};
 
+/// A Coinbase payload. This is contained as the payload of a coinbase special transaction.
+/// The Coinbase payload is described in DIP4.
+///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CoinbasePayload {

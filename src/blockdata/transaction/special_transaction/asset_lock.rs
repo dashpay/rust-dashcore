@@ -27,11 +27,17 @@ use std::io::{Error, Write};
 use consensus::{Decodable, Encodable, encode};
 use TxOut;
 
+/// An Asset Lock payload. This is contained as the payload of an asset lock special transaction.
+/// The Asset Lock Special transaction and this payload is described in the Asset Lock DIP2X
+/// (todo:update this).
+/// An Asset Lock can fund multiple Identity registrations or top ups.
+/// The Asset Lock payload credit outputs field contains a vector of TxOuts.
+/// Each TxOut refers to a funding of an Identity.
+///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct AssetLockPayload {
     version: u8,
-    count: u8,
     credit_outputs: Vec<TxOut>,
 }
 
@@ -39,7 +45,6 @@ impl Encodable for AssetLockPayload {
     fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
         let mut len = 0;
         len += self.version.consensus_encode(&mut s)?;
-        len += self.count.consensus_encode(&mut s)?;
         len += self.credit_outputs.consensus_encode(&mut s)?;
         Ok(len)
     }
@@ -48,11 +53,9 @@ impl Encodable for AssetLockPayload {
 impl Decodable for AssetLockPayload {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
         let version = u8::consensus_decode(&mut d)?;
-        let count = u8::consensus_decode(&mut d)?;
         let credit_outputs = Vec::<TxOut>::consensus_decode(&mut d)?;
         Ok(AssetLockPayload {
             version,
-            count,
             credit_outputs,
         })
     }

@@ -49,13 +49,21 @@ pub mod credit_withdrawal;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TransactionPayload {
+    /// A wrapper for a Masternode Registration payload
     ProviderRegistrationPayloadType(ProviderRegistrationPayload),
+    /// A wrapper for a Masternode Update Service payload
     ProviderUpdateServicePayloadType(ProviderUpdateServicePayload),
+    /// A wrapper for a Masternode Update Registrar payload
     ProviderUpdateRegistrarPayloadType(ProviderUpdateRegistrarPayload),
+    /// A wrapper for a Masternode Update Revocation payload
     ProviderUpdateRevocationPayloadType(ProviderUpdateRevocationPayload),
+    /// A wrapper for a Coinbase payload
     CoinbasePayloadType(CoinbasePayload),
+    /// A wrapper for a Quorum Commitment payload
     QuorumCommitmentPayloadType(QuorumCommitmentPayload),
+    /// A wrapper for an Asset Lock payload
     AssetLockPayloadType(AssetLockPayload),
+    /// A wrapper for a Credit Withdrawal payload
     CreditWithdrawalPayloadType(CreditWithdrawalPayload)
 }
 
@@ -137,18 +145,31 @@ impl TransactionPayload {
     }
 }
 
+/// The transaction type. Special transactions were introduced in DIP2.
+/// Compared to Bitcoin the version field is split into two 16 bit integers.
+/// The first part for the version and the second part for the transaction
+/// type.
+///
 #[derive(Clone, Copy)]
 #[repr(u16)]
 pub enum TransactionType {
+    /// A Classic transaction
     Classic = 0,
+    /// A Masternode Registration Transaction
     ProviderRegistration = 1,
+    /// A Masternode Update Service Transaction, used by the operator to signal changes to service
     ProviderUpdateService = 2,
+    /// A Masternode Update Registrar Transaction, used by the owner to signal base changes
     ProviderUpdateRegistrar = 3,
+    /// A Masternode Update Revocation Transaction, used by the operator to signal termination of service
     ProviderUpdateRevocation = 4,
+    /// A Coinbase Transaction, contained as the first transaction in each block
     Coinbase = 5,
+    /// A Quorum Commitment Transaction, used to save quorum information to the state
     QuorumCommitment = 6,
-
+    /// An Asset Lock Transaction, used to transfer credits to Dash Platform, by locking them until withdrawals occur
     AssetLock = 8,
+    /// A Credit Withdrawal Transaction, used to withdraw credits from Dash Platform
     CreditWithdrawal = 9,
 }
 
