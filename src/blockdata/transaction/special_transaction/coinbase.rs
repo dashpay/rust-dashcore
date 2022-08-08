@@ -24,6 +24,7 @@ use ::{MerkleRootMasternodeList, MerkleRootQuorums};
 use consensus::{Decodable, Encodable, encode};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CoinbasePayload {
     version: u16,
     height: u32,

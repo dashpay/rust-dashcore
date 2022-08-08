@@ -3,9 +3,11 @@ use consensus::{Decodable, Encodable};
 use consensus::encode::Error;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BLSPublicKey([u8;48]);
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BLSSignature([u8;96]);
 
 impl Encodable for BLSPublicKey {
@@ -42,13 +44,15 @@ impl Decodable for BLSSignature {
 //     ($element:ident) => {
 //         impl $crate::consensus::Encodable for $element {
 //             fn consensus_encode<S: $crate::io::Write>(&self, s: S) -> Result<usize, $crate::io::Error> {
-//                 self.0.consensus_encode(s)
+//                 s.write(self.0.as_slice())?;
 //             }
 //         }
 //
 //         impl $crate::consensus::Decodable for $element {
 //             fn consensus_decode<D: $crate::io::Read>(d: D) -> Result<Self, $crate::consensus::encode::Error> {
-//                 Ok(Self::from_inner($element::hex::FromHex::consensus_decode(d)?))
+//                 let mut data :[u8;96] = [0u8; 96];
+//                 d.read_exact(&mut data)?;
+//                 Ok(BLSSignature(data))
 //             }
 //         }
 //     }

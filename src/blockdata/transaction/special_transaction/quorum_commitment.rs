@@ -25,6 +25,7 @@ use consensus::{Decodable, Encodable, encode};
 use QuorumVVecHash;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct QuorumFinalizationCommitment {
     version: u16,
     llmq_type: u8,
@@ -80,6 +81,7 @@ impl Decodable for QuorumFinalizationCommitment {
 
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct QuorumCommitmentPayload {
     version: u16,
     height: u32,

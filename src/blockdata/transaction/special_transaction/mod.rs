@@ -24,7 +24,7 @@ use core::fmt::{Debug, Display, Formatter};
 use std::convert::TryFrom;
 use std::io;
 use std::io::{Error, Read, Write};
-use blockdata::transaction::special_transaction::asset_lock::{AssetLock, AssetLockPayload};
+use blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
 use blockdata::transaction::special_transaction::credit_withdrawal::CreditWithdrawalPayload;
 use blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
@@ -47,6 +47,7 @@ pub mod asset_lock;
 pub mod credit_withdrawal;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TransactionPayload {
     ProviderRegistrationPayloadType(ProviderRegistrationPayload),
     ProviderUpdateServicePayloadType(ProviderUpdateServicePayload),

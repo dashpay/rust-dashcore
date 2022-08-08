@@ -29,6 +29,7 @@ use consensus::{Decodable, Encodable, encode};
 use QuorumHash;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CreditWithdrawalPayload {
     version: u8,
     index: u64,

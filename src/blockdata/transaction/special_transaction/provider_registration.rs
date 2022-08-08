@@ -48,6 +48,7 @@ use util::address::Payload;
 use VarInt;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProviderRegistrationPayload {
     version: u16,
     provider_type: u16,

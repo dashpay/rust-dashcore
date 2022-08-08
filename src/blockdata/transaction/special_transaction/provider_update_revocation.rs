@@ -46,6 +46,7 @@ use consensus::{Decodable, Encodable, encode};
 use ::{InputsHash, SpecialTransactionPayloadHash};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProviderUpdateRevocationPayload {
     version: u16,
     pro_tx_hash: ProTxHash,

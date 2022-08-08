@@ -20,7 +20,6 @@
 //! A TxOut is an output of a transaction.
 //!
 
-#[cfg(feature="bitcoinconsensus")] use blockdata::script;
 use Script;
 
 /// A transaction output, which defines new coins to be created from old ones.
