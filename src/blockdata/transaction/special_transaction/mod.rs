@@ -24,14 +24,16 @@ use core::fmt::{Debug, Display, Formatter};
 use std::convert::TryFrom;
 use std::io;
 use std::io::{Error, Read, Write};
+use blockdata::transaction::special_transaction::asset_lock::{AssetLock, AssetLockPayload};
 use blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
+use blockdata::transaction::special_transaction::credit_withdrawal::CreditWithdrawalPayload;
 use blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
 use blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
 use blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
 use blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
 use blockdata::transaction::special_transaction::quorum_commitment::QuorumCommitmentPayload;
-use blockdata::transaction::special_transaction::TransactionPayload::{CoinbasePayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType, ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType, QuorumCommitmentPayloadType};
-use blockdata::transaction::special_transaction::TransactionType::{Classic, Coinbase, ProviderRegistration, ProviderUpdateRegistrar, ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment};
+use blockdata::transaction::special_transaction::TransactionPayload::{AssetLockPayloadType, CoinbasePayloadType, CreditWithdrawalPayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType, ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType, QuorumCommitmentPayloadType};
+use blockdata::transaction::special_transaction::TransactionType::{AssetLock, Classic, Coinbase, CreditWithdrawal, ProviderRegistration, ProviderUpdateRegistrar, ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment};
 use consensus::{Decodable, Encodable, encode};
 use SpecialTransactionPayloadHash;
 
@@ -41,6 +43,8 @@ pub mod provider_update_registrar;
 pub mod provider_update_revocation;
 pub mod coinbase;
 pub mod quorum_commitment;
+pub mod asset_lock;
+pub mod credit_withdrawal;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub enum TransactionPayload {
@@ -50,6 +54,8 @@ pub enum TransactionPayload {
     ProviderUpdateRevocationPayloadType(ProviderUpdateRevocationPayload),
     CoinbasePayloadType(CoinbasePayload),
     QuorumCommitmentPayloadType(QuorumCommitmentPayload),
+    AssetLockPayloadType(AssetLockPayload),
+    CreditWithdrawalPayloadType(CreditWithdrawalPayload)
 }
 
 impl Encodable for TransactionPayload {
@@ -61,6 +67,8 @@ impl Encodable for TransactionPayload {
             ProviderUpdateRevocationPayloadType(p) => {p.consensus_encode(&mut s)}
             CoinbasePayloadType(p) => {p.consensus_encode(&mut s)}
             QuorumCommitmentPayloadType(p) => {p.consensus_encode(&mut s)}
+            AssetLockPayloadType(p) => {p.consensus_encode(&mut s)}
+            CreditWithdrawalPayloadType(p) => {p.consensus_encode(&mut s)}
         }
     }
 }
@@ -74,6 +82,8 @@ impl TransactionPayload {
             ProviderUpdateRevocationPayloadType(_) => { ProviderUpdateRevocation }
             CoinbasePayloadType(_) => { Coinbase }
             QuorumCommitmentPayloadType(_) => { QuorumCommitment }
+            AssetLockPayloadType(_) => { AssetLock }
+            CreditWithdrawalPayloadType(_) => { CreditWithdrawal }
         }
     }
 
@@ -136,6 +146,9 @@ pub enum TransactionType {
     ProviderUpdateRevocation = 4,
     Coinbase = 5,
     QuorumCommitment = 6,
+
+    AssetLock = 8,
+    CreditWithdrawal = 9,
 }
 
 impl Debug for TransactionType {
@@ -148,6 +161,8 @@ impl Debug for TransactionType {
             ProviderUpdateRevocation => write!(f, "Provider Update Revocation Transaction"),
             Coinbase => write!(f, "Coinbase Transaction"),
             QuorumCommitment => write!(f, "Quorum Commitment Transaction"),
+            AssetLock => write!(f, "Asset Lock Transaction"),
+            CreditWithdrawal => write!(f, "Credit Withdrawal Transaction"),
         }
     }
 }
@@ -162,6 +177,8 @@ impl Display for TransactionType {
             ProviderUpdateRevocation => write!(f, "Provider Update Revocation"),
             Coinbase => write!(f, "Coinbase"),
             QuorumCommitment => write!(f, "Quorum Commitment"),
+            AssetLock => write!(f, "Asset Lock"),
+            CreditWithdrawal => write!(f, "Credit Withdrawal"),
         }
     }
 }
@@ -178,6 +195,8 @@ impl TryFrom<u16> for TransactionType {
             4 => Ok(ProviderUpdateRevocation),
             5 => Ok(Coinbase),
             6 => Ok(QuorumCommitment),
+            8 => Ok(AssetLock),
+            9 => Ok(CreditWithdrawal),
             _ => Err(encode::Error::UnknownSpecialTransactionType(value))
         }
     }
@@ -207,6 +226,8 @@ impl TransactionType {
             ProviderUpdateRevocation => { Some(ProviderUpdateRevocationPayloadType(ProviderUpdateRevocationPayload::consensus_decode(d)?))}
             Coinbase => { Some(CoinbasePayloadType(CoinbasePayload::consensus_decode(d)?))}
             QuorumCommitment => { Some(QuorumCommitmentPayloadType(QuorumCommitmentPayload::consensus_decode(d)?))}
+            AssetLock => { Some(AssetLockPayloadType(AssetLockPayload::consensus_decode(d)?))}
+            CreditWithdrawal => { Some(CreditWithdrawalPayloadType(CreditWithdrawalPayload::consensus_decode(d)?))}
         })
     }
 }
