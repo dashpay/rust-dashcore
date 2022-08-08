@@ -83,6 +83,7 @@ impl Encodable for TransactionPayload {
 }
 
 impl TransactionPayload {
+    /// Gets the Transaction Type for a Special Transaction Payload
     pub fn get_type(&self) -> TransactionType {
         match self {
             ProviderRegistrationPayloadType(_) => { ProviderRegistration }
@@ -96,6 +97,9 @@ impl TransactionPayload {
         }
     }
 
+    /// Convenience method that assumes the payload to be a provider registration payload to get it
+    /// easier.
+    /// Errors if it is not a provider registration payload.
     pub fn to_provider_registration_payload(self) -> Result<ProviderRegistrationPayload, encode::Error> {
         if let ProviderRegistrationPayloadType(payload) = self {
             Ok(payload)
@@ -104,6 +108,9 @@ impl TransactionPayload {
         }
     }
 
+    /// Convenience method that assumes the payload to be a provider update service payload to get it
+    /// easier.
+    /// Errors if it is not a provider update service payload.
     pub fn to_update_service_payload(self) -> Result<ProviderUpdateServicePayload, encode::Error> {
         if let ProviderUpdateServicePayloadType(payload) = self {
             Ok(payload)
@@ -112,6 +119,9 @@ impl TransactionPayload {
         }
     }
 
+    /// Convenience method that assumes the payload to be a provider update registrar payload to get it
+    /// easier.
+    /// Errors if it is not a provider update registrar payload.
     pub fn to_update_registrar_payload(self) -> Result<ProviderUpdateRegistrarPayload, encode::Error> {
         if let ProviderUpdateRegistrarPayloadType(payload) = self {
             Ok(payload)
@@ -120,6 +130,9 @@ impl TransactionPayload {
         }
     }
 
+    /// Convenience method that assumes the payload to be a provider update revocation payload to get it
+    /// easier.
+    /// Errors if it is not a provider update revocation payload.
     pub fn to_update_revocation_payload(self) -> Result<ProviderUpdateRevocationPayload, encode::Error> {
         if let ProviderUpdateRevocationPayloadType(payload) = self {
             Ok(payload)
@@ -128,6 +141,9 @@ impl TransactionPayload {
         }
     }
 
+    /// Convenience method that assumes the payload to be a coinbase payload to get it
+    /// easier.
+    /// Errors if it is not a coinbase payload.
     pub fn to_coinbase_payload(self) -> Result<CoinbasePayload, encode::Error> {
         if let CoinbasePayloadType(payload) = self {
             Ok(payload)
@@ -136,11 +152,36 @@ impl TransactionPayload {
         }
     }
 
+    /// Convenience method that assumes the payload to be a quorum commitment payload to get it
+    /// easier.
+    /// Errors if it is not a quorum commitment payload.
     pub fn to_quorum_commitment_payload(self) -> Result<QuorumCommitmentPayload, encode::Error> {
         if let QuorumCommitmentPayloadType(payload) = self {
             Ok(payload)
         } else {
             Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: QuorumCommitment, actual: self.get_type() })
+        }
+    }
+
+    /// Convenience method that assumes the payload to be an asset lock payload to get it
+    /// easier.
+    /// Errors if it is not an asset lock payload.
+    pub fn to_asset_lock_payload(self) -> Result<AssetLockPayload, encode::Error> {
+        if let AssetLockPayloadType(payload) = self {
+            Ok(payload)
+        } else {
+            Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: AssetLock, actual: self.get_type() })
+        }
+    }
+
+    /// Convenience method that assumes the payload to be a credit withdrawal payload to get it
+    /// easier.
+    /// Errors if it is not a credit withdrawal payload.
+    pub fn to_credit_withdrawal_payload(self) -> Result<CreditWithdrawalPayload, encode::Error> {
+        if let CreditWithdrawalPayloadType(payload) = self {
+            Ok(payload)
+        } else {
+            Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: AssetLock, actual: self.get_type() })
         }
     }
 }

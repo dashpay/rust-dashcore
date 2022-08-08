@@ -78,21 +78,27 @@ pub struct ProviderRegistrationPayload {
 }
 
 impl ProviderRegistrationPayload {
+    /// A convenience method to get the address from payout script
     pub fn payout_address(&self, network: Network) -> Result<Address, encode::Error> {
         Address::from_script(&self.script_payout, network).ok_or(encode::Error::NonStandardScriptPayout(self.script_payout.clone()))
     }
+    /// A convenience method to get the address from the owner key hash
     pub fn owner_address(&self, network: Network) -> Address {
         Address {
             payload: Payload::PubkeyHash(self.owner_key_hash),
             network,
         }
     }
+    /// A convenience method to get the address from the voting key hash
     pub fn voting_address(&self, network: Network) -> Address {
         Address {
             payload: Payload::PubkeyHash(self.voting_key_hash),
             network,
         }
     }
+    /// This is used to prove access to the collateral. The collateral private key signs
+    /// a string of formatted values proving access to the 1000 Dash and therefore the ability
+    /// to register the masternode.
     pub fn payload_collateral_string(&self, network: Network) -> Result<String, encode::Error> {
         let mut base_payload_hash = self.base_payload_hash().to_vec();
         base_payload_hash.reverse();
