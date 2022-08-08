@@ -694,14 +694,14 @@ impl Address {
     /// ```rust
     /// use dashcore::{Address, Network};
     ///
-    /// let address: Address = "2N83imGV3gPwBzKJQvWJ7cRUY2SpUyU6A5e".parse().unwrap();
+    /// let address: Address = "yWZBnVvSxS5xSq27dHVAJpuqbt7vvwGFL1".parse().unwrap();
     /// assert!(address.is_valid_for_network(Network::Testnet));
     /// assert!(address.is_valid_for_network(Network::Regtest));
     /// assert!(address.is_valid_for_network(Network::Devnet));
     ///
     /// assert_eq!(address.is_valid_for_network(Network::Dash), false);
     ///
-    /// let address: Address = "32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf".parse().unwrap();
+    /// let address: Address = "Xci5rLWMqdQDy5uaCDVWEcTi6sfnkmqdUz".parse().unwrap();
     /// assert!(address.is_valid_for_network(Network::Dash));
     /// assert_eq!(address.is_valid_for_network(Network::Testnet), false);
     /// ```

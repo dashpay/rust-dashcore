@@ -37,7 +37,7 @@
 //! let network = Network::Dash;
 //! let bytes = serialize(&network.magic());
 //!
-//! assert_eq!(&bytes[..], &[0xF9, 0xBE, 0xB4, 0xD9]);
+//! assert_eq!(&bytes[..], &[0xBF, 0x0C, 0x6B, 0xBD]);
 //! ```
 
 use core::{fmt, ops, convert::From};
@@ -85,7 +85,7 @@ impl Network {
     /// ```rust
     /// use dashcore::network::constants::Network;
     ///
-    /// assert_eq!(Some(Network::Dash), Network::from_magic(0xD9B4BEF9));
+    /// assert_eq!(Some(Network::Dash), Network::from_magic(0xBD6B0CBF));
     /// assert_eq!(None, Network::from_magic(0xFFFFFFFF));
     /// ```
     pub fn from_magic(magic: u32) -> Option<Network> {
@@ -108,7 +108,7 @@ impl Network {
     /// use dashcore::network::constants::Network;
     ///
     /// let network = Network::Dash;
-    /// assert_eq!(network.magic(), 0xD9B4BEF9);
+    /// assert_eq!(network.magic(), 0xBD6B0CBF);
     /// ```
     pub fn magic(self) -> u32 {
         // Note: any new entries here must be added to `from_magic` above

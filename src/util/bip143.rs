@@ -173,7 +173,7 @@ impl<R: DerefMut<Target = Transaction>> SigHashCache<R> {
     /// use dashcore::util::bip143::SigHashCache;
     /// use dashcore::Script;
     ///
-    /// let mut tx_to_sign = Transaction { version: 2, lock_time: 0, input: Vec::new(), output: Vec::new() };
+    /// let mut tx_to_sign = Transaction { version: 2, lock_time: 0, input: Vec::new(), output: Vec::new(), special_transaction_payload: None };
     /// let input_count = tx_to_sign.input.len();
     ///
     /// let mut sig_hasher = SigHashCache::new(&mut tx_to_sign);
