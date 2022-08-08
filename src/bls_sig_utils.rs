@@ -20,20 +20,21 @@
 use std::io::{Read, Write};
 use consensus::{Decodable, Encodable};
 use consensus::encode::Error;
-#[cfg(feature = "serde")]
-use serde::{Serialize, Deserialize};
-#[cfg(feature = "serde")]
-use serde_big_array::BigArray;
+use core::{fmt};
 
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct BLSPublicKey(#[cfg_attr(feature = "serde", serde(with = "BigArray"))] [u8;48]);
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BLSPublicKey([u8;48]);
+
+impl_array_newtype!(BLSPublicKey, u8, 48);
+impl_bytes_newtype!(BLSPublicKey, 48);
 
 /// A BLS Signature is 96 bytes in the scheme used for Dash Core
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct BLSSignature(#[cfg_attr(feature = "serde", serde(with = "BigArray"))] [u8;96]);
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BLSSignature([u8;96]);
+
+impl_array_newtype!(BLSSignature, u8, 96);
+impl_bytes_newtype!(BLSSignature, 96);
 
 impl Encodable for BLSPublicKey {
     fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, std::io::Error> {

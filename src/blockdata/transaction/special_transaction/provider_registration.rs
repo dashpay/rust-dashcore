@@ -114,7 +114,7 @@ impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
         len += self.provider_mode.consensus_encode(&mut s)?;
         len += self.collateral_outpoint.consensus_encode(&mut s)?;
         len += self.ip_address.consensus_encode(&mut s)?;
-        len += self.port.reverse_bits().consensus_encode(&mut s)?;
+        len += u16::from_be(self.port).consensus_encode(&mut s)?;
         len += self.owner_key_hash.consensus_encode(&mut s)?;
         len += self.operator_public_key.consensus_encode(&mut s)?;
         len += self.voting_key_hash.consensus_encode(&mut s)?;
@@ -148,7 +148,7 @@ impl Decodable for ProviderRegistrationPayload {
         let provider_mode = u16::consensus_decode(&mut d)?;
         let collateral_outpoint = OutPoint::consensus_decode(&mut d)?;
         let ip_address = u128::consensus_decode(&mut d)?;
-        let port = u16::consensus_decode(&mut d)?.reverse_bits();
+        let port = u16::from_be(u16::consensus_decode(&mut d)?);
         let owner_key_hash = PubkeyHash::consensus_decode(&mut d)?;
         let operator_public_key = BLSPublicKey::consensus_decode(&mut d)?;
         let voting_key_hash = PubkeyHash::consensus_decode(&mut d)?;
@@ -178,6 +178,8 @@ impl Decodable for ProviderRegistrationPayload {
 #[cfg(test)]
 #[cfg(feature="signer")]
 mod tests {
+    use core::str::FromStr;
+    use std::net::Ipv4Addr;
     use hashes::Hash;
     use hashes::hex::{FromHex, ToHex};
     use consensus::{deserialize};
@@ -185,9 +187,15 @@ mod tests {
     use ::{InputsHash, Txid};
     use ::{Network, OutPoint};
     use util::misc::signed_msg_hash;
-    use hex;
+    use ::{hex, PrivateKey};
     use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-    use signer::sign;
+    use ::{Address};
+    use signer::{sign_hash};
+    use ::{TxIn, TxOut};
+    use blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
+    use blockdata::transaction::special_transaction::TransactionPayload::ProviderRegistrationPayloadType;
+    use bls_sig_utils::BLSPublicKey;
+    use PubkeyHash;
 
     #[test]
     fn test_collateral_provider_registration_transaction() {
@@ -223,21 +231,44 @@ mod tests {
         let input_private_key0 = "cVfGhHY18Dx1EfZxFRkrvzVpB3wPtJGJWW6QvEtzMcfXSShoZyWV";
         let output_address0 = "yTWY6DsS4HBGs2JwDtnvVcpykLkbvtjUte";
         let collateral_address = "yeNVS6tFeQNXJVkjv6nm6gb7PtTERV5dGh";
-        let collateral_private_key = "cTVm7EkgzNBPcwAKGYHfvyK8cyrRAC8n3SUUw8qjLqCg2rpcczfo";
+        let collateral_private_key = PrivateKey::from_wif("cTVm7EkgzNBPcwAKGYHfvyK8cyrRAC8n3SUUw8qjLqCg2rpcczfo").expect("expected valid base 58");
         let collateral_hash = Txid::from_hex("58ab8ba7dce591c745f8b78ee49156d13277fff20880855f7cda501705439aca").expect("expected to decode collateral hash");
         let collateral_index = 0;
         let reversed_collateral = OutPoint::new(collateral_hash, collateral_index);
-        let payout_address = "yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs";
-
-        // DSAccount *collateralAccount = [providerRegistrationTransactionFromMessage.chain accountContainingAddress:collateralAddress];
-        //
-        // DSAccount *inputAccount = [providerRegistrationTransactionFromMessage.chain accountContainingAddress:inputAddress0];
-        // DSFundsDerivationPath *inputDerivationPath = (DSFundsDerivationPath *)[inputAccount derivationPathContainingAddress:inputAddress0];
-        //
-        // DSKey *inputPrivateKey = [inputDerivationPath privateKeyForKnownAddress:inputAddress0 fromSeed:seed];
+        let payout_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs").expect("expected a valid address");
 
         let payload_collateral_string = expected_provider_registration_payload.payload_collateral_string(network).expect("expected to produce a payload collateral string");
         let message_digest = signed_msg_hash(payload_collateral_string.as_str());
+
+        let provider_registration_payload_version = 1;
+        assert_eq!(expected_provider_registration_payload.version, provider_registration_payload_version);
+        let provider_type = 0;
+        assert_eq!(expected_provider_registration_payload.provider_type, provider_type);
+        let provider_mode = 0;
+        assert_eq!(expected_provider_registration_payload.provider_mode, provider_mode);
+
+        let collateral_outpoint = OutPoint {
+            txid: collateral_hash,
+            vout: collateral_index
+        };
+        assert_eq!(expected_provider_registration_payload.collateral_outpoint, collateral_outpoint);
+
+        let address = Ipv4Addr::from_str("1.2.5.6").expect("expected an ipv4 address");
+        let [a, b, c, d] = address.octets();
+        let ipv6_bytes: [u8;16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
+        assert_eq!(ipv6_bytes.to_hex(), expected_provider_registration_payload.ip_address.to_le_bytes().to_hex());
+
+        let port = 19999;
+        assert_eq!(port, expected_provider_registration_payload.port);
+
+        let owner_key_hash_hex = "3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c";
+        assert_eq!(owner_key_hash_hex, expected_provider_registration_payload.owner_key_hash.to_hex());
+
+        let operator_key_hex = "157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfa";
+        assert_eq!(operator_key_hex, expected_provider_registration_payload.operator_public_key.to_hex());
+
+        let voting_key_hash_hex = "d38a30fafe61575db40f05ab0a08d55119b0aad3";
+        assert_eq!(voting_key_hash_hex, expected_provider_registration_payload.voting_key_hash.to_hex());
 
         assert_eq!(expected_provider_registration_payload.inputs_hash.to_hex(), "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734", "inputs hash calculation has issues");
         assert_eq!(expected_provider_registration_payload.base_payload_hash().to_hex(), "71e973f79003accd202b9a2ab2613ac6ced601b26684e82f561f6684fef2f102", "Payload hash calculation has issues");
@@ -246,43 +277,50 @@ mod tests {
 
 
         let expected_base64_signature = "H7N+ScH/K4BXcTk5pVE+bnEacc/y5RfmIk33JO11Cu8bf5rZ7GErSnJQIy4eQA2nGKlQHh2aVWVSbksf9owCh2M=";
-        let signature = sign(message_digest.as_inner().as_slice(), collateral_private_key.as_bytes()).expect("expected to sign message digest");
+        let signature = sign_hash(message_digest.as_inner().as_slice(), collateral_private_key.to_bytes().as_slice()).expect("expected to sign message digest");
         let base64_signature = base64::encode(signature.as_slice());
 
-        assert_eq!(expected_base64_signature, base64_signature, "message digest signatures don't match")
-//     let signature = [signatureData base64EncodedStringWithOptions:0];
-//
-//     XCTAssertEqualObjects(signature, base64signature, "Signatures don't match up");
-//
-//
-//     XCTAssertEqualObjects(providerRegistrationTransactionFromMessage.payloadSignature, signatureData, "Signatures don't match up");
-//
-//     DSAuthenticationKeysDerivationPath *providerOwnerKeysDerivationPath = [DSAuthenticationKeysDerivationPath providerOwnerKeysDerivationPathForWallet:wallet];
-//     if (!providerOwnerKeysDerivationPath.hasExtendedPublicKey) {
-// [providerOwnerKeysDerivationPath generateExtendedPublicKeyFromSeed:seed storeUnderWalletUniqueId:nil];
-// }
-//     DSAuthenticationKeysDerivationPath *providerOperatorKeysDerivationPath = [DSAuthenticationKeysDerivationPath providerOperatorKeysDerivationPathForWallet:wallet];
-//     if (!providerOperatorKeysDerivationPath.hasExtendedPublicKey) {
-// [providerOperatorKeysDerivationPath generateExtendedPublicKeyFromSeed:seed storeUnderWalletUniqueId:nil];
-// }
-//     DSAuthenticationKeysDerivationPath *providerVotingKeysDerivationPath = [DSAuthenticationKeysDerivationPath providerVotingKeysDerivationPathForWallet:wallet];
-//     if (!providerVotingKeysDerivationPath.hasExtendedPublicKey) {
-// [providerVotingKeysDerivationPath generateExtendedPublicKeyFromSeed:seed storeUnderWalletUniqueId:nil];
-// }
-//
-//     DSECDSAKey *ownerKey = (DSECDSAKey *)[providerOwnerKeysDerivationPath privateKeyAtIndex:0 fromSeed:seed];
-//     UInt160 votingKeyHash = [providerVotingKeysDerivationPath publicKeyDataAtIndex:0].hash160;
-//     UInt384 operatorKey = [providerOperatorKeysDerivationPath publicKeyDataAtIndex:0].UInt384;
-//
-//     NSMutableData *scriptPayout = [NSMutableData data];
-//     [scriptPayout appendScriptPubKeyForAddress:payoutAddress forChain:wallet.chain];
-//
-//     UInt128 ipAddress = {.u32 = {0, 0, CFSwapInt32HostToBig(0xffff), 0}};
-//     struct in_addr addrV4;
-//     if (inet_aton(["1.2.5.6" UTF8String], &addrV4) != 0) {
-// uint32_t ip = ntohl(addrV4.s_addr);
-// ipAddress.u32[3] = CFSwapInt32HostToBig(ip);
-// }
+        assert_eq!(expected_base64_signature, base64_signature, "message digest signatures don't match");
+
+        assert_eq!(expected_provider_registration_payload.payload_sig, signature.to_vec());
+
+        let operator_reward = 0;
+
+        assert_eq!(operator_reward, expected_provider_registration_payload.operator_reward);
+
+        // We should verify the script payouts match
+        let script_payout = payout_address.script_pubkey();
+        assert_eq!(script_payout, expected_provider_registration_payload.script_payout);
+
+        let transaction = Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![TxIn{
+                previous_output: Default::default(),
+                script_sig: Default::default(),
+                sequence: 0,
+                witness: Default::default()
+            }],
+            output: vec![TxOut{ value: 0, script_pubkey: Default::default() }],
+            special_transaction_payload: Some(ProviderRegistrationPayloadType(ProviderRegistrationPayload {
+                version: provider_registration_payload_version,
+                provider_type,
+                provider_mode,
+                collateral_outpoint,
+                ip_address: u128::from_le_bytes(ipv6_bytes),
+                port,
+                owner_key_hash: PubkeyHash::from_hex(owner_key_hash_hex).unwrap(),
+                operator_public_key: BLSPublicKey::from_hex(operator_key_hex).unwrap(),
+                voting_key_hash: PubkeyHash::from_hex(voting_key_hash_hex).unwrap(),
+                operator_reward,
+                script_payout,
+                inputs_hash: Default::default(),
+                payload_sig: vec![]
+            }))
+        };
+
+        //assert_eq!(transaction, expected_transaction);
+
 //
 //     NSMutableData *inputScript = [NSMutableData data];
 //
