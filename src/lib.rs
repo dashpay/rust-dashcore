@@ -100,6 +100,7 @@ pub extern crate base64;
 #[cfg(feature = "serde")] #[macro_use] extern crate serde;
 #[cfg(all(test, feature = "serde"))] extern crate serde_json;
 #[cfg(all(test, feature = "serde"))] extern crate serde_test;
+#[cfg(all(test, feature = "serde"))] extern crate serde_big_array;
 #[cfg(all(test, feature = "serde"))] extern crate bincode;
 #[cfg(all(test, feature = "unstable"))] extern crate test;
 
