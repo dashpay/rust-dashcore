@@ -1,12 +1,12 @@
 [package]
 name = "dashcore"
 version = "0.29.1"
-authors = ["Andrew Poelstra <apoelstra@wpsoftware.net>"]
+authors = ["Samuel Westrich <sam@dash.org>", "Anton Suprunchuk <anton@dash.org>"]
 license = "CC0-1.0"
 homepage = "https://github.com/dashevo/rust-dashcore/"
 repository = "https://github.com/dashevo/rust-dashcore/"
-documentation = "https://docs.rs/bitcoin/"
-description = "General purpose library for using and interoperating with Bitcoin and other cryptocurrencies."
+documentation = "https://dashcore.readme.io/docs"
+description = "General purpose library for using and interoperating with Dash Core payment chain."
 keywords = [ "crypto", "dash" ]
 readme = "README.md"
 exclude = ["./test_data"]
