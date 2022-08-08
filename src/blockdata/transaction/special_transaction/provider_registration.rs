@@ -156,12 +156,14 @@ impl Decodable for ProviderRegistrationPayload {
 
 #[cfg(test)]
 mod tests {
-    use consensus::Decodable;
+    use hashes::hex::{FromHex, ToHex};
+    use consensus::{deserialize};
     use ::{Transaction};
     use ::{InputsHash, Txid};
     use ::{Network, OutPoint};
     use util::misc::signed_msg_hash;
     use hex;
+    use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 
     fn test_collateral_provider_registration_transaction() {
     // This is a test for testnet
@@ -176,7 +178,7 @@ mod tests {
 
         let expected_transaction_bytes = hex::decode("0300010001ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58010000006b483045022100fe8fec0b3880bcac29614348887769b0b589908e3f5ec55a6cf478a6652e736502202f30430806a6690524e4dd599ba498e5ff100dea6a872ebb89c2fd651caa71ed012103d85b25d6886f0b3b8ce1eef63b720b518fad0b8e103eba4e85b6980bfdda2dfdffffffff018e37807e090000001976a9144ee1d4e5d61ac40a13b357ac6e368997079678c888ac00000000fd1201010000000000ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab580000000000000000000000000000ffff010205064e1f3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfad38a30fafe61575db40f05ab0a08d55119b0aad300001976a9144fbc8fb6e11e253d77e5a9c987418e89cf4a63d288ac3477990b757387cb0406168c2720acf55f83603736a314a37d01b135b873a27b411fb37e49c1ff2b8057713939a5513e6e711a71cff2e517e6224df724ed750aef1b7f9ad9ec612b4a7250232e1e400da718a9501e1d9a5565526e4b1ff68c028763").unwrap();
 
-        let expected_transaction = Transaction::consensus_decode(expected_transaction_bytes).expect("expected a transaction");
+        let expected_transaction : Transaction = deserialize(expected_transaction_bytes.as_slice()).expect("expected a transaction");
 
         let expected_provider_registration_payload = expected_transaction.special_transaction_payload.unwrap().to_provider_registration_payload().expect("expected to get a provider registration payload");
     //    protx register_prepare
@@ -189,13 +191,13 @@ mod tests {
     //    0
     //    ycBFJGv7V95aSs6XvMewFyp1AMngeRHBwy
 
-    let tx_id = Txid::consensus_decode("e65f550356250100513aa9c260400562ac8ee1b93ae1cc1214cc9f6830227b51").expect("expected to decode tx id");
-    let input_transaction_hash_value = InputsHash::consensus_decode("ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58").expect("expected to decode inputs hash");
+    let tx_id = Txid::from_hex("e65f550356250100513aa9c260400562ac8ee1b93ae1cc1214cc9f6830227b51").expect("expected to decode tx id");
+    let input_transaction_hash_value = InputsHash::from_hex("ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58").expect("expected to decode inputs hash");
     let input_address0 = "yQxPwSSicYgXiU22k4Ysq464VxRtgbnvpJ";
         let input_private_key0 = "cVfGhHY18Dx1EfZxFRkrvzVpB3wPtJGJWW6QvEtzMcfXSShoZyWV";
     let output_address0 = "yTWY6DsS4HBGs2JwDtnvVcpykLkbvtjUte";
     let collateral_address = "yeNVS6tFeQNXJVkjv6nm6gb7PtTERV5dGh";
-    let collateral_hash = Txid::consensus_decode("58ab8ba7dce591c745f8b78ee49156d13277fff20880855f7cda501705439aca").expect("expected to decode collateral hash");
+    let collateral_hash = Txid::from_hex("58ab8ba7dce591c745f8b78ee49156d13277fff20880855f7cda501705439aca").expect("expected to decode collateral hash");
     let collateral_index = 0;
     let reversed_collateral = OutPoint::new(collateral_hash, collateral_index);
     let payout_address = "yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs";
@@ -210,9 +212,9 @@ mod tests {
         let payload_collateral_string = expected_provider_registration_payload.payload_collateral_string(network).expect("expected to produce a payload collateral string");
         let message_digest = signed_msg_hash(payload_collateral_string.as_str());
 
-        assert_eq!(expected_provider_registration_payload.inputsHash, "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734", "Payload hash calculation has issues");
+        assert_eq!(expected_provider_registration_payload.inputs_hash.to_hex(), "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734", "Payload hash calculation has issues");
 
-        assert_eq!(expected_provider_registration_payload.payloadHash, "71e973f79003accd202b9a2ab2613ac6ced601b26684e82f561f6684fef2f102", "Payload hash calculation has issues");
+        assert_eq!(expected_provider_registration_payload.base_payload_hash().to_hex(), "71e973f79003accd202b9a2ab2613ac6ced601b26684e82f561f6684fef2f102", "Payload hash calculation has issues");
 
     assert_eq!("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs|0|yRxHYGLf9G4UVYdtAoB2iAzR3sxxVaZB6y|yfbxyP4ctRJR1rs3A8C3PdXA4Wtcrw7zTi|71e973f79003accd202b9a2ab2613ac6ced601b26684e82f561f6684fef2f102", payload_collateral_string, "provider transaction collateral string doesn't match");
 
