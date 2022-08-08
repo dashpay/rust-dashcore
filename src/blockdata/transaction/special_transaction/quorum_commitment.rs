@@ -24,6 +24,9 @@ use bls_sig_utils::{BLSPublicKey, BLSSignature};
 use consensus::{Decodable, Encodable, encode};
 use QuorumVVecHash;
 
+/// A Quorum Finalization Commitment. It is described in the finalization section of DIP6:
+/// https://github.com/dashpay/dips/blob/master/dip-0006.md#6-finalization-phase
+///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct QuorumFinalizationCommitment {
@@ -79,7 +82,11 @@ impl Decodable for QuorumFinalizationCommitment {
     }
 }
 
-
+/// A Quorum Commitment Payload used in a Quorum Commitment Special Transaction.
+/// This is used in the mining phase as described in DIP 6:
+/// https://github.com/dashpay/dips/blob/master/dip-0006.md#7-mining-phase.
+///
+/// Miners take the best final commitment for a DKG session and mine it into a block.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct QuorumCommitmentPayload {

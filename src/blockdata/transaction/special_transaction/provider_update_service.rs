@@ -45,6 +45,10 @@ use bls_sig_utils::BLSSignature;
 use consensus::{Decodable, Encodable, encode};
 use ::{InputsHash, SpecialTransactionPayloadHash};
 
+/// A Provider Update Service Payload used in a Provider Update Service Special Transaction.
+/// This is used to update the operational aspects a Masternode on the network.
+/// It must be signed by the operator's key that was set either at registration or by the last
+/// registrar update of the masternode.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProviderUpdateServicePayload {

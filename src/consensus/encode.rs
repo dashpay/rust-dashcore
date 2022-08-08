@@ -96,6 +96,7 @@ pub enum Error {
         /// The invalid transaction type
         actual: TransactionType,
     },
+    /// The script type was non standard
     NonStandardScriptPayout(Script),
 }
 

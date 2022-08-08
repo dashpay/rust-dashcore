@@ -45,6 +45,9 @@ use bls_sig_utils::BLSSignature;
 use consensus::{Decodable, Encodable, encode};
 use ::{InputsHash, SpecialTransactionPayloadHash};
 
+/// A Provider Update Revocation Payload used in a Provider Update Revocation Special Transaction.
+/// This is used to signal and stop a Masternode from the operator.
+/// It must be signed by the operator's key that was set at registration or registrar update.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProviderUpdateRevocationPayload {

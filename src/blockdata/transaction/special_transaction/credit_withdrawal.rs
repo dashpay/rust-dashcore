@@ -26,8 +26,16 @@ use std::io;
 use std::io::{Error, Write};
 use bls_sig_utils::BLSSignature;
 use consensus::{Decodable, Encodable, encode};
-use QuorumHash;
+use ::{QuorumHash};
 
+/// A Credit Withdrawal payload. This is contained as the payload of a credit withdrawal special
+/// transaction.
+/// The Credit Withdrawal Special transaction and this payload is described in the Asset Lock DIP2X
+/// (todo:update this).
+/// The Credit Withdrawal Payload is signed by a quorum.
+///
+/// Transaction using it have no inputs. Hence the proof of validity lies solely on the BLS signature.
+///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CreditWithdrawalPayload {

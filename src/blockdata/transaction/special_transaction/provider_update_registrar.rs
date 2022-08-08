@@ -41,6 +41,9 @@ use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEn
 use bls_sig_utils::BLSPublicKey;
 use ::{PubkeyHash, SpecialTransactionPayloadHash};
 
+/// A Provider Update Registrar Payload used in a Provider Update Registrar Special Transaction.
+/// This is used to update the base aspects a Masternode on the network.
+/// It must be signed by the owner's key that was set at registration.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProviderUpdateRegistrarPayload {

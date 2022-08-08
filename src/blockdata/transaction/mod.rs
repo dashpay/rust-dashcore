@@ -144,6 +144,8 @@ impl Transaction {
         Txid::from_engine(enc)
     }
 
+    /// Get the transaction type. If a classical transaction this would be 0.
+    /// Otherwise it is gotten by association from the payload type.
     pub fn tx_type(&self) -> TransactionType {
         TransactionType::from_optional_payload(&self.special_transaction_payload)
     }

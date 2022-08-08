@@ -46,6 +46,8 @@ pub mod quorum_commitment;
 pub mod asset_lock;
 pub mod credit_withdrawal;
 
+/// An enum wrapper around various special transaction payloads.
+/// Special transactions are defined in DIP 2.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TransactionPayload {
@@ -273,6 +275,8 @@ impl Decodable for TransactionType {
 }
 
 impl TransactionType {
+    /// Get the transaction type from an optional payload
+    /// If the payload in None then we have a Classical Transaction
     pub fn from_optional_payload(payload: &Option<TransactionPayload>) -> Self {
         match payload {
             None => { Classic}
@@ -280,6 +284,7 @@ impl TransactionType {
         }
     }
 
+    /// Decodes the payload based on the transaction type.
     pub fn consensus_decode<D: io::Read>(self, d: D) -> Result<Option<TransactionPayload>, encode::Error> {
         Ok(match self {
             Classic => { None }
@@ -303,5 +308,6 @@ pub trait SpecialTransactionBasePayloadEncodable {
     /// The only errors returned are errors propagated from the writer.
     fn base_payload_data_encode<W: io::Write>(&self, writer: W) -> Result<usize, io::Error>;
 
+    /// The hash of the base payload special transaction data.
     fn base_payload_hash(&self) -> SpecialTransactionPayloadHash;
 }

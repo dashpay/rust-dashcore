@@ -1,11 +1,32 @@
+// Rust Dash Library
+// Written by
+//   The Rust Dash developers
+//
+// To the extent possible under law, the author(s) have dedicated all
+// copyright and related and neighboring rights to this software to
+// the public domain worldwide. This software is distributed without
+// any warranty.
+//
+// You should have received a copy of the CC0 Public Domain Dedication
+// along with this software.
+// If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+//
+
+//! Dash BLS elements
+//! Convenience wrappers around fixed size arrays of 48 and 96 bytes representing the public key
+//! and signature.
+//!
+
 use std::io::{Read, Write};
 use consensus::{Decodable, Encodable};
 use consensus::encode::Error;
 
+/// A BLS Public key is 48 bytes in the scheme used for Dash Core
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BLSPublicKey([u8;48]);
 
+/// A BLS Signature is 96 bytes in the scheme used for Dash Core
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BLSSignature([u8;96]);
