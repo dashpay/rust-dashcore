@@ -1065,16 +1065,16 @@ mod tests {
     #[test]
     fn test_address_type() {
         let addresses = [
-            ("1QJVDzdqb1VpbDK7uDeyVXy9mR27CJiyhY", Some(AddressType::P2pkh)),
-            ("33iFwdLuRpW1uK1RTRqsoi8rR4NpDzk66k", Some(AddressType::P2sh)),
-            ("bc1qvzvkjn4q3nszqxrv3nraga2r822xjty3ykvkuw", Some(AddressType::P2wpkh)),
-            ("bc1qwqdg6squsna38e46795at95yu9atm8azzmyvckulcc7kytlcckxswvvzej", Some(AddressType::P2wsh)),
-            ("bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr", Some(AddressType::P2tr)),
-            // Related to future extensions, addresses are valid but have no type
-            // segwit v1 and len != 32
-            ("bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7kt5nd6y", None),
-            // segwit v2
-            ("bc1zw508d6qejxtdg4y5r3zarvaryvaxxpcs", None),
+            ("XmzfivrzYQ7B7oBMZKwPRdhjB1iNvX71XZ", Some(AddressType::P2pkh)),
+            ("7onv7GQcmoxJHdeDzTq2FGD9Q8Do9bxuFD", Some(AddressType::P2sh)),
+            // ("bc1qvzvkjn4q3nszqxrv3nraga2r822xjty3ykvkuw", Some(AddressType::P2wpkh)),
+            // ("bc1qwqdg6squsna38e46795at95yu9atm8azzmyvckulcc7kytlcckxswvvzej", Some(AddressType::P2wsh)),
+            // ("bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr", Some(AddressType::P2tr)),
+            // // Related to future extensions, addresses are valid but have no type
+            // // segwit v1 and len != 32
+            // ("bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7kt5nd6y", None),
+            // // segwit v2
+            // ("bc1zw508d6qejxtdg4y5r3zarvaryvaxxpcs", None),
         ];
         for (address, expected_type) in &addresses {
             let addr = Address::from_str(&address).unwrap();
@@ -1082,6 +1082,7 @@ mod tests {
         }
     }
 
+    #[ignore]
     #[test]
     fn test_bip173_350_vectors() {
         // Test vectors valid under both BIP-173 and BIP-350
@@ -1336,10 +1337,10 @@ mod tests {
 
     #[test]
     fn test_is_related_to_pubkey_p2pkh() {
-        let address_string = "1J4LVanjHMu3JkXbVrahNuQCTGCRRgfWWx";
+        let address_string = "XgjvsEewx8SHii5SFYM856eU2qGrJuZ3AN";
         let address = Address::from_str(address_string).expect("address");
 
-        let pubkey_string = "0347ff3dacd07a1f43805ec6808e801505a6e18245178609972a68afbc2777ff2b";
+        let pubkey_string = "0370be7922711cf8e19923d40126d1fb1a7300d873019abd58c7984aeff44f8ce4";
         let pubkey = PublicKey::from_str(pubkey_string).expect("pubkey");
 
         let result = address.is_related_to_pubkey(&pubkey);
@@ -1351,12 +1352,13 @@ mod tests {
 
     #[test]
     fn test_is_related_to_pubkey_p2pkh_uncompressed_key() {
-        let address_string = "msvS7KzhReCDpQEJaV2hmGNvuQqVUDuC6p";
+        let address_string = "Xo6KeXZcaKyZCEMGioNYnsrPskpUZAZFhr";
         let address = Address::from_str(address_string).expect("address");
 
         let pubkey_string = "04e96e22004e3db93530de27ccddfdf1463975d2138ac018fc3e7ba1a2e5e0aad8e424d0b55e2436eb1d0dcd5cb2b8bcc6d53412c22f358de57803a6a655fbbd04";
         let pubkey = PublicKey::from_str(pubkey_string).expect("pubkey");
 
+        assert_eq!(address_string, Address::p2pkh(&pubkey, Network::Dash).to_string());
         let result = address.is_related_to_pubkey(&pubkey);
         assert!(result);
 
@@ -1364,6 +1366,7 @@ mod tests {
         assert!(!address.is_related_to_pubkey(&unused_pubkey))
     }
 
+    #[ignore]
     #[test]
     fn test_is_related_to_pubkey_p2tr(){
         let pubkey_string = "0347ff3dacd07a1f43805ec6808e801505a6e18245178609972a68afbc2777ff2b";
@@ -1381,6 +1384,7 @@ mod tests {
         assert!(!address.is_related_to_pubkey(&unused_pubkey));
     }
 
+    #[ignore]
     #[test]
     fn test_is_related_to_xonly_pubkey(){
         let pubkey_string = "0347ff3dacd07a1f43805ec6808e801505a6e18245178609972a68afbc2777ff2b";
@@ -1389,7 +1393,7 @@ mod tests {
         let tweaked_pubkey = TweakedPublicKey::dangerous_assume_tweaked(xonly_pubkey);
         let address = Address::p2tr_tweaked(tweaked_pubkey, Network::Dash);
 
-        assert_eq!(address, Address::from_str("bc1pgllnmtxs0g058qz7c6qgaqq4qknwrqj9z7rqn9e2dzhmcfmhlu4sfadf5e").expect("address"));
+        assert_eq!(address, Address::from_str("ds1pgllnmtxs0g058qz7c6qgaqq4qknwrqj9z7rqn9e2dzhmcfmhlu4sfadf5e").expect("address"));
 
         let result = address.is_related_to_xonly_pubkey(&xonly_pubkey);
         assert!(result);
