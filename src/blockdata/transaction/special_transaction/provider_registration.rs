@@ -95,7 +95,7 @@ impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
         len += self.provider_mode.consensus_encode(&mut s)?;
         len += self.collateral_outpoint.consensus_encode(&mut s)?;
         len += self.ip_address.consensus_encode(&mut s)?;
-        len += self.port.consensus_encode(&mut s)?;
+        len += self.port.reverse_bits().consensus_encode(&mut s)?;
         len += self.owner_key_hash.consensus_encode(&mut s)?;
         len += self.operator_public_key.consensus_encode(&mut s)?;
         len += self.voting_key_hash.consensus_encode(&mut s)?;
@@ -157,18 +157,22 @@ impl Decodable for ProviderRegistrationPayload {
 }
 
 #[cfg(test)]
+#[cfg(feature="signer")]
 mod tests {
-    use hashes::hex::{FromHex};
+    use hashes::Hash;
+    use hashes::hex::{FromHex, ToHex};
     use consensus::{deserialize};
     use ::{Transaction};
     use ::{InputsHash, Txid};
     use ::{Network, OutPoint};
     use util::misc::signed_msg_hash;
     use hex;
-    //use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+    use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+    use signer::sign;
 
     #[test]
     fn test_collateral_provider_registration_transaction() {
+
         // This is a test for testnet
         let network = Network::Testnet;
 
@@ -200,6 +204,7 @@ mod tests {
         let input_private_key0 = "cVfGhHY18Dx1EfZxFRkrvzVpB3wPtJGJWW6QvEtzMcfXSShoZyWV";
         let output_address0 = "yTWY6DsS4HBGs2JwDtnvVcpykLkbvtjUte";
         let collateral_address = "yeNVS6tFeQNXJVkjv6nm6gb7PtTERV5dGh";
+        let collateral_private_key = "cTVm7EkgzNBPcwAKGYHfvyK8cyrRAC8n3SUUw8qjLqCg2rpcczfo";
         let collateral_hash = Txid::from_hex("58ab8ba7dce591c745f8b78ee49156d13277fff20880855f7cda501705439aca").expect("expected to decode collateral hash");
         let collateral_index = 0;
         let reversed_collateral = OutPoint::new(collateral_hash, collateral_index);
@@ -215,19 +220,17 @@ mod tests {
         let payload_collateral_string = expected_provider_registration_payload.payload_collateral_string(network).expect("expected to produce a payload collateral string");
         let message_digest = signed_msg_hash(payload_collateral_string.as_str());
 
-        //assert_eq!(expected_provider_registration_payload.inputs_hash.to_hex(), "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734", "inputs hash calculation has issues");
-        //assert_eq!(expected_provider_registration_payload.base_payload_hash().to_hex(), "71e973f79003accd202b9a2ab2613ac6ced601b26684e82f561f6684fef2f102", "Payload hash calculation has issues");
+        assert_eq!(expected_provider_registration_payload.inputs_hash.to_hex(), "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734", "inputs hash calculation has issues");
+        assert_eq!(expected_provider_registration_payload.base_payload_hash().to_hex(), "71e973f79003accd202b9a2ab2613ac6ced601b26684e82f561f6684fef2f102", "Payload hash calculation has issues");
 
         assert_eq!("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs|0|yRxHYGLf9G4UVYdtAoB2iAzR3sxxVaZB6y|yfbxyP4ctRJR1rs3A8C3PdXA4Wtcrw7zTi|71e973f79003accd202b9a2ab2613ac6ced601b26684e82f561f6684fef2f102", payload_collateral_string, "provider transaction collateral string doesn't match");
 
 
-//     let base64signature = "H7N+ScH/K4BXcTk5pVE+bnEacc/y5RfmIk33JO11Cu8bf5rZ7GErSnJQIy4eQA2nGKlQHh2aVWVSbksf9owCh2M=";
-//
-//     DSFundsDerivationPath *derivationPath = (DSFundsDerivationPath *)[collateralAccount derivationPathContainingAddress:collateralAddress];
-//
-//     NSIndexPath *indexPath = [derivationPath indexPathForKnownAddress:collateralAddress];
-//     DSECDSAKey *key = (DSECDSAKey *)[derivationPath privateKeyAtIndexPath:indexPath fromSeed:seed];
-//     NSData *signatureData = [key compactSign:messageDigest];
+        let expected_base64_signature = "H7N+ScH/K4BXcTk5pVE+bnEacc/y5RfmIk33JO11Cu8bf5rZ7GErSnJQIy4eQA2nGKlQHh2aVWVSbksf9owCh2M=";
+        let signature = sign(message_digest.as_inner().as_slice(), collateral_private_key.as_bytes()).expect("expected to sign message digest");
+        let base64_signature = base64::encode(signature.as_slice());
+
+        assert_eq!(expected_base64_signature, base64_signature, "message digest signatures don't match")
 //     let signature = [signatureData base64EncodedStringWithOptions:0];
 //
 //     XCTAssertEqualObjects(signature, base64signature, "Signatures don't match up");
