@@ -946,7 +946,7 @@ mod tests {
             addr.script_pubkey(),
             hex_script!("76a914162c5ea71c0b23f5b9022ef047c4a86470a5b07088ac")
         );
-        assert_eq!(&addr.to_string(), "132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM");
+        assert_eq!(&addr.to_string(), "Xci5rLWMqdQDy5uaCDVWEcTi6sfnkmqdUz");
         assert_eq!(addr.address_type(), Some(AddressType::P2pkh));
         roundtrips(&addr);
     }
@@ -955,11 +955,11 @@ mod tests {
     fn test_p2pkh_from_key() {
         let key = hex_key!("048d5141948c1702e8c95f438815794b87f706a8d4cd2bffad1dc1570971032c9b6042a0431ded2478b5c9cf2d81c124a5e57347a3c63ef0e7716cf54d613ba183");
         let addr = Address::p2pkh(&key, Dash);
-        assert_eq!(&addr.to_string(), "1QJVDzdqb1VpbDK7uDeyVXy9mR27CJiyhY");
+        assert_eq!(&addr.to_string(), "XyzL4FHjYiiQk9uhm6yCM4ewbkboBggYyo");
 
         let key = hex_key!(&"03df154ebfcf29d29cc10d5c2565018bce2d9edbab267c31d2caf44a63056cf99f");
         let addr = Address::p2pkh(&key, Testnet);
-        assert_eq!(&addr.to_string(), "mqkhEMH6NCeYjFybv7pvFC22MFeaNT9AQC");
+        assert_eq!(&addr.to_string(), "yWZBnVvSxS5xSq27dHVAJpuqbt7vvwGFL1");
         assert_eq!(addr.address_type(), Some(AddressType::P2pkh));
         roundtrips(&addr);
     }
@@ -975,7 +975,7 @@ mod tests {
             addr.script_pubkey(),
             hex_script!("a914162c5ea71c0b23f5b9022ef047c4a86470a5b07087")
         );
-        assert_eq!(&addr.to_string(), "33iFwdLuRpW1uK1RTRqsoi8rR4NpDzk66k");
+        assert_eq!(&addr.to_string(), "7URtmpd5Eobeu5YNj3WP968WLcDC86Kko6");
         assert_eq!(addr.address_type(), Some(AddressType::P2sh));
         roundtrips(&addr);
     }
@@ -984,7 +984,7 @@ mod tests {
     fn test_p2sh_parse() {
         let script = hex_script!("552103a765fc35b3f210b95223846b36ef62a4e53e34e2925270c2c7906b92c9f718eb2103c327511374246759ec8d0b89fa6c6b23b33e11f92c5bc155409d86de0c79180121038cae7406af1f12f4786d820a1466eec7bc5785a1b5e4a387eca6d797753ef6db2103252bfb9dcaab0cd00353f2ac328954d791270203d66c2be8b430f115f451b8a12103e79412d42372c55dd336f2eb6eb639ef9d74a22041ba79382c74da2338fe58ad21035049459a4ebc00e876a9eef02e72a3e70202d3d1f591fc0dd542f93f642021f82102016f682920d9723c61b27f562eb530c926c00106004798b6471e8c52c60ee02057ae");
         let addr = Address::p2sh(&script, Testnet).unwrap();
-        assert_eq!(&addr.to_string(), "2N3zXjbwdTcPsJiy8sUK9FhWJhqQCxA8Jjr");
+        assert_eq!(&addr.to_string(), "8qAmTPBdngNnZ1HoYDMjRWL4JYoF4Kdah4");
         assert_eq!(addr.address_type(), Some(AddressType::P2sh));
         roundtrips(&addr);
     }
@@ -995,6 +995,7 @@ mod tests {
         assert_eq!(Address::p2sh(&script, Testnet), Err(Error::ExcessiveScriptSize));
     }
 
+    #[ignore]
     #[test]
     fn test_p2wpkh() {
         // stolen from Dash transaction: b3c8c2b6cfc335abbcb2c7823a8453f55d64b2b5125a9a61e8737230cdb8ce20
@@ -1009,6 +1010,7 @@ mod tests {
         assert_eq!(Address::p2wpkh(&key, Dash), Err(Error::UncompressedPubkey));
     }
 
+    #[ignore]
     #[test]
     fn test_p2wsh() {
         // stolen from Dash transaction 5df912fda4becb1c29e928bec8d64d93e9ba8efa9b5b405bd683c86fd2c65667
@@ -1024,10 +1026,9 @@ mod tests {
 
     #[test]
     fn test_p2shwpkh() {
-        // stolen from Dash transaction: ad3fd9c6b52e752ba21425435ff3dd361d6ac271531fc1d2144843a9f550ad01
         let mut key = hex_key!("026c468be64d22761c30cd2f12cbc7de255d592d7904b1bab07236897cc4c2e766");
         let addr = Address::p2shwpkh(&key, Dash).unwrap();
-        assert_eq!(&addr.to_string(), "3QBRmWNqqBGme9er7fMkGqtZtp4gjMFxhE");
+        assert_eq!(&addr.to_string(), "7pu4bhf1eANQdvBoPH2FcDtDpMu4c7ZNuN");
         assert_eq!(addr.address_type(), Some(AddressType::P2sh));
         roundtrips(&addr);
 
@@ -1041,7 +1042,7 @@ mod tests {
         // stolen from Dash transaction f9ee2be4df05041d0e0a35d7caa3157495ca4f93b233234c9967b6901dacf7a9
         let script = hex_script!("522103e5529d8eaa3d559903adb2e881eb06c86ac2574ffa503c45f4e942e2a693b33e2102e5f10fcdcdbab211e0af6a481f5532536ec61a5fdbf7183770cf8680fe729d8152ae");
         let addr = Address::p2shwsh(&script, Dash);
-        assert_eq!(&addr.to_string(), "36EqgNnsWW94SreZgBWc1ANC6wpFZwirHr");
+        assert_eq!(&addr.to_string(), "7WxUWa53KVEhSdBWwoB7LYMr2VedMZqoqt");
         assert_eq!(addr.address_type(), Some(AddressType::P2sh));
         roundtrips(&addr);
     }
@@ -1226,15 +1227,15 @@ mod tests {
 
     #[test]
     fn test_qr_string() {
-        for el in  ["132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM", "33iFwdLuRpW1uK1RTRqsoi8rR4NpDzk66k"].iter() {
+        for el in  ["XdLDdeFJgVR3YeoVM55jrfFtUMzMNaEFF8", "7fH3aFXJ5TWv5eNScx7m4FCf3XD27mXYHq"].iter() {
             let addr = Address::from_str(el).unwrap();
             assert_eq!(addr.to_qr_uri(), format!("Dash:{}", el));
         }
 
-        for el in ["bcrt1q2nfxmhd4n3c8834pj72xagvyr9gl57n5r94fsl", "bc1qwqdg6squsna38e46795at95yu9atm8azzmyvckulcc7kytlcckxswvvzej"].iter() {
-            let addr = Address::from_str(el).unwrap();
-            assert_eq!(addr.to_qr_uri(), format!("Dash:{}", el.to_ascii_uppercase()) );
-        }
+        // for el in ["dsrt1q2nfxmhd4n3c8834pj72xagvyr9gl57n5r94fsl", "ds1qwqdg6squsna38e46795at95yu9atm8azzmyvckulcc7kytlcckxswvvzej"].iter() {
+        //     let addr = Address::from_str(el).unwrap();
+        //     assert_eq!(addr.to_qr_uri(), format!("Dash:{}", el.to_ascii_uppercase()) );
+        // }
     }
 
     #[test]
@@ -1305,9 +1306,10 @@ mod tests {
         roundtrips(&address);
     }
 
+    #[ignore]
     #[test]
     fn test_is_related_to_pubkey_p2wpkh() {
-        let address_string = "bc1qhvd6suvqzjcu9pxjhrwhtrlj85ny3n2mqql5w4";
+        let address_string = "ds1qhvd6suvqzjcu9pxjhrwhtrlj85ny3n2mqql5w4";
         let address = Address::from_str(address_string).expect("address");
 
         let pubkey_string = "0347ff3dacd07a1f43805ec6808e801505a6e18245178609972a68afbc2777ff2b";
@@ -1322,11 +1324,13 @@ mod tests {
 
     #[test]
     fn test_is_related_to_pubkey_p2shwpkh() {
-        let address_string = "3EZQk4F8GURH5sqVMLTFisD17yNeKa7Dfs";
+        let address_string = "7fH3aFXJ5TWv5eNScx7m4FCf3XD27mXYHq";
         let address = Address::from_str(address_string).expect("address");
 
         let pubkey_string = "0347ff3dacd07a1f43805ec6808e801505a6e18245178609972a68afbc2777ff2b";
         let pubkey = PublicKey::from_str(pubkey_string).expect("pubkey");
+
+        assert_eq!(address_string, Address::p2shwpkh(&pubkey, Network::Dash).expect("expected a compressed key").to_string());
 
         let result = address.is_related_to_pubkey(&pubkey);
         assert!(result);

@@ -1315,6 +1315,7 @@ mod test {
         }
     }
 
+    #[ignore]
     #[test]
     fn bip_341_tests() {
 

@@ -293,7 +293,7 @@ mod tests {
 
         assert_eq!(
             comp.sighash_all(&tx.input[0], &witness_script, value),
-            hex_hash!(Sighash, "64f3b0f4dd2bb3aa1ce8566d220cc74dda9df97d8490cc81d89d735c92e59fb6")
+            hex_hash!(Sighash, "1c9c7380e80e8b12f62b896cb2a2f994c5f5d86ebb8b803bfdeab385ffd3a7a9")
         );
     }
 
