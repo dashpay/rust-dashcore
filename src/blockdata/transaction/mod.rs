@@ -535,7 +535,7 @@ impl Decodable for Transaction {
                             input,
                             output,
                             lock_time: Decodable::consensus_decode(&mut d)?,
-                            special_transaction_payload: None
+                            special_transaction_payload: special_transaction_type.consensus_decode(d)?
                         })
                     }
                 }
@@ -548,8 +548,8 @@ impl Decodable for Transaction {
                 version,
                 input,
                 output: Decodable::consensus_decode(&mut d)?,
-                lock_time: Decodable::consensus_decode(d)?,
-                special_transaction_payload: None
+                lock_time: Decodable::consensus_decode(&mut d)?,
+                special_transaction_payload: special_transaction_type.consensus_decode(d)?
             })
         }
     }
