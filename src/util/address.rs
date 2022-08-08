@@ -1299,7 +1299,7 @@ mod tests {
         let internal_key = XOnlyPublicKey::from_str("cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc115").unwrap();
         let secp = Secp256k1::verification_only();
         let address = Address::p2tr(&secp, internal_key, None, Network::Dash);
-        assert_eq!(address.to_string(), "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr");
+        assert_eq!(address.to_string(), "ds1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqq9xzlq");
         assert_eq!(address.address_type(), Some(AddressType::P2tr));
         roundtrips(&address);
     }
