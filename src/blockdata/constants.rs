@@ -41,7 +41,7 @@ use util::uint::Uint256;
 
 /// The maximum allowable sequence number
 pub const MAX_SEQUENCE: u32 = 0xFFFFFFFF;
-/// How many satoshis are in "one bitcoin"
+/// How many duffs are in "one dash"
 pub const COIN_VALUE: u64 = 100_000_000;
 /// How many seconds between blocks we expect on average
 pub const TARGET_BLOCK_SPACING: u32 = 600;

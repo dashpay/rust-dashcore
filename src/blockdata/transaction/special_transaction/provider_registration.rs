@@ -37,6 +37,7 @@
 use std::io;
 use std::io::{Error, Write};
 use hashes::Hash;
+use hashes::hex::ToHex;
 use ::{OutPoint, Script};
 use consensus::{Decodable, Encodable, encode};
 use ::{InputsHash};
@@ -101,7 +102,8 @@ impl ProviderRegistrationPayload {
     pub fn payload_collateral_string(&self, network: Network) -> Result<String, encode::Error> {
         let mut base_payload_hash = self.base_payload_hash().to_vec();
         base_payload_hash.reverse();
-        Ok(format!("{}|{}|{}|{}|{}", self.payout_address(network)?, self.operator_reward, self.owner_address(network), self.voting_address(network), hex::encode(base_payload_hash)))
+        let base_payload_hash = SpecialTransactionPayloadHash::from_slice(base_payload_hash.as_slice()).unwrap();
+        Ok(format!("{}|{}|{}|{}|{}", self.payout_address(network)?, self.operator_reward, self.owner_address(network), self.voting_address(network), base_payload_hash.to_hex()))
     }
 }
 

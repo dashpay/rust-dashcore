@@ -121,7 +121,7 @@ impl fmt::Display for Error {
             Error::WrongSpecialTransactionPayloadConversion { expected: ref e, actual: ref a } => write!(f,
                                                                                            "wrong special transaction payload conversion expected: {} got: {}", e, a),
             Error::NonStandardScriptPayout(ref script) => write!(f,
-                                                        "non standard script payout: {}", hex::encode(script.as_bytes())),
+                                                        "non standard script payout: {}", script.to_hex()),
         }
     }
 }
