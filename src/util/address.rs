@@ -1068,14 +1068,25 @@ mod tests {
         let addresses = [
             ("XmzfivrzYQ7B7oBMZKwPRdhjB1iNvX71XZ", Some(AddressType::P2pkh)),
             ("7onv7GQcmoxJHdeDzTq2FGD9Q8Do9bxuFD", Some(AddressType::P2sh)),
-            // ("bc1qvzvkjn4q3nszqxrv3nraga2r822xjty3ykvkuw", Some(AddressType::P2wpkh)),
-            // ("bc1qwqdg6squsna38e46795at95yu9atm8azzmyvckulcc7kytlcckxswvvzej", Some(AddressType::P2wsh)),
-            // ("bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr", Some(AddressType::P2tr)),
-            // // Related to future extensions, addresses are valid but have no type
-            // // segwit v1 and len != 32
-            // ("bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7kt5nd6y", None),
-            // // segwit v2
-            // ("bc1zw508d6qejxtdg4y5r3zarvaryvaxxpcs", None),
+        ];
+        for (address, expected_type) in &addresses {
+            let addr = Address::from_str(&address).unwrap();
+            assert_eq!(&addr.address_type(), expected_type);
+        }
+    }
+
+    #[ignore]
+    #[test]
+    fn test_segwit_taproot_address_type() {
+        let addresses = [
+            ("bc1qvzvkjn4q3nszqxrv3nraga2r822xjty3ykvkuw", Some(AddressType::P2wpkh)),
+            ("bc1qwqdg6squsna38e46795at95yu9atm8azzmyvckulcc7kytlcckxswvvzej", Some(AddressType::P2wsh)),
+            ("bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr", Some(AddressType::P2tr)),
+            // Related to future extensions, addresses are valid but have no type
+            // segwit v1 and len != 32
+            ("bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7kt5nd6y", None),
+            // segwit v2
+            ("bc1zw508d6qejxtdg4y5r3zarvaryvaxxpcs", None),
         ];
         for (address, expected_type) in &addresses {
             let addr = Address::from_str(&address).unwrap();
