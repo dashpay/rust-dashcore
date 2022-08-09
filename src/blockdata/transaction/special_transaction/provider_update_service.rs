@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn test_provider_update_service_transaction() {
         // This is a test for testnet
-        let network = Network::Testnet;
+        let _network = Network::Testnet;
 
         let expected_transaction_bytes = hex::decode("03000200018f3fe6683e36326669b6e34876fb2a2264e8327e822f6fec304b66f47d61b3e1010000006b48304502210082af6727408f0f2ec16c7da1c42ccf0a026abea6a3a422776272b03c8f4e262a022033b406e556f6de980b2d728e6812b3ae18ee1c863ae573ece1cbdf777ca3e56101210351036c1192eaf763cd8345b44137482ad24b12003f23e9022ce46752edf47e6effffffff0180220e43000000001976a914123cbc06289e768ca7d743c8174b1e6eeb610f1488ac00000000b501003a72099db84b1c1158568eec863bea1b64f90eccee3304209cebe1df5e7539fd00000000000000000000ffff342440944e1f00e6725f799ea20480f06fb105ebe27e7c4845ab84155e4c2adf2d6e5b73a998b1174f9621bbeda5009c5a6487bdf75edcf602b67fe0da15c275cc91777cb25f5fd4bb94e84fd42cb2bb547c83792e57c80d196acd47020e4054895a0640b7861b3729c41dd681d4996090d5750f65c4b649a5cd5b2bdf55c880459821e53d91c9").unwrap();
 
@@ -136,7 +136,6 @@ mod tests {
         let expected_provider_update_service_payload = expected_transaction.special_transaction_payload.clone().unwrap().to_update_service_payload().expect("expected to get a provider registration payload");
 
         let tx_id = Txid::from_hex("fa2f2eba320c56fb0efebe2ace3333024104d8d0a30753da36db4bf97c119be7").expect("expected to decode tx id");
-        let input_transaction_hash_value = InputsHash::from_hex("ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58").expect("expected to decode inputs hash");
 
         let provider_update_service_payload_version = 1;
         assert_eq!(expected_provider_update_service_payload.version, provider_update_service_payload_version);
