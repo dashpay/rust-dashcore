@@ -39,11 +39,11 @@
 use std::io;
 use std::io::{Error, Write};
 use hashes::Hash;
-use ::{ProTxHash};
 use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use bls_sig_utils::BLSSignature;
 use consensus::{Decodable, Encodable, encode};
 use ::{InputsHash, SpecialTransactionPayloadHash};
+use Txid;
 
 /// A Provider Update Revocation Payload used in a Provider Update Revocation Special Transaction.
 /// This is used to signal and stop a Masternode from the operator.
@@ -52,7 +52,7 @@ use ::{InputsHash, SpecialTransactionPayloadHash};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProviderUpdateRevocationPayload {
     version: u16,
-    pro_tx_hash: ProTxHash,
+    pro_tx_hash: Txid,
     reason: u16,
     inputs_hash: InputsHash,
     payload_sig: BLSSignature,
@@ -87,7 +87,7 @@ impl Encodable for ProviderUpdateRevocationPayload {
 impl Decodable for ProviderUpdateRevocationPayload {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode(&mut d)?;
-        let pro_tx_hash = ProTxHash::consensus_decode(&mut d)?;
+        let pro_tx_hash = Txid::consensus_decode(&mut d)?;
         let reason = u16::consensus_decode(&mut d)?;
         let inputs_hash = InputsHash::consensus_decode(&mut d)?;
         let payload_sig = BLSSignature::consensus_decode(&mut d)?;

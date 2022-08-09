@@ -35,7 +35,7 @@ use blockdata::transaction::special_transaction::quorum_commitment::QuorumCommit
 use blockdata::transaction::special_transaction::TransactionPayload::{AssetLockPayloadType, CoinbasePayloadType, CreditWithdrawalPayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType, ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType, QuorumCommitmentPayloadType};
 use blockdata::transaction::special_transaction::TransactionType::{AssetLock, Classic, Coinbase, CreditWithdrawal, ProviderRegistration, ProviderUpdateRegistrar, ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment};
 use consensus::{Decodable, Encodable, encode};
-use SpecialTransactionPayloadHash;
+use ::{SpecialTransactionPayloadHash, VarInt};
 
 pub mod provider_registration;
 pub mod provider_update_service;
@@ -285,7 +285,12 @@ impl TransactionType {
     }
 
     /// Decodes the payload based on the transaction type.
-    pub fn consensus_decode<D: io::Read>(self, d: D) -> Result<Option<TransactionPayload>, encode::Error> {
+    pub fn consensus_decode<D: io::Read>(self, mut d: D) -> Result<Option<TransactionPayload>, encode::Error> {
+        let _len = match self {
+            Classic => { VarInt(0) }
+            _ => VarInt::consensus_decode(&mut d)?
+        };
+
         Ok(match self {
             Classic => { None }
             ProviderRegistration => { Some(ProviderRegistrationPayloadType(ProviderRegistrationPayload::consensus_decode(d)?))}

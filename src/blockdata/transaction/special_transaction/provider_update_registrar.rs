@@ -35,11 +35,11 @@ use std::io::Write;
 use hashes::Hash;
 use ::{Script};
 use consensus::{Decodable, Encodable, encode};
-use ::{ProTxHash};
 use ::{InputsHash};
 use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use bls_sig_utils::BLSPublicKey;
 use ::{PubkeyHash, SpecialTransactionPayloadHash};
+use Txid;
 
 /// A Provider Update Registrar Payload used in a Provider Update Registrar Special Transaction.
 /// This is used to update the base aspects a Masternode on the network.
@@ -48,7 +48,7 @@ use ::{PubkeyHash, SpecialTransactionPayloadHash};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProviderUpdateRegistrarPayload {
     version: u16,
-    pro_tx_hash: ProTxHash,
+    pro_tx_hash: Txid,
     operator_public_key: BLSPublicKey,
     voting_key_hash: PubkeyHash,
     operator_reward: u16,
@@ -89,7 +89,7 @@ impl Encodable for ProviderUpdateRegistrarPayload {
 impl Decodable for ProviderUpdateRegistrarPayload {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode(&mut d)?;
-        let pro_tx_hash = ProTxHash::consensus_decode(&mut d)?;
+        let pro_tx_hash = Txid::consensus_decode(&mut d)?;
         let operator_public_key = BLSPublicKey::consensus_decode(&mut d)?;
         let voting_key_hash = PubkeyHash::consensus_decode(&mut d)?;
         let operator_reward = u16::consensus_decode(&mut d)?;
