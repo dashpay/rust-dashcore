@@ -41,6 +41,7 @@ impl Default for TxOut {
 }
 
 impl TxOut {
+    /// Convenience method to get an output from an address
     pub fn new_from_address(value: u64, address: &Address) -> Self {
         TxOut {
             value,
@@ -48,6 +49,7 @@ impl TxOut {
         }
     }
 
+    /// Convenience method to get an output from a pubkey hash
     pub fn new_from_p2pkh(value: u64, pubkey_hash: &PubkeyHash) -> Self {
         TxOut {
             value,
@@ -55,6 +57,7 @@ impl TxOut {
         }
     }
 
+    /// Convenience method to get an output from a script hash
     pub fn new_from_p2sh(value: u64, script_hash: &ScriptHash) -> Self {
         TxOut {
             value,

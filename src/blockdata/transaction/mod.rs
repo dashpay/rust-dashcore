@@ -293,7 +293,8 @@ impl Transaction {
         Sighash::from_engine(engine)
     }
 
-    fn hash_inputs(&self) -> InputsHash {
+    /// This will hash all input outpoints
+    pub fn hash_inputs(&self) -> InputsHash {
         let mut enc = InputsHash::engine();
         for input in self.input.iter() {
             input.previous_output.consensus_encode(&mut enc).expect("engines don't error");
