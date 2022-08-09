@@ -20,7 +20,8 @@
 //! A TxOut is an output of a transaction.
 //!
 
-use Script;
+use ::{PubkeyHash, Script};
+use ::{Address, ScriptHash};
 
 /// A transaction output, which defines new coins to be created from old ones.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
@@ -36,6 +37,29 @@ pub struct TxOut {
 impl Default for TxOut {
     fn default() -> TxOut {
         TxOut { value: 0xffffffffffffffff, script_pubkey: Script::new() }
+    }
+}
+
+impl TxOut {
+    pub fn new_from_address(value: u64, address: &Address) -> Self {
+        TxOut {
+            value,
+            script_pubkey: address.script_pubkey()
+        }
+    }
+
+    pub fn new_from_p2pkh(value: u64, pubkey_hash: &PubkeyHash) -> Self {
+        TxOut {
+            value,
+            script_pubkey: Script::new_p2pkh(pubkey_hash)
+        }
+    }
+
+    pub fn new_from_p2sh(value: u64, script_hash: &ScriptHash) -> Self {
+        TxOut {
+            value,
+            script_pubkey: Script::new_p2sh(script_hash)
+        }
     }
 }
 

@@ -40,7 +40,7 @@ use std::convert::TryFrom;
 
 use hashes::{Hash, sha256d};
 
-use util::endian;
+use util::{endian};
 use blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature="bitcoinconsensus")] use blockdata::script;
 use blockdata::script::Script;
@@ -53,6 +53,7 @@ use hash_types::{Sighash, Txid, Wtxid};
 use ::{VarInt};
 use blockdata::transaction::hash_type::EcdsaSighashType;
 use blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
+use InputsHash;
 #[cfg(feature="bitcoinconsensus")] use OutPoint;
 
 #[cfg(doc)]
@@ -139,7 +140,10 @@ impl Transaction {
         self.output.consensus_encode(&mut enc).expect("engines don't error");
         self.lock_time.consensus_encode(&mut enc).expect("engines don't error");
         if let Some(payload) = &self.special_transaction_payload {
-            payload.consensus_encode(&mut enc).expect("engines don't error");
+            let mut buf = Vec::new();
+            payload.consensus_encode(&mut buf).expect("engines don't error");
+            // this is so we get the size of the payload
+            buf.consensus_encode(&mut enc).expect("engines don't error");
         }
         
         Txid::from_engine(enc)
@@ -209,7 +213,7 @@ impl Transaction {
             lock_time: self.lock_time,
             input: vec![],
             output: vec![],
-            special_transaction_payload: None
+            special_transaction_payload: self.special_transaction_payload.clone()
         };
         // Add all inputs necessary..
         if anyone_can_pay {
@@ -288,6 +292,33 @@ impl Transaction {
             .expect("engines don't error");
         Sighash::from_engine(engine)
     }
+
+    fn hash_inputs(&self) -> InputsHash {
+        let mut enc = InputsHash::engine();
+        for input in self.input.iter() {
+            input.previous_output.consensus_encode(&mut enc).expect("engines don't error");
+        }
+        InputsHash::from_engine(enc)
+    }
+
+    // fn legacy_sign_pubkey_hash_inputs_with_private_keys(&mut self, keys: HashMap<PubkeyHash, PrivateKey>) -> Result<(), sighash::Error> {
+    //     let cache = SighashCache::new(self);
+    //
+    //     for (index, input) in self.input.iter_mut().enumerate() {
+    //         let mut hash_inner = [0u8; 20];
+    //         hash_inner.copy_from_slice(&input.script_sig.as_bytes()[3..23]);
+    //         let pubkey_hash = PubkeyHash::from_inner(hash_inner);
+    //
+    //         let private_key = keys.get(pubkey_hash);
+    //         if let Some(key) = key {
+    //             let hash = cache.legacy_signature_hash(index,,EcdsaSighashType)?;
+    //             let signature = sign_hash(hash, private_key).map_err();
+    //             input.script_sig = Script::is_p2pkh()
+    //         } else {
+    //             return Err()
+    //         }
+    //     }
+    // }
 
     fn is_invalid_use_of_sighash_single(&self, sighash: u32, input_index: usize) -> bool {
         let ty = EcdsaSighashType::from_consensus(sighash);
@@ -511,7 +542,10 @@ impl Encodable for Transaction {
         }
         len += self.lock_time.consensus_encode(&mut s)?;
         if let Some(payload) = &self.special_transaction_payload {
-            len += payload.consensus_encode(s)?;
+            let mut buf = Vec::new();
+            payload.consensus_encode(&mut buf)?;
+            // this is so we get the size of the payload
+            len += buf.consensus_encode(&mut s)?;
         }
         Ok(len)
     }

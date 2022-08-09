@@ -381,7 +381,10 @@ impl<R: Deref<Target=Transaction>> SighashCache<R> {
 
         // nSpecialTransactionPayload
         if let Some(payload) = &self.tx.special_transaction_payload {
-            payload.consensus_encode(&mut writer)?;
+            let mut buf = Vec::new();
+            payload.consensus_encode(&mut buf)?;
+            // this is so we get the size of the payload
+            buf.consensus_encode(&mut writer)?;
         }
 
         // If the hash_type & 0x80 does not equal SIGHASH_ANYONECANPAY:

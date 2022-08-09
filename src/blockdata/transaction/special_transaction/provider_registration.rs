@@ -199,16 +199,8 @@ mod tests {
 
     #[test]
     fn test_collateral_provider_registration_transaction() {
-
         // This is a test for testnet
         let network = Network::Testnet;
-
-        // let seed_phrase = "enemy check owner stumble unaware debris suffer peanut good fabric bleak outside";
-        //
-        // let mnemonic = Mnemonic::parse_in_normalized(Language::English, seed_phrase).expect("expected mnemonic");
-        // let seed = mnemonic.to_seed("");
-        //
-        // assert_eq!(hex::ToHex(seed), "44cb0848958cb77898e464d18e3c70e2a437b343a894defa6010c5056a2b4a1caa01d04760871b578721b0a797fd1aacdfcd77f1870dddb34f1b204d5dbe07c0");
 
         let expected_transaction_bytes = hex::decode("0300010001ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58010000006b483045022100fe8fec0b3880bcac29614348887769b0b589908e3f5ec55a6cf478a6652e736502202f30430806a6690524e4dd599ba498e5ff100dea6a872ebb89c2fd651caa71ed012103d85b25d6886f0b3b8ce1eef63b720b518fad0b8e103eba4e85b6980bfdda2dfdffffffff018e37807e090000001976a9144ee1d4e5d61ac40a13b357ac6e368997079678c888ac00000000fd1201010000000000ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab580000000000000000000000000000ffff010205064e1f3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfad38a30fafe61575db40f05ab0a08d55119b0aad300001976a9144fbc8fb6e11e253d77e5a9c987418e89cf4a63d288ac3477990b757387cb0406168c2720acf55f83603736a314a37d01b135b873a27b411fb37e49c1ff2b8057713939a5513e6e711a71cff2e517e6224df724ed750aef1b7f9ad9ec612b4a7250232e1e400da718a9501e1d9a5565526e4b1ff68c028763").unwrap();
 
@@ -229,7 +221,7 @@ mod tests {
         let input_transaction_hash_value = InputsHash::from_hex("ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58").expect("expected to decode inputs hash");
         let input_address0 = "yQxPwSSicYgXiU22k4Ysq464VxRtgbnvpJ";
         let input_private_key0 = "cVfGhHY18Dx1EfZxFRkrvzVpB3wPtJGJWW6QvEtzMcfXSShoZyWV";
-        let output_address0 = "yTWY6DsS4HBGs2JwDtnvVcpykLkbvtjUte";
+        let output_address0 = Address::from_str("yTWY6DsS4HBGs2JwDtnvVcpykLkbvtjUte").expect("expected to be able to get output address");
         let collateral_address = Address::from_str("yeNVS6tFeQNXJVkjv6nm6gb7PtTERV5dGh").expect("expected to be able to get collateral address");
         let collateral_private_key = PrivateKey::from_wif("cTVm7EkgzNBPcwAKGYHfvyK8cyrRAC8n3SUUw8qjLqCg2rpcczfo").expect("expected valid base 58");
         let collateral_hash = Txid::from_hex("58ab8ba7dce591c745f8b78ee49156d13277fff20880855f7cda501705439aca").expect("expected to decode collateral hash");
@@ -293,7 +285,9 @@ mod tests {
 
         assert_eq!(expected_provider_registration_payload.payload_sig, signature.to_vec());
 
-        let transaction = Transaction {
+        assert_eq!(expected_transaction.txid(), tx_id);
+
+        let mut transaction = Transaction {
             version: 3,
             lock_time: 0,
             input: vec![TxIn{
@@ -302,7 +296,7 @@ mod tests {
                 sequence: 4294967295,
                 witness: Default::default()
             }],
-            output: vec![TxOut{ value: 0, script_pubkey: Default::default() }],
+            output: vec![TxOut::new_from_address(40777037710, &output_address0)],
             special_transaction_payload: Some(ProviderRegistrationPayloadType(ProviderRegistrationPayload {
                 version: provider_registration_payload_version,
                 provider_type,
@@ -319,9 +313,15 @@ mod tests {
                 payload_sig: signature.to_vec()
             }))
         };
+        // We are currently not supporting transaction signing
+        // So just assume signature is correct
+        transaction.input = expected_transaction.input.clone();
 
-        assert_eq!(transaction.special_transaction_payload, expected_transaction.special_transaction_payload);
-        //assert_eq!(transaction, expected_transaction);
+        assert_eq!(transaction.hash_inputs().to_hex(), inputs_hash_hex);
+
+        assert_eq!(transaction, expected_transaction);
+
+        assert_eq!(transaction.txid(), tx_id);
     }
 
 //
