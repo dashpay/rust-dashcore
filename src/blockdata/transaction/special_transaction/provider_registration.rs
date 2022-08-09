@@ -338,21 +338,6 @@ mod tests {
         let tx_id = Txid::from_hex("717d2d4a7d583da184872f4a07e35d897a1be9dd9875b4c017c81cf772e36694").expect("expected to decode tx id");
         let input_transaction_hash_value = InputsHash::from_hex("ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58").expect("expected to decode inputs hash");
 
-        // DSUTXO input0 = (DSUTXO){.hash = "02108f5f6f2743ce35ae58a94ab552381a17711ac54e9fd09358a0cb95beef79".hexToData.reverse.UInt256, .n = 0};
-// DSUTXO input1 = (DSUTXO){.hash = "02108f5f6f2743ce35ae58a94ab552381a17711ac54e9fd09358a0cb95beef79".hexToData.reverse.UInt256, .n = 1};
-// DSUTXO input2 = (DSUTXO){.hash = "74c41b22deefa3b3f1687f8cdaef64c69b84c2d172e872f408a4e3d86c5d929d".hexToData.reverse.UInt256, .n = 1};
-// let inputAddress0 = "yRdHYt6nG1ooGaXK7GEbwVMteLY3m4FbVT";
-// let inputAddress1 = "yWJqVcT5ot5GEcB8oYkHnnYcFG5pLiVVtd";
-// let inputAddress2 = "ygQ8tG3tboQ7oZEhtDBBYtquTmVyiDe6d5";
-// let outputAddress0 = "yRPMHZKviaWgqPaNP7XURemxtf7EyXNN1k";
-// let outputAddress1 = "yWcZ7ePLX3yLkC3Aj9KaZvxRQkkZC6VPL8";
-// let payoutAddress = "yRPMHZKviaWgqPaNP7XURemxtf7EyXNN1k";
-// DSKey *inputPrivateKey0 = [wallet privateKeyForAddress:inputAddress0 fromSeed:seed];
-// DSKey *inputPrivateKey1 = [wallet privateKeyForAddress:inputAddress1 fromSeed:seed];
-// DSKey *inputPrivateKey2 = [wallet privateKeyForAddress:inputAddress2 fromSeed:seed];
-//
-
-
         let input_address0 = "yQxPwSSicYgXiU22k4Ysq464VxRtgbnvpJ";
         let input_private_key0 = "cVfGhHY18Dx1EfZxFRkrvzVpB3wPtJGJWW6QvEtzMcfXSShoZyWV";
         let output_address0 = Address::from_str("yTWY6DsS4HBGs2JwDtnvVcpykLkbvtjUte").expect("expected to be able to get output address");
@@ -457,88 +442,4 @@ mod tests {
 
         assert_eq!(transaction.txid(), tx_id);
     }
-//
-// - (void)testNoCollateralProviderRegistrationTransaction {
-// DSChain *chain = [DSChain testnet];
-//
-// let seedPhrase = "enemy check owner stumble unaware debris suffer peanut good fabric bleak outside";
-//
-// NSData *seed = [[DSBIP39Mnemonic sharedInstance]
-// deriveKeyFromPhrase:seedPhrase
-// withPassphrase:nil];
-//
-// DSWallet *wallet = [DSWallet standardWalletWithSeedPhrase:seedPhrase setCreationDate:0 forChain:chain storeSeedPhrase:NO isTransient:YES];
-//
-// NSData *hexData = [NSData dataFromHexString:"030001000379efbe95cba05893d09f4ec51a71171a3852b54aa958ae35ce43276f5f8f1002000000006a473044022015df39c80ca8595cc197a0be692e9d158dc53bdbc8c6abca0d30c086f338c037022063becdb4f891436de3d2fb21cbf294e9dcb5c1a04bc0ba621867479e46d048cc0121030de5cb8989b6902d98017ab4d42b9244912006b0a1561c1d1ba0e2f3117a39adffffffff79efbe95cba05893d09f4ec51a71171a3852b54aa958ae35ce43276f5f8f1002010000006a47304402205c1bae23b459081b060de14133a20378243bebc05c8e2ed9acdabf6717ae7f9702204027ba0abbcce9ba5b2cb563cbff0190ba8f80e5f8fd6beb07c2c449f194c9be01210270b0f0b71472736a397975a84927314261be815d423006d1bcbc00cd693c3d81ffffffff9d925d6cd8e3a408f472e872d1c2849bc664efda8c7f68f1b3a3efde221bc474010000006a47304402203fa23ec33f91efa026b34e90b15a1fd64ff03242a6a92985b16a25b590e5bae002202d1429374b60b1180cd8b9bd0b432158524f5624d6c5d2d6db8c637c9961a21e0121024c0b09e261253dc40ed572c2d63d0b6cda89154583d75a5ab5a14fba81d70089ffffffff0200e87648170000001976a9143795a62df2eb953c1d08bc996d4089ee5d67e28b88ac438ca95a020000001976a91470ed8f5b5cfd4791c15b9d8a7f829cb6a98da18c88ac00000000d101000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffff010101014e1f3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfad38a30fafe61575db40f05ab0a08d55119b0aad300001976a9143795a62df2eb953c1d08bc996d4089ee5d67e28b88ac14b33f2231f0df567e0dfb12899c893f5d2d05f6dcc7d9c8c27b68a71191c75400"];
-// let txIdString = "717d2d4a7d583da184872f4a07e35d897a1be9dd9875b4c017c81cf772e36694";
-// DSUTXO input0 = (DSUTXO){.hash = "02108f5f6f2743ce35ae58a94ab552381a17711ac54e9fd09358a0cb95beef79".hexToData.reverse.UInt256, .n = 0};
-// DSUTXO input1 = (DSUTXO){.hash = "02108f5f6f2743ce35ae58a94ab552381a17711ac54e9fd09358a0cb95beef79".hexToData.reverse.UInt256, .n = 1};
-// DSUTXO input2 = (DSUTXO){.hash = "74c41b22deefa3b3f1687f8cdaef64c69b84c2d172e872f408a4e3d86c5d929d".hexToData.reverse.UInt256, .n = 1};
-// let inputAddress0 = "yRdHYt6nG1ooGaXK7GEbwVMteLY3m4FbVT";
-// let inputAddress1 = "yWJqVcT5ot5GEcB8oYkHnnYcFG5pLiVVtd";
-// let inputAddress2 = "ygQ8tG3tboQ7oZEhtDBBYtquTmVyiDe6d5";
-// let outputAddress0 = "yRPMHZKviaWgqPaNP7XURemxtf7EyXNN1k";
-// let outputAddress1 = "yWcZ7ePLX3yLkC3Aj9KaZvxRQkkZC6VPL8";
-// let payoutAddress = "yRPMHZKviaWgqPaNP7XURemxtf7EyXNN1k";
-// DSKey *inputPrivateKey0 = [wallet privateKeyForAddress:inputAddress0 fromSeed:seed];
-// DSKey *inputPrivateKey1 = [wallet privateKeyForAddress:inputAddress1 fromSeed:seed];
-// DSKey *inputPrivateKey2 = [wallet privateKeyForAddress:inputAddress2 fromSeed:seed];
-//
-// let checkInputAddress0 = [inputPrivateKey0 addressForChain:chain];
-// XCTAssertEqualObjects(checkInputAddress0, inputAddress0, "Private key does not match input address");
-//
-// let checkInputAddress1 = [inputPrivateKey1 addressForChain:chain];
-// XCTAssertEqualObjects(checkInputAddress1, inputAddress1, "Private key does not match input address");
-//
-// let checkInputAddress2 = [inputPrivateKey2 addressForChain:chain];
-// XCTAssertEqualObjects(checkInputAddress2, inputAddress2, "Private key does not match input address");
-//
-// DSAuthenticationKeysDerivationPath *providerOwnerKeysDerivationPath = [DSAuthenticationKeysDerivationPath providerOwnerKeysDerivationPathForWallet:wallet];
-// if (!providerOwnerKeysDerivationPath.hasExtendedPublicKey) {
-// [providerOwnerKeysDerivationPath generateExtendedPublicKeyFromSeed:seed storeUnderWalletUniqueId:nil];
-// }
-// DSAuthenticationKeysDerivationPath *providerOperatorKeysDerivationPath = [DSAuthenticationKeysDerivationPath providerOperatorKeysDerivationPathForWallet:wallet];
-// if (!providerOperatorKeysDerivationPath.hasExtendedPublicKey) {
-// [providerOperatorKeysDerivationPath generateExtendedPublicKeyFromSeed:seed storeUnderWalletUniqueId:nil];
-// }
-// DSAuthenticationKeysDerivationPath *providerVotingKeysDerivationPath = [DSAuthenticationKeysDerivationPath providerVotingKeysDerivationPathForWallet:wallet];
-// if (!providerVotingKeysDerivationPath.hasExtendedPublicKey) {
-// [providerVotingKeysDerivationPath generateExtendedPublicKeyFromSeed:seed storeUnderWalletUniqueId:nil];
-// }
-//
-// DSECDSAKey *ownerKey = (DSECDSAKey *)[providerOwnerKeysDerivationPath privateKeyAtIndex:0 fromSeed:seed];
-// UInt160 votingKeyHash = [providerVotingKeysDerivationPath publicKeyDataAtIndex:0].hash160;
-// UInt384 operatorKey = [providerOperatorKeysDerivationPath publicKeyDataAtIndex:0].UInt384;
-//
-// DSProviderRegistrationTransaction *providerRegistrationTransactionFromMessage = [[DSProviderRegistrationTransaction alloc] initWithMessage:hexData onChain:chain];
-//
-// XCTAssertEqualObjects(providerRegistrationTransactionFromMessage.toData, hexData, "Provider transaction does not match it's data");
-//
-// NSMutableData *scriptPayout = [NSMutableData data];
-// [scriptPayout appendScriptPubKeyForAddress:payoutAddress forChain:wallet.chain];
-//
-// UInt128 ipAddress = {.u32 = {0, 0, CFSwapInt32HostToBig(0xffff), 0}};
-// struct in_addr addrV4;
-// if (inet_aton(["1.1.1.1" UTF8String], &addrV4) != 0) {
-// uint32_t ip = ntohl(addrV4.s_addr);
-// ipAddress.u32[3] = CFSwapInt32HostToBig(ip);
-// }
-//
-// NSArray *inputHashes = @[uint256_obj(input0.hash), uint256_obj(input1.hash), uint256_obj(input2.hash)];
-// NSArray *inputIndexes = @[@(input0.n), @(input1.n), @(input2.n)];
-// NSArray *inputScripts = @[[NSData scriptPubKeyForAddress:inputAddress0 forChain:chain], [NSData scriptPubKeyForAddress:inputAddress1 forChain:chain], [NSData scriptPubKeyForAddress:inputAddress2 forChain:chain]];
-//
-// DSProviderRegistrationTransaction *providerRegistrationTransaction = [[DSProviderRegistrationTransaction alloc] initWithInputHashes:inputHashes inputIndexes:inputIndexes inputScripts:inputScripts inputSequences:@[@(TXIN_SEQUENCE), @(TXIN_SEQUENCE), @(TXIN_SEQUENCE)] outputAddresses:@[outputAddress0, outputAddress1] outputAmounts:@[@100000000000, @10110995523] providerRegistrationTransactionVersion:1 type:0 mode:0 collateralOutpoint:DSUTXO_ZERO ipAddress:ipAddress port:19999 ownerKeyHash:ownerKey.publicKeyData.hash160 operatorKey:operatorKey votingKeyHash:votingKeyHash operatorReward:0 scriptPayout:scriptPayout onChain:wallet.chain];
-//
-//
-// [providerRegistrationTransaction updateInputsHash];
-// [providerRegistrationTransaction signWithPrivateKeys:@[inputPrivateKey0, inputPrivateKey1, inputPrivateKey2]];
-//
-//
-// XCTAssertEqualObjects(providerRegistrationTransactionFromMessage.toData.hexString, providerRegistrationTransaction.toData.hexString, "Provider transaction does not match it's data");
-//
-// XCTAssertEqualObjects(uint256_reverse_hex(providerRegistrationTransactionFromMessage.txHash), txIdString, "Provider transaction hashes aren't correct");
-//
-// XCTAssertEqualObjects(uint256_reverse_hex(providerRegistrationTransaction.txHash), txIdString, "Provider transaction hashes aren't correct");
-// }
 }
