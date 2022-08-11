@@ -18,8 +18,8 @@
 //! It is defined in DIP4 https://github.com/dashpay/dips/blob/master/dip-0004.md.
 //!
 
-use std::io;
-use std::io::{Error, Write};
+use io;
+use io::{Error, Write};
 use ::{MerkleRootMasternodeList, MerkleRootQuorums};
 use consensus::{Decodable, Encodable, encode};
 

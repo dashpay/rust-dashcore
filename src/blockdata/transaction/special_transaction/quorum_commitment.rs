@@ -17,12 +17,16 @@
 //! It is defined in DIP6 https://github.com/dashpay/dips/blob/master/dip-0006.md.
 //!
 
-use std::io;
-use std::io::{Error, Write};
+use prelude::*;
+use io;
+use io::{Error, Write};
 use ::{QuorumHash};
 use bls_sig_utils::{BLSPublicKey, BLSSignature};
 use consensus::{Decodable, Encodable, encode};
 use QuorumVVecHash;
+
+
+
 
 /// A Quorum Finalization Commitment. It is described in the finalization section of DIP6:
 /// https://github.com/dashpay/dips/blob/master/dip-0006.md#6-finalization-phase

@@ -36,8 +36,8 @@
 
 //! The special transaction type used for Provider Update Revoking Transactions is 4.
 
-use std::io;
-use std::io::{Error, Write};
+use io;
+use io::{Error, Write};
 use hashes::Hash;
 use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use bls_sig_utils::BLSSignature;

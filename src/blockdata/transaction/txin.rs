@@ -20,7 +20,7 @@
 //! A TxIn is an input to a transaction.
 //!
 
-use std::io;
+use io;
 use blockdata::transaction::outpoint::OutPoint;
 use consensus::{Decodable, Encodable, encode};
 use ::{Script, Witness};

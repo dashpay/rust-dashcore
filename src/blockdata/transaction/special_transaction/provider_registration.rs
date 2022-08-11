@@ -34,8 +34,9 @@
 //! KeyIdVoting (renamed to voting_key_hash): This is the public key ID used for proposal voting.
 //! Votes signed with this key are valid while the masternode is in the registered set.
 
-use std::io;
-use std::io::{Error, Write};
+use prelude::*;
+use io;
+use io::{Error, Write};
 use hashes::Hash;
 use hashes::hex::ToHex;
 use ::{OutPoint, Script};

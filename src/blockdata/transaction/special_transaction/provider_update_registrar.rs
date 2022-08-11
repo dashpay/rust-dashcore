@@ -29,9 +29,10 @@
 //!
 //! The special transaction type used for ProUpRegTx Transactions is 3.
 
-use std::io::Error;
-use std::io;
-use std::io::Write;
+use prelude::*;
+use io::Error;
+use io;
+use io::Write;
 use hashes::Hash;
 use ::{Script};
 use consensus::{Decodable, Encodable, encode};

@@ -22,8 +22,8 @@
 //!
 //! The special transaction type used for CrWithTx Transactions is 9.
 
-use std::io;
-use std::io::{Error, Write};
+use io;
+use io::{Error, Write};
 use bls_sig_utils::BLSSignature;
 use consensus::{Decodable, Encodable, encode};
 use ::{QuorumHash};

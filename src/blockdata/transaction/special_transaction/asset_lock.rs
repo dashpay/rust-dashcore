@@ -22,8 +22,9 @@
 //!
 //! The special transaction type used for AssetLockTx Transactions is 8.
 
-use std::io;
-use std::io::{Error, Write};
+use prelude::*;
+use io;
+use io::{Error, Write};
 use consensus::{Decodable, Encodable, encode};
 use TxOut;
 

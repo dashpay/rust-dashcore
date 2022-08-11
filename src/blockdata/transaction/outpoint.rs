@@ -21,8 +21,9 @@
 //!
 
 #[cfg(feature = "std")] use std::error;
-use std::convert::TryInto;
-use std::{fmt, io};
+use core::convert::TryInto;
+use core::fmt;
+use io;
 use hashes::Hash;
 use hashes::hex::FromHex;
 use consensus::{Decodable, Encodable, encode};

@@ -36,7 +36,7 @@ use prelude::*;
 
 use ::{io};
 use core::{default::Default};
-use std::convert::TryFrom;
+use core::convert::TryFrom;
 
 use hashes::{Hash, sha256d};
 
@@ -145,7 +145,7 @@ impl Transaction {
             // this is so we get the size of the payload
             buf.consensus_encode(&mut enc).expect("engines don't error");
         }
-        
+
         Txid::from_engine(enc)
     }
 

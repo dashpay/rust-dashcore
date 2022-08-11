@@ -21,9 +21,9 @@
 //!
 
 use core::fmt::{Debug, Display, Formatter};
-use std::convert::TryFrom;
-use std::io;
-use std::io::{Error, Read, Write};
+use core::convert::TryFrom;
+use io;
+use io::{Error, Read, Write};
 use blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
 use blockdata::transaction::special_transaction::credit_withdrawal::CreditWithdrawalPayload;

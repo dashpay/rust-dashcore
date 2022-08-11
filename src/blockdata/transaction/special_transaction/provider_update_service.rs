@@ -35,8 +35,8 @@
 //! The special transaction type used for ProUpServTx Transactions is 2.
 
 
-use std::io;
-use std::io::{Error, Write};
+use io;
+use io::{Error, Write};
 use hashes::Hash;
 use ::{Script};
 use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
