@@ -52,7 +52,7 @@ impl Default for TxIn {
         TxIn {
             previous_output: OutPoint::default(),
             script_sig: Script::new(),
-            sequence: u32::MAX,
+            sequence: core::u32::MAX,
             witness: Witness::default(),
         }
     }
