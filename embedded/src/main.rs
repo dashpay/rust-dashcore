@@ -49,7 +49,7 @@ fn main() -> ! {
     let address = Address::p2wpkh(&pubkey, Network::Dash).unwrap();
     hprintln!("Address: {}", address).unwrap();
 
-    assert_eq!(address.to_string(), "bc1qpx9t9pzzl4qsydmhyt6ctrxxjd4ep549np9993".to_string());
+    assert_eq!(address.to_string(), "ds1qpx9t9pzzl4qsydmhyt6ctrxxjd4ep549jaqrtd".to_string());
     // exit QEMU
     // NOTE do not run this on hardware; it can corrupt OpenOCD state
     debug::exit(debug::EXIT_SUCCESS);
