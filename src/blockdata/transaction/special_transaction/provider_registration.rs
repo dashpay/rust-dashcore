@@ -116,7 +116,7 @@ impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
         len += self.provider_mode.consensus_encode(&mut s)?;
         len += self.collateral_outpoint.consensus_encode(&mut s)?;
         len += self.ip_address.consensus_encode(&mut s)?;
-        len += u16::from_be(self.port).consensus_encode(&mut s)?;
+        len += u16::swap_bytes(self.port).consensus_encode(&mut s)?;
         len += self.owner_key_hash.consensus_encode(&mut s)?;
         len += self.operator_public_key.consensus_encode(&mut s)?;
         len += self.voting_key_hash.consensus_encode(&mut s)?;
@@ -149,7 +149,7 @@ impl Decodable for ProviderRegistrationPayload {
         let provider_mode = u16::consensus_decode(&mut d)?;
         let collateral_outpoint = OutPoint::consensus_decode(&mut d)?;
         let ip_address = u128::consensus_decode(&mut d)?;
-        let port = u16::from_be(u16::consensus_decode(&mut d)?);
+        let port = u16::swap_bytes(u16::consensus_decode(&mut d)?);
         let owner_key_hash = PubkeyHash::consensus_decode(&mut d)?;
         let operator_public_key = BLSPublicKey::consensus_decode(&mut d)?;
         let voting_key_hash = PubkeyHash::consensus_decode(&mut d)?;
