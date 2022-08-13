@@ -67,7 +67,7 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateServicePayload {
         len += self.version.consensus_encode(&mut s)?;
         len += self.pro_tx_hash.consensus_encode(&mut s)?;
         len += self.ip_address.consensus_encode(&mut s)?;
-        len += u16::from_be(self.port).consensus_encode(&mut s)?;
+        len += u16::swap_bytes(self.port).consensus_encode(&mut s)?;
         len += self.script_payout.consensus_encode(&mut s)?;
         len += self.inputs_hash.consensus_encode(&mut s)?;
         Ok(len)
@@ -94,7 +94,7 @@ impl Decodable for ProviderUpdateServicePayload {
         let version = u16::consensus_decode(&mut d)?;
         let pro_tx_hash = Txid::consensus_decode(&mut d)?;
         let ip_address = u128::consensus_decode(&mut d)?;
-        let port = u16::from_be(u16::consensus_decode(&mut d)?);
+        let port = u16::swap_bytes(u16::consensus_decode(&mut d)?);
         let script_payout = Script::consensus_decode(&mut d)?;
         let inputs_hash = InputsHash::consensus_decode(&mut d)?;
         let payload_sig = BLSSignature::consensus_decode(&mut d)?;
