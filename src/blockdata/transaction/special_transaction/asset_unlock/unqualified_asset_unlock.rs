@@ -23,7 +23,7 @@
 //! The special transaction type used for CrWithTx Transactions is 9.
 
 use io::{Error, Write};
-use std::io;
+use io;
 use consensus::{Decodable, Encodable, encode};
 
 /// A Credit Withdrawal payload. This is contained as the payload of a credit withdrawal special

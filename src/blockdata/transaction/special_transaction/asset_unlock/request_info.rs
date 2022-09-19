@@ -26,6 +26,7 @@ use ::{io};
 use io::{Error, Write};
 use consensus::{Decodable, Encodable, encode};
 use ::{QuorumHash};
+use prelude::*;
 
 /// A Credit Withdrawal payload. This is contained as the payload of a credit withdrawal special
 /// transaction.
