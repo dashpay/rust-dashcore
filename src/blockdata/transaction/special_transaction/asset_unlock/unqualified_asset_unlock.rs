@@ -23,7 +23,7 @@
 //! The special transaction type used for AssetUnlockTx Transactions is 9.
 
 use io::{Error, Write};
-use std::convert::TryFrom;
+use core::convert::TryFrom;
 use ::{io, TxOut};
 use blockdata::transaction::special_transaction::TransactionType;
 use blockdata::transaction::special_transaction::TransactionType::AssetUnlock;
