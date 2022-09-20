@@ -30,6 +30,7 @@ use blockdata::transaction::special_transaction::TransactionType::AssetUnlock;
 use consensus::{Decodable, Encodable, encode};
 use consensus::encode::MAX_VEC_SIZE;
 use TxIn;
+use prelude::*;
 
 /// An Asset Unlock Base payload. This is the base payload of the Asset Unlock. In order to make
 /// it a full payload the request info should be added.
