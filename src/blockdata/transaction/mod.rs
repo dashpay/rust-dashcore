@@ -906,24 +906,6 @@ mod tests {
         assert_eq!(data.len(), 20);
         assert_eq!(&data, &pk_data.as_slice());
     }
-
-    #[test]
-    fn test_out_point_buffer() {
-        let tx_bytes = Vec::from_hex("ffff00000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000").unwrap();
-        let tx: Result<Transaction, _> = deserialize(&tx_bytes);
-        assert!(tx.is_ok());
-
-        let realtx = tx.unwrap();
-        let output_index = 0;
-        let out_point_buffer = realtx.out_point_buffer(output_index).unwrap();
-
-        let mut hex_string = String::new();
-        for &byte in out_point_buffer.iter() {
-            hex_string.push_str(&format!("{:02x}", byte));
-        }
-
-        assert_eq!(hex_string, realtx.txid().to_string() + "00000000");
-    }
 }
 
 #[cfg(all(test, feature = "unstable"))]
