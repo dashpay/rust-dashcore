@@ -17,6 +17,8 @@ use BlockHash;
 
 type BlsSignature = [u8; 96];
 
+type CycleHash = [u8; 32];
+
 #[derive(Clone, Eq, PartialEq)]
 // #[cfg_attr(feature = "use-serde", derive(Serialize, Deserialize))]
 /// Instant send lock is a mechanism used by the Dash network to
@@ -30,7 +32,7 @@ pub struct InstantLock {
     /// Transaction hash locked by this lock
     pub txid: Txid,
     /// Hash to figure out which quorum was used to sign this IS lock
-    pub cyclehash: BlockHash,
+    pub cyclehash: CycleHash,
     /// Quorum signature for this IS lock
     //#[cfg_attr(feature = "use-serde", serde(serialize_with = "<[_]>::serialize"))]
     //#[cfg_attr(feature = "use-serde", serde(with = "BigArray"))]
