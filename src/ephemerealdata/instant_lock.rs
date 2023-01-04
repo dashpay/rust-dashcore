@@ -11,7 +11,6 @@ use alloc::vec::Vec;
 #[cfg(any(feature = "std", test))]
 pub use std::vec::Vec;
 use blockdata::transaction::outpoint::OutPoint;
-use BlockHash;
 //#[cfg(feature = "use-serde")]
 //use serde_big_array::BigArray;
 
