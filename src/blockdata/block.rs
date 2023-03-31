@@ -27,11 +27,11 @@ use prelude::*;
 
 use core::fmt;
 
-use util;
+use ::{BlockHash, util};
 use util::Error::{BlockBadTarget, BlockBadProofOfWork};
 use util::hash::dash_merkle_root;
 use hashes::{Hash, HashEngine};
-use hash_types::{Wtxid, BlockHash, TxMerkleNode, WitnessMerkleNode, WitnessCommitment};
+use hash_types::{Wtxid, BlockHash256, TxMerkleNode, WitnessMerkleNode, WitnessCommitment};
 use util::uint::Uint256;
 use consensus::encode::Encodable;
 use network::constants::Network;
@@ -48,7 +48,7 @@ pub struct BlockHeader {
     /// The protocol version. Should always be 1.
     pub version: i32,
     /// Reference to the previous block in the chain.
-    pub prev_blockhash: BlockHash,
+    pub prev_blockhash: BlockHash256,
     /// The root hash of the merkle tree of transactions in the block.
     pub merkle_root: TxMerkleNode,
     /// The timestamp of the block, as claimed by the miner.
@@ -64,7 +64,14 @@ impl_consensus_encoding!(BlockHeader, version, prev_blockhash, merkle_root, time
 
 impl BlockHeader {
     /// Returns the block hash.
-    pub fn block_hash(&self) -> BlockHash {
+    pub fn block_hash(&self) -> BlockHash256 {
+        let mut engine = BlockHash256::engine();
+        self.consensus_encode(&mut engine).expect("engines don't error");
+        BlockHash256::from_engine(engine)
+    }
+
+    /// Returns the block hash.
+    pub fn block_hash_x11(&self) -> BlockHash {
         let mut engine = BlockHash::engine();
         self.consensus_encode(&mut engine).expect("engines don't error");
         BlockHash::from_engine(engine)
@@ -134,7 +141,7 @@ impl BlockHeader {
     }
 
     /// Checks that the proof-of-work for the block is valid, returning the block hash.
-    pub fn validate_pow(&self, required_target: &Uint256) -> Result<BlockHash, util::Error> {
+    pub fn validate_pow(&self, required_target: &Uint256) -> Result<BlockHash256, util::Error> {
         let target = &self.target();
         if target != required_target {
             return Err(BlockBadTarget);
@@ -173,7 +180,7 @@ impl_consensus_encoding!(Block, header, txdata);
 
 impl Block {
     /// Returns the block hash.
-    pub fn block_hash(&self) -> BlockHash {
+    pub fn block_hash(&self) -> BlockHash256 {
         self.header.block_hash()
     }
 

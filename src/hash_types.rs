@@ -24,6 +24,7 @@
 //!
 
 use hashes::{Hash, sha256, sha256d, hash160};
+use hash_x11;
 
 macro_rules! impl_hashencode {
     ($hashtype:ident) => {
@@ -44,7 +45,8 @@ macro_rules! impl_hashencode {
 
 hash_newtype!(Txid, sha256d::Hash, 32, doc="A dash transaction hash/transaction ID.");
 hash_newtype!(Wtxid, sha256d::Hash, 32, doc="A dash witness transaction ID.");
-hash_newtype!(BlockHash, sha256d::Hash, 32, doc="A dash block hash.");
+hash_newtype!(BlockHash, hash_x11::Hash, 32, doc="A dash block hash.");
+hash_newtype!(BlockHash256, sha256d::Hash, 32, doc="A dash block sha256 hash.");
 hash_newtype!(Sighash, sha256d::Hash, 32, doc="Hash of the transaction according to the signature algorithm");
 
 hash_newtype!(PubkeyHash, hash160::Hash, 20, doc="A hash of a public key.");
@@ -71,7 +73,7 @@ hash_newtype!(QuorumVVecHash, sha256d::Hash, 32, doc="A hash of a quorum verific
 
 impl_hashencode!(Txid);
 impl_hashencode!(Wtxid);
-impl_hashencode!(BlockHash);
+impl_hashencode!(BlockHash256);
 impl_hashencode!(Sighash);
 
 impl_hashencode!(PubkeyHash);

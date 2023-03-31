@@ -29,7 +29,7 @@ use hashes::sha256d;
 
 use network::constants;
 use consensus::encode::{self, Decodable, Encodable};
-use hash_types::{BlockHash, Txid, Wtxid};
+use hash_types::{BlockHash256, Txid, Wtxid};
 
 /// An inventory item.
 #[derive(PartialEq, Eq, Clone, Debug, Copy, Hash, PartialOrd, Ord)]
@@ -39,13 +39,13 @@ pub enum Inventory {
     /// Transaction
     Transaction(Txid),
     /// Block
-    Block(BlockHash),
+    Block(BlockHash256),
     /// Witness Transaction by Wtxid
     WTx(Wtxid),
     /// Witness Transaction
     WitnessTransaction(Txid),
     /// Witness Block
-    WitnessBlock(BlockHash),
+    WitnessBlock(BlockHash256),
     /// Unknown inventory type
     Unknown {
         /// The inventory item type.
@@ -104,9 +104,9 @@ pub struct GetBlocksMessage {
     /// Locator hashes --- ordered newest to oldest. The remote peer will
     /// reply with its longest known chain, starting from a locator hash
     /// if possible and block 1 otherwise.
-    pub locator_hashes: Vec<BlockHash>,
+    pub locator_hashes: Vec<BlockHash256>,
     /// References the block to stop at, or zero to just fetch the maximum 500 blocks
-    pub stop_hash: BlockHash,
+    pub stop_hash: BlockHash256,
 }
 
 /// The `getheaders` message
@@ -117,14 +117,14 @@ pub struct GetHeadersMessage {
     /// Locator hashes --- ordered newest to oldest. The remote peer will
     /// reply with its longest known chain, starting from a locator hash
     /// if possible and block 1 otherwise.
-    pub locator_hashes: Vec<BlockHash>,
+    pub locator_hashes: Vec<BlockHash256>,
     /// References the header to stop at, or zero to just fetch the maximum 2000 headers
-    pub stop_hash: BlockHash
+    pub stop_hash: BlockHash256
 }
 
 impl GetBlocksMessage {
     /// Construct a new `getblocks` message
-    pub fn new(locator_hashes: Vec<BlockHash>, stop_hash: BlockHash) -> GetBlocksMessage {
+    pub fn new(locator_hashes: Vec<BlockHash256>, stop_hash: BlockHash256) -> GetBlocksMessage {
         GetBlocksMessage {
             version: constants::PROTOCOL_VERSION,
             locator_hashes,
@@ -137,7 +137,7 @@ impl_consensus_encoding!(GetBlocksMessage, version, locator_hashes, stop_hash);
 
 impl GetHeadersMessage {
     /// Construct a new `getheaders` message
-    pub fn new(locator_hashes: Vec<BlockHash>, stop_hash: BlockHash) -> GetHeadersMessage {
+    pub fn new(locator_hashes: Vec<BlockHash256>, stop_hash: BlockHash256) -> GetHeadersMessage {
         GetHeadersMessage {
             version: constants::PROTOCOL_VERSION,
             locator_hashes,

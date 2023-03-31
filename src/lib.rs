@@ -111,6 +111,8 @@ pub extern crate anyhow;
 #[cfg(target_pointer_width = "16")]
 compile_error!("rust-bitcoin cannot be used on 16-bit architectures");
 
+pub mod hash_x11;
+
 #[cfg(test)]
 #[macro_use]
 mod test_macros;
