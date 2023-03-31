@@ -27,7 +27,6 @@ use prelude::*;
 use core::default::Default;
 
 use hashes::hex::{self, HexIterator};
-use hashes::sha256d;
 use blockdata::opcodes;
 use blockdata::script;
 use blockdata::block::{Block, BlockHeader};
@@ -36,7 +35,7 @@ use blockdata::transaction::txin::TxIn;
 use blockdata::transaction::txout::TxOut;
 use blockdata::witness::Witness;
 use network::constants::Network;
-use Transaction;
+use ::{hash_x11, Transaction};
 use util::uint::Uint256;
 
 /// The maximum allowable sequence number
@@ -125,7 +124,7 @@ fn dash_genesis_tx() -> Transaction {
 /// Constructs and returns the genesis block
 pub fn genesis_block(network: Network) -> Block {
     let txdata = vec![dash_genesis_tx()];
-    let hash: sha256d::Hash = txdata[0].txid().into();
+    let hash: hash_x11::Hash = txdata[0].txid().into();
     let merkle_root = hash.into();
     match network {
         Network::Dash => {

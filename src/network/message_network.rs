@@ -23,13 +23,12 @@
 
 use prelude::*;
 
-use io;
+use ::{hash_x11, io};
 
 use network::address::Address;
 use network::constants::{self, ServiceFlags};
 use consensus::{Encodable, Decodable, ReadExt};
 use consensus::encode;
-use hashes::sha256d;
 
 /// Some simple messages
 
@@ -141,7 +140,7 @@ pub struct Reject {
     /// reason of rejectection
     pub reason: Cow<'static, str>,
     /// reference to rejected item
-    pub hash: sha256d::Hash
+    pub hash: hash_x11::Hash
 }
 
 impl_consensus_encoding!(Reject, message, ccode, reason, hash);
@@ -153,7 +152,7 @@ mod tests {
     use super::RejectReason;
 
     use hashes::hex::FromHex;
-    use hashes::sha256d::Hash;
+    use hash_x11::Hash;
     use network::constants::ServiceFlags;
 
     use consensus::encode::{deserialize, serialize};

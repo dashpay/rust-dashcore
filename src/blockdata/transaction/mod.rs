@@ -38,7 +38,7 @@ use ::{io};
 use core::{default::Default};
 use core::convert::TryFrom;
 
-use hashes::{Hash, sha256d};
+use hashes::{Hash};
 
 use util::{endian};
 use blockdata::constants::WITNESS_SCALE_FACTOR;
@@ -53,7 +53,7 @@ use hash_types::{Sighash, Txid, Wtxid};
 use ::{VarInt};
 use blockdata::transaction::hash_type::EcdsaSighashType;
 use blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
-use InputsHash;
+use ::{hash_x11, InputsHash};
 #[cfg(feature="bitcoinconsensus")] use OutPoint;
 
 #[cfg(doc)]
@@ -117,7 +117,7 @@ impl Transaction {
     /// Computes a "normalized TXID" which does not include any signatures.
     /// This gives a way to identify a transaction that is "the same" as
     /// another in the sense of having same inputs and outputs.
-    pub fn ntxid(&self) -> sha256d::Hash {
+    pub fn ntxid(&self) -> hash_x11::Hash {
         let cloned_tx = Transaction {
             version: self.version,
             lock_time: self.lock_time,

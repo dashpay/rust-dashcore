@@ -420,7 +420,7 @@ mod test {
     use network::constants::ServiceFlags;
     use consensus::encode::{deserialize, deserialize_partial, serialize};
     use hashes::hex::FromHex;
-    use hashes::sha256d::Hash;
+    use hash_x11::Hash;
     use hashes::Hash as HashTrait;
     use network::address::{Address, AddrV2, AddrV2Message};
     use super::message_network::{Reject, RejectReason, VersionMessage};

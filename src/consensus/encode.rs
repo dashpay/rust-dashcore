@@ -36,7 +36,7 @@ use core::{fmt, mem, u32, convert::From};
 #[cfg(feature = "std")] use std::error;
 
 use hashes::{sha256d, Hash, sha256, hash160};
-use hash_types::{BlockHash256, FilterHash, TxMerkleNode, FilterHeader};
+use hash_types::{BlockHash, FilterHash, TxMerkleNode, FilterHeader};
 
 use io::{self, Cursor, Read};
 
@@ -49,7 +49,7 @@ use blockdata::transaction::{txout::TxOut, Transaction, txin::TxIn, outpoint::Ou
 use blockdata::transaction::special_transaction::TransactionType;
 #[cfg(feature = "std")]
 use network::{message_blockdata::Inventory, address::{Address, AddrV2Message}};
-use Script;
+use ::{hash_x11, Script};
 
 /// Encoding error
 #[derive(Debug)]
@@ -608,7 +608,7 @@ macro_rules! impl_vec {
         }
     }
 }
-impl_vec!(BlockHash256);
+impl_vec!(BlockHash);
 impl_vec!(FilterHash);
 impl_vec!(FilterHeader);
 impl_vec!(TxMerkleNode);
@@ -792,7 +792,19 @@ impl Decodable for sha256d::Hash {
     }
 }
 
+impl Decodable for hash_x11::Hash {
+    fn consensus_decode<D: io::Read>(d: D) -> Result<Self, Error> {
+        Ok(Self::from_inner(<<Self as Hash>::Inner>::consensus_decode(d)?))
+    }
+}
+
 impl Encodable for sha256::Hash {
+    fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {
+        self.into_inner().consensus_encode(s)
+    }
+}
+
+impl Encodable for hash_x11::Hash {
     fn consensus_encode<S: io::Write>(&self, s: S) -> Result<usize, io::Error> {
         self.into_inner().consensus_encode(s)
     }
@@ -822,7 +834,7 @@ mod tests {
     use super::*;
     use core::{mem::{self, discriminant}, fmt};
     use super::{deserialize, serialize, Error, CheckedData, VarInt};
-    use super::{Transaction, BlockHash256, FilterHash, TxMerkleNode, TxOut, TxIn};
+    use super::{Transaction, BlockHash, FilterHash, TxMerkleNode, TxOut, TxIn};
     use consensus::{Encodable, deserialize_partial, Decodable};
     use util::endian::{u64_to_array_le, u32_to_array_le, u16_to_array_le};
     use secp256k1::rand::{thread_rng, Rng};
@@ -1027,7 +1039,7 @@ mod tests {
         assert_eq!(discriminant(&err), discriminant(&rand_io_err));
 
         test_len_is_max_vec::<u8>();
-        test_len_is_max_vec::<BlockHash256>();
+        test_len_is_max_vec::<BlockHash>();
         test_len_is_max_vec::<FilterHash>();
         test_len_is_max_vec::<TxMerkleNode>();
         test_len_is_max_vec::<Transaction>();

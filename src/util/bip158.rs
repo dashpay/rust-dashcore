@@ -52,7 +52,7 @@ use core::fmt::{self, Display, Formatter};
 use core::cmp::{self, Ordering};
 
 use hashes::{Hash, siphash24};
-use hash_types::{BlockHash256, FilterHash, FilterHeader};
+use hash_types::{BlockHash, FilterHash, FilterHeader};
 
 use blockdata::block::Block;
 use blockdata::script::Script;
@@ -137,13 +137,13 @@ impl BlockFilter {
     }
 
     /// match any query pattern
-    pub fn match_any(&self, block_hash: &BlockHash256, query: &mut dyn Iterator<Item=&[u8]>) -> Result<bool, Error> {
+    pub fn match_any(&self, block_hash: &BlockHash, query: &mut dyn Iterator<Item=&[u8]>) -> Result<bool, Error> {
         let filter_reader = BlockFilterReader::new(block_hash);
         filter_reader.match_any(&mut Cursor::new(self.content.as_slice()), query)
     }
 
     /// match all query pattern
-    pub fn match_all(&self, block_hash: &BlockHash256, query: &mut dyn Iterator<Item=&[u8]>) -> Result<bool, Error> {
+    pub fn match_all(&self, block_hash: &BlockHash, query: &mut dyn Iterator<Item=&[u8]>) -> Result<bool, Error> {
         let filter_reader = BlockFilterReader::new(block_hash);
         filter_reader.match_all(&mut Cursor::new(self.content.as_slice()), query)
     }
@@ -210,7 +210,7 @@ pub struct BlockFilterReader {
 
 impl BlockFilterReader {
     /// Create a block filter reader
-    pub fn new(block_hash: &BlockHash256) -> BlockFilterReader {
+    pub fn new(block_hash: &BlockHash) -> BlockFilterReader {
         let block_hash_as_int = block_hash.into_inner();
         let k0 = endian::slice_to_u64_le(&block_hash_as_int[0..8]);
         let k1 = endian::slice_to_u64_le(&block_hash_as_int[8..16]);
@@ -513,7 +513,7 @@ impl<'a> BitStreamWriter<'a> {
 mod test {
     use io::Cursor;
 
-    use hash_types::BlockHash256;
+    use hash_types::BlockHash;
     use hashes::hex::FromHex;
 
     use super::*;
@@ -532,7 +532,7 @@ mod test {
 
         let testdata = serde_json::from_str::<Value>(data).unwrap().as_array().unwrap().clone();
         for t in testdata.iter().skip(1) {
-            let block_hash = BlockHash256::from_hex(&t.get(1).unwrap().as_str().unwrap()).unwrap();
+            let block_hash = BlockHash::from_hex(&t.get(1).unwrap().as_str().unwrap()).unwrap();
             let block: Block = deserialize(&Vec::from_hex(&t.get(2).unwrap().as_str().unwrap()).unwrap()).unwrap();
             assert_eq!(block.block_hash(), block_hash);
             let scripts = t.get(3).unwrap().as_array().unwrap();

@@ -27,18 +27,17 @@ use prelude::*;
 
 use core::fmt;
 
-use ::{BlockHash, util};
+use ::{util, BlockHash, VarInt};
 use util::Error::{BlockBadTarget, BlockBadProofOfWork};
 use util::hash::dash_merkle_root;
 use hashes::{Hash, HashEngine};
-use hash_types::{Wtxid, BlockHash256, TxMerkleNode, WitnessMerkleNode, WitnessCommitment};
+use hash_types::{Wtxid, TxMerkleNode, WitnessMerkleNode, WitnessCommitment};
 use util::uint::Uint256;
 use consensus::encode::Encodable;
 use network::constants::Network;
 use blockdata::transaction::Transaction;
 use blockdata::constants::{max_target, WITNESS_SCALE_FACTOR};
 use blockdata::script;
-use VarInt;
 
 /// A block header, which contains all the block's information except
 /// the actual transactions
@@ -48,7 +47,7 @@ pub struct BlockHeader {
     /// The protocol version. Should always be 1.
     pub version: i32,
     /// Reference to the previous block in the chain.
-    pub prev_blockhash: BlockHash256,
+    pub prev_blockhash: BlockHash,
     /// The root hash of the merkle tree of transactions in the block.
     pub merkle_root: TxMerkleNode,
     /// The timestamp of the block, as claimed by the miner.
@@ -64,14 +63,7 @@ impl_consensus_encoding!(BlockHeader, version, prev_blockhash, merkle_root, time
 
 impl BlockHeader {
     /// Returns the block hash.
-    pub fn block_hash(&self) -> BlockHash256 {
-        let mut engine = BlockHash256::engine();
-        self.consensus_encode(&mut engine).expect("engines don't error");
-        BlockHash256::from_engine(engine)
-    }
-
-    /// Returns the block hash.
-    pub fn block_hash_x11(&self) -> BlockHash {
+    pub fn block_hash(&self) -> BlockHash {
         let mut engine = BlockHash::engine();
         self.consensus_encode(&mut engine).expect("engines don't error");
         BlockHash::from_engine(engine)
@@ -141,7 +133,7 @@ impl BlockHeader {
     }
 
     /// Checks that the proof-of-work for the block is valid, returning the block hash.
-    pub fn validate_pow(&self, required_target: &Uint256) -> Result<BlockHash256, util::Error> {
+    pub fn validate_pow(&self, required_target: &Uint256) -> Result<BlockHash, util::Error> {
         let target = &self.target();
         if target != required_target {
             return Err(BlockBadTarget);
@@ -173,14 +165,14 @@ pub struct Block {
     /// The block header
     pub header: BlockHeader,
     /// List of transactions contained in the block
-    pub txdata: Vec<Transaction>
+    pub txdata: Vec<Transaction>,
 }
 
 impl_consensus_encoding!(Block, header, txdata);
 
 impl Block {
     /// Returns the block hash.
-    pub fn block_hash(&self) -> BlockHash256 {
+    pub fn block_hash(&self) -> BlockHash {
         self.header.block_hash()
     }
 
@@ -211,7 +203,7 @@ impl Block {
 
         // Commitment is in the last output that starts with magic bytes.
         if let Some(pos) = coinbase.output.iter()
-            .rposition(|o| o.script_pubkey.len () >= 38 && o.script_pubkey[0..6] ==  MAGIC)
+            .rposition(|o| o.script_pubkey.len() >= 38 && o.script_pubkey[0..6] == MAGIC)
         {
             let commitment = WitnessCommitment::from_slice(&coinbase.output[pos].script_pubkey.as_bytes()[6..38]).unwrap();
             // Witness reserved value is in coinbase input witness.

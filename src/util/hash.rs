@@ -114,9 +114,9 @@ where
 #[cfg(test)]
 mod tests {
     use consensus::encode::deserialize;
-    use hashes::sha256d;
 
     use blockdata::block::Block;
+    use hash_x11;
     use super::*;
 
     #[test]
@@ -128,7 +128,7 @@ mod tests {
 
         let hashes_iter = block.txdata.iter().map(|obj| obj.txid().as_hash());
 
-        let mut hashes_array: [sha256d::Hash; 15] = [Default::default(); 15];
+        let mut hashes_array: [hash_x11::Hash; 15] = [Default::default(); 15];
         for (i, hash) in hashes_iter.clone().enumerate() {
             hashes_array[i] = hash;
         }
