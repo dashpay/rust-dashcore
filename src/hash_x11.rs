@@ -1,8 +1,27 @@
+// Rust Dash Library
+// Originally written in 2014 by
+//     Andrew Poelstra <apoelstra@wpsoftware.net>
+//     For Bitcoin
+// Updated for Dash in 2022 by
+//     The Dash Core Developers
+//
+// To the extent possible under law, the author(s) have dedicated all
+// copyright and related and neighboring rights to this software to
+// the public domain worldwide. This software is distributed without
+// any warranty.
+//
+// You should have received a copy of the CC0 Public Domain Dedication
+// along with this software.
+// If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+//
+
+//! An implementation of a hash engine to support the X1 hash,
+//! which is a wrapper around the rs-x11-hash library.
+
 use core::{str};
 use std::io;
 use hashes::Error;
 use hashes::{Hash as HashTrait, HashEngine as EngineTrait, hex};
-use consensus;
 
 hex_fmt_impl!(Display, Hash);
 hex_fmt_impl!(LowerHex, Hash);
@@ -10,6 +29,7 @@ index_impl!(Hash);
 serde_impl!(Hash, 32);
 borrow_slice_impl!(Hash);
 
+/// Output of the X11 hash function
 #[derive(Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord, Hash, Debug)]
 #[repr(transparent)]
 pub struct Hash(
@@ -28,7 +48,6 @@ impl HashTrait for Hash {
     type Inner = [u8; 32];
 
     fn from_engine(e: Self::Engine) -> Self {
-        println!("from_engine");
         Hash(e.midstate().into_inner())
     }
 
@@ -57,9 +76,9 @@ impl HashTrait for Hash {
     }
 }
 
+/// A hashing engine of X11 algorithm, which bytes can be serialized into
 #[derive(Default, Clone)]
 pub struct HashEngine {
-    // h: [u8; 32],
     buf: Vec<u8>,
     length: usize,
 }
@@ -68,7 +87,6 @@ impl EngineTrait for HashEngine {
     type MidState = Midstate;
 
     fn midstate(&self) -> Self::MidState {
-        println!("midstate");
         let md: Vec<u8> = rs_x11_hash::get_x11_hash(self.buf.as_slice());
         let mut h: [u8; 32] = [0; 32];
         for n in 0..32 {
@@ -89,6 +107,7 @@ impl EngineTrait for HashEngine {
     }
 }
 
+/// Output of the X11 hash function
 #[derive(Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord, Hash)]
 pub struct Midstate(pub [u8; 32]);
 
