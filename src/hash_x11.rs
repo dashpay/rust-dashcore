@@ -2,7 +2,6 @@ use core::{str};
 use std::io;
 use hashes::Error;
 use hashes::{Hash as HashTrait, HashEngine as EngineTrait, hex};
-use ::{BlockHeader};
 use consensus;
 
 hex_fmt_impl!(Display, Hash);
