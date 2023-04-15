@@ -13,7 +13,7 @@ pub type QuorumHash = CryptoHash;
 
 #[derive(Clone, PartialEq, Eq, Debug, Ord, PartialOrd)]
 #[cfg_attr(feature = "use-serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "use-bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct CryptoHash(pub [u8; 32]);
 
 impl TryFrom<&str> for CryptoHash {
