@@ -1,9 +1,7 @@
 use std::convert::{TryFrom, TryInto};
 use hashes::hex::FromHex;
 use consensus::encode;
-use crate::dashcore::hashes::hex::FromHex;
 use crate::Error;
-use crate::Error::ConvertToFixedSizeError;
 
 pub type ProTxHash = CryptoHash;
 
