@@ -106,7 +106,7 @@ pub enum Error {
     /// The script type was non standard
     NonStandardScriptPayout(Script),
     /// Hex error
-    Hex(hashes::Error)
+    Hex(hashes::hex::Error)
 }
 
 impl fmt::Display for Error {
@@ -153,7 +153,9 @@ impl ::std::error::Error for Error {
             | Error::UnsupportedSegwitFlag(..)
             | Error::UnknownSpecialTransactionType(..)
             | Error::WrongSpecialTransactionPayloadConversion{..}
-            | Error::NonStandardScriptPayout(..)=> None,
+            | Error::NonStandardScriptPayout(..)
+            | Error::InvalidVectorSize { .. }
+            | Error::Hex(_) => None,
         }
     }
 }
