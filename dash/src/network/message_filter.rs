@@ -1,9 +1,10 @@
-//! Bitcoin Client Side Block Filtering network messages.
+//! Dash Client Side Block Filtering network messages.
 //!
 //! This module describes BIP157 Client Side Block Filtering network messages.
 //!
 
-use hash_types::{BlockHash, FilterHash, FilterHeader};
+use crate::hash_types::{BlockHash, FilterHash, FilterHeader};
+use crate::internal_macros::impl_consensus_encoding;
 
 /// getcfilters message
 #[derive(PartialEq, Eq, Clone, Debug)]

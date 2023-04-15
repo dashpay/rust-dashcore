@@ -10,7 +10,7 @@ use core::fmt::{Debug, Formatter};
 use alloc::vec::Vec;
 #[cfg(any(feature = "std", test))]
 pub use std::vec::Vec;
-use blockdata::transaction::outpoint::OutPoint;
+use blockdata::transaction::OutPoint;
 //#[cfg(feature = "use-serde")]
 //use serde_big_array::BigArray;
 

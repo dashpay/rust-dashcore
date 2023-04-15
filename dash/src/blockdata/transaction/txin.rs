@@ -21,7 +21,7 @@
 //!
 
 use io;
-use blockdata::transaction::outpoint::OutPoint;
+use blockdata::transaction::OutPoint;
 use consensus::{Decodable, Encodable, encode};
 use ::{Script, Witness};
 

@@ -28,7 +28,7 @@
 
 pub mod txin;
 pub mod txout;
-pub mod outpoint;
+mod outpoint;
 pub mod hash_type;
 pub mod special_transaction;
 
@@ -54,6 +54,7 @@ use ::{VarInt};
 use blockdata::transaction::hash_type::EcdsaSighashType;
 use blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
 use InputsHash;
+pub use outpoint::*;
 #[cfg(feature="bitcoinconsensus")] use OutPoint;
 
 #[cfg(doc)]

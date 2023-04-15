@@ -20,6 +20,8 @@
 
 pub mod encode;
 pub mod params;
+#[cfg(feature = "serde")]
+pub mod serde;
 
 pub use self::encode::{Encodable, Decodable, WriteExt, ReadExt};
 pub use self::encode::{serialize, deserialize, deserialize_partial};

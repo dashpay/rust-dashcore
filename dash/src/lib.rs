@@ -41,133 +41,110 @@
 //!                 deserialization.
 //! * `secp-lowmemory` - optimizations for low-memory devices.
 //! * `no-std` - enables additional features required for this crate to be usable
-//!              without std. Does **not** disable `std`. Depends on `hashbrown`
-//!              and `core2`.
+//!              without std. Does **not** disable `std`. Depends on `core2`.
 //!
 
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
-
-// Experimental features we need
-#![cfg_attr(all(test, feature = "unstable"), feature(test))]
-
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
+// Experimental features we need.
+#![cfg_attr(bench, feature(test))]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 // Coding conventions
-#![forbid(unsafe_code)]
-#![deny(non_upper_case_globals)]
-#![deny(non_camel_case_types)]
-#![deny(non_snake_case)]
-#![deny(unused_mut)]
-#![deny(dead_code)]
-#![deny(unused_imports)]
-#![deny(missing_docs)]
-#![deny(unused_must_use)]
-
-// #[rustversion::since(1.48)]
-// #[deny(rustdoc::broken_intra_doc_links)]
+#![warn(missing_docs)]
+// Instead of littering the codebase for non-fuzzing code just globally allow.
+#![cfg_attr(fuzzing, allow(dead_code, unused_imports))]
 
 #[cfg(not(any(feature = "std", feature = "no-std")))]
 compile_error!("at least one of the `std` or `no-std` features must be enabled");
 
 // Disable 16-bit support at least for now as we can't guarantee it yet.
 #[cfg(target_pointer_width = "16")]
-compile_error!("rust-bitcoin currently only supports architectures with pointers wider
-                than 16 bits, let us know if you want 16-bit support. Note that we do
-                NOT guarantee that we will implement it!");
+compile_error!(
+    "rust-bitcoin currently only supports architectures with pointers wider than 16 bits, let us
+    know if you want 16-bit support. Note that we do NOT guarantee that we will implement it!"
+);
 
-#[cfg(feature = "no-std")]
+#[cfg(bench)]
+extern crate test;
+
 #[macro_use]
 extern crate alloc;
-#[cfg(feature = "no-std")]
-extern crate core2;
-
-// #[cfg(feature = "use-serde")]
-// extern crate serde_big_array;
-
-#[cfg(any(feature = "std", test))]
-extern crate core; // for Rust 1.29 and no-std tests
-
-// Re-exported dependencies.
-#[macro_use] pub extern crate dashcore_hashes as hashes;
-pub extern crate secp256k1;
-pub extern crate bech32;
-
-#[cfg(feature = "no-std")]
-extern crate hashbrown;
 
 #[cfg(feature = "base64")]
-#[cfg_attr(docsrs, doc(cfg(feature = "base64")))]
 pub extern crate base64;
+pub extern crate bech32;
+#[cfg(feature = "bitcoinconsensus")]
+pub extern crate bitcoinconsensus;
+pub extern crate dashcore_hashes as hashes;
+pub extern crate secp256k1;
 
-#[cfg(feature="bitcoinconsensus")] extern crate bitcoinconsensus;
-#[cfg(feature = "serde")] #[macro_use] extern crate serde;
-#[cfg(all(test, feature = "serde"))] extern crate serde_json;
-#[cfg(all(test, feature = "serde"))] extern crate serde_test;
-#[cfg(all(test, feature = "serde"))] extern crate bincode;
-#[cfg(all(test, feature = "unstable"))] extern crate test;
-
-#[cfg(feature = "signer")]
-pub extern crate anyhow;
-
-#[cfg(target_pointer_width = "16")]
-compile_error!("rust-bitcoin cannot be used on 16-bit architectures");
+#[cfg(feature = "serde")]
+#[macro_use]
+extern crate actual_serde as serde;
 
 #[cfg(test)]
 #[macro_use]
 mod test_macros;
-#[macro_use]
 mod internal_macros;
+mod parse;
 #[cfg(feature = "serde")]
 mod serde_utils;
 
 #[macro_use]
 pub mod network;
+pub mod address;
+pub mod amount;
+pub mod base58;
+pub mod bip152;
+pub mod bip158;
+pub mod bip32;
 pub mod blockdata;
-pub mod util;
 pub mod consensus;
+// Private until we either make this a crate or flatten it - still to be decided.
+pub(crate) mod crypto;
+pub mod error;
 pub mod hash_types;
-pub mod policy;
-pub mod ephemerealdata;
-pub mod bls_sig_utils;
 pub mod merkle_tree;
-pub mod sign_message;
+pub mod policy;
+pub mod pow;
 pub mod psbt;
+pub mod sign_message;
+pub mod string;
+pub mod taproot;
+pub mod util;
 
-#[cfg(feature="signer")] pub mod signer;
-
-pub use hash_types::*;
-pub use blockdata::block::Block;
-pub use blockdata::block::BlockHeader;
-pub use blockdata::script::Script;
-pub use blockdata::transaction::Transaction;
-pub use blockdata::transaction::txin::TxIn;
-pub use blockdata::transaction::txout::TxOut;
-pub use blockdata::transaction::outpoint::OutPoint;
-pub use blockdata::transaction::hash_type::EcdsaSighashType;
-pub use blockdata::witness::Witness;
-pub use ephemerealdata::instant_lock::InstantLock;
-pub use consensus::encode::VarInt;
-pub use network::constants::Network;
-pub use Error;
-pub use address::Address;
-pub use address::AddressType;
-pub use amount::Amount;
-pub use amount::Denomination;
-pub use amount::SignedAmount;
-pub use merkleblock::MerkleBlock;
-pub use sighash::SchnorrSighashType;
-pub use types::*;
-
-pub use ecdsa::{self, EcdsaSig, EcdsaSigError};
-pub use schnorr::{self, SchnorrSig, SchnorrSigError};
-pub use key::{PrivateKey, PublicKey, XOnlyPublicKey, KeyPair};
-#[allow(deprecated)]
-pub use blockdata::transaction::hash_type::SigHashType;
-
+// May depend on crate features and we don't want to bother with it
+#[allow(unused)]
+#[cfg(feature = "std")]
+use std::error::Error as StdError;
 #[cfg(feature = "std")]
 use std::io;
+
+#[allow(unused)]
+#[cfg(not(feature = "std"))]
+use core2::error::Error as StdError;
 #[cfg(not(feature = "std"))]
 use core2::io;
+
+pub use crate::address::{Address, AddressType};
+pub use crate::amount::{Amount, Denomination, SignedAmount};
+pub use crate::blockdata::block::{self, Block};
+pub use crate::blockdata::fee_rate::FeeRate;
+pub use crate::blockdata::locktime::{self, absolute, relative};
+pub use crate::blockdata::script::{self, Script, ScriptBuf};
+pub use crate::blockdata::transaction::{self, OutPoint, Sequence, Transaction, TxIn, TxOut};
+pub use crate::blockdata::weight::Weight;
+pub use crate::blockdata::witness::{self, Witness};
+pub use crate::blockdata::{constants, opcodes};
+pub use crate::consensus::encode::VarInt;
+pub use crate::crypto::key::{self, PrivateKey, PublicKey};
+pub use crate::crypto::{ecdsa, sighash};
+pub use crate::error::Error;
+pub use crate::hash_types::{
+    BlockHash, PubkeyHash, ScriptHash, Txid, WPubkeyHash, WScriptHash, Wtxid,
+};
+pub use crate::merkle_tree::MerkleBlock;
+pub use crate::network::constants::Network;
+pub use crate::pow::{CompactTarget, Target, Work};
 
 #[cfg(not(feature = "std"))]
 mod io_extras {
@@ -177,29 +154,27 @@ mod io_extras {
     }
 
     /// Creates an instance of a writer which will successfully consume all data.
-    pub const fn sink() -> Sink {
-        Sink { _priv: () }
-    }
+    pub const fn sink() -> Sink { Sink { _priv: () } }
 
     impl core2::io::Write for Sink {
         #[inline]
-        fn write(&mut self, buf: &[u8]) -> core2::io::Result<usize> {
-            Ok(buf.len())
-        }
+        fn write(&mut self, buf: &[u8]) -> core2::io::Result<usize> { Ok(buf.len()) }
 
         #[inline]
-        fn flush(&mut self) -> core2::io::Result<()> {
-            Ok(())
-        }
+        fn flush(&mut self) -> core2::io::Result<()> { Ok(()) }
     }
 }
 
+#[rustfmt::skip]
 mod prelude {
     #[cfg(all(not(feature = "std"), not(test)))]
-    pub use alloc::{string::{String, ToString}, vec::Vec, boxed::Box, borrow::{Cow, ToOwned}, slice, rc, sync};
+    pub use alloc::{string::{String, ToString}, vec::Vec, boxed::Box, borrow::{Borrow, Cow, ToOwned}, slice, rc};
+
+    #[cfg(all(not(feature = "std"), not(test), any(not(rust_v_1_60), target_has_atomic = "ptr")))]
+    pub use alloc::sync;
 
     #[cfg(any(feature = "std", test))]
-    pub use std::{string::{String, ToString}, vec::Vec, boxed::Box, borrow::{Cow, ToOwned}, slice, rc, sync};
+    pub use std::{string::{String, ToString}, vec::Vec, boxed::Box, borrow::{Borrow, Cow, ToOwned}, slice, rc, sync};
 
     #[cfg(all(not(feature = "std"), not(test)))]
     pub use alloc::collections::{BTreeMap, BTreeSet, btree_map, BinaryHeap};
@@ -211,41 +186,32 @@ mod prelude {
     pub use std::io::sink;
 
     #[cfg(not(feature = "std"))]
-    pub use io_extras::sink;
+    pub use crate::io_extras::sink;
 
-    #[cfg(feature = "hashbrown")]
-    pub use hashbrown::HashSet;
-
-    #[cfg(not(feature = "hashbrown"))]
-    pub use std::collections::HashSet;
+    pub use internals::hex::display::DisplayHex;
 }
 
-#[cfg(all(test, feature = "unstable"))] use tests::EmptyWrite;
+#[cfg(bench)]
+use bench::EmptyWrite;
 
-#[cfg(all(test, feature = "unstable"))]
-mod tests {
+#[cfg(bench)]
+mod bench {
     use core::fmt::Arguments;
-    use io::{IoSlice, Result, Write};
+
+    use crate::io::{IoSlice, Result, Write};
 
     #[derive(Default, Clone, Debug, PartialEq, Eq)]
     pub struct EmptyWrite;
 
     impl Write for EmptyWrite {
-        fn write(&mut self, buf: &[u8]) -> Result<usize> {
-            Ok(buf.len())
-        }
+        fn write(&mut self, buf: &[u8]) -> Result<usize> { Ok(buf.len()) }
         fn write_vectored(&mut self, bufs: &[IoSlice]) -> Result<usize> {
             Ok(bufs.iter().map(|s| s.len()).sum())
         }
-        fn flush(&mut self) -> Result<()> {
-            Ok(())
-        }
+        fn flush(&mut self) -> Result<()> { Ok(()) }
 
-        fn write_all(&mut self, _: &[u8]) -> Result<()> {
-            Ok(())
-        }
-        fn write_fmt(&mut self, _: Arguments) -> Result<()> {
-            Ok(())
-        }
+        fn write_all(&mut self, _: &[u8]) -> Result<()> { Ok(()) }
+        fn write_fmt(&mut self, _: Arguments) -> Result<()> { Ok(()) }
     }
 }
+

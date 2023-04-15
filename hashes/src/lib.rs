@@ -1,4 +1,4 @@
-// Bitcoin Hashes Library
+// Dash Hashes Library
 // Written in 2018 by
 //   Andrew Poelstra <apoelstra@wpsoftware.net>
 //

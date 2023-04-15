@@ -23,37 +23,10 @@
 
 use network::constants::Network;
 use uint::Uint256;
-
-/// Lowest possible difficulty for Mainnet. See comment on Params::pow_limit for more info.
-const MAX_BITS_BITCOIN: Uint256 = Uint256([
-    0x0000000000000000u64,
-    0x0000000000000000u64,
-    0x0000000000000000u64,
-    0x00000000ffff0000u64,
-]);
-/// Lowest possible difficulty for Testnet. See comment on Params::pow_limit for more info.
-const MAX_BITS_TESTNET: Uint256 = Uint256([
-    0x0000000000000000u64,
-    0x0000000000000000u64,
-    0x0000000000000000u64,
-    0x00000000ffff0000u64,
-]);
-/// Lowest possible difficulty for Devnet. See comment on Params::pow_limit for more info.
-const MAX_BITS_DEVNET: Uint256 = Uint256([
-    0x0000000000000000u64,
-    0x0000000000000000u64,
-    0x0000000000000000u64,
-    0x00000377ae000000u64,
-]);
-/// Lowest possible difficulty for Regtest. See comment on Params::pow_limit for more info.
-const MAX_BITS_REGTEST: Uint256 = Uint256([
-    0x0000000000000000u64,
-    0x0000000000000000u64,
-    0x0000000000000000u64,
-    0x7fffff0000000000u64,
-]);
+use Work;
 
 /// Parameters that influence chain consensus.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct Params {
     /// Network for which parameters are valid.
@@ -80,7 +53,7 @@ pub struct Params {
     /// Still, this should not affect consensus as the only place where the non-compact form of
     /// this is used in Bitcoin Core's consensus algorithm is in comparison and there are no
     /// compact-expressible values between Bitcoin Core's and the limit expressed here.
-    pub pow_limit: Uint256,
+    pub pow_limit: Work,
     /// Expected amount of time to mine one block.
     pub pow_target_spacing: u64,
     /// Difficulty recalculation interval.
@@ -95,15 +68,15 @@ impl Params {
     /// Creates parameters set for the given network.
     pub fn new(network: Network) -> Self {
         match network {
-            Network::Dash => Params {
-                network: Network::Dash,
+            Network::Bitcoin => Params {
+                network: Network::Bitcoin,
                 bip16_time: 1333238400,                 // Apr 1 2012
                 bip34_height: 227931, // 000000000000024b89b42a942fe0d9fea3bb44ab7bd1b19115dd6a759c0808b8
                 bip65_height: 388381, // 000000000000000004c2b624ed5d7756c508d90fd0da2c7c679febfa6c4735f0
                 bip66_height: 363725, // 00000000000000000379eaa19dce8c9b722d46ae6a57c2f1a988119488b50931
                 rule_change_activation_threshold: 1916, // 95%
                 miner_confirmation_window: 2016,
-                pow_limit: MAX_BITS_BITCOIN,
+                pow_limit: Work::MAINNET_MIN,
                 pow_target_spacing: 10 * 60,            // 10 minutes.
                 pow_target_timespan: 14 * 24 * 60 * 60, // 2 weeks.
                 allow_min_difficulty_blocks: false,
@@ -117,7 +90,7 @@ impl Params {
                 bip66_height: 330776, // 000000002104c8c45e99a8853285a3b592602a3ccde2b832481da85e9e4ba182
                 rule_change_activation_threshold: 1512, // 75%
                 miner_confirmation_window: 2016,
-                pow_limit: MAX_BITS_TESTNET,
+                pow_limit: Work::TESTNET_MIN,
                 pow_target_spacing: 10 * 60,            // 10 minutes.
                 pow_target_timespan: 14 * 24 * 60 * 60, // 2 weeks.
                 allow_min_difficulty_blocks: true,
@@ -131,7 +104,7 @@ impl Params {
                 bip66_height: 1,
                 rule_change_activation_threshold: 1916, // 95%
                 miner_confirmation_window: 2016,
-                pow_limit: MAX_BITS_DEVNET,
+                pow_limit: Work::DEVNET_MIN,
                 pow_target_spacing: 10 * 60,            // 10 minutes.
                 pow_target_timespan: 14 * 24 * 60 * 60, // 2 weeks.
                 allow_min_difficulty_blocks: false,
@@ -145,7 +118,7 @@ impl Params {
                 bip66_height: 1251,                    // used only in rpc tests
                 rule_change_activation_threshold: 108, // 75%
                 miner_confirmation_window: 144,
-                pow_limit: MAX_BITS_REGTEST,
+                pow_limit: Work::REGTEST_MIN,
                 pow_target_spacing: 10 * 60,            // 10 minutes.
                 pow_target_timespan: 14 * 24 * 60 * 60, // 2 weeks.
                 allow_min_difficulty_blocks: true,
@@ -159,3 +132,4 @@ impl Params {
         self.pow_target_timespan / self.pow_target_spacing
     }
 }
+

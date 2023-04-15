@@ -76,8 +76,8 @@ impl Work {
     /// Lowest possible work value for Testnet. See comment on [`Params::pow_limit`] for more info.
     pub const TESTNET_MIN: Work = Work(U256(0x0000_0000_ffff_0000_0000_0000_0000_0000_u128, 0));
 
-    /// Lowest possible work value for Signet. See comment on [`Params::pow_limit`] for more info.
-    pub const SIGNET_MIN: Work = Work(U256(0x0000_0377_ae00_0000_0000_0000_0000_0000_u128, 0));
+    /// Lowest possible work value for Devnet. See comment on [`Params::pow_limit`] for more info.
+    pub const DEVNET_MIN: Work = Work(U256(0x0000_0377_ae00_0000_0000_0000_0000_0000_u128, 0));
 
     /// Lowest possible work value for Regtest. See comment on [`Params::pow_limit`] for more info.
     pub const REGTEST_MIN: Work = Work(U256(0x7fff_ff00_0000_0000_0000_0000_0000_0000_u128, 0));

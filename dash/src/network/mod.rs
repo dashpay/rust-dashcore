@@ -49,8 +49,7 @@ pub mod message_network;
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod message_filter;
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-pub mod stream_reader;
+pub mod message_compact_blocks;
 
 /// Network error
 #[derive(Debug)]
