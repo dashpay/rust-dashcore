@@ -236,8 +236,8 @@ the case and how we broke both `rust-miniscript` and BDK.
 * Drop `Decimal` type.
 * Drop `LoneHeaders` type.
 * Replace `strason` dependency with (optional) `serde_json`.
-* Export the `bitcoin_hashes` and `secp256k1` dependent crates.
-* Updated `bitcoin_hashes` dependency to v0.7.
+* Export the `dashcore_hashes` and `secp256k1` dependent crates.
+* Updated `dashcore_hashes` dependency to v0.7.
 * Removed `rand` and `serde_test` dependencies.
 * Internal improvements to consensus encoding logic.
 
@@ -255,7 +255,7 @@ the case and how we broke both `rust-miniscript` and BDK.
 # 0.17.0 - 2019-02-28 - ``The PSBT Release''
 
 * **Update minimum rustc version to 1.22**.
-* [Replace `rust-crypto` with `bitcoin_hashes`; refactor hash types](https://github.com/rust-bitcoin/rust-bitcoin/pull/215)
+* [Replace `rust-crypto` with `dashcore_hashes`; refactor hash types](https://github.com/rust-bitcoin/rust-bitcoin/pull/215)
 * [Remove `Address::p2pk`](https://github.com/rust-bitcoin/rust-bitcoin/pull/222/)
 * Remove misleading blanket `MerkleRoot` implementation; [it is now only defined for `Block`](https://github.com/rust-bitcoin/rust-bitcoin/pull/218)
 * [Add BIP157](https://github.com/rust-bitcoin/rust-bitcoin/pull/215) (client-side block filtering messages)
