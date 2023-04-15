@@ -105,6 +105,8 @@ pub enum Error {
     },
     /// The script type was non standard
     NonStandardScriptPayout(Script),
+    /// Hex error
+    Hex(hashes::Error)
 }
 
 impl fmt::Display for Error {
@@ -129,6 +131,8 @@ impl fmt::Display for Error {
                                                                                            "wrong special transaction payload conversion expected: {} got: {}", e, a),
             Error::NonStandardScriptPayout(ref script) => write!(f,
                                                         "non standard script payout: {}", script.to_hex()),
+            Error::InvalidVectorSize { expected, actual } => write!(f, "invalid vector size error expected: {} got: {}", expected, actual),
+            Error::Hex(ref e) => write!(f, "hex error {}", e),
         }
     }
 }
