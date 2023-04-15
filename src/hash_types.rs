@@ -69,6 +69,8 @@ hash_newtype!(InputsHash, sha256d::Hash, 32, doc="A hash of all transaction inpu
 hash_newtype!(QuorumHash, sha256d::Hash, 32, doc="A hash used to identify a quorum");
 hash_newtype!(QuorumVVecHash, sha256d::Hash, 32, doc="A hash of a quorum verification vector");
 
+pub type ProTxHash = Txid;
+
 impl_hashencode!(Txid);
 impl_hashencode!(Wtxid);
 impl_hashencode!(BlockHash);

@@ -27,7 +27,6 @@ use QuorumVVecHash;
 
 
 
-
 /// A Quorum Finalization Commitment. It is described in the finalization section of DIP6:
 /// https://github.com/dashpay/dips/blob/master/dip-0006.md#6-finalization-phase
 ///
