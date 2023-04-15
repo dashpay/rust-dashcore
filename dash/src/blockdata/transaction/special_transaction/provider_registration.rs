@@ -46,7 +46,7 @@ use ::{Address, Network};
 use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use bls_sig_utils::BLSPublicKey;
 use ::{PubkeyHash, SpecialTransactionPayloadHash};
-use util::address::Payload;
+use address::Payload;
 
 /// A Provider Registration Payload used in a Provider Registration Special Transaction.
 /// This is used to register a Masternode on the network.
@@ -187,7 +187,7 @@ mod tests {
     use ::{Transaction};
     use ::{InputsHash, Txid};
     use ::{Network, OutPoint};
-    use util::misc::signed_msg_hash;
+    use misc::signed_msg_hash;
     use ::{hex, PrivateKey};
     use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use ::{Address};

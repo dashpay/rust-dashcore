@@ -5,11 +5,11 @@ use std::str::FromStr;
 
 use dashcore::secp256k1::Secp256k1;
 use dashcore::PublicKey;
-use dashcore::util::bip32::ExtendedPrivKey;
-use dashcore::util::bip32::ExtendedPubKey;
-use dashcore::util::bip32::DerivationPath;
-use dashcore::util::bip32::ChildNumber;
-use dashcore::util::address::Address;
+use dashcore::bip32::ExtendedPrivKey;
+use dashcore::bip32::ExtendedPubKey;
+use dashcore::bip32::DerivationPath;
+use dashcore::bip32::ChildNumber;
+use dashcore::address::Address;
 use dashcore::secp256k1::ffi::types::AlignedType;
 use dashcore::hashes::hex::FromHex;
 

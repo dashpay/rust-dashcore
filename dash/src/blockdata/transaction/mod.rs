@@ -40,7 +40,7 @@ use core::convert::TryFrom;
 
 use hashes::{Hash, sha256d};
 
-use util::{endian};
+use {endian};
 use blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature="bitcoinconsensus")] use blockdata::script;
 use blockdata::script::Script;
@@ -57,7 +57,7 @@ use InputsHash;
 #[cfg(feature="bitcoinconsensus")] use OutPoint;
 
 #[cfg(doc)]
-use util::sighash::SchnorrSighashType;
+use sighash::SchnorrSighashType;
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.
 const UINT256_ONE: [u8; 32] = [

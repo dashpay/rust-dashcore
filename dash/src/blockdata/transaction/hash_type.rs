@@ -194,7 +194,7 @@ mod tests {
 
     use hashes::Hash;
     use hashes::hex::FromHex;
-    use util::sighash::SighashCache;
+    use sighash::SighashCache;
 
     #[test]
     fn test_sighashtype_fromstr_display() {

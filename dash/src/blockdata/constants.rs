@@ -37,7 +37,7 @@ use blockdata::transaction::txout::TxOut;
 use blockdata::witness::Witness;
 use network::constants::Network;
 use Transaction;
-use util::uint::Uint256;
+use uint::Uint256;
 
 /// The maximum allowable sequence number
 pub const MAX_SEQUENCE: u32 = 0xFFFFFFFF;

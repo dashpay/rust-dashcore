@@ -42,9 +42,9 @@ use policy::DUST_RELAY_TX_FEE;
 #[cfg(feature="bitcoinconsensus")] use bitcoinconsensus;
 #[cfg(feature="bitcoinconsensus")] use core::convert::From;
 
-use util::key::PublicKey;
-use util::address::WitnessVersion;
-use util::taproot::{LeafVersion, TapBranchHash, TapLeafHash};
+use key::PublicKey;
+use address::WitnessVersion;
+use taproot::{LeafVersion, TapBranchHash, TapLeafHash};
 use secp256k1::{Secp256k1, Verification, XOnlyPublicKey};
 use blockdata::transaction::outpoint::OutPoint;
 use schnorr::{TapTweak, TweakedPublicKey, UntweakedPublicKey};
@@ -1105,8 +1105,8 @@ mod test {
     use hashes::hex::{FromHex, ToHex};
     use consensus::encode::{deserialize, serialize};
     use blockdata::opcodes;
-    use util::key::PublicKey;
-    use util::psbt::serialize::Serialize;
+    use key::PublicKey;
+    use psbt::serialize::Serialize;
 
     #[test]
     fn script() {

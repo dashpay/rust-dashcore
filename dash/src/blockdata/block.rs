@@ -28,11 +28,11 @@ use prelude::*;
 use core::fmt;
 
 use util;
-use util::Error::{BlockBadTarget, BlockBadProofOfWork};
-use util::hash::dash_merkle_root;
+use Error::{BlockBadTarget, BlockBadProofOfWork};
+use merkle_tree::calculate_root;
 use hashes::{Hash, HashEngine};
 use hash_types::{Wtxid, BlockHash, TxMerkleNode, WitnessMerkleNode, WitnessCommitment};
-use util::uint::Uint256;
+use uint::Uint256;
 use consensus::encode::Encodable;
 use network::constants::Network;
 use blockdata::transaction::Transaction;
@@ -134,14 +134,14 @@ impl BlockHeader {
     }
 
     /// Checks that the proof-of-work for the block is valid, returning the block hash.
-    pub fn validate_pow(&self, required_target: &Uint256) -> Result<BlockHash, util::Error> {
+    pub fn validate_pow(&self, required_target: &Uint256) -> Result<BlockHash, Error> {
         let target = &self.target();
         if target != required_target {
             return Err(BlockBadTarget);
         }
         let block_hash = self.block_hash();
         let mut ret = [0u64; 4];
-        util::endian::bytes_to_u64_slice_le(block_hash.as_inner(), &mut ret);
+        endian::bytes_to_u64_slice_le(block_hash.as_inner(), &mut ret);
         let hash = &Uint256(ret);
         if hash <= target { Ok(block_hash) } else { Err(BlockBadProofOfWork) }
     }
@@ -222,7 +222,7 @@ impl Block {
     /// Computes the transaction merkle root.
     pub fn compute_merkle_root(&self) -> Option<TxMerkleNode> {
         let hashes = self.txdata.iter().map(|obj| obj.txid().as_hash());
-        dash_merkle_root(hashes).map(|h| h.into())
+        calculate_root(hashes).map(|h| h.into())
     }
 
     /// Calculate the transaction merkle root.
@@ -249,7 +249,7 @@ impl Block {
                 t.wtxid().as_hash()
             }
         });
-        dash_merkle_root(hashes).map(|h| h.into())
+        calculate_root(hashes).map(|h| h.into())
     }
 
     /// base_size == size of header + size of encoded transaction count.
@@ -324,7 +324,7 @@ impl Block {
                 // Expand the push to exactly 8 bytes (LE).
                 let mut full = [0; 8];
                 full[0..b.len()].copy_from_slice(b);
-                Ok(util::endian::slice_to_u64_le(&full))
+                Ok(endian::slice_to_u64_le(&full))
             }
             script::Instruction::PushBytes(b) if b.len() > 8 => {
                 Err(Bip34Error::UnexpectedPush(b.to_vec()))
@@ -366,8 +366,8 @@ mod tests {
 
     use blockdata::block::{Block, BlockHeader};
     use consensus::encode::{deserialize, serialize};
-    use util::uint::Uint256;
-    use util::Error::{BlockBadTarget, BlockBadProofOfWork};
+    use uint::Uint256;
+    use Error::{BlockBadTarget, BlockBadProofOfWork};
     use network::constants::Network;
 
     #[test]
@@ -431,7 +431,7 @@ mod tests {
     // Check testnet block 000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b
     #[test]
     fn segwit_block_test() {
-        let segwit_block = include_bytes!("../../test_data/testnet_block_000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b.raw").to_vec();
+        let segwit_block = include_bytes!("../../tests/data/testnet_block_000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b.raw").to_vec();
 
         let decode: Result<Block, _> = deserialize(&segwit_block);
 
@@ -519,7 +519,7 @@ mod benches {
     #[bench]
     #[allow(deprecated)]
     pub fn bench_stream_reader(bh: &mut Bencher) {
-        let big_block = include_bytes!("../../test_data/mainnet_block_000000000000000000000c835b2adcaedc20fdf6ee440009c249452c726dafae.raw");
+        let big_block = include_bytes!("../../tests/data/mainnet_block_000000000000000000000c835b2adcaedc20fdf6ee440009c249452c726dafae.raw");
         assert_eq!(big_block.len(), 1_381_836);
         let big_block = black_box(big_block);
 
@@ -532,7 +532,7 @@ mod benches {
 
     #[bench]
     pub fn bench_block_serialize(bh: &mut Bencher) {
-        let raw_block = include_bytes!("../../test_data/mainnet_block_000000000000000000000c835b2adcaedc20fdf6ee440009c249452c726dafae.raw");
+        let raw_block = include_bytes!("../../tests/data/mainnet_block_000000000000000000000c835b2adcaedc20fdf6ee440009c249452c726dafae.raw");
 
         let block: Block = deserialize(&raw_block[..]).unwrap();
 
@@ -547,7 +547,7 @@ mod benches {
 
     #[bench]
     pub fn bench_block_serialize_logic(bh: &mut Bencher) {
-        let raw_block = include_bytes!("../../test_data/mainnet_block_000000000000000000000c835b2adcaedc20fdf6ee440009c249452c726dafae.raw");
+        let raw_block = include_bytes!("../../tests/data/mainnet_block_000000000000000000000c835b2adcaedc20fdf6ee440009c249452c726dafae.raw");
 
         let block: Block = deserialize(&raw_block[..]).unwrap();
 
@@ -559,7 +559,7 @@ mod benches {
 
     #[bench]
     pub fn bench_block_deserialize(bh: &mut Bencher) {
-        let raw_block = include_bytes!("../../test_data/mainnet_block_000000000000000000000c835b2adcaedc20fdf6ee440009c249452c726dafae.raw");
+        let raw_block = include_bytes!("../../tests/data/mainnet_block_000000000000000000000c835b2adcaedc20fdf6ee440009c249452c726dafae.raw");
 
         bh.iter(|| {
             let block: Block = deserialize(&raw_block[..]).unwrap();

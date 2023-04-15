@@ -1,6 +1,6 @@
 extern crate dashcore;
 
-use dashcore::util::address::Address;
+use dashcore::address::Address;
 use dashcore::network::constants::Network;
 use dashcore::blockdata::script;
 use dashcore::consensus::encode;

@@ -23,72 +23,121 @@
 //! hash).
 //!
 
-use hashes::{Hash, sha256, sha256d, hash160};
-
+#[rustfmt::skip]
 macro_rules! impl_hashencode {
     ($hashtype:ident) => {
         impl $crate::consensus::Encodable for $hashtype {
-            fn consensus_encode<S: $crate::io::Write>(&self, s: S) -> Result<usize, $crate::io::Error> {
-                self.0.consensus_encode(s)
+            fn consensus_encode<W: $crate::io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, $crate::io::Error> {
+                self.0.consensus_encode(w)
             }
         }
 
         impl $crate::consensus::Decodable for $hashtype {
-            fn consensus_decode<D: $crate::io::Read>(d: D) -> Result<Self, $crate::consensus::encode::Error> {
+            fn consensus_decode<R: $crate::io::Read + ?Sized>(r: &mut R) -> Result<Self, $crate::consensus::encode::Error> {
                 use $crate::hashes::Hash;
-                Ok(Self::from_inner(<<$hashtype as $crate::hashes::Hash>::Inner>::consensus_decode(d)?))
+                Ok(Self::from_byte_array(<<$hashtype as $crate::hashes::Hash>::Bytes>::consensus_decode(r)?))
             }
         }
-    }
+    };
 }
 
-hash_newtype!(Txid, sha256d::Hash, 32, doc="A dash transaction hash/transaction ID.");
-hash_newtype!(Wtxid, sha256d::Hash, 32, doc="A dash witness transaction ID.");
-hash_newtype!(BlockHash, sha256d::Hash, 32, doc="A dash block hash.");
-hash_newtype!(Sighash, sha256d::Hash, 32, doc="Hash of the transaction according to the signature algorithm");
+#[rustfmt::skip]
+macro_rules! impl_asref_push_bytes {
+    ($($hashtype:ident),*) => {
+        $(
+            impl AsRef<$crate::blockdata::script::PushBytes> for $hashtype {
+                fn as_ref(&self) -> &$crate::blockdata::script::PushBytes {
+                    use $crate::hashes::Hash;
+                    self.as_byte_array().into()
+                }
+            }
 
-hash_newtype!(PubkeyHash, hash160::Hash, 20, doc="A hash of a public key.");
-hash_newtype!(ScriptHash, hash160::Hash, 20, doc="A hash of Dash Script bytecode.");
-hash_newtype!(WPubkeyHash, hash160::Hash, 20, doc="SegWit version of a public key hash.");
-hash_newtype!(WScriptHash, sha256::Hash, 32, doc="SegWit version of a Bitcoin Script bytecode hash.");
+            impl From<$hashtype> for $crate::blockdata::script::PushBytesBuf {
+                fn from(hash: $hashtype) -> Self {
+                    use $crate::hashes::Hash;
+                    hash.as_byte_array().into()
+                }
+            }
+        )*
+    };
+}
 
-hash_newtype!(TxMerkleNode, sha256d::Hash, 32, doc="A hash of the Merkle tree branch or root for transactions");
-hash_newtype!(WitnessMerkleNode, sha256d::Hash, 32, doc="A hash corresponding to the Merkle tree root for witness data");
-hash_newtype!(WitnessCommitment, sha256d::Hash, 32, doc="A hash corresponding to the witness structure commitment in the coinbase transaction");
-hash_newtype!(XpubIdentifier, hash160::Hash, 20, doc="XpubIdentifier as defined in BIP-32.");
+// newtypes module is solely here so we can rustfmt::skip.
+pub use newtypes::*;
 
-hash_newtype!(FilterHash, sha256d::Hash, 32, doc="Filter hash, as defined in BIP-157");
-hash_newtype!(FilterHeader, sha256d::Hash, 32, doc="Filter header, as defined in BIP-157");
+#[rustfmt::skip]
+mod newtypes {
+    use hashes::{sha256, sha256d, hash160, hash_newtype};
 
-hash_newtype!(MerkleRootMasternodeList, sha256d::Hash, 32, doc="The merkle root of the masternode list");
-hash_newtype!(MerkleRootQuorums, sha256d::Hash, 32, doc="The merkle root of the quorums");
+    hash_newtype! {
+        /// A dash transaction hash/transaction ID.
+        ///
+        pub struct Txid(sha256d::Hash);
 
-hash_newtype!(SpecialTransactionPayloadHash, sha256d::Hash, 32, doc="A special transaction payload hash");
-hash_newtype!(InputsHash, sha256d::Hash, 32, doc="A hash of all transaction inputs");
+        /// A dash witness transaction ID.
+        pub struct Wtxid(sha256d::Hash);
+        /// A dash block hash.
+        pub struct BlockHash(sha256d::Hash);
 
-hash_newtype!(QuorumHash, sha256d::Hash, 32, doc="A hash used to identify a quorum");
-hash_newtype!(QuorumVVecHash, sha256d::Hash, 32, doc="A hash of a quorum verification vector");
+        /// A hash of a public key.
+        pub struct PubkeyHash(hash160::Hash);
+        /// A hash of Dash Script bytecode.
+        pub struct ScriptHash(hash160::Hash);
+        /// SegWit version of a public key hash.
+        pub struct WPubkeyHash(hash160::Hash);
+        /// SegWit version of a Dash Script bytecode hash.
+        pub struct WScriptHash(sha256::Hash);
 
-pub type ProTxHash = Txid;
+        /// A hash of the Merkle tree branch or root for transactions
+        pub struct TxMerkleNode(sha256d::Hash);
+        /// A hash corresponding to the Merkle tree root for witness data
+        pub struct WitnessMerkleNode(sha256d::Hash);
+        /// A hash corresponding to the witness structure commitment in the coinbase transaction
+        pub struct WitnessCommitment(sha256d::Hash);
+        /// XpubIdentifier as defined in BIP-32.
+        pub struct XpubIdentifier(hash160::Hash);
 
-impl_hashencode!(Txid);
-impl_hashencode!(Wtxid);
-impl_hashencode!(BlockHash);
-impl_hashencode!(Sighash);
+        /// Filter hash, as defined in BIP-157
+        pub struct FilterHash(sha256d::Hash);
+        /// Filter header, as defined in BIP-157
+        pub struct FilterHeader(sha256d::Hash);
 
-impl_hashencode!(PubkeyHash);
+        /// Dash Additions
+        ///
+        /// The merkle root of the masternode list
+        pub struct MerkleRootMasternodeList(sha256d::Hash);
+        /// The merkle root of the quorums
+        pub struct MerkleRootQuorums(sha256d::Hash);
+        /// A special transaction payload hash
+        pub struct SpecialTransactionPayloadHash(sha256d::Hash);
+        /// A hash of all transaction inputs
+        pub struct InputsHash(sha256d::Hash);
+        /// A hash used to identify a quorum
+        pub struct QuorumHash(sha256d::Hash);
+        /// A hash of a quorum verification vector
+        pub struct QuorumVVecHash(sha256d::Hash);
+    }
 
-impl_hashencode!(TxMerkleNode);
-impl_hashencode!(WitnessMerkleNode);
+    impl_hashencode!(Txid);
+    impl_hashencode!(Wtxid);
+    impl_hashencode!(BlockHash);
 
-impl_hashencode!(FilterHash);
-impl_hashencode!(FilterHeader);
+    impl_hashencode!(TxMerkleNode);
+    impl_hashencode!(WitnessMerkleNode);
 
-impl_hashencode!(MerkleRootMasternodeList);
-impl_hashencode!(MerkleRootQuorums);
+    impl_hashencode!(FilterHash);
+    impl_hashencode!(FilterHeader);
 
-impl_hashencode!(SpecialTransactionPayloadHash);
-impl_hashencode!(InputsHash);
+    impl_hashencode!(MerkleRootMasternodeList);
+    impl_hashencode!(MerkleRootQuorums);
 
-impl_hashencode!(QuorumHash);
-impl_hashencode!(QuorumVVecHash);
+    impl_hashencode!(SpecialTransactionPayloadHash);
+    impl_hashencode!(InputsHash);
+
+    impl_hashencode!(QuorumHash);
+    impl_hashencode!(QuorumVVecHash);
+
+    impl_asref_push_bytes!(PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash);
+
+    pub type ProTxHash = Txid;
+}

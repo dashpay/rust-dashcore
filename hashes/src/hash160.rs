@@ -30,7 +30,7 @@ crate::internal_macros::hash_type! {
     160,
     false,
     "Output of the Bitcoin HASH160 hash function. (RIPEMD160(SHA256))",
-    "crate::util::json_hex_string::len_20"
+    "crate::json_hex_string::len_20"
 }
 
 type HashEngine = sha256::HashEngine;

@@ -40,9 +40,9 @@ use hash_types::{BlockHash, FilterHash, TxMerkleNode, FilterHeader};
 
 use io::{self, Cursor, Read};
 
-use util::endian;
-use util::psbt;
-use util::taproot::TapLeafHash;
+use endian;
+use psbt;
+use taproot::TapLeafHash;
 use hashes::hex::ToHex;
 
 use blockdata::transaction::{txout::TxOut, Transaction, txin::TxIn, outpoint::OutPoint};
@@ -837,7 +837,7 @@ mod tests {
     use super::{deserialize, serialize, Error, CheckedData, VarInt};
     use super::{Transaction, BlockHash, FilterHash, TxMerkleNode, TxOut, TxIn};
     use consensus::{Encodable, deserialize_partial, Decodable};
-    use util::endian::{u64_to_array_le, u32_to_array_le, u16_to_array_le};
+    use endian::{u64_to_array_le, u32_to_array_le, u16_to_array_le};
     use secp256k1::rand::{thread_rng, Rng};
     #[cfg(feature = "std")]
     use network::{Address, message_blockdata::Inventory};

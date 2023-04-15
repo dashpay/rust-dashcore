@@ -152,14 +152,14 @@ the case and how we broke both `rust-miniscript` and BDK.
 - [Remove](https://github.com/rust-bitcoin/rust-bitcoin/pull/385) the `BitcoinHash` trait
 - [Introduce `SigHashCache` structure](https://github.com/rust-bitcoin/rust-bitcoin/pull/390) to replace `SighashComponents` and support all sighash modes
 - [Add](https://github.com/rust-bitcoin/rust-bitcoin/pull/416) `Transaction::get_size` method
-- [Export](https://github.com/rust-bitcoin/rust-bitcoin/pull/412) `util::amount::Denomination`
+- [Export](https://github.com/rust-bitcoin/rust-bitcoin/pull/412) `amount::Denomination`
 - [Add](https://github.com/rust-bitcoin/rust-bitcoin/pull/417) `Block::get_size` and `Block::get_weight` methods
 - [Add](https://github.com/rust-bitcoin/rust-bitcoin/pull/415) `MerkleBlock::from_header_txids`
 - [Add](https://github.com/rust-bitcoin/rust-bitcoin/pull/429) `BlockHeader::u256_from_compact_target`
 - [Add](https://github.com/rust-bitcoin/rust-bitcoin/pull/448) `feefilter` network message
 - [Cleanup/replace](https://github.com/rust-bitcoin/rust-bitcoin/pull/397) `Script::Instructions` iterator API
 - [Disallow uncompressed pubkeys in witness address generation](https://github.com/rust-bitcoin/rust-bitcoin/pull/428)
-- [Deprecate](https://github.com/rust-bitcoin/rust-bitcoin/pull/451) `util::contracthash` module
+- [Deprecate](https://github.com/rust-bitcoin/rust-bitcoin/pull/451) `contracthash` module
 - [Add](https://github.com/rust-bitcoin/rust-bitcoin/pull/435) modulo division operation for `Uint128` and `Uint256`
 - [Add](https://github.com/rust-bitcoin/rust-bitcoin/pull/436) `slice_to_u64_be` endian conversion method
 
@@ -213,7 +213,7 @@ the case and how we broke both `rust-miniscript` and BDK.
 
 * Add `Amount` and `SignedAmount` types.
 * Add BIP-158 support with `BlockFilter` and related types.
-* Add `util::misc::signed_msg_hash()` for signing messages.
+* Add `misc::signed_msg_hash()` for signing messages.
 * Add `MerkleBlock` and `PartialMerkleTree` types.
 * bip32: Support serde serializaton for types and add some utility methods:
     * `ChildNumber::increment`
@@ -244,9 +244,9 @@ the case and how we broke both `rust-miniscript` and BDK.
 # 0.18.0 - 2019-03-21
 
 * Update `bitcoin-bech32` version to 0.9
-* add `to_bytes` method for `util::key` types
-* add serde impls for `util::key` types
-* contracthash: minor cleanups, use `util::key` types instead of `secp256k1` types
+* add `to_bytes` method for `key` types
+* add serde impls for `key` types
+* contracthash: minor cleanups, use `key` types instead of `secp256k1` types
 
 # 0.17.1 - 2019-03-04
 
@@ -270,7 +270,7 @@ the case and how we broke both `rust-miniscript` and BDK.
 * Reorganize opcode types to eliminate unsafe code
 * Un-expose some macros that were unintentionally exported
 * Update rust-secp256k1 dependency to 0.12
-* Remove `util::iter::Pair` type which does not belong in this library
+* Remove `iter::Pair` type which does not belong in this library
 * Minor bugfixes and optimizations
 
 # 0.15.1 - 2018-11-08
@@ -283,7 +283,7 @@ the case and how we broke both `rust-miniscript` and BDK.
     * Remove `nu_select` macro and low-level networking support
     * Move `network::consensus_params` to `consensus::params`
     * Move many other things into `consensus::params`
-    * Move `BitcoinHash` from `network::serialize` to `util::hash`; remove impl for `Vec<u8>`
+    * Move `BitcoinHash` from `network::serialize` to `hash`; remove impl for `Vec<u8>`
     * Rename/restructure error types
     * Rename `Consensus{De,En}coder` to `consensus::{De,En}coder`
     * Replace `Raw{De,En}coder` with blanket impls of `consensus::{De,En}coder` on `io::Read` and `io::Write`
@@ -318,7 +318,7 @@ the case and how we broke both `rust-miniscript` and BDK.
 * Use modern `as_` `to_` `into_` conventions for array-wrapping types; impl `Display` rather than `ToString` for most types
 * Change `script::Instructions` iterator [to allow rejecting non-minimal pushes](https://github.com/rust-bitcoin/rust-bitcoin/pull/136);
   fix bug where errors would iterate forever.
-* Overhaul `util::Error`; introduce `serialize::Error` [and use it for `SimpleDecoder` and `SimpleDecoder` rather
+* Overhaul `Error`; introduce `serialize::Error` [and use it for `SimpleDecoder` and `SimpleDecoder` rather
   than parameterizing these over their error type](https://github.com/rust-bitcoin/rust-bitcoin/pull/137).
 * Overhaul `UDecimal` and `Decimal` serialization and parsing [and fix many lingering parsing bugs](https://github.com/rust-bitcoin/rust-bitcoin/pull/142)
 * [Update to serde 1.0 and strason 0.4](https://github.com/rust-bitcoin/rust-bitcoin/pull/125)

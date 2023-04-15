@@ -129,7 +129,11 @@ pub mod hash_types;
 pub mod policy;
 pub mod ephemerealdata;
 pub mod bls_sig_utils;
-mod types;
+pub mod merkle_tree;
+pub mod sign_message;
+pub mod psbt;
+
+#[cfg(feature="signer")] pub mod signer;
 
 pub use hash_types::*;
 pub use blockdata::block::Block;
@@ -144,23 +148,19 @@ pub use blockdata::witness::Witness;
 pub use ephemerealdata::instant_lock::InstantLock;
 pub use consensus::encode::VarInt;
 pub use network::constants::Network;
-pub use util::Error;
-pub use util::address::Address;
-pub use util::address::AddressType;
-pub use util::amount::Amount;
-pub use util::amount::Denomination;
-pub use util::amount::SignedAmount;
-pub use util::merkleblock::MerkleBlock;
-pub use util::sighash::SchnorrSighashType;
+pub use Error;
+pub use address::Address;
+pub use address::AddressType;
+pub use amount::Amount;
+pub use amount::Denomination;
+pub use amount::SignedAmount;
+pub use merkleblock::MerkleBlock;
+pub use sighash::SchnorrSighashType;
 pub use types::*;
 
-#[cfg(feature = "signer")]
-pub use util::signer;
-
-pub use util::ecdsa::{self, EcdsaSig, EcdsaSigError};
-pub use util::schnorr::{self, SchnorrSig, SchnorrSigError};
-pub use util::key::{PrivateKey, PublicKey, XOnlyPublicKey, KeyPair};
-pub use util::psbt;
+pub use ecdsa::{self, EcdsaSig, EcdsaSigError};
+pub use schnorr::{self, SchnorrSig, SchnorrSigError};
+pub use key::{PrivateKey, PublicKey, XOnlyPublicKey, KeyPair};
 #[allow(deprecated)]
 pub use blockdata::transaction::hash_type::SigHashType;
 
