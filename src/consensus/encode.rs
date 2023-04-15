@@ -72,6 +72,13 @@ pub enum Error {
         /// The maximum capacity
         max: usize,
     },
+    /// A Vector was trying to be converted to a fixed size vector, but was the wrong size
+    InvalidVectorSize {
+        /// The expected size
+        expected: usize,
+        /// The actual size of the vector
+        actual: usize,
+    },
     /// Checksum was invalid
     InvalidChecksum {
         /// The expected checksum

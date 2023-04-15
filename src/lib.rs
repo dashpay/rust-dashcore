@@ -128,6 +128,7 @@ pub mod hash_types;
 pub mod policy;
 pub mod ephemerealdata;
 pub mod bls_sig_utils;
+pub mod types;
 
 pub use hash_types::*;
 pub use blockdata::block::Block;
