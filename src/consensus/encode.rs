@@ -40,7 +40,7 @@ use hash_types::{BlockHash, FilterHash, TxMerkleNode, FilterHeader};
 
 use io::{self, Cursor, Read};
 
-use util::endian;
+use util::{address, endian};
 use util::psbt;
 use util::taproot::TapLeafHash;
 use hashes::hex::ToHex;
@@ -106,7 +106,9 @@ pub enum Error {
     /// The script type was non standard
     NonStandardScriptPayout(Script),
     /// Hex error
-    Hex(hashes::hex::Error)
+    Hex(hashes::hex::Error),
+    /// Address error
+    Address(address::Error)
 }
 
 impl fmt::Display for Error {
@@ -133,6 +135,7 @@ impl fmt::Display for Error {
                                                         "non standard script payout: {}", script.to_hex()),
             Error::InvalidVectorSize { expected, actual } => write!(f, "invalid vector size error expected: {} got: {}", expected, actual),
             Error::Hex(ref e) => write!(f, "hex error {}", e),
+            Error::Address(ref e) => write!(f, "address error {}", e),
         }
     }
 }
@@ -156,6 +159,7 @@ impl ::std::error::Error for Error {
             | Error::NonStandardScriptPayout(..)
             | Error::InvalidVectorSize { .. }
             | Error::Hex(_) => None,
+            | Error::Address(_) => None,
         }
     }
 }
@@ -166,6 +170,14 @@ impl From<io::Error> for Error {
         Error::Io(error)
     }
 }
+
+#[doc(hidden)]
+impl From<address::Error> for Error {
+    fn from(error: address::Error) -> Self {
+        Error::Address(error)
+    }
+}
+
 
 #[doc(hidden)]
 impl From<psbt::Error> for Error {
