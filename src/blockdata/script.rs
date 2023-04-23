@@ -49,9 +49,9 @@ use secp256k1::{Secp256k1, Verification, XOnlyPublicKey};
 use blockdata::transaction::outpoint::OutPoint;
 use schnorr::{TapTweak, TweakedPublicKey, UntweakedPublicKey};
 
-/// A Bitcoin script.
+/// A Dash script.
 #[derive(Clone, Default, PartialOrd, Ord, PartialEq, Eq, Hash)]
-pub struct Script(Box<[u8]>);
+pub struct Script(pub Box<[u8]>);
 
 impl<I> Index<I> for Script
 where
