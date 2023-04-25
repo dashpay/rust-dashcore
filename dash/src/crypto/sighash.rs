@@ -16,13 +16,14 @@ use core::{fmt, str};
 
 use hashes::{hash_newtype, sha256, sha256d, sha256t_hash_newtype, Hash};
 
-use crate::blockdata::transaction::EncodeSigningDataResult;
 use crate::blockdata::witness::Witness;
 use crate::consensus::{encode, Encodable};
 use crate::error::impl_std_error;
 use crate::prelude::*;
 use crate::taproot::{LeafVersion, TapLeafHash, TAPROOT_ANNEX_PREFIX};
-use crate::{io, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut};
+use std::io;
+use crate::blockdata::transaction::{Transaction, txin::TxIn, txout::TxOut};
+use crate::script::{Script, ScriptBuf};
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.
 #[rustfmt::skip]

@@ -42,8 +42,8 @@
 
 use core::{fmt, ops, convert::From};
 
-use io;
-use consensus::encode::{self, Encodable, Decodable};
+use std::io;
+use crate::consensus::encode::{self, Encodable, Decodable};
 
 /// Version of the protocol as appearing in network message headers
 /// This constant is used to signal to other peers which features you support.
@@ -62,19 +62,21 @@ use consensus::encode::{self, Encodable, Decodable};
 /// 60001 - Support `pong` message and nonce in `ping` message
 pub const PROTOCOL_VERSION: u32 = 70220;
 
-user_enum! {
-    /// The cryptocurrency to act on
-    #[derive(Copy, PartialEq, Eq, PartialOrd, Ord, Clone, Hash, Debug)]
-    pub enum Network {
-        /// Classic Dash Core Payment Chain
-        Dash <-> "dash",
-        /// Dash's testnet
-        Testnet <-> "testnet",
-        /// A Dash devnet
-        Devnet <-> "devnet",
-        /// Dash's regtest
-        Regtest <-> "regtest"
-    }
+/// The cryptocurrency network to act on.
+#[derive(Copy, PartialEq, Eq, PartialOrd, Ord, Clone, Hash, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+#[non_exhaustive]
+pub enum Network {
+    /// Classic Dash Core Payment Chain
+    Dash,
+    /// Bitcoin's testnet network.
+    Testnet,
+    /// Bitcoin's signet network.
+    Devnet,
+    /// Bitcoin's regtest network.
+    Regtest,
 }
 
 impl Network {

@@ -28,35 +28,33 @@
 
 pub mod txin;
 pub mod txout;
-mod outpoint;
+pub mod outpoint;
 pub mod hash_type;
 pub mod special_transaction;
 
-use prelude::*;
+use crate::prelude::*;
 
-use ::{io};
+use std::io;
 use core::{default::Default};
-use core::convert::TryFrom;
 
 use hashes::{Hash, sha256d};
 
 use {endian};
-use blockdata::constants::WITNESS_SCALE_FACTOR;
+use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature="bitcoinconsensus")] use blockdata::script;
-use blockdata::script::Script;
-use blockdata::transaction::txin::TxIn;
-use blockdata::transaction::txout::TxOut;
-use blockdata::witness::Witness;
-use consensus::{encode, Decodable, Encodable};
-use consensus::encode::MAX_VEC_SIZE;
-use hash_types::{Sighash, Txid, Wtxid};
-use ::{VarInt};
-use blockdata::transaction::hash_type::EcdsaSighashType;
-use blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
-use InputsHash;
-pub use outpoint::*;
-#[cfg(feature="bitcoinconsensus")] use OutPoint;
-
+use crate::blockdata::script::Script;
+use crate::blockdata::transaction::txin::TxIn;
+use crate::blockdata::transaction::txout::TxOut;
+use crate::blockdata::witness::Witness;
+use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::encode::{VarInt};
+use crate::consensus::encode::MAX_VEC_SIZE;
+use crate::hash_types::{Txid, Wtxid, InputsHash};
+use crate::blockdata::transaction::hash_type::EcdsaSighashType;
+use crate::blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
+pub use crate::transaction::outpoint::*;
+use crate::sighash::LegacySighash;
+// #[cfg(feature="bitcoinconsensus")] use OutPoint;
 #[cfg(doc)]
 use sighash::SchnorrSighashType;
 
@@ -283,15 +281,15 @@ impl Transaction {
         input_index: usize,
         script_pubkey: &Script,
         sighash_u32: u32
-    ) -> Sighash {
+    ) -> LegacySighash {
         if self.is_invalid_use_of_sighash_single(sighash_u32, input_index) {
-            return Sighash::from_slice(&UINT256_ONE).expect("const-size array");
+            return LegacySighash::from_slice(&UINT256_ONE).expect("const-size array");
         }
 
-        let mut engine = Sighash::engine();
+        let mut engine = LegacySighash::engine();
         self.encode_signing_data_to(&mut engine, input_index, script_pubkey, sighash_u32)
             .expect("engines don't error");
-        Sighash::from_engine(engine)
+        LegacySighash::from_engine(engine)
     }
 
     /// This will hash all input outpoints

@@ -22,11 +22,11 @@
 //!
 //! The special transaction type used for AssetLockTx Transactions is 8.
 
-use prelude::*;
-use io;
-use io::{Error, Write};
-use consensus::{Decodable, Encodable, encode};
-use TxOut;
+use crate::prelude::*;
+use std::io;
+use std::io::{Error, Write};
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::transaction::txout::TxOut;
 
 /// An Asset Lock payload. This is contained as the payload of an asset lock special transaction.
 /// The Asset Lock Special transaction and this payload is described in the Asset Lock DIP2X

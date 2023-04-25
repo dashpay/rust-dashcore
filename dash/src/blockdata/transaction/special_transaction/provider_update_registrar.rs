@@ -29,18 +29,16 @@
 //!
 //! The special transaction type used for ProUpRegTx Transactions is 3.
 
-use prelude::*;
-use io::Error;
-use io;
-use io::Write;
+use crate::prelude::*;
+use std::io::Error;
+use std::io;
+use std::io::Write;
 use hashes::Hash;
-use ::{Script};
-use consensus::{Decodable, Encodable, encode};
-use ::{InputsHash};
-use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-use bls_sig_utils::BLSPublicKey;
-use ::{PubkeyHash, SpecialTransactionPayloadHash};
-use Txid;
+use crate::{Script};
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+use crate::bls_sig_utils::BLSPublicKey;
+use crate::hash_types::{PubkeyHash, SpecialTransactionPayloadHash, Txid, InputsHash};
 
 /// A Provider Update Registrar Payload used in a Provider Update Registrar Special Transaction.
 /// This is used to update the base aspects a Masternode on the network.

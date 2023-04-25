@@ -22,14 +22,16 @@
 //!
 //! The special transaction type used for CrWithTx Transactions is 9.
 
-use ::{io, SpecialTransactionPayloadHash};
-use io::{Error, Write};
+use crate::hash_types::{SpecialTransactionPayloadHash};
+use std::io::{Error, Write};
 use hashes::Hash;
-use bls_sig_utils::BLSSignature;
-use consensus::{Decodable, Encodable, encode};
-use blockdata::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
-use blockdata::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
-use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+use crate::bls_sig_utils::BLSSignature;
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::blockdata::transaction::special_transaction::{
+    asset_unlock::request_info::AssetUnlockRequestInfo,
+    asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload,
+    SpecialTransactionBasePayloadEncodable,
+};
 
 /// A Credit Withdrawal payload. This is contained as the payload of a credit withdrawal special
 /// transaction.
@@ -78,7 +80,7 @@ impl Encodable for AssetUnlockPayload {
 }
 
 impl Decodable for AssetUnlockPayload {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+    fn consensus_decode<D: std::io::Read>(mut d: D) -> Result<Self, encode::Error> {
         let base = AssetUnlockBasePayload::consensus_decode(&mut d)?;
         let request_info = AssetUnlockRequestInfo::consensus_decode(&mut d)?;
         let quorum_sig = BLSSignature::consensus_decode(&mut d)?;

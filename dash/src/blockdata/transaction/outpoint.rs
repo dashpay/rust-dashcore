@@ -23,11 +23,10 @@
 #[cfg(feature = "std")] use std::error;
 use core::convert::TryInto;
 use core::fmt;
-use io;
-use hashes::Hash;
+use std::io;
 use hashes::hex::FromHex;
-use consensus::{Decodable, Encodable, encode};
-use Txid;
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::hash_types::Txid;
 
 /// A reference to a transaction output.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -37,7 +36,8 @@ pub struct OutPoint {
     /// The index of the referenced output in its transaction's vout.
     pub vout: u32,
 }
-serde_struct_human_string_impl!(OutPoint, "an OutPoint", txid, vout);
+#[cfg(feature = "serde")]
+crate::serde_utils::serde_struct_human_string_impl!(OutPoint, "an OutPoint", txid, vout);
 
 impl OutPoint {
     /// Creates a new [`OutPoint`].

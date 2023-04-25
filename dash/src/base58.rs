@@ -21,14 +21,14 @@
 //! strings respectively.
 //!
 
-use prelude::*;
+use crate::prelude::*;
 
 use core::{fmt, str, iter, slice};
 
 use hashes::{sha256d, Hash, hex};
 use secp256k1;
 
-use {endian, key};
+use crate::key;
 
 /// An error that might occur during base58 decoding
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
@@ -132,7 +132,10 @@ static BASE58_DIGITS: [Option<u8>; 128] = [
 ];
 
 /// Decode base58-encoded string into a byte vector
-pub fn from(data: &str) -> Result<Vec<u8>, Error> {
+pub fn from(data: &str) -> Result<Vec<u8>, Error> { decode(data) }
+
+/// Decodes a base58-encoded string into a byte vector.
+pub fn decode(data: &str) -> Result<Vec<u8>, Error> {
     // 11/15 is just over log_256(58)
     let mut scratch = vec![0u8; 1 + data.len() * 11 / 15];
     // Build in base 256
@@ -143,7 +146,9 @@ pub fn from(data: &str) -> Result<Vec<u8>, Error> {
         }
         let mut carry = match BASE58_DIGITS[d58 as usize] {
             Some(d58) => d58 as u32,
-            None => { return Err(Error::BadByte(d58)); }
+            None => {
+                return Err(Error::BadByte(d58));
+            }
         };
         for d256 in scratch.iter_mut().rev() {
             carry += *d256 as u32 * 58;
@@ -154,28 +159,36 @@ pub fn from(data: &str) -> Result<Vec<u8>, Error> {
     }
 
     // Copy leading zeroes directly
-    let mut ret: Vec<u8> = data.bytes().take_while(|&x| x == BASE58_CHARS[0])
-                                       .map(|_| 0)
-                                       .collect();
+    let mut ret: Vec<u8> = data.bytes().take_while(|&x| x == BASE58_CHARS[0]).map(|_| 0).collect();
     // Copy rest of string
     ret.extend(scratch.into_iter().skip_while(|&x| x == 0));
     Ok(ret)
 }
 
-/// Decode a base58check-encoded string
-pub fn from_check(data: &str) -> Result<Vec<u8>, Error> {
-    let mut ret: Vec<u8> = from(data)?;
+/// Decodes a base58check-encoded string into a byte vector verifying the checksum.
+#[deprecated(since = "0.30.0", note = "Use base58::decode_check() instead")]
+pub fn from_check(data: &str) -> Result<Vec<u8>, Error> { decode_check(data) }
+
+/// Decodes a base58check-encoded string into a byte vector verifying the checksum.
+pub fn decode_check(data: &str) -> Result<Vec<u8>, Error> {
+    let mut ret: Vec<u8> = decode(data)?;
     if ret.len() < 4 {
         return Err(Error::TooShort(ret.len()));
     }
-    let ck_start = ret.len() - 4;
-    let expected = endian::slice_to_u32_le(&sha256d::Hash::hash(&ret[..ck_start])[..4]);
-    let actual = endian::slice_to_u32_le(&ret[ck_start..(ck_start + 4)]);
+    let check_start = ret.len() - 4;
+
+    let hash_check =
+        sha256d::Hash::hash(&ret[..check_start])[..4].try_into().expect("4 byte slice");
+    let data_check = ret[check_start..].try_into().expect("4 byte slice");
+
+    let expected = u32::from_le_bytes(hash_check);
+    let actual = u32::from_le_bytes(data_check);
+
     if expected != actual {
         return Err(Error::BadChecksum(expected, actual));
     }
 
-    ret.truncate(ck_start);
+    ret.truncate(check_start);
     Ok(ret)
 }
 

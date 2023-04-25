@@ -36,14 +36,13 @@
 
 //! The special transaction type used for Provider Update Revoking Transactions is 4.
 
-use io;
-use io::{Error, Write};
+use std::io;
+use std::io::{Error, Write};
 use hashes::Hash;
-use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-use bls_sig_utils::BLSSignature;
-use consensus::{Decodable, Encodable, encode};
-use ::{InputsHash, SpecialTransactionPayloadHash};
-use Txid;
+use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+use crate::bls_sig_utils::BLSSignature;
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::hash_types::{InputsHash, SpecialTransactionPayloadHash, Txid};
 
 /// A Provider Update Revocation Payload used in a Provider Update Revocation Special Transaction.
 /// This is used to signal and stop a Masternode from the operator.

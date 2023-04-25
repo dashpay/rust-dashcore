@@ -111,6 +111,7 @@ pub mod sign_message;
 pub mod string;
 pub mod taproot;
 pub mod util;
+mod bls_sig_utils;
 
 // May depend on crate features and we don't want to bother with it
 #[allow(unused)]
@@ -131,7 +132,8 @@ pub use crate::blockdata::block::{self, Block};
 pub use crate::blockdata::fee_rate::FeeRate;
 pub use crate::blockdata::locktime::{self, absolute, relative};
 pub use crate::blockdata::script::{self, Script, ScriptBuf};
-pub use crate::blockdata::transaction::{self, OutPoint, Sequence, Transaction, TxIn, TxOut};
+pub use crate::blockdata::transaction::{self, Transaction};
+pub use crate::transaction::{txin::TxIn, txout::TxOut, outpoint::OutPoint};
 pub use crate::blockdata::weight::Weight;
 pub use crate::blockdata::witness::{self, Witness};
 pub use crate::blockdata::{constants, opcodes};

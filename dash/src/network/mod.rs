@@ -21,7 +21,7 @@
 //! of Bitcoin data and network messages.
 //!
 
-use io;
+use std::io;
 use core::fmt;
 #[cfg(feature = "std")] use std::error;
 

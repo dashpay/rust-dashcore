@@ -18,7 +18,7 @@ use crate::blockdata::block::{self, Block};
 use crate::blockdata::locktime::absolute;
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::script;
-use crate::blockdata::transaction::{OutPoint, Sequence, Transaction, TxIn, TxOut};
+use crate::blockdata::transaction::{outpoint::OutPoint, Transaction, txin::TxIn, txout::TxOut};
 use crate::blockdata::witness::Witness;
 use crate::internal_macros::impl_bytes_newtype;
 use crate::network::constants::Network;
@@ -70,6 +70,7 @@ fn bitcoin_genesis_tx() -> Transaction {
         lock_time: absolute::LockTime::ZERO,
         input: vec![],
         output: vec![],
+        special_transaction_payload: None,
     };
 
     // Inputs

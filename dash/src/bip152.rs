@@ -372,19 +372,21 @@ impl BlockTransactions {
 #[cfg(test)]
 mod test {
     use hashes::hex::FromHex;
+    use crate::blockdata::script::ScriptBuf;
+    use crate::blockdata::transaction::{Transaction, txin::TxIn, txout::TxOut, outpoint::OutPoint};
 
     use super::*;
     use crate::blockdata::locktime::absolute;
     use crate::consensus::encode::{deserialize, serialize};
     use crate::hash_types::TxMerkleNode;
-    use crate::{
-        CompactTarget, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
-    };
+    use crate::pow::CompactTarget;
+    use crate::blockdata::witness::Witness;
+    use crate::hash_types::{Txid};
 
     fn dummy_tx(nonce: &[u8]) -> Transaction {
         Transaction {
             version: 1,
-            lock_time: absolute::LockTime::from_consensus(2),
+            lock_time: absolute::LockTime::from_consensus(2).to_consensus_u32(),
             input: vec![TxIn {
                 previous_output: OutPoint::new(Txid::hash(nonce), 0),
                 script_sig: ScriptBuf::new(),
@@ -392,6 +394,7 @@ mod test {
                 witness: Witness::new(),
             }],
             output: vec![TxOut { value: 1, script_pubkey: ScriptBuf::new() }],
+            special_transaction_payload: None,
         }
     }
 

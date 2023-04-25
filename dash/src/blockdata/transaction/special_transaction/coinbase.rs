@@ -18,10 +18,10 @@
 //! It is defined in DIP4 https://github.com/dashpay/dips/blob/master/dip-0004.md.
 //!
 
-use io;
-use io::{Error, Write};
-use ::{MerkleRootMasternodeList, MerkleRootQuorums};
-use consensus::{Decodable, Encodable, encode};
+use std::io;
+use std::io::{Error, Write};
+use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+use crate::consensus::{Decodable, Encodable, encode};
 
 /// A Coinbase payload. This is contained as the payload of a coinbase special transaction.
 /// The Coinbase payload is described in DIP4.

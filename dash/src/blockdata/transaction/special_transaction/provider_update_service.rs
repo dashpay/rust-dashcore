@@ -35,15 +35,14 @@
 //! The special transaction type used for ProUpServTx Transactions is 2.
 
 
-use io;
-use io::{Error, Write};
+use std::io;
+use std::io::{Error, Write};
 use hashes::Hash;
-use ::{Script};
-use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-use bls_sig_utils::BLSSignature;
-use consensus::{Decodable, Encodable, encode};
-use ::{InputsHash, SpecialTransactionPayloadHash};
-use Txid;
+use crate::{Script};
+use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+use crate::bls_sig_utils::BLSSignature;
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::hash_types::{InputsHash, SpecialTransactionPayloadHash, Txid};
 
 /// A Provider Update Service Payload used in a Provider Update Service Special Transaction.
 /// This is used to update the operational aspects a Masternode on the network.

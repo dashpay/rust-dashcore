@@ -20,8 +20,9 @@
 //! A TxOut is an output of a transaction.
 //!
 
-use ::{PubkeyHash, Script};
-use ::{Address, ScriptHash};
+use crate::{PubkeyHash, Script, ScriptBuf};
+use crate::{Address, ScriptHash};
+use crate::internal_macros::impl_consensus_encoding;
 
 /// A transaction output, which defines new coins to be created from old ones.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
@@ -30,13 +31,13 @@ pub struct TxOut {
     /// The value of the output, in satoshis.
     pub value: u64,
     /// The script which must be satisfied for the output to be spent.
-    pub script_pubkey: Script
+    pub script_pubkey: ScriptBuf
 }
 
 // This is used as a "null txout" in consensus signing code.
 impl Default for TxOut {
-    fn default() -> TxOut {
-        TxOut { value: 0xffffffffffffffff, script_pubkey: Script::new() }
+    fn default() -> Box<TxOut> {
+        Box::new(TxOut { value: 0xffffffffffffffff, script_pubkey: Script::new() })
     }
 }
 

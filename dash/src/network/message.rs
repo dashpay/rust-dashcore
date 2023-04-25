@@ -28,7 +28,6 @@ use crate::consensus::{encode, serialize};
 use crate::io;
 use crate::merkle_tree::MerkleBlock;
 use crate::network::address::{AddrV2Message, Address};
-use crate::network::constants::Magic;
 use crate::network::{
     message_blockdata, message_bloom, message_compact_blocks, message_filter, message_network,
 };
@@ -161,7 +160,7 @@ crate::error::impl_std_error!(CommandStringError);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawNetworkMessage {
     /// Magic bytes to identify the network these messages are meant for
-    pub magic: Magic,
+    pub magic: u32,
     /// The actual message data
     pub payload: NetworkMessage,
 }

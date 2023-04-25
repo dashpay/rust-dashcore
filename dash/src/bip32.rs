@@ -21,21 +21,22 @@
 //! at <https://github.com/Dash/bips/blob/master/bip-0032.mediawiki>.
 //!
 
-use prelude::*;
+use crate::prelude::*;
 
-use io::Write;
+use std::io::Write;
 use core::{fmt, str::FromStr, default::Default};
 use core::ops::Index;
 #[cfg(feature = "std")] use std::error;
 #[cfg(feature = "serde")] use serde;
 
-use hash_types::XpubIdentifier;
+use crate::hash_types::XpubIdentifier;
 use hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine, hex};
 use secp256k1::{self, Secp256k1, XOnlyPublicKey};
 
-use network::constants::Network;
-use {base58, endian, key};
+use crate::network::constants::Network;
+use crate::base58;
 use key::{PublicKey, PrivateKey, KeyPair};
+use crate::internal_macros::impl_bytes_newtype;
 
 /// A chain code
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -66,7 +67,7 @@ pub struct ExtendedPrivKey {
     /// Chain code
     pub chain_code: ChainCode
 }
-serde_string_impl!(ExtendedPrivKey, "a BIP-32 extended private key");
+crate::serde_utils::serde_string_impl!(ExtendedPrivKey, "a BIP-32 extended private key");
 
 #[cfg(not(feature = "std"))]
 #[cfg_attr(docsrs, doc(cfg(not(feature = "std"))))]
@@ -98,7 +99,7 @@ pub struct ExtendedPubKey {
     /// Chain code
     pub chain_code: ChainCode
 }
-serde_string_impl!(ExtendedPubKey, "a BIP-32 extended public key");
+crate::serde_utils::serde_string_impl!(ExtendedPubKey, "a BIP-32 extended public key");
 
 /// A child number for a derived key
 #[derive(Copy, Clone, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
@@ -243,7 +244,7 @@ pub trait IntoDerivationPath {
 /// A BIP-32 derivation path.
 #[derive(Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub struct DerivationPath(Vec<ChildNumber>);
-serde_string_impl!(DerivationPath, "a BIP-32 derivation path");
+crate::serde_utils::serde_string_impl!(DerivationPath, "a BIP-32 derivation path");
 
 impl<I> Index<I> for DerivationPath
 where
@@ -516,7 +517,8 @@ impl From<key::Error> for Error {
             key::Error::Base58(e) => Error::Base58(e),
             key::Error::Secp256k1(e) => Error::Secp256k1(e),
             key::Error::InvalidKeyPrefix(_) => Error::Secp256k1(secp256k1::Error::InvalidPublicKey),
-            key::Error::Hex(e) => Error::Hex(e)
+            key::Error::Hex(e) => Error::Hex(e),
+            key::Error::InvalidHexLength(got) => Error::InvalidPublicKeyHexLength(got),
         }
     }
 }
@@ -579,12 +581,19 @@ impl ExtendedPrivKey {
     }
 
     /// Private->Private child key derivation
-    pub fn ckd_priv<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>, i: ChildNumber) -> Result<ExtendedPrivKey, Error> {
+    /// Private->Private child key derivation
+    pub fn ckd_priv<C: secp256k1::Signing>(
+        &self,
+        secp: &Secp256k1<C>,
+        i: ChildNumber,
+    ) -> Result<ExtendedPrivKey, Error> {
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&self.chain_code[..]);
         match i {
             ChildNumber::Normal { .. } => {
                 // Non-hardened key: compute public data and use that
-                hmac_engine.input(&secp256k1::PublicKey::from_secret_key(secp, &self.private_key).serialize()[..]);
+                hmac_engine.input(
+                    &secp256k1::PublicKey::from_secret_key(secp, &self.private_key).serialize()[..],
+                );
             }
             ChildNumber::Hardened { .. } => {
                 // Hardened key: use only secret data to prevent public derivation
@@ -593,10 +602,12 @@ impl ExtendedPrivKey {
             }
         }
 
-        hmac_engine.input(&endian::u32_to_array_be(u32::from(i)));
+        hmac_engine.input(&u32::from(i).to_be_bytes());
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
-        let sk = secp256k1::SecretKey::from_slice(&hmac_result[..32]).expect("statistically impossible to hit");
-        let tweaked = sk.add_tweak(&self.private_key.into()).expect("statistically impossible to hit");
+        let sk = secp256k1::SecretKey::from_slice(&hmac_result[..32])
+            .expect("statistically impossible to hit");
+        let tweaked =
+            sk.add_tweak(&self.private_key.into()).expect("statistically impossible to hit");
 
         Ok(ExtendedPrivKey {
             network: self.network,
@@ -604,32 +615,33 @@ impl ExtendedPrivKey {
             parent_fingerprint: self.fingerprint(secp),
             child_number: i,
             private_key: tweaked,
-            chain_code: ChainCode::from(&hmac_result[32..])
+            chain_code: ChainCode::from_hmac(hmac_result),
         })
     }
 
     /// Decoding extended private key from binary data according to BIP 32
     pub fn decode(data: &[u8]) -> Result<ExtendedPrivKey, Error> {
         if data.len() != 78 {
-            return Err(Error::WrongExtendedKeyLength(data.len()))
+            return Err(Error::WrongExtendedKeyLength(data.len()));
         }
 
-        let network = if data[0..4] == [0x04u8, 0x88, 0xAD, 0xE4] {
-            Network::Dash
-        } else if data[0..4] == [0x04u8, 0x35, 0x83, 0x94] {
-            Network::Testnet
-        } else {
-            let mut ver = [0u8; 4];
-            ver.copy_from_slice(&data[0..4]);
-            return Err(Error::UnknownVersion(ver));
+        let network = match data {
+            [0x04u8, 0x88, 0xAD, 0xE4, ..] => Network::Bitcoin,
+            [0x04u8, 0x35, 0x83, 0x94, ..] => Network::Testnet,
+            [b0, b1, b2, b3, ..] => return Err(Error::UnknownVersion([*b0, *b1, *b2, *b3])),
+            _ => unreachable!("length checked above"),
         };
 
         Ok(ExtendedPrivKey {
             network,
             depth: data[4],
-            parent_fingerprint: Fingerprint::from(&data[5..9]),
-            child_number: endian::slice_to_u32_be(&data[9..13]).into(),
-            chain_code: ChainCode::from(&data[13..45]),
+            parent_fingerprint: data[5..9]
+                .try_into()
+                .expect("9 - 5 == 4, which is the Fingerprint length"),
+            child_number: u32::from_be_bytes(data[9..13].try_into().expect("4 byte slice")).into(),
+            chain_code: data[13..45]
+                .try_into()
+                .expect("45 - 13 == 32, which is the ChainCode length"),
             private_key: secp256k1::SecretKey::from_slice(&data[46..78])?,
         })
     }
@@ -810,7 +822,7 @@ impl FromStr for ExtendedPrivKey {
     type Err = Error;
 
     fn from_str(inp: &str) -> Result<ExtendedPrivKey, Error> {
-        let data = base58::from_check(inp)?;
+        let data = base58::decode_check(inp)?;
 
         if data.len() != 78 {
             return Err(base58::Error::InvalidLength(data.len()).into());
@@ -830,7 +842,7 @@ impl FromStr for ExtendedPubKey {
     type Err = Error;
 
     fn from_str(inp: &str) -> Result<ExtendedPubKey, Error> {
-        let data = base58::from_check(inp)?;
+        let data = base58::decode_check(inp)?;
 
         if data.len() != 78 {
             return Err(base58::Error::InvalidLength(data.len()).into());

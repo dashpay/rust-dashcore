@@ -21,9 +21,8 @@
 //! chains (such as mainnet, testnet).
 //!
 
-use network::constants::Network;
-use uint::Uint256;
-use Work;
+use crate::network::constants::Network;
+use crate::Work;
 
 /// Parameters that influence chain consensus.
 #[non_exhaustive]

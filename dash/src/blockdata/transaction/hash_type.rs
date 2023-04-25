@@ -21,7 +21,7 @@
 //!
 
 #[cfg(feature = "std")] use std::error;
-use prelude::*;
+use crate::prelude::*;
 use core::{fmt, str::FromStr};
 
 /// This type is consensus valid but an input including it would prevent the transaction from

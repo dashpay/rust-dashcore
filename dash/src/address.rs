@@ -36,7 +36,7 @@
 //! let address = Address::p2pkh(&public_key, Network::Dash);
 //! ```
 
-use prelude::*;
+use crate::prelude::*;
 
 use core::fmt;
 use core::num::ParseIntError;
@@ -44,16 +44,16 @@ use core::str::FromStr;
 #[cfg(feature = "std")] use std::error;
 
 use secp256k1::{Secp256k1, Verification, XOnlyPublicKey};
-use bech32;
+use crate::{bech32, ScriptBuf};
 use hashes::{sha256, Hash, HashEngine};
-use hash_types::{PubkeyHash, ScriptHash};
-use blockdata::{script, opcodes};
-use blockdata::constants::{PUBKEY_ADDRESS_PREFIX_MAIN, SCRIPT_ADDRESS_PREFIX_MAIN, PUBKEY_ADDRESS_PREFIX_TEST, SCRIPT_ADDRESS_PREFIX_TEST, MAX_SCRIPT_ELEMENT_SIZE};
-use network::constants::Network;
-use base58;
-use taproot::TapBranchHash;
-use key::PublicKey;
-use blockdata::script::Instruction;
+use crate::hash_types::{PubkeyHash, ScriptHash};
+use crate::blockdata::{script, opcodes};
+use crate::blockdata::constants::{PUBKEY_ADDRESS_PREFIX_MAIN, SCRIPT_ADDRESS_PREFIX_MAIN, PUBKEY_ADDRESS_PREFIX_TEST, SCRIPT_ADDRESS_PREFIX_TEST, MAX_SCRIPT_ELEMENT_SIZE};
+use crate::network::constants::Network;
+use crate::base58;
+use crate::taproot::TapBranchHash;
+use crate::key::PublicKey;
+use crate::blockdata::script::Instruction;
 use schnorr::{TapTweak, UntweakedPublicKey, TweakedPublicKey};
 
 /// Address error.
@@ -372,13 +372,11 @@ impl Payload {
     /// Constructs a [Payload] from an output script (`scriptPubkey`).
     pub fn from_script(script: &script::Script) -> Option<Payload> {
         Some(if script.is_p2pkh() {
-            let mut hash_inner = [0u8; 20];
-            hash_inner.copy_from_slice(&script.as_bytes()[3..23]);
-            Payload::PubkeyHash(PubkeyHash::from_inner(hash_inner))
+            let bytes = script.as_bytes()[3..23].try_into().expect("statically 20B long");
+            Payload::PubkeyHash(PubkeyHash::from_byte_array(bytes))
         } else if script.is_p2sh() {
-            let mut hash_inner = [0u8; 20];
-            hash_inner.copy_from_slice(&script.as_bytes()[2..22]);
-            Payload::ScriptHash(ScriptHash::from_inner(hash_inner))
+            let bytes = script.as_bytes()[2..22].try_into().expect("statically 20B long");
+            Payload::PubkeyHash(ScriptHash::from_byte_array(bytes))
         } else if script.is_witness_program() {
             Payload::WitnessProgram {
                 version: WitnessVersion::from_opcode(opcodes::All::from(script[0])).ok()?,
@@ -390,10 +388,10 @@ impl Payload {
     }
 
     /// Generates a script pubkey spending to this [Payload].
-    pub fn script_pubkey(&self) -> script::Script {
+    pub fn script_pubkey(&self) -> ScriptBuf {
         match *self {
-            Payload::PubkeyHash(ref hash) => script::Script::new_p2pkh(hash),
-            Payload::ScriptHash(ref hash) => script::Script::new_p2sh(hash),
+            Payload::PubkeyHash(ref hash) => ScriptBuf::new_p2pkh(hash),
+            Payload::ScriptHash(ref hash) => ScriptBuf::new_p2sh(hash),
             Payload::WitnessProgram { version, program: ref prog } => {
                 script::Script::new_witness_program(version, prog)
             }
@@ -666,7 +664,7 @@ impl Address {
     }
 
     /// Generates a script pubkey spending to this address.
-    pub fn script_pubkey(&self) -> script::Script {
+    pub fn script_pubkey(&self) -> ScriptBuf {
         self.payload.script_pubkey()
     }
 
@@ -854,7 +852,7 @@ impl FromStr for Address {
         if s.len() > 50 {
             return Err(Error::Base58(base58::Error::InvalidLength(s.len() * 11 / 15)));
         }
-        let data = base58::from_check(s)?;
+        let data = base58::decode_check(s)?;
         if data.len() != 21 {
             return Err(Error::Base58(base58::Error::InvalidLength(data.len())));
         }

@@ -22,16 +22,15 @@
 //!
 //! The special transaction type used for AssetUnlockTx Transactions is 9.
 
-use io::{Error, Write};
-use core::convert::TryFrom;
-use ::{io, TxOut};
-use blockdata::transaction::special_transaction::TransactionType;
-use blockdata::transaction::special_transaction::TransactionType::AssetUnlock;
-use consensus::{Decodable, Encodable, encode};
-use consensus::encode::MAX_VEC_SIZE;
-use ::{Script, TxIn};
-use prelude::*;
-use ::{PubkeyHash, ScriptHash};
+use std::io::{Error, Write};
+use crate::transaction::TxOut;
+use crate::blockdata::transaction::special_transaction::TransactionType;
+use crate::blockdata::transaction::special_transaction::TransactionType::AssetUnlock;
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::encode::MAX_VEC_SIZE;
+use crate::{Script, TxIn};
+use crate::prelude::*;
+use crate::hash_types::{PubkeyHash, ScriptHash};
 
 /// An Asset Unlock Base payload. This is the base payload of the Asset Unlock. In order to make
 /// it a full payload the request info should be added.
@@ -57,7 +56,7 @@ impl Encodable for AssetUnlockBasePayload {
 }
 
 impl Decodable for AssetUnlockBasePayload {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+    fn consensus_decode<D: std::io::Read>(mut d: D) -> Result<Self, encode::Error> {
         let version = u8::consensus_decode(&mut d)?;
         let index = u64::consensus_decode(&mut d)?;
         let fee = u32::consensus_decode(&mut d)?;
@@ -132,7 +131,7 @@ impl Encodable for AssetUnlockBaseTransactionInfo {
 }
 
 impl Decodable for AssetUnlockBaseTransactionInfo {
-    fn consensus_decode<D: io::Read>(d: D) -> Result<Self, encode::Error> {
+    fn consensus_decode<D: std::io::Read>(d: D) -> Result<Self, encode::Error> {
         let mut d = d.take(MAX_VEC_SIZE as u64);
         let version = u16::consensus_decode(&mut d)?;
         let special_transaction_type_u16 = u16::consensus_decode(&mut d)?;

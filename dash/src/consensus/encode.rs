@@ -30,26 +30,25 @@
 //! typically big-endian decimals, etc.)
 //!
 
-use prelude::*;
+use crate::prelude::*;
 
 use core::{fmt, mem, u32, convert::From};
 #[cfg(feature = "std")] use std::error;
 
-use hashes::{sha256d, Hash, sha256, hash160};
-use hash_types::{BlockHash, FilterHash, TxMerkleNode, FilterHeader};
-
-use io::{self, Cursor, Read};
+use hashes::{sha256d, Hash, sha256};
+use crate::hash_types::{BlockHash, FilterHash, TxMerkleNode, FilterHeader};
+use crate::bip152::{ShortId, PrefilledTransaction};
+use std::io::{self, Cursor, Read};
 
 use endian;
-use psbt;
-use taproot::TapLeafHash;
-use hashes::hex::ToHex;
+use crate::psbt;
+use crate::taproot::TapLeafHash;
 
-use blockdata::transaction::{txout::TxOut, Transaction, txin::TxIn, outpoint::OutPoint};
-use blockdata::transaction::special_transaction::TransactionType;
+use crate::blockdata::transaction::{txout::TxOut, Transaction, txin::TxIn};
+use crate::blockdata::transaction::special_transaction::TransactionType;
 #[cfg(feature = "std")]
-use network::{message_blockdata::Inventory, address::{Address, AddrV2Message}};
-use Script;
+use crate::network::{message_blockdata::Inventory, address::{Address, AddrV2Message}};
+use crate::blockdata::script::Script;
 
 /// Encoding error
 #[derive(Debug)]

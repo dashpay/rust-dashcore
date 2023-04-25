@@ -20,10 +20,11 @@
 //! A TxIn is an input to a transaction.
 //!
 
-use io;
-use blockdata::transaction::OutPoint;
-use consensus::{Decodable, Encodable, encode};
-use ::{Script, Witness};
+use std::io;
+use crate::blockdata::script::ScriptBuf;
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::{Script, Witness};
+use crate::transaction::outpoint::OutPoint;
 
 /// A transaction input, which defines old coins to be consumed
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
@@ -33,7 +34,7 @@ pub struct TxIn {
     pub previous_output: OutPoint,
     /// The script which pushes values on the stack which will cause
     /// the referenced output's script to be accepted.
-    pub script_sig: Script,
+    pub script_sig: ScriptBuf,
     /// The sequence number, which suggests to miners which of two
     /// conflicting transactions should be preferred, or 0xFFFFFFFF
     /// to ignore this feature. This is generally never used since
@@ -81,7 +82,7 @@ impl Decodable for TxIn {
 #[cfg(test)]
 mod tests {
     use hashes::hex::FromHex;
-    use consensus::deserialize;
+    use crate::consensus::encode::deserialize;
     use super::*;
 
     #[test]

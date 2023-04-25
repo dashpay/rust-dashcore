@@ -34,19 +34,19 @@
 //! KeyIdVoting (renamed to voting_key_hash): This is the public key ID used for proposal voting.
 //! Votes signed with this key are valid while the masternode is in the registered set.
 
-use prelude::*;
-use io;
-use io::{Error, Write};
+use crate::prelude::*;
+use std::io;
+use std::io::{Error, Write};
 use hashes::Hash;
-use hashes::hex::ToHex;
-use ::{OutPoint, Script};
-use consensus::{Decodable, Encodable, encode};
-use ::{InputsHash};
-use ::{Address, Network};
-use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-use bls_sig_utils::BLSPublicKey;
-use ::{PubkeyHash, SpecialTransactionPayloadHash};
-use address::Payload;
+use crate::{OutPoint, Script};
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::hash_types::{InputsHash};
+use crate::{Address};
+use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+use crate::bls_sig_utils::BLSPublicKey;
+use crate::hash_types::{PubkeyHash, SpecialTransactionPayloadHash};
+use crate::address::Payload;
+use crate::Network;
 
 /// A Provider Registration Payload used in a Provider Registration Special Transaction.
 /// This is used to register a Masternode on the network.
@@ -182,7 +182,7 @@ mod tests {
     use core::str::FromStr;
     use std::net::Ipv4Addr;
     use hashes::Hash;
-    use hashes::hex::{FromHex, ToHex};
+    use hashes::hex::{FromHex};
     use consensus::{deserialize};
     use ::{Transaction};
     use ::{InputsHash, Txid};
@@ -197,6 +197,8 @@ mod tests {
     use blockdata::transaction::special_transaction::TransactionPayload::ProviderRegistrationPayloadType;
     use bls_sig_utils::BLSPublicKey;
     use ::{PubkeyHash};
+    use transaction::outpoint::OutPoint;
+    use transaction::outpoint::ParseOutPointError::Txid;
 
     #[test]
     fn test_collateral_provider_registration_transaction() {
@@ -332,13 +334,14 @@ mod tests {
         // This is a test for testnet
         let network = Network::Testnet;
 
-        let expected_transaction_bytes = hex::decode("030001000379efbe95cba05893d09f4ec51a71171a3852b54aa958ae35ce43276f5f8f1002000000006a473044022015df39c80ca8595cc197a0be692e9d158dc53bdbc8c6abca0d30c086f338c037022063becdb4f891436de3d2fb21cbf294e9dcb5c1a04bc0ba621867479e46d048cc0121030de5cb8989b6902d98017ab4d42b9244912006b0a1561c1d1ba0e2f3117a39adffffffff79efbe95cba05893d09f4ec51a71171a3852b54aa958ae35ce43276f5f8f1002010000006a47304402205c1bae23b459081b060de14133a20378243bebc05c8e2ed9acdabf6717ae7f9702204027ba0abbcce9ba5b2cb563cbff0190ba8f80e5f8fd6beb07c2c449f194c9be01210270b0f0b71472736a397975a84927314261be815d423006d1bcbc00cd693c3d81ffffffff9d925d6cd8e3a408f472e872d1c2849bc664efda8c7f68f1b3a3efde221bc474010000006a47304402203fa23ec33f91efa026b34e90b15a1fd64ff03242a6a92985b16a25b590e5bae002202d1429374b60b1180cd8b9bd0b432158524f5624d6c5d2d6db8c637c9961a21e0121024c0b09e261253dc40ed572c2d63d0b6cda89154583d75a5ab5a14fba81d70089ffffffff0200e87648170000001976a9143795a62df2eb953c1d08bc996d4089ee5d67e28b88ac438ca95a020000001976a91470ed8f5b5cfd4791c15b9d8a7f829cb6a98da18c88ac00000000d101000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffff010101014e1f3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfad38a30fafe61575db40f05ab0a08d55119b0aad300001976a9143795a62df2eb953c1d08bc996d4089ee5d67e28b88ac14b33f2231f0df567e0dfb12899c893f5d2d05f6dcc7d9c8c27b68a71191c75400").unwrap();
+        let expected_transaction_bytes = Vec::from_hex("030001000379efbe95cba05893d09f4ec51a71171a3852b54aa958ae35ce43276f5f8f1002000000006a473044022015df39c80ca8595cc197a0be692e9d158dc53bdbc8c6abca0d30c086f338c037022063becdb4f891436de3d2fb21cbf294e9dcb5c1a04bc0ba621867479e46d048cc0121030de5cb8989b6902d98017ab4d42b9244912006b0a1561c1d1ba0e2f3117a39adffffffff79efbe95cba05893d09f4ec51a71171a3852b54aa958ae35ce43276f5f8f1002010000006a47304402205c1bae23b459081b060de14133a20378243bebc05c8e2ed9acdabf6717ae7f9702204027ba0abbcce9ba5b2cb563cbff0190ba8f80e5f8fd6beb07c2c449f194c9be01210270b0f0b71472736a397975a84927314261be815d423006d1bcbc00cd693c3d81ffffffff9d925d6cd8e3a408f472e872d1c2849bc664efda8c7f68f1b3a3efde221bc474010000006a47304402203fa23ec33f91efa026b34e90b15a1fd64ff03242a6a92985b16a25b590e5bae002202d1429374b60b1180cd8b9bd0b432158524f5624d6c5d2d6db8c637c9961a21e0121024c0b09e261253dc40ed572c2d63d0b6cda89154583d75a5ab5a14fba81d70089ffffffff0200e87648170000001976a9143795a62df2eb953c1d08bc996d4089ee5d67e28b88ac438ca95a020000001976a91470ed8f5b5cfd4791c15b9d8a7f829cb6a98da18c88ac00000000d101000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffff010101014e1f3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfad38a30fafe61575db40f05ab0a08d55119b0aad300001976a9143795a62df2eb953c1d08bc996d4089ee5d67e28b88ac14b33f2231f0df567e0dfb12899c893f5d2d05f6dcc7d9c8c27b68a71191c75400").unwrap();
 
         let expected_transaction: Transaction = deserialize(expected_transaction_bytes.as_slice()).expect("expected a transaction");
 
         let expected_provider_registration_payload = expected_transaction.special_transaction_payload.clone().unwrap().to_provider_registration_payload().expect("expected to get a provider registration payload");
 
-        let tx_id = Txid::from_hex("717d2d4a7d583da184872f4a07e35d897a1be9dd9875b4c017c81cf772e36694").expect("expected to decode tx id");
+        let tx_id_bytes = Vec::from_hex("717d2d4a7d583da184872f4a07e35d897a1be9dd9875b4c017c81cf772e36694").expect("expected to decode tx id");
+        let tx_id = Txid::new(tx_id_bytes);
         let input_transaction_hash_value = InputsHash::from_hex("ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58").expect("expected to decode inputs hash");
 
         let input_address0 = "yQxPwSSicYgXiU22k4Ysq464VxRtgbnvpJ";

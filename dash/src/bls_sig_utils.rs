@@ -17,8 +17,6 @@
 //! and signature.
 //!
 
-use core::{fmt};
-
 impl_array_newtype!(BLSPublicKey, u8, 48);
 impl_bytes_newtype!(BLSPublicKey, 48);
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core

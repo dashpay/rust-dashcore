@@ -18,11 +18,11 @@
 //!
 //! The request info should be added once the quorum selection for signing has been made.
 
-use ::{io};
-use io::{Error, Write};
-use consensus::{Decodable, Encodable, encode};
-use ::{QuorumHash};
-use prelude::*;
+use std::io;
+use std::io::{Error, Write};
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::hash_types::{QuorumHash};
+use crate::prelude::*;
 
 /// An asset unlock request info
 /// This is the information about the signing quorum

@@ -22,20 +22,20 @@
 
 use core::fmt::{Debug, Display, Formatter};
 use core::convert::TryFrom;
-use io;
-use io::{Error, Read, Write};
-use blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
-use blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
-use blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
-use blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
-use blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
-use blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
-use blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
-use blockdata::transaction::special_transaction::quorum_commitment::QuorumCommitmentPayload;
-use blockdata::transaction::special_transaction::TransactionPayload::{AssetLockPayloadType, AssetUnlockPayloadType, CoinbasePayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType, ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType, QuorumCommitmentPayloadType};
-use blockdata::transaction::special_transaction::TransactionType::{AssetLock, Classic, Coinbase, AssetUnlock, ProviderRegistration, ProviderUpdateRegistrar, ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment};
-use consensus::{Decodable, Encodable, encode};
-use ::{SpecialTransactionPayloadHash, VarInt};
+use std::io;
+use std::io::{Error, Read, Write};
+use crate::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
+use crate::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
+use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
+use crate::blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
+use crate::blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
+use crate::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
+use crate::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
+use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumCommitmentPayload;
+use crate::blockdata::transaction::special_transaction::TransactionPayload::{AssetLockPayloadType, AssetUnlockPayloadType, CoinbasePayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType, ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType, QuorumCommitmentPayloadType};
+use crate::blockdata::transaction::special_transaction::TransactionType::{AssetLock, Classic, Coinbase, AssetUnlock, ProviderRegistration, ProviderUpdateRegistrar, ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment};
+use crate::consensus::{Decodable, Encodable, encode, encode::VarInt};
+use crate::hash_types::{SpecialTransactionPayloadHash};
 
 pub mod provider_registration;
 pub mod provider_update_service;

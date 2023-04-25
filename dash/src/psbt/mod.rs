@@ -16,7 +16,7 @@ use secp256k1::{Message, Secp256k1, Signing};
 
 use crate::bip32::{self, ExtendedPrivKey, ExtendedPubKey, KeySource};
 use crate::blockdata::script::ScriptBuf;
-use crate::blockdata::transaction::{Transaction, TxOut};
+use crate::blockdata::transaction::{Transaction, txout::TxOut};
 use crate::crypto::ecdsa;
 use crate::crypto::key::{PrivateKey, PublicKey};
 use crate::prelude::*;
@@ -822,10 +822,10 @@ mod tests {
     use crate::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
     use crate::blockdata::locktime::absolute;
     use crate::blockdata::script::ScriptBuf;
-    use crate::blockdata::transaction::{OutPoint, Sequence, Transaction, TxIn, TxOut};
+    use crate::blockdata::transaction::{outpoint::OutPoint, Transaction, txin::TxIn, txout::TxOut};
     use crate::blockdata::witness::Witness;
     use crate::internal_macros::hex;
-    use crate::network::constants::Network::Bitcoin;
+    use crate::network::constants::Network::Dash;
     use crate::psbt::map::{Input, Output};
     use crate::psbt::raw;
     use crate::psbt::serialize::{Deserialize, Serialize};
@@ -838,6 +838,7 @@ mod tests {
                 lock_time: absolute::LockTime::ZERO,
                 input: vec![],
                 output: vec![],
+                special_transaction_payload: None,
             },
             xpub: Default::default(),
             version: 0,
@@ -1089,7 +1090,7 @@ mod tests {
         use super::*;
         use crate::blockdata::locktime::absolute;
         use crate::blockdata::script::ScriptBuf;
-        use crate::blockdata::transaction::{OutPoint, Sequence, Transaction, TxIn, TxOut};
+        use crate::blockdata::transaction::{outpoint::OutPoint, Transaction, txin::TxIn, txout::TxOut};
         use crate::blockdata::witness::Witness;
         use crate::psbt::map::{Input, Map, Output};
         use crate::psbt::{raw, Error, PartiallySignedTransaction};
