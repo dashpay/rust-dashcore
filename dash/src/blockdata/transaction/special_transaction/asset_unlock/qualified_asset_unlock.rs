@@ -22,6 +22,7 @@
 //!
 //! The special transaction type used for CrWithTx Transactions is 9.
 
+use std::io;
 use crate::hash_types::{SpecialTransactionPayloadHash};
 use std::io::{Error, Write};
 use hashes::Hash;
@@ -70,24 +71,24 @@ impl SpecialTransactionBasePayloadEncodable for AssetUnlockPayload {
 }
 
 impl Encodable for AssetUnlockPayload {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.base.consensus_encode(&mut s)?;
-        len += self.request_info.consensus_encode(&mut s)?;
-        len += self.quorum_sig.consensus_encode(&mut s)?;
+        len += self.base.consensus_encode(w)?;
+        len += self.request_info.consensus_encode(w)?;
+        len += self.quorum_sig.consensus_encode(w)?;
         Ok(len)
     }
 }
 
 impl Decodable for AssetUnlockPayload {
-    fn consensus_decode<D: std::io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let base = AssetUnlockBasePayload::consensus_decode(&mut d)?;
-        let request_info = AssetUnlockRequestInfo::consensus_decode(&mut d)?;
-        let quorum_sig = BLSSignature::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let base = AssetUnlockBasePayload::consensus_decode(r)?;
+        let request_info = AssetUnlockRequestInfo::consensus_decode(r)?;
+        let quorum_sig = BLSSignature::consensus_decode(r)?;
         Ok(AssetUnlockPayload {
             base,
             request_info,
-            quorum_sig
+            quorum_sig,
         })
     }
 }

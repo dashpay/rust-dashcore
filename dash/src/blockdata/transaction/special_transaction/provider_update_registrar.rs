@@ -34,6 +34,7 @@ use std::io::Error;
 use std::io;
 use std::io::Write;
 use hashes::Hash;
+use crate::ScriptBuf;
 use crate::{Script};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
@@ -51,7 +52,7 @@ pub struct ProviderUpdateRegistrarPayload {
     provider_mode: u16,
     operator_public_key: BLSPublicKey,
     voting_key_hash: PubkeyHash,
-    script_payout: Script,
+    script_payout: ScriptBuf,
     inputs_hash: InputsHash,
     payload_sig: Vec<u8>,
 }
@@ -77,24 +78,24 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRegistrarPayload {
 }
 
 impl Encodable for ProviderUpdateRegistrarPayload {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.base_payload_data_encode(&mut s)?;
-        len += self.payload_sig.consensus_encode(&mut s)?;
+        len += self.base_payload_data_encode(w)?;
+        len += self.payload_sig.consensus_encode(w)?;
         Ok(len)
     }
 }
 
 impl Decodable for ProviderUpdateRegistrarPayload {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let version = u16::consensus_decode(&mut d)?;
-        let pro_tx_hash = Txid::consensus_decode(&mut d)?;
-        let provider_mode = u16::consensus_decode(&mut d)?;
-        let operator_public_key = BLSPublicKey::consensus_decode(&mut d)?;
-        let voting_key_hash = PubkeyHash::consensus_decode(&mut d)?;
-        let script_payout = Script::consensus_decode(&mut d)?;
-        let inputs_hash = InputsHash::consensus_decode(&mut d)?;
-        let payload_sig = Vec::<u8>::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let version = u16::consensus_decode(r)?;
+        let pro_tx_hash = Txid::consensus_decode(r)?;
+        let provider_mode = u16::consensus_decode(r)?;
+        let operator_public_key = BLSPublicKey::consensus_decode(r)?;
+        let voting_key_hash = PubkeyHash::consensus_decode(r)?;
+        let script_payout = Script::consensus_decode(r)?;
+        let inputs_hash = InputsHash::consensus_decode(r)?;
+        let payload_sig = Vec::<u8>::consensus_decode(r)?;
 
         Ok(ProviderUpdateRegistrarPayload {
             version,

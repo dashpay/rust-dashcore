@@ -17,6 +17,9 @@
 //! and signature.
 //!
 
+use crate::internal_macros::impl_bytes_newtype;
+use internals::{impl_array_newtype};
+
 impl_array_newtype!(BLSPublicKey, u8, 48);
 impl_bytes_newtype!(BLSPublicKey, 48);
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core
@@ -36,19 +39,17 @@ pub struct BLSSignature([u8;96]);
 macro_rules! impl_elementencode {
     ($element:ident, $len:expr) => {
         impl $crate::consensus::Encodable for $element {
-            fn consensus_encode<S: $crate::io::Write>(&self, mut s: S) -> Result<usize, $crate::io::Error> {
-                s.write(&self.0)
+            fn consensus_encode<W: $crate::io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, $crate::io::Error> {
+                self.0.consensus_encode(w)
             }
         }
 
         impl $crate::consensus::Decodable for $element {
-            fn consensus_decode<D: $crate::io::Read>(mut d: D) -> Result<Self, $crate::consensus::encode::Error> {
-                let mut data :[u8;$len] = [0u8; $len];
-                d.read_exact(&mut data)?;
-                Ok($element(data))
+            fn consensus_decode<R: $crate::io::Read + ?Sized>(r: &mut R) -> Result<Self, $crate::consensus::encode::Error> {
+                Ok(Self::from_byte_array(<$element::Bytes>::consensus_decode(r)?))
             }
         }
-    }
+    };
 }
 
 

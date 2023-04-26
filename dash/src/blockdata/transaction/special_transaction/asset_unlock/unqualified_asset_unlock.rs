@@ -22,12 +22,11 @@
 //!
 //! The special transaction type used for AssetUnlockTx Transactions is 9.
 
-use std::io::{Error, Write};
+use std::io;
 use crate::transaction::TxOut;
 use crate::blockdata::transaction::special_transaction::TransactionType;
 use crate::blockdata::transaction::special_transaction::TransactionType::AssetUnlock;
 use crate::consensus::{Decodable, Encodable, encode};
-use crate::consensus::encode::MAX_VEC_SIZE;
 use crate::{Script, TxIn};
 use crate::prelude::*;
 use crate::hash_types::{PubkeyHash, ScriptHash};
@@ -46,20 +45,20 @@ pub struct AssetUnlockBasePayload {
 }
 
 impl Encodable for AssetUnlockBasePayload {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.version.consensus_encode(&mut s)?;
-        len += self.index.consensus_encode(&mut s)?;
-        len += self.fee.consensus_encode(&mut s)?;
+        len += self.version.consensus_encode(w)?;
+        len += self.index.consensus_encode(w)?;
+        len += self.fee.consensus_encode(w)?;
         Ok(len)
     }
 }
 
 impl Decodable for AssetUnlockBasePayload {
-    fn consensus_decode<D: std::io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let version = u8::consensus_decode(&mut d)?;
-        let index = u64::consensus_decode(&mut d)?;
-        let fee = u32::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let version = u8::consensus_decode(r)?;
+        let index = u64::consensus_decode(r)?;
+        let fee = u32::consensus_decode(r)?;
         Ok(AssetUnlockBasePayload {
             version,
             index,
@@ -118,33 +117,32 @@ impl AssetUnlockBaseTransactionInfo {
 }
 
 impl Encodable for AssetUnlockBaseTransactionInfo {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.version.consensus_encode(&mut s)?;
-        len += (AssetUnlock as u16).consensus_encode(&mut s)?;
-        len += Vec::<TxIn>::new().consensus_encode(&mut s)?;
-        len += self.output.consensus_encode(&mut s)?;
-        len += self.lock_time.consensus_encode(&mut s)?;
-        len += self.base_payload.consensus_encode(&mut s)?;
+        len += self.version.consensus_encode(w)?;
+        len += (AssetUnlock as u16).consensus_encode(w)?;
+        len += Vec::<TxIn>::new().consensus_encode(w)?;
+        len += self.output.consensus_encode(w)?;
+        len += self.lock_time.consensus_encode(w)?;
+        len += self.base_payload.consensus_encode(w)?;
         Ok(len)
     }
 }
 
 impl Decodable for AssetUnlockBaseTransactionInfo {
-    fn consensus_decode<D: std::io::Read>(d: D) -> Result<Self, encode::Error> {
-        let mut d = d.take(MAX_VEC_SIZE as u64);
-        let version = u16::consensus_decode(&mut d)?;
-        let special_transaction_type_u16 = u16::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let version = u16::consensus_decode(r)?;
+        let special_transaction_type_u16 = u16::consensus_decode(r)?;
         let special_transaction_type = TransactionType::try_from(special_transaction_type_u16).map_err(|_| encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16))?;
         if special_transaction_type != AssetUnlock {
             return Err(encode::Error::WrongSpecialTransactionPayloadConversion{ expected: AssetUnlock, actual: special_transaction_type})
         }
-        Vec::<TxIn>::consensus_decode(&mut d)?; //no inputs
+        Vec::<TxIn>::consensus_decode(r)?; //no inputs
         Ok(AssetUnlockBaseTransactionInfo {
             version,
-            output: Decodable::consensus_decode(&mut d)?,
-            lock_time: Decodable::consensus_decode(&mut d)?,
-            base_payload: AssetUnlockBasePayload::consensus_decode(d)?
+            output: Decodable::consensus_decode(r)?,
+            lock_time: Decodable::consensus_decode(r)?,
+            base_payload: AssetUnlockBasePayload::consensus_decode(r)?
         })
     }
 }

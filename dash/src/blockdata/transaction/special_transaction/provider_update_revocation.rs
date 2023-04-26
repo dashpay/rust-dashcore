@@ -75,33 +75,31 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRevocationPayload 
 }
 
 impl Encodable for ProviderUpdateRevocationPayload {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.base_payload_data_encode(&mut s)?;
-        len += self.payload_sig.consensus_encode(&mut s)?;
+        len += self.base_payload_data_encode(w)?;
+        len += self.payload_sig.consensus_encode(w)?;
         Ok(len)
     }
 }
 
 impl Decodable for ProviderUpdateRevocationPayload {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let version = u16::consensus_decode(&mut d)?;
-        let pro_tx_hash = Txid::consensus_decode(&mut d)?;
-        let reason = u16::consensus_decode(&mut d)?;
-        let inputs_hash = InputsHash::consensus_decode(&mut d)?;
-        let payload_sig = BLSSignature::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let version = u16::consensus_decode(r)?;
+        let pro_tx_hash = Txid::consensus_decode(r)?;
+        let reason = u16::consensus_decode(r)?;
+        let inputs_hash = InputsHash::consensus_decode(r)?;
+        let payload_sig = BLSSignature::consensus_decode(r)?;
 
         Ok(ProviderUpdateRevocationPayload {
             version,
             pro_tx_hash,
             reason,
             inputs_hash,
-            payload_sig
+            payload_sig,
         })
     }
 }
 
 #[cfg(test)]
-mod tests {
-
-}
+mod tests {}

@@ -15,7 +15,7 @@
 // If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 //
 
-//! Bitcoin consensus-encodable types.
+//! Dash consensus-encodable types.
 //!
 //! This is basically a replacement of the `Encodable` trait which does
 //! normalization of endianness etc., to ensure that the encoding matches
@@ -30,47 +30,53 @@
 //! typically big-endian decimals, etc.)
 //!
 
+use core::convert::From;
+use core::{fmt, mem, u32};
+
+use hashes::{sha256, sha256d, Hash};
+use internals::write_err;
+use crate::ScriptBuf;
+use crate::transaction::special_transaction::TransactionType;
+use crate::bip152::{PrefilledTransaction, ShortId};
+use crate::transaction::{txin::TxIn, txout::TxOut};
+use crate::blockdata::transaction::{Transaction};
+use crate::hash_types::{BlockHash, FilterHash, FilterHeader, TxMerkleNode};
+use crate::io::{self, Cursor, Read};
+#[cfg(feature = "std")]
+use crate::network::{
+    address::{AddrV2Message, Address},
+    message_blockdata::Inventory,
+};
 use crate::prelude::*;
-
-use core::{fmt, mem, u32, convert::From};
-#[cfg(feature = "std")] use std::error;
-
-use hashes::{sha256d, Hash, sha256};
-use crate::hash_types::{BlockHash, FilterHash, TxMerkleNode, FilterHeader};
-use crate::bip152::{ShortId, PrefilledTransaction};
-use std::io::{self, Cursor, Read};
-
-use endian;
-use crate::psbt;
 use crate::taproot::TapLeafHash;
 
-use crate::blockdata::transaction::{txout::TxOut, Transaction, txin::TxIn};
-use crate::blockdata::transaction::special_transaction::TransactionType;
-#[cfg(feature = "std")]
-use crate::network::{message_blockdata::Inventory, address::{Address, AddrV2Message}};
-use crate::blockdata::script::Script;
-
-/// Encoding error
+/// Encoding error.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
-    /// And I/O error
+    /// And I/O error.
     Io(io::Error),
-    /// PSBT-related error
-    Psbt(psbt::Error),
-    /// Network magic was not expected
-    UnexpectedNetworkMagic {
-        /// The expected network magic
-        expected: u32,
-        /// The unexpected network magic
-        actual: u32,
-    },
-    /// Tried to allocate an oversized vector
+    /// Tried to allocate an oversized vector.
     OversizedVectorAllocation {
-        /// The capacity requested
+        /// The capacity requested.
         requested: usize,
-        /// The maximum capacity
+        /// The maximum capacity.
         max: usize,
     },
+    /// Checksum was invalid.
+    InvalidChecksum {
+        /// The expected checksum.
+        expected: [u8; 4],
+        /// The invalid checksum.
+        actual: [u8; 4],
+    },
+    /// VarInt was encoded in a non-minimal way.
+    NonMinimalVarInt,
+    /// Parsing error.
+    ParseFailed(&'static str),
+    /// Unsupported Segwit flag.
+    UnsupportedSegwitFlag(u8),
+
     /// A Vector was trying to be converted to a fixed size vector, but was the wrong size
     InvalidVectorSize {
         /// The expected size
@@ -78,21 +84,6 @@ pub enum Error {
         /// The actual size of the vector
         actual: usize,
     },
-    /// Checksum was invalid
-    InvalidChecksum {
-        /// The expected checksum
-        expected: [u8; 4],
-        /// The invalid checksum
-        actual: [u8; 4],
-    },
-    /// VarInt was encoded in a non-minimal way
-    NonMinimalVarInt,
-    /// Network magic was unknown
-    UnknownNetworkMagic(u32),
-    /// Parsing error
-    ParseFailed(&'static str),
-    /// Unsupported Segwit flag
-    UnsupportedSegwitFlag(u8),
     /// The Transaction type was not identified
     UnknownSpecialTransactionType(u16),
     /// We tried to convert the payload to the wrong type
@@ -103,7 +94,7 @@ pub enum Error {
         actual: TransactionType,
     },
     /// The script type was non standard
-    NonStandardScriptPayout(Script),
+    NonStandardScriptPayout(ScriptBuf),
     /// Hex error
     Hex(hashes::hex::Error)
 }
@@ -111,25 +102,21 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::Io(ref e) => write!(f, "I/O error: {}", e),
-            Error::Psbt(ref e) => write!(f, "PSBT error: {}", e),
-            Error::UnexpectedNetworkMagic { expected: ref e, actual: ref a } => write!(f,
-                "unexpected network magic: expected {}, actual {}", e, a),
-            Error::OversizedVectorAllocation { requested: ref r, max: ref m } => write!(f,
-                "allocation of oversized vector: requested {}, maximum {}", r, m),
-            Error::InvalidChecksum { expected: ref e, actual: ref a } => write!(f,
-                "invalid checksum: expected {}, actual {}", e.to_hex(), a.to_hex()),
+            Error::Io(ref e) => write_err!(f, "IO error"; e),
+            Error::OversizedVectorAllocation { requested: ref r, max: ref m } =>
+                write!(f, "allocation of oversized vector: requested {}, maximum {}", r, m),
+            Error::InvalidChecksum { expected: ref e, actual: ref a } =>
+                write!(f, "invalid checksum: expected {:x}, actual {:x}", e.as_hex(), a.as_hex()),
             Error::NonMinimalVarInt => write!(f, "non-minimal varint"),
-            Error::UnknownNetworkMagic(ref m) => write!(f, "unknown network magic: {}", m),
-            Error::ParseFailed(ref e) => write!(f, "parse failed: {}", e),
-            Error::UnsupportedSegwitFlag(ref swflag) => write!(f,
-                "unsupported segwit version: {}", swflag),
-            Error::UnknownSpecialTransactionType(ref stt) => write!(f,
-                                                               "unknown special transaction type: {}", stt),
+            Error::ParseFailed(ref s) => write!(f, "parse failed: {}", s),
+            Error::UnsupportedSegwitFlag(ref swflag) =>
+                write!(f, "unsupported segwit version: {}", swflag),
+            Error::UnknownSpecialTransactionType(ref stt) =>
+                write!(f, "unknown special transaction type: {}", stt),
             Error::WrongSpecialTransactionPayloadConversion { expected: ref e, actual: ref a } => write!(f,
                                                                                            "wrong special transaction payload conversion expected: {} got: {}", e, a),
             Error::NonStandardScriptPayout(ref script) => write!(f,
-                                                        "non standard script payout: {}", script.to_hex()),
+                                                        "non standard script payout: {}", script.to_hex_string()),
             Error::InvalidVectorSize { expected, actual } => write!(f, "invalid vector size error expected: {} got: {}", expected, actual),
             Error::Hex(ref e) => write!(f, "hex error {}", e),
         }
@@ -137,18 +124,17 @@ impl fmt::Display for Error {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl ::std::error::Error for Error {
-    fn cause(&self) -> Option<&dyn  error::Error> {
-        match *self {
-            Error::Io(ref e) => Some(e),
-            Error::Psbt(ref e) => Some(e),
-            Error::UnexpectedNetworkMagic { .. }
-            | Error::OversizedVectorAllocation { .. }
-            | Error::InvalidChecksum { .. }
-            | Error::NonMinimalVarInt
-            | Error::UnknownNetworkMagic(..)
-            | Error::ParseFailed(..)
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        use self::Error::*;
+
+        match self {
+            Io(e) => Some(e),
+            OversizedVectorAllocation { .. }
+            | InvalidChecksum { .. }
+            | NonMinimalVarInt
+            | ParseFailed(_)
+            | UnsupportedSegwitFlag(_)
             | Error::UnsupportedSegwitFlag(..)
             | Error::UnknownSpecialTransactionType(..)
             | Error::WrongSpecialTransactionPayloadConversion{..}
@@ -877,6 +863,7 @@ impl Decodable for TapLeafHash {
 mod tests {
     use core::fmt;
     use core::mem::{self, discriminant};
+    use ::{TxIn, TxOut};
 
     use super::*;
     use crate::consensus::{deserialize_partial, Decodable, Encodable};

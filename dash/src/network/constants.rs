@@ -41,9 +41,14 @@
 //! ```
 
 use core::{fmt, ops, convert::From};
+use core::fmt::Display;
+use core::str::FromStr;
 
 use std::io;
+use internals::write_err;
 use crate::consensus::encode::{self, Encodable, Decodable};
+use crate::constants::ChainHash;
+use crate::error::impl_std_error;
 
 /// Version of the protocol as appearing in network message headers
 /// This constant is used to signal to other peers which features you support.
@@ -71,9 +76,9 @@ pub const PROTOCOL_VERSION: u32 = 70220;
 pub enum Network {
     /// Classic Dash Core Payment Chain
     Dash,
-    /// Bitcoin's testnet network.
+    /// Dash's testnet network.
     Testnet,
-    /// Bitcoin's signet network.
+    /// Dash's devnet network.
     Devnet,
     /// Bitcoin's regtest network.
     Regtest,
@@ -117,8 +122,79 @@ impl Network {
         match self {
             Network::Dash => 0xBD6B0CBF,
             Network::Testnet => 0xFFCAE2CE,
-            Network::Devnet  => 0xCEFFCAE2,
+            Network::Devnet => 0xCEFFCAE2,
             Network::Regtest => 0xDAB5BFFA,
+        }
+    }
+}
+
+/// An error in parsing network string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseNetworkError(String);
+
+impl fmt::Display for ParseNetworkError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write_err!(f, "failed to parse {} as network", self.0; self)
+    }
+}
+impl_std_error!(ParseNetworkError);
+
+impl FromStr for Network {
+    type Err = ParseNetworkError;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        use Network::*;
+
+        let network = match s {
+            "dash" => Dash,
+            "testnet" => Testnet,
+            "devnet" => Devnet,
+            "regtest" => Regtest,
+            _ => return Err(ParseNetworkError(s.to_owned())),
+        };
+        Ok(network)
+    }
+}
+
+impl fmt::Display for Network {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        use Network::*;
+
+        let s = match *self {
+            Dash => "dash",
+            Testnet => "testnet",
+            Devnet => "devnet",
+            Regtest => "regtest",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+
+/// Error in parsing network from chain hash.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownChainHash(ChainHash);
+
+impl Display for UnknownChainHash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "unknown chain hash: {}", self.0)
+    }
+}
+
+impl_std_error!(UnknownChainHash);
+
+impl TryFrom<ChainHash> for Network {
+    type Error = UnknownChainHash;
+
+    fn try_from(chain_hash: ChainHash) -> Result<Self, Self::Error> {
+        match chain_hash {
+            // Note: any new network entries must be matched against here.
+            ChainHash::Dash => Ok(Network::Dash),
+            ChainHash::TESTNET => Ok(Network::Testnet),
+            ChainHash::Devnet => Ok(Network::Devnet),
+            ChainHash::REGTEST => Ok(Network::Regtest),
+            _ => Err(UnknownChainHash(chain_hash)),
         }
     }
 }
@@ -279,15 +355,15 @@ impl ops::BitXorAssign for ServiceFlags {
 
 impl Encodable for ServiceFlags {
     #[inline]
-    fn consensus_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
-        self.0.consensus_encode(&mut s)
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+        self.0.consensus_encode(w)
     }
 }
 
 impl Decodable for ServiceFlags {
     #[inline]
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        Ok(ServiceFlags(Decodable::consensus_decode(&mut d)?))
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        Ok(ServiceFlags(Decodable::consensus_decode(r)?))
     }
 }
 
@@ -295,6 +371,7 @@ impl Decodable for ServiceFlags {
 mod tests {
     use super::{Network, ServiceFlags};
     use consensus::encode::{deserialize, serialize};
+    use crate::consensus::{deserialize, serialize};
 
     #[test]
     fn serialize_test() {
@@ -307,7 +384,6 @@ mod tests {
         assert_eq!(deserialize(&[0xce, 0xe2, 0xca, 0xff]).ok(), Some(Network::Testnet.magic()));
         assert_eq!(deserialize(&[0xe2, 0xca, 0xff, 0xce]).ok(), Some(Network::Devnet.magic()));
         assert_eq!(deserialize(&[0xfa, 0xbf, 0xb5, 0xda]).ok(), Some(Network::Regtest.magic()));
-
     }
 
     #[test]

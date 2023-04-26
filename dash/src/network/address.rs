@@ -288,7 +288,7 @@ impl Encodable for AddrV2Message {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.time.consensus_encode(w)?;
-        len += VarInt(self.services.to_u64()).consensus_encode(w)?;
+        len += VarInt(self.services.as_u64()).consensus_encode(w)?;
         len += self.addr.consensus_encode(w)?;
 
         w.write_all(&self.port.to_be_bytes())?;

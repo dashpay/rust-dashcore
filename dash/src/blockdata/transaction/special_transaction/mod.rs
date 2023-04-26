@@ -23,7 +23,7 @@
 use core::fmt::{Debug, Display, Formatter};
 use core::convert::TryFrom;
 use std::io;
-use std::io::{Error, Read, Write};
+use std::io::{Error, Write};
 use crate::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use crate::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
 use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
@@ -70,16 +70,16 @@ pub enum TransactionPayload {
 }
 
 impl Encodable for TransactionPayload {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, Error> {
         match self {
-            ProviderRegistrationPayloadType(p) => { p.consensus_encode(&mut s)}
-            ProviderUpdateServicePayloadType(p) => { p.consensus_encode(&mut s)}
-            ProviderUpdateRegistrarPayloadType(p) => {p.consensus_encode(&mut s)}
-            ProviderUpdateRevocationPayloadType(p) => {p.consensus_encode(&mut s)}
-            CoinbasePayloadType(p) => {p.consensus_encode(&mut s)}
-            QuorumCommitmentPayloadType(p) => {p.consensus_encode(&mut s)}
-            AssetLockPayloadType(p) => {p.consensus_encode(&mut s)}
-            AssetUnlockPayloadType(p) => {p.consensus_encode(&mut s)}
+            ProviderRegistrationPayloadType(p) => { p.consensus_encode(w)}
+            ProviderUpdateServicePayloadType(p) => { p.consensus_encode(w)}
+            ProviderUpdateRegistrarPayloadType(p) => {p.consensus_encode(w)}
+            ProviderUpdateRevocationPayloadType(p) => {p.consensus_encode(w)}
+            CoinbasePayloadType(p) => {p.consensus_encode(w)}
+            QuorumCommitmentPayloadType(p) => {p.consensus_encode(w)}
+            AssetLockPayloadType(p) => {p.consensus_encode(w)}
+            AssetUnlockPayloadType(p) => {p.consensus_encode(w)}
         }
     }
 }
@@ -268,8 +268,8 @@ impl TryFrom<u16> for TransactionType {
 }
 
 impl Decodable for TransactionType {
-    fn consensus_decode<D: Read>(d: D) -> Result<Self, encode::Error> {
-        let special_transaction_number = u16::consensus_decode(d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let special_transaction_number = u16::consensus_decode(r)?;
         TransactionType::try_from(special_transaction_number)
     }
 }

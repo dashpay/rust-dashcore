@@ -38,6 +38,7 @@
 use std::io;
 use std::io::{Error, Write};
 use hashes::Hash;
+use crate::ScriptBuf;
 use crate::{Script};
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
@@ -55,7 +56,7 @@ pub struct ProviderUpdateServicePayload {
     pro_tx_hash: Txid,
     ip_address: u128,
     port: u16,
-    script_payout: Script,
+    script_payout: ScriptBuf,
     inputs_hash: InputsHash,
     payload_sig: BLSSignature,
 }
@@ -80,23 +81,23 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateServicePayload {
 }
 
 impl Encodable for ProviderUpdateServicePayload {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.base_payload_data_encode(&mut s)?;
-        len += self.payload_sig.consensus_encode(&mut s)?;
+        len += self.base_payload_data_encode(w)?;
+        len += self.payload_sig.consensus_encode(w)?;
         Ok(len)
     }
 }
 
 impl Decodable for ProviderUpdateServicePayload {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let version = u16::consensus_decode(&mut d)?;
-        let pro_tx_hash = Txid::consensus_decode(&mut d)?;
-        let ip_address = u128::consensus_decode(&mut d)?;
-        let port = u16::swap_bytes(u16::consensus_decode(&mut d)?);
-        let script_payout = Script::consensus_decode(&mut d)?;
-        let inputs_hash = InputsHash::consensus_decode(&mut d)?;
-        let payload_sig = BLSSignature::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let version = u16::consensus_decode(r)?;
+        let pro_tx_hash = Txid::consensus_decode(r)?;
+        let ip_address = u128::consensus_decode(r)?;
+        let port = u16::swap_bytes(u16::consensus_decode(r)?);
+        let script_payout = Script::consensus_decode(r)?;
+        let inputs_hash = InputsHash::consensus_decode(r)?;
+        let payload_sig = BLSSignature::consensus_decode(r)?;
 
         Ok(ProviderUpdateServicePayload {
             version,
@@ -143,7 +144,7 @@ mod tests {
 
         let address = Ipv4Addr::from_str("52.36.64.148").expect("expected an ipv4 address");
         let [a, b, c, d] = address.octets();
-        let ipv6_bytes: [u8;16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
+        let ipv6_bytes: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
         assert_eq!(expected_provider_update_service_payload.ip_address.to_le_bytes().to_hex(), ipv6_bytes.to_hex());
 
         let port = 19999;
@@ -175,8 +176,8 @@ mod tests {
                 port,
                 script_payout,
                 inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
-                payload_sig
-            }))
+                payload_sig,
+            })),
         };
 
         assert_eq!(transaction.hash_inputs().to_hex(), inputs_hash_hex);

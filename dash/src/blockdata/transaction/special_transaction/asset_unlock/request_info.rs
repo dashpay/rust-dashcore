@@ -48,18 +48,18 @@ impl AssetUnlockRequestInfo {
 }
 
 impl Encodable for AssetUnlockRequestInfo {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.request_height.consensus_encode(&mut s)?;
-        len += self.quorum_hash.consensus_encode(&mut s)?;
+        len += self.request_height.consensus_encode(w)?;
+        len += self.quorum_hash.consensus_encode(w)?;
         Ok(len)
     }
 }
 
 impl Decodable for AssetUnlockRequestInfo {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let request_height = u32::consensus_decode(&mut d)?;
-        let quorum_hash = QuorumHash::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let request_height = u32::consensus_decode(r)?;
+        let quorum_hash = QuorumHash::consensus_decode(r)?;
         Ok(AssetUnlockRequestInfo {
             request_height,
             quorum_hash,

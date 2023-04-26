@@ -38,6 +38,7 @@ use crate::prelude::*;
 use std::io;
 use std::io::{Error, Write};
 use hashes::Hash;
+use crate::ScriptBuf;
 use crate::{OutPoint, Script};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash};
@@ -73,7 +74,7 @@ pub struct ProviderRegistrationPayload {
     operator_public_key: BLSPublicKey,
     voting_key_hash: PubkeyHash,
     operator_reward: u16,
-    script_payout: Script,
+    script_payout: ScriptBuf,
     inputs_hash: InputsHash,
     payload_sig: Vec<u8>,
 }
@@ -85,17 +86,11 @@ impl ProviderRegistrationPayload {
     }
     /// A convenience method to get the address from the owner key hash
     pub fn owner_address(&self, network: Network) -> Address {
-        Address {
-            payload: Payload::PubkeyHash(self.owner_key_hash),
-            network,
-        }
+        Address::new(network, Payload::PubkeyHash(self.owner_key_hash))
     }
     /// A convenience method to get the address from the voting key hash
     pub fn voting_address(&self, network: Network) -> Address {
-        Address {
-            payload: Payload::PubkeyHash(self.voting_key_hash),
-            network,
-        }
+        Address::new(network, Payload::PubkeyHash(self.voting_key_hash))
     }
     /// This is used to prove access to the collateral. The collateral private key signs
     /// a string of formatted values proving access to the 1000 Dash and therefore the ability
@@ -134,29 +129,29 @@ impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
 }
 
 impl Encodable for ProviderRegistrationPayload {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.base_payload_data_encode(&mut s)?;
-        len += self.payload_sig.consensus_encode(&mut s)?;
+        len += self.base_payload_data_encode(w)?;
+        len += self.payload_sig.consensus_encode(w)?;
         Ok(len)
     }
 }
 
 impl Decodable for ProviderRegistrationPayload {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let version = u16::consensus_decode(&mut d)?;
-        let provider_type = u16::consensus_decode(&mut d)?;
-        let provider_mode = u16::consensus_decode(&mut d)?;
-        let collateral_outpoint = OutPoint::consensus_decode(&mut d)?;
-        let ip_address = u128::consensus_decode(&mut d)?;
-        let port = u16::swap_bytes(u16::consensus_decode(&mut d)?);
-        let owner_key_hash = PubkeyHash::consensus_decode(&mut d)?;
-        let operator_public_key = BLSPublicKey::consensus_decode(&mut d)?;
-        let voting_key_hash = PubkeyHash::consensus_decode(&mut d)?;
-        let operator_reward = u16::consensus_decode(&mut d)?;
-        let script_payout = Script::consensus_decode(&mut d)?;
-        let inputs_hash = InputsHash::consensus_decode(&mut d)?;
-        let payload_sig = Vec::<u8>::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let version = u16::consensus_decode(r)?;
+        let provider_type = u16::consensus_decode(r)?;
+        let provider_mode = u16::consensus_decode(r)?;
+        let collateral_outpoint = OutPoint::consensus_decode(r)?;
+        let ip_address = u128::consensus_decode(r)?;
+        let port = u16::swap_bytes(u16::consensus_decode(r)?);
+        let owner_key_hash = PubkeyHash::consensus_decode(r)?;
+        let operator_public_key = BLSPublicKey::consensus_decode(r)?;
+        let voting_key_hash = PubkeyHash::consensus_decode(r)?;
+        let operator_reward = u16::consensus_decode(r)?;
+        let script_payout = Script::consensus_decode(r)?;
+        let inputs_hash = InputsHash::consensus_decode(r)?;
+        let payload_sig = Vec::<u8>::consensus_decode(r)?;
 
         Ok(ProviderRegistrationPayload {
             version,
@@ -177,7 +172,7 @@ impl Decodable for ProviderRegistrationPayload {
 }
 
 #[cfg(test)]
-#[cfg(feature="signer")]
+#[cfg(feature = "signer")]
 mod tests {
     use core::str::FromStr;
     use std::net::Ipv4Addr;
@@ -244,13 +239,13 @@ mod tests {
 
         let collateral_outpoint = OutPoint {
             txid: collateral_hash,
-            vout: collateral_index
+            vout: collateral_index,
         };
         assert_eq!(expected_provider_registration_payload.collateral_outpoint, collateral_outpoint);
 
         let address = Ipv4Addr::from_str("1.2.5.6").expect("expected an ipv4 address");
         let [a, b, c, d] = address.octets();
-        let ipv6_bytes: [u8;16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
+        let ipv6_bytes: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
         assert_eq!(ipv6_bytes.to_hex(), expected_provider_registration_payload.ip_address.to_le_bytes().to_hex());
 
         let port = 19999;
@@ -293,11 +288,11 @@ mod tests {
         let mut transaction = Transaction {
             version: 3,
             lock_time: 0,
-            input: vec![TxIn{
+            input: vec![TxIn {
                 previous_output: OutPoint::new(collateral_hash, 1),
                 script_sig: collateral_address.script_pubkey(),
                 sequence: 4294967295,
-                witness: Default::default()
+                witness: Default::default(),
             }],
             output: vec![TxOut::new_from_address(40777037710, &output_address0)],
             special_transaction_payload: Some(ProviderRegistrationPayloadType(ProviderRegistrationPayload {
@@ -313,8 +308,8 @@ mod tests {
                 operator_reward,
                 script_payout,
                 inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
-                payload_sig: signature.to_vec()
-            }))
+                payload_sig: signature.to_vec(),
+            })),
         };
         // We are currently not supporting transaction signing
         // So just assume signature is correct
@@ -366,13 +361,13 @@ mod tests {
 
         let collateral_outpoint = OutPoint {
             txid: collateral_hash,
-            vout: collateral_index
+            vout: collateral_index,
         };
         assert_eq!(expected_provider_registration_payload.collateral_outpoint, collateral_outpoint);
 
         let address = Ipv4Addr::from_str("1.1.1.1").expect("expected an ipv4 address");
         let [a, b, c, d] = address.octets();
-        let ipv6_bytes: [u8;16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
+        let ipv6_bytes: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
         assert_eq!(ipv6_bytes.to_hex(), expected_provider_registration_payload.ip_address.to_le_bytes().to_hex());
 
         let port = 19999;
@@ -415,11 +410,11 @@ mod tests {
         let mut transaction = Transaction {
             version: 3,
             lock_time: 0,
-            input: vec![TxIn{
+            input: vec![TxIn {
                 previous_output: OutPoint::new(collateral_hash, 1),
                 script_sig: collateral_address.script_pubkey(),
                 sequence: 4294967295,
-                witness: Default::default()
+                witness: Default::default(),
             }],
             output: vec![TxOut::new_from_address(40777037710, &output_address0)],
             special_transaction_payload: Some(ProviderRegistrationPayloadType(ProviderRegistrationPayload {
@@ -435,8 +430,8 @@ mod tests {
                 operator_reward,
                 script_payout,
                 inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
-                payload_sig: signature.to_vec()
-            }))
+                payload_sig: signature.to_vec(),
+            })),
         };
         // We are currently not supporting transaction signing
         // So just assume signature is correct

@@ -39,16 +39,15 @@ use core::{default::Default};
 
 use hashes::{Hash, sha256d};
 
-use {endian};
 use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature="bitcoinconsensus")] use blockdata::script;
+use crate::ScriptBuf;
 use crate::blockdata::script::Script;
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
 use crate::consensus::{encode, Decodable, Encodable};
 use crate::consensus::encode::{VarInt};
-use crate::consensus::encode::MAX_VEC_SIZE;
 use crate::hash_types::{Txid, Wtxid, InputsHash};
 use crate::blockdata::transaction::hash_type::EcdsaSighashType;
 use crate::blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
@@ -66,6 +65,75 @@ const UINT256_ONE: [u8; 32] = [
     0, 0, 0, 0, 0, 0, 0, 0
 ];
 
+/// Result of [`Transaction::encode_signing_data_to`].
+///
+/// This type forces the caller to handle SIGHASH_SINGLE bug case.
+///
+/// This corner case can't be expressed using standard `Result`,
+/// in a way that is both convenient and not-prone to accidental
+/// mistakes (like calling `.expect("writer never fails")`).
+#[must_use]
+pub enum EncodeSigningDataResult<E> {
+    /// Input data is an instance of `SIGHASH_SINGLE` bug
+    SighashSingleBug,
+    /// Operation performed normally.
+    WriteResult(Result<(), E>),
+}
+
+impl<E> EncodeSigningDataResult<E> {
+    /// Checks for SIGHASH_SINGLE bug returning error if the writer failed.
+    ///
+    /// This method is provided for easy and correct handling of the result because
+    /// SIGHASH_SINGLE bug is a special case that must not be ignored nor cause panicking.
+    /// Since the data is usually written directly into a hasher which never fails,
+    /// the recommended pattern to handle this is:
+    ///
+    /// ```rust
+    /// # use dashcore::consensus::deserialize;
+    /// # use dashcore::hashes::{Hash, hex::FromHex};
+    /// # use dashcore::sighash::{LegacySighash, SighashCache};
+    /// # use dashcore::Transaction;
+    ///   use dashcore::sighash::LegacySighash;
+    /// # let mut writer = LegacySighash::engine();
+    /// # let input_index = 0;
+    /// # let script_pubkey = bitcoin::ScriptBuf::new();
+    /// # let sighash_u32 = 0u32;
+    /// # const SOME_TX: &'static str = "0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000";
+    /// # let raw_tx = Vec::from_hex(SOME_TX).unwrap();
+    /// # let tx: Transaction = deserialize(&raw_tx).unwrap();
+    /// let cache = SighashCache::new(&tx);
+    /// if cache.legacy_encode_signing_data_to(&mut writer, input_index, &script_pubkey, sighash_u32)
+    ///         .is_sighash_single_bug()
+    ///         .expect("writer can't fail") {
+    ///     // use a hash value of "1", instead of computing the actual hash due to SIGHASH_SINGLE bug
+    /// }
+    /// ```
+    #[allow(clippy::wrong_self_convention)] // E is not Copy so we consume self.
+    pub fn is_sighash_single_bug(self) -> Result<bool, E> {
+        match self {
+            EncodeSigningDataResult::SighashSingleBug => Ok(true),
+            EncodeSigningDataResult::WriteResult(Ok(())) => Ok(false),
+            EncodeSigningDataResult::WriteResult(Err(e)) => Err(e),
+        }
+    }
+
+    /// Maps a `Result<T, E>` to `Result<T, F>` by applying a function to a
+    /// contained [`Err`] value, leaving an [`Ok`] value untouched.
+    ///
+    /// Like [`Result::map_err`].
+    pub fn map_err<E2, F>(self, f: F) -> EncodeSigningDataResult<E2>
+        where
+            F: FnOnce(E) -> E2,
+    {
+        match self {
+            EncodeSigningDataResult::SighashSingleBug => EncodeSigningDataResult::SighashSingleBug,
+            EncodeSigningDataResult::WriteResult(Err(e)) =>
+                EncodeSigningDataResult::WriteResult(Err(f(e))),
+            EncodeSigningDataResult::WriteResult(Ok(o)) =>
+                EncodeSigningDataResult::WriteResult(Ok(o)),
+        }
+    }
+}
 
 /// A Dash transaction, which describes an authenticated movement of coins.
 ///
@@ -120,7 +188,7 @@ impl Transaction {
         let cloned_tx = Transaction {
             version: self.version,
             lock_time: self.lock_time,
-            input: self.input.iter().map(|txin| TxIn { script_sig: Script::new(), witness: Witness::default(), .. *txin }).collect(),
+            input: self.input.iter().map(|txin| TxIn { script_sig: ScriptBuf::new(), witness: Witness::default(), .. *txin }).collect(),
             output: self.output.clone(),
             special_transaction_payload: self.special_transaction_payload.clone()
         };
@@ -185,72 +253,61 @@ impl Transaction {
     /// # Panics
     ///
     /// If `input_index` is out of bounds (greater than or equal to `self.input.len()`).
+    /// Encodes the signing data from which a signature hash for a given input index with a given
+    /// sighash flag can be computed.
+    ///
+    /// To actually produce a scriptSig, this hash needs to be run through an ECDSA signer, the
+    /// [`EcdsaSighashType`] appended to the resulting sig, and a script written around this, but
+    /// this is the general (and hard) part.
+    ///
+    /// The `sighash_type` supports an arbitrary `u32` value, instead of just [`EcdsaSighashType`],
+    /// because internally 4 bytes are being hashed, even though only the lowest byte is appended to
+    /// signature in a transaction.
+    ///
+    /// # Warning
+    ///
+    /// - Does NOT attempt to support OP_CODESEPARATOR. In general this would require evaluating
+    /// `script_pubkey` to determine which separators get evaluated and which don't, which we don't
+    /// have the information to determine.
+    /// - Does NOT handle the sighash single bug (see "Returns" section)
+    ///
+    /// # Returns
+    ///
+    /// This function can't handle the SIGHASH_SINGLE bug internally, so it returns [`EncodeSigningDataResult`]
+    /// that must be handled by the caller (see [`EncodeSigningDataResult::is_sighash_single_bug`]).
+    ///
+    /// # Panics
+    ///
+    /// If `input_index` is out of bounds (greater than or equal to `self.input.len()`).
+    #[deprecated(
+        since = "0.30.0",
+        note = "Use SighashCache::legacy_encode_signing_data_to instead"
+    )]
     pub fn encode_signing_data_to<Write: io::Write, U: Into<u32>>(
         &self,
-        mut writer: Write,
+        writer: Write,
         input_index: usize,
         script_pubkey: &Script,
         sighash_type: U,
-    ) -> Result<(), encode::Error> {
-        let sighash_type: u32 = sighash_type.into();
-        assert!(input_index < self.input.len());  // Panic on OOB
+    ) -> EncodeSigningDataResult<io::Error> {
+        use EncodeSigningDataResult::*;
 
-        if self.is_invalid_use_of_sighash_single(sighash_type, input_index) {
-            // We cannot correctly handle the SIGHASH_SINGLE bug here because usage of this function
-            // will result in the data written to the writer being hashed, however the correct
-            // handling of the SIGHASH_SINGLE bug is to return the 'one array' - either implement
-            // this behaviour manually or use `signature_hash()`.
-            writer.write(b"[not a transaction] SIGHASH_SINGLE bug")?;
-            return Ok(())
+        use crate::sighash::{self, SighashCache};
+
+        assert!(input_index < self.input.len()); // Panic on OOB
+
+        let cache = SighashCache::new(self);
+        match cache.legacy_encode_signing_data_to(writer, input_index, script_pubkey, sighash_type)
+        {
+            SighashSingleBug => SighashSingleBug,
+            WriteResult(res) => match res {
+                Ok(()) => WriteResult(Ok(())),
+                Err(e) => match e {
+                    sighash::Error::Io(e) => WriteResult(Err(e.into())),
+                    _ => unreachable!("we check input_index above"),
+                },
+            },
         }
-
-        let (sighash, anyone_can_pay) = EcdsaSighashType::from_consensus(sighash_type).split_anyonecanpay_flag();
-
-        // Build tx to sign
-        let mut tx = Transaction {
-            version: self.version,
-            lock_time: self.lock_time,
-            input: vec![],
-            output: vec![],
-            special_transaction_payload: self.special_transaction_payload.clone()
-        };
-        // Add all inputs necessary..
-        if anyone_can_pay {
-            tx.input = vec![TxIn {
-                previous_output: self.input[input_index].previous_output,
-                script_sig: script_pubkey.clone(),
-                sequence: self.input[input_index].sequence,
-                witness: Witness::default(),
-            }];
-        } else {
-            tx.input = Vec::with_capacity(self.input.len());
-            for (n, input) in self.input.iter().enumerate() {
-                tx.input.push(TxIn {
-                    previous_output: input.previous_output,
-                    script_sig: if n == input_index { script_pubkey.clone() } else { Script::new() },
-                    sequence: if n != input_index && (sighash == EcdsaSighashType::Single || sighash == EcdsaSighashType::None) { 0 } else { input.sequence },
-                    witness: Witness::default(),
-                });
-            }
-        }
-        // ..then all outputs
-        tx.output = match sighash {
-            EcdsaSighashType::All => self.output.clone(),
-            EcdsaSighashType::Single => {
-                let output_iter = self.output.iter()
-                                      .take(input_index + 1)  // sign all outputs up to and including this one, but erase
-                                      .enumerate()            // all of them except for this one
-                                      .map(|(n, out)| if n == input_index { out.clone() } else { TxOut::default() });
-                output_iter.collect()
-            }
-            EcdsaSighashType::None => vec![],
-            _ => unreachable!()
-        };
-        // hash the result
-        tx.consensus_encode(&mut writer)?;
-        let sighash_arr = endian::u32_to_array_le(sighash_type);
-        sighash_arr.consensus_encode(&mut writer)?;
-        Ok(())
     }
 
     /// Computes a signature hash for a given input index with a given sighash flag.
@@ -287,7 +344,7 @@ impl Transaction {
         }
 
         let mut engine = LegacySighash::engine();
-        self.encode_signing_data_to(&mut engine, input_index, script_pubkey, sighash_u32)
+        self.legacy_encode_signing_data_to(&mut engine, input_index, script_pubkey, sighash_u32)
             .expect("engines don't error");
         LegacySighash::from_engine(engine)
     }
@@ -491,7 +548,7 @@ impl Transaction {
     /// accepts hash of the public key to prove ownership of the burnt
     /// dash on Dash Platform.
     pub fn add_burn_output(&mut self, satoshis_to_burn: u64, data: &[u8; 20]) {
-        let burn_script = Script::new_op_return(data);
+        let burn_script = ScriptBuf::new_op_return(data);
         let output = TxOut {
             value: satoshis_to_burn,
             script_pubkey: burn_script,
@@ -515,10 +572,9 @@ impl Transaction {
 }
 
 impl Encodable for Transaction {
-    fn consensus_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.version.consensus_encode(&mut s)?;
-        len += (self.tx_type() as u16).consensus_encode(&mut s)?;
+        len += self.version.consensus_encode(w)?;
         // To avoid serialization ambiguity, no inputs means we use BIP141 serialization (see
         // `Transaction` docs for full explanation).
         let mut have_witness = self.input.is_empty();
@@ -529,45 +585,40 @@ impl Encodable for Transaction {
             }
         }
         if !have_witness {
-            len += self.input.consensus_encode(&mut s)?;
-            len += self.output.consensus_encode(&mut s)?;
+            len += self.input.consensus_encode(w)?;
+            len += self.output.consensus_encode(w)?;
         } else {
-            len += 0u8.consensus_encode(&mut s)?;
-            len += 1u8.consensus_encode(&mut s)?;
-            len += self.input.consensus_encode(&mut s)?;
-            len += self.output.consensus_encode(&mut s)?;
+            len += 0u8.consensus_encode(w)?;
+            len += 1u8.consensus_encode(w)?;
+            len += self.input.consensus_encode(w)?;
+            len += self.output.consensus_encode(w)?;
             for input in &self.input {
-                len += input.witness.consensus_encode(&mut s)?;
+                len += input.witness.consensus_encode(w)?;
             }
         }
-        len += self.lock_time.consensus_encode(&mut s)?;
-        if let Some(payload) = &self.special_transaction_payload {
-            let mut buf = Vec::new();
-            payload.consensus_encode(&mut buf)?;
-            // this is so we get the size of the payload
-            len += buf.consensus_encode(&mut s)?;
-        }
+        len += self.lock_time.consensus_encode(w)?;
         Ok(len)
     }
 }
 
 impl Decodable for Transaction {
-    fn consensus_decode<D: io::Read>(d: D) -> Result<Self, encode::Error> {
-        let mut d = d.take(MAX_VEC_SIZE as u64);
-        let version = u16::consensus_decode(&mut d)?;
-        let special_transaction_type_u16 = u16::consensus_decode(&mut d)?;
+    fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(
+        r: &mut R,
+    ) -> Result<Self, encode::Error> {
+        let version = u16::consensus_decode_from_finite_reader(r)?;
+        let special_transaction_type_u16 = u16::consensus_decode(r)?;
         let special_transaction_type = TransactionType::try_from(special_transaction_type_u16).map_err(|_| encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16))?;
-        let input = Vec::<TxIn>::consensus_decode(&mut d)?;
+        let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
         // segwit
         if input.is_empty() {
-            let segwit_flag = u8::consensus_decode(&mut d)?;
+            let segwit_flag = u8::consensus_decode_from_finite_reader(r)?;
             match segwit_flag {
                 // BIP144 input witnesses
                 1 => {
-                    let mut input = Vec::<TxIn>::consensus_decode(&mut d)?;
-                    let output = Vec::<TxOut>::consensus_decode(&mut d)?;
+                    let mut input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
+                    let output = Vec::<TxOut>::consensus_decode_from_finite_reader(r)?;
                     for txin in input.iter_mut() {
-                        txin.witness = Decodable::consensus_decode(&mut d)?;
+                        txin.witness = Decodable::consensus_decode_from_finite_reader(r)?;
                     }
                     if !input.is_empty() && input.iter().all(|input| input.witness.is_empty()) {
                         Err(encode::Error::ParseFailed("witness flag set but no witnesses present"))
@@ -576,22 +627,22 @@ impl Decodable for Transaction {
                             version,
                             input,
                             output,
-                            lock_time: Decodable::consensus_decode(&mut d)?,
-                            special_transaction_payload: special_transaction_type.consensus_decode(d)?
+                            lock_time: Decodable::consensus_decode_from_finite_reader(r)?,
+                            special_transaction_payload: special_transaction_type.consensus_decode(r)?
                         })
                     }
                 }
                 // We don't support anything else
                 x => Err(encode::Error::UnsupportedSegwitFlag(x)),
             }
-        // non-segwit
+            // non-segwit
         } else {
             Ok(Transaction {
                 version,
                 input,
-                output: Decodable::consensus_decode(&mut d)?,
-                lock_time: Decodable::consensus_decode(&mut d)?,
-                special_transaction_payload: special_transaction_type.consensus_decode(d)?
+                output: Decodable::consensus_decode_from_finite_reader(r)?,
+                lock_time: Decodable::consensus_decode_from_finite_reader(r)?,
+                special_transaction_payload: special_transaction_type.consensus_decode(r)?
             })
         }
     }

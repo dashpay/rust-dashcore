@@ -20,11 +20,11 @@
 //! An outpoint is a reference to one of the indexed destinations of a transaction.
 //!
 
+use hashes::{self, Hash};
+
 #[cfg(feature = "std")] use std::error;
-use core::convert::TryInto;
 use core::fmt;
 use std::io;
-use hashes::hex::FromHex;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::Txid;
 
@@ -52,8 +52,8 @@ impl OutPoint {
     #[inline]
     pub fn null() -> OutPoint {
         OutPoint {
-            txid: Default::default(),
-            vout: u32::max_value(),
+            txid: Hash::all_zeros(),
+            vout: u32::MAX,
         }
     }
 
@@ -77,18 +77,6 @@ impl OutPoint {
     }
 }
 
-impl From<[u8; 36]> for OutPoint {
-    fn from(buffer: [u8; 36]) -> Self {
-        let tx_id: [u8; 32] = buffer[0..32].try_into().unwrap();
-        let index: [u8; 4] = buffer[32..36].try_into().unwrap();
-
-        Self {
-            txid: Txid::from_inner(tx_id),
-            vout: u32::from_le_bytes(index)
-        }
-    }
-}
-
 impl Default for OutPoint {
     fn default() -> Self {
         OutPoint::null()
@@ -102,16 +90,16 @@ impl fmt::Display for OutPoint {
 }
 
 impl Encodable for OutPoint {
-    fn consensus_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
-        let len = self.txid.consensus_encode(&mut s)?;
-        Ok(len + self.vout.consensus_encode(s)?)
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+        let len = self.txid.consensus_encode(w)?;
+        Ok(len + self.vout.consensus_encode(w)?)
     }
 }
 impl Decodable for OutPoint {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         Ok(OutPoint {
-            txid: Decodable::consensus_decode(&mut d)?,
-            vout: Decodable::consensus_decode(d)?,
+            txid: Decodable::consensus_decode(r)?,
+            vout: Decodable::consensus_decode(r)?,
         })
     }
 }

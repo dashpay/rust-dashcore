@@ -65,7 +65,6 @@ pub enum EcdsaSighashType {
     /// 0x83: Sign one output and only this input (see `Single` for what "one output" means).
     SinglePlusAnyoneCanPay	= 0x83
 }
-serde_string_impl!(EcdsaSighashType, "a EcdsaSighashType data");
 
 impl fmt::Display for EcdsaSighashType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

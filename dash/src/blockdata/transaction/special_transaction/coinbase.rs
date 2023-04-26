@@ -19,7 +19,6 @@
 //!
 
 use std::io;
-use std::io::{Error, Write};
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::consensus::{Decodable, Encodable, encode};
 
@@ -36,32 +35,30 @@ pub struct CoinbasePayload {
 }
 
 impl Encodable for CoinbasePayload {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.version.consensus_encode(&mut s)?;
-        len += self.height.consensus_encode(&mut s)?;
-        len += self.merkle_root_masternode_list.consensus_encode(&mut s)?;
-        len += self.merkle_root_quorums.consensus_encode(&mut s)?;
+        len += self.version.consensus_encode(w)?;
+        len += self.height.consensus_encode(w)?;
+        len += self.merkle_root_masternode_list.consensus_encode(w)?;
+        len += self.merkle_root_quorums.consensus_encode(w)?;
         Ok(len)
     }
 }
 
 impl Decodable for CoinbasePayload {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let version = u16::consensus_decode(&mut d)?;
-        let height = u32::consensus_decode(&mut d)?;
-        let merkle_root_masternode_list = MerkleRootMasternodeList::consensus_decode(&mut d)?;
-        let merkle_root_quorums = MerkleRootQuorums::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let version = u16::consensus_decode(r)?;
+        let height = u32::consensus_decode(r)?;
+        let merkle_root_masternode_list = MerkleRootMasternodeList::consensus_decode(r)?;
+        let merkle_root_quorums = MerkleRootQuorums::consensus_decode(r)?;
         Ok(CoinbasePayload {
             version,
             height,
             merkle_root_masternode_list,
-            merkle_root_quorums
+            merkle_root_quorums,
         })
     }
 }
 
 #[cfg(test)]
-mod tests {
-
-}
+mod tests {}

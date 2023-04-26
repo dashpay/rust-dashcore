@@ -20,7 +20,7 @@
 //! A TxOut is an output of a transaction.
 //!
 
-use crate::{PubkeyHash, Script, ScriptBuf};
+use crate::{PubkeyHash, ScriptBuf};
 use crate::{Address, ScriptHash};
 use crate::internal_macros::impl_consensus_encoding;
 
@@ -35,10 +35,9 @@ pub struct TxOut {
 }
 
 // This is used as a "null txout" in consensus signing code.
+// This is used as a "null txout" in consensus signing code.
 impl Default for TxOut {
-    fn default() -> Box<TxOut> {
-        Box::new(TxOut { value: 0xffffffffffffffff, script_pubkey: Script::new() })
-    }
+    fn default() -> TxOut { TxOut { value: 0xffffffffffffffff, script_pubkey: ScriptBuf::new() } }
 }
 
 impl TxOut {
@@ -54,7 +53,7 @@ impl TxOut {
     pub fn new_from_p2pkh(value: u64, pubkey_hash: &PubkeyHash) -> Self {
         TxOut {
             value,
-            script_pubkey: Script::new_p2pkh(pubkey_hash)
+            script_pubkey: ScriptBuf::new_p2pkh(pubkey_hash)
         }
     }
 
@@ -62,7 +61,7 @@ impl TxOut {
     pub fn new_from_p2sh(value: u64, script_hash: &ScriptHash) -> Self {
         TxOut {
             value,
-            script_pubkey: Script::new_p2sh(script_hash)
+            script_pubkey: ScriptBuf::new_p2sh(script_hash)
         }
     }
 }

@@ -22,7 +22,7 @@ use crate::error::impl_std_error;
 use crate::prelude::*;
 use crate::taproot::{LeafVersion, TapLeafHash, TAPROOT_ANNEX_PREFIX};
 use std::io;
-use crate::blockdata::transaction::{Transaction, txin::TxIn, txout::TxOut};
+use crate::blockdata::transaction::{Transaction, EncodeSigningDataResult, txin::TxIn, txout::TxOut};
 use crate::script::{Script, ScriptBuf};
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.
@@ -890,6 +890,7 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
                 lock_time: self_.lock_time,
                 input: vec![],
                 output: vec![],
+                special_transaction_payload: None,
             };
             // Add all inputs necessary..
             if anyone_can_pay {
@@ -913,7 +914,7 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
                             && (sighash == EcdsaSighashType::Single
                                 || sighash == EcdsaSighashType::None)
                         {
-                            Sequence::ZERO
+                            0
                         } else {
                             input.sequence
                         },

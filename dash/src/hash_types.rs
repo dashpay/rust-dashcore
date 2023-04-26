@@ -136,6 +136,7 @@ mod newtypes {
 
     impl_hashencode!(QuorumHash);
     impl_hashencode!(QuorumVVecHash);
+    impl_hashencode!(PubkeyHash);
 
     impl_asref_push_bytes!(PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash);
 
