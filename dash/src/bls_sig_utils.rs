@@ -36,20 +36,6 @@ pub struct BLSSignature([u8;96]);
 impl_array_newtype!(BLSSignature, u8, 96);
 impl_bytes_newtype!(BLSSignature, 96);
 
-// impl Encodable for BLSSignature {
-//     fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, Error> {
-//         self.0.to_vec().consensus_encode(w)
-//     }
-// }
-
-// impl Decodable for BLSSignature {
-//     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, Error> {
-//         let mut data :[u8;96] = [0u8; 96];
-//         r.read_exact(&mut data);
-//         BLSSignature::consensus_decode_from_finite_reader(r)
-//     }
-// }
-
 macro_rules! impl_elementencode {
     ($element:ident, $len:expr) => {
         impl $crate::consensus::Encodable for $element {
