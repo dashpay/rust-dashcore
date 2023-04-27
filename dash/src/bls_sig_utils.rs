@@ -54,24 +54,6 @@ macro_rules! impl_elementencode {
     };
 }
 
-// macro_rules! impl_elementencode {
-//     ($element:ident, $len:expr) => {
-//         impl $crate::consensus::Encodable for $element {
-//             fn consensus_encode<S: $crate::io::Write>(&self, mut s: S) -> Result<usize, $crate::io::Error> {
-//                 s.write(&self.0)
-//             }
-//         }
-//
-//         impl $crate::consensus::Decodable for $element {
-//             fn consensus_decode<D: $crate::io::Read>(mut d: D) -> Result<Self, $crate::consensus::encode::Error> {
-//                 let mut data :[u8;$len] = [0u8; $len];
-//                 d.read_exact(&mut data)?;
-//                 Ok($element(data))
-//             }
-//         }
-//     }
-// }
-
 #[rustversion::before(1.48)]
 macro_rules! impl_eq_ord_hash {
     ($element:ident, $len:expr) => {
