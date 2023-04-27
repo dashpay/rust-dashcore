@@ -42,7 +42,7 @@ use hashes::{Hash, sha256d};
 use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature = "bitcoinconsensus")]
 use blockdata::script;
-use crate::ScriptBuf;
+use crate::{ScriptBuf, Weight};
 use crate::blockdata::script::Script;
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
@@ -383,22 +383,24 @@ impl Transaction {
     }
 
     /// Returns the "weight" of this transaction, as defined by BIP141.
-    #[inline]
-    #[deprecated(since = "0.28.0", note = "Please use `transaction::weight` instead.")]
-    pub fn get_weight(&self) -> usize {
-        self.weight()
-    }
-
-    /// Returns the "weight" of this transaction, as defined by BIP141.
     ///
     /// For transactions with an empty witness, this is simply the consensus-serialized size times
     /// four. For transactions with a witness, this is the non-witness consensus-serialized size
     /// multiplied by three plus the with-witness consensus-serialized size.
+    ///
+    /// For transactions with no inputs, this function will return a value 2 less than the actual
+    /// weight of the serialized transaction. The reason is that zero-input transactions, post-segwit,
+    /// cannot be unambiguously serialized; we make a choice that adds two extra bytes. For more
+    /// details see [BIP 141](https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki)
+    /// which uses a "input count" of `0x00` as a `marker` for a Segwit-encoded transaction.
+    ///
+    /// If you need to use 0-input transactions, we strongly recommend you do so using the PSBT
+    /// API. The unsigned transaction encoded within PSBT is always a non-segwit transaction
+    /// and can therefore avoid this ambiguity.
     #[inline]
-    pub fn weight(&self) -> usize {
-        self.scaled_size(WITNESS_SCALE_FACTOR)
+    pub fn weight(&self) -> Weight {
+        Weight::from_wu(self.scaled_size(WITNESS_SCALE_FACTOR) as u64)
     }
-
     /// Returns the regular byte-wise consensus-serialized size of this transaction.
     #[inline]
     #[deprecated(since = "0.28.0", note = "Please use `transaction::size` instead.")]
@@ -427,11 +429,11 @@ impl Transaction {
     /// [`policy`] module.
     ///
     /// [`BIP141`]: https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki
-    /// [`policy`]: ../policy/asset_unlock.html
+    /// [`policy`]: ../policy/mod.rs.html
     #[inline]
     pub fn vsize(&self) -> usize {
-        let weight = self.weight();
-        (weight + WITNESS_SCALE_FACTOR - 1) / WITNESS_SCALE_FACTOR
+        // No overflow because it's computed from data in memory
+        self.weight().to_vbytes_ceil() as usize
     }
 
     /// Returns the size of this transaction excluding the witness data.
