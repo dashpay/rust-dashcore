@@ -96,7 +96,7 @@ pub enum Error {
     /// The script type was non standard
     NonStandardScriptPayout(ScriptBuf),
     /// Hex error
-    Hex(hashes::hex::Error)
+    Hex(hashes::hex::Error),
 }
 
 impl fmt::Display for Error {
@@ -114,9 +114,9 @@ impl fmt::Display for Error {
             Error::UnknownSpecialTransactionType(ref stt) =>
                 write!(f, "unknown special transaction type: {}", stt),
             Error::WrongSpecialTransactionPayloadConversion { expected: ref e, actual: ref a } => write!(f,
-                                                                                           "wrong special transaction payload conversion expected: {} got: {}", e, a),
+                                                                                                         "wrong special transaction payload conversion expected: {} got: {}", e, a),
             Error::NonStandardScriptPayout(ref script) => write!(f,
-                                                        "non standard script payout: {}", script.to_hex_string()),
+                                                                 "non standard script payout: {}", script.to_hex_string()),
             Error::InvalidVectorSize { expected, actual } => write!(f, "invalid vector size error expected: {} got: {}", expected, actual),
             Error::Hex(ref e) => write!(f, "hex error {}", e),
         }
@@ -137,7 +137,7 @@ impl std::error::Error for Error {
             | UnsupportedSegwitFlag(_)
             | Error::UnsupportedSegwitFlag(..)
             | Error::UnknownSpecialTransactionType(..)
-            | Error::WrongSpecialTransactionPayloadConversion{..}
+            | Error::WrongSpecialTransactionPayloadConversion { .. }
             | Error::NonStandardScriptPayout(..)
             | Error::InvalidVectorSize { .. }
             | Error::Hex(_) => None,
@@ -188,6 +188,8 @@ pub fn deserialize_partial<T: Decodable>(data: &[u8]) -> Result<(T, usize), Erro
 
 /// Extensions of `Write` to encode data as per Bitcoin consensus.
 pub trait WriteExt: io::Write {
+    /// Outputs a 128-bit unsigned integer.
+    fn emit_u128(&mut self, v: u128) -> Result<(), io::Error>;
     /// Outputs a 64-bit unsigned integer.
     fn emit_u64(&mut self, v: u64) -> Result<(), io::Error>;
     /// Outputs a 32-bit unsigned integer.
@@ -215,6 +217,8 @@ pub trait WriteExt: io::Write {
 
 /// Extensions of `Read` to decode data as per Bitcoin consensus.
 pub trait ReadExt: io::Read {
+    /// Reads a 128-bit unsigned integer.
+    fn read_u128(&mut self) -> Result<u128, Error>;
     /// Reads a 64-bit unsigned integer.
     fn read_u64(&mut self) -> Result<u64, Error>;
     /// Reads a 32-bit unsigned integer.
@@ -261,6 +265,7 @@ macro_rules! decoder_fn {
 }
 
 impl<W: io::Write + ?Sized> WriteExt for W {
+    encoder_fn!(emit_u128, u128);
     encoder_fn!(emit_u64, u64);
     encoder_fn!(emit_u32, u32);
     encoder_fn!(emit_u16, u16);
@@ -279,6 +284,7 @@ impl<W: io::Write + ?Sized> WriteExt for W {
 }
 
 impl<R: Read + ?Sized> ReadExt for R {
+    decoder_fn!(read_u128, u128, 16);
     decoder_fn!(read_u64, u64, 8);
     decoder_fn!(read_u32, u32, 4);
     decoder_fn!(read_u16, u16, 2);
@@ -408,6 +414,7 @@ impl_int_encodable!(u8, read_u8, emit_u8);
 impl_int_encodable!(u16, read_u16, emit_u16);
 impl_int_encodable!(u32, read_u32, emit_u32);
 impl_int_encodable!(u64, read_u64, emit_u64);
+impl_int_encodable!(u128, read_u128, emit_u128);
 impl_int_encodable!(i8, read_i8, emit_i8);
 impl_int_encodable!(i16, read_i16, emit_i16);
 impl_int_encodable!(i32, read_i32, emit_i32);
@@ -1230,7 +1237,7 @@ mod tests {
         for _ in 0..10 {
             round_trip! {bool, i8, u8, i16, u16, i32, u32, i64, u64,
             (bool, i8, u16, i32), (u64, i64, u32, i32, u16, i16), (i8, u8, i16, u16, i32, u32, i64, u64),
-            [u8; 2], [u8; 4], [u8; 8], [u8; 12], [u8; 16], [u8; 32]};
+            [u8; 2], [u8; 4], [u8; 8], [u8; 12], [u8; 16], [u8; 32]}
 
             data.clear();
             data64.clear();
@@ -1239,7 +1246,7 @@ mod tests {
             data64.resize(len, 0u64);
             let mut arr33 = [0u8; 33];
             let mut arr16 = [0u16; 8];
-            round_trip_bytes! {(Vec<u8>, data), ([u8; 33], arr33), ([u16; 8], arr16), (Vec<u64>, data64)};
+            round_trip_bytes! {(Vec<u8>, data), ([u8; 33], arr33), ([u16; 8], arr16), (Vec<u64>, data64)}
         }
     }
 
@@ -1251,7 +1258,7 @@ mod tests {
             assert_eq!(
                 read_bytes_from_finite_reader(
                     io::Cursor::new(&data),
-                    ReadBytesFromFiniteReaderOpts { len: data.len(), chunk_size }
+                    ReadBytesFromFiniteReaderOpts { len: data.len(), chunk_size },
                 )
                     .unwrap(),
                 data

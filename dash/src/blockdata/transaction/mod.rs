@@ -40,7 +40,8 @@ use core::{default::Default};
 use hashes::{Hash, sha256d};
 
 use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
-#[cfg(feature="bitcoinconsensus")] use blockdata::script;
+#[cfg(feature = "bitcoinconsensus")]
+use blockdata::script;
 use crate::ScriptBuf;
 use crate::blockdata::script::Script;
 use crate::blockdata::transaction::txin::TxIn;
@@ -188,9 +189,9 @@ impl Transaction {
         let cloned_tx = Transaction {
             version: self.version,
             lock_time: self.lock_time,
-            input: self.input.iter().map(|txin| TxIn { script_sig: ScriptBuf::new(), witness: Witness::default(), .. *txin }).collect(),
+            input: self.input.iter().map(|txin| TxIn { script_sig: ScriptBuf::new(), witness: Witness::default(), ..*txin }).collect(),
             output: self.output.clone(),
-            special_transaction_payload: self.special_transaction_payload.clone()
+            special_transaction_payload: self.special_transaction_payload.clone(),
         };
         cloned_tx.txid().into()
     }
@@ -337,15 +338,14 @@ impl Transaction {
         &self,
         input_index: usize,
         script_pubkey: &Script,
-        sighash_u32: u32
+        sighash_u32: u32,
     ) -> LegacySighash {
         if self.is_invalid_use_of_sighash_single(sighash_u32, input_index) {
             return LegacySighash::from_slice(&UINT256_ONE).expect("const-size array");
         }
 
         let mut engine = LegacySighash::engine();
-        self.legacy_encode_signing_data_to(&mut engine, input_index, script_pubkey, sighash_u32)
-            .expect("engines don't error");
+        self.encode_signing_data_to(&mut engine, input_index, script_pubkey, sighash_u32);
         LegacySighash::from_engine(engine)
     }
 
@@ -455,14 +455,14 @@ impl Transaction {
                 output.script_pubkey.len();
         }
         let non_input_size =
-        // version:
-        4 +
-        // count varints:
-        VarInt(self.input.len() as u64).len() +
-        VarInt(self.output.len() as u64).len() +
-        output_size +
-        // lock_time
-        4;
+            // version:
+            4 +
+                // count varints:
+                VarInt(self.input.len() as u64).len() +
+                VarInt(self.output.len() as u64).len() +
+                output_size +
+                // lock_time
+                4;
         non_input_size + input_size
     }
 
@@ -471,7 +471,7 @@ impl Transaction {
         let mut input_weight = 0;
         let mut inputs_with_witnesses = 0;
         for input in &self.input {
-            input_weight += scale_factor*(32 + 4 + 4 + // outpoint (32+4) + nSequence
+            input_weight += scale_factor * (32 + 4 + 4 + // outpoint (32+4) + nSequence
                 VarInt(input.script_sig.len() as u64).len() +
                 input.script_sig.len());
             if !input.witness.is_empty() {
@@ -486,14 +486,14 @@ impl Transaction {
                 output.script_pubkey.len();
         }
         let non_input_size =
-        // version:
-        4 +
-        // count varints:
-        VarInt(self.input.len() as u64).len() +
-        VarInt(self.output.len() as u64).len() +
-        output_size +
-        // lock_time
-        4;
+            // version:
+            4 +
+                // count varints:
+                VarInt(self.input.len() as u64).len() +
+                VarInt(self.output.len() as u64).len() +
+                output_size +
+                // lock_time
+                4;
         if inputs_with_witnesses == 0 {
             non_input_size * scale_factor + input_weight
         } else {
@@ -502,23 +502,23 @@ impl Transaction {
     }
 
     /// Shorthand for [`Self::verify_with_flags`] with flag [`bitcoinconsensus::VERIFY_ALL`].
-    #[cfg(feature="bitcoinconsensus")]
+    #[cfg(feature = "bitcoinconsensus")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bitcoinconsensus")))]
     pub fn verify<S>(&self, spent: S) -> Result<(), script::Error>
-    where
-        S: FnMut(&OutPoint) -> Option<TxOut>
+        where
+            S: FnMut(&OutPoint) -> Option<TxOut>
     {
         self.verify_with_flags(spent, ::bitcoinconsensus::VERIFY_ALL)
     }
 
     /// Verify that this transaction is able to spend its inputs.
     /// The `spent` closure should not return the same [`TxOut`] twice!
-    #[cfg(feature="bitcoinconsensus")]
+    #[cfg(feature = "bitcoinconsensus")]
     #[cfg_attr(docsrs, doc(cfg(feature = "bitcoinconsensus")))]
     pub fn verify_with_flags<S, F>(&self, mut spent: S, flags: F) -> Result<(), script::Error>
-    where
-        S: FnMut(&OutPoint) -> Option<TxOut>,
-        F: Into<u32>
+        where
+            S: FnMut(&OutPoint) -> Option<TxOut>,
+            F: Into<u32>
     {
         let tx = encode::serialize(&*self);
         let flags: u32 = flags.into();
@@ -563,7 +563,7 @@ impl Transaction {
             let hash = self.txid();
 
             let (one, two) = result.split_at_mut(32);
-            one.copy_from_slice(hash.as_inner());
+            one.copy_from_slice(hash.as_raw_hash().as_byte_array().as_slice());
             let output_index_bytes: [u8; 4] = (output_index as u32).to_le_bytes();
             two.copy_from_slice(&output_index_bytes);
             result
@@ -602,9 +602,7 @@ impl Encodable for Transaction {
 }
 
 impl Decodable for Transaction {
-    fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(
-        r: &mut R,
-    ) -> Result<Self, encode::Error> {
+    fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode_from_finite_reader(r)?;
         let special_transaction_type_u16 = u16::consensus_decode(r)?;
         let special_transaction_type = TransactionType::try_from(special_transaction_type_u16).map_err(|_| encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16))?;
@@ -628,7 +626,7 @@ impl Decodable for Transaction {
                             input,
                             output,
                             lock_time: Decodable::consensus_decode_from_finite_reader(r)?,
-                            special_transaction_payload: special_transaction_type.consensus_decode(r)?
+                            special_transaction_payload: special_transaction_type.consensus_decode(r)?,
                         })
                     }
                 }
@@ -642,7 +640,7 @@ impl Decodable for Transaction {
                 input,
                 output: Decodable::consensus_decode_from_finite_reader(r)?,
                 lock_time: Decodable::consensus_decode_from_finite_reader(r)?,
-                special_transaction_payload: special_transaction_type.consensus_decode(r)?
+                special_transaction_payload: special_transaction_type.consensus_decode(r)?,
             })
         }
     }
@@ -658,14 +656,16 @@ mod tests {
     use consensus::encode::deserialize;
 
     use hashes::hex::FromHex;
+    use crate::{constants, Network};
+    use crate::consensus::deserialize;
 
     #[test]
-    fn test_is_coinbase () {
+    fn test_is_coinbase() {
         use network::constants::Network;
         use blockdata::constants;
 
         let genesis = constants::genesis_block(Network::Dash);
-        assert! (genesis.txdata[0].is_coin_base());
+        assert!(genesis.txdata[0].is_coin_base());
         let tx_bytes = Vec::from_hex("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000").unwrap();
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
         assert!(!tx.is_coin_base());
@@ -693,7 +693,7 @@ mod tests {
                    "a6eab3c14ab5272a58a5ba91505ba1a4b6d7a3a9fcbd187b6cd99a7b6d548cb7".to_string());
         assert_eq!(format!("{:x}", realtx.wtxid()),
                    "a6eab3c14ab5272a58a5ba91505ba1a4b6d7a3a9fcbd187b6cd99a7b6d548cb7".to_string());
-        assert_eq!(realtx.weight(), tx_bytes.len()*WITNESS_SCALE_FACTOR);
+        assert_eq!(realtx.weight(), tx_bytes.len() * WITNESS_SCALE_FACTOR);
         assert_eq!(realtx.size(), tx_bytes.len());
         assert_eq!(realtx.vsize(), tx_bytes.len());
         assert_eq!(realtx.strippedsize(), tx_bytes.len());
@@ -741,7 +741,7 @@ mod tests {
         // Construct a transaction without the witness data.
         let mut tx_without_witness = realtx.clone();
         tx_without_witness.input.iter_mut().for_each(|input| input.witness.clear());
-        assert_eq!(tx_without_witness.weight(), expected_strippedsize*WITNESS_SCALE_FACTOR);
+        assert_eq!(tx_without_witness.weight(), expected_strippedsize * WITNESS_SCALE_FACTOR);
         assert_eq!(tx_without_witness.size(), expected_strippedsize);
         assert_eq!(tx_without_witness.vsize(), expected_strippedsize);
         assert_eq!(tx_without_witness.strippedsize(), expected_strippedsize);
@@ -868,8 +868,8 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature="bitcoinconsensus")]
-    fn test_transaction_verify () {
+    #[cfg(feature = "bitcoinconsensus")]
+    fn test_transaction_verify() {
         use hashes::hex::FromHex;
         use std::collections::HashMap;
         use blockdata::script;
@@ -921,7 +921,7 @@ mod tests {
             }
             None
         }).err().unwrap() {
-            script::Error::BitcoinConsensus(_) => {},
+            script::Error::BitcoinConsensus(_) => {}
             _ => panic!("Wrong error type"),
         }
     }
@@ -933,7 +933,7 @@ mod tests {
             lock_time: 0,
             input: vec![],
             output: vec![],
-            special_transaction_payload: None
+            special_transaction_payload: None,
         };
 
         let pk_data = Vec::from_hex("b8e2d839dd21088b78bebfea3e3e632181197982").unwrap();

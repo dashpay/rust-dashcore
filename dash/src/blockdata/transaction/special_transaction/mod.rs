@@ -285,10 +285,10 @@ impl TransactionType {
     }
 
     /// Decodes the payload based on the transaction type.
-    pub fn consensus_decode<D: io::Read>(self, mut d: D) -> Result<Option<TransactionPayload>, encode::Error> {
+    pub fn consensus_decode<R: io::Read + ?Sized>(self, d: &mut R) -> Result<Option<TransactionPayload>, encode::Error> {
         let _len = match self {
             Classic => { VarInt(0) }
-            _ => VarInt::consensus_decode(&mut d)?
+            _ => VarInt::consensus_decode(d)?
         };
 
         Ok(match self {

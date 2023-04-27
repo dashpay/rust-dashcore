@@ -35,7 +35,6 @@ use std::io;
 use std::io::Write;
 use hashes::Hash;
 use crate::ScriptBuf;
-use crate::{Script};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSPublicKey;
@@ -93,7 +92,7 @@ impl Decodable for ProviderUpdateRegistrarPayload {
         let provider_mode = u16::consensus_decode(r)?;
         let operator_public_key = BLSPublicKey::consensus_decode(r)?;
         let voting_key_hash = PubkeyHash::consensus_decode(r)?;
-        let script_payout = Script::consensus_decode(r)?;
+        let script_payout = ScriptBuf::consensus_decode(r)?;
         let inputs_hash = InputsHash::consensus_decode(r)?;
         let payload_sig = Vec::<u8>::consensus_decode(r)?;
 

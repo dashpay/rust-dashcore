@@ -39,7 +39,6 @@ use std::io;
 use std::io::{Error, Write};
 use hashes::Hash;
 use crate::ScriptBuf;
-use crate::{Script};
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::{Decodable, Encodable, encode};
@@ -95,7 +94,7 @@ impl Decodable for ProviderUpdateServicePayload {
         let pro_tx_hash = Txid::consensus_decode(r)?;
         let ip_address = u128::consensus_decode(r)?;
         let port = u16::swap_bytes(u16::consensus_decode(r)?);
-        let script_payout = Script::consensus_decode(r)?;
+        let script_payout = ScriptBuf::consensus_decode(r)?;
         let inputs_hash = InputsHash::consensus_decode(r)?;
         let payload_sig = BLSSignature::consensus_decode(r)?;
 

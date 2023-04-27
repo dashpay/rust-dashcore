@@ -38,8 +38,9 @@ use crate::prelude::*;
 use std::io;
 use std::io::{Error, Write};
 use hashes::Hash;
+use internals::hex::Case::Lower;
 use crate::ScriptBuf;
-use crate::{OutPoint, Script};
+use crate::{OutPoint};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash};
 use crate::{Address};
@@ -48,6 +49,7 @@ use crate::bls_sig_utils::BLSPublicKey;
 use crate::hash_types::{PubkeyHash, SpecialTransactionPayloadHash};
 use crate::address::Payload;
 use crate::Network;
+use crate::psbt::serialize::Serialize;
 
 /// A Provider Registration Payload used in a Provider Registration Special Transaction.
 /// This is used to register a Masternode on the network.
@@ -82,7 +84,10 @@ pub struct ProviderRegistrationPayload {
 impl ProviderRegistrationPayload {
     /// A convenience method to get the address from payout script
     pub fn payout_address(&self, network: Network) -> Result<Address, encode::Error> {
-        Address::from_script(&self.script_payout, network).ok_or(encode::Error::NonStandardScriptPayout(self.script_payout.clone()))
+        match Address::from_script(&self.script_payout, network) {
+            Ok(addr) => Ok(addr),
+            Err(_) => Err(encode::Error::NonStandardScriptPayout(self.script_payout.clone())),
+        }
     }
     /// A convenience method to get the address from the owner key hash
     pub fn owner_address(&self, network: Network) -> Address {
@@ -96,10 +101,10 @@ impl ProviderRegistrationPayload {
     /// a string of formatted values proving access to the 1000 Dash and therefore the ability
     /// to register the masternode.
     pub fn payload_collateral_string(&self, network: Network) -> Result<String, encode::Error> {
-        let mut base_payload_hash = self.base_payload_hash().to_vec();
+        let mut base_payload_hash =self.base_payload_hash().as_raw_hash().serialize();
         base_payload_hash.reverse();
         let base_payload_hash = SpecialTransactionPayloadHash::from_slice(base_payload_hash.as_slice()).unwrap();
-        Ok(format!("{}|{}|{}|{}|{}", self.payout_address(network)?, self.operator_reward, self.owner_address(network), self.voting_address(network), base_payload_hash.to_hex()))
+        Ok(format!("{}|{}|{}|{}|{}", self.payout_address(network)?, self.operator_reward, self.owner_address(network), self.voting_address(network), base_payload_hash.as_byte_array().to_hex_string(Lower)))
     }
 }
 
@@ -149,7 +154,7 @@ impl Decodable for ProviderRegistrationPayload {
         let operator_public_key = BLSPublicKey::consensus_decode(r)?;
         let voting_key_hash = PubkeyHash::consensus_decode(r)?;
         let operator_reward = u16::consensus_decode(r)?;
-        let script_payout = Script::consensus_decode(r)?;
+        let script_payout = ScriptBuf::consensus_decode(r)?;
         let inputs_hash = InputsHash::consensus_decode(r)?;
         let payload_sig = Vec::<u8>::consensus_decode(r)?;
 

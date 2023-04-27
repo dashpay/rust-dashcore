@@ -20,21 +20,21 @@
 use crate::internal_macros::impl_bytes_newtype;
 use internals::{impl_array_newtype};
 
-impl_array_newtype!(BLSPublicKey, u8, 48);
-impl_bytes_newtype!(BLSPublicKey, 48);
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core
 #[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
 #[derive(Clone)]
 pub struct BLSPublicKey([u8;48]);
 
-impl_array_newtype!(BLSSignature, u8, 96);
-impl_bytes_newtype!(BLSSignature, 96);
+impl_array_newtype!(BLSPublicKey, u8, 48);
+impl_bytes_newtype!(BLSPublicKey, 48);
 
 /// A BLS Signature is 96 bytes in the scheme used for Dash Core
 #[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
 #[derive(Clone)]
 pub struct BLSSignature([u8;96]);
 
+impl_array_newtype!(BLSSignature, u8, 96);
+impl_bytes_newtype!(BLSSignature, 96);
 
 macro_rules! impl_elementencode {
     ($element:ident, $len:expr) => {
@@ -51,8 +51,6 @@ macro_rules! impl_elementencode {
         }
     };
 }
-
-
 
 #[rustversion::before(1.48)]
 macro_rules! impl_eq_ord_hash {

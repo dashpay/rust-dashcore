@@ -27,7 +27,7 @@ use crate::transaction::TxOut;
 use crate::blockdata::transaction::special_transaction::TransactionType;
 use crate::blockdata::transaction::special_transaction::TransactionType::AssetUnlock;
 use crate::consensus::{Decodable, Encodable, encode};
-use crate::{Script, TxIn};
+use crate::{ScriptBuf, TxIn};
 use crate::prelude::*;
 use crate::hash_types::{PubkeyHash, ScriptHash};
 
@@ -87,7 +87,7 @@ impl AssetUnlockBaseTransactionInfo {
     /// accepts hash of the public key to prove ownership of the burnt
     /// dash on Dash Platform.
     pub fn add_burn_output(&mut self, satoshis_to_burn: u64, data: &[u8; 20]) {
-        let burn_script = Script::new_op_return(data);
+        let burn_script = ScriptBuf::new_op_return(data);
         let output = TxOut {
             value: satoshis_to_burn,
             script_pubkey: burn_script,
@@ -97,7 +97,7 @@ impl AssetUnlockBaseTransactionInfo {
 
     /// Convenience method that adds an output that pays to a public key hash.
     pub fn add_p2pkh_output(&mut self, amount: u64, public_key_hash: &PubkeyHash) {
-        let public_key_hash_script = Script::new_p2pkh(public_key_hash);
+        let public_key_hash_script = ScriptBuf::new_p2pkh(public_key_hash);
         let output = TxOut {
             value: amount,
             script_pubkey: public_key_hash_script,
@@ -107,7 +107,7 @@ impl AssetUnlockBaseTransactionInfo {
 
     /// Convenience method that adds an output that pays to a public key hash.
     pub fn add_p2sh_output(&mut self, amount: u64, script_hash: &ScriptHash) {
-        let pay_to_script_hash_script = Script::new_p2sh(script_hash);
+        let pay_to_script_hash_script = ScriptBuf::new_p2sh(script_hash);
         let output = TxOut {
             value: amount,
             script_pubkey: pay_to_script_hash_script,

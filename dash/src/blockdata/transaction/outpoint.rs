@@ -120,15 +120,16 @@ pub enum ParseOutPointError {
 }
 
 
-impl ::core::str::FromStr for OutPoint {
+impl core::str::FromStr for OutPoint {
     type Err = ParseOutPointError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.len() > 75 { // 64 + 1 + 10
+        if s.len() > 75 {
+            // 64 + 1 + 10
             return Err(ParseOutPointError::TooLong);
         }
         let find = s.find(':');
-        if find == None || find != s.rfind(':') {
+        if find.is_none() || find != s.rfind(':') {
             return Err(ParseOutPointError::Format);
         }
         let colon = find.unwrap();
@@ -136,8 +137,8 @@ impl ::core::str::FromStr for OutPoint {
             return Err(ParseOutPointError::Format);
         }
         Ok(OutPoint {
-            txid: Txid::from_hex(&s[..colon]).map_err(ParseOutPointError::Txid)?,
-            vout: parse_vout(&s[colon+1..])?,
+            txid: s[..colon].parse().map_err(ParseOutPointError::Txid)?,
+            vout: parse_vout(&s[colon + 1..])?,
         })
     }
 }

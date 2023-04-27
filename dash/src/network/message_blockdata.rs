@@ -31,6 +31,7 @@ use crate::network::constants;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::{BlockHash, Txid, Wtxid};
 use crate::internal_macros::{impl_consensus_encoding};
+use crate::hashes::Hash;
 
 /// An inventory item.
 #[derive(PartialEq, Eq, Clone, Debug, Copy, Hash, PartialOrd, Ord)]
@@ -156,6 +157,7 @@ mod tests {
 
     use consensus::encode::{deserialize, serialize};
     use core::default::Default;
+    use crate::consensus::{deserialize, serialize};
 
     #[test]
     fn getblocks_message_test() {
