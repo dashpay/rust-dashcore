@@ -161,7 +161,7 @@ mod out_bytes {
     // As a sanity check we only provide conversions for even, non-empty arrays.
     // Weird lengths 66 and 130 are provided for serialized public keys.
     impl_from_array!(
-        2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 40, 64, 66, 128, 130, 256, 512,
+        2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 40, 64, 66, 96, 128, 130, 192, 256, 512,
         1024, 2048, 4096, 8192
     );
 
