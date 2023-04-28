@@ -115,8 +115,8 @@ struct TaprootCache {
 /// `SIGHASH_ANYONECANPAY`, [`Prevouts::One`] may be used.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Prevouts<'u, T>
-where
-    T: 'u + Borrow<TxOut>,
+    where
+        T: 'u + Borrow<TxOut>,
 {
     /// `One` variant allows provision of the single prevout needed. It's useful, for example, when
     /// modifier `SIGHASH_ANYONECANPAY` is provided, only prevout of the current input is needed.
@@ -279,8 +279,8 @@ impl std::error::Error for Error {
 }
 
 impl<'u, T> Prevouts<'u, T>
-where
-    T: Borrow<TxOut>,
+    where
+        T: Borrow<TxOut>,
 {
     fn check_all(&self, tx: &Transaction) -> Result<(), Error> {
         if let Prevouts::All(prevouts) = self {
@@ -912,7 +912,7 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
                         },
                         sequence: if n != input_index
                             && (sighash == EcdsaSighashType::Single
-                                || sighash == EcdsaSighashType::None)
+                            || sighash == EcdsaSighashType::None)
                         {
                             0
                         } else {
@@ -959,7 +959,7 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
                 script_pubkey,
                 sighash_type,
             )
-            .map_err(|e| Error::Io(e.kind())),
+                .map_err(|e| Error::Io(e.kind())),
         )
     }
 
@@ -1125,7 +1125,6 @@ mod tests {
 
     use super::*;
     use crate::address::Address;
-    use crate::blockdata::locktime::absolute;
     use crate::consensus::deserialize;
     use crate::crypto::key::PublicKey;
     use crate::crypto::sighash::{LegacySighash, TapSighash};
@@ -1142,9 +1141,10 @@ mod tests {
         // We need a tx with more inputs than outputs.
         let tx = Transaction {
             version: 1,
-            lock_time: absolute::LockTime::ZERO,
+            lock_time: 0,
             input: vec![TxIn::default(), TxIn::default()],
             output: vec![TxOut::default()],
+            special_transaction_payload: None,
         };
         let script = ScriptBuf::new();
         let cache = SighashCache::new(&tx);
@@ -1216,7 +1216,7 @@ mod tests {
             "01365724000000000023542156b39dab4f8f3508e0432cfb41fab110170acaa2d4c42539cb90a4dc7c093bc500",
             0,
             "33ca0ebfb4a945eeee9569fc0f5040221275f88690b7f8592ada88ce3bdf6703",
-            TapSighashType::Default, None, None, None
+            TapSighashType::Default, None, None, None,
         );
 
         test_taproot_sighash(
@@ -1224,7 +1224,7 @@ mod tests {
             "02591f220000000000225120f25ad35583ea31998d968871d7de1abd2a52f6fe4178b54ea158274806ff4ece48fb310000000000225120f25ad35583ea31998d968871d7de1abd2a52f6fe4178b54ea158274806ff4ece",
             1,
             "626ab955d58c9a8a600a0c580549d06dc7da4e802eb2a531f62a588e430967a8",
-            TapSighashType::All, None, None, None
+            TapSighashType::All, None, None, None,
         );
 
         test_taproot_sighash(
@@ -1232,7 +1232,7 @@ mod tests {
             "01c4811000000000002251201bf9297d0a2968ae6693aadd0fa514717afefd218087a239afb7418e2d22e65c",
             0,
             "dfa9437f9c9a1d1f9af271f79f2f5482f287cdb0d2e03fa92c8a9b216cc6061c",
-            TapSighashType::AllPlusAnyoneCanPay, None, None, None
+            TapSighashType::AllPlusAnyoneCanPay, None, None, None,
         );
 
         test_taproot_sighash(
@@ -1240,7 +1240,7 @@ mod tests {
             "0144c84d0000000000225120e3f2107989c88e67296ab2faca930efa2e3a5bd3ff0904835a11c9e807458621",
             0,
             "3129de36a5d05fff97ffca31eb75fcccbbbc27b3147a7a36a9e4b45d8b625067",
-            TapSighashType::None, None, None, None
+            TapSighashType::None, None, None, None,
         );
 
         test_taproot_sighash(
@@ -1248,7 +1248,7 @@ mod tests {
             "013fed110000000000225120eb536ae8c33580290630fc495046e998086a64f8f33b93b07967d9029b265c55",
             0,
             "2441e8b0e063a2083ee790f14f2045022f07258ddde5ee01de543c9e789d80ae",
-            TapSighashType::NonePlusAnyoneCanPay, None, None, None
+            TapSighashType::NonePlusAnyoneCanPay, None, None, None,
         );
 
         test_taproot_sighash(
@@ -1256,7 +1256,7 @@ mod tests {
             "01efa558000000000022512007071ea3dc7e331b0687d0193d1e6d6ed10e645ef36f10ef8831d5e522ac9e80",
             0,
             "30239345177cadd0e3ea413d49803580abb6cb27971b481b7788a78d35117a88",
-            TapSighashType::Single, None, None, None
+            TapSighashType::Single, None, None, None,
         );
 
         test_taproot_sighash(
@@ -1264,7 +1264,7 @@ mod tests {
             "0107af4e00000000002251202c36d243dfc06cb56a248e62df27ecba7417307511a81ae61aa41c597a929c69",
             0,
             "bf9c83f26c6dd16449e4921f813f551c4218e86f2ec906ca8611175b41b566df",
-            TapSighashType::SinglePlusAnyoneCanPay, None, None, None
+            TapSighashType::SinglePlusAnyoneCanPay, None, None, None,
         );
     }
 
@@ -1329,15 +1329,16 @@ mod tests {
     fn test_sighash_errors() {
         let dumb_tx = Transaction {
             version: 0,
-            lock_time: absolute::LockTime::ZERO,
+            lock_time: 0,
             input: vec![TxIn::default()],
             output: vec![],
+            special_transaction_payload: None,
         };
         let mut c = SighashCache::new(&dumb_tx);
 
         // 1.29 fixes
         let empty_vec = vec![];
-        let empty_prevouts : Prevouts<TxOut> = Prevouts::All(&empty_vec);
+        let empty_prevouts: Prevouts<TxOut> = Prevouts::All(&empty_vec);
         assert_eq!(
             c.taproot_signature_hash(0, &empty_prevouts, None, None, TapSighashType::All),
             Err(Error::PrevoutsSize)
@@ -1362,7 +1363,7 @@ mod tests {
             c.taproot_signature_hash(10, &prevout, None, None, TapSighashType::AllPlusAnyoneCanPay),
             Err(Error::IndexOutOfInputsBounds {
                 index: 10,
-                inputs_size: 1
+                inputs_size: 1,
             })
         );
         let prevout = Prevouts::One(0, &tx_out);
@@ -1370,14 +1371,14 @@ mod tests {
             c.taproot_signature_hash(0, &prevout, None, None, TapSighashType::SinglePlusAnyoneCanPay),
             Err(Error::SingleWithoutCorrespondingOutput {
                 index: 0,
-                outputs_size: 0
+                outputs_size: 0,
             })
         );
         assert_eq!(
             c.legacy_signature_hash(10, Script::empty(), 0u32),
             Err(Error::IndexOutOfInputsBounds {
                 index: 10,
-                inputs_size: 1
+                inputs_size: 1,
             })
         );
     }
@@ -1445,8 +1446,8 @@ mod tests {
     #[test]
     fn bip_341_sighash_tests() {
         fn sighash_deser_numeric<'de, D>(deserializer: D) -> Result<TapSighashType, D::Error>
-        where
-            D: actual_serde::Deserializer<'de>,
+            where
+                D: actual_serde::Deserializer<'de>,
         {
             use actual_serde::de::{Deserialize, Error, Unexpected};
 
@@ -1764,7 +1765,7 @@ mod tests {
              ffffffff0200e9a435000000001976a914389ffce9cd9ae88dcc0631e88a821ffdbe9bfe2688acc0832f\
              05000000001976a9147480a33f950689af511e6e84c138dbbd3c3ee41588ac00000000"
         ))
-        .unwrap();
+            .unwrap();
 
         let witness_script = ScriptBuf::from_hex(
             "56210307b8ae49ac90a048e9b53357a2354b3334e9c8bee813ecb98e99a7e07e8c3ba32103b28f0c28\
@@ -1774,7 +1775,7 @@ mod tests {
              2c07a1789aac162102d8b661b0b3302ee2f162b09e07a55ad5dfbe673a9f01d9f0c19617681024306b\
              56ae",
         )
-        .unwrap();
+            .unwrap();
         let value = 987654321;
 
         let mut cache = SighashCache::new(&tx);

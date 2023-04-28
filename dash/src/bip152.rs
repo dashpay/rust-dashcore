@@ -390,7 +390,7 @@ mod test {
             input: vec![TxIn {
                 previous_output: OutPoint::new(Txid::hash(nonce), 0),
                 script_sig: ScriptBuf::new(),
-                sequence: Sequence(1),
+                sequence: 1,
                 witness: Witness::new(),
             }],
             output: vec![TxOut { value: 1, script_pubkey: ScriptBuf::new() }],

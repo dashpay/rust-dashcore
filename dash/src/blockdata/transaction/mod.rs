@@ -571,6 +571,22 @@ impl Transaction {
             result
         })
     }
+
+    /// Computes the weight and checks that it matches the output of `predict_weight`.
+    #[cfg(test)]
+    fn check_weight(&self) -> Weight {
+        let weight1 = self.weight();
+        let inputs = self.input.iter().map(|txin| {
+            InputWeightPrediction::new(
+                txin.script_sig.len(),
+                txin.witness.iter().map(|elem| elem.len()),
+            )
+        });
+        let outputs = self.output.iter().map(|txout| txout.script_pubkey.len());
+        let weight2 = predict_weight(inputs, outputs);
+        assert_eq!(weight1, weight2);
+        weight1
+    }
 }
 
 impl Encodable for Transaction {
@@ -648,23 +664,232 @@ impl Decodable for Transaction {
     }
 }
 
+/// Weight prediction of an individual input.
+///
+/// This helper type collects information about an input to be used in [`predict_weight`] function.
+/// It can only be created using the [`new`](InputWeightPrediction::new) function.
+#[derive(Copy, Clone, Debug)]
+pub struct InputWeightPrediction {
+    script_size: usize,
+    witness_size: usize,
+}
+
+impl InputWeightPrediction {
+    /// Input weight prediction corresponding to spending of P2WPKH output with the largest possible
+    /// DER-encoded signature.
+    ///
+    /// If the input in your transaction uses P2WPKH you can use this instead of
+    /// [`InputWeightPrediction::new`].
+    ///
+    /// This is useful when you **do not** use [signature grinding] and want to ensure you are not
+    /// under-paying. See [`ground_p2wpkh`](Self::ground_p2wpkh) if you do use signature grinding.
+    ///
+    /// [signature grinding]: https://bitcoin.stackexchange.com/questions/111660/what-is-signature-grinding
+    pub const P2WPKH_MAX: Self =
+        InputWeightPrediction { script_size: 0, witness_size: 1 + 1 + 73 + 1 + 33 };
+
+    /// Input weight prediction corresponding to spending of taproot output using the key and
+    /// default sighash.
+    ///
+    /// If the input in your transaction uses Taproot key spend you can use this instead of
+    /// [`InputWeightPrediction::new`].
+    pub const P2TR_KEY_DEFAULT_SIGHASH: Self =
+        InputWeightPrediction { script_size: 0, witness_size: 1 + 1 + 64 };
+
+    /// Input weight prediction corresponding to spending of taproot output using the key and
+    /// **non**-default sighash.
+    ///
+    /// If the input in your transaction uses Taproot key spend you can use this instead of
+    /// [`InputWeightPrediction::new`].
+    pub const P2TR_KEY_NON_DEFAULT_SIGHASH: Self =
+        InputWeightPrediction { script_size: 0, witness_size: 1 + 1 + 65 };
+
+    /// Input weight prediction corresponding to spending of P2WPKH output using [signature
+    /// grinding].
+    ///
+    /// If the input in your transaction uses P2WPKH and you use signature grinding you can use this
+    /// instead of [`InputWeightPrediction::new`]. See [`P2WPKH_MAX`](Self::P2WPKH_MAX) if you don't
+    /// use signature grinding.
+    ///
+    /// Note: `bytes_to_grind` is usually `1` because of exponential cost of higher values.
+    ///
+    /// # Panics
+    ///
+    /// The funcion panics in const context and debug builds if `bytes_to_grind` is higher than 62.
+    ///
+    /// [signature grinding]: https://bitcoin.stackexchange.com/questions/111660/what-is-signature-grinding
+    pub const fn ground_p2wpkh(bytes_to_grind: usize) -> Self {
+        // Written to trigger const/debug panic for unreasonably high values.
+        let der_signature_size = 10 + (62 - bytes_to_grind);
+        let witness_size = 1 // length of element count varint
+            + 1 // length of element size varint (max signature length is 73B)
+            + der_signature_size
+            + 1 // sighash flag
+            + 1 // length of element size varint
+            + 33; // length of (always-compressed) public key
+        InputWeightPrediction { script_size: 0, witness_size }
+    }
+
+    /// Computes the prediction for a single input.
+    pub fn new<T>(input_script_len: usize, witness_element_lengths: T) -> Self
+        where
+            T: IntoIterator,
+            T::Item: Borrow<usize>,
+    {
+        let (count, total_size) =
+            witness_element_lengths.into_iter().fold((0, 0), |(count, total_size), elem_len| {
+                let elem_len = *elem_len.borrow();
+                let elem_size = elem_len + VarInt(elem_len as u64).len();
+                (count + 1, total_size + elem_size)
+            });
+        let witness_size = if count > 0 { total_size + VarInt(count as u64).len() } else { 0 };
+        let script_size = input_script_len + VarInt(input_script_len as u64).len();
+
+        InputWeightPrediction { script_size, witness_size }
+    }
+
+    /// Computes the prediction for a single input in `const` context.
+    ///
+    /// *Important: only available in Rust 1.46+*
+    ///
+    /// This is a `const` version of [`new`](Self::new) which only allows slices due to current Rust
+    /// limitations around `const fn`. Because of these limitations it may be less efficient than
+    /// `new` and thus is intended to be only used in `const` context.
+    pub const fn from_slice(input_script_len: usize, witness_element_lengths: &[usize]) -> Self {
+        let mut i = 0;
+        let mut total_size = 0;
+        // for loops not supported in const fn
+        while i < witness_element_lengths.len() {
+            let elem_len = witness_element_lengths[i];
+            let elem_size = elem_len + VarInt(elem_len as u64).len();
+            total_size += elem_size;
+            i += 1;
+        }
+        let witness_size = if !witness_element_lengths.is_empty() {
+            total_size + VarInt(witness_element_lengths.len() as u64).len()
+        } else {
+            0
+        };
+        let script_size = input_script_len + VarInt(input_script_len as u64).len();
+
+        InputWeightPrediction { script_size, witness_size }
+    }
+}
+
+/// Predicts the weight of a to-be-constructed transaction.
+///
+/// This function computes the weight of a transaction which is not fully known. All that is needed
+/// is the lengths of scripts and witness elements.
+///
+/// # Arguments
+///
+/// * `inputs` - an iterator which returns `InputWeightPrediction` for each input of the
+///   to-be-constructed transaction.
+/// * `output_script_lens` - an iterator which returns the length of `script_pubkey` of each output
+///   of the to-be-constructed transaction.
+///
+/// Note that lengths of the scripts and witness elements must be non-serialized, IOW *without* the
+/// preceding compact size. The lenght of preceding compact size is computed and added inside the
+/// function for convenience.
+///
+/// If you  have the transaction already constructed (except for signatures) with a dummy value for
+/// fee output you can use the return value of [`Transaction::script_pubkey_lens`] method directly
+/// as the second argument.
+///
+/// # Usage
+///
+/// When signing a transaction one doesn't know the signature before knowing the transaction fee and
+/// the transaction fee is not known before knowing the transaction size which is not known before
+/// knowing the signature. This apparent dependency cycle can be broken by knowing the length of the
+/// signature without knowing the contents of the signature e.g., we know all Schnorr signatures
+/// are 64 bytes long.
+///
+/// Additionally, some protocols may require calculating the amounts before knowing various parts
+/// of the transaction (assuming their length is known).
+///
+/// # Notes on integer overflow
+///
+/// Overflows are intentionally not checked because one of the following holds:
+///
+/// * The transaction is valid (obeys the block size limit) and the code feeds correct values to
+///   this function - no overflow can happen.
+/// * The transaction will be so large it doesn't fit in the memory - overflow will happen but
+///   then the transaction will fail to construct and even if one serialized it on disk directly
+///   it'd be invalid anyway so overflow doesn't matter.
+/// * The values fed into this function are inconsistent with the actual lengths the transaction
+///   will have - the code is already broken and checking overflows doesn't help. Unfortunately
+///   this probably cannot be avoided.
+pub fn predict_weight<I, O>(inputs: I, output_script_lens: O) -> Weight
+    where
+        I: IntoIterator<Item = InputWeightPrediction>,
+        O: IntoIterator<Item = usize>,
+{
+    let (input_count, partial_input_weight, inputs_with_witnesses) = inputs.into_iter().fold(
+        (0, 0, 0),
+        |(count, partial_input_weight, inputs_with_witnesses), prediction| {
+            (
+                count + 1,
+                partial_input_weight + prediction.script_size * 4 + prediction.witness_size,
+                inputs_with_witnesses + (prediction.witness_size > 0) as usize,
+            )
+        },
+    );
+    let (output_count, output_scripts_size) = output_script_lens.into_iter().fold(
+        (0, 0),
+        |(output_count, total_scripts_size), script_len| {
+            let script_size = script_len + VarInt(script_len as u64).len();
+            (output_count + 1, total_scripts_size + script_size)
+        },
+    );
+    predict_weight_internal(
+        input_count,
+        partial_input_weight,
+        inputs_with_witnesses,
+        output_count,
+        output_scripts_size,
+    )
+}
+
+const fn predict_weight_internal(
+    input_count: usize,
+    partial_input_weight: usize,
+    inputs_with_witnesses: usize,
+    output_count: usize,
+    output_scripts_size: usize,
+) -> Weight {
+    let input_weight = partial_input_weight + input_count * 4 * (32 + 4 + 4);
+    let output_size = 8 * output_count + output_scripts_size;
+    let non_input_size =
+        // version:
+        4 +
+            // count varints:
+            VarInt(input_count as u64).len() +
+            VarInt(output_count as u64).len() +
+            output_size +
+            // lock_time
+            4;
+    let weight = if inputs_with_witnesses == 0 {
+        non_input_size * 4 + input_weight
+    } else {
+        non_input_size * 4 + input_weight + input_count - inputs_with_witnesses + 2
+    };
+    Weight::from_wu(weight as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use blockdata::constants::WITNESS_SCALE_FACTOR;
-    use blockdata::script::Script;
-    use consensus::encode::serialize;
-    use consensus::encode::deserialize;
-
+    use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
+    use crate::consensus::encode::serialize;
+    use crate::consensus::encode::deserialize;
     use hashes::hex::FromHex;
-    use crate::{constants, Network};
-    use crate::consensus::deserialize;
+    use crate::internal_macros::hex;
 
     #[test]
     fn test_is_coinbase() {
-        use network::constants::Network;
-        use blockdata::constants;
+        use crate::network::constants::Network;
+        use crate::blockdata::constants;
 
         let genesis = constants::genesis_block(Network::Dash);
         assert!(genesis.txdata[0].is_coin_base());
@@ -675,7 +900,7 @@ mod tests {
 
     #[test]
     fn test_nonsegwit_transaction() {
-        let tx_bytes = Vec::from_hex("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000").unwrap();
+        let tx_bytes = hex!("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000");
         let tx: Result<Transaction, _> = deserialize(&tx_bytes);
         assert!(tx.is_ok());
         let realtx = tx.unwrap();
@@ -685,17 +910,23 @@ mod tests {
         assert_eq!(realtx.input.len(), 1);
         // In particular this one is easy to get backward -- in bitcoin hashes are encoded
         // as little-endian 256-bit numbers rather than as data strings.
-        assert_eq!(format!("{:x}", realtx.input[0].previous_output.txid),
-                   "ce9ea9f6f5e422c6a9dbcddb3b9a14d1c78fab9ab520cb281aa2a74a09575da1".to_string());
+        assert_eq!(
+            format!("{:x}", realtx.input[0].previous_output.txid),
+            "ce9ea9f6f5e422c6a9dbcddb3b9a14d1c78fab9ab520cb281aa2a74a09575da1".to_string()
+        );
         assert_eq!(realtx.input[0].previous_output.vout, 1);
         assert_eq!(realtx.output.len(), 1);
         assert_eq!(realtx.lock_time, 0);
 
-        assert_eq!(format!("{:x}", realtx.txid()),
-                   "a6eab3c14ab5272a58a5ba91505ba1a4b6d7a3a9fcbd187b6cd99a7b6d548cb7".to_string());
-        assert_eq!(format!("{:x}", realtx.wtxid()),
-                   "a6eab3c14ab5272a58a5ba91505ba1a4b6d7a3a9fcbd187b6cd99a7b6d548cb7".to_string());
-        assert_eq!(realtx.weight(), tx_bytes.len() * WITNESS_SCALE_FACTOR);
+        assert_eq!(
+            format!("{:x}", realtx.txid()),
+            "a6eab3c14ab5272a58a5ba91505ba1a4b6d7a3a9fcbd187b6cd99a7b6d548cb7".to_string()
+        );
+        assert_eq!(
+            format!("{:x}", realtx.wtxid()),
+            "a6eab3c14ab5272a58a5ba91505ba1a4b6d7a3a9fcbd187b6cd99a7b6d548cb7".to_string()
+        );
+        assert_eq!(realtx.check_weight().to_wu() as usize, tx_bytes.len() * WITNESS_SCALE_FACTOR);
         assert_eq!(realtx.size(), tx_bytes.len());
         assert_eq!(realtx.vsize(), tx_bytes.len());
         assert_eq!(realtx.strippedsize(), tx_bytes.len());
@@ -703,13 +934,13 @@ mod tests {
 
     #[test]
     fn test_segwit_transaction() {
-        let tx_bytes = Vec::from_hex(
+        let tx_bytes = hex!(
             "02000000000101595895ea20179de87052b4046dfe6fd515860505d6511a9004cf12a1f93cac7c01000000\
             00ffffffff01deb807000000000017a9140f3444e271620c736808aa7b33e370bd87cb5a078702483045022\
             100fb60dad8df4af2841adc0346638c16d0b8035f5e3f3753b88db122e70c79f9370220756e6633b17fd271\
             0e626347d28d60b0a2d6cbb41de51740644b9fb3ba7751040121028fa937ca8cba2197a37c007176ed89410\
             55d3bcb8627d085e94553e62f057dcc00000000"
-        ).unwrap();
+        );
         let tx: Result<Transaction, _> = deserialize(&tx_bytes);
         assert!(tx.is_ok());
         let realtx = tx.unwrap();
@@ -719,18 +950,24 @@ mod tests {
         assert_eq!(realtx.input.len(), 1);
         // In particular this one is easy to get backward -- in bitcoin hashes are encoded
         // as little-endian 256-bit numbers rather than as data strings.
-        assert_eq!(format!("{:x}", realtx.input[0].previous_output.txid),
-                   "7cac3cf9a112cf04901a51d605058615d56ffe6d04b45270e89d1720ea955859".to_string());
+        assert_eq!(
+            format!("{:x}", realtx.input[0].previous_output.txid),
+            "7cac3cf9a112cf04901a51d605058615d56ffe6d04b45270e89d1720ea955859".to_string()
+        );
         assert_eq!(realtx.input[0].previous_output.vout, 1);
         assert_eq!(realtx.output.len(), 1);
         assert_eq!(realtx.lock_time, 0);
 
-        assert_eq!(format!("{:x}", realtx.txid()),
-                   "f5864806e3565c34d1b41e716f72609d00b55ea5eac5b924c9719a842ef42206".to_string());
-        assert_eq!(format!("{:x}", realtx.wtxid()),
-                   "80b7d8a82d5d5bf92905b06f2014dd699e03837ca172e3a59d51426ebbe3e7f5".to_string());
-        const EXPECTED_WEIGHT: usize = 442;
-        assert_eq!(realtx.weight(), EXPECTED_WEIGHT);
+        assert_eq!(
+            format!("{:x}", realtx.txid()),
+            "f5864806e3565c34d1b41e716f72609d00b55ea5eac5b924c9719a842ef42206".to_string()
+        );
+        assert_eq!(
+            format!("{:x}", realtx.wtxid()),
+            "80b7d8a82d5d5bf92905b06f2014dd699e03837ca172e3a59d51426ebbe3e7f5".to_string()
+        );
+        const EXPECTED_WEIGHT: Weight = Weight::from_wu(442);
+        assert_eq!(realtx.check_weight(), EXPECTED_WEIGHT);
         assert_eq!(realtx.size(), tx_bytes.len());
         assert_eq!(realtx.vsize(), 111);
         // Since
@@ -738,12 +975,16 @@ mod tests {
         //     weight = WITNESS_SCALE_FACTOR * stripped_size + witness_size
         // then,
         //     stripped_size = (weight - size) / (WITNESS_SCALE_FACTOR - 1)
-        let expected_strippedsize = (EXPECTED_WEIGHT - tx_bytes.len()) / (WITNESS_SCALE_FACTOR - 1);
+        let expected_strippedsize =
+            (EXPECTED_WEIGHT.to_wu() as usize - tx_bytes.len()) / (WITNESS_SCALE_FACTOR - 1);
         assert_eq!(realtx.strippedsize(), expected_strippedsize);
         // Construct a transaction without the witness data.
-        let mut tx_without_witness = realtx.clone();
+        let mut tx_without_witness = realtx;
         tx_without_witness.input.iter_mut().for_each(|input| input.witness.clear());
-        assert_eq!(tx_without_witness.weight(), expected_strippedsize * WITNESS_SCALE_FACTOR);
+        assert_eq!(
+            tx_without_witness.check_weight().to_wu() as usize,
+            expected_strippedsize * WITNESS_SCALE_FACTOR
+        );
         assert_eq!(tx_without_witness.size(), expected_strippedsize);
         assert_eq!(tx_without_witness.vsize(), expected_strippedsize);
         assert_eq!(tx_without_witness.strippedsize(), expected_strippedsize);
@@ -786,17 +1027,17 @@ mod tests {
         let old_ntxid = tx.ntxid();
         assert_eq!(format!("{:x}", old_ntxid), "c3573dbea28ce24425c59a189391937e00d255150fa973d59d61caf3a06b601d");
         // changing sigs does not affect it
-        tx.input[0].script_sig = Script::new();
+        tx.input[0].script_sig = ScriptBuf::new();
         assert_eq!(old_ntxid, tx.ntxid());
         // changing pks does
-        tx.output[0].script_pubkey = Script::new();
+        tx.output[0].script_pubkey = ScriptBuf::new();
         assert!(old_ntxid != tx.ntxid());
     }
 
     #[test]
     fn test_txid() {
         // segwit tx from Liquid integration tests, txid/hash from Core decoderawtransaction
-        let tx_bytes = Vec::from_hex(
+        let tx_bytes = hex!(
             "01000000000102ff34f95a672bb6a4f6ff4a7e90fa8c7b3be7e70ffc39bc99be3bda67942e836c00000000\
              23220020cde476664d3fa347b8d54ef3aee33dcb686a65ced2b5207cbf4ec5eda6b9b46e4f414d4c934ad8\
              1d330314e888888e3bd22c7dde8aac2ca9227b30d7c40093248af7812201000000232200200af6f6a071a6\
@@ -825,26 +1066,38 @@ mod tests {
              ab0281d17cfca1cc035966d335f474932d5e6c5422210355fbb768ce3ce39360277345dbb5f376e706459e\
              5a2b5e0e09a535e61690647021023222ceec58b94bd25925dd9743dae6b928737491bd940fc5dd7c6f5d5f\
              2adc1e53ae00000000"
-        ).unwrap();
+        );
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
 
-        assert_eq!(format!("{:x}", tx.wtxid()), "d6ac4a5e61657c4c604dcde855a1db74ec6b3e54f32695d72c5e11c7761ea1b4");
-        assert_eq!(format!("{:x}", tx.txid()), "9652aa62b0e748caeec40c4cb7bc17c6792435cc3dfe447dd1ca24f912a1c6ec");
-        assert_eq!(tx.weight(), 2718);
+        assert_eq!(
+            format!("{:x}", tx.wtxid()),
+            "d6ac4a5e61657c4c604dcde855a1db74ec6b3e54f32695d72c5e11c7761ea1b4"
+        );
+        assert_eq!(
+            format!("{:x}", tx.txid()),
+            "9652aa62b0e748caeec40c4cb7bc17c6792435cc3dfe447dd1ca24f912a1c6ec"
+        );
+        assert_eq!(tx.check_weight(), Weight::from_wu(2718));
 
         // non-segwit tx from my mempool
-        let tx_bytes = Vec::from_hex(
+        let tx_bytes = hex!(
             "01000000010c7196428403d8b0c88fcb3ee8d64f56f55c8973c9ab7dd106bb4f3527f5888d000000006a47\
              30440220503a696f55f2c00eee2ac5e65b17767cd88ed04866b5637d3c1d5d996a70656d02202c9aff698f\
              343abb6d176704beda63fcdec503133ea4f6a5216b7f925fa9910c0121024d89b5a13d6521388969209df2\
              7a8469bd565aff10e8d42cef931fad5121bfb8ffffffff02b825b404000000001976a914ef79e7ee9fff98\
              bcfd08473d2b76b02a48f8c69088ac0000000000000000296a273236303039343836393731373233313237\
              3633313032313332353630353838373931323132373000000000"
-        ).unwrap();
+        );
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
 
-        assert_eq!(format!("{:x}", tx.wtxid()), "971ed48a62c143bbd9c87f4bafa2ef213cfa106c6e140f111931d0be307468dd");
-        assert_eq!(format!("{:x}", tx.txid()), "971ed48a62c143bbd9c87f4bafa2ef213cfa106c6e140f111931d0be307468dd");
+        assert_eq!(
+            format!("{:x}", tx.wtxid()),
+            "971ed48a62c143bbd9c87f4bafa2ef213cfa106c6e140f111931d0be307468dd"
+        );
+        assert_eq!(
+            format!("{:x}", tx.txid()),
+            "971ed48a62c143bbd9c87f4bafa2ef213cfa106c6e140f111931d0be307468dd"
+        );
     }
 
     #[test]

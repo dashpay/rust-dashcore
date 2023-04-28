@@ -886,8 +886,7 @@ mod tests {
     use secp256k1::{self, Secp256k1};
     use hashes::hex::FromHex;
 
-    use network::constants::Network::{self, Dash};
-    use crate::Network::Dash;
+    use crate::network::constants::Network::{self, Dash};
 
     #[test]
     fn test_parse_derivation_path() {

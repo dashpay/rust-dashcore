@@ -196,7 +196,6 @@ impl ChainHash {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::blockdata::locktime::absolute;
     use crate::consensus::encode::serialize;
     use crate::internal_macros::hex;
     use crate::network::constants::Network;
@@ -212,12 +211,12 @@ mod test {
         assert_eq!(serialize(&gen.input[0].script_sig),
                    hex!("4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73"));
 
-        assert_eq!(gen.input[0].sequence, Sequence::MAX);
+        assert_eq!(gen.input[0].sequence, u32::MAX);
         assert_eq!(gen.output.len(), 1);
         assert_eq!(serialize(&gen.output[0].script_pubkey),
                    hex!("434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac"));
         assert_eq!(gen.output[0].value, 50 * COIN_VALUE);
-        assert_eq!(gen.lock_time, absolute::LockTime::ZERO);
+        assert_eq!(gen.lock_time, 0);
 
         assert_eq!(
             gen.wtxid().to_string(),
@@ -227,7 +226,7 @@ mod test {
 
     #[test]
     fn bitcoin_genesis_full_block() {
-        let gen = genesis_block(Network::Bitcoin);
+        let gen = genesis_block(Network::Dash);
 
         assert_eq!(gen.header.version, block::Version::ONE);
         assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
@@ -329,7 +328,7 @@ mod test {
     // Test vector taken from: https://github.com/lightning/bolts/blob/master/00-introduction.md
     #[test]
     fn mainnet_chain_hash_test_vector() {
-        let got = ChainHash::using_genesis_block(Network::Bitcoin).to_string();
+        let got = ChainHash::using_genesis_block(Network::Dash).to_string();
         let want = "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000";
         assert_eq!(got, want);
     }

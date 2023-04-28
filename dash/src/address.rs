@@ -1270,11 +1270,10 @@ mod tests {
 
     use hex_lit::hex;
     use secp256k1::XOnlyPublicKey;
-    use Network::Dash;
 
     use super::*;
     use crate::crypto::key::PublicKey;
-    use crate::network::constants::Network::{Bitcoin, Testnet};
+    use crate::network::constants::Network::{Dash, Testnet};
 
     fn roundtrips(addr: &Address) {
         assert_eq!(
@@ -1474,7 +1473,7 @@ mod tests {
         for (address, expected_type) in &addresses {
             let addr = Address::from_str(address)
                 .unwrap()
-                .require_network(Network::Bitcoin)
+                .require_network(Network::Dash)
                 .expect("mainnet");
             assert_eq!(&addr.address_type(), expected_type);
         }
@@ -1645,7 +1644,7 @@ mod tests {
         ["132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM", "33iFwdLuRpW1uK1RTRqsoi8rR4NpDzk66k"].iter()
         {
             let addr =
-                Address::from_str(el).unwrap().require_network(Network::Bitcoin).expect("mainnet");
+                Address::from_str(el).unwrap().require_network(Network::Dash).expect("mainnet");
             assert_eq!(addr.to_qr_uri(), format!("bitcoin:{}", el));
         }
 
@@ -1719,7 +1718,7 @@ mod tests {
         )
             .unwrap();
         let secp = Secp256k1::verification_only();
-        let address = Address::p2tr(&secp, internal_key, None, Network::Bitcoin);
+        let address = Address::p2tr(&secp, internal_key, None, Network::Dash);
         assert_eq!(
             address.to_string(),
             "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr"
@@ -1733,7 +1732,7 @@ mod tests {
         let address_string = "bc1qhvd6suvqzjcu9pxjhrwhtrlj85ny3n2mqql5w4";
         let address = Address::from_str(address_string)
             .expect("address")
-            .require_network(Network::Bitcoin)
+            .require_network(Network::Dash)
             .expect("mainnet");
 
         let pubkey_string = "0347ff3dacd07a1f43805ec6808e801505a6e18245178609972a68afbc2777ff2b";
@@ -1754,7 +1753,7 @@ mod tests {
         let address_string = "3EZQk4F8GURH5sqVMLTFisD17yNeKa7Dfs";
         let address = Address::from_str(address_string)
             .expect("address")
-            .require_network(Network::Bitcoin)
+            .require_network(Network::Dash)
             .expect("mainnet");
 
         let pubkey_string = "0347ff3dacd07a1f43805ec6808e801505a6e18245178609972a68afbc2777ff2b";
@@ -1775,7 +1774,7 @@ mod tests {
         let address_string = "1J4LVanjHMu3JkXbVrahNuQCTGCRRgfWWx";
         let address = Address::from_str(address_string)
             .expect("address")
-            .require_network(Network::Bitcoin)
+            .require_network(Network::Dash)
             .expect("mainnet");
 
         let pubkey_string = "0347ff3dacd07a1f43805ec6808e801505a6e18245178609972a68afbc2777ff2b";
@@ -1818,13 +1817,13 @@ mod tests {
         let pubkey = PublicKey::from_str(pubkey_string).expect("pubkey");
         let xonly_pubkey = XOnlyPublicKey::from(pubkey.inner);
         let tweaked_pubkey = TweakedPublicKey::dangerous_assume_tweaked(xonly_pubkey);
-        let address = Address::p2tr_tweaked(tweaked_pubkey, Network::Bitcoin);
+        let address = Address::p2tr_tweaked(tweaked_pubkey, Network::Dash);
 
         assert_eq!(
             address,
             Address::from_str("bc1pgllnmtxs0g058qz7c6qgaqq4qknwrqj9z7rqn9e2dzhmcfmhlu4sfadf5e")
                 .expect("address")
-                .require_network(Network::Bitcoin)
+                .require_network(Network::Dash)
                 .expect("mainnet")
         );
 
@@ -1844,13 +1843,13 @@ mod tests {
         let pubkey = PublicKey::from_str(pubkey_string).expect("pubkey");
         let xonly_pubkey = XOnlyPublicKey::from(pubkey.inner);
         let tweaked_pubkey = TweakedPublicKey::dangerous_assume_tweaked(xonly_pubkey);
-        let address = Address::p2tr_tweaked(tweaked_pubkey, Network::Bitcoin);
+        let address = Address::p2tr_tweaked(tweaked_pubkey, Network::Dash);
 
         assert_eq!(
             address,
             Address::from_str("bc1pgllnmtxs0g058qz7c6qgaqq4qknwrqj9z7rqn9e2dzhmcfmhlu4sfadf5e")
                 .expect("address")
-                .require_network(Network::Bitcoin)
+                .require_network(Network::Dash)
                 .expect("mainnet")
         );
 
@@ -1869,10 +1868,10 @@ mod tests {
             ScriptBuf::from_hex("001161458e330389cd0437ee9fe3641d70cc18").unwrap();
         let expected = Err(Error::UnrecognizedScript);
 
-        assert_eq!(Address::from_script(&bad_p2wpkh, Network::Bitcoin), expected);
-        assert_eq!(Address::from_script(&bad_p2wsh, Network::Bitcoin), expected);
+        assert_eq!(Address::from_script(&bad_p2wpkh, Network::Dash), expected);
+        assert_eq!(Address::from_script(&bad_p2wsh, Network::Dash), expected);
         assert_eq!(
-            Address::from_script(&invalid_segwitv0_script, Network::Bitcoin),
+            Address::from_script(&invalid_segwitv0_script, Network::Dash),
             Err(Error::InvalidSegwitV0ProgramLength(17))
         );
     }
@@ -1903,10 +1902,10 @@ mod tests {
             "bc1pgllnmtxs0g058qz7c6qgaqq4qknwrqj9z7rqn9e2dzhmcfmhlu4sfadf5e",
         ];
         for addr in &addresses {
-            let addr = Address::from_str(addr).unwrap().require_network(Network::Bitcoin).unwrap();
+            let addr = Address::from_str(addr).unwrap().require_network(Network::Dash).unwrap();
             for another in &addresses {
                 let another =
-                    Address::from_str(another).unwrap().require_network(Network::Bitcoin).unwrap();
+                    Address::from_str(another).unwrap().require_network(Network::Dash).unwrap();
                 assert_eq!(addr.matches_script_pubkey(&another.script_pubkey()), addr == another);
             }
         }

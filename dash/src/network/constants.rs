@@ -370,8 +370,7 @@ impl Decodable for ServiceFlags {
 #[cfg(test)]
 mod tests {
     use super::{Network, ServiceFlags};
-    use consensus::encode::{deserialize, serialize};
-    use crate::consensus::{deserialize, serialize};
+    use crate::consensus::encode::{deserialize, serialize};
 
     #[test]
     fn serialize_test() {

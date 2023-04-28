@@ -10,6 +10,7 @@ use crate::io::{self, Cursor, Read};
 use crate::prelude::*;
 use crate::psbt::map::Map;
 use crate::psbt::{raw, Error, PartiallySignedTransaction};
+use crate::transaction::special_transaction::TransactionType;
 
 /// Type: Unsigned Transaction PSBT_GLOBAL_UNSIGNED_TX = 0x00
 const PSBT_GLOBAL_UNSIGNED_TX: u8 = 0x00;
@@ -91,6 +92,7 @@ impl PartiallySignedTransaction {
                                 if tx.is_none() {
                                     let vlen: usize = pair.value.len();
                                     let mut decoder = Cursor::new(pair.value);
+                                    let transaction_type: TransactionType = Decodable::consensus_decode(&mut decoder)?;
 
                                     // Manually deserialized to ensure 0-input
                                     // txs without witnesses are deserialized
@@ -100,7 +102,7 @@ impl PartiallySignedTransaction {
                                         input: Decodable::consensus_decode(&mut decoder)?,
                                         output: Decodable::consensus_decode(&mut decoder)?,
                                         lock_time: Decodable::consensus_decode(&mut decoder)?,
-                                        special_transaction_payload: Decodable::consensus_decode(&mut decoder)?,
+                                        special_transaction_payload: transaction_type.consensus_decode(&mut decoder)?,
                                     });
 
                                     if decoder.position() != vlen as u64 {

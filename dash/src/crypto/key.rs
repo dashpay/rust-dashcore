@@ -731,7 +731,7 @@ mod tests {
     use super::*;
     use crate::address::Address;
     use crate::io;
-    use crate::network::constants::Network::{Bitcoin, Testnet};
+    use crate::network::constants::Network::{Dash, Testnet};
 
     #[test]
     fn test_key_derivation() {

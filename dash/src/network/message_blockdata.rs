@@ -56,7 +56,7 @@ pub enum Inventory {
         inv_type: u32,
         /// The hash of the inventory item
         hash: [u8; 32],
-    }
+    },
 }
 
 impl Encodable for Inventory {
@@ -122,7 +122,7 @@ pub struct GetHeadersMessage {
     /// if possible and block 1 otherwise.
     pub locator_hashes: Vec<BlockHash>,
     /// References the header to stop at, or zero to just fetch the maximum 2000 headers
-    pub stop_hash: BlockHash
+    pub stop_hash: BlockHash,
 }
 
 impl GetBlocksMessage {
@@ -155,14 +155,15 @@ impl_consensus_encoding!(GetHeadersMessage, version, locator_hashes, stop_hash);
 mod tests {
     use super::{Vec, GetHeadersMessage, GetBlocksMessage};
 
-    use consensus::encode::{deserialize, serialize};
+    use hashes::Hash;
+    use crate::consensus::encode::{deserialize, serialize};
     use core::default::Default;
-    use crate::consensus::{deserialize, serialize};
+    use crate::internal_macros::hex;
 
     #[test]
     fn getblocks_message_test() {
-        let from_sat = Vec::from_hex("72110100014a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b0000000000000000000000000000000000000000000000000000000000000000").unwrap();
-        let genhash = Vec::from_hex("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b").unwrap();
+        let from_sat: Vec<u8> = hex!("72110100014a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b0000000000000000000000000000000000000000000000000000000000000000");
+        let genhash: Vec<u8> = hex!("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b");
 
         let decode: Result<GetBlocksMessage, _> = deserialize(&from_sat);
         assert!(decode.is_ok());
@@ -170,15 +171,15 @@ mod tests {
         assert_eq!(real_decode.version, 70002);
         assert_eq!(real_decode.locator_hashes.len(), 1);
         assert_eq!(serialize(&real_decode.locator_hashes[0]), genhash);
-        assert_eq!(real_decode.stop_hash, Default::default());
+        assert_eq!(real_decode.stop_hash, Hash::all_zeros());
 
         assert_eq!(serialize(&real_decode), from_sat);
     }
 
     #[test]
     fn getheaders_message_test() {
-        let from_sat = Vec::from_hex("72110100014a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b0000000000000000000000000000000000000000000000000000000000000000").unwrap();
-        let genhash = Vec::from_hex("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b").unwrap();
+        let from_sat = hex!("72110100014a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b0000000000000000000000000000000000000000000000000000000000000000");
+        let genhash = hex!("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b");
 
         let decode: Result<GetHeadersMessage, _> = deserialize(&from_sat);
         assert!(decode.is_ok());
@@ -186,7 +187,7 @@ mod tests {
         assert_eq!(real_decode.version, 70002);
         assert_eq!(real_decode.locator_hashes.len(), 1);
         assert_eq!(serialize(&real_decode.locator_hashes[0]), genhash);
-        assert_eq!(real_decode.stop_hash, Default::default());
+        assert_eq!(real_decode.stop_hash, Hash::all_zeros());
 
         assert_eq!(serialize(&real_decode), from_sat);
     }

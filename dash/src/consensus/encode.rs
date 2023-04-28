@@ -883,7 +883,7 @@ impl Decodable for TapLeafHash {
 mod tests {
     use core::fmt;
     use core::mem::{self, discriminant};
-    use ::{TxIn, TxOut};
+    use crate::{TxIn, TxOut};
 
     use super::*;
     use crate::consensus::{deserialize_partial, Decodable, Encodable};

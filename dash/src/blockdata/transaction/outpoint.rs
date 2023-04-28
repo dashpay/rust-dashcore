@@ -106,11 +106,12 @@ impl Decodable for OutPoint {
 
 /// An error in parsing an OutPoint.
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[non_exhaustive]
 pub enum ParseOutPointError {
     /// Error in TXID part.
     Txid(hashes::hex::Error),
     /// Error in vout part.
-    Vout(::core::num::ParseIntError),
+    Vout(crate::error::ParseIntError),
     /// Error in general format.
     Format,
     /// Size exceeds max.
@@ -118,7 +119,6 @@ pub enum ParseOutPointError {
     /// Vout part is not strictly numeric without leading zeroes.
     VoutNotCanonical,
 }
-
 
 impl core::str::FromStr for OutPoint {
     type Err = ParseOutPointError;
@@ -176,48 +176,91 @@ fn parse_vout(s: &str) -> Result<u32, ParseOutPointError> {
             return Err(ParseOutPointError::VoutNotCanonical);
         }
     }
-    s.parse().map_err(ParseOutPointError::Vout)
+    crate::parse::int(s).map_err(ParseOutPointError::Vout)
 }
 
 #[cfg(test)]
 mod tests {
     use core::str::FromStr;
-    use Transaction;
+    use crate::internal_macros::hex;
+    use crate::Transaction;
     use super::*;
 
     #[test]
     fn test_outpoint() {
-        assert_eq!(OutPoint::from_str("i don't care"),
-                   Err(ParseOutPointError::Format));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:1:1"),
-                   Err(ParseOutPointError::Format));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:"),
-                   Err(ParseOutPointError::Format));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:11111111111"),
-                   Err(ParseOutPointError::TooLong));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:01"),
-                   Err(ParseOutPointError::VoutNotCanonical));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:+42"),
-                   Err(ParseOutPointError::VoutNotCanonical));
-        assert_eq!(OutPoint::from_str("i don't care:1"),
-                   Err(ParseOutPointError::Txid(Txid::from_hex("i don't care").unwrap_err())));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c945X:1"),
-                   Err(ParseOutPointError::Txid(Txid::from_hex("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c945X").unwrap_err())));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:lol"),
-                   Err(ParseOutPointError::Vout(u32::from_str("lol").unwrap_err())));
+        assert_eq!(OutPoint::from_str("i don't care"), Err(ParseOutPointError::Format));
+        assert_eq!(
+            OutPoint::from_str(
+                "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:1:1"
+            ),
+            Err(ParseOutPointError::Format)
+        );
+        assert_eq!(
+            OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:"),
+            Err(ParseOutPointError::Format)
+        );
+        assert_eq!(
+            OutPoint::from_str(
+                "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:11111111111"
+            ),
+            Err(ParseOutPointError::TooLong)
+        );
+        assert_eq!(
+            OutPoint::from_str(
+                "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:01"
+            ),
+            Err(ParseOutPointError::VoutNotCanonical)
+        );
+        assert_eq!(
+            OutPoint::from_str(
+                "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:+42"
+            ),
+            Err(ParseOutPointError::VoutNotCanonical)
+        );
+        assert_eq!(
+            OutPoint::from_str("i don't care:1"),
+            Err(ParseOutPointError::Txid("i don't care".parse::<Txid>().unwrap_err()))
+        );
+        assert_eq!(
+            OutPoint::from_str(
+                "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c945X:1"
+            ),
+            Err(ParseOutPointError::Txid(
+                "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c945X"
+                    .parse::<Txid>()
+                    .unwrap_err()
+            ))
+        );
+        assert_eq!(
+            OutPoint::from_str(
+                "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:lol"
+            ),
+            Err(ParseOutPointError::Vout(crate::parse::int::<u32, _>("lol").unwrap_err()))
+        );
 
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:42"),
-                   Ok(OutPoint {
-                       txid: Txid::from_hex("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456").unwrap(),
-                       vout: 42,
-                   }));
-        assert_eq!(OutPoint::from_str("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:0"),
-                   Ok(OutPoint {
-                       txid: Txid::from_hex("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456").unwrap(),
-                       vout: 0,
-                   }));
+        assert_eq!(
+            OutPoint::from_str(
+                "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:42"
+            ),
+            Ok(OutPoint {
+                txid: "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
+                    .parse()
+                    .unwrap(),
+                vout: 42,
+            })
+        );
+        assert_eq!(
+            OutPoint::from_str(
+                "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:0"
+            ),
+            Ok(OutPoint {
+                txid: "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
+                    .parse()
+                    .unwrap(),
+                vout: 0,
+            })
+        );
     }
-
 
     #[test]
     fn out_point_buffer() {
@@ -229,7 +272,7 @@ mod tests {
             special_transaction_payload: None
         };
 
-        let pk_data = Vec::from_hex("b8e2d839dd21088b78bebfea3e3e632181197982").unwrap();
+        let pk_data = hex!("b8e2d839dd21088b78bebfea3e3e632181197982");
 
         let mut pk_array: [u8; 20] = [0; 20];
         for (index, kek) in pk_array.iter_mut().enumerate() {
@@ -238,7 +281,7 @@ mod tests {
 
         tx.add_burn_output(10000, &pk_array);
 
-        let mut expected_buf = tx.txid().as_inner().to_vec();
+        let mut expected_buf = tx.txid().as_byte_array().to_vec();
         let mut expected_index = vec![0,0,0,0];
         // 0 serialized as 32 bits
         expected_buf.append(&mut expected_index);
@@ -260,7 +303,7 @@ mod tests {
             special_transaction_payload: None
         };
 
-        let pk_data = Vec::from_hex("b8e2d839dd21088b78bebfea3e3e632181197982").unwrap();
+        let pk_data = hex!("b8e2d839dd21088b78bebfea3e3e632181197982");
 
         let mut pk_array: [u8; 20] = [0; 20];
         for (index, kek) in pk_array.iter_mut().enumerate() {
@@ -269,7 +312,7 @@ mod tests {
 
         tx.add_burn_output(10000, &pk_array);
 
-        let mut expected_buf = tx.txid().as_inner().to_vec();
+        let mut expected_buf = tx.txid().as_byte_array().to_vec();
         let mut expected_index = vec![0,0,0,0];
         // 0 serialized as 32 bits
         expected_buf.append(&mut expected_index);

@@ -820,12 +820,11 @@ mod tests {
 
     use super::*;
     use crate::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
-    use crate::blockdata::locktime::absolute;
     use crate::blockdata::script::ScriptBuf;
     use crate::blockdata::transaction::{outpoint::OutPoint, Transaction, txin::TxIn, txout::TxOut};
     use crate::blockdata::witness::Witness;
     use crate::internal_macros::hex;
-    use crate::network::constants::Network::Dash;
+    use crate::Network::Dash;
     use crate::psbt::map::{Input, Output};
     use crate::psbt::raw;
     use crate::psbt::serialize::{Deserialize, Serialize};
@@ -835,7 +834,7 @@ mod tests {
         let psbt = PartiallySignedTransaction {
             unsigned_tx: Transaction {
                 version: 2,
-                lock_time: absolute::LockTime::ZERO,
+                lock_time: 0,
                 input: vec![],
                 output: vec![],
                 special_transaction_payload: None,
@@ -867,7 +866,7 @@ mod tests {
 
         let mut hd_keypaths: BTreeMap<secp256k1::PublicKey, KeySource> = Default::default();
 
-        let mut sk: ExtendedPrivKey = ExtendedPrivKey::new_master(Bitcoin, &seed).unwrap();
+        let mut sk: ExtendedPrivKey = ExtendedPrivKey::new_master(Dash, &seed).unwrap();
 
         let fprint = sk.fingerprint(secp);
 
@@ -909,7 +908,7 @@ mod tests {
         let expected = PartiallySignedTransaction {
             unsigned_tx: Transaction {
                 version: 2,
-                lock_time: absolute::LockTime::from_consensus(1257139),
+                lock_time: 1257139,
                 input: vec![TxIn {
                     previous_output: OutPoint {
                         txid: "f61b1742ca13176464adb3cb66050c00787bb3a4eead37e985f2df1e37718126"
@@ -918,7 +917,7 @@ mod tests {
                         vout: 0,
                     },
                     script_sig: ScriptBuf::new(),
-                    sequence: Sequence::ENABLE_LOCKTIME_NO_RBF,
+                    sequence: u32::MAX,
                     witness: Witness::default(),
                 }],
                 output: vec![
@@ -937,6 +936,7 @@ mod tests {
                         .unwrap(),
                     },
                 ],
+                special_transaction_payload: None,
             },
             xpub: Default::default(),
             version: 0,
@@ -1088,7 +1088,6 @@ mod tests {
         use std::str::FromStr;
 
         use super::*;
-        use crate::blockdata::locktime::absolute;
         use crate::blockdata::script::ScriptBuf;
         use crate::blockdata::transaction::{outpoint::OutPoint, Transaction, txin::TxIn, txout::TxOut};
         use crate::blockdata::witness::Witness;
@@ -1177,7 +1176,7 @@ mod tests {
             let unserialized = PartiallySignedTransaction {
                 unsigned_tx: Transaction {
                     version: 2,
-                    lock_time: absolute::LockTime::from_consensus(1257139),
+                    lock_time: 1257139,
                     input: vec![
                         TxIn {
                             previous_output: OutPoint {
@@ -1185,7 +1184,7 @@ mod tests {
                                 vout: 0,
                             },
                             script_sig: ScriptBuf::new(),
-                            sequence: Sequence::ENABLE_LOCKTIME_NO_RBF,
+                            sequence: u32::MAX,
                             witness: Witness::default(),
                         }
                     ],
@@ -1199,6 +1198,7 @@ mod tests {
                             script_pubkey: ScriptBuf::from_hex("a9143545e6e33b832c47050f24d3eeb93c9c03948bc787").unwrap(),
                         },
                     ],
+                    special_transaction_payload: None,
                 },
                 xpub: Default::default(),
                 version: 0,
@@ -1209,7 +1209,7 @@ mod tests {
                     Input {
                         non_witness_utxo: Some(Transaction {
                             version: 1,
-                            lock_time: absolute::LockTime::ZERO,
+                            lock_time: 0,
                             input: vec![
                                 TxIn {
                                     previous_output: OutPoint {
@@ -1217,7 +1217,7 @@ mod tests {
                                         vout: 1,
                                     },
                                     script_sig: ScriptBuf::from_hex("160014be18d152a9b012039daf3da7de4f53349eecb985").unwrap(),
-                                    sequence: Sequence::MAX,
+                                    sequence: u32::MAX,
                                     witness: Witness::from_slice(&[
                                         hex!("304402202712be22e0270f394f568311dc7ca9a68970b8025fdd3b240229f07f8a5f3a240220018b38d7dcd314e734c9276bd6fb40f673325bc4baa144c800d2f2f02db2765c01"),
                                         hex!("03d2e15674941bad4a996372cb87e1856d3652606d98562fe39c5e9e7e413f2105"),
@@ -1229,7 +1229,7 @@ mod tests {
                                         vout: 1,
                                     },
                                     script_sig: ScriptBuf::from_hex("160014fe3e9ef1a745e974d902c4355943abcb34bd5353").unwrap(),
-                                    sequence: Sequence::MAX,
+                                    sequence: u32::MAX,
                                     witness: Witness::from_slice(&[
                                         hex!("3045022100d12b852d85dcd961d2f5f4ab660654df6eedcc794c0c33ce5cc309ffb5fce58d022067338a8e0e1725c197fb1a88af59f51e44e4255b20167c8684031c05d1f2592a01"),
                                         hex!("0223b72beef0965d10be0778efecd61fcac6f79a4ea169393380734464f84f2ab3"),
@@ -1246,6 +1246,7 @@ mod tests {
                                     script_pubkey: ScriptBuf::from_hex("a914339725ba21efd62ac753a9bcd067d6c7a6a39d0587").unwrap(),
                                 },
                             ],
+                            special_transaction_payload: None,
                         }),
                         ..Default::default()
                     },
@@ -1509,7 +1510,7 @@ mod tests {
         let mut unserialized = PartiallySignedTransaction {
             unsigned_tx: Transaction {
                 version: 2,
-                lock_time: absolute::LockTime::from_consensus(1257139),
+                lock_time: 1257139,
                 input: vec![
                     TxIn {
                         previous_output: OutPoint {
@@ -1517,7 +1518,7 @@ mod tests {
                             vout: 0,
                         },
                         script_sig: ScriptBuf::new(),
-                        sequence: Sequence::ENABLE_LOCKTIME_NO_RBF,
+                        sequence: 0,
                         witness: Witness::default(),
                     }
                 ],
@@ -1531,6 +1532,7 @@ mod tests {
                         script_pubkey: ScriptBuf::from_hex("a9143545e6e33b832c47050f24d3eeb93c9c03948bc787").unwrap(),
                     },
                 ],
+                special_transaction_payload: None,
             },
             version: 0,
             xpub: Default::default(),
@@ -1541,7 +1543,7 @@ mod tests {
                 Input {
                     non_witness_utxo: Some(Transaction {
                         version: 1,
-                        lock_time: absolute::LockTime::ZERO,
+                        lock_time: 0,
                         input: vec![
                             TxIn {
                                 previous_output: OutPoint {
@@ -1549,7 +1551,7 @@ mod tests {
                                     vout: 1,
                                 },
                                 script_sig: ScriptBuf::from_hex("160014be18d152a9b012039daf3da7de4f53349eecb985").unwrap(),
-                                sequence: Sequence::MAX,
+                                sequence: u32::MAX,
                                 witness: Witness::from_slice(&[
                                     hex!("304402202712be22e0270f394f568311dc7ca9a68970b8025fdd3b240229f07f8a5f3a240220018b38d7dcd314e734c9276bd6fb40f673325bc4baa144c800d2f2f02db2765c01"),
                                     hex!("03d2e15674941bad4a996372cb87e1856d3652606d98562fe39c5e9e7e413f2105"),
@@ -1561,7 +1563,7 @@ mod tests {
                                     vout: 1,
                                 },
                                 script_sig: ScriptBuf::from_hex("160014fe3e9ef1a745e974d902c4355943abcb34bd5353").unwrap(),
-                                sequence: Sequence::MAX,
+                                sequence: u32::MAX,
                                 witness: Witness::from_slice(&[
                                     hex!("3045022100d12b852d85dcd961d2f5f4ab660654df6eedcc794c0c33ce5cc309ffb5fce58d022067338a8e0e1725c197fb1a88af59f51e44e4255b20167c8684031c05d1f2592a01"),
                                     hex!("0223b72beef0965d10be0778efecd61fcac6f79a4ea169393380734464f84f2ab3"),
@@ -1578,6 +1580,7 @@ mod tests {
                                 script_pubkey: ScriptBuf::from_hex("a914339725ba21efd62ac753a9bcd067d6c7a6a39d0587").unwrap(),
                             },
                         ],
+                        special_transaction_payload: None,
                     }),
                     ..Default::default()
                 },
@@ -1678,14 +1681,14 @@ mod tests {
         let mut t = PartiallySignedTransaction {
             unsigned_tx: Transaction {
                 version: 2,
-                lock_time: absolute::LockTime::from_consensus(1257139),
+                lock_time: 1257139,
                 input: vec![
                     TxIn {
                         previous_output: OutPoint {
                             txid: "f61b1742ca13176464adb3cb66050c00787bb3a4eead37e985f2df1e37718126".parse().unwrap(),
                             vout: 0,
                         },
-                        sequence: Sequence::ENABLE_LOCKTIME_NO_RBF,
+                        sequence: 0,
                         ..Default::default()
                     }
                 ],
@@ -1699,6 +1702,7 @@ mod tests {
                         ..Default::default()
                     },
                 ],
+                special_transaction_payload: None,
             },
             xpub: Default::default(),
             version: 0,
@@ -1709,14 +1713,14 @@ mod tests {
                 Input {
                     non_witness_utxo: Some(Transaction {
                         version: 1,
-                        lock_time: absolute::LockTime::ZERO,
+                        lock_time: 0,
                         input: vec![
                             TxIn {
                                 previous_output: OutPoint {
                                     txid: "e567952fb6cc33857f392efa3a46c995a28f69cca4bb1b37e0204dab1ec7a389".parse().unwrap(),
                                     vout: 1,
                                 },
-                                sequence: Sequence::MAX,
+                                sequence: u32::MAX,
                                 ..Default::default()
                             },
                             TxIn {
@@ -1724,7 +1728,7 @@ mod tests {
                                     txid: "b490486aec3ae671012dddb2bb08466bef37720a533a894814ff1da743aaf886".parse().unwrap(),
                                     vout: 1,
                                 },
-                                sequence: Sequence::MAX,
+                                sequence: u32::MAX,
                                 ..Default::default()
                             }
                         ],
@@ -1738,6 +1742,7 @@ mod tests {
                                 ..Default::default()
                             },
                         ],
+                        special_transaction_payload: None,
                     }),
                     ..Default::default()
                 },
