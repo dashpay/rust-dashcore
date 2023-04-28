@@ -66,7 +66,8 @@ hash_newtype!(MerkleRootQuorums, sha256d::Hash, 32, doc="The merkle root of the 
 hash_newtype!(SpecialTransactionPayloadHash, sha256d::Hash, 32, doc="A special transaction payload hash");
 hash_newtype!(InputsHash, sha256d::Hash, 32, doc="A hash of all transaction inputs");
 
-hash_newtype!(QuorumHash, sha256d::Hash, 32, doc="A hash used to identify a quorum");
+// TODO: last argument 'false' is just a workaround, see comment on "ProTxHash" below for more details
+hash_newtype!(QuorumHash, sha256d::Hash, 32, doc="A hash used to identify a quorum", false);
 hash_newtype!(QuorumVVecHash, sha256d::Hash, 32, doc="A hash of a quorum verification vector");
 
 // TODO: this is a workaround for dashcore_rpc, which reverses bytes.
