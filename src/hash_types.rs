@@ -69,7 +69,15 @@ hash_newtype!(InputsHash, sha256d::Hash, 32, doc="A hash of all transaction inpu
 hash_newtype!(QuorumHash, sha256d::Hash, 32, doc="A hash used to identify a quorum");
 hash_newtype!(QuorumVVecHash, sha256d::Hash, 32, doc="A hash of a quorum verification vector");
 
-pub type ProTxHash = Txid;
+// TODO: this is a workaround for dashcore_rpc, which reverses bytes.
+// Originally, we had: `pub type ProTxHash = Txid;`, but it
+// looks like fmt() is used in serialization somewhere. As by default
+// DISPLAY_BACKWARD is true for sha256d::Hash, this causes ProTxHashes (and other Txid's)
+// to be reversed, and breaks compatibility with other client lib implementations.
+// 
+// Note: this can also affect other types, like Txid
+hash_newtype!(ProTxHash, sha256d::Hash, 32, doc="ProTxHash transaction ID.", false);
+impl_hashencode!(ProTxHash);
 
 impl_hashencode!(Txid);
 impl_hashencode!(Wtxid);
