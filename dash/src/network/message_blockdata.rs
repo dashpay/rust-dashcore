@@ -157,7 +157,6 @@ mod tests {
 
     use hashes::Hash;
     use crate::consensus::encode::{deserialize, serialize};
-    use core::default::Default;
     use crate::internal_macros::hex;
 
     #[test]

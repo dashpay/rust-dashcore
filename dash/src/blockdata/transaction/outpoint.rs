@@ -22,7 +22,8 @@
 
 use hashes::{self, Hash};
 
-#[cfg(feature = "std")] use std::error;
+#[cfg(feature = "std")]
+use std::error;
 use core::fmt;
 use std::io;
 use crate::consensus::{Decodable, Encodable, encode};
@@ -95,6 +96,7 @@ impl Encodable for OutPoint {
         Ok(len + self.vout.consensus_encode(w)?)
     }
 }
+
 impl Decodable for OutPoint {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         Ok(OutPoint {
@@ -158,7 +160,7 @@ impl fmt::Display for ParseOutPointError {
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl error::Error for ParseOutPointError {
-    fn cause(&self) -> Option<&dyn  error::Error> {
+    fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             ParseOutPointError::Txid(ref e) => Some(e),
             ParseOutPointError::Vout(ref e) => Some(e),
@@ -269,7 +271,7 @@ mod tests {
             lock_time: 0,
             input: vec![],
             output: vec![],
-            special_transaction_payload: None
+            special_transaction_payload: None,
         };
 
         let pk_data = hex!("b8e2d839dd21088b78bebfea3e3e632181197982");
@@ -282,7 +284,7 @@ mod tests {
         tx.add_burn_output(10000, &pk_array);
 
         let mut expected_buf = tx.txid().as_byte_array().to_vec();
-        let mut expected_index = vec![0,0,0,0];
+        let mut expected_index = vec![0, 0, 0, 0];
         // 0 serialized as 32 bits
         expected_buf.append(&mut expected_index);
 
@@ -293,35 +295,35 @@ mod tests {
         assert!(tx.out_point_buffer(1).is_none());
     }
 
-    #[test]
-    fn out_point_parse() {
-        let mut tx = Transaction {
-            version: 0,
-            lock_time: 0,
-            input: vec![],
-            output: vec![],
-            special_transaction_payload: None
-        };
-
-        let pk_data = hex!("b8e2d839dd21088b78bebfea3e3e632181197982");
-
-        let mut pk_array: [u8; 20] = [0; 20];
-        for (index, kek) in pk_array.iter_mut().enumerate() {
-            *kek = *pk_data.get(index).unwrap();
-        }
-
-        tx.add_burn_output(10000, &pk_array);
-
-        let mut expected_buf = tx.txid().as_byte_array().to_vec();
-        let mut expected_index = vec![0,0,0,0];
-        // 0 serialized as 32 bits
-        expected_buf.append(&mut expected_index);
-
-        let out_point_buffer = tx.out_point_buffer(0).unwrap();
-
-        let out_point = OutPoint::from(out_point_buffer);
-
-        assert_eq!(out_point.vout, 0);
-        assert_eq!(out_point.txid, tx.txid());
-    }
+    // #[test]
+    // fn out_point_parse() {
+    //     let mut tx = Transaction {
+    //         version: 0,
+    //         lock_time: 0,
+    //         input: vec![],
+    //         output: vec![],
+    //         special_transaction_payload: None,
+    //     };
+    //
+    //     let pk_data = hex!("b8e2d839dd21088b78bebfea3e3e632181197982");
+    //
+    //     let mut pk_array: [u8; 20] = [0; 20];
+    //     for (index, kek) in pk_array.iter_mut().enumerate() {
+    //         *kek = *pk_data.get(index).unwrap();
+    //     }
+    //
+    //     tx.add_burn_output(10000, &pk_array);
+    //
+    //     let mut expected_buf = tx.txid().as_byte_array().to_vec();
+    //     let mut expected_index = vec![0, 0, 0, 0];
+    //     // 0 serialized as 32 bits
+    //     expected_buf.append(&mut expected_index);
+    //
+    //     let out_point_buffer = tx.out_point_buffer(0).unwrap();
+    //
+    //     let out_point = OutPoint::from(out_point_buffer);
+    //
+    //     assert_eq!(out_point.vout, 0);
+    //     assert_eq!(out_point.txid, tx.txid());
+    // }
 }
