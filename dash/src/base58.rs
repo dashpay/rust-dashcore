@@ -290,7 +290,8 @@ impl From<key::Error> for Error {
             key::Error::Secp256k1(e) => Error::Secp256k1(e),
             key::Error::Base58(e) => e,
             key::Error::InvalidKeyPrefix(_) => Error::Secp256k1(secp256k1::Error::InvalidPublicKey),
-            key::Error::Hex(e) => Error::Hex(e)
+            key::Error::Hex(e) => Error::Hex(e),
+            key::Error::InvalidHexLength(size) => Error::InvalidLength(size),
         }
     }
 }

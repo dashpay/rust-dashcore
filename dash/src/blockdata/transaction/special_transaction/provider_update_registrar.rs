@@ -77,10 +77,10 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRegistrarPayload {
 }
 
 impl Encodable for ProviderUpdateRegistrarPayload {
-    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, mut w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.base_payload_data_encode(w)?;
-        len += self.payload_sig.consensus_encode(w)?;
+        len += self.base_payload_data_encode(&mut w)?;
+        len += self.payload_sig.consensus_encode(&mut w)?;
         Ok(len)
     }
 }
@@ -112,7 +112,6 @@ impl Decodable for ProviderUpdateRegistrarPayload {
 #[cfg(test)]
 mod tests {
     use hashes::Hash;
-    use hashes::hex::FromHex;
     use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use crate::blockdata::transaction::special_transaction::TransactionPayload::{ProviderUpdateRegistrarPayloadType};
     use crate::blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;

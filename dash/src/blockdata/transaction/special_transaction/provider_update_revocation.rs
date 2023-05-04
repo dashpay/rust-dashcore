@@ -75,10 +75,10 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRevocationPayload 
 }
 
 impl Encodable for ProviderUpdateRevocationPayload {
-    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, mut w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.base_payload_data_encode(w)?;
-        len += self.payload_sig.consensus_encode(w)?;
+        len += self.base_payload_data_encode(&mut w)?;
+        len += self.payload_sig.consensus_encode(&mut w)?;
         Ok(len)
     }
 }

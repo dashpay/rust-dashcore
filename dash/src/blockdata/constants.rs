@@ -158,7 +158,7 @@ impl_bytes_newtype!(ChainHash, 32);
 impl ChainHash {
     // Mainnet value can be verified at https://github.com/lightning/bolts/blob/master/00-introduction.md
     /// `ChainHash` for mainnet bitcoin.
-    pub const Dash: Self = Self([
+    pub const DASH: Self = Self([
         111, 226, 140, 10, 182, 241, 179, 114, 193, 166, 162, 70, 174, 99, 247, 79, 147, 30, 131,
         101, 225, 90, 8, 156, 104, 214, 25, 0, 0, 0, 0, 0,
     ]);
@@ -168,7 +168,7 @@ impl ChainHash {
         32, 132, 233, 14, 173, 1, 234, 51, 9, 0, 0, 0, 0,
     ]);
     /// `ChainHash` for devnet dash.
-    pub const Devnet: Self = Self([
+    pub const DEVNET: Self = Self([
         246, 30, 238, 59, 99, 163, 128, 164, 119, 160, 99, 175, 50, 178, 187, 201, 124, 159, 249,
         240, 31, 44, 66, 37, 233, 115, 152, 129, 8, 0, 0, 0,
     ]);
@@ -183,7 +183,7 @@ impl ChainHash {
     /// See [BOLT 0](https://github.com/lightning/bolts/blob/ffeece3dab1c52efdb9b53ae476539320fa44938/00-introduction.md#chain_hash)
     /// for specification.
     pub const fn using_genesis_block(network: Network) -> Self {
-        let hashes = [Self::Dash, Self::TESTNET, Self::Devnet, Self::REGTEST];
+        let hashes = [Self::DASH, Self::TESTNET, Self::DEVNET, Self::REGTEST];
         hashes[network as usize]
     }
 

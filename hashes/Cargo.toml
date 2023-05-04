@@ -34,6 +34,7 @@ actual-schemars = { package = "schemars", version = "<=0.8.3", optional = true }
 # Do NOT enable this dependency, this is just to pin dyn-clone (transitive dep from schemars)
 # because 1.0.8 does not build with Rust 1.41.1 (because of useage of `Arc::as_ptr`).
 dyn-clone = { version = "<=1.0.7", default_features = false, optional = true }
+secp256k1 = { default-features = false, features = ["bitcoin_hashes"], version= "0.27.0" }
 
 [dev-dependencies]
 serde_test = "1.0"

@@ -19,14 +19,29 @@
 
 use crate::internal_macros::impl_bytes_newtype;
 use internals::{impl_array_newtype};
+use internals::hex::Case;
+use internals::hex::display::DisplayHex;
 
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core
 #[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct BLSPublicKey([u8;48]);
 
 impl_array_newtype!(BLSPublicKey, u8, 48);
-impl_bytes_newtype!(BLSPublicKey, 48);
+
+impl BLSPublicKey {
+    pub fn from_hex(s: &str) -> Result<BLSPublicKey, hashes::hex::Error> {
+        use hashes::hex::FromHex;
+        let v: Vec<u8> = Vec::from_hex(s)?;
+        let mut payload: [u8;48] = [0; 48];
+        payload.copy_from_slice(v.as_slice());
+        Ok(Self(payload))
+    }
+
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex_string(Case::Lower)
+    }
+}
 
 /// A BLS Signature is 96 bytes in the scheme used for Dash Core
 #[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]

@@ -5,17 +5,17 @@ use core::convert::TryFrom;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use bitcoin::bip32::{ExtendedPrivKey, ExtendedPubKey, Fingerprint, IntoDerivationPath, KeySource};
-use bitcoin::blockdata::opcodes::OP_0;
-use bitcoin::blockdata::script;
-use bitcoin::consensus::encode::{deserialize, serialize_hex};
-use bitcoin::hashes::hex::FromHex;
-use bitcoin::psbt::{Psbt, PsbtSighashType};
-use bitcoin::script::PushBytes;
-use bitcoin::secp256k1::{self, Secp256k1};
-use bitcoin::{
-    absolute, Amount, Denomination, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Witness,
+use dashcore::bip32::{ExtendedPrivKey, ExtendedPubKey, Fingerprint, IntoDerivationPath, KeySource};
+use dashcore::blockdata::opcodes::OP_0;
+use dashcore::blockdata::script;
+use dashcore::consensus::encode::{deserialize, serialize_hex};
+use dashcore::hashes::hex::FromHex;
+use dashcore::psbt::{Psbt, PsbtSighashType};
+use dashcore::script::PushBytes;
+use dashcore::secp256k1::{self, Secp256k1};
+use dashcore::{
+    Amount, Denomination, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Transaction, TxIn,
+    TxOut, Witness,
 };
 
 const NETWORK: Network = Network::Testnet;
@@ -164,7 +164,7 @@ fn create_transaction() -> Transaction {
 
     Transaction {
         version: 2,
-        lock_time: absolute::LockTime::ZERO,
+        lock_time: 0,
         input: vec![
             TxIn {
                 previous_output: OutPoint {
@@ -172,7 +172,7 @@ fn create_transaction() -> Transaction {
                     vout: input_0.index,
                 },
                 script_sig: ScriptBuf::new(),
-                sequence: Sequence::MAX, // Disable nSequence.
+                sequence: u32::MAX, // Disable nSequence.
                 witness: Witness::default(),
             },
             TxIn {
@@ -181,7 +181,7 @@ fn create_transaction() -> Transaction {
                     vout: input_1.index,
                 },
                 script_sig: ScriptBuf::new(),
-                sequence: Sequence::MAX,
+                sequence: u32::MAX,
                 witness: Witness::default(),
             },
         ],
@@ -201,6 +201,7 @@ fn create_transaction() -> Transaction {
                     .expect("failed to parse script"),
             },
         ],
+        special_transaction_payload: None,
     }
 }
 
@@ -333,7 +334,7 @@ fn parse_and_verify_keys(
 }
 
 /// Does the first signing according to the BIP, returns the signed PSBT. Verifies against BIP 174 test vector.
-fn signer_one_sign(psbt: Psbt, key_map: BTreeMap<bitcoin::PublicKey, PrivateKey>) -> Psbt {
+fn signer_one_sign(psbt: Psbt, key_map: BTreeMap<PublicKey, PrivateKey>) -> Psbt {
     let expected_psbt_hex = include_str!("data/sign_1_psbt_hex");
     let expected_psbt = hex_psbt!(expected_psbt_hex).unwrap();
 
@@ -344,7 +345,7 @@ fn signer_one_sign(psbt: Psbt, key_map: BTreeMap<bitcoin::PublicKey, PrivateKey>
 }
 
 /// Does the second signing according to the BIP, returns the signed PSBT. Verifies against BIP 174 test vector.
-fn signer_two_sign(psbt: Psbt, key_map: BTreeMap<bitcoin::PublicKey, PrivateKey>) -> Psbt {
+fn signer_two_sign(psbt: Psbt, key_map: BTreeMap<PublicKey, PrivateKey>) -> Psbt {
     let expected_psbt_hex = include_str!("data/sign_2_psbt_hex");
     let expected_psbt = hex_psbt!(expected_psbt_hex).unwrap();
 
@@ -410,7 +411,7 @@ fn combine_lexicographically() {
 }
 
 /// Signs `psbt` with `keys` if required.
-fn sign(mut psbt: Psbt, keys: BTreeMap<bitcoin::PublicKey, PrivateKey>) -> Psbt {
+fn sign(mut psbt: Psbt, keys: BTreeMap<PublicKey, PrivateKey>) -> Psbt {
     let secp = Secp256k1::new();
     psbt.sign(&keys, &secp).unwrap();
     psbt

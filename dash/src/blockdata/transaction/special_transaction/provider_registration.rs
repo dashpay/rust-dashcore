@@ -101,7 +101,7 @@ impl ProviderRegistrationPayload {
     /// a string of formatted values proving access to the 1000 Dash and therefore the ability
     /// to register the masternode.
     pub fn payload_collateral_string(&self, network: Network) -> Result<String, encode::Error> {
-        let mut base_payload_hash =self.base_payload_hash().as_raw_hash().serialize();
+        let mut base_payload_hash = self.base_payload_hash().as_raw_hash().serialize();
         base_payload_hash.reverse();
         let base_payload_hash = SpecialTransactionPayloadHash::from_slice(base_payload_hash.as_slice()).unwrap();
         Ok(format!("{}|{}|{}|{}|{}", self.payout_address(network)?, self.operator_reward, self.owner_address(network), self.voting_address(network), base_payload_hash.as_byte_array().to_hex_string(Lower)))
@@ -134,10 +134,10 @@ impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
 }
 
 impl Encodable for ProviderRegistrationPayload {
-    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, mut w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.base_payload_data_encode(w)?;
-        len += self.payload_sig.consensus_encode(w)?;
+        len += self.base_payload_data_encode(&mut w)?;
+        len += self.payload_sig.consensus_encode(&mut w)?;
         Ok(len)
     }
 }

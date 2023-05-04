@@ -67,7 +67,12 @@ pub use newtypes::*;
 
 #[rustfmt::skip]
 mod newtypes {
-    use hashes::{sha256, sha256d, hash160, hash_newtype};
+    use core::fmt::LowerHex;
+    use core::str::FromStr;
+    use hashes::{sha256, sha256d, hash160, hash_newtype, hex, Hash};
+    use hashes::hex::Error;
+    use internals::hex::Case;
+    use internals::hex::display::DisplayHex;
 
     hash_newtype! {
         /// A dash transaction hash/transaction ID.
@@ -139,6 +144,28 @@ mod newtypes {
     impl_hashencode!(PubkeyHash);
 
     impl_asref_push_bytes!(PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash);
+
+    impl InputsHash {
+        pub fn to_hex(&self) -> String {
+            self.0.as_byte_array().to_hex_string(Case::Lower)
+        }
+    }
+
+    impl SpecialTransactionPayloadHash {
+        pub fn to_hex(&self) -> String {
+            self.0.as_byte_array().to_hex_string(Case::Lower)
+        }
+    }
+
+    impl PubkeyHash {
+        pub fn from_hex(s: &str) -> Result<PubkeyHash, Error> {
+            Ok(Self(hash160::Hash::from_str(s)?))
+        }
+
+        pub fn to_hex(&self) -> String {
+            self.0.as_byte_array().to_hex_string(Case::Lower)
+        }
+    }
 
     pub type ProTxHash = Txid;
 }

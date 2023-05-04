@@ -80,10 +80,10 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateServicePayload {
 }
 
 impl Encodable for ProviderUpdateServicePayload {
-    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, mut w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.base_payload_data_encode(w)?;
-        len += self.payload_sig.consensus_encode(w)?;
+        len += self.base_payload_data_encode(&mut w)?;
+        len += self.payload_sig.consensus_encode(&mut w)?;
         Ok(len)
     }
 }
@@ -147,13 +147,13 @@ mod tests {
         let address = Ipv4Addr::from_str("52.36.64.148").expect("expected an ipv4 address");
         let [a, b, c, d] = address.octets();
         let ipv6_bytes: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
-        assert_eq!(expected_provider_update_service_payload.ip_address.to_le_bytes().as_hex(), ipv6_bytes.as_hex());
+        assert_eq!(expected_provider_update_service_payload.ip_address.to_le_bytes(), ipv6_bytes);
 
         let port = 19999;
         assert_eq!(expected_provider_update_service_payload.port, port);
 
         let inputs_hash_hex = "b198a9735b6e2ddf2a4c5e1584ab45487c7ee2eb05b16ff08004a29e795f72e6";
-        assert_eq!(expected_provider_update_service_payload.inputs_hash.to_hex(), inputs_hash_hex, "inputs hash calculation has issues");
+        assert_eq!(expected_provider_update_service_payload.inputs_hash.to_hex().as_str(), inputs_hash_hex, "inputs hash calculation has issues");
 
         assert_eq!(expected_provider_update_service_payload.base_payload_hash().to_hex(), "9784b3663039784858420677b00f0b3f34af8ff1f1788adfd0e681d345b776ba", "Payload hash calculation has issues");
 

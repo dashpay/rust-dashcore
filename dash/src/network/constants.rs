@@ -190,9 +190,9 @@ impl TryFrom<ChainHash> for Network {
     fn try_from(chain_hash: ChainHash) -> Result<Self, Self::Error> {
         match chain_hash {
             // Note: any new network entries must be matched against here.
-            ChainHash::Dash => Ok(Network::Dash),
+            ChainHash::DASH => Ok(Network::Dash),
             ChainHash::TESTNET => Ok(Network::Testnet),
-            ChainHash::Devnet => Ok(Network::Devnet),
+            ChainHash::DEVNET => Ok(Network::Devnet),
             ChainHash::REGTEST => Ok(Network::Regtest),
             _ => Err(UnknownChainHash(chain_hash)),
         }
