@@ -1721,7 +1721,7 @@ mod tests {
         let address = Address::p2tr(&secp, internal_key, None, Network::Dash);
         assert_eq!(
             address.to_string(),
-            "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr"
+            "ds1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqq9xzlq"
         );
         assert_eq!(address.address_type(), Some(AddressType::P2tr));
         roundtrips(&address);
