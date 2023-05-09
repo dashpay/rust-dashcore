@@ -551,7 +551,7 @@ impl From<base58::Error> for Error {
 impl ExtendedPrivKey {
     /// Construct a new master key from a seed value
     pub fn new_master(network: Network, seed: &[u8]) -> Result<ExtendedPrivKey, Error> {
-        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(b"Bitcoin seed");
+        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(b"Dash seed");
         hmac_engine.input(seed);
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
 
@@ -1063,8 +1063,8 @@ mod tests {
 
         // m/0h/1
         test_path(&secp, Dash, &seed, "m/0h/1".parse().unwrap(),
-                   "xprv9xc7kxoRsCeHwh7uK4gPumyqpdGcUVB5XjAKHTjPnrNLr6uMz6ZkpieuVDJykxumA5rWaHrCgRKsDEHnHnVhAHoYkwofb8aWF29xZAsRecq",
-                   "xpub6BbUAULKhaCbABCNR6DQGuvaNf76swtvtx5v5r91MBuKiuEWXdt1NWyPLWgDeT4yFBEyfL5r3y7CDAWmzzwa3EbdGEvJky6cMmTCRg5KPE7");
+                  "xprv9xc7kxoRsCeHwh7uK4gPumyqpdGcUVB5XjAKHTjPnrNLr6uMz6ZkpieuVDJykxumA5rWaHrCgRKsDEHnHnVhAHoYkwofb8aWF29xZAsRecq",
+                  "xpub6BbUAULKhaCbABCNR6DQGuvaNf76swtvtx5v5r91MBuKiuEWXdt1NWyPLWgDeT4yFBEyfL5r3y7CDAWmzzwa3EbdGEvJky6cMmTCRg5KPE7");
 
         // m/0h/1/2h
         test_path(&secp, Dash, &seed, "m/0h/1/2h".parse().unwrap(),

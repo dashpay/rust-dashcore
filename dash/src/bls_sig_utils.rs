@@ -19,7 +19,6 @@
 
 use crate::internal_macros::impl_bytes_newtype;
 use internals::{impl_array_newtype};
-use internals::hex::Case;
 use internals::hex::display::DisplayHex;
 
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core
@@ -39,7 +38,7 @@ impl BLSPublicKey {
     }
 
     pub fn to_hex(&self) -> String {
-        self.0.to_hex_string(Case::Lower)
+        self.0.to_lower_hex_string()
     }
 }
 
@@ -55,7 +54,7 @@ macro_rules! impl_elementencode {
     ($element:ident, $len:expr) => {
         impl $crate::consensus::Encodable for $element {
             fn consensus_encode<W: $crate::io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, $crate::io::Error> {
-                self.0.to_vec().consensus_encode(w)
+                self.0.consensus_encode(w)
             }
         }
 

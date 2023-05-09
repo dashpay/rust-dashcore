@@ -34,7 +34,7 @@ use std::io::Error;
 use std::io;
 use std::io::Write;
 use hashes::Hash;
-use crate::ScriptBuf;
+use crate::{ScriptBuf};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSPublicKey;
@@ -111,15 +111,16 @@ impl Decodable for ProviderUpdateRegistrarPayload {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
-    use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-    use crate::blockdata::transaction::special_transaction::TransactionPayload::{ProviderUpdateRegistrarPayloadType};
-    use crate::blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
+    use core::str::FromStr;
     use crate::consensus::deserialize;
-    use crate::{Network, PubkeyHash, ScriptBuf, Transaction, Txid};
+    use crate::{Network, ScriptBuf, Transaction, Txid};
+    use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use crate::bls_sig_utils::BLSPublicKey;
     use crate::hash_types::InputsHash;
     use crate::internal_macros::hex;
+    use crate::PubkeyHash;
+    use crate::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
+    use crate::transaction::special_transaction::TransactionPayload::ProviderUpdateRegistrarPayloadType;
 
     #[test]
     fn test_provider_update_registrar_transaction() {
@@ -132,11 +133,11 @@ mod tests {
 
         let expected_provider_update_registrar_payload = expected_transaction.special_transaction_payload.clone().unwrap().to_update_registrar_payload().expect("expected to get an update registrar payload");
 
-        let tx_id = Txid::from_slice(hex!("bd98378ca37d3ae6f4850b82e77be675feb3c9bc6e33cb0c23de1b38a08034c7").as_slice()).expect("expected to decode tx id");
+        let tx_id = Txid::from_str("bd98378ca37d3ae6f4850b82e77be675feb3c9bc6e33cb0c23de1b38a08034c7").expect("expected to decode tx id");
 
         let provider_update_registrar_payload_version = 1;
         assert_eq!(expected_provider_update_registrar_payload.version, provider_update_registrar_payload_version);
-        let pro_tx_hash = Txid::from_slice(hex!("3dbb7de94e219e8f7eaea4f3c01cf97d77372e10152734c1959f17302369aa49").as_slice()).expect("expected to decode tx id");
+        let pro_tx_hash = Txid::from_str("3dbb7de94e219e8f7eaea4f3c01cf97d77372e10152734c1959f17302369aa49").expect("expected to decode tx id");
         assert_eq!(expected_provider_update_registrar_payload.pro_tx_hash, pro_tx_hash);
 
         let provider_mode = 0;
@@ -173,9 +174,9 @@ mod tests {
                 pro_tx_hash,
                 provider_mode,
                 operator_public_key: BLSPublicKey::from_hex(operator_key_hex).unwrap(),
-                voting_key_hash: PubkeyHash::from_slice(hex!(voting_key_hash_hex).as_slice()).unwrap(),
+                voting_key_hash: PubkeyHash::from_hex(voting_key_hash_hex).unwrap(),
                 script_payout,
-                inputs_hash: InputsHash::from_slice(hex!(inputs_hash_hex).as_slice()).unwrap(),
+                inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
                 payload_sig
             }))
         };

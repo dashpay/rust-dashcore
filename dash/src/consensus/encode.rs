@@ -586,6 +586,9 @@ impl_array!(16);
 impl_array!(20);
 impl_array!(32);
 impl_array!(33);
+impl_array!(48);
+impl_array!(64);
+impl_array!(96);
 
 impl Decodable for [u16; 8] {
     #[inline]

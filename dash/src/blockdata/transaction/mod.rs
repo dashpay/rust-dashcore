@@ -593,6 +593,7 @@ impl Encodable for Transaction {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.version.consensus_encode(w)?;
+        len += (self.tx_type() as u16).consensus_encode(w)?;
         // To avoid serialization ambiguity, no inputs means we use BIP141 serialization (see
         // `Transaction` docs for full explanation).
         let mut have_witness = self.input.is_empty();
@@ -615,6 +616,9 @@ impl Encodable for Transaction {
             }
         }
         len += self.lock_time.consensus_encode(w)?;
+        if let Some(payload) = &self.special_transaction_payload {
+            len += payload.consensus_encode(w)?;
+        }
         Ok(len)
     }
 }

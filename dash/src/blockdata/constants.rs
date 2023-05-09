@@ -40,14 +40,14 @@ pub const MIN_TRANSACTION_WEIGHT: u32 = 4 * 60;
 pub const WITNESS_SCALE_FACTOR: usize = 4;
 /// The maximum allowed number of signature check operations in a block.
 pub const MAX_BLOCK_SIGOPS_COST: i64 = 80_000;
-/// Mainnet (bitcoin) pubkey address prefix.
-pub const PUBKEY_ADDRESS_PREFIX_MAIN: u8 = 0; // 0x00
-/// Mainnet (bitcoin) script address prefix.
-pub const SCRIPT_ADDRESS_PREFIX_MAIN: u8 = 5; // 0x05
-/// Test (tesnet, devnet, regtest) pubkey address prefix.
-pub const PUBKEY_ADDRESS_PREFIX_TEST: u8 = 111; // 0x6f
-/// Test (tesnet, devnet, regtest) script address prefix.
-pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 196; // 0xc4
+/// Mainnet (dash) pubkey address prefix.
+pub const PUBKEY_ADDRESS_PREFIX_MAIN: u8 = 76; // 0x4C
+/// Mainnet (dash) script address prefix.
+pub const SCRIPT_ADDRESS_PREFIX_MAIN: u8 = 16; // 0x10
+/// Test (testnet, devnet, regtest) pubkey address prefix.
+pub const PUBKEY_ADDRESS_PREFIX_TEST: u8 = 140; // 0x8C
+/// Test (testnet, devnet, regtest) script address prefix.
+pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 19; // 0x13
 /// The maximum allowed script size.
 pub const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
 /// How may blocks between halvings.
@@ -299,7 +299,7 @@ mod test {
 
         #[allow(unreachable_patterns)] // This is specifically trying to catch later added variants.
         match network {
-            Network::Devnet => {},
+            Network::Dash => {},
             Network::Testnet => {},
             Network::Devnet => {},
             Network::Regtest => {},

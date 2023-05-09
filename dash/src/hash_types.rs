@@ -67,9 +67,8 @@ pub use newtypes::*;
 
 #[rustfmt::skip]
 mod newtypes {
-    use core::fmt::LowerHex;
     use core::str::FromStr;
-    use hashes::{sha256, sha256d, hash160, hash_newtype, hex, Hash};
+    use hashes::{sha256, sha256d, hash160, hash_newtype, Hash};
     use hashes::hex::Error;
     use internals::hex::Case;
     use internals::hex::display::DisplayHex;
@@ -146,14 +145,18 @@ mod newtypes {
     impl_asref_push_bytes!(PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash);
 
     impl InputsHash {
+        pub fn from_hex(s: &str) -> Result<InputsHash, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
+
         pub fn to_hex(&self) -> String {
-            self.0.as_byte_array().to_hex_string(Case::Lower)
+            self.0.to_string()
         }
     }
 
     impl SpecialTransactionPayloadHash {
         pub fn to_hex(&self) -> String {
-            self.0.as_byte_array().to_hex_string(Case::Lower)
+            self.0.to_string()
         }
     }
 

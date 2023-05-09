@@ -114,8 +114,6 @@ impl Decodable for ProviderUpdateServicePayload {
 mod tests {
     use core::str::FromStr;
     use std::net::Ipv4Addr;
-    use hashes::Hash;
-    use internals::hex::exts::DisplayHex;
     use crate::consensus::deserialize;
     use crate::{Network, ScriptBuf, Transaction, Txid};
     use crate::blockdata::transaction::special_transaction::{
@@ -137,11 +135,11 @@ mod tests {
 
         let expected_provider_update_service_payload = expected_transaction.special_transaction_payload.clone().unwrap().to_update_service_payload().expect("expected to get a provider registration payload");
 
-        let tx_id = Txid::from_slice(hex!("fa2f2eba320c56fb0efebe2ace3333024104d8d0a30753da36db4bf97c119be7").as_slice()).expect("expected to decode tx id");
+        let tx_id = Txid::from_str("fa2f2eba320c56fb0efebe2ace3333024104d8d0a30753da36db4bf97c119be7").expect("expected to decode tx id");
 
         let provider_update_service_payload_version = 1;
         assert_eq!(expected_provider_update_service_payload.version, provider_update_service_payload_version);
-        let pro_tx_hash = Txid::from_slice(hex!("fd39755edfe1eb9c200433eecc0ef9641bea3b86ec8e5658111c4bb89d09723a").as_slice()).expect("expected to decode tx id");
+        let pro_tx_hash = Txid::from_str("fd39755edfe1eb9c200433eecc0ef9641bea3b86ec8e5658111c4bb89d09723a").expect("expected to decode tx id");
         assert_eq!(expected_provider_update_service_payload.pro_tx_hash, pro_tx_hash);
 
         let address = Ipv4Addr::from_str("52.36.64.148").expect("expected an ipv4 address");
@@ -155,7 +153,7 @@ mod tests {
         let inputs_hash_hex = "b198a9735b6e2ddf2a4c5e1584ab45487c7ee2eb05b16ff08004a29e795f72e6";
         assert_eq!(expected_provider_update_service_payload.inputs_hash.to_hex().as_str(), inputs_hash_hex, "inputs hash calculation has issues");
 
-        assert_eq!(expected_provider_update_service_payload.base_payload_hash().to_hex(), "9784b3663039784858420677b00f0b3f34af8ff1f1788adfd0e681d345b776ba", "Payload hash calculation has issues");
+        assert_eq!(expected_provider_update_service_payload.base_payload_hash().to_hex().as_str(), "9784b3663039784858420677b00f0b3f34af8ff1f1788adfd0e681d345b776ba", "Payload hash calculation has issues");
 
         // We should verify the script payouts match
         let script_payout = ScriptBuf::new();
@@ -177,7 +175,7 @@ mod tests {
                 ip_address: u128::from_le_bytes(ipv6_bytes),
                 port,
                 script_payout,
-                inputs_hash: InputsHash::from_slice(hex!(inputs_hash_hex).as_slice()).unwrap(),
+                inputs_hash: InputsHash::from_str(inputs_hash_hex).unwrap(),
                 payload_sig,
             })),
         };
