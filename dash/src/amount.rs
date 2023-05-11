@@ -17,8 +17,7 @@ use crate::prelude::*;
 ///
 /// # Examples
 /// ```
-/// # use core::str::FromStr;
-/// # use bitcoin::Amount;
+/// use core::str::FromStr;
 /// use dashcore::Amount;
 ///
 /// assert_eq!(Amount::from_str("1 BTC").unwrap(), Amount::from_sat(100_000_000));
@@ -550,12 +549,11 @@ impl Amount {
     ///
     /// # Examples
     /// ```
-    /// # use bitcoin::{Amount, Denomination};
     /// use dashcore::{Amount, Denomination};
     /// let amount = Amount::from_sat(100_000);
-    /// assert_eq!(amount.to_btc(), amount.to_float_in(Denomination::Dash))
+    /// assert_eq!(amount.to_dash(), amount.to_float_in(Denomination::Dash))
     /// ```
-    pub fn to_btc(self) -> f64 { self.to_float_in(Denomination::Dash) }
+    pub fn to_dash(self) -> f64 { self.to_float_in(Denomination::Dash) }
 
     /// Convert this [Amount] in floating-point notation with a given
     /// denomination.
@@ -662,7 +660,7 @@ impl default::Default for Amount {
 
 impl fmt::Debug for Amount {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Amount({:.8} BTC)", self.to_btc())
+        write!(f, "Amount({:.8} BTC)", self.to_dash())
     }
 }
 
@@ -1232,7 +1230,7 @@ pub mod serde {
             s.serialize_some(&self.to_sat())
         }
         fn ser_btc_opt<S: Serializer>(self, s: S) -> Result<S::Ok, S::Error> {
-            s.serialize_some(&self.to_btc())
+            s.serialize_some(&self.to_dash())
         }
     }
 

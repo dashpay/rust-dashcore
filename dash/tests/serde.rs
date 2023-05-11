@@ -41,6 +41,15 @@ use bitcoin::{
     ecdsa, Address, Block, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence, Target,
     Transaction, TxIn, TxOut, Txid, Work,
 };
+use dashcore::{absolute, Address, Block, ecdsa, Network, OutPoint, PrivateKey, PublicKey, relative, ScriptBuf, taproot, Target, Transaction, Txid, TxIn, TxOut, Witness, Work};
+use dashcore::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
+use dashcore::consensus::{deserialize, serialize};
+use dashcore::Network::Dash;
+use dashcore::psbt::{Input, Output, Psbt, PsbtSighashType, raw};
+use dashcore::psbt::raw::{Key, Pair, ProprietaryKey};
+use dashcore::sighash::{EcdsaSighashType, TapSighashType};
+use dashcore::taproot::{ControlBlock, LeafVersion, TaprootBuilder, TapTree};
+use dashcore_hashes::{Hash, hash160, ripemd160, sha256, sha256d};
 
 /// Implicitly does regression test for `BlockHeader` also.
 #[test]
@@ -143,7 +152,7 @@ fn serde_regression_witness() {
 fn serde_regression_address() {
     let s = include_str!("data/serde/public_key_hex");
     let pk = PublicKey::from_str(s.trim()).unwrap();
-    let addr = Address::p2pkh(&pk, Network::Bitcoin);
+    let addr = Address::p2pkh(&pk, Dash);
 
     let got = serialize(&addr).unwrap();
     let want = include_bytes!("data/serde/address_bincode") as &[_];
@@ -220,7 +229,7 @@ fn serde_regression_public_key() {
 fn serde_regression_psbt() {
     let tx = Transaction {
         version: 1,
-        lock_time: absolute::LockTime::ZERO,
+        lock_time: 0,
         input: vec![TxIn {
             previous_output: OutPoint {
                 txid: "e567952fb6cc33857f392efa3a46c995a28f69cca4bb1b37e0204dab1ec7a389"
@@ -241,6 +250,7 @@ fn serde_regression_psbt() {
             script_pubkey: ScriptBuf::from_hex("a914339725ba21efd62ac753a9bcd067d6c7a6a39d0587")
                 .unwrap(),
         }],
+        special_transaction_payload: None,
     };
     let unknown: BTreeMap<raw::Key, Vec<u8>> =
         vec![(raw::Key { type_value: 1, key: vec![0, 1] }, vec![3, 4, 5])].into_iter().collect();

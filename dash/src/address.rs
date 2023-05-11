@@ -693,16 +693,16 @@ struct AddressInner {
 /// use dashcore::address::{NetworkUnchecked, NetworkChecked};
 ///
 /// // variant 1
-/// let address: Address<NetworkUnchecked> = "32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf".parse().unwrap();
-/// let address: Address<NetworkChecked> = address.require_network(Network::Bitcoin).unwrap();
+/// let address: Address<NetworkUnchecked> = "XxMZ412shTuxDKUBdNfxMeLr4KhtfJjRv5".parse().unwrap();
+/// let address: Address<NetworkChecked> = address.require_network(Network::Dash).unwrap();
 ///
 /// // variant 2
-/// let address: Address = Address::from_str("32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf").unwrap()
-///                .require_network(Network::Bitcoin).unwrap();
+/// let address: Address = Address::from_str("XxMZ412shTuxDKUBdNfxMeLr4KhtfJjRv5").unwrap()
+///                .require_network(Network::Dash).unwrap();
 ///
 /// // variant 3
-/// let address: Address<NetworkChecked> = "32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf".parse::<Address<_>>()
-///                .unwrap().require_network(Network::Bitcoin).unwrap();
+/// let address: Address<NetworkChecked> = "XxMZ412shTuxDKUBdNfxMeLr4KhtfJjRv5".parse::<Address<_>>()
+///                .unwrap().require_network(Network::Dash).unwrap();
 /// ```
 ///
 /// ### Formatting addresses
@@ -715,15 +715,17 @@ struct AddressInner {
 /// ```
 /// # use std::str::FromStr;
 /// # use dashcore::address::{Address, NetworkChecked};
-/// let address: Address<NetworkChecked> = Address::from_str("132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM")
+/// let address: Address<NetworkChecked> = Address::from_str("XbPsX3CJbEaeNUXMpn29CNbQhTy6q6hf4A")
 ///                .unwrap().assume_checked();
-/// assert_eq!(address.to_string(), "132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM");
+/// assert_eq!(address.to_string(), "XbPsX3CJbEaeNUXMpn29CNbQhTy6q6hf4A");
 /// ```
 ///
 /// ```ignore
 /// # use std::str::FromStr;
 /// # use bitcoin::address::{Address, NetworkChecked};
-/// let address: Address<NetworkUnchecked> = Address::from_str("132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM")
+/// use dashcore::Address;
+/// use dashcore::address::NetworkUnchecked;
+/// let address: Address<NetworkUnchecked> = Address::from_str("XbPsX3CJbEaeNUXMpn29CNbQhTy6q6hf4A")
 ///                .unwrap();
 /// let s = address.to_string(); // does not compile
 /// ```
@@ -735,17 +737,17 @@ struct AddressInner {
 /// ```
 /// # use std::str::FromStr;
 /// # use dashcore::address::{Address, NetworkUnchecked};
-/// let address: Address<NetworkUnchecked> = Address::from_str("132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM")
+/// let address: Address<NetworkUnchecked> = Address::from_str("XbPsX3CJbEaeNUXMpn29CNbQhTy6q6hf4A")
 ///                .unwrap();
-/// assert_eq!(format!("{:?}", address), "Address<NetworkUnchecked>(132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM)");
+/// assert_eq!(format!("{:?}", address), "Address<NetworkUnchecked>(XbPsX3CJbEaeNUXMpn29CNbQhTy6q6hf4A)");
 /// ```
 ///
 /// ```
 /// # use std::str::FromStr;
 /// # use dashcore::address::{Address, NetworkChecked};
-/// let address: Address<NetworkChecked> = Address::from_str("132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM")
+/// let address: Address<NetworkChecked> = Address::from_str("XbPsX3CJbEaeNUXMpn29CNbQhTy6q6hf4A")
 ///                .unwrap().assume_checked();
-/// assert_eq!(format!("{:?}", address), "132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM");
+/// assert_eq!(format!("{:?}", address), "XbPsX3CJbEaeNUXMpn29CNbQhTy6q6hf4A");
 /// ```
 ///
 /// ### Relevant BIPs
@@ -977,7 +979,7 @@ impl Address {
     /// Generates a script pubkey spending to this address.
     pub fn script_pubkey(&self) -> ScriptBuf { self.payload().script_pubkey() }
 
-    /// Creates a URI string *bitcoin:address* optimized to be encoded in QR codes.
+    /// Creates a URI string *dashcore:address* optimized to be encoded in QR codes.
     ///
     /// If the address is bech32, both the schema and the address become uppercase.
     /// If the address is base58, the schema is lowercase and the address is left mixed case.
@@ -992,8 +994,8 @@ impl Address {
     /// If you want to avoid allocation you can use alternate display instead:
     /// ```
     /// # use core::fmt::Write;
-    /// # const ADDRESS: &str = "BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4";
-    /// # let address = ADDRESS.parse::<bitcoin::Address<_>>().unwrap().assume_checked();
+    /// # const ADDRESS: &str = "Xxb77sLZJZMUeYdf3TpWNoRFgEvjQkoi2q";
+    /// # let address = ADDRESS.parse::<dashcore::Address<_>>().unwrap().assume_checked();
     /// # let mut writer = String::new();
     /// # // magic trick to make error handling look better
     /// # (|| -> Result<(), core::fmt::Error> {
@@ -1006,8 +1008,8 @@ impl Address {
     /// ```
     pub fn to_qr_uri(&self) -> String {
         let schema = match self.payload() {
-            Payload::WitnessProgram { .. } => "BITCOIN",
-            _ => "bitcoin",
+            Payload::WitnessProgram { .. } => "DASH",
+            _ => "dash",
         };
         format!("{}:{:#}", schema, self)
     }
@@ -1060,15 +1062,15 @@ impl Address<NetworkUnchecked> {
     /// use dashcore::{Address, Network};
     /// use dashcore::address::NetworkUnchecked;
     ///
-    /// let address: Address<NetworkUnchecked> = "2N83imGV3gPwBzKJQvWJ7cRUY2SpUyU6A5e".parse().unwrap();
+    /// let address: Address<NetworkUnchecked> = "yiLAa2hfeevAiiDn2wf4rXCPC9Frf3TQcE".parse().unwrap();
     /// assert!(address.is_valid_for_network(Network::Testnet));
     /// assert!(address.is_valid_for_network(Network::Regtest));
     /// assert!(address.is_valid_for_network(Network::Devnet));
     ///
-    /// assert_eq!(address.is_valid_for_network(Network::Bitcoin), false);
+    /// assert_eq!(address.is_valid_for_network(Network::Dash), false);
     ///
-    /// let address: Address<NetworkUnchecked> = "32iVBEu4dxkUQk9dJbZUiBiQdmypcEyJRf".parse().unwrap();
-    /// assert!(address.is_valid_for_network(Network::Bitcoin));
+    /// let address: Address<NetworkUnchecked> = "Xs6U2uPMzn4zyfTtEkDgXMFGm39RP1F7mv".parse().unwrap();
+    /// assert!(address.is_valid_for_network(Network::Dash));
     /// assert_eq!(address.is_valid_for_network(Network::Testnet), false);
     /// ```
     pub fn is_valid_for_network(&self, network: Network) -> bool {
@@ -1269,7 +1271,7 @@ mod tests {
     use core::str::FromStr;
 
     use hex_lit::hex;
-    use secp256k1::XOnlyPublicKey;
+    use secp256k1::{All, SecretKey, XOnlyPublicKey};
 
     use super::*;
     use crate::crypto::key::PublicKey;
@@ -1631,11 +1633,11 @@ mod tests {
     #[test]
     fn test_qr_string() {
         for el in
-        ["XdLDdeFJgVR3YeoVM55jrfFtUMzMNaEFF8", "7fH3aFXJ5TWv5eNScx7m4FCf3XD27mXYHq"].iter()
+        ["Xxb77sLZJZMUeYdf3TpWNoRFgEvjQkoi2q", "XanpivH7JqvtWsCkjB5vXqoGBhv4XGBRJn"].iter()
         {
             let addr =
-                Address::from_str(el).unwrap().require_network(Network::Dash).expect("mainnet");
-            assert_eq!(addr.to_qr_uri(), format!("bitcoin:{}", el));
+                Address::from_str(el).unwrap().require_network(Dash).expect("mainnet");
+            assert_eq!(addr.to_qr_uri(), format!("dash:{}", el));
         }
 
         // for el in ["dsrt1q2nfxmhd4n3c8834pj72xagvyr9gl57n5r94fsl", "ds1qwqdg6squsna38e46795at95yu9atm8azzmyvckulcc7kytlcckxswvvzej"].iter() {

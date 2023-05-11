@@ -44,14 +44,14 @@ impl LockTime {
     /// # Examples
     ///
     /// ```rust
-    /// # use bitcoin::Sequence;
-    /// # use bitcoin::locktime::relative::{LockTime, Height, Time};
+    /// # use dashcore::locktime::relative::{LockTime, Height, Time};
     ///
     /// # let height = 100;       // 100 blocks.
     /// # let intervals = 70;     // Approx 10 hours.
     /// # let current_height = || Height::from(height + 10);
     /// # let current_time = || Time::from_512_second_intervals(intervals + 10);
-    /// # let lock = Sequence::from_height(height).to_relative_lock_time().expect("valid height");
+    /// # let lock = LockTime::from(Height::from(height));
+    /// # let test_lock = LockTime::from(Height::from(height+10));
     ///
     /// // Users that have chain data can get the current height and time to check against a lock.
     /// let height_and_time = (current_time(), current_height());  // tuple order does not matter.
@@ -84,18 +84,13 @@ impl LockTime {
     /// # Examples
     ///
     /// ```rust
-    /// # use bitcoin::Sequence;
-    /// # use bitcoin::locktime::relative::{LockTime, Height, Time};
+    /// # use dashcore::locktime::relative::{LockTime, Height, Time};
     ///
     /// # let height = 100;       // 100 blocks.
-    /// # let lock = Sequence::from_height(height).to_relative_lock_time().expect("valid height");
-    /// # let test_sequence = Sequence::from_height(height + 10);
+    /// # let lock = LockTime::from(Height::from(height));
+    /// # let test_lock = LockTime::from(Height::from(height+10));
     ///
-    /// let satisfied = match test_sequence.to_relative_lock_time() {
-    ///     None => false, // Handle non-lock-time case.
-    ///     Some(test_lock) => lock.is_implied_by(test_lock),
-    /// };
-    /// assert!(satisfied);
+    /// assert!(lock.is_implied_by(test_lock));
     /// ```
     #[inline]
     #[cfg_attr(all(test, mutate), mutate)]
@@ -118,11 +113,10 @@ impl LockTime {
     /// # Examples
     ///
     /// ```rust
-    /// # use bitcoin::Sequence;
-    /// # use bitcoin::locktime::relative::{LockTime, Height, Time};
+    /// # use dashcore::locktime::relative::{LockTime, Height, Time};
     ///
     /// let height: u16 = 100;
-    /// let lock = Sequence::from_height(height).to_relative_lock_time().expect("valid height");
+    /// let lock = LockTime::from(Height::from(height));
     /// assert!(lock.is_satisfied_by_height(Height::from(height+1)).expect("a height"));
     /// ```
     #[inline]
@@ -145,11 +139,10 @@ impl LockTime {
     /// # Examples
     ///
     /// ```rust
-    /// # use bitcoin::Sequence;
-    /// # use bitcoin::locktime::relative::{LockTime, Height, Time};
+    /// use dashcore::locktime::relative::{LockTime, Height, Time};
     ///
     /// let intervals: u16 = 70; // approx 10 hours;
-    /// let lock = Sequence::from_512_second_intervals(intervals).to_relative_lock_time().expect("valid time");
+    /// let lock = LockTime::from(Time::from_512_second_intervals(intervals));
     /// assert!(lock.is_satisfied_by_time(Time::from_512_second_intervals(intervals + 10)).expect("a time"));
     /// ```
     #[inline]

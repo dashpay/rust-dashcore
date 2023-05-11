@@ -1070,10 +1070,10 @@ impl<R: BorrowMut<Transaction>> SighashCache<R> {
     ///
     /// This allows in-line signing such as
     /// ```
-    /// use bitcoin::{absolute, Transaction, Script};
-    /// use bitcoin::sighash::{EcdsaSighashType, SighashCache};
+    /// use dashcore::{absolute, Transaction, Script};
+    /// use dashcore::sighash::{EcdsaSighashType, SighashCache};
     ///
-    /// let mut tx_to_sign = Transaction { version: 2, lock_time: absolute::LockTime::ZERO, input: Vec::new(), output: Vec::new() };
+    /// let mut tx_to_sign = Transaction { version: 2, lock_time: 0, input: Vec::new(), output: Vec::new(), special_transaction_payload: None};
     /// let input_count = tx_to_sign.input.len();
     ///
     /// let mut sig_hasher = SighashCache::new(&mut tx_to_sign);

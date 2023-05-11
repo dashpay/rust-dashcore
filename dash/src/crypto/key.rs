@@ -196,7 +196,7 @@ impl PublicKey {
     ///
     /// ```rust
     /// use std::str::FromStr;
-    /// use bitcoin::PublicKey;
+    /// use dashcore::PublicKey;
     ///
     /// let pk = |s| PublicKey::from_str(s).unwrap();
     ///
