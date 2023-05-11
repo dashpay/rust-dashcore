@@ -1792,9 +1792,10 @@ mod tests {
 
         let unsigned_tx = Transaction {
             version: 2,
-            lock_time: absolute::LockTime::ZERO,
+            lock_time: 0,
             input: vec![TxIn::default(), TxIn::default()],
             output: vec![TxOut::default()],
+            special_transaction_payload: None,
         };
         let mut psbt = PartiallySignedTransaction::from_unsigned_tx(unsigned_tx).unwrap();
 
