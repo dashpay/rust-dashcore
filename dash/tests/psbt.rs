@@ -13,10 +13,7 @@ use dashcore::hashes::hex::FromHex;
 use dashcore::psbt::{Psbt, PsbtSighashType};
 use dashcore::script::PushBytes;
 use dashcore::secp256k1::{self, Secp256k1};
-use dashcore::{
-    Amount, Denomination, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Transaction, TxIn,
-    TxOut, Witness,
-};
+use dashcore::{Amount, Denomination, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Transaction, TxIn, TxOut, Witness};
 
 const NETWORK: Network = Network::Testnet;
 
@@ -69,8 +66,8 @@ fn bip174_psbt_workflow() {
 
     // Strings from BIP 174 test vector.
     let test_vector = vec![
-        ("cP53pDbR5WtAD8dYAW9hhTjuvvTVaEiQBdrz9XPrgLBeRFiyCbQr", "m/0h/0h/0h"), // from_priv, into_derivation_path?
-        ("cR6SXDoyfQrcp4piaiHE97Rsgta9mNhGTen9XeonVgwsh4iSgw6d", "m/0h/0h/2h"),
+        ("cQREycwKkUqJrgkYqcSLpv5Ab1ytgVkRk5e7dENJ5pQjUd83qwFd", "m/0h/0h/0h"), // from_priv, into_derivation_path?
+        ("cUQLHVPngMorTZfKhb74quVxtiUuHtt5CnbEgnZTUFk8Vhid9HCh", "m/0h/0h/2h"),
     ];
 
     // We pass the keys to the signer after doing verification to make explicit
@@ -84,8 +81,8 @@ fn bip174_psbt_workflow() {
 
     // Strings from BIP 174 test vector.
     let test_vector = vec![
-        ("cT7J9YpCwY3AVRFSjN6ukeEeWY6mhpbJPxRaDaP5QTdygQRxP9Au", "m/0h/0h/1h"),
-        ("cNBc3SWUip9PPm1GjRoLEJT6T41iNzCYtD7qro84FMnM5zEqeJsE", "m/0h/0h/3h"),
+        ("cVKFqnCzcH5ZThgJ5YyfCYhh7Y8D6xkja7bdbwFT6FFAEtLTnqmy", "m/0h/0h/1h"),
+        ("cNUQGYrUibaUJ2eXuWohNiPJf4fuUHxnT4QYiMyT97QDhSuBZQBJ", "m/0h/0h/3h"),
     ];
 
     let keys = parse_and_verify_keys(&ext_priv, &test_vector);
@@ -122,7 +119,7 @@ fn bip174_psbt_workflow() {
 /// Attempts to build an extended private key from seed and also directly from a string.
 fn build_extended_private_key() -> ExtendedPrivKey {
     // Strings from BIP 174 test vector.
-    let extended_private_key = "tprv8ZgxMBicQKsPd9TeAdPADNnSyH9SSUUbTVeFszDE23Ki6TBB5nCefAdHkK8Fm3qMQR6sHwA56zqRmKmxnHk37JkiFzvncDqoKmPWubu7hDF";
+    let extended_private_key = "tprv8ZgxMBicQKsPeo2FFervjry6YxkJ2JdXKbwP3SFnApxEMXDM9Kt22SzQfWbCCWXDAUHttNjcqvttEvVk7Tausd5TrL45aiTi7aug6f2c537";
     let seed = "cUkG8i1RFfWGWy5ziR11zJ5V4U4W3viSFCfyJmZnvQaUsd1xuF3T";
 
     let xpriv = ExtendedPrivKey::from_str(extended_private_key).unwrap();
@@ -230,12 +227,12 @@ fn update_psbt(mut psbt: Psbt, fingerprint: Fingerprint) -> Psbt {
     // Public key and its derivation path (these are the child pubkeys for our `ExtendedPrivKey`,
     // can be verified by deriving the key using this derivation path).
     let pk_path = vec![
-        ("029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f", "m/0h/0h/0h"),
-        ("02dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d7", "m/0h/0h/1h"),
-        ("03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc", "m/0h/0h/2h"),
-        ("023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e73", "m/0h/0h/3h"),
-        ("03a9a4c37f5996d3aa25dbac6b570af0650394492942460b354753ed9eeca58771", "m/0h/0h/4h"),
-        ("027f6399757d2eff55a136ad02c684b1838b6556e5f1b6b34282a94b6b50051096", "m/0h/0h/5h"),
+        ("0353f34734bf126e6be1a52dce8a79a6530d5299e1cc4027f5bb96207da3085e94", "m/0h/0h/0h"),
+        ("0220bb0ddea616ff71ea6a85945b830cc4359d4178c90420dc4d6d80d25a4d9159", "m/0h/0h/1h"),
+        ("03a696181a5adfab2af3267ea0617493d0f677d75404e879360fd0246de3423df4", "m/0h/0h/2h"),
+        ("02e2cc9898cd2a31f923dae903b1da8df9ea468c75358188fa510b0e017ee41918", "m/0h/0h/3h"),
+        ("02a262d32e02856d69bb791042b3773b6fca08d62bcf87be9c5fa9e2b8d3adbb75", "m/0h/0h/4h"),
+        ("02c3c127892d7104e5f2f8c22612e0f81036ac64a7ac01d9ae0bc985337d4dd46e", "m/0h/0h/5h"),
     ];
 
     let expected_psbt_hex = include_str!("data/update_1_psbt_hex");
@@ -297,7 +294,6 @@ fn bip32_derivation(
 fn update_psbt_with_sighash_all(mut psbt: Psbt) -> Psbt {
     let expected_psbt_hex = include_str!("data/update_2_psbt_hex");
     let expected_psbt = hex_psbt!(expected_psbt_hex).unwrap();
-
     let ty = PsbtSighashType::from_str("SIGHASH_ALL").unwrap();
 
     let mut input_0 = psbt.inputs[0].clone();

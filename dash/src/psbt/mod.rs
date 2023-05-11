@@ -293,8 +293,7 @@ impl PartiallySignedTransaction {
                 Ok((msg, sighash_ty)) => (msg, sighash_ty),
             };
 
-            let sig =
-                ecdsa::Signature { sig: secp.sign_ecdsa(&msg, &sk.inner), hash_ty: sighash_ty };
+            let sig = ecdsa::Signature { sig: secp.sign_ecdsa(&msg, &sk.inner), hash_ty: sighash_ty };
 
             let pk = sk.public_key(secp);
 

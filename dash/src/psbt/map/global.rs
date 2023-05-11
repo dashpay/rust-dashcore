@@ -5,7 +5,7 @@ use core::convert::TryFrom;
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPubKey, Fingerprint};
 use crate::blockdata::transaction::Transaction;
 use crate::consensus::encode::MAX_VEC_SIZE;
-use crate::consensus::{encode, Decodable};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::io::{self, Cursor, Read};
 use crate::prelude::*;
 use crate::psbt::map::Map;
@@ -32,9 +32,14 @@ impl Map for PartiallySignedTransaction {
                 // without witnesses.
                 let mut ret = Vec::new();
                 ret.extend(encode::serialize(&self.unsigned_tx.version));
-                ret.extend(encode::serialize(&self.unsigned_tx.input));
+                (self.unsigned_tx.tx_type() as u16).consensus_encode(&mut ret).expect("can't encode tx type");
+                let input = encode::serialize(&self.unsigned_tx.input);
+                ret.extend(input);
                 ret.extend(encode::serialize(&self.unsigned_tx.output));
                 ret.extend(encode::serialize(&self.unsigned_tx.lock_time));
+                if let Some(payload) = &self.unsigned_tx.special_transaction_payload {
+                    payload.consensus_encode(&mut ret).expect("can't encode special tx payload");
+                }
                 ret
             },
         });
@@ -92,17 +97,21 @@ impl PartiallySignedTransaction {
                                 if tx.is_none() {
                                     let vlen: usize = pair.value.len();
                                     let mut decoder = Cursor::new(pair.value);
+                                    let version = Decodable::consensus_decode(&mut decoder)?;
                                     let transaction_type: TransactionType = Decodable::consensus_decode(&mut decoder)?;
+                                    let input = Decodable::consensus_decode(&mut decoder)?;
+                                    let output = Decodable::consensus_decode(&mut decoder)?;
+                                    let lock_time = Decodable::consensus_decode(&mut decoder)?;
 
                                     // Manually deserialized to ensure 0-input
                                     // txs without witnesses are deserialized
                                     // properly.
                                     tx = Some(Transaction {
-                                        version: Decodable::consensus_decode(&mut decoder)?,
-                                        input: Decodable::consensus_decode(&mut decoder)?,
-                                        output: Decodable::consensus_decode(&mut decoder)?,
-                                        lock_time: Decodable::consensus_decode(&mut decoder)?,
-                                        special_transaction_payload: transaction_type.consensus_decode(&mut decoder)?,
+                                        version,
+                                        lock_time,
+                                        input,
+                                        output,
+                                        special_transaction_payload: transaction_type.consensus_decode(&mut decoder)?
                                     });
 
                                     if decoder.position() != vlen as u64 {
