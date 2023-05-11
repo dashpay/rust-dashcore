@@ -533,7 +533,7 @@ mod test {
     use crate::consensus::encode::{deserialize, deserialize_partial, serialize};
     use crate::internal_macros::hex;
     use crate::network::address::{AddrV2, AddrV2Message, Address};
-    use crate::network::constants::{Network, ServiceFlags};
+    use crate::network::constants::{ServiceFlags};
     use crate::network::message_blockdata::{GetBlocksMessage, GetHeadersMessage, Inventory};
     use crate::network::message_bloom::{BloomFlags, FilterAdd, FilterLoad};
     use crate::network::message_compact_blocks::{GetBlockTxn, SendCmpct};

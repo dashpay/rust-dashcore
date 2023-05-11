@@ -979,7 +979,7 @@ mod tests {
         // create some values to use in the PSBT
         let tx = Transaction {
             version: 1,
-            lock_time: absolute::LockTime::ZERO,
+            lock_time: 0,
             input: vec![TxIn {
                 previous_output: OutPoint {
                     txid: "e567952fb6cc33857f392efa3a46c995a28f69cca4bb1b37e0204dab1ec7a389"
@@ -1001,6 +1001,7 @@ mod tests {
                 )
                 .unwrap(),
             }],
+            special_transaction_payload: None,
         };
         let unknown: BTreeMap<raw::Key, Vec<u8>> =
             vec![(raw::Key { type_value: 1, key: vec![0, 1] }, vec![3, 4, 5])]

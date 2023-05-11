@@ -1971,4 +1971,9 @@ mod test {
         let json_str = include_str!("../tests/data/bip341_tests.json");
         serde_json::from_str(json_str).expect("JSON was not well-formatted")
     }
+
+    #[test]
+    fn popo() {
+        //
+    }
 }

@@ -372,7 +372,6 @@ impl BlockTransactions {
 #[cfg(test)]
 mod test {
     use hashes::hex::FromHex;
-    use internals::hex::Case;
     use crate::blockdata::script::ScriptBuf;
     use crate::blockdata::transaction::{Transaction, txin::TxIn, txout::TxOut, outpoint::OutPoint};
 
