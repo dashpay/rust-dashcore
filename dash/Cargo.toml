@@ -48,7 +48,7 @@ rustversion = { version="1.0.9"}
 actual-serde = { package = "serde", version = "1.0.103", default-features = false, features = [ "derive", "alloc" ], optional = true }
 
 base64-compat = { version = "1.0.0", optional = true }
-bitcoinconsensus = { version = "0.19.0-3", optional = true }
+bitcoinconsensus = { version = "0.20.2-0.5.0", default-features = false, optional = true }
 hex_lit = "0.1.1"
 
 bincode = {version= "2.0.0-rc.3", optional = true}

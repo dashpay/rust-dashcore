@@ -76,7 +76,7 @@ impl PartiallySignedTransaction {
     /// ## Panics
     ///
     /// The function panics if the length of transaction inputs is not equal to the length of PSBT inputs.
-    pub fn iter_funding_utxos(&self) -> impl Iterator<Item = Result<&TxOut, Error>> {
+    pub fn iter_funding_utxos(&self) -> impl Iterator<Item=Result<&TxOut, Error>> {
         assert_eq!(self.inputs.len(), self.unsigned_tx.input.len());
         self.unsigned_tx.input.iter().zip(&self.inputs).map(|(tx_input, psbt_input)| {
             match (&psbt_input.witness_utxo, &psbt_input.non_witness_utxo) {
@@ -174,8 +174,8 @@ impl PartiallySignedTransaction {
 
                     if (derivation1 == derivation2 && fingerprint1 == fingerprint2)
                         || (derivation1.len() < derivation2.len()
-                            && derivation1[..]
-                                == derivation2[derivation2.len() - derivation1.len()..])
+                        && derivation1[..]
+                        == derivation2[derivation2.len() - derivation1.len()..])
                     {
                         continue;
                     } else if derivation2[..]
@@ -224,9 +224,9 @@ impl PartiallySignedTransaction {
         k: &K,
         secp: &Secp256k1<C>,
     ) -> Result<SigningKeys, (SigningKeys, SigningErrors)>
-    where
-        C: Signing,
-        K: GetKey,
+        where
+            C: Signing,
+            K: GetKey,
     {
         let tx = self.unsigned_tx.clone(); // clone because we need to mutably borrow when signing.
         let mut cache = SighashCache::new(&tx);
@@ -267,10 +267,10 @@ impl PartiallySignedTransaction {
         cache: &mut SighashCache<T>,
         secp: &Secp256k1<C>,
     ) -> Result<Vec<PublicKey>, SignError>
-    where
-        C: Signing,
-        T: Borrow<Transaction>,
-        K: GetKey,
+        where
+            C: Signing,
+            T: Borrow<Transaction>,
+            K: GetKey,
     {
         let msg_sighash_ty_res = self.sighash_ecdsa(input_index, cache);
 
@@ -348,7 +348,7 @@ impl PartiallySignedTransaction {
                 let script_code = ScriptBuf::p2wpkh_script_code(
                     input.redeem_script.as_ref().expect("checked above"),
                 )
-                .ok_or(SignError::NotWpkh)?;
+                    .ok_or(SignError::NotWpkh)?;
                 let sighash =
                     cache.segwit_signature_hash(input_index, &script_code, utxo.value, hash_ty)?;
                 Ok((Message::from(sighash), hash_ty))
@@ -805,6 +805,7 @@ mod display_from_str {
         }
     }
 }
+
 #[cfg(feature = "base64")]
 pub use self::display_from_str::PsbtParseError;
 
@@ -925,14 +926,14 @@ mod tests {
                         script_pubkey: ScriptBuf::from_hex(
                             "76a914d0c59903c5bac2868760e90fd521a4665aa7652088ac",
                         )
-                        .unwrap(),
+                            .unwrap(),
                     },
                     TxOut {
                         value: 100000000,
                         script_pubkey: ScriptBuf::from_hex(
                             "a9143545e6e33b832c47050f24d3eeb93c9c03948bc787",
                         )
-                        .unwrap(),
+                            .unwrap(),
                     },
                 ],
                 special_transaction_payload: None,
@@ -999,7 +1000,7 @@ mod tests {
                 script_pubkey: ScriptBuf::from_hex(
                     "a914339725ba21efd62ac753a9bcd067d6c7a6a39d0587",
                 )
-                .unwrap(),
+                    .unwrap(),
             }],
             special_transaction_payload: None,
         };
@@ -1012,8 +1013,8 @@ mod tests {
             "0339880dc92394b7355e3d0439fa283c31de7590812ea011c4245c0674a685e883".parse().unwrap(),
             key_source.clone(),
         )]
-        .into_iter()
-        .collect();
+            .into_iter()
+            .collect();
 
         let proprietary: BTreeMap<raw::ProprietaryKey, Vec<u8>> = vec![(
             raw::ProprietaryKey {
@@ -1023,8 +1024,8 @@ mod tests {
             },
             vec![5, 6, 7],
         )]
-        .into_iter()
-        .collect();
+            .into_iter()
+            .collect();
 
         let psbt = PartiallySignedTransaction {
             version: 0,
@@ -1234,7 +1235,7 @@ mod tests {
                                         hex!("3045022100d12b852d85dcd961d2f5f4ab660654df6eedcc794c0c33ce5cc309ffb5fce58d022067338a8e0e1725c197fb1a88af59f51e44e4255b20167c8684031c05d1f2592a01"),
                                         hex!("0223b72beef0965d10be0778efecd61fcac6f79a4ea169393380734464f84f2ab3"),
                                     ]),
-                                }
+                                },
                             ],
                             output: vec![
                                 TxOut {
@@ -1268,7 +1269,7 @@ mod tests {
 
             #[cfg(feature = "base64")]
             {
-                let base64str = "cHNidP8BAHUCAAAAASaBcTce3/KF6Tet7qSze3gADAVmy7OtZGQXE8pCFxv2AAAAAAD+////AtPf9QUAAAAAGXapFNDFmQPFusKGh2DpD9UhpGZap2UgiKwA4fUFAAAAABepFDVF5uM7gyxHBQ8k0+65PJwDlIvHh7MuEwAAAQD9pQEBAAAAAAECiaPHHqtNIOA3G7ukzGmPopXJRjr6Ljl/hTPMti+VZ+UBAAAAFxYAFL4Y0VKpsBIDna89p95PUzSe7LmF/////4b4qkOnHf8USIk6UwpyN+9rRgi7st0tAXHmOuxqSJC0AQAAABcWABT+Pp7xp0XpdNkCxDVZQ6vLNL1TU/////8CAMLrCwAAAAAZdqkUhc/xCX/Z4Ai7NK9wnGIZeziXikiIrHL++E4sAAAAF6kUM5cluiHv1irHU6m80GfWx6ajnQWHAkcwRAIgJxK+IuAnDzlPVoMR3HyppolwuAJf3TskAinwf4pfOiQCIAGLONfc0xTnNMkna9b7QPZzMlvEuqFEyADS8vAtsnZcASED0uFWdJQbrUqZY3LLh+GFbTZSYG2YVi/jnF6efkE/IQUCSDBFAiEA0SuFLYXc2WHS9fSrZgZU327tzHlMDDPOXMMJ/7X85Y0CIGczio4OFyXBl/saiK9Z9R5E5CVbIBZ8hoQDHAXR8lkqASECI7cr7vCWXRC+B3jv7NYfysb3mk6haTkzgHNEZPhPKrMAAAAAAAAA";
+                let base64str = "cHNidP8BAHUCAAAAASaBcTce3/KF6Tet7qSze3gADAVmy7OtZGQXE8pCFxv2AAAAAAD/////AtPf9QUAAAAAGXapFNDFmQPFusKGh2DpD9UhpGZap2UgiKwA4fUFAAAAABepFDVF5uM7gyxHBQ8k0+65PJwDlIvHh7MuEwAAAQD9pQEBAAAAAAECiaPHHqtNIOA3G7ukzGmPopXJRjr6Ljl/hTPMti+VZ+UBAAAAFxYAFL4Y0VKpsBIDna89p95PUzSe7LmF/////4b4qkOnHf8USIk6UwpyN+9rRgi7st0tAXHmOuxqSJC0AQAAABcWABT+Pp7xp0XpdNkCxDVZQ6vLNL1TU/////8CAMLrCwAAAAAZdqkUhc/xCX/Z4Ai7NK9wnGIZeziXikiIrHL++E4sAAAAF6kUM5cluiHv1irHU6m80GfWx6ajnQWHAkcwRAIgJxK+IuAnDzlPVoMR3HyppolwuAJf3TskAinwf4pfOiQCIAGLONfc0xTnNMkna9b7QPZzMlvEuqFEyADS8vAtsnZcASED0uFWdJQbrUqZY3LLh+GFbTZSYG2YVi/jnF6efkE/IQUCSDBFAiEA0SuFLYXc2WHS9fSrZgZU327tzHlMDDPOXMMJ/7X85Y0CIGczio4OFyXBl/saiK9Z9R5E5CVbIBZ8hoQDHAXR8lkqASECI7cr7vCWXRC+B3jv7NYfysb3mk6haTkzgHNEZPhPKrMAAAAAAAAA";
                 assert_eq!(PartiallySignedTransaction::from_str(base64str).unwrap(), unserialized);
                 assert_eq!(base64str, unserialized.to_string());
                 assert_eq!(
@@ -1568,7 +1569,7 @@ mod tests {
                                     hex!("3045022100d12b852d85dcd961d2f5f4ab660654df6eedcc794c0c33ce5cc309ffb5fce58d022067338a8e0e1725c197fb1a88af59f51e44e4255b20167c8684031c05d1f2592a01"),
                                     hex!("0223b72beef0965d10be0778efecd61fcac6f79a4ea169393380734464f84f2ab3"),
                                 ]),
-                            }
+                            },
                         ],
                         output: vec![
                             TxOut {
@@ -1730,7 +1731,7 @@ mod tests {
                                 },
                                 sequence: u32::MAX,
                                 ..Default::default()
-                            }
+                            },
                         ],
                         output: vec![
                             TxOut {

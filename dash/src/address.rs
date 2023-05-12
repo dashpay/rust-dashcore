@@ -1271,7 +1271,7 @@ mod tests {
     use core::str::FromStr;
 
     use hex_lit::hex;
-    use secp256k1::{All, SecretKey, XOnlyPublicKey};
+    use secp256k1::{XOnlyPublicKey};
 
     use super::*;
     use crate::crypto::key::PublicKey;
