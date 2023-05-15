@@ -409,7 +409,7 @@ fn consensus_error_into_serde<E: serde::de::Error>(error: ConsensusError) -> E {
             Unexpected::Other(script_buf.to_string().as_str()),
             &DisplayExpected("standard scriptPubKey"),
         ),
-        ConsensusError::Hex(error) => error,
+        ConsensusError::Hex(error) => E::custom(error),
     }
 }
 

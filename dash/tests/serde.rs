@@ -27,24 +27,10 @@ use std::convert::TryFrom;
 use std::str::FromStr;
 
 use bincode::serialize;
-use bitcoin::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
-use bitcoin::blockdata::locktime::{absolute, relative};
-use bitcoin::blockdata::witness::Witness;
-use bitcoin::consensus::encode::deserialize;
-use bitcoin::hashes::hex::FromHex;
-use bitcoin::hashes::{hash160, ripemd160, sha256, sha256d, Hash};
-use bitcoin::psbt::raw::{self, Key, Pair, ProprietaryKey};
-use bitcoin::psbt::{Input, Output, Psbt, PsbtSighashType};
-use bitcoin::sighash::{EcdsaSighashType, TapSighashType};
-use bitcoin::taproot::{self, ControlBlock, LeafVersion, TapTree, TaprootBuilder};
-use bitcoin::{
-    ecdsa, Address, Block, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence, Target,
-    Transaction, TxIn, TxOut, Txid, Work,
-};
+use dashcore::hashes::hex::FromHex;
 use dashcore::{absolute, Address, Block, ecdsa, Network, OutPoint, PrivateKey, PublicKey, relative, ScriptBuf, taproot, Target, Transaction, Txid, TxIn, TxOut, Witness, Work};
 use dashcore::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
-use dashcore::consensus::{deserialize, serialize};
-use dashcore::Network::Dash;
+use dashcore::consensus::{deserialize};
 use dashcore::psbt::{Input, Output, Psbt, PsbtSighashType, raw};
 use dashcore::psbt::raw::{Key, Pair, ProprietaryKey};
 use dashcore::sighash::{EcdsaSighashType, TapSighashType};
@@ -152,7 +138,7 @@ fn serde_regression_witness() {
 fn serde_regression_address() {
     let s = include_str!("data/serde/public_key_hex");
     let pk = PublicKey::from_str(s.trim()).unwrap();
-    let addr = Address::p2pkh(&pk, Dash);
+    let addr = Address::p2pkh(&pk, Network::Dash);
 
     let got = serialize(&addr).unwrap();
     let want = include_bytes!("data/serde/address_bincode") as &[_];
@@ -239,7 +225,7 @@ fn serde_regression_psbt() {
             },
             script_sig: ScriptBuf::from_hex("160014be18d152a9b012039daf3da7de4f53349eecb985")
                 .unwrap(),
-            sequence: Sequence::from_consensus(4294967295),
+            sequence: 4294967295,
             witness: Witness::from_slice(&[Vec::from_hex(
                 "03d2e15674941bad4a996372cb87e1856d3652606d98562fe39c5e9e7e413f2105",
             )
