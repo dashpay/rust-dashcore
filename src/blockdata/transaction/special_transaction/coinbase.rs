@@ -18,6 +18,8 @@
 //! It is defined in DIP4 https://github.com/dashpay/dips/blob/master/dip-0004.md.
 //!
 
+use prelude::Vec;
+
 use std::io::ErrorKind;
 
 use io;
