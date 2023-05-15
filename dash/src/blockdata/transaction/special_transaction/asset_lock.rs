@@ -36,6 +36,7 @@ use crate::transaction::txout::TxOut;
 ///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct AssetLockPayload {
     version: u8,
     credit_outputs: Vec<TxOut>,

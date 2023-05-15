@@ -35,6 +35,7 @@ use crate::hash_types::{PubkeyHash, ScriptHash};
 /// it a full payload the request info should be added.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct AssetUnlockBasePayload {
     /// The payload protocol version, is currently expected to be 0.
     pub version: u8,
@@ -71,6 +72,7 @@ impl Decodable for AssetUnlockBasePayload {
 /// to be kept in withdrawal queues.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct AssetUnlockBaseTransactionInfo {
     /// The protocol version, is currently expected to be 1 or 2 (BIP 68).
     pub version: u16,

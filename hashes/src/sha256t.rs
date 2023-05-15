@@ -36,7 +36,7 @@ pub trait Tag {
 pub struct Hash<T: Tag>(
     #[cfg_attr(
         feature = "schemars",
-        schemars(schema_with = "crate::json_hex_string::len_32")
+        schemars(schema_with = "crate::util::json_hex_string::len_32")
     )]
     [u8; 32],
     #[cfg_attr(feature = "schemars", schemars(skip))] PhantomData<T>,

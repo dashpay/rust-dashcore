@@ -418,8 +418,6 @@ pub mod json_hex_string {
     }
     define_custom_hex!(len_8, 8);
     define_custom_hex!(len_20, 20);
-    define_custom_hex!(len_32, 32);
-    define_custom_hex!(len_64, 64);
 }
 
 #[cfg(test)]

@@ -45,6 +45,7 @@ use crate::hash_types::{PubkeyHash, SpecialTransactionPayloadHash, Txid, InputsH
 /// It must be signed by the owner's key that was set at registration.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct ProviderUpdateRegistrarPayload {
     version: u16,
     pro_tx_hash: Txid,

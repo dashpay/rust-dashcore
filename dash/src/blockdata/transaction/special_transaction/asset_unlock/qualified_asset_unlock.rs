@@ -44,6 +44,7 @@ use crate::blockdata::transaction::special_transaction::{
 ///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct AssetUnlockPayload {
     /// The base information about the asset unlock. This base information is the information that
     /// should be put into a queue.

@@ -25,7 +25,7 @@ crate::internal_macros::hash_type! {
     256,
     true,
     "Output of the SHA256d hash function.",
-    "crate::json_hex_string::len_32"
+    "crate::util::json_hex_string::len_32"
 }
 
 type HashEngine = sha256::HashEngine;

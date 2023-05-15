@@ -778,10 +778,10 @@ impl fmt::Display for DisplayUnchecked<'_> {
 }
 
 #[cfg(feature = "serde")]
-crate::serde_utils::serde_string_serialize_impl!(Address, "a Bitcoin address");
+crate::serde_utils::serde_string_serialize_impl!(Address, "a Dash address");
 
 #[cfg(feature = "serde")]
-crate::serde_utils::serde_string_deserialize_impl!(Address<NetworkUnchecked>, "a Bitcoin address");
+crate::serde_utils::serde_string_deserialize_impl!(Address<NetworkUnchecked>, "a Dash address");
 
 #[cfg(feature = "serde")]
 impl serde::Serialize for Address<NetworkUnchecked> {
@@ -972,7 +972,7 @@ impl Address {
     pub fn is_standard(&self) -> bool { self.address_type().is_some() }
 
     /// Constructs an [`Address`] from an output script (`scriptPubkey`).
-    pub fn from_script(script: &Script, network: Network) -> Result<Address, Error> {
+    pub fn from_script(script: &ScriptBuf, network: Network) -> Result<Address, Error> {
         Ok(Address::new(network, Payload::from_script(script)?))
     }
 

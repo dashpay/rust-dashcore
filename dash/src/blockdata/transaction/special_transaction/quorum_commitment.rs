@@ -28,6 +28,7 @@ use crate::consensus::{Decodable, Encodable, encode};
 ///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct QuorumFinalizationCommitment {
     version: u16,
     llmq_type: u8,
@@ -88,6 +89,7 @@ impl Decodable for QuorumFinalizationCommitment {
 /// Miners take the best final commitment for a DKG session and mine it into a block.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct QuorumCommitmentPayload {
     version: u16,
     height: u32,

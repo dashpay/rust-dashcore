@@ -27,6 +27,7 @@ use crate::consensus::{Decodable, Encodable, encode};
 ///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct CoinbasePayload {
     version: u16,
     height: u32,

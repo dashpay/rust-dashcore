@@ -50,6 +50,7 @@ use crate::hash_types::{InputsHash, SpecialTransactionPayloadHash, Txid};
 /// registrar update of the masternode.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct ProviderUpdateServicePayload {
     version: u16,
     pro_tx_hash: Txid,

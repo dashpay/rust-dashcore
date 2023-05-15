@@ -1150,10 +1150,8 @@ mod tests {
     #[cfg(feature = "serde")]
     pub fn encode_fingerprint_chaincode() {
         use serde_json;
-        let fp = Fingerprint::from(&[1u8,2,3,42][..]);
-        let cc = ChainCode::from(
-            &[1u8,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9,0,1,2][..]
-        );
+        let fp = Fingerprint::from([1u8,2,3,42]);
+        let cc = ChainCode::from([1u8,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9,0,1,2]);
 
         serde_round_trip!(fp);
         serde_round_trip!(cc);

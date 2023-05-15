@@ -990,7 +990,7 @@ mod tests {
                 },
                 script_sig: ScriptBuf::from_hex("160014be18d152a9b012039daf3da7de4f53349eecb985")
                     .unwrap(),
-                sequence: Sequence::MAX,
+                sequence: u32::MAX,
                 witness: Witness::from_slice(&[hex!(
                     "03d2e15674941bad4a996372cb87e1856d3652606d98562fe39c5e9e7e413f2105"
                 )]),

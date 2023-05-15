@@ -17,9 +17,11 @@
 //! and signature.
 //!
 
+use std::fmt;
 use crate::internal_macros::impl_bytes_newtype;
 use internals::{impl_array_newtype};
 use internals::hex::display::DisplayHex;
+use crate::serde_utils::{serde_string_impl};
 
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core
 #[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
@@ -39,6 +41,22 @@ impl BLSPublicKey {
 
     pub fn to_hex(&self) -> String {
         self.0.to_lower_hex_string()
+    }
+}
+
+serde_string_impl!(BLSPublicKey, "a BLS Public Key");
+
+impl core::str::FromStr for BLSPublicKey {
+    type Err = hashes::hex::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        BLSPublicKey::from_hex(s)
+    }
+}
+
+impl fmt::Display for BLSPublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_hex())
     }
 }
 

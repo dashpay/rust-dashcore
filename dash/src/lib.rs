@@ -37,8 +37,7 @@
 //! * `unstable` - enables unstable features for testing.
 //! * `rand` - (dependency), makes it more convenient to generate random values.
 //! * `bincode` - (dependency), implements bincode serialization and deserialization.
-//! * `use-serde` - (dependency), implements `serde`-based serialization and
-//!                 deserialization.
+//! * `serde` - (dependency), implements `serde`-based serialization and deserialization.
 //! * `secp-lowmemory` - optimizations for low-memory devices.
 //! * `no-std` - enables additional features required for this crate to be usable
 //!              without std. Does **not** disable `std`. Depends on `core2`.
@@ -113,6 +112,7 @@ pub mod string;
 pub mod taproot;
 pub mod util;
 mod bls_sig_utils;
+mod signer;
 
 // May depend on crate features and we don't want to bother with it
 #[allow(unused)]

@@ -36,10 +36,9 @@
 
 use crate::prelude::*;
 use std::io;
-use std::io::{Error, Write};
 use hashes::Hash;
 use internals::hex::Case::Lower;
-use crate::ScriptBuf;
+use crate::{ScriptBuf};
 use crate::{OutPoint};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash};
@@ -65,6 +64,7 @@ use crate::psbt::serialize::Serialize;
 /// *The inputs hash is used to guarantee the uniqueness of the payload sig.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct ProviderRegistrationPayload {
     version: u16,
     provider_type: u16,
@@ -109,14 +109,14 @@ impl ProviderRegistrationPayload {
 }
 
 impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
-    fn base_payload_data_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn base_payload_data_encode<W: io::Write>(&self, mut s: W) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.version.consensus_encode(&mut s)?;
         len += self.provider_type.consensus_encode(&mut s)?;
         len += self.provider_mode.consensus_encode(&mut s)?;
         len += self.collateral_outpoint.consensus_encode(&mut s)?;
         len += self.ip_address.consensus_encode(&mut s)?;
-        len += u16::swap_bytes(self.port).consensus_encode(&mut s)?;
+        len += self.port.consensus_encode(&mut s)?;
         len += self.owner_key_hash.consensus_encode(&mut s)?;
         len += self.operator_public_key.consensus_encode(&mut s)?;
         len += self.voting_key_hash.consensus_encode(&mut s)?;
@@ -181,31 +181,30 @@ impl Decodable for ProviderRegistrationPayload {
 mod tests {
     use core::str::FromStr;
     use std::net::Ipv4Addr;
-    use hashes::Hash;
     use hashes::hex::{FromHex};
-    use consensus::{deserialize};
-    use ::{Transaction};
-    use ::{InputsHash, Txid};
-    use ::{Network, OutPoint};
-    use misc::signed_msg_hash;
-    use ::{hex, PrivateKey};
-    use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-    use ::{Address};
-    use signer::{sign_hash};
-    use ::{TxIn, TxOut};
-    use blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
-    use blockdata::transaction::special_transaction::TransactionPayload::ProviderRegistrationPayloadType;
-    use bls_sig_utils::BLSPublicKey;
-    use ::{PubkeyHash};
-    use transaction::outpoint::OutPoint;
-    use transaction::outpoint::ParseOutPointError::Txid;
+    use internals::hex::display::DisplayHex;
+    use crate::consensus::{deserialize};
+    use crate::{PrivateKey, Transaction, Txid, Witness};
+    use crate::{Network, OutPoint};
+    use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+    use crate::{Address};
+    use crate::{TxIn, TxOut};
+    use crate::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
+    use crate::transaction::special_transaction::TransactionPayload::ProviderRegistrationPayloadType;
+    use crate::{PubkeyHash};
+    use crate::bls_sig_utils::BLSPublicKey;
+    use crate::hash_types::InputsHash;
+    use crate::internal_macros::hex;
+    use crate::psbt::serialize::Serialize;
+    use crate::sign_message::signed_msg_hash;
+    use crate::signer::sign_hash;
 
     #[test]
     fn test_collateral_provider_registration_transaction() {
         // This is a test for testnet
         let network = Network::Testnet;
 
-        let expected_transaction_bytes = hex::decode("0300010001ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58010000006b483045022100fe8fec0b3880bcac29614348887769b0b589908e3f5ec55a6cf478a6652e736502202f30430806a6690524e4dd599ba498e5ff100dea6a872ebb89c2fd651caa71ed012103d85b25d6886f0b3b8ce1eef63b720b518fad0b8e103eba4e85b6980bfdda2dfdffffffff018e37807e090000001976a9144ee1d4e5d61ac40a13b357ac6e368997079678c888ac00000000fd1201010000000000ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab580000000000000000000000000000ffff010205064e1f3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfad38a30fafe61575db40f05ab0a08d55119b0aad300001976a9144fbc8fb6e11e253d77e5a9c987418e89cf4a63d288ac3477990b757387cb0406168c2720acf55f83603736a314a37d01b135b873a27b411fb37e49c1ff2b8057713939a5513e6e711a71cff2e517e6224df724ed750aef1b7f9ad9ec612b4a7250232e1e400da718a9501e1d9a5565526e4b1ff68c028763").unwrap();
+        let expected_transaction_bytes = hex!("0300010001ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58010000006b483045022100fe8fec0b3880bcac29614348887769b0b589908e3f5ec55a6cf478a6652e736502202f30430806a6690524e4dd599ba498e5ff100dea6a872ebb89c2fd651caa71ed012103d85b25d6886f0b3b8ce1eef63b720b518fad0b8e103eba4e85b6980bfdda2dfdffffffff018e37807e090000001976a9144ee1d4e5d61ac40a13b357ac6e368997079678c888ac00000000fd1201010000000000ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab580000000000000000000000000000ffff010205064e1f3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfad38a30fafe61575db40f05ab0a08d55119b0aad300001976a9144fbc8fb6e11e253d77e5a9c987418e89cf4a63d288ac3477990b757387cb0406168c2720acf55f83603736a314a37d01b135b873a27b411fb37e49c1ff2b8057713939a5513e6e711a71cff2e517e6224df724ed750aef1b7f9ad9ec612b4a7250232e1e400da718a9501e1d9a5565526e4b1ff68c028763");
 
         let expected_transaction: Transaction = deserialize(expected_transaction_bytes.as_slice()).expect("expected a transaction");
 
@@ -244,14 +243,14 @@ mod tests {
 
         let collateral_outpoint = OutPoint {
             txid: collateral_hash,
-            vout: collateral_index,
+            vout: 0,
         };
         assert_eq!(expected_provider_registration_payload.collateral_outpoint, collateral_outpoint);
 
         let address = Ipv4Addr::from_str("1.2.5.6").expect("expected an ipv4 address");
         let [a, b, c, d] = address.octets();
         let ipv6_bytes: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
-        assert_eq!(ipv6_bytes.to_hex(), expected_provider_registration_payload.ip_address.to_le_bytes().to_hex());
+        assert_eq!(ipv6_bytes.to_lower_hex_string(), expected_provider_registration_payload.ip_address.to_le_bytes().to_lower_hex_string());
 
         let port = 19999;
         assert_eq!(port, expected_provider_registration_payload.port);
@@ -277,11 +276,11 @@ mod tests {
         assert_eq!(operator_reward, expected_provider_registration_payload.operator_reward);
 
         // We should verify the script payouts match
-        let script_payout = payout_address.script_pubkey();
+        let script_payout = payout_address.assume_checked().script_pubkey();
         assert_eq!(script_payout, expected_provider_registration_payload.script_payout);
 
         let expected_base64_signature = "H7N+ScH/K4BXcTk5pVE+bnEacc/y5RfmIk33JO11Cu8bf5rZ7GErSnJQIy4eQA2nGKlQHh2aVWVSbksf9owCh2M=";
-        let signature = sign_hash(message_digest.as_inner().as_slice(), collateral_private_key.to_bytes().as_slice()).expect("expected to sign message digest");
+        let signature = sign_hash(message_digest.serialize().as_slice(), collateral_private_key.to_bytes().as_slice()).expect("expected to sign message digest");
         let base64_signature = base64::encode(signature.as_slice());
 
         assert_eq!(expected_base64_signature, base64_signature, "message digest signatures don't match");
@@ -295,11 +294,11 @@ mod tests {
             lock_time: 0,
             input: vec![TxIn {
                 previous_output: OutPoint::new(collateral_hash, 1),
-                script_sig: collateral_address.script_pubkey(),
+                script_sig: collateral_address.assume_checked().script_pubkey(),
                 sequence: 4294967295,
-                witness: Default::default(),
+                witness: Witness::new(),
             }],
-            output: vec![TxOut::new_from_address(40777037710, &output_address0)],
+            output: vec![TxOut::new_from_address(40777037710, &output_address0.assume_checked())],
             special_transaction_payload: Some(ProviderRegistrationPayloadType(ProviderRegistrationPayload {
                 version: provider_registration_payload_version,
                 provider_type,
@@ -340,8 +339,7 @@ mod tests {
 
         let expected_provider_registration_payload = expected_transaction.special_transaction_payload.clone().unwrap().to_provider_registration_payload().expect("expected to get a provider registration payload");
 
-        let tx_id_bytes = Vec::from_hex("717d2d4a7d583da184872f4a07e35d897a1be9dd9875b4c017c81cf772e36694").expect("expected to decode tx id");
-        let tx_id = Txid::new(tx_id_bytes);
+        let tx_id = Txid::from_hex("717d2d4a7d583da184872f4a07e35d897a1be9dd9875b4c017c81cf772e36694").unwrap();
         let input_transaction_hash_value = InputsHash::from_hex("ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58").expect("expected to decode inputs hash");
 
         let input_address0 = "yQxPwSSicYgXiU22k4Ysq464VxRtgbnvpJ";
@@ -366,14 +364,14 @@ mod tests {
 
         let collateral_outpoint = OutPoint {
             txid: collateral_hash,
-            vout: collateral_index,
+            vout: 0,
         };
         assert_eq!(expected_provider_registration_payload.collateral_outpoint, collateral_outpoint);
 
         let address = Ipv4Addr::from_str("1.1.1.1").expect("expected an ipv4 address");
         let [a, b, c, d] = address.octets();
         let ipv6_bytes: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
-        assert_eq!(ipv6_bytes.to_hex(), expected_provider_registration_payload.ip_address.to_le_bytes().to_hex());
+        assert_eq!(ipv6_bytes.to_lower_hex_string(), expected_provider_registration_payload.ip_address.to_le_bytes().to_lower_hex_string());
 
         let port = 19999;
         assert_eq!(port, expected_provider_registration_payload.port);
@@ -399,11 +397,11 @@ mod tests {
         assert_eq!(operator_reward, expected_provider_registration_payload.operator_reward);
 
         // We should verify the script payouts match
-        let script_payout = payout_address.script_pubkey();
+        let script_payout = payout_address.assume_checked().script_pubkey();
         assert_eq!(script_payout, expected_provider_registration_payload.script_payout);
 
         let expected_base64_signature = "H7N+ScH/K4BXcTk5pVE+bnEacc/y5RfmIk33JO11Cu8bf5rZ7GErSnJQIy4eQA2nGKlQHh2aVWVSbksf9owCh2M=";
-        let signature = sign_hash(message_digest.as_inner().as_slice(), collateral_private_key.to_bytes().as_slice()).expect("expected to sign message digest");
+        let signature = sign_hash(base64::decode(&expected_base64_signature).expect("expected valid base64").as_slice(), collateral_private_key.to_bytes().as_slice()).expect("expected to sign message digest");
         let base64_signature = base64::encode(signature.as_slice());
 
         assert_eq!(expected_base64_signature, base64_signature, "message digest signatures don't match");
@@ -417,11 +415,11 @@ mod tests {
             lock_time: 0,
             input: vec![TxIn {
                 previous_output: OutPoint::new(collateral_hash, 1),
-                script_sig: collateral_address.script_pubkey(),
+                script_sig: collateral_address.assume_checked().script_pubkey(),
                 sequence: 4294967295,
-                witness: Default::default(),
+                witness: Witness::new(),
             }],
-            output: vec![TxOut::new_from_address(40777037710, &output_address0)],
+            output: vec![TxOut::new_from_address(40777037710, &output_address0.assume_checked())],
             special_transaction_payload: Some(ProviderRegistrationPayloadType(ProviderRegistrationPayload {
                 version: provider_registration_payload_version,
                 provider_type,

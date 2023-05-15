@@ -144,6 +144,16 @@ mod newtypes {
 
     impl_asref_push_bytes!(PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash);
 
+    impl Txid {
+        pub fn from_hex(s: &str) -> Result<Txid, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
+
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
+    }
+
     impl InputsHash {
         pub fn from_hex(s: &str) -> Result<InputsHash, Error> {
             Ok(Self(sha256d::Hash::from_str(s)?))

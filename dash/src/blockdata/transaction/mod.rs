@@ -164,6 +164,7 @@ impl<E> EncodeSigningDataResult<E> {
 /// for 0-input transactions, which results in unambiguously parseable transactions.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct Transaction {
     /// The protocol version, is currently expected to be 1 or 2 (BIP 68).
     pub version: u16,
@@ -341,7 +342,7 @@ impl Transaction {
         }
 
         let mut engine = LegacySighash::engine();
-        self.encode_signing_data_to(&mut engine, input_index, script_pubkey, sighash_u32);
+        let _ = self.encode_signing_data_to(&mut engine, input_index, script_pubkey, sighash_u32);
         LegacySighash::from_engine(engine)
     }
 
@@ -1115,7 +1116,7 @@ mod tests {
     fn test_segwit_tx_decode() {
         let tx_bytes = Vec::from_hex("010000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff3603da1b0e00045503bd5704c7dd8a0d0ced13bb5785010800000000000a636b706f6f6c122f4e696e6a61506f6f6c2f5345475749542fffffffff02b4e5a212000000001976a914876fbb82ec05caa6af7a3b5e5a983aae6c6cc6d688ac0000000000000000266a24aa21a9edf91c46b49eb8a29089980f02ee6b57e7d63d33b18b4fddac2bcd7db2a39837040120000000000000000000000000000000000000000000000000000000000000000000000000").unwrap();
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
-        assert_eq!(tx.weight(), 780);
+        assert_eq!(tx.weight(), Weight::from_wu(780));
         serde_round_trip!(tx);
 
         let consensus_encoded = serialize(&tx);

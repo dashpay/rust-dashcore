@@ -30,7 +30,7 @@ crate::internal_macros::hash_type! {
     64,
     false,
     "Output of the SipHash24 hash function.",
-    "crate::json_hex_string::len_8"
+    "crate::util::json_hex_string::len_8"
 }
 
 #[cfg(not(fuzzing))]

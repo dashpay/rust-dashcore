@@ -29,6 +29,7 @@ use crate::prelude::*;
 /// The request height should be the height at which the specified quorum is active on core.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct AssetUnlockRequestInfo {
     /// The core request height of the transaction. This should match a period where the quorum_hash
     /// is still active
