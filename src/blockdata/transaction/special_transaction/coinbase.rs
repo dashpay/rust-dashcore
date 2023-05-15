@@ -33,6 +33,9 @@ pub struct CoinbasePayload {
     height: u32,
     merkle_root_masternode_list: MerkleRootMasternodeList,
     merkle_root_quorums: MerkleRootQuorums,
+    best_cl_height: u32,
+    best_cl_signature: Vec<u8>,
+    asset_locked_amount: u64,
 }
 
 impl Encodable for CoinbasePayload {
@@ -42,6 +45,9 @@ impl Encodable for CoinbasePayload {
         len += self.height.consensus_encode(&mut s)?;
         len += self.merkle_root_masternode_list.consensus_encode(&mut s)?;
         len += self.merkle_root_quorums.consensus_encode(&mut s)?;
+        len += self.best_cl_height.consensus_encode(&mut s)?;
+        len += self.best_cl_signature.consensus_encode(&mut s)?;
+        len += self.asset_locked_amount.consensus_encode(&mut s)?;
         Ok(len)
     }
 }
@@ -52,11 +58,17 @@ impl Decodable for CoinbasePayload {
         let height = u32::consensus_decode(&mut d)?;
         let merkle_root_masternode_list = MerkleRootMasternodeList::consensus_decode(&mut d)?;
         let merkle_root_quorums = MerkleRootQuorums::consensus_decode(&mut d)?;
+        let best_cl_height = u32::consensus_decode(&mut d)?;
+        let best_cl_signature = Vec::<u8>::consensus_decode(&mut d)?;
+        let asset_locked_amount = u64::consensus_decode(&mut d)?;
         Ok(CoinbasePayload {
             version,
             height,
             merkle_root_masternode_list,
-            merkle_root_quorums
+            merkle_root_quorums,
+            best_cl_height,
+            best_cl_signature,
+            asset_locked_amount,
         })
     }
 }
