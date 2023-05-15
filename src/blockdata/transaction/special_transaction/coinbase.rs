@@ -20,10 +20,8 @@
 
 use prelude::Vec;
 
-use std::io::ErrorKind;
-
 use io;
-use io::{Error, Write};
+use io::{Error, Write, ErrorKind};
 use ::{MerkleRootMasternodeList, MerkleRootQuorums};
 use consensus::{Decodable, Encodable, encode};
 
