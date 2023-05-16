@@ -18,7 +18,7 @@
 //!
 
 use std::fmt;
-use crate::internal_macros::impl_bytes_newtype;
+use crate::internal_macros::{hex, impl_bytes_newtype};
 use internals::{impl_array_newtype};
 use internals::hex::display::DisplayHex;
 
@@ -32,7 +32,7 @@ impl_array_newtype!(BLSPublicKey, u8, 48);
 impl BLSPublicKey {
     pub fn from_hex(s: &str) -> Result<BLSPublicKey, hashes::hex::Error> {
         use hashes::hex::FromHex;
-        let v: Vec<u8> = Vec::from_hex(s)?;
+        let v: Vec<u8> = hex!(s)?;
         let mut payload: [u8;48] = [0; 48];
         payload.copy_from_slice(v.as_slice());
         Ok(Self(payload))

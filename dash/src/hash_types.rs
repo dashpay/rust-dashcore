@@ -145,36 +145,43 @@ mod newtypes {
     impl_asref_push_bytes!(PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash);
 
     impl Txid {
+        /// Create a Txid from a string
         pub fn from_hex(s: &str) -> Result<Txid, Error> {
             Ok(Self(sha256d::Hash::from_str(s)?))
         }
 
+        /// Convert a Txid to a string
         pub fn to_hex(&self) -> String {
             self.0.to_string()
         }
     }
 
     impl InputsHash {
+        /// Create an InputsHash from a string
         pub fn from_hex(s: &str) -> Result<InputsHash, Error> {
             Ok(Self(sha256d::Hash::from_str(s)?))
         }
 
+        /// Convert an InputsHash to a string
         pub fn to_hex(&self) -> String {
             self.0.to_string()
         }
     }
 
     impl SpecialTransactionPayloadHash {
+        /// Create a SpecialTransactionPayloadHash from a string
         pub fn to_hex(&self) -> String {
             self.0.to_string()
         }
     }
 
     impl PubkeyHash {
+        /// Create a PubkeyHash from a string
         pub fn from_hex(s: &str) -> Result<PubkeyHash, Error> {
             Ok(Self(hash160::Hash::from_str(s)?))
         }
 
+        /// Convert a PubkeyHash to a string
         pub fn to_hex(&self) -> String {
             self.0.as_byte_array().to_hex_string(Case::Lower)
         }
