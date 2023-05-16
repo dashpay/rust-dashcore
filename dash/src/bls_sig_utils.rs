@@ -18,24 +18,25 @@
 //!
 
 use std::fmt;
-use crate::internal_macros::{hex, impl_bytes_newtype};
+use hex::FromHexError;
+use crate::internal_macros::{impl_bytes_newtype};
 use internals::{impl_array_newtype};
 use internals::hex::display::DisplayHex;
 
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core
 #[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
 #[derive(Clone, Copy, Debug)]
-pub struct BLSPublicKey([u8;48]);
+pub struct BLSPublicKey([u8; 48]);
 
 impl_array_newtype!(BLSPublicKey, u8, 48);
 
 impl BLSPublicKey {
-    pub fn from_hex(s: &str) -> Result<BLSPublicKey, hashes::hex::Error> {
-        use hashes::hex::FromHex;
-        let v: Vec<u8> = hex!(s)?;
-        let mut payload: [u8;48] = [0; 48];
-        payload.copy_from_slice(v.as_slice());
-        Ok(Self(payload))
+    pub fn from_hex(s: &str) -> Result<BLSPublicKey, FromHexError> {
+        hex::decode(s).map(|v| {
+            let mut payload: [u8; 48] = [0; 48];
+            payload.copy_from_slice(v.as_slice());
+            Self(payload)
+        })
     }
 
     pub fn to_hex(&self) -> String {
@@ -47,7 +48,7 @@ impl BLSPublicKey {
 crate::serde_utils::serde_string_impl!(BLSPublicKey, "a BLS Public Key");
 
 impl core::str::FromStr for BLSPublicKey {
-    type Err = hashes::hex::Error;
+    type Err = FromHexError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         BLSPublicKey::from_hex(s)
@@ -63,7 +64,7 @@ impl fmt::Display for BLSPublicKey {
 /// A BLS Signature is 96 bytes in the scheme used for Dash Core
 #[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
 #[derive(Clone, Copy)]
-pub struct BLSSignature([u8;96]);
+pub struct BLSSignature([u8; 96]);
 
 impl_array_newtype!(BLSSignature, u8, 96);
 impl_bytes_newtype!(BLSSignature, 96);
