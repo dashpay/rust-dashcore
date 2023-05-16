@@ -21,7 +21,6 @@ use std::fmt;
 use crate::internal_macros::impl_bytes_newtype;
 use internals::{impl_array_newtype};
 use internals::hex::display::DisplayHex;
-use crate::serde_utils::{serde_string_impl};
 
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core
 #[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
@@ -44,7 +43,8 @@ impl BLSPublicKey {
     }
 }
 
-serde_string_impl!(BLSPublicKey, "a BLS Public Key");
+#[cfg(feature = "serde")]
+crate::serde_utils::serde_string_impl!(BLSPublicKey, "a BLS Public Key");
 
 impl core::str::FromStr for BLSPublicKey {
     type Err = hashes::hex::Error;

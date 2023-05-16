@@ -135,7 +135,6 @@ impl std::error::Error for Error {
             | NonMinimalVarInt
             | ParseFailed(_)
             | UnsupportedSegwitFlag(_)
-            | Error::UnsupportedSegwitFlag(..)
             | Error::UnknownSpecialTransactionType(..)
             | Error::WrongSpecialTransactionPayloadConversion { .. }
             | Error::NonStandardScriptPayout(..)

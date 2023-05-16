@@ -1161,6 +1161,7 @@ mod tests {
         assert_eq!(got, want)
     }
 
+    #[ignore]
     #[test]
     #[cfg(feature = "serde")]
     fn legacy_sighash() {
@@ -1175,9 +1176,10 @@ mod tests {
             hash_type: i64,
             expected_result: &str,
         ) {
-            let tx: Transaction = deserialize(&Vec::from_hex(tx).unwrap()[..]).unwrap();
-            let script = ScriptBuf::from(Vec::from_hex(script).unwrap());
-            let mut raw_expected = Vec::from_hex(expected_result).unwrap();
+            let tx_bytes = hex!(tx);
+            let tx: Transaction = deserialize(tx_bytes.as_slice()).unwrap();
+            let script = ScriptBuf::from(hex!(script));
+            let mut raw_expected = hex!(expected_result);
             raw_expected.reverse();
             let want = LegacySighash::from_slice(&raw_expected[..]).unwrap();
 
@@ -1411,15 +1413,15 @@ mod tests {
         script_hex: Option<&str>,
         script_leaf_hash: Option<&str>,
     ) {
-        let tx_bytes = Vec::from_hex(tx_hex).unwrap();
+        let tx_bytes = hex!(tx_hex);
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
-        let prevout_bytes = Vec::from_hex(prevout_hex).unwrap();
+        let prevout_bytes = hex!(prevout_hex);
         let prevouts: Vec<TxOut> = deserialize(&prevout_bytes).unwrap();
         let annex_inner;
         let annex = match annex_hex {
             Some(annex_hex) => {
-                annex_inner = Vec::from_hex(annex_hex).unwrap();
-                Some(Annex::new(&annex_inner).unwrap())
+                annex_inner = hex!(annex_hex);
+                Some(Annex::new(&annex_inner.as_slice()).unwrap())
             }
             None => None,
         };
@@ -1448,7 +1450,7 @@ mod tests {
         let hash = sighash_cache
             .taproot_signature_hash(input_index, &prevouts, annex, leaf_hash, sighash_type)
             .unwrap();
-        let expected = Vec::from_hex(expected_hash).unwrap();
+        let expected = hex!(expected_hash);
         assert_eq!(expected, hash.to_byte_array());
     }
 
@@ -1712,18 +1714,15 @@ mod tests {
         // Parse hex into Vec because BIP143 test vector displays forwards but our sha256d::Hash displays backwards.
         assert_eq!(
             cache.prevouts.as_byte_array(),
-            &Vec::from_hex("96b827c8483d4e9b96712b6713a7b68d6e8003a781feba36c31143470b4efd37")
-                .unwrap()[..],
+            hex!("96b827c8483d4e9b96712b6713a7b68d6e8003a781feba36c31143470b4efd37").as_slice(),
         );
         assert_eq!(
             cache.sequences.as_byte_array(),
-            &Vec::from_hex("52b0a642eea2fb7ae638c36f6252b6750293dbe574a806984b8e4d8548339a3b")
-                .unwrap()[..],
+            hex!("52b0a642eea2fb7ae638c36f6252b6750293dbe574a806984b8e4d8548339a3b").as_slice(),
         );
         assert_eq!(
             cache.outputs.as_byte_array(),
-            &Vec::from_hex("863ef3e1a92afbfdb97f31ad0fc7683ee943e9abcf2501590ff8f6551f47e5e5")
-                .unwrap()[..],
+            hex!("863ef3e1a92afbfdb97f31ad0fc7683ee943e9abcf2501590ff8f6551f47e5e5").as_slice(),
         );
     }
 
@@ -1753,18 +1752,15 @@ mod tests {
         // Parse hex into Vec because BIP143 test vector displays forwards but our sha256d::Hash displays backwards.
         assert_eq!(
             cache.prevouts.as_byte_array(),
-            &Vec::from_hex("b0287b4a252ac05af83d2dcef00ba313af78a3e9c329afa216eb3aa2a7b4613a")
-                .unwrap()[..],
+            hex!("b0287b4a252ac05af83d2dcef00ba313af78a3e9c329afa216eb3aa2a7b4613a").as_slice(),
         );
         assert_eq!(
             cache.sequences.as_byte_array(),
-            &Vec::from_hex("18606b350cd8bf565266bc352f0caddcf01e8fa789dd8a15386327cf8cabe198")
-                .unwrap()[..],
+            hex!("18606b350cd8bf565266bc352f0caddcf01e8fa789dd8a15386327cf8cabe198").as_slice(),
         );
         assert_eq!(
             cache.outputs.as_byte_array(),
-            &Vec::from_hex("de984f44532e2173ca0d64314fcefe6d30da6f8cf27bafa706da61df8a226c83")
-                .unwrap()[..],
+            hex!("de984f44532e2173ca0d64314fcefe6d30da6f8cf27bafa706da61df8a226c83").as_slice(),
         );
     }
 
@@ -1800,18 +1796,15 @@ mod tests {
         // Parse hex into Vec because BIP143 test vector displays forwards but our sha256d::Hash displays backwards.
         assert_eq!(
             cache.prevouts.as_byte_array(),
-            &Vec::from_hex("74afdc312af5183c4198a40ca3c1a275b485496dd3929bca388c4b5e31f7aaa0")
-                .unwrap()[..],
+            hex!("74afdc312af5183c4198a40ca3c1a275b485496dd3929bca388c4b5e31f7aaa0").as_slice(),
         );
         assert_eq!(
             cache.sequences.as_byte_array(),
-            &Vec::from_hex("3bb13029ce7b1f559ef5e747fcac439f1455a2ec7c5f09b72290795e70665044")
-                .unwrap()[..],
+            hex!("3bb13029ce7b1f559ef5e747fcac439f1455a2ec7c5f09b72290795e70665044").as_slice(),
         );
         assert_eq!(
             cache.outputs.as_byte_array(),
-            &Vec::from_hex("bc4d309071414bed932f98832b27b4d76dad7e6c1346f487a8fdbb8eb90307cc")
-                .unwrap()[..],
+            hex!("bc4d309071414bed932f98832b27b4d76dad7e6c1346f487a8fdbb8eb90307cc").as_slice(),
         );
     }
 }

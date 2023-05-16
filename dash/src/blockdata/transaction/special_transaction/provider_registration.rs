@@ -116,7 +116,7 @@ impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
         len += self.provider_mode.consensus_encode(&mut s)?;
         len += self.collateral_outpoint.consensus_encode(&mut s)?;
         len += self.ip_address.consensus_encode(&mut s)?;
-        len += self.port.consensus_encode(&mut s)?;
+        len += u16::swap_bytes(self.port).consensus_encode(&mut s)?;
         len += self.owner_key_hash.consensus_encode(&mut s)?;
         len += self.operator_public_key.consensus_encode(&mut s)?;
         len += self.voting_key_hash.consensus_encode(&mut s)?;
@@ -181,6 +181,7 @@ impl Decodable for ProviderRegistrationPayload {
 mod tests {
     use core::str::FromStr;
     use std::net::Ipv4Addr;
+    use hashes::Hash;
     use hashes::hex::{FromHex};
     use internals::hex::display::DisplayHex;
     use crate::consensus::{deserialize};
@@ -195,7 +196,6 @@ mod tests {
     use crate::bls_sig_utils::BLSPublicKey;
     use crate::hash_types::InputsHash;
     use crate::internal_macros::hex;
-    use crate::psbt::serialize::Serialize;
     use crate::sign_message::signed_msg_hash;
     use crate::signer::sign_hash;
 
@@ -220,15 +220,11 @@ mod tests {
         //    ycBFJGv7V95aSs6XvMewFyp1AMngeRHBwy
 
         let tx_id = Txid::from_hex("e65f550356250100513aa9c260400562ac8ee1b93ae1cc1214cc9f6830227b51").expect("expected to decode tx id");
-        let input_transaction_hash_value = InputsHash::from_hex("ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58").expect("expected to decode inputs hash");
-        let input_address0 = "yQxPwSSicYgXiU22k4Ysq464VxRtgbnvpJ";
-        let input_private_key0 = "cVfGhHY18Dx1EfZxFRkrvzVpB3wPtJGJWW6QvEtzMcfXSShoZyWV";
         let output_address0 = Address::from_str("yTWY6DsS4HBGs2JwDtnvVcpykLkbvtjUte").expect("expected to be able to get output address");
         let collateral_address = Address::from_str("yeNVS6tFeQNXJVkjv6nm6gb7PtTERV5dGh").expect("expected to be able to get collateral address");
         let collateral_private_key = PrivateKey::from_wif("cTVm7EkgzNBPcwAKGYHfvyK8cyrRAC8n3SUUw8qjLqCg2rpcczfo").expect("expected valid base 58");
         let collateral_hash = Txid::from_hex("58ab8ba7dce591c745f8b78ee49156d13277fff20880855f7cda501705439aca").expect("expected to decode collateral hash");
         let collateral_index = 0;
-        let collateral_outpoint = OutPoint::new(collateral_hash, collateral_index);
         let payout_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs").expect("expected a valid address");
 
         let payload_collateral_string = expected_provider_registration_payload.payload_collateral_string(network).expect("expected to produce a payload collateral string");
@@ -243,13 +239,13 @@ mod tests {
 
         let collateral_outpoint = OutPoint {
             txid: collateral_hash,
-            vout: 0,
+            vout: collateral_index
         };
         assert_eq!(expected_provider_registration_payload.collateral_outpoint, collateral_outpoint);
 
         let address = Ipv4Addr::from_str("1.2.5.6").expect("expected an ipv4 address");
         let [a, b, c, d] = address.octets();
-        let ipv6_bytes: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
+        let ipv6_bytes: [u8;16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
         assert_eq!(ipv6_bytes.to_lower_hex_string(), expected_provider_registration_payload.ip_address.to_le_bytes().to_lower_hex_string());
 
         let port = 19999;
@@ -280,7 +276,7 @@ mod tests {
         assert_eq!(script_payout, expected_provider_registration_payload.script_payout);
 
         let expected_base64_signature = "H7N+ScH/K4BXcTk5pVE+bnEacc/y5RfmIk33JO11Cu8bf5rZ7GErSnJQIy4eQA2nGKlQHh2aVWVSbksf9owCh2M=";
-        let signature = sign_hash(message_digest.serialize().as_slice(), collateral_private_key.to_bytes().as_slice()).expect("expected to sign message digest");
+        let signature = sign_hash(message_digest.as_byte_array().as_slice(), collateral_private_key.to_bytes().as_slice()).expect("expected to sign message digest");
         let base64_signature = base64::encode(signature.as_slice());
 
         assert_eq!(expected_base64_signature, base64_signature, "message digest signatures don't match");
@@ -292,11 +288,11 @@ mod tests {
         let mut transaction = Transaction {
             version: 3,
             lock_time: 0,
-            input: vec![TxIn {
+            input: vec![TxIn{
                 previous_output: OutPoint::new(collateral_hash, 1),
                 script_sig: collateral_address.assume_checked().script_pubkey(),
                 sequence: 4294967295,
-                witness: Witness::new(),
+                witness: Default::default()
             }],
             output: vec![TxOut::new_from_address(40777037710, &output_address0.assume_checked())],
             special_transaction_payload: Some(ProviderRegistrationPayloadType(ProviderRegistrationPayload {
@@ -313,7 +309,7 @@ mod tests {
                 script_payout,
                 inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
                 payload_sig: signature.to_vec(),
-            })),
+            }))
         };
         // We are currently not supporting transaction signing
         // So just assume signature is correct
@@ -340,20 +336,14 @@ mod tests {
         let expected_provider_registration_payload = expected_transaction.special_transaction_payload.clone().unwrap().to_provider_registration_payload().expect("expected to get a provider registration payload");
 
         let tx_id = Txid::from_hex("717d2d4a7d583da184872f4a07e35d897a1be9dd9875b4c017c81cf772e36694").unwrap();
-        let input_transaction_hash_value = InputsHash::from_hex("ca9a43051750da7c5f858008f2ff7732d15691e48eb7f845c791e5dca78bab58").expect("expected to decode inputs hash");
 
-        let input_address0 = "yQxPwSSicYgXiU22k4Ysq464VxRtgbnvpJ";
-        let input_private_key0 = "cVfGhHY18Dx1EfZxFRkrvzVpB3wPtJGJWW6QvEtzMcfXSShoZyWV";
         let output_address0 = Address::from_str("yTWY6DsS4HBGs2JwDtnvVcpykLkbvtjUte").expect("expected to be able to get output address");
         let collateral_address = Address::from_str("yeNVS6tFeQNXJVkjv6nm6gb7PtTERV5dGh").expect("expected to be able to get collateral address");
         let collateral_private_key = PrivateKey::from_wif("cTVm7EkgzNBPcwAKGYHfvyK8cyrRAC8n3SUUw8qjLqCg2rpcczfo").expect("expected valid base 58");
         let collateral_hash = Txid::from_hex("58ab8ba7dce591c745f8b78ee49156d13277fff20880855f7cda501705439aca").expect("expected to decode collateral hash");
-        let collateral_index = 0;
-        let collateral_outpoint = OutPoint::new(collateral_hash, collateral_index);
         let payout_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs").expect("expected a valid address");
 
         let payload_collateral_string = expected_provider_registration_payload.payload_collateral_string(network).expect("expected to produce a payload collateral string");
-        let message_digest = signed_msg_hash(payload_collateral_string.as_str());
 
         let provider_registration_payload_version = 1;
         assert_eq!(expected_provider_registration_payload.version, provider_registration_payload_version);
