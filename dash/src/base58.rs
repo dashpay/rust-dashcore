@@ -70,7 +70,6 @@ impl fmt::Display for Error {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl ::std::error::Error for Error {}
 
 /// Vector-like object that holds the first 100 elements on the stack. If more space is needed it

@@ -158,7 +158,6 @@ impl fmt::Display for ParseOutPointError {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl error::Error for ParseOutPointError {
     fn cause(&self) -> Option<&dyn error::Error> {
         match *self {

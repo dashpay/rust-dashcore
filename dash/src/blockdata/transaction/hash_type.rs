@@ -36,7 +36,6 @@ impl fmt::Display for NonStandardSighashType {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl error::Error for NonStandardSighashType {}
 
 /// Legacy Hashtype of an input's signature
@@ -177,7 +176,6 @@ impl fmt::Display for SighashTypeParseError {
     }
 }
 
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 #[cfg(feature = "std")]
 impl ::std::error::Error for SighashTypeParseError {}
 
