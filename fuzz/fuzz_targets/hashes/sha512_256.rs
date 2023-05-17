@@ -1,30 +1,22 @@
-extern crate dashcore;
+use dashcore::hashes::{sha512_256, Hash, HashEngine};
+use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {
-    let _: Result<dashcore::blockdata::block::Block, _>= dashcore::consensus::encode::deserialize(data);
+    let mut engine = sha512_256::Hash::engine();
+    engine.input(data);
+    let eng_hash = sha512_256::Hash::from_engine(engine);
+
+    let hash = sha512_256::Hash::hash(data);
+    assert_eq!(&hash[..], &eng_hash[..]);
 }
 
-#[cfg(feature = "afl")]
-#[macro_use] extern crate afl;
-#[cfg(feature = "afl")]
-fn main() {
-    fuzz!(|data| {
-        do_test(&data);
-    });
-}
-
-#[cfg(feature = "honggfuzz")]
-#[macro_use] extern crate honggfuzz;
-#[cfg(feature = "honggfuzz")]
 fn main() {
     loop {
-        fuzz!(|data| {
-            do_test(data);
-        });
+        fuzz!(|d| { do_test(d) });
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, fuzzing))]
 mod tests {
     fn extend_vec_from_hex(hex: &str, out: &mut Vec<u8>) {
         let mut b = 0;
@@ -46,7 +38,7 @@ mod tests {
     #[test]
     fn duplicate_crash() {
         let mut a = Vec::new();
-        extend_vec_from_hex("00", &mut a);
+        extend_vec_from_hex("00000", &mut a);
         super::do_test(&a);
     }
 }

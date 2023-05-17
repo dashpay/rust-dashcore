@@ -1,30 +1,19 @@
-extern crate dashcore;
+use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {
-    let psbt: Result<dashcore::psbt::PartiallySignedTransaction, _> = dashcore::consensus::encode::deserialize(data);
+    let psbt: Result<dashcore::psbt::PartiallySignedTransaction, _> =
+        dashcore::psbt::Psbt::deserialize(data);
     match psbt {
-        Err(_) => {},
+        Err(_) => {}
         Ok(psbt) => {
-            let ser = dashcore::consensus::encode::serialize(&psbt);
-            let deser: dashcore::psbt::PartiallySignedTransaction  = dashcore::consensus::encode::deserialize(&ser).unwrap();
+            let ser = dashcore::psbt::Psbt::serialize(&psbt);
+            let deser = dashcore::psbt::Psbt::deserialize(&ser).unwrap();
             // Since the fuzz data could order psbt fields differently, we compare to our deser/ser instead of data
-            assert_eq!(ser, dashcore::consensus::encode::serialize(&deser));
+            assert_eq!(ser, dashcore::psbt::Psbt::serialize(&deser));
         }
     }
 }
 
-#[cfg(feature = "afl")]
-#[macro_use] extern crate afl;
-#[cfg(feature = "afl")]
-fn main() {
-    fuzz!(|data| {
-        do_test(&data);
-    });
-}
-
-#[cfg(feature = "honggfuzz")]
-#[macro_use] extern crate honggfuzz;
-#[cfg(feature = "honggfuzz")]
 fn main() {
     loop {
         fuzz!(|data| {
@@ -33,7 +22,7 @@ fn main() {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, fuzzing))]
 mod tests {
     fn extend_vec_from_hex(hex: &str, out: &mut Vec<u8>) {
         let mut b = 0;

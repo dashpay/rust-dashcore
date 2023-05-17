@@ -1,14 +1,15 @@
-extern crate dashcore;
+use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {
-    let tx_result: Result<dashcore::blockdata::transaction::Transaction, _> = dashcore::consensus::encode::deserialize(data);
+    let tx_result: Result<dashcore::blockdata::transaction::Transaction, _> =
+        dashcore::consensus::encode::deserialize(data);
     match tx_result {
-        Err(_) => {},
+        Err(_) => {}
         Ok(mut tx) => {
             let ser = dashcore::consensus::encode::serialize(&tx);
             assert_eq!(&ser[..], data);
             let len = ser.len();
-            let calculated_weight = tx.get_weight();
+            let calculated_weight = tx.weight().to_wu() as usize;
             for input in &mut tx.input {
                 input.witness = dashcore::blockdata::witness::Witness::default();
             }
@@ -21,22 +22,10 @@ fn do_test(data: &[u8]) {
             } else {
                 assert_eq!(no_witness_len * 3 + len, calculated_weight);
             }
-        },
+        }
     }
 }
 
-#[cfg(feature = "afl")]
-#[macro_use] extern crate afl;
-#[cfg(feature = "afl")]
-fn main() {
-    fuzz!(|data| {
-        do_test(&data);
-    });
-}
-
-#[cfg(feature = "honggfuzz")]
-#[macro_use] extern crate honggfuzz;
-#[cfg(feature = "honggfuzz")]
 fn main() {
     loop {
         fuzz!(|data| {
@@ -45,7 +34,7 @@ fn main() {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, fuzzing))]
 mod tests {
     fn extend_vec_from_hex(hex: &str, out: &mut Vec<u8>) {
         let mut b = 0;

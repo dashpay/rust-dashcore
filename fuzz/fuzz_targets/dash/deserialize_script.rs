@@ -1,12 +1,11 @@
-extern crate dashcore;
-
 use dashcore::address::Address;
-use dashcore::network::constants::Network;
 use dashcore::blockdata::script;
 use dashcore::consensus::encode;
+use dashcore::network::constants::Network;
+use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {
-    let s: Result<script::Script, _> = encode::deserialize(data);
+    let s: Result<script::ScriptBuf, _> = encode::deserialize(data);
     if let Ok(script) = s {
         let _: Result<Vec<script::Instruction>, script::Error> = script.instructions().collect();
 
@@ -16,13 +15,15 @@ fn do_test(data: &[u8]) {
                 return;
             }
             match ins.ok().unwrap() {
-                script::Instruction::Op(op) => { b = b.push_opcode(op); }
+                script::Instruction::Op(op) => {
+                    b = b.push_opcode(op);
+                }
                 script::Instruction::PushBytes(bytes) => {
                     // Any one-byte pushes, except -0, which can be interpreted as numbers, should be
                     // reserialized as numbers. (For -1 through 16, this will use special ops; for
                     // others it'll just reserialize them as pushes.)
                     if bytes.len() == 1 && bytes[0] != 0x80 && bytes[0] != 0x00 {
-                        if let Ok(num) = script::read_scriptint(bytes) {
+                        if let Ok(num) = script::read_scriptint(bytes.as_bytes()) {
                             b = b.push_int(num);
                         } else {
                             b = b.push_slice(bytes);
@@ -37,24 +38,12 @@ fn do_test(data: &[u8]) {
         assert_eq!(data, &encode::serialize(&script)[..]);
 
         // Check if valid address and if that address roundtrips.
-        if let Some(addr) = Address::from_script(&script, Network::Dash) {
+        if let Ok(addr) = Address::from_script(&script, Network::Dash) {
             assert_eq!(addr.script_pubkey(), script);
         }
     }
 }
 
-#[cfg(feature = "afl")]
-#[macro_use] extern crate afl;
-#[cfg(feature = "afl")]
-fn main() {
-    fuzz!(|data| {
-        do_test(&data);
-    });
-}
-
-#[cfg(feature = "honggfuzz")]
-#[macro_use] extern crate honggfuzz;
-#[cfg(feature = "honggfuzz")]
 fn main() {
     loop {
         fuzz!(|data| {
@@ -63,7 +52,7 @@ fn main() {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, fuzzing))]
 mod tests {
     fn extend_vec_from_hex(hex: &str, out: &mut Vec<u8>) {
         let mut b = 0;
