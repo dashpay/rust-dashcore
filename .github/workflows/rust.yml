@@ -14,7 +14,7 @@ jobs:
             env:
               DO_COV: true
               AS_DEPENDENCY: true
-              DO_NO_STD: true
+#              DO_NO_STD: true
           - rust: beta
             env:
               AS_DEPENDENCY: true
@@ -23,7 +23,7 @@ jobs:
             env:
               DO_BENCH: true
               AS_DEPENDENCY: true
-              DO_NO_STD: true
+#              DO_NO_STD: true
               DO_DOCS: true
           - rust: 1.65.0
             env:
