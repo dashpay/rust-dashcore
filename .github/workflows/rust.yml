@@ -18,7 +18,7 @@ jobs:
           - rust: beta
             env:
               AS_DEPENDENCY: true
-              DO_NO_STD: true
+#              DO_NO_STD: true
           - rust: nightly
             env:
               DO_BENCH: true
