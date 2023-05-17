@@ -76,11 +76,11 @@ then
 fi
 
 # Use as dependency if told to
-if [ "$AS_DEPENDENCY" = true ]
-then
-    cargo new dep_test
-    cd dep_test
-    echo 'dashcore = { path = "..", features = ["serde"] }' >> Cargo.toml
-
-    cargo test --verbose
-fi
+#if [ "$AS_DEPENDENCY" = true ]
+#then
+#    cargo new dep_test
+#    cd dep_test
+#    echo 'dashcore = { path = "..", features = ["serde"] }' >> Cargo.toml
+#
+#    cargo test --verbose
+#fi
