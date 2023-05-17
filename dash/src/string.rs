@@ -3,7 +3,7 @@
 //! Bitcoin string parsing utilities.
 //!
 //! This module provides utility types and traits
-//! to support handling and parsing strings within `rust-bitcoin`.
+//! to support handling and parsing strings within `rust-dash`.
 
 use core::fmt;
 

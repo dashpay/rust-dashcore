@@ -240,7 +240,7 @@ mod tests {
         use crate::{Address, AddressType, Network};
 
         let secp = secp256k1::Secp256k1::new();
-        let message = "rust-bitcoin MessageSignature test";
+        let message = "rust-dash MessageSignature test";
         let msg_hash = super::signed_msg_hash(message);
         let msg = secp256k1::Message::from(msg_hash);
 

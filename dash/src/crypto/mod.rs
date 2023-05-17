@@ -1,4 +1,4 @@
-// Rust Bitcoin Library - Written by the rust-bitcoin developers.
+// Rust Bitcoin Library - Written by the rust-dash developers.
 // SPDX-License-Identifier: CC0-1.0
 
 //! Cryptography
@@ -9,5 +9,5 @@
 pub mod ecdsa;
 pub mod key;
 pub mod sighash;
-// Contents re-exported in `bitcoin::taproot`.
+// Contents re-exported in `dash::taproot`.
 pub(crate) mod taproot;

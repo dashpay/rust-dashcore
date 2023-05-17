@@ -27,7 +27,7 @@ use crate::taproot::{LeafVersion, TapLeafHash, TapNodeHash};
 
 /// Bitcoin script slice.
 ///
-/// *[See also the `bitcoin::blockdata::script` module](crate::blockdata::script).*
+/// *[See also the `dash::blockdata::script` module](crate::blockdata::script).*
 ///
 /// `Script` is a script slice, the most primitive script type. It's usually seen in its borrowed
 /// form `&Script`. It is always encoded as a series of bytes representing the opcodes and data

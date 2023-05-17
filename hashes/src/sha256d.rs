@@ -61,7 +61,7 @@ mod tests {
 
         #[rustfmt::skip]
         let tests = vec![
-            // Test vector copied out of rust-bitcoin
+            // Test vector copied out of rust-dash
             Test {
                 input: "",
                 output: vec![

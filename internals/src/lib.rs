@@ -4,7 +4,7 @@
 //! # Rust DashCore Internal
 //!
 //! This crate is only meant to be used internally by crates in the
-//! [rust-bitcoin](https://github.com/rust-dashcore) ecosystem.
+//! [rust-dash](https://github.com/rust-dashcore) ecosystem.
 //!
 
 #![no_std]

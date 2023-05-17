@@ -2,7 +2,7 @@
 //!
 //! For remaining types see: ./serde_opcodes.rs
 //!
-//! If you find a type defined in `rust-bitcoin` that implements `Serialize` and does _not_ have a
+//! If you find a type defined in `rust-dash` that implements `Serialize` and does _not_ have a
 //! regression test please add it.
 //!
 //! Types/tests were found using, and are ordered by, the output of: `git grep -l Serialize`.

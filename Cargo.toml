@@ -1,5 +1,5 @@
 [workspace]
-members = ["dash", "hashes", "internals"]
+members = ["dash", "hashes", "internals", "fuzz"]
 
 [patch.crates-io.dashcore_hashes]
 path = "hashes"

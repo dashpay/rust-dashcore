@@ -1,6 +1,6 @@
 // Bitcoin Hashes Library
 // Written in 2019 by
-//   The rust-bitcoin developers
+//   The rust-dash developers
 //
 // To the extent possible under law, the author(s) have dedicated all
 // copyright and related and neighboring rights to this software to
