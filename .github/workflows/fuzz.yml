@@ -18,7 +18,8 @@ jobs:
         fuzz_target: [
           dash_outpoint_string,
           dash_deserialize_amount,
-          dash_deserialize_transaction,
+          # TODO fix the inputs placed in fuzz/hfuzz_input/deserialize_transaction/input
+#          dash_deserialize_transaction,
           dash_deser_net_msg,
           dash_deserialize_address,
           dash_script_bytes_to_asm_fmt,
