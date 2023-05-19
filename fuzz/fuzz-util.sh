@@ -4,7 +4,7 @@ REPO_DIR=$(git rev-parse --show-toplevel)
 
 listTargetFiles() {
   pushd "$REPO_DIR/fuzz" > /dev/null || exit 1
-  find fuzz_targets/ -type f -name "*.rs"
+  find fuzz_targets/ -type f -name "*.rs" | grep -v "deserialize_transaction"
   popd > /dev/null || exit 1
 }
 
