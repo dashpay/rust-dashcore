@@ -17,7 +17,7 @@
 //! The provider update registrar special transaction is used to update the owner controlled options
 //! for a masternode.
 //!
-//! It is defined in DIP3 https://github.com/dashpay/dips/blob/master/dip-0003.md as follows:
+//! It is defined in DIP3 [dip-0003](https://github.com/dashpay/dips/blob/master/dip-0003.md) as follows:
 //!
 //! To registrar update a masternode, the masternode owner must submit another special transaction
 //! (DIP2) to the network. This special transaction is called a Provider Update Registrar

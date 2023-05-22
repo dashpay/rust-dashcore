@@ -791,10 +791,6 @@ impl InputWeightPrediction {
 /// preceding compact size. The lenght of preceding compact size is computed and added inside the
 /// function for convenience.
 ///
-/// If you  have the transaction already constructed (except for signatures) with a dummy value for
-/// fee output you can use the return value of [`Transaction::script_pubkey_lens`] method directly
-/// as the second argument.
-///
 /// # Usage
 ///
 /// When signing a transaction one doesn't know the signature before knowing the transaction fee and

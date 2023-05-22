@@ -15,9 +15,9 @@
 //! Dash Special Transaction.
 //!
 //! A dash special transaction's purpose is to relay more data than just economic information.
-//! They are defined in DIP2 https://github.com/dashpay/dips/blob/master/dip-0002.md.
+//! They are defined in DIP2 [dip-0002](https://github.com/dashpay/dips/blob/master/dip-0002.md).
 //! The list of special transactions can be found here:
-//! https://github.com/dashpay/dips/blob/master/dip-0002-special-transactions.md
+//! [dip-0002-special-transactions](https://github.com/dashpay/dips/blob/master/dip-0002-special-transactions.md)
 //!
 
 use core::fmt::{Debug, Display, Formatter};

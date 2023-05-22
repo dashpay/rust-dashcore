@@ -15,7 +15,7 @@
 //! Dash Provider Registration Special Transaction.
 //!
 //! The provider registration special transaction is used to register a masternode.
-//! It is defined in DIP3 https://github.com/dashpay/dips/blob/master/dip-0003.md.
+//! It is defined in DIP3 [dip-0003](https://github.com/dashpay/dips/blob/master/dip-0003.md).
 //!
 //! The ProRegTx contains 2 public key IDs and one BLS public key, which represent 3 different
 //! roles in the masternode and define update and voting rights. A "public key ID" refers to the

@@ -17,7 +17,7 @@
 //! The provider update revocation special transaction is used to signal to the owner that they
 //! should choose a new operator.
 //!
-//! It is defined in DIP3 https://github.com/dashpay/dips/blob/master/dip-0003.md as follows:
+//! It is defined in DIP3 [dip-0003](https://github.com/dashpay/dips/blob/master/dip-0003.md) as follows:
 //!
 //! If an operator suspects their keys are insecure or if they wish to terminate service, they
 //! can issue a special transaction to the network. This special transaction is called a Provider

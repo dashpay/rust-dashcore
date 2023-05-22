@@ -15,7 +15,7 @@
 //! Dash Coinbase Special Transaction.
 //!
 //! Each time a block is mined it includes a coinbase special transaction.
-//! It is defined in DIP4 https://github.com/dashpay/dips/blob/master/dip-0004.md.
+//! It is defined in DIP4 [dip-0004](https://github.com/dashpay/dips/blob/master/dip-0004.md).
 //!
 
 use std::io;

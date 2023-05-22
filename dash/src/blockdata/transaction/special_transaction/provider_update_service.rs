@@ -17,7 +17,7 @@
 //! The provider update service special transaction is used to update the operator controlled
 //! options for a masternode.
 //!
-//! It is defined in DIP3 https://github.com/dashpay/dips/blob/master/dip-0003.md as follows:
+//! It is defined in DIP3 [dip-0003](https://github.com/dashpay/dips/blob/master/dip-0003.md) as follows:
 //!
 //! To service update a masternode, the masternode operator must submit another special
 //! transaction (DIP2) to the network. This special transaction is called a Provider Update
