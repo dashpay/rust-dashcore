@@ -17,7 +17,7 @@
 //! The asset lock special transaction is used to add to the asset lock credit pool.
 //!
 //!
-//! It is defined in DIPX https://github.com/dashpay/dips/blob/master/dip-000X.md as follows:
+//! It is defined in DIPX [dip-000X.md](https://github.com/dashpay/dips/blob/master/dip-000X.md) as follows:
 //!
 //!
 //! The special transaction type used for AssetLockTx Transactions is 8.

@@ -17,7 +17,7 @@
 //! These base elements are used in withdrawal queues.
 //!
 //!
-//! It is defined in DIPX https://github.com/dashpay/dips/blob/master/dip-000X.md as follows:
+//! It is defined in DIPX [dip-000X.md](https://github.com/dashpay/dips/blob/master/dip-000X.md) as follows:
 //!
 //!
 //! The special transaction type used for AssetUnlockTx Transactions is 9.

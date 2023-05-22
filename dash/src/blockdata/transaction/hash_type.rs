@@ -44,8 +44,7 @@ pub type SigHashType = EcdsaSighashType;
 
 /// Hashtype of an input's signature, encoded in the last byte of the signature.
 ///
-/// Fixed values so they can be cast as integer types for encoding (see also
-/// [`SchnorrSighashType`]).
+/// Fixed values so they can be cast as integer types for encoding.
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum EcdsaSighashType {
     /// 0x1: Sign all outputs.
