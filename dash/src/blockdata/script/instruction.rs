@@ -44,7 +44,9 @@ impl<'a> Instruction<'a> {
 /// Iterator over a script returning parsed opcodes.
 #[derive(Debug, Clone)]
 pub struct Instructions<'a> {
+    /// The instruction script in the byte array.
     pub data: core::slice::Iter<'a, u8>,
+    /// Whether to enforce minimal pushdata encoding.
     pub enforce_minimal: bool,
 }
 
@@ -79,6 +81,7 @@ impl<'a> Instructions<'a> {
         }
     }
 
+    /// Returns the next instruction without advancing the iterator.
     pub fn next_push_data_len(
         &mut self,
         len: PushDataLenLen,
@@ -112,8 +115,11 @@ impl<'a> Instructions<'a> {
 ///
 /// This makes it easier to prove correctness of `next_push_data_len`.
 pub enum PushDataLenLen {
+    /// ...
     One = 1,
+    /// ...
     Two = 2,
+    /// ...
     Four = 4,
 }
 
@@ -193,6 +199,7 @@ impl<'a> InstructionIndices<'a> {
         InstructionIndices { instructions, pos: 0 }
     }
 
+    /// Returns the number of remaining bytes.
     pub fn remaining_bytes(&self) -> usize { self.instructions.as_script().len() }
 
     /// Modifies the iterator using `next_fn` returning the next item.
