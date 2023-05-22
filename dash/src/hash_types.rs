@@ -187,5 +187,6 @@ mod newtypes {
         }
     }
 
+    /// ProTxHash is a pro-tx hash based on Txid.
     pub type ProTxHash = Txid;
 }

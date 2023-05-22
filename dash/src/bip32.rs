@@ -658,6 +658,7 @@ impl ExtendedPrivKey {
         })
     }
 
+    /// Extended private key binary encoding according to BIP 32
     pub fn encode(&self) -> [u8; 78] {
         let mut ret = [0; 78];
         ret[0..4].copy_from_slice(
