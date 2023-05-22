@@ -25,7 +25,7 @@ use hashes::{self, Hash};
 #[cfg(feature = "std")]
 use std::error;
 use core::fmt;
-use std::io;
+use crate::io;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::Txid;
 

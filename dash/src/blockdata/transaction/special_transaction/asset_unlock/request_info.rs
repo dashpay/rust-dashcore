@@ -18,8 +18,7 @@
 //!
 //! The request info should be added once the quorum selection for signing has been made.
 
-use std::io;
-use std::io::{Error, Write};
+use crate::io;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{QuorumHash};
 use crate::prelude::*;
@@ -40,7 +39,7 @@ pub struct AssetUnlockRequestInfo {
 
 impl AssetUnlockRequestInfo {
     /// Encodes the asset unlock on top of
-    pub fn consensus_append_to_base_encode<S: Write>(&self, base_bytes: Vec<u8>, mut s: S) -> Result<usize, Error> {
+    pub fn consensus_append_to_base_encode<S: io::Write>(&self, base_bytes: Vec<u8>, mut s: S) -> Result<usize, io::Error> {
         let mut len = 0;
         len += base_bytes.consensus_encode(&mut s)?;
         len += self.consensus_encode(&mut s)?;

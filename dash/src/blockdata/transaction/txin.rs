@@ -20,7 +20,7 @@
 //! A TxIn is an input to a transaction.
 //!
 
-use std::io;
+use crate::io;
 use crate::blockdata::script::ScriptBuf;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::{Witness};

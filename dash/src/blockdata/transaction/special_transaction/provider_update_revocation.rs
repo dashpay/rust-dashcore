@@ -36,8 +36,7 @@
 
 //! The special transaction type used for Provider Update Revoking Transactions is 4.
 
-use std::io;
-use std::io::{Error, Write};
+use crate::io;
 use hashes::Hash;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
@@ -59,7 +58,7 @@ pub struct ProviderUpdateRevocationPayload {
 }
 
 impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRevocationPayload {
-    fn base_payload_data_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn base_payload_data_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.version.consensus_encode(&mut s)?;
         len += self.pro_tx_hash.consensus_encode(&mut s)?;

@@ -34,7 +34,7 @@ pub mod special_transaction;
 
 use crate::prelude::*;
 
-use std::io;
+use crate::io;
 use core::{default::Default};
 
 use hashes::{Hash, sha256d};

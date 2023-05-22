@@ -72,6 +72,7 @@ mod newtypes {
     use hashes::hex::Error;
     use internals::hex::Case;
     use internals::hex::display::DisplayHex;
+    use crate::prelude::String;
 
     hash_newtype! {
         /// A dash transaction hash/transaction ID.

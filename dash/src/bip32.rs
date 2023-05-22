@@ -23,7 +23,6 @@
 
 use crate::prelude::*;
 
-use std::io::Write;
 use core::{fmt, str::FromStr, default::Default};
 use core::ops::Index;
 #[cfg(feature = "std")] use std::error;

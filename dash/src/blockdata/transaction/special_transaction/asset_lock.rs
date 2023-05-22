@@ -23,7 +23,7 @@
 //! The special transaction type used for AssetLockTx Transactions is 8.
 
 use crate::prelude::*;
-use std::io;
+use crate::io;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::transaction::txout::TxOut;
 

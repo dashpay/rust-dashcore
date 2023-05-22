@@ -18,7 +18,7 @@
 //!
 
 use crate::prelude::*;
-use std::io;
+use crate::io;
 use crate::hash_types::{QuorumHash, QuorumVVecHash};
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::consensus::{Decodable, Encodable, encode};

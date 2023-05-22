@@ -22,7 +22,7 @@
 //!
 //! The special transaction type used for AssetUnlockTx Transactions is 9.
 
-use std::io;
+use crate::io;
 use crate::transaction::TxOut;
 use crate::blockdata::transaction::special_transaction::TransactionType;
 use crate::blockdata::transaction::special_transaction::TransactionType::AssetUnlock;

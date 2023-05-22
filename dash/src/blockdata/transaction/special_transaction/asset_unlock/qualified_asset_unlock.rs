@@ -22,9 +22,8 @@
 //!
 //! The special transaction type used for CrWithTx Transactions is 9.
 
-use std::io;
+use crate::io;
 use crate::hash_types::{SpecialTransactionPayloadHash};
-use std::io::{Error, Write};
 use hashes::Hash;
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::{Decodable, Encodable, encode};
@@ -57,7 +56,7 @@ pub struct AssetUnlockPayload {
 }
 
 impl SpecialTransactionBasePayloadEncodable for AssetUnlockPayload {
-    fn base_payload_data_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn base_payload_data_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.base.consensus_encode(&mut s)?;
         len += self.request_info.consensus_encode(&mut s)?;

@@ -35,7 +35,7 @@
 //! Votes signed with this key are valid while the masternode is in the registered set.
 
 use crate::prelude::*;
-use std::io;
+use crate::io;
 use hashes::Hash;
 use internals::hex::Case::Lower;
 use crate::{ScriptBuf};

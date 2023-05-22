@@ -35,8 +35,7 @@
 //! The special transaction type used for ProUpServTx Transactions is 2.
 
 
-use std::io;
-use std::io::{Error, Write};
+use crate::io;
 use hashes::Hash;
 use crate::ScriptBuf;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
@@ -62,7 +61,7 @@ pub struct ProviderUpdateServicePayload {
 }
 
 impl SpecialTransactionBasePayloadEncodable for ProviderUpdateServicePayload {
-    fn base_payload_data_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn base_payload_data_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.version.consensus_encode(&mut s)?;
         len += self.pro_tx_hash.consensus_encode(&mut s)?;

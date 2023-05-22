@@ -18,7 +18,7 @@
 //! It is defined in DIP4 [dip-0004](https://github.com/dashpay/dips/blob/master/dip-0004.md).
 //!
 
-use std::io;
+use crate::io;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::consensus::{Decodable, Encodable, encode};
 

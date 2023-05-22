@@ -22,8 +22,7 @@
 
 use core::fmt::{Debug, Display, Formatter};
 use core::convert::TryFrom;
-use std::io;
-use std::io::{Error, Write};
+use crate::io;
 use crate::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use crate::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
 use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
@@ -71,7 +70,7 @@ pub enum TransactionPayload {
 }
 
 impl Encodable for TransactionPayload {
-    fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         match self {
             ProviderRegistrationPayloadType(p) => { p.consensus_encode(w)}
             ProviderUpdateServicePayloadType(p) => { p.consensus_encode(w)}

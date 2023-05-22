@@ -30,9 +30,7 @@
 //! The special transaction type used for ProUpRegTx Transactions is 3.
 
 use crate::prelude::*;
-use std::io::Error;
-use std::io;
-use std::io::Write;
+use crate::io;
 use hashes::Hash;
 use crate::{ScriptBuf};
 use crate::consensus::{Decodable, Encodable, encode};
@@ -58,7 +56,7 @@ pub struct ProviderUpdateRegistrarPayload {
 }
 
 impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRegistrarPayload {
-    fn base_payload_data_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn base_payload_data_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.version.consensus_encode(&mut s)?;
         len += self.pro_tx_hash.consensus_encode(&mut s)?;

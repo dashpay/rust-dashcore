@@ -44,11 +44,12 @@ use core::{fmt, ops, convert::From};
 use core::fmt::Display;
 use core::str::FromStr;
 
-use std::io;
+use crate::io;
 use internals::write_err;
 use crate::consensus::encode::{self, Encodable, Decodable};
 use crate::constants::ChainHash;
 use crate::error::impl_std_error;
+use crate::prelude::String;
 
 /// Version of the protocol as appearing in network message headers
 /// This constant is used to signal to other peers which features you support.

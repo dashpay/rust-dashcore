@@ -21,7 +21,7 @@ use crate::consensus::{encode, Encodable};
 use crate::error::impl_std_error;
 use crate::prelude::*;
 use crate::taproot::{LeafVersion, TapLeafHash, TAPROOT_ANNEX_PREFIX};
-use std::io;
+use crate::io;
 use crate::blockdata::transaction::{Transaction, EncodeSigningDataResult, txin::TxIn, txout::TxOut};
 use crate::script::{Script, ScriptBuf};
 
