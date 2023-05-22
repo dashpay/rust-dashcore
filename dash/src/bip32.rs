@@ -37,6 +37,7 @@ use crate::base58;
 use crate::crypto::key::{self, KeyPair, PrivateKey, PublicKey};
 use crate::internal_macros::impl_bytes_newtype;
 use internals::{impl_array_newtype};
+use crate::io::Write;
 
 /// A chain code
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
