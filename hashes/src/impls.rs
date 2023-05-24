@@ -20,7 +20,7 @@
 #[cfg(feature = "std")]
 use std::io;
 
-#[cfg(not(feature = "std"))]
+#[cfg(feature = "core2")]
 use core2::io;
 
 use crate::{hmac, ripemd160, sha1, sha256, sha512, siphash24, HashEngine};

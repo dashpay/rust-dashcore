@@ -23,6 +23,7 @@
 //! hash).
 //!
 
+
 #[rustfmt::skip]
 macro_rules! impl_hashencode {
     ($hashtype:ident) => {
@@ -67,6 +68,9 @@ pub use newtypes::*;
 
 #[rustfmt::skip]
 mod newtypes {
+
+    use crate::alloc::string::ToString;
+
     use core::str::FromStr;
     use hashes::{sha256, sha256d, hash160, hash_newtype, Hash};
     use hashes::hex::Error;
