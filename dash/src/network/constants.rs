@@ -49,7 +49,7 @@ use internals::write_err;
 use crate::consensus::encode::{self, Encodable, Decodable};
 use crate::constants::ChainHash;
 use crate::error::impl_std_error;
-use crate::prelude::String;
+use crate::prelude::{String, ToOwned};
 
 /// Version of the protocol as appearing in network message headers
 /// This constant is used to signal to other peers which features you support.
