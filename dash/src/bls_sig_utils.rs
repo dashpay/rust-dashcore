@@ -32,6 +32,7 @@ pub struct BLSPublicKey([u8; 48]);
 impl_array_newtype!(BLSPublicKey, u8, 48);
 
 impl BLSPublicKey {
+    /// Create a new BLS Public Key from a hex string
     pub fn from_hex(s: &str) -> Result<BLSPublicKey, FromHexError> {
         hex::decode(s).map(|v| {
             let mut payload: [u8; 48] = [0; 48];
@@ -40,6 +41,7 @@ impl BLSPublicKey {
         })
     }
 
+    /// Convert the BLS Public Key to a hex string
     pub fn to_hex(&self) -> String {
         self.0.to_lower_hex_string()
     }
