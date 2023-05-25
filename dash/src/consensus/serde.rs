@@ -411,6 +411,7 @@ fn consensus_error_into_serde<E: serde::de::Error>(error: ConsensusError) -> E {
             &DisplayExpected("standard scriptPubKey"),
         ),
         ConsensusError::Hex(error) => E::custom(error),
+        ConsensusError::Address(error) => E::custom(error),
     }
 }
 
