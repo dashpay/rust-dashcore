@@ -35,7 +35,7 @@ use core::{fmt, mem, u32};
 
 use hashes::{sha256, sha256d, Hash, hash160};
 use internals::write_err;
-use crate::ScriptBuf;
+use crate::{address, ScriptBuf};
 use crate::transaction::special_transaction::TransactionType;
 use crate::bip152::{PrefilledTransaction, ShortId};
 use crate::transaction::{txin::TxIn, txout::TxOut};
@@ -97,6 +97,8 @@ pub enum Error {
     NonStandardScriptPayout(ScriptBuf),
     /// Hex error
     Hex(hashes::hex::Error),
+    /// Address error
+    Address(address::Error)
 }
 
 impl fmt::Display for Error {
@@ -119,6 +121,7 @@ impl fmt::Display for Error {
                                                                  "non standard script payout: {}", script.to_hex_string()),
             Error::InvalidVectorSize { expected, actual } => write!(f, "invalid vector size error expected: {} got: {}", expected, actual),
             Error::Hex(ref e) => write!(f, "hex error {}", e),
+            Error::Address(ref e) => write!(f, "address error {}", e),
         }
     }
 }
@@ -140,6 +143,7 @@ impl std::error::Error for Error {
             | Error::NonStandardScriptPayout(..)
             | Error::InvalidVectorSize { .. }
             | Error::Hex(_) => None,
+            | Error::Address(_) => None,
         }
     }
 }
@@ -147,6 +151,13 @@ impl std::error::Error for Error {
 #[doc(hidden)]
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self { Error::Io(error) }
+}
+
+#[doc(hidden)]
+impl From<address::Error> for Error {
+    fn from(error: address::Error) -> Self {
+        Error::Address(error)
+    }
 }
 
 /// Encodes an object into a vector.

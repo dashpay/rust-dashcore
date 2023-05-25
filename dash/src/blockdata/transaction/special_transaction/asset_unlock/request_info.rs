@@ -40,8 +40,8 @@ pub struct AssetUnlockRequestInfo {
 impl AssetUnlockRequestInfo {
     /// Encodes the asset unlock on top of
     pub fn consensus_append_to_base_encode<S: io::Write>(&self, base_bytes: Vec<u8>, mut s: S) -> Result<usize, io::Error> {
-        let mut len = 0;
-        len += base_bytes.consensus_encode(&mut s)?;
+        s.write(base_bytes.as_slice())?;
+        let mut len = base_bytes.len();
         len += self.consensus_encode(&mut s)?;
         Ok(len)
     }

@@ -122,9 +122,13 @@ mod newtypes {
         /// A hash of all transaction inputs
         pub struct InputsHash(sha256d::Hash);
         /// A hash used to identify a quorum
+        #[hash_newtype(forward)]
         pub struct QuorumHash(sha256d::Hash);
         /// A hash of a quorum verification vector
         pub struct QuorumVVecHash(sha256d::Hash);
+        /// ProTxHash is a pro-tx hash
+        #[hash_newtype(forward)]
+        pub struct ProTxHash(sha256d::Hash);
     }
 
     impl_hashencode!(Txid);
@@ -152,6 +156,18 @@ mod newtypes {
     impl Txid {
         /// Create a Txid from a string
         pub fn from_hex(s: &str) -> Result<Txid, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
+
+        /// Convert a Txid to a string
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
+    }
+
+    impl ProTxHash {
+        /// Create a Txid from a string
+        pub fn from_hex(s: &str) -> Result<ProTxHash, Error> {
             Ok(Self(sha256d::Hash::from_str(s)?))
         }
 
@@ -191,7 +207,4 @@ mod newtypes {
             self.0.as_byte_array().to_hex_string(Case::Lower)
         }
     }
-
-    /// ProTxHash is a pro-tx hash based on Txid.
-    pub type ProTxHash = Txid;
 }
