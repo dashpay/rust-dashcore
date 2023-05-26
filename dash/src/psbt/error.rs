@@ -70,7 +70,7 @@ pub enum Error {
     /// Conflicting data during combine procedure:
     /// global extended public key has inconsistent key sources
     CombineInconsistentKeySources(Box<ExtendedPubKey>),
-    /// Serialization error in bitcoin consensus-encoded structures
+    /// Serialization error in dash consensus-encoded structures
     ConsensusEncoding(encode::Error),
     /// Negative fee
     NegativeFee,
@@ -139,7 +139,7 @@ impl fmt::Display for Error {
             Error::CombineInconsistentKeySources(ref s) => {
                 write!(f, "combine conflict: {}", s)
             }
-            Error::ConsensusEncoding(ref e) => write_err!(f, "bitcoin consensus encoding error"; e),
+            Error::ConsensusEncoding(ref e) => write_err!(f, "dash consensus encoding error"; e),
             Error::NegativeFee => f.write_str("PSBT has a negative fee which is not allowed"),
             Error::FeeOverflow => f.write_str("integer overflow in fee calculation"),
             Error::InvalidPublicKey(ref e) => write_err!(f, "invalid public key"; e),

@@ -194,7 +194,7 @@ pub fn read_scriptbool(v: &[u8]) -> bool {
 /// Note that this does **not** return an error for `size` between `core::size_of::<usize>()`
 /// and `u16::max_value / 8` if there's no overflow.
 #[inline]
-#[deprecated(since = "0.30.0", note = "bitcoin integers are signed 32 bits, use read_scriptint")]
+#[deprecated(since = "0.30.0", note = "dash integers are signed 32 bits, use read_scriptint")]
 pub fn read_uint(data: &[u8], size: usize) -> Result<usize, Error> {
     read_uint_iter(&mut data.iter(), size).map_err(Into::into)
 }
@@ -695,7 +695,7 @@ mod bitcoinconsensus_hack {
     use core::fmt;
 
     #[repr(transparent)]
-    pub struct Error(bitcoinconsensus::Error);
+    pub(crate) struct Error(bitcoinconsensus::Error);
 
     impl fmt::Debug for Error {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Debug::fmt(&self.0, f) }
@@ -708,7 +708,7 @@ mod bitcoinconsensus_hack {
     // bitcoinconsensus::Error has no sources at this time
     impl std::error::Error for Error {}
 
-    pub fn wrap_error(error: &bitcoinconsensus::Error) -> &Error {
+    pub(crate) fn wrap_error(error: &bitcoinconsensus::Error) -> &Error {
         // Unfortunately, we cannot have the reference inside `Error` struct because of the 'static
         // bound on `source` return type, so we have to use unsafe to overcome the limitation.
         // SAFETY: the type is repr(transparent) and the lifetimes match

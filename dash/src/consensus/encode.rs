@@ -15,7 +15,7 @@
 // If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 //
 
-//! Bitcoin consensus-encodable types.
+//! Dash consensus-encodable types.
 //!
 //! This is basically a replacement of the `Encodable` trait which does
 //! normalization of endianness etc., to ensure that the encoding matches
@@ -30,48 +30,53 @@
 //! typically big-endian decimals, etc.)
 //!
 
-use prelude::*;
+use core::convert::From;
+use core::{fmt, mem, u32};
 
-use core::{fmt, mem, u32, convert::From};
-#[cfg(feature = "std")] use std::error;
-
-use hashes::{sha256d, Hash, sha256, hash160};
-use hash_types::{BlockHash, FilterHash, TxMerkleNode, FilterHeader};
-
-use io::{self, Cursor, Read};
-
-use endian;
-use psbt;
-use taproot::TapLeafHash;
-use hashes::hex::ToHex;
-
-use blockdata::transaction::{txout::TxOut, Transaction, txin::TxIn, outpoint::OutPoint};
-use blockdata::transaction::special_transaction::TransactionType;
+use hashes::{sha256, sha256d, Hash, hash160};
+use internals::write_err;
+use crate::{address, ScriptBuf};
+use crate::transaction::special_transaction::TransactionType;
+use crate::bip152::{PrefilledTransaction, ShortId};
+use crate::transaction::{txin::TxIn, txout::TxOut};
+use crate::blockdata::transaction::{Transaction};
+use crate::hash_types::{BlockHash, FilterHash, FilterHeader, TxMerkleNode};
+use crate::io::{self, Cursor, Read};
 #[cfg(feature = "std")]
-use network::{message_blockdata::Inventory, address::{Address, AddrV2Message}};
-use Script;
+use crate::network::{
+    address::{AddrV2Message, Address},
+    message_blockdata::Inventory,
+};
+use crate::prelude::*;
+use crate::taproot::TapLeafHash;
 
-/// Encoding error
+/// Encoding error.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
-    /// And I/O error
+    /// And I/O error.
     Io(io::Error),
-    /// PSBT-related error
-    Psbt(psbt::Error),
-    /// Network magic was not expected
-    UnexpectedNetworkMagic {
-        /// The expected network magic
-        expected: u32,
-        /// The unexpected network magic
-        actual: u32,
-    },
-    /// Tried to allocate an oversized vector
+    /// Tried to allocate an oversized vector.
     OversizedVectorAllocation {
-        /// The capacity requested
+        /// The capacity requested.
         requested: usize,
-        /// The maximum capacity
+        /// The maximum capacity.
         max: usize,
     },
+    /// Checksum was invalid.
+    InvalidChecksum {
+        /// The expected checksum.
+        expected: [u8; 4],
+        /// The invalid checksum.
+        actual: [u8; 4],
+    },
+    /// VarInt was encoded in a non-minimal way.
+    NonMinimalVarInt,
+    /// Parsing error.
+    ParseFailed(&'static str),
+    /// Unsupported Segwit flag.
+    UnsupportedSegwitFlag(u8),
+
     /// A Vector was trying to be converted to a fixed size vector, but was the wrong size
     InvalidVectorSize {
         /// The expected size
@@ -79,21 +84,6 @@ pub enum Error {
         /// The actual size of the vector
         actual: usize,
     },
-    /// Checksum was invalid
-    InvalidChecksum {
-        /// The expected checksum
-        expected: [u8; 4],
-        /// The invalid checksum
-        actual: [u8; 4],
-    },
-    /// VarInt was encoded in a non-minimal way
-    NonMinimalVarInt,
-    /// Network magic was unknown
-    UnknownNetworkMagic(u32),
-    /// Parsing error
-    ParseFailed(&'static str),
-    /// Unsupported Segwit flag
-    UnsupportedSegwitFlag(u8),
     /// The Transaction type was not identified
     UnknownSpecialTransactionType(u16),
     /// We tried to convert the payload to the wrong type
@@ -104,58 +94,56 @@ pub enum Error {
         actual: TransactionType,
     },
     /// The script type was non standard
-    NonStandardScriptPayout(Script),
+    NonStandardScriptPayout(ScriptBuf),
     /// Hex error
-    Hex(hashes::hex::Error)
+    Hex(hashes::hex::Error),
+    /// Address error
+    Address(address::Error)
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::Io(ref e) => write!(f, "I/O error: {}", e),
-            Error::Psbt(ref e) => write!(f, "PSBT error: {}", e),
-            Error::UnexpectedNetworkMagic { expected: ref e, actual: ref a } => write!(f,
-                "unexpected network magic: expected {}, actual {}", e, a),
-            Error::OversizedVectorAllocation { requested: ref r, max: ref m } => write!(f,
-                "allocation of oversized vector: requested {}, maximum {}", r, m),
-            Error::InvalidChecksum { expected: ref e, actual: ref a } => write!(f,
-                "invalid checksum: expected {}, actual {}", e.to_hex(), a.to_hex()),
+            Error::Io(ref e) => write_err!(f, "IO error"; e),
+            Error::OversizedVectorAllocation { requested: ref r, max: ref m } =>
+                write!(f, "allocation of oversized vector: requested {}, maximum {}", r, m),
+            Error::InvalidChecksum { expected: ref e, actual: ref a } =>
+                write!(f, "invalid checksum: expected {:x}, actual {:x}", e.as_hex(), a.as_hex()),
             Error::NonMinimalVarInt => write!(f, "non-minimal varint"),
-            Error::UnknownNetworkMagic(ref m) => write!(f, "unknown network magic: {}", m),
-            Error::ParseFailed(ref e) => write!(f, "parse failed: {}", e),
-            Error::UnsupportedSegwitFlag(ref swflag) => write!(f,
-                "unsupported segwit version: {}", swflag),
-            Error::UnknownSpecialTransactionType(ref stt) => write!(f,
-                                                               "unknown special transaction type: {}", stt),
+            Error::ParseFailed(ref s) => write!(f, "parse failed: {}", s),
+            Error::UnsupportedSegwitFlag(ref swflag) =>
+                write!(f, "unsupported segwit version: {}", swflag),
+            Error::UnknownSpecialTransactionType(ref stt) =>
+                write!(f, "unknown special transaction type: {}", stt),
             Error::WrongSpecialTransactionPayloadConversion { expected: ref e, actual: ref a } => write!(f,
-                                                                                           "wrong special transaction payload conversion expected: {} got: {}", e, a),
+                                                                                                         "wrong special transaction payload conversion expected: {} got: {}", e, a),
             Error::NonStandardScriptPayout(ref script) => write!(f,
-                                                        "non standard script payout: {}", script.to_hex()),
+                                                                 "non standard script payout: {}", script.to_hex_string()),
             Error::InvalidVectorSize { expected, actual } => write!(f, "invalid vector size error expected: {} got: {}", expected, actual),
             Error::Hex(ref e) => write!(f, "hex error {}", e),
+            Error::Address(ref e) => write!(f, "address error {}", e),
         }
     }
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl ::std::error::Error for Error {
-    fn cause(&self) -> Option<&dyn  error::Error> {
-        match *self {
-            Error::Io(ref e) => Some(e),
-            Error::Psbt(ref e) => Some(e),
-            Error::UnexpectedNetworkMagic { .. }
-            | Error::OversizedVectorAllocation { .. }
-            | Error::InvalidChecksum { .. }
-            | Error::NonMinimalVarInt
-            | Error::UnknownNetworkMagic(..)
-            | Error::ParseFailed(..)
-            | Error::UnsupportedSegwitFlag(..)
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        use self::Error::*;
+
+        match self {
+            Io(e) => Some(e),
+            OversizedVectorAllocation { .. }
+            | InvalidChecksum { .. }
+            | NonMinimalVarInt
+            | ParseFailed(_)
+            | UnsupportedSegwitFlag(_)
             | Error::UnknownSpecialTransactionType(..)
-            | Error::WrongSpecialTransactionPayloadConversion{..}
+            | Error::WrongSpecialTransactionPayloadConversion { .. }
             | Error::NonStandardScriptPayout(..)
             | Error::InvalidVectorSize { .. }
             | Error::Hex(_) => None,
+            | Error::Address(_) => None,
         }
     }
 }
@@ -163,6 +151,13 @@ impl ::std::error::Error for Error {
 #[doc(hidden)]
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self { Error::Io(error) }
+}
+
+#[doc(hidden)]
+impl From<address::Error> for Error {
+    fn from(error: address::Error) -> Self {
+        Error::Address(error)
+    }
 }
 
 /// Encodes an object into a vector.
@@ -203,6 +198,8 @@ pub fn deserialize_partial<T: Decodable>(data: &[u8]) -> Result<(T, usize), Erro
 
 /// Extensions of `Write` to encode data as per Bitcoin consensus.
 pub trait WriteExt: io::Write {
+    /// Outputs a 128-bit unsigned integer.
+    fn emit_u128(&mut self, v: u128) -> Result<(), io::Error>;
     /// Outputs a 64-bit unsigned integer.
     fn emit_u64(&mut self, v: u64) -> Result<(), io::Error>;
     /// Outputs a 32-bit unsigned integer.
@@ -230,6 +227,8 @@ pub trait WriteExt: io::Write {
 
 /// Extensions of `Read` to decode data as per Bitcoin consensus.
 pub trait ReadExt: io::Read {
+    /// Reads a 128-bit unsigned integer.
+    fn read_u128(&mut self) -> Result<u128, Error>;
     /// Reads a 64-bit unsigned integer.
     fn read_u64(&mut self) -> Result<u64, Error>;
     /// Reads a 32-bit unsigned integer.
@@ -276,6 +275,7 @@ macro_rules! decoder_fn {
 }
 
 impl<W: io::Write + ?Sized> WriteExt for W {
+    encoder_fn!(emit_u128, u128);
     encoder_fn!(emit_u64, u64);
     encoder_fn!(emit_u32, u32);
     encoder_fn!(emit_u16, u16);
@@ -294,6 +294,7 @@ impl<W: io::Write + ?Sized> WriteExt for W {
 }
 
 impl<R: Read + ?Sized> ReadExt for R {
+    decoder_fn!(read_u128, u128, 16);
     decoder_fn!(read_u64, u64, 8);
     decoder_fn!(read_u32, u32, 4);
     decoder_fn!(read_u16, u16, 2);
@@ -423,6 +424,7 @@ impl_int_encodable!(u8, read_u8, emit_u8);
 impl_int_encodable!(u16, read_u16, emit_u16);
 impl_int_encodable!(u32, read_u32, emit_u32);
 impl_int_encodable!(u64, read_u64, emit_u64);
+impl_int_encodable!(u128, read_u128, emit_u128);
 impl_int_encodable!(i8, read_i8, emit_i8);
 impl_int_encodable!(i16, read_i16, emit_i16);
 impl_int_encodable!(i32, read_i32, emit_i32);
@@ -591,8 +593,12 @@ impl_array!(8);
 impl_array!(10);
 impl_array!(12);
 impl_array!(16);
+impl_array!(20);
 impl_array!(32);
 impl_array!(33);
+impl_array!(48);
+impl_array!(64);
+impl_array!(96);
 
 impl Decodable for [u16; 8] {
     #[inline]
@@ -838,6 +844,18 @@ tuple_encode!(T0, T1, T2, T3, T4, T5);
 tuple_encode!(T0, T1, T2, T3, T4, T5, T6);
 tuple_encode!(T0, T1, T2, T3, T4, T5, T6, T7);
 
+impl Encodable for hash160::Hash {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+        self.as_byte_array().consensus_encode(w)
+    }
+}
+
+impl Decodable for hash160::Hash {
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, Error> {
+        Ok(Self::from_byte_array(<<Self as Hash>::Bytes>::consensus_decode(r)?))
+    }
+}
+
 impl Encodable for sha256d::Hash {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         self.as_byte_array().consensus_encode(w)
@@ -878,6 +896,7 @@ impl Decodable for TapLeafHash {
 mod tests {
     use core::fmt;
     use core::mem::{self, discriminant};
+    use crate::{TxIn, TxOut};
 
     use super::*;
     use crate::consensus::{deserialize_partial, Decodable, Encodable};
@@ -1244,7 +1263,7 @@ mod tests {
         for _ in 0..10 {
             round_trip! {bool, i8, u8, i16, u16, i32, u32, i64, u64,
             (bool, i8, u16, i32), (u64, i64, u32, i32, u16, i16), (i8, u8, i16, u16, i32, u32, i64, u64),
-            [u8; 2], [u8; 4], [u8; 8], [u8; 12], [u8; 16], [u8; 32]};
+            [u8; 2], [u8; 4], [u8; 8], [u8; 12], [u8; 16], [u8; 32]}
 
             data.clear();
             data64.clear();
@@ -1253,7 +1272,7 @@ mod tests {
             data64.resize(len, 0u64);
             let mut arr33 = [0u8; 33];
             let mut arr16 = [0u16; 8];
-            round_trip_bytes! {(Vec<u8>, data), ([u8; 33], arr33), ([u16; 8], arr16), (Vec<u64>, data64)};
+            round_trip_bytes! {(Vec<u8>, data), ([u8; 33], arr33), ([u16; 8], arr16), (Vec<u64>, data64)}
         }
     }
 
@@ -1265,7 +1284,7 @@ mod tests {
             assert_eq!(
                 read_bytes_from_finite_reader(
                     io::Cursor::new(&data),
-                    ReadBytesFromFiniteReaderOpts { len: data.len(), chunk_size }
+                    ReadBytesFromFiniteReaderOpts { len: data.len(), chunk_size },
                 )
                     .unwrap(),
                 data

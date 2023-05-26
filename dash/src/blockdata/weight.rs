@@ -255,8 +255,8 @@ impl DivAssign<u64> for Weight {
 
 impl core::iter::Sum for Weight {
     fn sum<I>(iter: I) -> Self
-    where
-        I: Iterator<Item = Self>,
+        where
+            I: Iterator<Item = Self>,
     {
         Weight(iter.map(Weight::to_wu).sum())
     }
@@ -264,8 +264,8 @@ impl core::iter::Sum for Weight {
 
 impl<'a> core::iter::Sum<&'a Weight> for Weight {
     fn sum<I>(iter: I) -> Self
-    where
-        I: Iterator<Item = &'a Weight>,
+        where
+            I: Iterator<Item = &'a Weight>,
     {
         iter.cloned().sum()
     }

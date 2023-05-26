@@ -9,7 +9,7 @@ use secp256k1::XOnlyPublicKey;
 
 use crate::bip32::KeySource;
 use crate::blockdata::script::ScriptBuf;
-use crate::blockdata::transaction::{Transaction, TxOut};
+use crate::blockdata::transaction::{Transaction, txout::TxOut};
 use crate::blockdata::witness::Witness;
 use crate::crypto::key::PublicKey;
 use crate::crypto::{ecdsa, taproot};

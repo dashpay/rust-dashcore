@@ -12,7 +12,6 @@ use crate::blockdata::locktime::absolute;
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
 use crate::blockdata::script::{opcode_to_verify, write_scriptint, PushBytes, Script, ScriptBuf};
-use crate::blockdata::transaction::Sequence;
 use crate::key::PublicKey;
 use crate::prelude::*;
 
@@ -111,11 +110,6 @@ impl Builder {
     /// Adds instructions to push an absolute lock time onto the stack.
     pub fn push_lock_time(self, lock_time: absolute::LockTime) -> Builder {
         self.push_int(lock_time.to_consensus_u32().into())
-    }
-
-    /// Adds instructions to push a sequence number onto the stack.
-    pub fn push_sequence(self, sequence: Sequence) -> Builder {
-        self.push_int(sequence.to_consensus_u32().into())
     }
 
     /// Converts the `Builder` into `ScriptBuf`.

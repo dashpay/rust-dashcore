@@ -28,7 +28,6 @@ use crate::consensus::{encode, serialize};
 use crate::io;
 use crate::merkle_tree::MerkleBlock;
 use crate::network::address::{AddrV2Message, Address};
-use crate::network::constants::Magic;
 use crate::network::{
     message_blockdata, message_bloom, message_compact_blocks, message_filter, message_network,
 };
@@ -161,7 +160,7 @@ crate::error::impl_std_error!(CommandStringError);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawNetworkMessage {
     /// Magic bytes to identify the network these messages are meant for
-    pub magic: Magic,
+    pub magic: u32,
     /// The actual message data
     pub payload: NetworkMessage,
 }
@@ -534,7 +533,7 @@ mod test {
     use crate::consensus::encode::{deserialize, deserialize_partial, serialize};
     use crate::internal_macros::hex;
     use crate::network::address::{AddrV2, AddrV2Message, Address};
-    use crate::network::constants::{Magic, Network, ServiceFlags};
+    use crate::network::constants::{ServiceFlags};
     use crate::network::message_blockdata::{GetBlocksMessage, GetHeadersMessage, Inventory};
     use crate::network::message_bloom::{BloomFlags, FilterAdd, FilterLoad};
     use crate::network::message_compact_blocks::{GetBlockTxn, SendCmpct};
@@ -654,7 +653,7 @@ mod test {
 
         for msg in msgs {
             let raw_msg =
-                RawNetworkMessage { magic: Magic::from_bytes([57, 0, 0, 0]), payload: msg };
+                RawNetworkMessage { magic: u32::from_le_bytes([57, 0, 0, 0]), payload: msg };
             assert_eq!(deserialize::<RawNetworkMessage>(&serialize(&raw_msg)).unwrap(), raw_msg);
         }
     }
@@ -687,7 +686,7 @@ mod test {
     #[test]
     #[rustfmt::skip]
     fn serialize_verack_test() {
-        assert_eq!(serialize(&RawNetworkMessage { magic: Magic::from(Network::Bitcoin), payload: NetworkMessage::Verack }),
+        assert_eq!(serialize(&RawNetworkMessage { magic: 0xd9b4bef9, payload: NetworkMessage::Verack }),
                    vec![0xf9, 0xbe, 0xb4, 0xd9, 0x76, 0x65, 0x72, 0x61,
                         0x63, 0x6B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                         0x00, 0x00, 0x00, 0x00, 0x5d, 0xf6, 0xe0, 0xe2]);
@@ -696,7 +695,7 @@ mod test {
     #[test]
     #[rustfmt::skip]
     fn serialize_ping_test() {
-        assert_eq!(serialize(&RawNetworkMessage { magic: Magic::from(Network::Bitcoin), payload: NetworkMessage::Ping(100) }),
+        assert_eq!(serialize(&RawNetworkMessage { magic: 0xd9b4bef9, payload: NetworkMessage::Ping(100) }),
                    vec![0xf9, 0xbe, 0xb4, 0xd9, 0x70, 0x69, 0x6e, 0x67,
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                         0x08, 0x00, 0x00, 0x00, 0x24, 0x67, 0xf1, 0x1d,
@@ -706,7 +705,7 @@ mod test {
     #[test]
     #[rustfmt::skip]
     fn serialize_mempool_test() {
-        assert_eq!(serialize(&RawNetworkMessage { magic: Magic::from(Network::Bitcoin), payload: NetworkMessage::MemPool }),
+        assert_eq!(serialize(&RawNetworkMessage { magic: 0xd9b4bef9, payload: NetworkMessage::MemPool }),
                    vec![0xf9, 0xbe, 0xb4, 0xd9, 0x6d, 0x65, 0x6d, 0x70,
                         0x6f, 0x6f, 0x6c, 0x00, 0x00, 0x00, 0x00, 0x00,
                         0x00, 0x00, 0x00, 0x00, 0x5d, 0xf6, 0xe0, 0xe2]);
@@ -715,7 +714,7 @@ mod test {
     #[test]
     #[rustfmt::skip]
     fn serialize_getaddr_test() {
-        assert_eq!(serialize(&RawNetworkMessage { magic: Magic::from(Network::Bitcoin), payload: NetworkMessage::GetAddr }),
+        assert_eq!(serialize(&RawNetworkMessage { magic: 0xd9b4bef9, payload: NetworkMessage::GetAddr }),
                    vec![0xf9, 0xbe, 0xb4, 0xd9, 0x67, 0x65, 0x74, 0x61,
                         0x64, 0x64, 0x72, 0x00, 0x00, 0x00, 0x00, 0x00,
                         0x00, 0x00, 0x00, 0x00, 0x5d, 0xf6, 0xe0, 0xe2]);
@@ -730,7 +729,7 @@ mod test {
             0x00, 0x00, 0x00, 0x00, 0x5d, 0xf6, 0xe0, 0xe2
         ]);
         let preimage = RawNetworkMessage {
-            magic: Magic::from(Network::Bitcoin),
+            magic: 0xd9b4bef9,
             payload: NetworkMessage::GetAddr,
         };
         assert!(msg.is_ok());
@@ -763,7 +762,7 @@ mod test {
 
         assert!(msg.is_ok());
         let msg = msg.unwrap();
-        assert_eq!(msg.magic, Magic::from(Network::Bitcoin));
+        assert_eq!(msg.magic, 0xd9b4bef9);
         if let NetworkMessage::Version(version_msg) = msg.payload {
             assert_eq!(version_msg.version, 70015);
             assert_eq!(
@@ -809,7 +808,7 @@ mod test {
 
         let (msg, consumed) = msg.unwrap();
         assert_eq!(consumed, data.to_vec().len() - 2);
-        assert_eq!(msg.magic, Magic::from(Network::Bitcoin));
+        assert_eq!(msg.magic, 0xd9b4bef9);
         if let NetworkMessage::Version(version_msg) = msg.payload {
             assert_eq!(version_msg.version, 70015);
             assert_eq!(

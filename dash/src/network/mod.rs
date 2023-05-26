@@ -21,32 +21,25 @@
 //! of Bitcoin data and network messages.
 //!
 
-use io;
+use crate::io;
 use core::fmt;
 #[cfg(feature = "std")] use std::error;
 
 pub mod constants;
 
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod address;
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub use self::address::Address;
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod message;
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod message_blockdata;
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod message_bloom;
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod message_network;
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod message_filter;
 #[cfg(feature = "std")]
 pub mod message_compact_blocks;
@@ -80,7 +73,6 @@ impl From<io::Error> for Error {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl error::Error for Error {
     fn cause(&self) -> Option<&dyn error::Error> {
         match *self {

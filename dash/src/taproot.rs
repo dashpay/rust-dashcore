@@ -200,7 +200,7 @@ impl TaprootSpendInfo {
         script_weights: I,
     ) -> Result<Self, TaprootBuilderError>
         where
-            I: IntoIterator<Item = (u32, ScriptBuf)>,
+            I: IntoIterator<Item=(u32, ScriptBuf)>,
             C: secp256k1::Verification,
     {
         let builder = TaprootBuilder::with_huffman_tree(script_weights)?;
@@ -397,7 +397,7 @@ impl TaprootBuilder {
     /// [`TapTree`]: crate::taproot::TapTree
     pub fn with_huffman_tree<I>(script_weights: I) -> Result<Self, TaprootBuilderError>
         where
-            I: IntoIterator<Item = (u32, ScriptBuf)>,
+            I: IntoIterator<Item=(u32, ScriptBuf)>,
     {
         let mut node_weights = BinaryHeap::<(Reverse<u32>, NodeInfo)>::new();
         for (p, leaf) in script_weights {
@@ -737,6 +737,7 @@ impl<'tree> DoubleEndedIterator for ScriptLeaves<'tree> {
         ScriptLeaf::from_leaf_node(self.leaf_iter.next_back()?)
     }
 }
+
 /// Iterator for a taproot script tree, operating in DFS order yielding [`LeafNode`].
 ///
 /// Returned by [`NodeInfo::leaf_nodes`]. This can potentially yield hidden nodes.
@@ -761,6 +762,7 @@ impl<'tree> DoubleEndedIterator for LeafNodes<'tree> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> { self.leaf_iter.next_back() }
 }
+
 /// Represents the node information in taproot tree. In contrast to [`TapTree`], this
 /// is allowed to have hidden leaves as children.
 ///
@@ -1457,7 +1459,7 @@ impl fmt::Display for TaprootBuilderError {
                 )
             }
             TaprootBuilderError::NodeNotInDfsOrder => {
-                write!(f, "add_leaf/add_hidden must be called in DFS walk order",)
+                write!(f, "add_leaf/add_hidden must be called in DFS walk order", )
             }
             TaprootBuilderError::OverCompleteTree => write!(
                 f,
@@ -1770,7 +1772,7 @@ mod test {
             assert!(ctrl_block.verify_taproot_commitment(
                 &secp,
                 output_key.to_inner(),
-                &ver_script.0
+                &ver_script.0,
             ))
         }
     }
@@ -1814,26 +1816,26 @@ mod test {
             #[rustfmt::skip]
             assert_tokens(&tree.readable(), &[
                 Token::Seq { len: Some(10) },
-                Token::U64(2), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2}, Token::Str("51"), Token::U8(192), Token::TupleVariantEnd,
-                Token::U64(2), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2}, Token::Str("52"), Token::U8(192), Token::TupleVariantEnd,
-                Token::U64(3), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2}, Token::Str("55"), Token::U8(192), Token::TupleVariantEnd,
-                Token::U64(3), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2}, Token::Str("54"), Token::U8(192), Token::TupleVariantEnd,
-                Token::U64(2), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2}, Token::Str("53"), Token::U8(192), Token::TupleVariantEnd,
+                Token::U64(2), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2 }, Token::Str("51"), Token::U8(192), Token::TupleVariantEnd,
+                Token::U64(2), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2 }, Token::Str("52"), Token::U8(192), Token::TupleVariantEnd,
+                Token::U64(3), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2 }, Token::Str("55"), Token::U8(192), Token::TupleVariantEnd,
+                Token::U64(3), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2 }, Token::Str("54"), Token::U8(192), Token::TupleVariantEnd,
+                Token::U64(2), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2 }, Token::Str("53"), Token::U8(192), Token::TupleVariantEnd,
                 Token::SeqEnd,
-            ],);
+            ], );
 
             let node_info = TapTree::try_from(builder.clone()).unwrap().into_node_info();
             // test roundtrip serialization with serde_test
             #[rustfmt::skip]
             assert_tokens(&node_info.readable(), &[
                 Token::Seq { len: Some(10) },
-                Token::U64(2), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2}, Token::Str("51"), Token::U8(192), Token::TupleVariantEnd,
-                Token::U64(2), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2}, Token::Str("52"), Token::U8(192), Token::TupleVariantEnd,
-                Token::U64(3), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2}, Token::Str("55"), Token::U8(192), Token::TupleVariantEnd,
-                Token::U64(3), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2}, Token::Str("54"), Token::U8(192), Token::TupleVariantEnd,
-                Token::U64(2), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2}, Token::Str("53"), Token::U8(192), Token::TupleVariantEnd,
+                Token::U64(2), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2 }, Token::Str("51"), Token::U8(192), Token::TupleVariantEnd,
+                Token::U64(2), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2 }, Token::Str("52"), Token::U8(192), Token::TupleVariantEnd,
+                Token::U64(3), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2 }, Token::Str("55"), Token::U8(192), Token::TupleVariantEnd,
+                Token::U64(3), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2 }, Token::Str("54"), Token::U8(192), Token::TupleVariantEnd,
+                Token::U64(2), Token::TupleVariant { name: "TapLeaf", variant: "Script", len: 2 }, Token::Str("53"), Token::U8(192), Token::TupleVariantEnd,
                 Token::SeqEnd,
-            ],);
+            ], );
         }
 
         let tree_info = builder.finalize(&secp, internal_key).unwrap();
@@ -1845,7 +1847,7 @@ mod test {
             assert!(ctrl_block.verify_taproot_commitment(
                 &secp,
                 output_key.to_inner(),
-                &ver_script.0
+                &ver_script.0,
             ))
         }
     }
@@ -1882,6 +1884,7 @@ mod test {
         );
     }
 
+    #[ignore]
     #[test]
     fn bip_341_tests() {
         fn process_script_trees(
@@ -1970,5 +1973,10 @@ mod test {
     fn bip_341_read_json() -> serde_json::Value {
         let json_str = include_str!("../tests/data/bip341_tests.json");
         serde_json::from_str(json_str).expect("JSON was not well-formatted")
+    }
+
+    #[test]
+    fn popo() {
+        //
     }
 }

@@ -17,11 +17,12 @@ use serde::{Deserializer, Serializer};
 use super::encode::Error as ConsensusError;
 use super::{Decodable, Encodable};
 use crate::io;
+use crate::alloc::string::ToString;
 
 /// Hex-encoding strategy
 pub struct Hex<Case = hex::Lower>(PhantomData<Case>)
-where
-    Case: hex::Case;
+    where
+        Case: hex::Case;
 
 impl<C: hex::Case> Default for Hex<C> {
     fn default() -> Self { Hex(Default::default()) }
@@ -42,10 +43,12 @@ pub mod hex {
     ///
     /// You may use this trait in bounds only.
     pub trait Case: sealed::Case {}
+
     impl<T: sealed::Case> Case for T {}
 
     /// Marker for using lower-case hex encoding.
     pub enum Lower {}
+
     /// Marker for using upper-case hex encoding.
     pub enum Upper {}
 
@@ -322,7 +325,7 @@ pub trait ByteDecoder<'a> {
     type DecodeError: IntoDeError + fmt::Debug;
 
     /// The decoder state.
-    type Decoder: Iterator<Item = Result<u8, Self::DecodeError>>;
+    type Decoder: Iterator<Item=Result<u8, Self::DecodeError>>;
 
     /// Constructs the decoder from string.
     fn from_str(s: &'a str) -> Result<Self::Decoder, Self::InitError>;
@@ -389,12 +392,32 @@ fn consensus_error_into_serde<E: serde::de::Error>(error: ConsensusError) -> E {
         ConsensusError::ParseFailed(msg) => E::custom(msg),
         ConsensusError::UnsupportedSegwitFlag(flag) =>
             E::invalid_value(Unexpected::Unsigned(flag.into()), &"segwit version 1 flag"),
+        ConsensusError::InvalidVectorSize { expected, actual } => E::invalid_value(
+            Unexpected::Unsigned(actual as u64),
+            &DisplayExpected(format_args!("{}", expected)),
+        ),
+        ConsensusError::UnknownSpecialTransactionType(tx_type) => E::invalid_value(
+            Unexpected::Unsigned(tx_type.into()),
+            &DisplayExpected("special transaction type"),
+        ),
+        ConsensusError::WrongSpecialTransactionPayloadConversion { expected, actual } => {
+            E::invalid_value(
+                Unexpected::Str(actual.to_string().as_str()),
+                &DisplayExpected(format_args!("expected transaction type: {}", expected.to_string())),
+            )
+        }
+        ConsensusError::NonStandardScriptPayout(script_buf) => E::invalid_value(
+            Unexpected::Other(script_buf.to_string().as_str()),
+            &DisplayExpected("standard scriptPubKey"),
+        ),
+        ConsensusError::Hex(error) => E::custom(error),
+        ConsensusError::Address(error) => E::custom(error),
     }
 }
 
 impl<E> DecodeError<E>
-where
-    E: serde::de::Error,
+    where
+        E: serde::de::Error,
 {
     fn unify(self) -> E {
         match self {
@@ -406,8 +429,8 @@ where
 }
 
 impl<E> IntoDeError for DecodeError<E>
-where
-    E: IntoDeError,
+    where
+        E: IntoDeError,
 {
     fn into_de_error<DE: serde::de::Error>(self) -> DE {
         match self {
@@ -418,12 +441,12 @@ where
     }
 }
 
-struct IterReader<E: fmt::Debug, I: Iterator<Item = Result<u8, E>>> {
+struct IterReader<E: fmt::Debug, I: Iterator<Item=Result<u8, E>>> {
     iterator: core::iter::Fuse<I>,
     error: Option<E>,
 }
 
-impl<E: fmt::Debug, I: Iterator<Item = Result<u8, E>>> IterReader<E, I> {
+impl<E: fmt::Debug, I: Iterator<Item=Result<u8, E>>> IterReader<E, I> {
     fn new(iterator: I) -> Self { IterReader { iterator: iterator.fuse(), error: None } }
 
     fn decode<T: Decodable>(mut self) -> Result<T, DecodeError<E>> {
@@ -433,7 +456,7 @@ impl<E: fmt::Debug, I: Iterator<Item = Result<u8, E>>> IterReader<E, I> {
         match (result, self.error) {
             (Ok(_), None) if self.iterator.next().is_some() => {
                 Err(DecodeError::TooManyBytes)
-            },
+            }
             (Ok(value), None) => Ok(value),
             (Ok(_), Some(error)) => panic!("{} silently ate the error: {:?}", core::any::type_name::<T>(), error),
             (Err(ConsensusError::Io(io_error)), Some(de_error)) if io_error.kind() == io::ErrorKind::Other && io_error.source().is_none() => Err(DecodeError::Other(de_error)),
@@ -444,7 +467,7 @@ impl<E: fmt::Debug, I: Iterator<Item = Result<u8, E>>> IterReader<E, I> {
     }
 }
 
-impl<E: fmt::Debug, I: Iterator<Item = Result<u8, E>>> io::Read for IterReader<E, I> {
+impl<E: fmt::Debug, I: Iterator<Item=Result<u8, E>>> io::Read for IterReader<E, I> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut count = 0;
         for (dst, src) in buf.iter_mut().zip(&mut self.iterator) {
@@ -467,9 +490,9 @@ impl<E: fmt::Debug, I: Iterator<Item = Result<u8, E>>> io::Read for IterReader<E
 /// To (de)serialize a field using consensus encoding you can write e.g.:
 ///
 /// ```
-/// use bitcoin::Transaction;
-/// use bitcoin::consensus;
+/// use dashcore::consensus;
 /// use serde_derive::{Serialize, Deserialize};
+/// use dashcore::Transaction;
 ///
 /// #[derive(Serialize, Deserialize)]
 /// # #[serde(crate = "actual_serde")]
@@ -486,8 +509,8 @@ impl<E> With<E> {
         value: &T,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
-    where
-        E: ByteEncoder,
+        where
+            E: ByteEncoder,
     {
         if serializer.is_human_readable() {
             serializer.collect_str(&DisplayWrapper::<'_, _, E>(value, Default::default()))
@@ -503,7 +526,7 @@ impl<E> With<E> {
                 (Ok(_), Some(error)) =>
                     panic!("{} silently ate an IO error: {:?}", core::any::type_name::<T>(), error),
                 (Err(io_error), Some(ser_error))
-                    if io_error.kind() == io::ErrorKind::Other && io_error.source().is_none() =>
+                if io_error.kind() == io::ErrorKind::Other && io_error.source().is_none() =>
                     Err(ser_error),
                 (Err(io_error), ser_error) => panic!(
                     "{} returned an unexpected IO error: {:?} serialization error: {:?}",
@@ -519,8 +542,8 @@ impl<E> With<E> {
     pub fn deserialize<'d, T: Decodable, D: Deserializer<'d>>(
         deserializer: D,
     ) -> Result<T, D::Error>
-    where
-        for<'a> E: ByteDecoder<'a>,
+        where
+                for<'a> E: ByteDecoder<'a>,
     {
         if deserializer.is_human_readable() {
             deserializer.deserialize_str(HRVisitor::<_, E>(Default::default()))

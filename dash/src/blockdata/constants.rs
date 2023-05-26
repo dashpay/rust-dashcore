@@ -18,13 +18,13 @@ use crate::blockdata::block::{self, Block};
 use crate::blockdata::locktime::absolute;
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::script;
-use crate::blockdata::transaction::{OutPoint, Sequence, Transaction, TxIn, TxOut};
+use crate::blockdata::transaction::{outpoint::OutPoint, Transaction, txin::TxIn, txout::TxOut};
 use crate::blockdata::witness::Witness;
 use crate::internal_macros::impl_bytes_newtype;
 use crate::network::constants::Network;
 use crate::pow::CompactTarget;
 
-/// How many satoshis are in "one bitcoin".
+/// How many satoshis are in "one dash".
 pub const COIN_VALUE: u64 = 100_000_000;
 /// How many seconds between blocks we expect on average.
 pub const TARGET_BLOCK_SPACING: u32 = 600;
@@ -40,14 +40,14 @@ pub const MIN_TRANSACTION_WEIGHT: u32 = 4 * 60;
 pub const WITNESS_SCALE_FACTOR: usize = 4;
 /// The maximum allowed number of signature check operations in a block.
 pub const MAX_BLOCK_SIGOPS_COST: i64 = 80_000;
-/// Mainnet (bitcoin) pubkey address prefix.
-pub const PUBKEY_ADDRESS_PREFIX_MAIN: u8 = 0; // 0x00
-/// Mainnet (bitcoin) script address prefix.
-pub const SCRIPT_ADDRESS_PREFIX_MAIN: u8 = 5; // 0x05
-/// Test (tesnet, signet, regtest) pubkey address prefix.
-pub const PUBKEY_ADDRESS_PREFIX_TEST: u8 = 111; // 0x6f
-/// Test (tesnet, signet, regtest) script address prefix.
-pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 196; // 0xc4
+/// Mainnet (dash) pubkey address prefix.
+pub const PUBKEY_ADDRESS_PREFIX_MAIN: u8 = 76; // 0x4C
+/// Mainnet (dash) script address prefix.
+pub const SCRIPT_ADDRESS_PREFIX_MAIN: u8 = 16; // 0x10
+/// Test (testnet, devnet, regtest) pubkey address prefix.
+pub const PUBKEY_ADDRESS_PREFIX_TEST: u8 = 140; // 0x8C
+/// Test (testnet, devnet, regtest) script address prefix.
+pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 19; // 0x13
 /// The maximum allowed script size.
 pub const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
 /// How may blocks between halvings.
@@ -67,9 +67,10 @@ fn bitcoin_genesis_tx() -> Transaction {
     // Base
     let mut ret = Transaction {
         version: 1,
-        lock_time: absolute::LockTime::ZERO,
+        lock_time: absolute::LockTime::ZERO.to_consensus_u32(),
         input: vec![],
         output: vec![],
+        special_transaction_payload: None,
     };
 
     // Inputs
@@ -81,7 +82,7 @@ fn bitcoin_genesis_tx() -> Transaction {
     ret.input.push(TxIn {
         previous_output: OutPoint::null(),
         script_sig: in_script,
-        sequence: Sequence::MAX,
+        sequence: 0xFFFFFFFF,
         witness: Witness::default(),
     });
 
@@ -101,7 +102,7 @@ pub fn genesis_block(network: Network) -> Block {
     let hash: sha256d::Hash = txdata[0].txid().into();
     let merkle_root = hash.into();
     match network {
-        Network::Bitcoin => Block {
+        Network::Dash => Block {
             header: block::Header {
                 version: block::Version::ONE,
                 prev_blockhash: Hash::all_zeros(),
@@ -123,7 +124,7 @@ pub fn genesis_block(network: Network) -> Block {
             },
             txdata,
         },
-        Network::Signet => Block {
+        Network::Devnet => Block {
             header: block::Header {
                 version: block::Version::ONE,
                 prev_blockhash: Hash::all_zeros(),
@@ -156,22 +157,22 @@ impl_bytes_newtype!(ChainHash, 32);
 
 impl ChainHash {
     // Mainnet value can be verified at https://github.com/lightning/bolts/blob/master/00-introduction.md
-    /// `ChainHash` for mainnet bitcoin.
-    pub const BITCOIN: Self = Self([
+    /// `ChainHash` for mainnet dash.
+    pub const DASH: Self = Self([
         111, 226, 140, 10, 182, 241, 179, 114, 193, 166, 162, 70, 174, 99, 247, 79, 147, 30, 131,
         101, 225, 90, 8, 156, 104, 214, 25, 0, 0, 0, 0, 0,
     ]);
-    /// `ChainHash` for testnet bitcoin.
+    /// `ChainHash` for testnet dash.
     pub const TESTNET: Self = Self([
         67, 73, 127, 215, 248, 38, 149, 113, 8, 244, 163, 15, 217, 206, 195, 174, 186, 121, 151,
         32, 132, 233, 14, 173, 1, 234, 51, 9, 0, 0, 0, 0,
     ]);
-    /// `ChainHash` for signet bitcoin.
-    pub const SIGNET: Self = Self([
+    /// `ChainHash` for devnet dash.
+    pub const DEVNET: Self = Self([
         246, 30, 238, 59, 99, 163, 128, 164, 119, 160, 99, 175, 50, 178, 187, 201, 124, 159, 249,
         240, 31, 44, 66, 37, 233, 115, 152, 129, 8, 0, 0, 0,
     ]);
-    /// `ChainHash` for regtest bitcoin.
+    /// `ChainHash` for regtest dash.
     pub const REGTEST: Self = Self([
         6, 34, 110, 70, 17, 26, 11, 89, 202, 175, 18, 96, 67, 235, 91, 191, 40, 195, 79, 58, 94,
         51, 42, 31, 199, 178, 183, 60, 241, 136, 145, 15,
@@ -182,7 +183,7 @@ impl ChainHash {
     /// See [BOLT 0](https://github.com/lightning/bolts/blob/ffeece3dab1c52efdb9b53ae476539320fa44938/00-introduction.md#chain_hash)
     /// for specification.
     pub const fn using_genesis_block(network: Network) -> Self {
-        let hashes = [Self::BITCOIN, Self::TESTNET, Self::SIGNET, Self::REGTEST];
+        let hashes = [Self::DASH, Self::TESTNET, Self::DEVNET, Self::REGTEST];
         hashes[network as usize]
     }
 
@@ -195,7 +196,6 @@ impl ChainHash {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::blockdata::locktime::absolute;
     use crate::consensus::encode::serialize;
     use crate::internal_macros::hex;
     use crate::network::constants::Network;
@@ -211,12 +211,12 @@ mod test {
         assert_eq!(serialize(&gen.input[0].script_sig),
                    hex!("4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73"));
 
-        assert_eq!(gen.input[0].sequence, Sequence::MAX);
+        assert_eq!(gen.input[0].sequence, u32::MAX);
         assert_eq!(gen.output.len(), 1);
         assert_eq!(serialize(&gen.output[0].script_pubkey),
                    hex!("434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac"));
         assert_eq!(gen.output[0].value, 50 * COIN_VALUE);
-        assert_eq!(gen.lock_time, absolute::LockTime::ZERO);
+        assert_eq!(gen.lock_time, 0);
 
         assert_eq!(
             gen.wtxid().to_string(),
@@ -226,7 +226,7 @@ mod test {
 
     #[test]
     fn bitcoin_genesis_full_block() {
-        let gen = genesis_block(Network::Bitcoin);
+        let gen = genesis_block(Network::Dash);
 
         assert_eq!(gen.header.version, block::Version::ONE);
         assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
@@ -263,8 +263,8 @@ mod test {
     }
 
     #[test]
-    fn signet_genesis_full_block() {
-        let gen = genesis_block(Network::Signet);
+    fn devnet_genesis_full_block() {
+        let gen = genesis_block(Network::Devnet);
         assert_eq!(gen.header.version, block::Version::ONE);
         assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
@@ -299,9 +299,9 @@ mod test {
 
         #[allow(unreachable_patterns)] // This is specifically trying to catch later added variants.
         match network {
-            Network::Bitcoin => {},
+            Network::Dash => {},
             Network::Testnet => {},
-            Network::Signet => {},
+            Network::Devnet => {},
             Network::Regtest => {},
             _ => panic!("Update ChainHash::using_genesis_block and chain_hash_genesis_block with new variants"),
         }
@@ -319,16 +319,16 @@ mod test {
     }
 
     chain_hash_genesis_block! {
-        mainnet_chain_hash_genesis_block, Network::Bitcoin;
+        mainnet_chain_hash_genesis_block, Network::Dash;
         testnet_chain_hash_genesis_block, Network::Testnet;
-        signet_chain_hash_genesis_block, Network::Signet;
+        devnet_chain_hash_genesis_block, Network::Devnet;
         regtest_chain_hash_genesis_block, Network::Regtest;
     }
 
     // Test vector taken from: https://github.com/lightning/bolts/blob/master/00-introduction.md
     #[test]
     fn mainnet_chain_hash_test_vector() {
-        let got = ChainHash::using_genesis_block(Network::Bitcoin).to_string();
+        let got = ChainHash::using_genesis_block(Network::Dash).to_string();
         let want = "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000";
         assert_eq!(got, want);
     }

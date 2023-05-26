@@ -23,6 +23,7 @@
 //! hash).
 //!
 
+
 #[rustfmt::skip]
 macro_rules! impl_hashencode {
     ($hashtype:ident) => {
@@ -67,7 +68,15 @@ pub use newtypes::*;
 
 #[rustfmt::skip]
 mod newtypes {
-    use hashes::{sha256, sha256d, hash160, hash_newtype};
+
+    use crate::alloc::string::ToString;
+
+    use core::str::FromStr;
+    use hashes::{sha256, sha256d, hash160, hash_newtype, Hash};
+    use hashes::hex::Error;
+    use internals::hex::Case;
+    use internals::hex::display::DisplayHex;
+    use crate::prelude::String;
 
     hash_newtype! {
         /// A dash transaction hash/transaction ID.
@@ -113,9 +122,13 @@ mod newtypes {
         /// A hash of all transaction inputs
         pub struct InputsHash(sha256d::Hash);
         /// A hash used to identify a quorum
+        #[hash_newtype(forward)]
         pub struct QuorumHash(sha256d::Hash);
         /// A hash of a quorum verification vector
         pub struct QuorumVVecHash(sha256d::Hash);
+        /// ProTxHash is a pro-tx hash
+        #[hash_newtype(forward)]
+        pub struct ProTxHash(sha256d::Hash);
     }
 
     impl_hashencode!(Txid);
@@ -136,8 +149,62 @@ mod newtypes {
 
     impl_hashencode!(QuorumHash);
     impl_hashencode!(QuorumVVecHash);
+    impl_hashencode!(PubkeyHash);
 
     impl_asref_push_bytes!(PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash);
 
-    pub type ProTxHash = Txid;
+    impl Txid {
+        /// Create a Txid from a string
+        pub fn from_hex(s: &str) -> Result<Txid, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
+
+        /// Convert a Txid to a string
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
+    }
+
+    impl ProTxHash {
+        /// Create a Txid from a string
+        pub fn from_hex(s: &str) -> Result<ProTxHash, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
+
+        /// Convert a Txid to a string
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
+    }
+
+    impl InputsHash {
+        /// Create an InputsHash from a string
+        pub fn from_hex(s: &str) -> Result<InputsHash, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
+
+        /// Convert an InputsHash to a string
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
+    }
+
+    impl SpecialTransactionPayloadHash {
+        /// Create a SpecialTransactionPayloadHash from a string
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
+    }
+
+    impl PubkeyHash {
+        /// Create a PubkeyHash from a string
+        pub fn from_hex(s: &str) -> Result<PubkeyHash, Error> {
+            Ok(Self(hash160::Hash::from_str(s)?))
+        }
+
+        /// Convert a PubkeyHash to a string
+        pub fn to_hex(&self) -> String {
+            self.0.as_byte_array().to_hex_string(Case::Lower)
+        }
+    }
 }

@@ -17,7 +17,7 @@
 //! The provider update registrar special transaction is used to update the owner controlled options
 //! for a masternode.
 //!
-//! It is defined in DIP3 https://github.com/dashpay/dips/blob/master/dip-0003.md as follows:
+//! It is defined in DIP3 [dip-0003](https://github.com/dashpay/dips/blob/master/dip-0003.md) as follows:
 //!
 //! To registrar update a masternode, the masternode owner must submit another special transaction
 //! (DIP2) to the network. This special transaction is called a Provider Update Registrar
@@ -29,37 +29,34 @@
 //!
 //! The special transaction type used for ProUpRegTx Transactions is 3.
 
-use prelude::*;
-use io::Error;
-use io;
-use io::Write;
+use crate::prelude::*;
+use crate::io;
 use hashes::Hash;
-use ::{Script};
-use consensus::{Decodable, Encodable, encode};
-use ::{InputsHash};
-use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-use bls_sig_utils::BLSPublicKey;
-use ::{PubkeyHash, SpecialTransactionPayloadHash};
-use Txid;
+use crate::{ScriptBuf};
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+use crate::bls_sig_utils::BLSPublicKey;
+use crate::hash_types::{PubkeyHash, SpecialTransactionPayloadHash, Txid, InputsHash};
 
 /// A Provider Update Registrar Payload used in a Provider Update Registrar Special Transaction.
 /// This is used to update the base aspects a Masternode on the network.
 /// It must be signed by the owner's key that was set at registration.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct ProviderUpdateRegistrarPayload {
     version: u16,
     pro_tx_hash: Txid,
     provider_mode: u16,
     operator_public_key: BLSPublicKey,
     voting_key_hash: PubkeyHash,
-    script_payout: Script,
+    script_payout: ScriptBuf,
     inputs_hash: InputsHash,
     payload_sig: Vec<u8>,
 }
 
 impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRegistrarPayload {
-    fn base_payload_data_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn base_payload_data_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.version.consensus_encode(&mut s)?;
         len += self.pro_tx_hash.consensus_encode(&mut s)?;
@@ -79,24 +76,24 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRegistrarPayload {
 }
 
 impl Encodable for ProviderUpdateRegistrarPayload {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, mut w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.base_payload_data_encode(&mut s)?;
-        len += self.payload_sig.consensus_encode(&mut s)?;
+        len += self.base_payload_data_encode(&mut w)?;
+        len += self.payload_sig.consensus_encode(&mut w)?;
         Ok(len)
     }
 }
 
 impl Decodable for ProviderUpdateRegistrarPayload {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let version = u16::consensus_decode(&mut d)?;
-        let pro_tx_hash = Txid::consensus_decode(&mut d)?;
-        let provider_mode = u16::consensus_decode(&mut d)?;
-        let operator_public_key = BLSPublicKey::consensus_decode(&mut d)?;
-        let voting_key_hash = PubkeyHash::consensus_decode(&mut d)?;
-        let script_payout = Script::consensus_decode(&mut d)?;
-        let inputs_hash = InputsHash::consensus_decode(&mut d)?;
-        let payload_sig = Vec::<u8>::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let version = u16::consensus_decode(r)?;
+        let pro_tx_hash = Txid::consensus_decode(r)?;
+        let provider_mode = u16::consensus_decode(r)?;
+        let operator_public_key = BLSPublicKey::consensus_decode(r)?;
+        let voting_key_hash = PubkeyHash::consensus_decode(r)?;
+        let script_payout = ScriptBuf::consensus_decode(r)?;
+        let inputs_hash = InputsHash::consensus_decode(r)?;
+        let payload_sig = Vec::<u8>::consensus_decode(r)?;
 
         Ok(ProviderUpdateRegistrarPayload {
             version,
@@ -113,33 +110,33 @@ impl Decodable for ProviderUpdateRegistrarPayload {
 
 #[cfg(test)]
 mod tests {
-    use hashes::hex::{FromHex, ToHex};
-    use consensus::deserialize;
-    use ::{Network, Transaction};
-    use ::{InputsHash, Txid};
-    use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-    use blockdata::transaction::special_transaction::TransactionPayload::{ProviderUpdateRegistrarPayloadType};
-    use ::{Script};
-    use blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
-    use bls_sig_utils::BLSPublicKey;
-    use PubkeyHash;
+    use core::str::FromStr;
+    use crate::consensus::deserialize;
+    use crate::{Network, ScriptBuf, Transaction, Txid};
+    use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+    use crate::bls_sig_utils::BLSPublicKey;
+    use crate::hash_types::InputsHash;
+    use crate::internal_macros::hex;
+    use crate::PubkeyHash;
+    use crate::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
+    use crate::transaction::special_transaction::TransactionPayload::ProviderUpdateRegistrarPayloadType;
 
     #[test]
     fn test_provider_update_registrar_transaction() {
         // This is a test for testnet
         let _network = Network::Testnet;
 
-        let expected_transaction_bytes = hex::decode("0300030001c7de76dac8dd96f9b49b12a06fe39c8caf0cad12d23ad6026094d9b11b2b260d000000006b483045022100b31895e8cea95a965c82d842eadd6eef3c7b29e677c62a5c8e2b5dce05b4ddfc02206c7b5a9ea8b71983c3b21f4ff75ac1aa44090d28af8b2d9b93e794e6eb5835e20121032ea8be689184f329dce575776bc956cd52230f4c04755d5753d9491ea5bf8f2affffffff01c94670d0060000001976a914345f07bc7ebaf9f82f273be249b6066d2d5c236688ac00000000e4010049aa692330179f95c1342715102e37777df91cc0f3a4ae7e8f9e214ee97dbb3d0000139b654f0b1c031e1cf2b934c2d895178875cfe7c6a4f6758f02bc66eea7fc292d0040701acbe31f5e14a911cb061a2f6cc4a7bb877a80c11ae06b988d98305773f93b981976a91456bcf3cac49235537d6ce0fb3214d8850a6db77788ac2d7f857a2f15eb9340a0cfbce3ff8cf09b40e582d05b1f98c7468caa0f942bcf411ff69c9cb072660cc10048332c14c08621e7461f1f4f54b448baedc0e3434d9a7c3a1780885aaef4dd44c597b49b97595e02ad54728f572967d3ce0c2c0ceac174").unwrap();
+        let expected_transaction_bytes = hex!("0300030001c7de76dac8dd96f9b49b12a06fe39c8caf0cad12d23ad6026094d9b11b2b260d000000006b483045022100b31895e8cea95a965c82d842eadd6eef3c7b29e677c62a5c8e2b5dce05b4ddfc02206c7b5a9ea8b71983c3b21f4ff75ac1aa44090d28af8b2d9b93e794e6eb5835e20121032ea8be689184f329dce575776bc956cd52230f4c04755d5753d9491ea5bf8f2affffffff01c94670d0060000001976a914345f07bc7ebaf9f82f273be249b6066d2d5c236688ac00000000e4010049aa692330179f95c1342715102e37777df91cc0f3a4ae7e8f9e214ee97dbb3d0000139b654f0b1c031e1cf2b934c2d895178875cfe7c6a4f6758f02bc66eea7fc292d0040701acbe31f5e14a911cb061a2f6cc4a7bb877a80c11ae06b988d98305773f93b981976a91456bcf3cac49235537d6ce0fb3214d8850a6db77788ac2d7f857a2f15eb9340a0cfbce3ff8cf09b40e582d05b1f98c7468caa0f942bcf411ff69c9cb072660cc10048332c14c08621e7461f1f4f54b448baedc0e3434d9a7c3a1780885aaef4dd44c597b49b97595e02ad54728f572967d3ce0c2c0ceac174");
 
         let expected_transaction: Transaction = deserialize(expected_transaction_bytes.as_slice()).expect("expected a transaction");
 
         let expected_provider_update_registrar_payload = expected_transaction.special_transaction_payload.clone().unwrap().to_update_registrar_payload().expect("expected to get an update registrar payload");
 
-        let tx_id = Txid::from_hex("bd98378ca37d3ae6f4850b82e77be675feb3c9bc6e33cb0c23de1b38a08034c7").expect("expected to decode tx id");
+        let tx_id = Txid::from_str("bd98378ca37d3ae6f4850b82e77be675feb3c9bc6e33cb0c23de1b38a08034c7").expect("expected to decode tx id");
 
         let provider_update_registrar_payload_version = 1;
         assert_eq!(expected_provider_update_registrar_payload.version, provider_update_registrar_payload_version);
-        let pro_tx_hash = Txid::from_hex("3dbb7de94e219e8f7eaea4f3c01cf97d77372e10152734c1959f17302369aa49").expect("expected to decode tx id");
+        let pro_tx_hash = Txid::from_str("3dbb7de94e219e8f7eaea4f3c01cf97d77372e10152734c1959f17302369aa49").expect("expected to decode tx id");
         assert_eq!(expected_provider_update_registrar_payload.pro_tx_hash, pro_tx_hash);
 
         let provider_mode = 0;
@@ -158,7 +155,7 @@ mod tests {
 
         // We should verify the script payouts match
         let pubkey_hash = PubkeyHash::from_hex("56bcf3cac49235537d6ce0fb3214d8850a6db777").expect("expected to get pubkey hash");
-        let script_payout = Script::new_p2pkh(&pubkey_hash);
+        let script_payout = ScriptBuf::new_p2pkh(&pubkey_hash);
         assert_eq!(expected_provider_update_registrar_payload.script_payout, script_payout);
 
         assert_eq!(expected_transaction.txid(), tx_id);

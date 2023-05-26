@@ -21,7 +21,7 @@
 //!
 
 #[cfg(feature = "std")] use std::error;
-use prelude::*;
+use crate::prelude::*;
 use core::{fmt, str::FromStr};
 
 /// This type is consensus valid but an input including it would prevent the transaction from
@@ -36,7 +36,6 @@ impl fmt::Display for NonStandardSighashType {
 }
 
 #[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl error::Error for NonStandardSighashType {}
 
 /// Legacy Hashtype of an input's signature
@@ -45,8 +44,7 @@ pub type SigHashType = EcdsaSighashType;
 
 /// Hashtype of an input's signature, encoded in the last byte of the signature.
 ///
-/// Fixed values so they can be cast as integer types for encoding (see also
-/// [`SchnorrSighashType`]).
+/// Fixed values so they can be cast as integer types for encoding.
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum EcdsaSighashType {
     /// 0x1: Sign all outputs.
@@ -65,7 +63,6 @@ pub enum EcdsaSighashType {
     /// 0x83: Sign one output and only this input (see `Single` for what "one output" means).
     SinglePlusAnyoneCanPay	= 0x83
 }
-serde_string_impl!(EcdsaSighashType, "a EcdsaSighashType data");
 
 impl fmt::Display for EcdsaSighashType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -178,23 +175,20 @@ impl fmt::Display for SighashTypeParseError {
     }
 }
 
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 #[cfg(feature = "std")]
 impl ::std::error::Error for SighashTypeParseError {}
 
 #[cfg(test)]
 mod tests {
     use core::str::FromStr;
-    use blockdata::transaction::{hash_type, UINT256_ONE};
-    use ::{EcdsaSighashType, TxIn};
-    use ::{Script, Transaction};
-    use ::{Sighash, TxOut};
-
-    use consensus::encode::deserialize;
-
     use hashes::Hash;
+    use crate::blockdata::transaction::{hash_type, UINT256_ONE};
+    use crate::consensus::encode::deserialize;
+
     use hashes::hex::FromHex;
-    use sighash::SighashCache;
+    use crate::sighash::{LegacySighash, SighashCache};
+    use crate::transaction::hash_type::EcdsaSighashType;
+    use crate::{ScriptBuf, Transaction, TxIn, TxOut};
 
     #[test]
     fn test_sighashtype_fromstr_display() {
@@ -241,32 +235,28 @@ mod tests {
     fn sighash_single_bug() {
         const SIGHASH_SINGLE: u32 = 3;
         // We need a tx with more inputs than outputs.
-        let mut input = Vec::new();
-        input.push(TxIn::default());
-        input.push(TxIn::default());
-        let mut output = Vec::new();
-        output.push(TxOut::default());
-
         let tx = Transaction {
             version: 1,
             lock_time: 0,
-            input: input,
-            output: output,   // TODO: Use Vec::from([TxOut]) once we bump MSRV.
-            special_transaction_payload: None
+            input: vec![TxIn::default(), TxIn::default()],
+            output: vec![TxOut::default()],
+            special_transaction_payload: None,
         };
-        let script = Script::new();
-        let got = tx.signature_hash(1, &script, SIGHASH_SINGLE);
-        let want = Sighash::from_slice(&UINT256_ONE).unwrap();
+        let script = ScriptBuf::new();
+        let cache = SighashCache::new(&tx);
+
+        let got = cache.legacy_signature_hash(1, &script, SIGHASH_SINGLE).expect("sighash");
+        let want = LegacySighash::from_slice(&UINT256_ONE).unwrap();
 
         assert_eq!(got, want)
     }
 
     fn run_test_sighash(tx: &str, script: &str, input_index: usize, hash_type: i32, expected_result: &str) {
         let tx: Transaction = deserialize(&Vec::from_hex(tx).unwrap()[..]).unwrap();
-        let script = Script::from(Vec::from_hex(script).unwrap());
+        let script = ScriptBuf::from(Vec::from_hex(script).unwrap());
         let mut raw_expected = Vec::from_hex(expected_result).unwrap();
         raw_expected.reverse();
-        let expected_result = Sighash::from_slice(&raw_expected[..]).unwrap();
+        let expected_result = LegacySighash::from_slice(&raw_expected[..]).unwrap();
 
         let actual_result = if raw_expected[0] % 2 == 0 {
             // tx.signature_hash and cache.legacy_signature_hash are the same, this if helps to test

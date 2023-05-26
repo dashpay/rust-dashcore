@@ -26,7 +26,7 @@ crate::internal_macros::hash_type! {
     256,
     false,
     "Output of the SHA256 hash function.",
-    "crate::json_hex_string::len_32"
+    "crate::util::json_hex_string::len_32"
 }
 
 #[cfg(not(fuzzing))]
@@ -497,6 +497,10 @@ impl HashEngine {
         self.h[6] = self.h[6].wrapping_add(g);
         self.h[7] = self.h[7].wrapping_add(h);
     }
+}
+
+impl secp256k1::ThirtyTwoByteHash for Hash {
+    fn into_32(self) -> [u8; 32] { self.0 }
 }
 
 #[cfg(test)]

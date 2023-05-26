@@ -37,8 +37,7 @@
 //! * `unstable` - enables unstable features for testing.
 //! * `rand` - (dependency), makes it more convenient to generate random values.
 //! * `bincode` - (dependency), implements bincode serialization and deserialization.
-//! * `use-serde` - (dependency), implements `serde`-based serialization and
-//!                 deserialization.
+//! * `serde` - (dependency), implements `serde`-based serialization and deserialization.
 //! * `secp-lowmemory` - optimizations for low-memory devices.
 //! * `no-std` - enables additional features required for this crate to be usable
 //!              without std. Does **not** disable `std`. Depends on `core2`.
@@ -59,7 +58,7 @@ compile_error!("at least one of the `std` or `no-std` features must be enabled")
 // Disable 16-bit support at least for now as we can't guarantee it yet.
 #[cfg(target_pointer_width = "16")]
 compile_error!(
-    "rust-bitcoin currently only supports architectures with pointers wider than 16 bits, let us
+    "rust-dash currently only supports architectures with pointers wider than 16 bits, let us
     know if you want 16-bit support. Note that we do NOT guarantee that we will implement it!"
 );
 
@@ -80,6 +79,7 @@ pub extern crate secp256k1;
 #[cfg(feature = "serde")]
 #[macro_use]
 extern crate actual_serde as serde;
+extern crate core;
 
 #[cfg(test)]
 #[macro_use]
@@ -111,6 +111,8 @@ pub mod sign_message;
 pub mod string;
 pub mod taproot;
 pub mod util;
+pub mod bls_sig_utils;
+mod signer;
 
 // May depend on crate features and we don't want to bother with it
 #[allow(unused)]
@@ -131,7 +133,8 @@ pub use crate::blockdata::block::{self, Block};
 pub use crate::blockdata::fee_rate::FeeRate;
 pub use crate::blockdata::locktime::{self, absolute, relative};
 pub use crate::blockdata::script::{self, Script, ScriptBuf};
-pub use crate::blockdata::transaction::{self, OutPoint, Sequence, Transaction, TxIn, TxOut};
+pub use crate::blockdata::transaction::{self, Transaction};
+pub use crate::transaction::{txin::TxIn, txout::TxOut, outpoint::OutPoint};
 pub use crate::blockdata::weight::Weight;
 pub use crate::blockdata::witness::{self, Witness};
 pub use crate::blockdata::{constants, opcodes};

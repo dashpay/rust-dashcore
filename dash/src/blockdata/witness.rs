@@ -18,7 +18,7 @@ use crate::sighash::EcdsaSighashType;
 use crate::taproot::TAPROOT_ANNEX_PREFIX;
 use crate::{Script, VarInt};
 
-/// The Witness is the data used to unlock bitcoin since the [segwit upgrade].
+/// The Witness is the data used to unlock dash since the [segwit upgrade].
 ///
 /// Can be logically seen as an array of bytestrings, i.e. `Vec<Vec<u8>>`, and it is serialized on the wire
 /// in that format. You can convert between this type and `Vec<Vec<u8>>` by using [`Witness::from_slice`]

@@ -3,13 +3,13 @@
 
 #![cfg(feature = "serde")]
 
-extern crate bitcoin;
+extern crate dashcore;
 extern crate serde_json;
 
 macro_rules! test_opcodes {
     ($($op:ident),* $(,)+) => {
         $(
-            let op = bitcoin::blockdata::opcodes::all::$op;
+            let op = dashcore::blockdata::opcodes::all::$op;
             let want = concat!("\"", stringify!($op), "\"");
             let got = ::serde_json::to_string(&op).unwrap();
             assert_eq!(got, want);

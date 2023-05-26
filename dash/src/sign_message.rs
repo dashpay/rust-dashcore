@@ -210,7 +210,7 @@ mod message_signing {
 /// Hash message for signature using Bitcoin's message signing format.
 pub fn signed_msg_hash(msg: &str) -> sha256d::Hash {
     let mut engine = sha256d::Hash::engine();
-    engine.input(BITCOIN_SIGNED_MSG_PREFIX);
+    engine.input(DASH_SIGNED_MSG_PREFIX);
     let msg_len = encode::VarInt(msg.len() as u64);
     msg_len.consensus_encode(&mut engine).expect("engines don't error");
     engine.input(msg.as_bytes());
@@ -226,7 +226,7 @@ mod tests {
         let hash = signed_msg_hash("test");
         assert_eq!(
             hash.to_string(),
-            "a6f87fe6d58a032c320ff8d1541656f0282c2c7bfcc69d61af4c8e8ed528e49c"
+            "9534c129a0eec7aaec6b6145d5014c2867d573f23a9827089ff09d5c357597dc"
         );
     }
 
@@ -240,7 +240,7 @@ mod tests {
         use crate::{Address, AddressType, Network};
 
         let secp = secp256k1::Secp256k1::new();
-        let message = "rust-bitcoin MessageSignature test";
+        let message = "rust-dash MessageSignature test";
         let msg_hash = super::signed_msg_hash(message);
         let msg = secp256k1::Message::from(msg_hash);
 

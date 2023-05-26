@@ -86,7 +86,7 @@ impl crate::HashEngine for HashEngine {
 pub struct Hash(
     #[cfg_attr(
         feature = "schemars",
-        schemars(schema_with = "crate::json_hex_string::len_64")
+        schemars(schema_with = "crate::util::json_hex_string::len_64")
     )]
     [u8; 64],
 );

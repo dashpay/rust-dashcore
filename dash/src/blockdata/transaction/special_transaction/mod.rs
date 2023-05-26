@@ -15,27 +15,26 @@
 //! Dash Special Transaction.
 //!
 //! A dash special transaction's purpose is to relay more data than just economic information.
-//! They are defined in DIP2 https://github.com/dashpay/dips/blob/master/dip-0002.md.
+//! They are defined in DIP2 [dip-0002](https://github.com/dashpay/dips/blob/master/dip-0002.md).
 //! The list of special transactions can be found here:
-//! https://github.com/dashpay/dips/blob/master/dip-0002-special-transactions.md
+//! [dip-0002-special-transactions](https://github.com/dashpay/dips/blob/master/dip-0002-special-transactions.md)
 //!
 
 use core::fmt::{Debug, Display, Formatter};
 use core::convert::TryFrom;
-use io;
-use io::{Error, Read, Write};
-use blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
-use blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
-use blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
-use blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
-use blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
-use blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
-use blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
-use blockdata::transaction::special_transaction::quorum_commitment::QuorumCommitmentPayload;
-use blockdata::transaction::special_transaction::TransactionPayload::{AssetLockPayloadType, AssetUnlockPayloadType, CoinbasePayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType, ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType, QuorumCommitmentPayloadType};
-use blockdata::transaction::special_transaction::TransactionType::{AssetLock, Classic, Coinbase, AssetUnlock, ProviderRegistration, ProviderUpdateRegistrar, ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment};
-use consensus::{Decodable, Encodable, encode};
-use ::{SpecialTransactionPayloadHash, VarInt};
+use crate::io;
+use crate::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
+use crate::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
+use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
+use crate::blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
+use crate::blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
+use crate::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
+use crate::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
+use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumCommitmentPayload;
+use crate::blockdata::transaction::special_transaction::TransactionPayload::{AssetLockPayloadType, AssetUnlockPayloadType, CoinbasePayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType, ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType, QuorumCommitmentPayloadType};
+use crate::blockdata::transaction::special_transaction::TransactionType::{AssetLock, Classic, Coinbase, AssetUnlock, ProviderRegistration, ProviderUpdateRegistrar, ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment};
+use crate::consensus::{Decodable, Encodable, encode, encode::VarInt};
+use crate::hash_types::{SpecialTransactionPayloadHash};
 
 pub mod provider_registration;
 pub mod provider_update_service;
@@ -50,6 +49,7 @@ pub mod asset_unlock;
 /// Special transactions are defined in DIP 2.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub enum TransactionPayload {
     /// A wrapper for a Masternode Registration payload
     ProviderRegistrationPayloadType(ProviderRegistrationPayload),
@@ -70,16 +70,16 @@ pub enum TransactionPayload {
 }
 
 impl Encodable for TransactionPayload {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         match self {
-            ProviderRegistrationPayloadType(p) => { p.consensus_encode(&mut s)}
-            ProviderUpdateServicePayloadType(p) => { p.consensus_encode(&mut s)}
-            ProviderUpdateRegistrarPayloadType(p) => {p.consensus_encode(&mut s)}
-            ProviderUpdateRevocationPayloadType(p) => {p.consensus_encode(&mut s)}
-            CoinbasePayloadType(p) => {p.consensus_encode(&mut s)}
-            QuorumCommitmentPayloadType(p) => {p.consensus_encode(&mut s)}
-            AssetLockPayloadType(p) => {p.consensus_encode(&mut s)}
-            AssetUnlockPayloadType(p) => {p.consensus_encode(&mut s)}
+            ProviderRegistrationPayloadType(p) => { p.consensus_encode(w)}
+            ProviderUpdateServicePayloadType(p) => { p.consensus_encode(w)}
+            ProviderUpdateRegistrarPayloadType(p) => {p.consensus_encode(w)}
+            ProviderUpdateRevocationPayloadType(p) => {p.consensus_encode(w)}
+            CoinbasePayloadType(p) => {p.consensus_encode(w)}
+            QuorumCommitmentPayloadType(p) => {p.consensus_encode(w)}
+            AssetLockPayloadType(p) => {p.consensus_encode(w)}
+            AssetUnlockPayloadType(p) => {p.consensus_encode(w)}
         }
     }
 }
@@ -268,8 +268,8 @@ impl TryFrom<u16> for TransactionType {
 }
 
 impl Decodable for TransactionType {
-    fn consensus_decode<D: Read>(d: D) -> Result<Self, encode::Error> {
-        let special_transaction_number = u16::consensus_decode(d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let special_transaction_number = u16::consensus_decode(r)?;
         TransactionType::try_from(special_transaction_number)
     }
 }
@@ -285,10 +285,10 @@ impl TransactionType {
     }
 
     /// Decodes the payload based on the transaction type.
-    pub fn consensus_decode<D: io::Read>(self, mut d: D) -> Result<Option<TransactionPayload>, encode::Error> {
+    pub fn consensus_decode<R: io::Read + ?Sized>(self, d: &mut R) -> Result<Option<TransactionPayload>, encode::Error> {
         let _len = match self {
             Classic => { VarInt(0) }
-            _ => VarInt::consensus_decode(&mut d)?
+            _ => VarInt::consensus_decode(d)?
         };
 
         Ok(match self {

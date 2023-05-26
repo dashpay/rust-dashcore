@@ -1,4 +1,4 @@
-// Rust Bitcoin Library - Written by the rust-bitcoin developers.
+// Rust Bitcoin Library - Written by the rust-dash developers.
 // SPDX-License-Identifier: CC0-1.0
 
 //! Provides type [`LockTime`] that implements the logic around nLockTime/OP_CHECKLOCKTIMEVERIFY.
@@ -57,7 +57,7 @@ pub const LOCK_TIME_THRESHOLD: u32 = 500_000_000;
 ///
 /// # Examples
 /// ```
-/// # use bitcoin::absolute::{LockTime, LockTime::*};
+/// # use dashcore::absolute::{LockTime, LockTime::*};
 /// # let n = LockTime::from_consensus(741521);          // n OP_CHECKLOCKTIMEVERIFY
 /// # let lock_time = LockTime::from_consensus(741521);  // nLockTime
 /// // To compare absolute lock times there are various `is_satisfied_*` methods, you may also use:
@@ -74,7 +74,7 @@ pub enum LockTime {
     ///
     /// # Examples
     /// ```rust
-    /// use bitcoin::absolute::LockTime;
+    /// use dashcore::absolute::LockTime;
     ///
     /// let block: u32 = 741521;
     /// let n = LockTime::from_height(block).expect("valid height");
@@ -86,7 +86,7 @@ pub enum LockTime {
     ///
     /// # Examples
     /// ```rust
-    /// use bitcoin::absolute::LockTime;
+    /// use dashcore::absolute::LockTime;
     ///
     /// let seconds: u32 = 1653195600; // May 22nd, 5am UTC.
     /// let n = LockTime::from_time(seconds).expect("valid time");
@@ -106,7 +106,7 @@ impl LockTime {
     /// # Examples
     ///
     /// ```rust
-    /// # use bitcoin::absolute::LockTime;
+    /// # use dashcore::absolute::LockTime;
     /// # let n = LockTime::from_consensus(741521); // n OP_CHECKLOCKTIMEVERIFY
     ///
     /// // `from_consensus` roundtrips as expected with `to_consensus_u32`.
@@ -128,7 +128,7 @@ impl LockTime {
     ///
     /// # Examples
     /// ```rust
-    /// # use bitcoin::absolute::LockTime;
+    /// # use dashcore::absolute::LockTime;
     /// assert!(LockTime::from_height(741521).is_ok());
     /// assert!(LockTime::from_height(1653195600).is_err());
     /// ```
@@ -144,7 +144,7 @@ impl LockTime {
     ///
     /// # Examples
     /// ```rust
-    /// # use bitcoin::absolute::LockTime;
+    /// # use dashcore::absolute::LockTime;
     /// assert!(LockTime::from_time(1653195600).is_ok());
     /// assert!(LockTime::from_time(741521).is_err());
     /// ```
@@ -184,7 +184,7 @@ impl LockTime {
     ///
     /// # Examples
     /// ```no_run
-    /// # use bitcoin::absolute::{LockTime, Height, Time};
+    /// # use dashcore::absolute::{LockTime, Height, Time};
     /// // Can be implemented if block chain data is available.
     /// fn get_height() -> Height { todo!("return the current block height") }
     /// fn get_time() -> Time { todo!("return the current block time") }
@@ -219,7 +219,7 @@ impl LockTime {
     /// # Examples
     ///
     /// ```rust
-    /// # use bitcoin::absolute::{LockTime, LockTime::*};
+    /// # use dashcore::absolute::{LockTime, LockTime::*};
     /// let lock_time = LockTime::from_consensus(741521);
     /// let check = LockTime::from_consensus(741521 + 1);
     /// assert!(lock_time.is_implied_by(check));
@@ -248,7 +248,7 @@ impl LockTime {
     /// # Examples
     ///
     /// ```rust
-    /// # use bitcoin::absolute::{LockTime, LockTime::*};
+    /// # use dashcore::absolute::{LockTime, LockTime::*};
     /// # let n = LockTime::from_consensus(741521);              // n OP_CHECKLOCKTIMEVERIFY
     /// # let lock_time = LockTime::from_consensus(741521 + 1);  // nLockTime
     ///
@@ -362,14 +362,12 @@ impl<'de> serde::Deserialize<'de> for LockTime {
             // calls visit_u64, even when called from Deserializer::deserialize_u32. The
             // other visit_u*s have default implementations that forward to visit_u64.
             fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<u32, E> {
-                use core::convert::TryInto;
                 v.try_into().map_err(|_| {
                     E::invalid_value(serde::de::Unexpected::Unsigned(v), &"a 32-bit number")
                 })
             }
             // Also do the signed version, just for good measure.
             fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<u32, E> {
-                use core::convert::TryInto;
                 v.try_into().map_err(|_| {
                     E::invalid_value(serde::de::Unexpected::Signed(v), &"a 32-bit number")
                 })
@@ -413,7 +411,7 @@ impl Height {
     ///
     /// # Examples
     /// ```rust
-    /// use bitcoin::locktime::absolute::Height;
+    /// use crate::dashcore::locktime::absolute::Height;
     ///
     /// let h: u32 = 741521;
     /// let height = Height::from_consensus(h).expect("invalid height value");
@@ -432,7 +430,7 @@ impl Height {
     ///
     /// # Examples
     /// ```rust
-    /// use bitcoin::absolute::LockTime;
+    /// use dashcore::absolute::LockTime;
     ///
     /// let n_lock_time: u32 = 741521;
     /// let lock_time = LockTime::from_consensus(n_lock_time);
@@ -493,7 +491,7 @@ impl Time {
     ///
     /// # Examples
     /// ```rust
-    /// use bitcoin::locktime::absolute::Time;
+    /// use dashcore::locktime::absolute::Time;
     ///
     /// let t: u32 = 1653195600; // May 22nd, 5am UTC.
     /// let time = Time::from_consensus(t).expect("invalid time value");
@@ -512,7 +510,7 @@ impl Time {
     ///
     /// # Examples
     /// ```rust
-    /// use bitcoin::absolute::LockTime;
+    /// use dashcore::absolute::LockTime;
     ///
     /// let n_lock_time: u32 = 1653195600; // May 22nd, 5am UTC.
     /// let lock_time = LockTime::from_consensus(n_lock_time);

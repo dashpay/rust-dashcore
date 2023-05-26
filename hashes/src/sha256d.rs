@@ -25,7 +25,7 @@ crate::internal_macros::hash_type! {
     256,
     true,
     "Output of the SHA256d hash function.",
-    "crate::json_hex_string::len_32"
+    "crate::util::json_hex_string::len_32"
 }
 
 type HashEngine = sha256::HashEngine;
@@ -39,6 +39,10 @@ fn from_engine(e: sha256::HashEngine) -> Hash {
     let mut ret = [0; 32];
     ret.copy_from_slice(&sha2d[..]);
     Hash(ret)
+}
+
+impl secp256k1::ThirtyTwoByteHash for Hash {
+    fn into_32(self) -> [u8; 32] { self.0 }
 }
 
 #[cfg(test)]
@@ -57,7 +61,7 @@ mod tests {
 
         #[rustfmt::skip]
         let tests = vec![
-            // Test vector copied out of rust-bitcoin
+            // Test vector copied out of rust-dash
             Test {
                 input: "",
                 output: vec![

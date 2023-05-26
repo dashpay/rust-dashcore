@@ -474,7 +474,7 @@ impl<'a, R: io::Read> BitStreamReader<'a, R> {
     ///
     /// # Examples
     /// ```
-    /// # use bitcoin::bip158::BitStreamReader;
+    /// # use dashcore::bip158::BitStreamReader;
     /// # let data = vec![0xff];
     /// # let mut input = data.as_slice();
     /// let mut reader = BitStreamReader::new(&mut input); // input contains all 1's

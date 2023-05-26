@@ -27,7 +27,7 @@ use crate::taproot::{LeafVersion, TapLeafHash, TapNodeHash};
 
 /// Bitcoin script slice.
 ///
-/// *[See also the `bitcoin::blockdata::script` module](crate::blockdata::script).*
+/// *[See also the `dash::blockdata::script` module](crate::blockdata::script).*
 ///
 /// `Script` is a script slice, the most primitive script type. It's usually seen in its borrowed
 /// form `&Script`. It is always encoded as a series of bytes representing the opcodes and data
@@ -257,6 +257,7 @@ impl Script {
             && self.0[1] == OP_PUSHBYTES_20.to_u8()
     }
 
+    /// Returns P2WPKH byte slice if this script is P2WPKH, otherwise None.
     pub fn v0_p2wpkh(&self) -> Option<&[u8; 20]> {
         if self.is_v0_p2wpkh() {
             Some(self.0[2..].try_into().expect("is_v0_p2wpkh checks the length"))

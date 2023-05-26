@@ -20,20 +20,22 @@
 //! A TxIn is an input to a transaction.
 //!
 
-use io;
-use blockdata::transaction::OutPoint;
-use consensus::{Decodable, Encodable, encode};
-use ::{Script, Witness};
+use crate::io;
+use crate::blockdata::script::ScriptBuf;
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::{Witness};
+use crate::transaction::outpoint::OutPoint;
 
 /// A transaction input, which defines old coins to be consumed
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct TxIn {
     /// The reference to the previous output that is being used an an input.
     pub previous_output: OutPoint,
     /// The script which pushes values on the stack which will cause
     /// the referenced output's script to be accepted.
-    pub script_sig: Script,
+    pub script_sig: ScriptBuf,
     /// The sequence number, which suggests to miners which of two
     /// conflicting transactions should be preferred, or 0xFFFFFFFF
     /// to ignore this feature. This is generally never used since
@@ -51,28 +53,31 @@ impl Default for TxIn {
     fn default() -> TxIn {
         TxIn {
             previous_output: OutPoint::default(),
-            script_sig: Script::new(),
-            sequence: core::u32::MAX,
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
             witness: Witness::default(),
         }
     }
 }
 
 impl Encodable for TxIn {
-    fn consensus_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.previous_output.consensus_encode(&mut s)?;
-        len += self.script_sig.consensus_encode(&mut s)?;
-        len += self.sequence.consensus_encode(s)?;
+        len += self.previous_output.consensus_encode(w)?;
+        len += self.script_sig.consensus_encode(w)?;
+        len += self.sequence.consensus_encode(w)?;
         Ok(len)
     }
 }
 impl Decodable for TxIn {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
+    #[inline]
+    fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(
+        r: &mut R,
+    ) -> Result<Self, encode::Error> {
         Ok(TxIn {
-            previous_output: Decodable::consensus_decode(&mut d)?,
-            script_sig: Decodable::consensus_decode(&mut d)?,
-            sequence: Decodable::consensus_decode(d)?,
+            previous_output: Decodable::consensus_decode_from_finite_reader(r)?,
+            script_sig: Decodable::consensus_decode_from_finite_reader(r)?,
+            sequence: Decodable::consensus_decode_from_finite_reader(r)?,
             witness: Witness::default(),
         })
     }
@@ -81,7 +86,7 @@ impl Decodable for TxIn {
 #[cfg(test)]
 mod tests {
     use hashes::hex::FromHex;
-    use consensus::deserialize;
+    use crate::consensus::encode::deserialize;
     use super::*;
 
     #[test]
@@ -94,7 +99,7 @@ mod tests {
     fn test_txin_default() {
         let txin = TxIn::default();
         assert_eq!(txin.previous_output, OutPoint::default());
-        assert_eq!(txin.script_sig, Script::new());
+        assert_eq!(txin.script_sig, ScriptBuf::new());
         assert_eq!(txin.sequence, 0xFFFFFFFF);
         assert_eq!(txin.previous_output, OutPoint::default());
         assert_eq!(txin.witness.len(), 0 as usize);

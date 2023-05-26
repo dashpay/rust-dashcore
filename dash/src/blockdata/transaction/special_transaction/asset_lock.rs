@@ -17,16 +17,15 @@
 //! The asset lock special transaction is used to add to the asset lock credit pool.
 //!
 //!
-//! It is defined in DIPX https://github.com/dashpay/dips/blob/master/dip-000X.md as follows:
+//! It is defined in DIPX [dip-000X.md](https://github.com/dashpay/dips/blob/master/dip-000X.md) as follows:
 //!
 //!
 //! The special transaction type used for AssetLockTx Transactions is 8.
 
-use prelude::*;
-use io;
-use io::{Error, Write};
-use consensus::{Decodable, Encodable, encode};
-use TxOut;
+use crate::prelude::*;
+use crate::io;
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::transaction::txout::TxOut;
 
 /// An Asset Lock payload. This is contained as the payload of an asset lock special transaction.
 /// The Asset Lock Special transaction and this payload is described in the Asset Lock DIP2X
@@ -37,24 +36,25 @@ use TxOut;
 ///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct AssetLockPayload {
     version: u8,
     credit_outputs: Vec<TxOut>,
 }
 
 impl Encodable for AssetLockPayload {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.version.consensus_encode(&mut s)?;
-        len += self.credit_outputs.consensus_encode(&mut s)?;
+        len += self.version.consensus_encode(w)?;
+        len += self.credit_outputs.consensus_encode(w)?;
         Ok(len)
     }
 }
 
 impl Decodable for AssetLockPayload {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let version = u8::consensus_decode(&mut d)?;
-        let credit_outputs = Vec::<TxOut>::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let version = u8::consensus_decode(r)?;
+        let credit_outputs = Vec::<TxOut>::consensus_decode(r)?;
         Ok(AssetLockPayload {
             version,
             credit_outputs,

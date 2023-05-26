@@ -18,17 +18,17 @@
 //!
 //! The request info should be added once the quorum selection for signing has been made.
 
-use ::{io};
-use io::{Error, Write};
-use consensus::{Decodable, Encodable, encode};
-use ::{QuorumHash};
-use prelude::*;
+use crate::io;
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::hash_types::{QuorumHash};
+use crate::prelude::*;
 
 /// An asset unlock request info
 /// This is the information about the signing quorum
 /// The request height should be the height at which the specified quorum is active on core.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct AssetUnlockRequestInfo {
     /// The core request height of the transaction. This should match a period where the quorum_hash
     /// is still active
@@ -39,27 +39,27 @@ pub struct AssetUnlockRequestInfo {
 
 impl AssetUnlockRequestInfo {
     /// Encodes the asset unlock on top of
-    pub fn consensus_append_to_base_encode<S: Write>(&self, base_bytes: Vec<u8>, mut s: S) -> Result<usize, Error> {
-        let mut len = 0;
-        len += base_bytes.consensus_encode(&mut s)?;
+    pub fn consensus_append_to_base_encode<S: io::Write>(&self, base_bytes: Vec<u8>, mut s: S) -> Result<usize, io::Error> {
+        s.write(base_bytes.as_slice())?;
+        let mut len = base_bytes.len();
         len += self.consensus_encode(&mut s)?;
         Ok(len)
     }
 }
 
 impl Encodable for AssetUnlockRequestInfo {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.request_height.consensus_encode(&mut s)?;
-        len += self.quorum_hash.consensus_encode(&mut s)?;
+        len += self.request_height.consensus_encode(w)?;
+        len += self.quorum_hash.consensus_encode(w)?;
         Ok(len)
     }
 }
 
 impl Decodable for AssetUnlockRequestInfo {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let request_height = u32::consensus_decode(&mut d)?;
-        let quorum_hash = QuorumHash::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let request_height = u32::consensus_decode(r)?;
+        let quorum_hash = QuorumHash::consensus_decode(r)?;
         Ok(AssetUnlockRequestInfo {
             request_height,
             quorum_hash,

@@ -17,7 +17,7 @@
 //! The provider update revocation special transaction is used to signal to the owner that they
 //! should choose a new operator.
 //!
-//! It is defined in DIP3 https://github.com/dashpay/dips/blob/master/dip-0003.md as follows:
+//! It is defined in DIP3 [dip-0003](https://github.com/dashpay/dips/blob/master/dip-0003.md) as follows:
 //!
 //! If an operator suspects their keys are insecure or if they wish to terminate service, they
 //! can issue a special transaction to the network. This special transaction is called a Provider
@@ -36,20 +36,19 @@
 
 //! The special transaction type used for Provider Update Revoking Transactions is 4.
 
-use io;
-use io::{Error, Write};
+use crate::io;
 use hashes::Hash;
-use blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-use bls_sig_utils::BLSSignature;
-use consensus::{Decodable, Encodable, encode};
-use ::{InputsHash, SpecialTransactionPayloadHash};
-use Txid;
+use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+use crate::bls_sig_utils::BLSSignature;
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::hash_types::{InputsHash, SpecialTransactionPayloadHash, Txid};
 
 /// A Provider Update Revocation Payload used in a Provider Update Revocation Special Transaction.
 /// This is used to signal and stop a Masternode from the operator.
 /// It must be signed by the operator's key that was set at registration or registrar update.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct ProviderUpdateRevocationPayload {
     version: u16,
     pro_tx_hash: Txid,
@@ -59,7 +58,7 @@ pub struct ProviderUpdateRevocationPayload {
 }
 
 impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRevocationPayload {
-    fn base_payload_data_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn base_payload_data_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.version.consensus_encode(&mut s)?;
         len += self.pro_tx_hash.consensus_encode(&mut s)?;
@@ -76,33 +75,31 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRevocationPayload 
 }
 
 impl Encodable for ProviderUpdateRevocationPayload {
-    fn consensus_encode<S: Write>(&self, mut s: S) -> Result<usize, Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, mut w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.base_payload_data_encode(&mut s)?;
-        len += self.payload_sig.consensus_encode(&mut s)?;
+        len += self.base_payload_data_encode(&mut w)?;
+        len += self.payload_sig.consensus_encode(&mut w)?;
         Ok(len)
     }
 }
 
 impl Decodable for ProviderUpdateRevocationPayload {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let version = u16::consensus_decode(&mut d)?;
-        let pro_tx_hash = Txid::consensus_decode(&mut d)?;
-        let reason = u16::consensus_decode(&mut d)?;
-        let inputs_hash = InputsHash::consensus_decode(&mut d)?;
-        let payload_sig = BLSSignature::consensus_decode(&mut d)?;
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let version = u16::consensus_decode(r)?;
+        let pro_tx_hash = Txid::consensus_decode(r)?;
+        let reason = u16::consensus_decode(r)?;
+        let inputs_hash = InputsHash::consensus_decode(r)?;
+        let payload_sig = BLSSignature::consensus_decode(r)?;
 
         Ok(ProviderUpdateRevocationPayload {
             version,
             pro_tx_hash,
             reason,
             inputs_hash,
-            payload_sig
+            payload_sig,
         })
     }
 }
 
 #[cfg(test)]
-mod tests {
-
-}
+mod tests {}
