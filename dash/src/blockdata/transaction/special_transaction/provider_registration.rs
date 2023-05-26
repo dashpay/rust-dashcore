@@ -48,7 +48,6 @@ use crate::bls_sig_utils::BLSPublicKey;
 use crate::hash_types::{PubkeyHash, SpecialTransactionPayloadHash};
 use crate::address::Payload;
 use crate::Network;
-use crate::psbt::serialize::Serialize;
 
 /// A Provider Registration Payload used in a Provider Registration Special Transaction.
 /// This is used to register a Masternode on the network.
@@ -101,7 +100,8 @@ impl ProviderRegistrationPayload {
     /// a string of formatted values proving access to the 1000 Dash and therefore the ability
     /// to register the masternode.
     pub fn payload_collateral_string(&self, network: Network) -> Result<String, encode::Error> {
-        let mut base_payload_hash = self.base_payload_hash().as_raw_hash().serialize();
+        let base_payload_hash = self.base_payload_hash();
+        let mut base_payload_hash = *base_payload_hash.as_raw_hash().as_byte_array();
         base_payload_hash.reverse();
         let base_payload_hash = SpecialTransactionPayloadHash::from_slice(base_payload_hash.as_slice()).unwrap();
         Ok(format!("{}|{}|{}|{}|{}", self.payout_address(network)?, self.operator_reward, self.owner_address(network), self.voting_address(network), base_payload_hash.as_byte_array().to_hex_string(Lower)))

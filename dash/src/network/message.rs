@@ -521,7 +521,7 @@ impl Decodable for RawNetworkMessage {
 mod test {
     use std::net::Ipv4Addr;
 
-    use hashes::sha256d::Hash;
+    use hashes::hash_x11::Hash;
     use hashes::Hash as HashTrait;
 
     use super::message_network::{Reject, RejectReason, VersionMessage};

@@ -37,7 +37,7 @@ use crate::prelude::*;
 use crate::io;
 use core::{default::Default};
 
-use hashes::{Hash, sha256d};
+use hashes::{hash_x11, Hash};
 
 use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature = "bitcoinconsensus")]
@@ -182,7 +182,7 @@ impl Transaction {
     /// Computes a "normalized TXID" which does not include any signatures.
     /// This gives a way to identify a transaction that is "the same" as
     /// another in the sense of having same inputs and outputs.
-    pub fn ntxid(&self) -> sha256d::Hash {
+    pub fn ntxid(&self) -> hash_x11::Hash {
         let cloned_tx = Transaction {
             version: self.version,
             lock_time: self.lock_time,

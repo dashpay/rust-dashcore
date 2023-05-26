@@ -124,7 +124,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use hashes::sha256d;
+    use hashes::{hash_x11};
 
     use super::*;
     use crate::blockdata::block::Block;
@@ -139,7 +139,7 @@ mod tests {
 
         let hashes_iter = block.txdata.iter().map(|obj| obj.txid().to_raw_hash());
 
-        let mut hashes_array: [sha256d::Hash; 15] = [Hash::all_zeros(); 15];
+        let mut hashes_array: [hash_x11::Hash; 15] = [Hash::all_zeros(); 15];
         for (i, hash) in hashes_iter.clone().enumerate() {
             hashes_array[i] = hash;
         }
