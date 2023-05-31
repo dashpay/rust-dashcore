@@ -21,6 +21,7 @@
 use core::ops::Index;
 use core::slice::SliceIndex;
 use core::{str};
+use std::convert::TryInto;
 
 #[cfg(feature = "std")]
 use std::io;
@@ -32,7 +33,7 @@ use crate::{hex, Error, HashEngine as _};
 
 crate::internal_macros::hash_type! {
     256,
-    false,
+    true,
     "Output of the X11 hash function.",
     "crate::util::json_hex_string::len_32"
 }
@@ -66,11 +67,11 @@ impl crate::HashEngine for HashEngine {
 
     fn midstate(&self) -> Self::MidState {
         let md: Vec<u8> = rs_x11_hash::get_x11_hash(self.buf.as_slice()).to_vec();
-        let mut h: [u8; 32] = [0; 32];
-        for n in 0..32 {
-            let v = md.get(n.clone()).unwrap();
-            h[32-n-1] = v.clone();
-        }
+        let s = md.as_slice();
+        let h: [u8; 32] = match s.try_into() {
+            Ok(h) => h,
+            Err(_) => panic!("slice with incorrect length"),
+        };
         Midstate(h)
     }
 
@@ -151,15 +152,4 @@ impl io::Write for HashEngine {
         Ok(buf.len())
     }
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{hash_x11, Hash};
-
-    #[test]
-    fn pop() {
-        let hash = hash_x11::Hash::hash(b"hello world");
-        println!("hash = {:?}", hash);
-    }
 }

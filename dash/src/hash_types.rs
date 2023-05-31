@@ -81,10 +81,10 @@ mod newtypes {
     hash_newtype! {
         /// A dash transaction hash/transaction ID.
         ///
-        pub struct Txid(hash_x11::Hash);
+        pub struct Txid(sha256d::Hash);
 
         /// A dash witness transaction ID.
-        pub struct Wtxid(hash_x11::Hash);
+        pub struct Wtxid(sha256d::Hash);
         /// A dash block hash.
         pub struct BlockHash(hash_x11::Hash);
 
@@ -98,27 +98,27 @@ mod newtypes {
         pub struct WScriptHash(sha256::Hash);
 
         /// A hash of the Merkle tree branch or root for transactions
-        pub struct TxMerkleNode(hash_x11::Hash);
+        pub struct TxMerkleNode(sha256d::Hash);
         /// A hash corresponding to the Merkle tree root for witness data
-        pub struct WitnessMerkleNode(hash_x11::Hash);
+        pub struct WitnessMerkleNode(sha256d::Hash);
         /// A hash corresponding to the witness structure commitment in the coinbase transaction
         pub struct WitnessCommitment(sha256d::Hash);
         /// XpubIdentifier as defined in BIP-32.
         pub struct XpubIdentifier(hash160::Hash);
 
         /// Filter hash, as defined in BIP-157
-        pub struct FilterHash(hash_x11::Hash);
+        pub struct FilterHash(sha256d::Hash);
         /// Filter header, as defined in BIP-157
-        pub struct FilterHeader(hash_x11::Hash);
+        pub struct FilterHeader(sha256d::Hash);
 
         /// Dash Additions
         ///
         /// The merkle root of the masternode list
-        pub struct MerkleRootMasternodeList(hash_x11::Hash);
+        pub struct MerkleRootMasternodeList(sha256d::Hash);
         /// The merkle root of the quorums
-        pub struct MerkleRootQuorums(hash_x11::Hash);
+        pub struct MerkleRootQuorums(sha256d::Hash);
         /// A special transaction payload hash
-        pub struct SpecialTransactionPayloadHash(hash_x11::Hash);
+        pub struct SpecialTransactionPayloadHash(sha256d::Hash);
         /// A hash of all transaction inputs
         pub struct InputsHash(sha256d::Hash);
         /// A hash used to identify a quorum
@@ -156,7 +156,7 @@ mod newtypes {
     impl Txid {
         /// Create a Txid from a string
         pub fn from_hex(s: &str) -> Result<Txid, Error> {
-            Ok(Self(hash_x11::Hash::from_str(s)?))
+            Ok(Self(sha256d::Hash::from_str(s)?))
         }
 
         /// Convert a Txid to a string

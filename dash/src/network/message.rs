@@ -521,7 +521,8 @@ impl Decodable for RawNetworkMessage {
 mod test {
     use std::net::Ipv4Addr;
 
-    use hashes::hash_x11::Hash;
+    use hashes::hash_x11::Hash as X11Hash;
+    use hashes::sha256d::Hash;
     use hashes::Hash as HashTrait;
 
     use super::message_network::{Reject, RejectReason, VersionMessage};
@@ -542,6 +543,7 @@ mod test {
     };
 
     fn hash(slice: [u8; 32]) -> Hash { Hash::from_slice(&slice).unwrap() }
+    fn hash_x11(slice: [u8; 32]) -> X11Hash { X11Hash::from_slice(&slice).unwrap() }
 
     #[test]
     fn full_round_ser_der_raw_network_message_test() {
@@ -563,16 +565,16 @@ mod test {
                 45,
                 Address::new(&([123, 255, 000, 100], 833).into(), ServiceFlags::NETWORK),
             )]),
-            NetworkMessage::Inv(vec![Inventory::Block(hash([8u8; 32]).into())]),
+            NetworkMessage::Inv(vec![Inventory::Block(hash_x11([8u8; 32]).into())]),
             NetworkMessage::GetData(vec![Inventory::Transaction(hash([45u8; 32]).into())]),
             NetworkMessage::NotFound(vec![Inventory::Error]),
             NetworkMessage::GetBlocks(GetBlocksMessage::new(
-                vec![hash([1u8; 32]).into(), hash([4u8; 32]).into()],
-                hash([5u8; 32]).into(),
+                vec![hash_x11([1u8; 32]).into(), hash_x11([4u8; 32]).into()],
+                hash_x11([5u8; 32]).into(),
             )),
             NetworkMessage::GetHeaders(GetHeadersMessage::new(
-                vec![hash([10u8; 32]).into(), hash([40u8; 32]).into()],
-                hash([50u8; 32]).into(),
+                vec![hash_x11([10u8; 32]).into(), hash_x11([40u8; 32]).into()],
+                hash_x11([50u8; 32]).into(),
             )),
             NetworkMessage::MemPool,
             NetworkMessage::Tx(tx),
@@ -597,31 +599,31 @@ mod test {
             NetworkMessage::GetCFilters(GetCFilters {
                 filter_type: 2,
                 start_height: 52,
-                stop_hash: hash([42u8; 32]).into(),
+                stop_hash: hash_x11([42u8; 32]).into(),
             }),
             NetworkMessage::CFilter(CFilter {
                 filter_type: 7,
-                block_hash: hash([25u8; 32]).into(),
+                block_hash: hash_x11([25u8; 32]).into(),
                 filter: vec![1, 2, 3],
             }),
             NetworkMessage::GetCFHeaders(GetCFHeaders {
                 filter_type: 4,
                 start_height: 102,
-                stop_hash: hash([47u8; 32]).into(),
+                stop_hash: hash_x11([47u8; 32]).into(),
             }),
             NetworkMessage::CFHeaders(CFHeaders {
                 filter_type: 13,
-                stop_hash: hash([53u8; 32]).into(),
+                stop_hash: hash_x11([53u8; 32]).into(),
                 previous_filter_header: hash([12u8; 32]).into(),
                 filter_hashes: vec![hash([4u8; 32]).into(), hash([12u8; 32]).into()],
             }),
             NetworkMessage::GetCFCheckpt(GetCFCheckpt {
                 filter_type: 17,
-                stop_hash: hash([25u8; 32]).into(),
+                stop_hash: hash_x11([25u8; 32]).into(),
             }),
             NetworkMessage::CFCheckpt(CFCheckpt {
                 filter_type: 27,
-                stop_hash: hash([77u8; 32]).into(),
+                stop_hash: hash_x11([77u8; 32]).into(),
                 filter_headers: vec![hash([3u8; 32]).into(), hash([99u8; 32]).into()],
             }),
             NetworkMessage::Alert(vec![45, 66, 3, 2, 6, 8, 9, 12, 3, 130]),
@@ -629,7 +631,7 @@ mod test {
                 message: "Test reject".into(),
                 ccode: RejectReason::Duplicate,
                 reason: "Cause".into(),
-                hash: hash([255u8; 32]),
+                hash: hash_x11([255u8; 32]),
             }),
             NetworkMessage::FeeFilter(1000),
             NetworkMessage::WtxidRelay,
@@ -643,7 +645,7 @@ mod test {
             NetworkMessage::CmpctBlock(cmptblock),
             NetworkMessage::GetBlockTxn(GetBlockTxn {
                 txs_request: BlockTransactionsRequest {
-                    block_hash: hash([11u8; 32]).into(),
+                    block_hash: hash_x11([11u8; 32]).into(),
                     indexes: vec![0, 1, 2, 3, 10, 3002],
                 },
             }),

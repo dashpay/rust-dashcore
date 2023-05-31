@@ -20,7 +20,7 @@
 //! A TxOut is an output of a transaction.
 //!
 
-use crate::{PubkeyHash, ScriptBuf};
+use crate::{PubkeyHash, ScriptBuf, VarInt};
 use crate::{Address, ScriptHash};
 use crate::internal_macros::impl_consensus_encoding;
 
@@ -32,7 +32,7 @@ pub struct TxOut {
     /// The value of the output, in satoshis.
     pub value: u64,
     /// The script which must be satisfied for the output to be spent.
-    pub script_pubkey: ScriptBuf
+    pub script_pubkey: ScriptBuf,
 }
 
 // This is used as a "null txout" in consensus signing code.
@@ -42,11 +42,16 @@ impl Default for TxOut {
 }
 
 impl TxOut {
+    ///
+    pub fn size(&self) -> usize {
+        8 + VarInt(self.script_pubkey.len() as u64).len() + self.script_pubkey.len()
+    }
+
     /// Convenience method to get an output from an address
     pub fn new_from_address(value: u64, address: &Address) -> Self {
         TxOut {
             value,
-            script_pubkey: address.script_pubkey()
+            script_pubkey: address.script_pubkey(),
         }
     }
 
@@ -54,7 +59,7 @@ impl TxOut {
     pub fn new_from_p2pkh(value: u64, pubkey_hash: &PubkeyHash) -> Self {
         TxOut {
             value,
-            script_pubkey: ScriptBuf::new_p2pkh(pubkey_hash)
+            script_pubkey: ScriptBuf::new_p2pkh(pubkey_hash),
         }
     }
 
@@ -62,7 +67,7 @@ impl TxOut {
     pub fn new_from_p2sh(value: u64, script_hash: &ScriptHash) -> Self {
         TxOut {
             value,
-            script_pubkey: ScriptBuf::new_p2sh(script_hash)
+            script_pubkey: ScriptBuf::new_p2sh(script_hash),
         }
     }
 }

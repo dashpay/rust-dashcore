@@ -23,7 +23,7 @@
 //! The special transaction type used for AssetLockTx Transactions is 8.
 
 use crate::prelude::*;
-use crate::io;
+use crate::{io, VarInt};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::transaction::txout::TxOut;
 
@@ -40,6 +40,14 @@ use crate::transaction::txout::TxOut;
 pub struct AssetLockPayload {
     version: u8,
     credit_outputs: Vec<TxOut>,
+}
+
+impl AssetLockPayload {
+    /// The size of the payload in bytes.
+    pub fn size(&self) -> usize {
+        let mut size = 1 + VarInt(self.credit_outputs.len() as u64).len();
+        size + self.credit_outputs.iter().map(|tx| tx.size()).sum::<usize>()
+    }
 }
 
 impl Encodable for AssetLockPayload {
@@ -59,5 +67,31 @@ impl Decodable for AssetLockPayload {
             version,
             credit_outputs,
         })
+    }
+}
+
+mod tests {
+    use crate::transaction::special_transaction::asset_lock::AssetLockPayload;
+    use crate::{ScriptBuf, TxOut};
+    use crate::consensus::Encodable;
+
+    #[test]
+    fn size() {
+        let want = 41;
+        let tx1 = TxOut {
+            value: 10,
+            script_pubkey: ScriptBuf(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]),
+        };
+        let tx2 = TxOut {
+            value: 11,
+            script_pubkey: ScriptBuf(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1]),
+        };
+        let payload = AssetLockPayload {
+            version: 1,
+            credit_outputs: vec![tx1, tx2],
+        };
+        assert_eq!(payload.size(), want);
+        let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
+        assert_eq!(actual, want);
     }
 }

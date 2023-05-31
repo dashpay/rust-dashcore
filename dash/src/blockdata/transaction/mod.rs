@@ -37,7 +37,7 @@ use crate::prelude::*;
 use crate::io;
 use core::{default::Default};
 
-use hashes::{hash_x11, Hash};
+use hashes::{Hash, sha256d};
 
 use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature = "bitcoinconsensus")]
@@ -182,7 +182,7 @@ impl Transaction {
     /// Computes a "normalized TXID" which does not include any signatures.
     /// This gives a way to identify a transaction that is "the same" as
     /// another in the sense of having same inputs and outputs.
-    pub fn ntxid(&self) -> hash_x11::Hash {
+    pub fn ntxid(&self) -> sha256d::Hash {
         let cloned_tx = Transaction {
             version: self.version,
             lock_time: self.lock_time,
@@ -453,6 +453,7 @@ impl Transaction {
                 VarInt(output.script_pubkey.len() as u64).len() +
                 output.script_pubkey.len();
         }
+        let special_tx_len = self.special_transaction_len();
         let non_input_size =
             // version:
             4 +
@@ -461,7 +462,8 @@ impl Transaction {
                 VarInt(self.output.len() as u64).len() +
                 output_size +
                 // lock_time
-                4;
+                4 +
+                special_tx_len;
         non_input_size + input_size
     }
 
@@ -484,6 +486,7 @@ impl Transaction {
                 VarInt(output.script_pubkey.len() as u64).len() +
                 output.script_pubkey.len();
         }
+        let special_tx_len = self.special_transaction_len();
         let non_input_size =
             // version:
             4 +
@@ -492,12 +495,21 @@ impl Transaction {
                 VarInt(self.output.len() as u64).len() +
                 output_size +
                 // lock_time
-                4;
+                4 +
+                special_tx_len;
         if inputs_with_witnesses == 0 {
             non_input_size * scale_factor + input_weight
         } else {
             non_input_size * scale_factor + input_weight + self.input.len() - inputs_with_witnesses + 2
         }
+    }
+
+    pub fn special_transaction_len(&self) -> usize {
+        if self.special_transaction_payload.is_none() {
+            return 0
+        }
+        let payload = self.special_transaction_payload.clone().unwrap();
+        payload.len()
     }
 
     /// Shorthand for [`Self::verify_with_flags`] with flag [`bitcoinconsensus::VERIFY_ALL`].
@@ -612,7 +624,10 @@ impl Encodable for Transaction {
         }
         len += self.lock_time.consensus_encode(w)?;
         if let Some(payload) = &self.special_transaction_payload {
-            len += payload.consensus_encode(w)?;
+            let mut buf = Vec::new();
+            payload.consensus_encode(&mut buf)?;
+            // this is so we get the size of the payload
+            len += buf.consensus_encode(w)?;
         }
         Ok(len)
     }

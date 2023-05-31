@@ -9,7 +9,7 @@
 //!
 
 use core::default::Default;
-use hashes::{hash_x11, Hash};
+use hashes::{Hash, sha256d};
 use hex_lit::hex;
 use internals::impl_array_newtype;
 
@@ -98,7 +98,7 @@ fn bitcoin_genesis_tx() -> Transaction {
 /// Constructs and returns the genesis block.
 pub fn genesis_block(network: Network) -> Block {
     let txdata = vec![bitcoin_genesis_tx()];
-    let hash: hash_x11::Hash = txdata[0].txid().into();
+    let hash: sha256d::Hash = txdata[0].txid().into();
     let merkle_root = hash.into();
     match network {
         Network::Dash => Block {
@@ -158,23 +158,23 @@ impl ChainHash {
     // Mainnet value can be verified at https://github.com/lightning/bolts/blob/master/00-introduction.md
     /// `ChainHash` for mainnet dash.
     pub const DASH: Self = Self([
-        111, 226, 140, 10, 182, 241, 179, 114, 193, 166, 162, 70, 174, 99, 247, 79, 147, 30, 131,
-        101, 225, 90, 8, 156, 104, 214, 25, 0, 0, 0, 0, 0,
+        158, 200, 179, 141, 168, 16, 7, 209, 175, 9, 245, 190, 45, 242, 47, 39, 206, 210, 244, 95,
+        244, 64, 51, 148, 171, 36, 158, 149, 202, 125, 244, 214
     ]);
     /// `ChainHash` for testnet dash.
     pub const TESTNET: Self = Self([
-        67, 73, 127, 215, 248, 38, 149, 113, 8, 244, 163, 15, 217, 206, 195, 174, 186, 121, 151,
-        32, 132, 233, 14, 173, 1, 234, 51, 9, 0, 0, 0, 0,
+        109, 190, 101, 107, 217, 106, 128, 75, 237, 234, 124, 69, 181, 127, 252, 241, 47, 90, 113,
+        76, 240, 10, 107, 143, 205, 30, 239, 201, 20, 200, 170, 223
     ]);
     /// `ChainHash` for devnet dash.
     pub const DEVNET: Self = Self([
-        246, 30, 238, 59, 99, 163, 128, 164, 119, 160, 99, 175, 50, 178, 187, 201, 124, 159, 249,
-        240, 31, 44, 66, 37, 233, 115, 152, 129, 8, 0, 0, 0,
+        210, 55, 61, 64, 56, 40, 220, 16, 73, 236, 144, 245, 48, 15, 60, 225, 224, 52, 184, 34, 240,
+        52, 172, 101, 17, 196, 40, 216, 139, 7, 44, 79
     ]);
     /// `ChainHash` for regtest dash.
     pub const REGTEST: Self = Self([
-        6, 34, 110, 70, 17, 26, 11, 89, 202, 175, 18, 96, 67, 235, 91, 191, 40, 195, 79, 58, 94,
-        51, 42, 31, 199, 178, 183, 60, 241, 136, 145, 15,
+        12, 114, 216, 95, 211, 222, 54, 46, 230, 206, 30, 27, 105, 136, 123, 6, 215, 189, 206, 15,
+        146, 148, 227, 57, 191, 224, 171, 74, 113, 116, 159, 143
     ]);
 
     /// Returns the hash of the `network` genesis block for use as a chain hash.
@@ -219,7 +219,7 @@ mod test {
 
         assert_eq!(
             gen.wtxid().to_string(),
-            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
+            "57cd9b1778f398d84234e9101b1c3147cf0dcae52b9ecdc24242dd655ced06cc"
         );
     }
 
@@ -231,7 +231,7 @@ mod test {
         assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
             gen.header.merkle_root.to_string(),
-            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
+            "57cd9b1778f398d84234e9101b1c3147cf0dcae52b9ecdc24242dd655ced06cc"
         );
 
         assert_eq!(gen.header.time, 1231006505);
@@ -239,7 +239,7 @@ mod test {
         assert_eq!(gen.header.nonce, 2083236893);
         assert_eq!(
             gen.header.block_hash().to_string(),
-            "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+            "9ec8b38da81007d1af09f5be2df22f27ced2f45ff4403394ab249e95ca7df4d6"
         );
     }
 
@@ -250,14 +250,14 @@ mod test {
         assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
             gen.header.merkle_root.to_string(),
-            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
+            "57cd9b1778f398d84234e9101b1c3147cf0dcae52b9ecdc24242dd655ced06cc"
         );
         assert_eq!(gen.header.time, 1296688602);
         assert_eq!(gen.header.bits, CompactTarget::from_consensus(0x1d00ffff));
         assert_eq!(gen.header.nonce, 414098458);
         assert_eq!(
             gen.header.block_hash().to_string(),
-            "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"
+            "6dbe656bd96a804bedea7c45b57ffcf12f5a714cf00a6b8fcd1eefc914c8aadf"
         );
     }
 
@@ -268,27 +268,23 @@ mod test {
         assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
             gen.header.merkle_root.to_string(),
-            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
+            "57cd9b1778f398d84234e9101b1c3147cf0dcae52b9ecdc24242dd655ced06cc"
         );
         assert_eq!(gen.header.time, 1598918400);
         assert_eq!(gen.header.bits, CompactTarget::from_consensus(0x1e0377ae));
         assert_eq!(gen.header.nonce, 52613770);
         assert_eq!(
             gen.header.block_hash().to_string(),
-            "00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6"
+            "d2373d403828dc1049ec90f5300f3ce1e034b822f034ac6511c428d88b072c4f"
         );
     }
 
     // The *_chain_hash tests are sanity/regression tests, they verify that the const byte array
     // representing the genesis block is the same as that created by hashing the genesis block.
     fn chain_hash_and_genesis_block(network: Network) {
-        use hashes::sha256;
-
         // The genesis block hash is a double-sha256 and it is displayed backwards.
         let genesis_hash = genesis_block(network).block_hash();
-        // We abuse the sha256 hash here so we get a LowerHex impl that does not print the hex backwards.
-        let hash = sha256::Hash::from_slice(genesis_hash.as_byte_array()).unwrap();
-        let want = format!("{:02x}", hash);
+        let want = format!("{:02x}", genesis_hash);
 
         let chain_hash = ChainHash::using_genesis_block(network);
         let got = format!("{:02x}", chain_hash);
@@ -328,7 +324,7 @@ mod test {
     #[test]
     fn mainnet_chain_hash_test_vector() {
         let got = ChainHash::using_genesis_block(Network::Dash).to_string();
-        let want = "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000";
+        let want = "9ec8b38da81007d1af09f5be2df22f27ced2f45ff4403394ab249e95ca7df4d6";
         assert_eq!(got, want);
     }
 }

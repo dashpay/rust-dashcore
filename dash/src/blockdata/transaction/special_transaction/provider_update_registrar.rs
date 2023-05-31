@@ -30,12 +30,12 @@
 //! The special transaction type used for ProUpRegTx Transactions is 3.
 
 use crate::prelude::*;
-use crate::io;
+use crate::{io, VarInt};
 use hashes::Hash;
 use crate::{ScriptBuf};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-use crate::bls_sig_utils::BLSPublicKey;
+use crate::bls_sig_utils::{BLSPublicKey};
 use crate::hash_types::{PubkeyHash, SpecialTransactionPayloadHash, Txid, InputsHash};
 
 /// A Provider Update Registrar Payload used in a Provider Update Registrar Special Transaction.
@@ -52,7 +52,16 @@ pub struct ProviderUpdateRegistrarPayload {
     voting_key_hash: PubkeyHash,
     script_payout: ScriptBuf,
     inputs_hash: InputsHash,
-    payload_sig: Vec<u8>,
+    payload_sig: Vec<u8>, // TODO: Need to figure out, is this signature BLS Signature (length 96)
+}
+
+impl ProviderUpdateRegistrarPayload {
+    pub fn size(&self) -> usize {
+        let mut size = 2 + 32 + 2 + 48 + 20 + 32; // 136
+        size += VarInt(self.script_payout.len() as u64).len() + self.script_payout.len();
+        size += VarInt(self.payload_sig.len() as u64).len() + self.payload_sig.len();
+        size
+    }
 }
 
 impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRegistrarPayload {
@@ -111,7 +120,8 @@ impl Decodable for ProviderUpdateRegistrarPayload {
 #[cfg(test)]
 mod tests {
     use core::str::FromStr;
-    use crate::consensus::deserialize;
+    use hashes::Hash;
+    use crate::consensus::{deserialize, Encodable};
     use crate::{Network, ScriptBuf, Transaction, Txid};
     use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use crate::bls_sig_utils::BLSPublicKey;
@@ -185,5 +195,23 @@ mod tests {
         assert_eq!(transaction, expected_transaction);
 
         assert_eq!(transaction.txid(), tx_id);
+    }
+
+    #[test]
+    fn size() {
+        let want = 244;
+        let payload = ProviderUpdateRegistrarPayload{
+            version: 0,
+            pro_tx_hash: Txid::all_zeros(),
+            provider_mode:0,
+            operator_public_key: BLSPublicKey::from([0; 48]),
+            voting_key_hash: PubkeyHash::all_zeros(),
+            script_payout: ScriptBuf::from_hex("00000000000000000000").unwrap(), // 10 bytes
+            inputs_hash: InputsHash::all_zeros(),
+            payload_sig: vec![0; 96],
+        };
+        assert_eq!(payload.size(), want);
+        let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
+        assert_eq!(actual, want);
     }
 }

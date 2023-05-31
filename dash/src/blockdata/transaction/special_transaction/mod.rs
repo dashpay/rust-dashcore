@@ -99,6 +99,21 @@ impl TransactionPayload {
         }
     }
 
+    // Gets the size of the special transaction payload
+    pub fn len(&self) -> usize {
+        // 1 byte is the size of the special transaction type
+        1 + match self {
+            ProviderRegistrationPayloadType(p) => { p.size()}
+            ProviderUpdateServicePayloadType(p) => { p.size() }
+            ProviderUpdateRegistrarPayloadType(p) => {p.size() }
+            ProviderUpdateRevocationPayloadType(p) => {p.size()}
+            CoinbasePayloadType(p) => {p.size()}
+            QuorumCommitmentPayloadType(p) => {p.size()}
+            AssetLockPayloadType(p) => {p.size()}
+            AssetUnlockPayloadType(p) => {p.size()}
+        }
+    }
+
     /// Convenience method that assumes the payload to be a provider registration payload to get it
     /// easier.
     /// Errors if it is not a provider registration payload.

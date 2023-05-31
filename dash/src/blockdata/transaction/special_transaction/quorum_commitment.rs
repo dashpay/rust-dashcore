@@ -18,7 +18,7 @@
 //!
 
 use crate::prelude::*;
-use crate::io;
+use crate::{io, VarInt};
 use crate::hash_types::{QuorumHash, QuorumVVecHash};
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::consensus::{Decodable, Encodable, encode};
@@ -39,6 +39,15 @@ pub struct QuorumFinalizationCommitment {
     quorum_vvec_hash: QuorumVVecHash,
     quorum_sig: BLSSignature,
     sig: BLSSignature,
+}
+
+impl QuorumFinalizationCommitment {
+    pub fn size(&self) -> usize {
+        let mut size = 2 + 1 + 32 + 48 + 32 + 96 + 96;
+        size += VarInt(self.signers.len() as u64).len() + self.signers.len();
+        size += VarInt(self.valid_members.len() as u64).len() + self.valid_members.len();
+        size
+    }
 }
 
 impl Encodable for QuorumFinalizationCommitment {
@@ -96,6 +105,12 @@ pub struct QuorumCommitmentPayload {
     finalization_commitment: QuorumFinalizationCommitment,
 }
 
+impl QuorumCommitmentPayload {
+    pub fn size(&self) -> usize {
+        2 + 4 + self.finalization_commitment.size()
+    }
+}
+
 impl Encodable for QuorumCommitmentPayload {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
@@ -121,4 +136,33 @@ impl Decodable for QuorumCommitmentPayload {
 
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use hashes::Hash;
+    use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
+    use crate::consensus::Encodable;
+    use crate::hash_types::{QuorumHash, QuorumVVecHash};
+    use crate::transaction::special_transaction::quorum_commitment::{QuorumCommitmentPayload, QuorumFinalizationCommitment};
+
+    #[test]
+    fn size() {
+        let want = 313;
+        let payload = QuorumCommitmentPayload {
+            version: 0,
+            height: 0,
+            finalization_commitment: QuorumFinalizationCommitment {
+                version: 0,
+                llmq_type: 0,
+                quorum_hash: QuorumHash::all_zeros(),
+                signers: vec![1, 2, 3, 4, 5],
+                valid_members: vec![6, 7, 8, 9, 0],
+                quorum_public_key: BLSPublicKey::from([0; 48]),
+                quorum_vvec_hash: QuorumVVecHash::all_zeros(),
+                quorum_sig: BLSSignature::from([0; 96]),
+                sig: BLSSignature::from([0; 96]),
+            },
+        };
+        let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
+        assert_eq!(payload.size(), want);
+        assert_eq!(actual, want);
+    }
+}

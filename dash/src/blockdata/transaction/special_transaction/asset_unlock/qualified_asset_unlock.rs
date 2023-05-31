@@ -55,6 +55,13 @@ pub struct AssetUnlockPayload {
     pub quorum_sig: BLSSignature,
 }
 
+impl AssetUnlockPayload {
+    /// The size of the payload in bytes.
+    pub fn size(&self) -> usize {
+        self.base.size() + self.request_info.size() + 96
+    }
+}
+
 impl SpecialTransactionBasePayloadEncodable for AssetUnlockPayload {
     fn base_payload_data_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
         let mut len = 0;
@@ -90,5 +97,31 @@ impl Decodable for AssetUnlockPayload {
             request_info,
             quorum_sig,
         })
+    }
+}
+
+mod tests {
+    use hashes::Hash;
+    use crate::bls_sig_utils::BLSSignature;
+    use crate::consensus::Encodable;
+    use crate::hash_types::QuorumHash;
+    use crate::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
+    use crate::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
+    use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
+
+    #[test]
+    fn size() {
+        let want = 145;
+        let payload = AssetUnlockPayload {
+            base: AssetUnlockBasePayload { version: 0, index: 0, fee: 0 },
+            request_info: AssetUnlockRequestInfo {
+                request_height: 0,
+                quorum_hash: QuorumHash::all_zeros(),
+            },
+            quorum_sig: BLSSignature::from([0; 96]),
+        };
+        let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
+        assert_eq!(payload.size(), want);
+        assert_eq!(actual, want);
     }
 }
