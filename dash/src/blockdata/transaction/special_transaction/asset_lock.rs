@@ -45,7 +45,7 @@ pub struct AssetLockPayload {
 impl AssetLockPayload {
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
-        let mut size = 1 + VarInt(self.credit_outputs.len() as u64).len();
+        let size = 1 + VarInt(self.credit_outputs.len() as u64).len();
         size + self.credit_outputs.iter().map(|tx| tx.size()).sum::<usize>()
     }
 }
@@ -71,9 +71,9 @@ impl Decodable for AssetLockPayload {
 }
 
 mod tests {
-    use crate::transaction::special_transaction::asset_lock::AssetLockPayload;
-    use crate::{ScriptBuf, TxOut};
     use crate::consensus::Encodable;
+    use crate::{ScriptBuf, TxOut};
+    use crate::transaction::special_transaction::asset_lock::AssetLockPayload;
 
     #[test]
     fn size() {

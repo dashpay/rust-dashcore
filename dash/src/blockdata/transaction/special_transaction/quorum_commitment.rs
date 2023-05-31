@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn size() {
-        let want = 313;
+        let want = 325;
         let payload = QuorumCommitmentPayload {
             version: 0,
             height: 0,

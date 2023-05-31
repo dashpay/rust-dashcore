@@ -40,19 +40,24 @@ pub const WITNESS_SCALE_FACTOR: usize = 4;
 /// The maximum allowed number of signature check operations in a block.
 pub const MAX_BLOCK_SIGOPS_COST: i64 = 80_000;
 /// Mainnet (dash) pubkey address prefix.
-pub const PUBKEY_ADDRESS_PREFIX_MAIN: u8 = 76; // 0x4C
+pub const PUBKEY_ADDRESS_PREFIX_MAIN: u8 = 76;
+// 0x4C
 /// Mainnet (dash) script address prefix.
-pub const SCRIPT_ADDRESS_PREFIX_MAIN: u8 = 16; // 0x10
+pub const SCRIPT_ADDRESS_PREFIX_MAIN: u8 = 16;
+// 0x10
 /// Test (testnet, devnet, regtest) pubkey address prefix.
-pub const PUBKEY_ADDRESS_PREFIX_TEST: u8 = 140; // 0x8C
+pub const PUBKEY_ADDRESS_PREFIX_TEST: u8 = 140;
+// 0x8C
 /// Test (testnet, devnet, regtest) script address prefix.
-pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 19; // 0x13
+pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 19;
+// 0x13
 /// The maximum allowed script size.
 pub const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
 /// How may blocks between halvings.
 pub const SUBSIDY_HALVING_INTERVAL: u32 = 210_000;
 /// Maximum allowed value for an integer in Script.
-pub const MAX_SCRIPTNUM_VALUE: u32 = 0x80000000; // 2^31
+pub const MAX_SCRIPTNUM_VALUE: u32 = 0x80000000;
+// 2^31
 /// Number of blocks needed for an output from a coinbase transaction to be spendable.
 pub const COINBASE_MATURITY: u32 = 100;
 
@@ -158,23 +163,19 @@ impl ChainHash {
     // Mainnet value can be verified at https://github.com/lightning/bolts/blob/master/00-introduction.md
     /// `ChainHash` for mainnet dash.
     pub const DASH: Self = Self([
-        158, 200, 179, 141, 168, 16, 7, 209, 175, 9, 245, 190, 45, 242, 47, 39, 206, 210, 244, 95,
-        244, 64, 51, 148, 171, 36, 158, 149, 202, 125, 244, 214
+        4, 56, 21, 192, 10, 42, 23, 242, 90, 219, 163, 1, 98, 89, 58, 167, 5, 4, 25, 91, 183, 218, 230, 227, 167, 85, 39, 96, 51, 189, 13, 217
     ]);
     /// `ChainHash` for testnet dash.
     pub const TESTNET: Self = Self([
-        109, 190, 101, 107, 217, 106, 128, 75, 237, 234, 124, 69, 181, 127, 252, 241, 47, 90, 113,
-        76, 240, 10, 107, 143, 205, 30, 239, 201, 20, 200, 170, 223
+        16, 238, 202, 52, 44, 112, 187, 96, 147, 134, 134, 75, 156, 55, 90, 205, 70, 74, 202, 97, 112, 87, 40, 133, 32, 84, 236, 123, 183, 28, 220, 240
     ]);
     /// `ChainHash` for devnet dash.
     pub const DEVNET: Self = Self([
-        210, 55, 61, 64, 56, 40, 220, 16, 73, 236, 144, 245, 48, 15, 60, 225, 224, 52, 184, 34, 240,
-        52, 172, 101, 17, 196, 40, 216, 139, 7, 44, 79
+        164, 119, 85, 190, 121, 37, 150, 111, 131, 181, 177, 164, 204, 209, 202, 105, 29, 197, 235, 240, 250, 179, 224, 6, 46, 238, 40, 136, 23, 215, 12, 88
     ]);
     /// `ChainHash` for regtest dash.
     pub const REGTEST: Self = Self([
-        12, 114, 216, 95, 211, 222, 54, 46, 230, 206, 30, 27, 105, 136, 123, 6, 215, 189, 206, 15,
-        146, 148, 227, 57, 191, 224, 171, 74, 113, 116, 159, 143
+        16, 251, 76, 138, 72, 44, 63, 251, 228, 123, 87, 245, 131, 191, 84, 111, 117, 107, 92, 205, 105, 10, 247, 249, 131, 113, 112, 200, 29, 102, 142, 242
     ]);
 
     /// Returns the hash of the `network` genesis block for use as a chain hash.
@@ -219,7 +220,7 @@ mod test {
 
         assert_eq!(
             gen.wtxid().to_string(),
-            "57cd9b1778f398d84234e9101b1c3147cf0dcae52b9ecdc24242dd655ced06cc"
+            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
         );
     }
 
@@ -231,7 +232,7 @@ mod test {
         assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
             gen.header.merkle_root.to_string(),
-            "57cd9b1778f398d84234e9101b1c3147cf0dcae52b9ecdc24242dd655ced06cc"
+            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
         );
 
         assert_eq!(gen.header.time, 1231006505);
@@ -239,7 +240,7 @@ mod test {
         assert_eq!(gen.header.nonce, 2083236893);
         assert_eq!(
             gen.header.block_hash().to_string(),
-            "9ec8b38da81007d1af09f5be2df22f27ced2f45ff4403394ab249e95ca7df4d6"
+            "043815c00a2a17f25adba30162593aa70504195bb7dae6e3a755276033bd0dd9"
         );
     }
 
@@ -250,14 +251,14 @@ mod test {
         assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
             gen.header.merkle_root.to_string(),
-            "57cd9b1778f398d84234e9101b1c3147cf0dcae52b9ecdc24242dd655ced06cc"
+            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
         );
         assert_eq!(gen.header.time, 1296688602);
         assert_eq!(gen.header.bits, CompactTarget::from_consensus(0x1d00ffff));
         assert_eq!(gen.header.nonce, 414098458);
         assert_eq!(
             gen.header.block_hash().to_string(),
-            "6dbe656bd96a804bedea7c45b57ffcf12f5a714cf00a6b8fcd1eefc914c8aadf"
+            "10eeca342c70bb609386864b9c375acd464aca61705728852054ec7bb71cdcf0"
         );
     }
 
@@ -268,14 +269,14 @@ mod test {
         assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
             gen.header.merkle_root.to_string(),
-            "57cd9b1778f398d84234e9101b1c3147cf0dcae52b9ecdc24242dd655ced06cc"
+            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
         );
         assert_eq!(gen.header.time, 1598918400);
         assert_eq!(gen.header.bits, CompactTarget::from_consensus(0x1e0377ae));
         assert_eq!(gen.header.nonce, 52613770);
         assert_eq!(
             gen.header.block_hash().to_string(),
-            "d2373d403828dc1049ec90f5300f3ce1e034b822f034ac6511c428d88b072c4f"
+            "a47755be7925966f83b5b1a4ccd1ca691dc5ebf0fab3e0062eee288817d70c58"
         );
     }
 
@@ -294,10 +295,10 @@ mod test {
 
         #[allow(unreachable_patterns)] // This is specifically trying to catch later added variants.
         match network {
-            Network::Dash => {},
-            Network::Testnet => {},
-            Network::Devnet => {},
-            Network::Regtest => {},
+            Network::Dash => {}
+            Network::Testnet => {}
+            Network::Devnet => {}
+            Network::Regtest => {}
             _ => panic!("Update ChainHash::using_genesis_block and chain_hash_genesis_block with new variants"),
         }
     }
@@ -324,7 +325,7 @@ mod test {
     #[test]
     fn mainnet_chain_hash_test_vector() {
         let got = ChainHash::using_genesis_block(Network::Dash).to_string();
-        let want = "9ec8b38da81007d1af09f5be2df22f27ced2f45ff4403394ab249e95ca7df4d6";
+        let want = "043815c00a2a17f25adba30162593aa70504195bb7dae6e3a755276033bd0dd9";
         assert_eq!(got, want);
     }
 }

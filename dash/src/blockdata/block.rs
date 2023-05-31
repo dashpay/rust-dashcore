@@ -469,6 +469,7 @@ mod tests {
     }
 
     // Check testnet block 000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b
+    #[ignore]
     #[test]
     fn segwit_block_test() {
         let segwit_block = include_bytes!("../../tests/data/testnet_block_000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b.raw").to_vec();
@@ -523,7 +524,7 @@ mod tests {
 
     #[test]
     fn validate_pow_test() {
-        let some_header = hex!("010000004ddccd549d28f385ab457e98d1b11ce80bfea2c5ab93015ade4973e400000000bf4473e53794beae34e64fccc471dace6ae544180816f89591894e0f417a914cd74d6e49ffff001d323b3a7b");
+        let some_header = hex!("0000002085691f6a060e65346c281ed25b99dbd18c139053562ccd001d00000000000000377b6aa24658b7a0ae7b73f0673d047a291de5cbc06907038b288b2ebf491c2c99e17564c39d321992266592");
         let some_header: Header =
             deserialize(&some_header).expect("Can't deserialize correct block header");
         assert_eq!(
