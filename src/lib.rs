@@ -36,6 +36,7 @@
 //! * `base64` - (dependency), enables encoding of PSBTs and message signatures.
 //! * `unstable` - enables unstable features for testing.
 //! * `rand` - (dependency), makes it more convenient to generate random values.
+//! * `bincode` - (dependency), implements bincode serialization and deserialization.
 //! * `use-serde` - (dependency), implements `serde`-based serialization and
 //!                 deserialization.
 //! * `secp-lowmemory` - optimizations for low-memory devices.
@@ -134,6 +135,7 @@ pub mod hash_types;
 pub mod policy;
 pub mod ephemerealdata;
 pub mod bls_sig_utils;
+mod types;
 
 pub use hash_types::*;
 pub use blockdata::block::Block;
@@ -156,6 +158,7 @@ pub use util::amount::Denomination;
 pub use util::amount::SignedAmount;
 pub use util::merkleblock::MerkleBlock;
 pub use util::sighash::SchnorrSighashType;
+pub use types::*;
 
 #[cfg(feature = "signer")]
 pub use util::signer;
