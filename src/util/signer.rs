@@ -1,13 +1,16 @@
 //! Module contains helper functions for signing and verification the ECDSA signatures
 
 use anyhow::{bail, anyhow};
-use hashes::{Hash, sha256, ripemd160};
+use hashes::Hash;
 use prelude::Vec;
 use core::{convert::TryInto};
 
+use util::hash::ripemd160_sha256;
+use util::hash::double_sha;
+
 use crate::{
     secp256k1::{
-		Secp256k1, SecretKey,
+        Secp256k1, SecretKey,
         ecdsa::{RecoverableSignature, RecoveryId},
         Message,
     },
@@ -86,8 +89,8 @@ pub fn sign_hash(data_hash: &[u8], private_key: &[u8]) -> Result<[u8; 65], anyho
 /// converts the signature from/to compact format. Compact format is when the signature
 /// is prefixed by the recovery byte
 pub trait CompactSignature
-where
-    Self: Sized,
+    where
+        Self: Sized,
 {
     /// Converts the Signature with Recovery byte to the compact format where
     /// the first byte of signature is occupied by the recovery byte
@@ -116,7 +119,7 @@ impl CompactSignature for RecoverableSignature {
             &signature.as_ref()[1..],
             RecoveryId::from_i32(i).unwrap(),
         )
-        .map_err(anyhow::Error::msg)
+            .map_err(anyhow::Error::msg)
     }
 
     fn to_compact_signature(&self, is_compressed: bool) -> [u8; 65] {
@@ -129,17 +132,6 @@ impl CompactSignature for RecoverableSignature {
         let compact_signature = [&[prefix], signature.as_slice()].concat();
         compact_signature.try_into().unwrap()
     }
-}
-
-
-/// calculates double sha256 on data
-pub fn double_sha(payload : impl AsRef<[u8]>) -> Vec<u8>  {
-    sha256::Hash::hash(&sha256::Hash::hash(payload.as_ref())).to_vec()
-}
-
-/// calculates the RIPEMD169(SHA256(data))
-pub fn ripemd160_sha256(data : &[u8]) -> Vec<u8> {
-    ripemd160::Hash::hash(&sha256::Hash::hash(data)).to_vec()
 }
 
 #[cfg(test)]
@@ -283,6 +275,3 @@ mod test {
         assert_error_contains!(validation_result, "the signature must be 65 bytes long")
     }
 }
-
-
-
