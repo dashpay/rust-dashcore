@@ -44,7 +44,6 @@ crate::internal_macros::hash_type! {
 }
 
 /// Output of the X11 hash function
-#[cfg(not(fuzzing))]
 fn from_engine(e: HashEngine) -> Hash {
     return Hash(e.midstate().to_byte_array());
 }
