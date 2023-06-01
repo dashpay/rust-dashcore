@@ -69,6 +69,8 @@ hash_newtype!(InputsHash, sha256d::Hash, 32, doc="A hash of all transaction inpu
 hash_newtype!(QuorumHash, sha256d::Hash, 32, doc="A hash used to identify a quorum");
 hash_newtype!(QuorumVVecHash, sha256d::Hash, 32, doc="A hash of a quorum verification vector");
 
+hash_newtype!(QuorumSigningRequestId, sha256d::Hash, 32, doc="A hash used to identify a quorum signing request");
+
 impl_hashencode!(Txid);
 impl_hashencode!(Wtxid);
 impl_hashencode!(BlockHash);
@@ -90,3 +92,5 @@ impl_hashencode!(InputsHash);
 
 impl_hashencode!(QuorumHash);
 impl_hashencode!(QuorumVVecHash);
+
+impl_hashencode!(QuorumSigningRequestId);

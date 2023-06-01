@@ -131,17 +131,6 @@ impl CompactSignature for RecoverableSignature {
     }
 }
 
-
-/// calculates double sha256 on data
-pub fn double_sha(payload : impl AsRef<[u8]>) -> Vec<u8>  {
-    sha256::Hash::hash(&sha256::Hash::hash(payload.as_ref())).to_vec()
-}
-
-/// calculates the RIPEMD169(SHA256(data))
-pub fn ripemd160_sha256(data : &[u8]) -> Vec<u8> {
-    ripemd160::Hash::hash(&sha256::Hash::hash(data)).to_vec()
-}
-
 #[cfg(test)]
 mod test {
     use crate::{assert_error_contains};

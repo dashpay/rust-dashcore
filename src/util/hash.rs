@@ -28,7 +28,7 @@ use prelude::*;
 use io;
 use core::cmp::min;
 
-use hashes::Hash;
+use hashes::{Hash, ripemd160, sha256};
 use consensus::encode::Encodable;
 
 /// Calculates the merkle root of a list of *hashes*, inline (in place) in `hashes`.
@@ -109,6 +109,16 @@ where
     let half_len = hashes.len() / 2 + hashes.len() % 2;
 
     merkle_root_r(&mut hashes[0..half_len])
+}
+
+/// calculates double sha256 on data
+pub fn double_sha(payload : impl AsRef<[u8]>) -> Vec<u8>  {
+    sha256::Hash::hash(&sha256::Hash::hash(payload.as_ref())).to_vec()
+}
+
+/// calculates the RIPEMD169(SHA256(data))
+pub fn ripemd160_sha256(data : &[u8]) -> Vec<u8> {
+    ripemd160::Hash::hash(&sha256::Hash::hash(data)).to_vec()
 }
 
 #[cfg(test)]
