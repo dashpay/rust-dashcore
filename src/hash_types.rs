@@ -75,10 +75,12 @@ hash_newtype!(QuorumVVecHash, sha256d::Hash, 32, doc="A hash of a quorum verific
 // looks like fmt() is used in serialization somewhere. As by default
 // DISPLAY_BACKWARD is true for sha256d::Hash, this causes ProTxHashes (and other Txid's)
 // to be reversed, and breaks compatibility with other client lib implementations.
-// 
+//
 // Note: this can also affect other types, like Txid
 hash_newtype!(ProTxHash, sha256d::Hash, 32, doc="ProTxHash transaction ID.", false);
 impl_hashencode!(ProTxHash);
+
+hash_newtype!(QuorumSigningRequestId, sha256d::Hash, 32, doc="A hash used to identify a quorum signing request");
 
 impl_hashencode!(Txid);
 impl_hashencode!(Wtxid);
@@ -101,3 +103,5 @@ impl_hashencode!(InputsHash);
 
 impl_hashencode!(QuorumHash);
 impl_hashencode!(QuorumVVecHash);
+
+impl_hashencode!(QuorumSigningRequestId);

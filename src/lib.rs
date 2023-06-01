@@ -88,8 +88,14 @@ extern crate core2;
 extern crate core; // for Rust 1.29 and no-std tests
 
 // Re-exported dependencies.
+
+/// Bitcoin hashes implementation
 #[macro_use] pub extern crate bitcoin_hashes as hashes;
+
+/// Bitcoin secp256k1 bindings
 pub extern crate secp256k1;
+
+/// Rust implementation of the Bech32 encoding format described
 pub extern crate bech32;
 
 #[cfg(feature = "no-std")]

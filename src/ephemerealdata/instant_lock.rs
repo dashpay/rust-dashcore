@@ -10,9 +10,13 @@ use core::fmt::{Debug, Formatter};
 use alloc::vec::Vec;
 #[cfg(any(feature = "std", test))]
 pub use std::vec::Vec;
+use hashes::{Hash, HashEngine};
 use blockdata::transaction::outpoint::OutPoint;
+use QuorumSigningRequestId;
 //#[cfg(feature = "use-serde")]
 //use serde_big_array::BigArray;
+
+const IS_LOCK_REQUEST_ID_PREFIX: &str = "islock";
 
 type BlsSignature = [u8; 96];
 
@@ -36,6 +40,30 @@ pub struct InstantLock {
     //#[cfg_attr(feature = "use-serde", serde(serialize_with = "<[_]>::serialize"))]
     //#[cfg_attr(feature = "use-serde", serde(with = "BigArray"))]
     pub signature: BlsSignature,
+}
+
+impl InstantLock {
+    /// Returns quorum signing request ID
+    pub fn request_id(&self) -> Result<QuorumSigningRequestId, io::Error> {
+        let mut engine = QuorumSigningRequestId::engine();
+
+        // Prefix
+        let prefix_len = encode::VarInt(IS_LOCK_REQUEST_ID_PREFIX.len() as u64);
+        prefix_len.consensus_encode(&mut engine)?;
+
+        engine.input(IS_LOCK_REQUEST_ID_PREFIX.as_bytes());
+
+        // Inputs
+        let inputs_len = encode::VarInt(self.inputs.len() as u64);
+        inputs_len.consensus_encode(&mut engine)?;
+
+        for input in &self.inputs {
+            engine.input(&input.txid[..]);
+            engine.input(&input.vout.to_le_bytes());
+        }
+
+        Ok(QuorumSigningRequestId::from_engine(engine))
+    }
 }
 
 impl Default for InstantLock {
@@ -90,15 +118,14 @@ impl Encodable for InstantLock {
 }
 
 #[cfg(test)]
-mod is_lock_test {
+mod tests {
     use hashes::hex::{FromHex, ToHex};
     use consensus::{deserialize, serialize};
     use ephemerealdata::instant_lock::InstantLock;
 
     #[test]
     pub fn should_decode_vec() {
-        let hex = "010101102862a43d122e6675aba4b507ae307af8e1e17febc77907e08b3efa28f41b000000004b446de00a592c67402c0a65649f4ad69f29084b3e9054f5aa6b85a50b497fe136a56617591a6a89237bada6af1f9b46eba47b5d89a8c4e49ff2d0236182307c85e12d70ca7118c5034004f93e45384079f46c6c2928b45cfc5d3ad640e70dfd87a9a3069899adfb3b1622daeeead19809b74354272ccf95290678f55c13728e3c5ee8f8417fcce3dfdca2a7c9c33ec981abdff1ec35a2e4b558c3698f01c1b8";
-        // let object = {
+        // {
         //     version: 1,
         //     inputs: [
         //     {
@@ -110,14 +137,13 @@ mod is_lock_test {
         //     cyclehash: "7c30826123d0f29fe4c4a8895d7ba4eb469b1fafa6ad7b23896a1a591766a536",
         //     signature: "85e12d70ca7118c5034004f93e45384079f46c6c2928b45cfc5d3ad640e70dfd87a9a3069899adfb3b1622daeeead19809b74354272ccf95290678f55c13728e3c5ee8f8417fcce3dfdca2a7c9c33ec981abdff1ec35a2e4b558c3698f01c1b8"
         // };
+        let hex = "010101102862a43d122e6675aba4b507ae307af8e1e17febc77907e08b3efa28f41b000000004b446de00a592c67402c0a65649f4ad69f29084b3e9054f5aa6b85a50b497fe136a56617591a6a89237bada6af1f9b46eba47b5d89a8c4e49ff2d0236182307c85e12d70ca7118c5034004f93e45384079f46c6c2928b45cfc5d3ad640e70dfd87a9a3069899adfb3b1622daeeead19809b74354272ccf95290678f55c13728e3c5ee8f8417fcce3dfdca2a7c9c33ec981abdff1ec35a2e4b558c3698f01c1b8";
+
         let vec = Vec::from_hex(hex).unwrap();
 
-        // let expected_hash = "4ee6a4ed2b6c70efd401c6c91dfaf6c61badd13f80ec07c281bb93d5270fcd58";
-        // let expected_request_id = "495be44677e82895a9396fef02c6e9afc1f01d4aff70622b9f78e0e10d57064c";
-        
         let is_lock: InstantLock = deserialize(&vec).unwrap();
         assert_eq!(is_lock.version, 1);
-        
+
         // TODO: check outpoints
 
         let mut cycle_clone = is_lock.cyclehash.clone();
@@ -127,9 +153,24 @@ mod is_lock_test {
         let mut signature_clone = is_lock.signature.clone();
         signature_clone.reverse();
         //assert_eq!(signature_clone.to_hex(), "85e12d70ca7118c5034004f93e45384079f46c6c2928b45cfc5d3ad640e70dfd87a9a3069899adfb3b1622daeeead19809b74354272ccf95290678f55c13728e3c5ee8f8417fcce3dfdca2a7c9c33ec981abdff1ec35a2e4b558c3698f01c1b8");
-        
+
         let serialized = serialize(&is_lock).to_hex();
         assert_eq!(serialized, hex);
+    }
+
+    #[test]
+    pub fn should_create_request_id() {
+        let hex = "010101102862a43d122e6675aba4b507ae307af8e1e17febc77907e08b3efa28f41b000000004b446de00a592c67402c0a65649f4ad69f29084b3e9054f5aa6b85a50b497fe136a56617591a6a89237bada6af1f9b46eba47b5d89a8c4e49ff2d0236182307c85e12d70ca7118c5034004f93e45384079f46c6c2928b45cfc5d3ad640e70dfd87a9a3069899adfb3b1622daeeead19809b74354272ccf95290678f55c13728e3c5ee8f8417fcce3dfdca2a7c9c33ec981abdff1ec35a2e4b558c3698f01c1b8";
+
+        let expected_request_id = "495be44677e82895a9396fef02c6e9afc1f01d4aff70622b9f78e0e10d57064c";
+
+        let vec = Vec::from_hex(hex).unwrap();
+
+        let is_lock: InstantLock = deserialize(&vec).unwrap();
+
+        let request_id = is_lock.request_id().expect("should return request id");
+
+        assert_eq!(request_id.to_hex(), expected_request_id);
     }
 
     // #[test]
