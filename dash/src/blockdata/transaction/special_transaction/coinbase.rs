@@ -18,7 +18,10 @@
 //! It is defined in DIP4 [dip-0004](https://github.com/dashpay/dips/blob/master/dip-0004.md).
 //!
 
+use prelude::Vec;
+
 use crate::io;
+use crate::io::{Error, Write, ErrorKind};
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::consensus::{Decodable, Encodable, encode};
 
@@ -33,6 +36,9 @@ pub struct CoinbasePayload {
     height: u32,
     merkle_root_masternode_list: MerkleRootMasternodeList,
     merkle_root_quorums: MerkleRootQuorums,
+    best_cl_height: Option<u32>,
+    best_cl_signature: Option<Vec<u8>>,
+    asset_locked_amount: Option<u64>,
 }
 
 impl Encodable for CoinbasePayload {
@@ -42,6 +48,25 @@ impl Encodable for CoinbasePayload {
         len += self.height.consensus_encode(w)?;
         len += self.merkle_root_masternode_list.consensus_encode(w)?;
         len += self.merkle_root_quorums.consensus_encode(w)?;
+        if self.version >= 3 {
+            if let Some(best_cl_height) = self.best_cl_height {
+                len += best_cl_height.consensus_encode(w)?;
+            } else {
+                return Err(Error::new(ErrorKind::InvalidInput, "best_cl_height is not set"));
+            }
+
+            if let Some(ref best_cl_signature) = self.best_cl_signature {
+                len += best_cl_signature.consensus_encode(w)?;
+            } else {
+                return Err(Error::new(ErrorKind::InvalidInput, "best_cl_signature is not set"));
+            }
+
+            if let Some(asset_locked_amount) = self.asset_locked_amount {
+                len += asset_locked_amount.consensus_encode(w)?;
+            } else {
+                return Err(Error::new(ErrorKind::InvalidInput, "asset_locked_amount is not set"));
+            }
+        }
         Ok(len)
     }
 }
@@ -52,11 +77,17 @@ impl Decodable for CoinbasePayload {
         let height = u32::consensus_decode(r)?;
         let merkle_root_masternode_list = MerkleRootMasternodeList::consensus_decode(r)?;
         let merkle_root_quorums = MerkleRootQuorums::consensus_decode(r)?;
+        let best_cl_height = if version >= 3 { Some(u32::consensus_decode(&mut d)?) } else { None };
+        let best_cl_signature = if version >= 3 { Some(Vec::<u8>::consensus_decode(&mut d)?) } else { None };
+        let asset_locked_amount = if version >= 3 { Some(u64::consensus_decode(&mut d)?) } else { None };
         Ok(CoinbasePayload {
             version,
             height,
             merkle_root_masternode_list,
             merkle_root_quorums,
+            best_cl_height,
+            best_cl_signature,
+            asset_locked_amount,
         })
     }
 }
