@@ -20,7 +20,7 @@
 
 use crate::prelude::Vec;
 
-use crate::io;
+use crate::{io, VarInt};
 use crate::io::{Error, Write, ErrorKind};
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::consensus::{Decodable, Encodable, encode};
@@ -45,7 +45,14 @@ impl CoinbasePayload {
     /// The size of the payload in bytes.
     /// version(2) + height(4) + merkle_root_masternode_list(32) + merkle_root_quorums(32)
     pub fn size(&self) -> usize {
-        return 2 + 4 + 32 + 32;
+        let mut size: usize = 2 + 4 + 32 + 32;
+        if self.version >= 3 {
+            size += 4 + 8;
+            if let Some(sig) = &self.best_cl_signature {
+                size += VarInt(sig.len() as u64).len() + sig.len()
+            }
+        }
+        size
     }
 }
 
@@ -109,15 +116,20 @@ mod tests {
 
     #[test]
     fn size() {
-        let want = 70;
-        let payload = CoinbasePayload{
-            height: 1000,
-            version: 2,
-            merkle_root_masternode_list: MerkleRootMasternodeList::all_zeros(),
-            merkle_root_quorums: MerkleRootQuorums::all_zeros(),
-        };
-        assert_eq!(payload.size(), want);
-        let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
-        assert_eq!(actual, want);
+        let test_cases: &[(usize, u16)] = &[(70, 2), (179, 3)];
+        for (want, version) in test_cases.iter() {
+            let payload = CoinbasePayload {
+                height: 1000,
+                version: *version,
+                merkle_root_masternode_list: MerkleRootMasternodeList::all_zeros(),
+                merkle_root_quorums: MerkleRootQuorums::all_zeros(),
+                best_cl_height: Some(900),
+                best_cl_signature: Some(vec![0; 96]),
+                asset_locked_amount: Some(10000),
+            };
+            assert_eq!(payload.size(), *want);
+            let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
+            assert_eq!(actual, *want);
+        }
     }
 }
