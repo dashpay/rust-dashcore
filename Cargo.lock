@@ -454,9 +454,9 @@ checksum = "436b050e76ed2903236f032a59761c1eb99e1b0aead2c257922771dab1fc8c78"
 
 [[package]]
 name = "rs-x11-hash"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2684f844ccdefb42cd267b2527074010163aa77d5dff5285276b7b0ee0b0c595"
+checksum = "ca402acc8ae67dded1a840b5cb4fe38a9118877aa401960dce00dfbc26885b7c"
 dependencies = [
  "bindgen",
  "cc",
