@@ -21,13 +21,16 @@
 use core::ops::Index;
 use core::slice::SliceIndex;
 use core::{str};
-use std::convert::TryInto;
 
+#[cfg(feature = "std")]
+use std::vec::Vec;
 #[cfg(feature = "std")]
 use std::io;
 
-#[cfg(not(feature = "std"))]
+#[cfg(all(feature = "core2", not(feature = "std")))]
 use core2::io;
+#[cfg(all(feature = "alloc", not(feature = "std")))]
+use alloc::vec::Vec;
 
 use crate::{hex, Error, HashEngine as _};
 
@@ -66,13 +69,7 @@ impl crate::HashEngine for HashEngine {
     const BLOCK_SIZE: usize = 32;
 
     fn midstate(&self) -> Self::MidState {
-        let md: Vec<u8> = rs_x11_hash::get_x11_hash(self.buf.as_slice()).to_vec();
-        let s = md.as_slice();
-        let h: [u8; 32] = match s.try_into() {
-            Ok(h) => h,
-            Err(_) => panic!("slice with incorrect length"),
-        };
-        Midstate(h)
+        Midstate(rs_x11_hash::get_x11_hash(self.buf.as_slice()))
     }
 
     fn input(&mut self, data: &[u8]) {
