@@ -13,7 +13,7 @@ edition = "2018"
 exclude = ["tests", "contrib"]
 
 [features]
-default = []
+default = ["std"]
 std = ["alloc", "internals/std"]
 alloc = ["internals/alloc"]
 schemars = ["actual-schemars", "dyn-clone"]
