@@ -18,7 +18,7 @@
 //! It is defined in DIP4 [dip-0004](https://github.com/dashpay/dips/blob/master/dip-0004.md).
 //!
 
-use prelude::Vec;
+use crate::prelude::Vec;
 
 use crate::io;
 use crate::io::{Error, Write, ErrorKind};
