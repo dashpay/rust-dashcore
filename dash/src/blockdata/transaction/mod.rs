@@ -504,6 +504,7 @@ impl Transaction {
         }
     }
 
+    /// Returns the length of the special transaction payload, if any.
     pub fn special_transaction_len(&self) -> usize {
         if self.special_transaction_payload.is_none() {
             return 0

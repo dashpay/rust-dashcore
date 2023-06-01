@@ -61,6 +61,7 @@ pub struct ProviderUpdateServicePayload {
 }
 
 impl ProviderUpdateServicePayload {
+    /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
         let mut size = 2 + 32 + 16 + 2 + 32 + 96; // 180
         size += VarInt(self.script_payout.len() as u64).len() + self.script_payout.len();

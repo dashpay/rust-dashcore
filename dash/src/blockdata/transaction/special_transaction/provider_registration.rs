@@ -107,6 +107,7 @@ impl ProviderRegistrationPayload {
         Ok(format!("{}|{}|{}|{}|{}", self.payout_address(network)?, self.operator_reward, self.owner_address(network), self.voting_address(network), base_payload_hash.as_byte_array().to_hex_string(Lower)))
     }
 
+    /// The size of the payload in bytes.
     /// version(2) + provider_type(2) + provider_mode(2) + collateral_outpoint(32 + 4) + ip_address(16) +
     /// port(2) + owner_key_hash(20) + operator_public_key(48) + voting_key_hash(20) + operator_reward(2) +
     /// script_payout(VarInt(script_payout_len).len() + script_payout_len) +

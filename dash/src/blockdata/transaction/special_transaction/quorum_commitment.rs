@@ -42,6 +42,7 @@ pub struct QuorumFinalizationCommitment {
 }
 
 impl QuorumFinalizationCommitment {
+    /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
         let mut size = 2 + 1 + 32 + 48 + 32 + 96 + 96;
         size += VarInt(self.signers.len() as u64).len() + self.signers.len();
@@ -106,6 +107,7 @@ pub struct QuorumCommitmentPayload {
 }
 
 impl QuorumCommitmentPayload {
+    /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
         2 + 4 + self.finalization_commitment.size()
     }

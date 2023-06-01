@@ -36,6 +36,7 @@ pub struct CoinbasePayload {
 }
 
 impl CoinbasePayload {
+    /// The size of the payload in bytes.
     /// version(2) + height(4) + merkle_root_masternode_list(32) + merkle_root_quorums(32)
     pub fn size(&self) -> usize {
         return 2 + 4 + 32 + 32;

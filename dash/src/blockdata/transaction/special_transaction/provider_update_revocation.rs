@@ -58,6 +58,7 @@ pub struct ProviderUpdateRevocationPayload {
 }
 
 impl ProviderUpdateRevocationPayload {
+    /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
         2 + 32 + 2 + 32 + 96
     }
