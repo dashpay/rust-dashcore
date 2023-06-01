@@ -99,7 +99,7 @@ impl TransactionPayload {
         }
     }
 
-    // Gets the size of the special transaction payload
+    /// Gets the size of the special transaction payload
     pub fn len(&self) -> usize {
         // 1 byte is the size of the special transaction type
         1 + match self {
