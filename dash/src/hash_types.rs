@@ -72,10 +72,8 @@ mod newtypes {
     use crate::alloc::string::ToString;
 
     use core::str::FromStr;
-    use hashes::{sha256, sha256d, hash160, hash_newtype, Hash};
+    use hashes::{sha256, sha256d, hash160, hash_newtype};
     use hashes::hex::Error;
-    use internals::hex::Case;
-    use internals::hex::display::DisplayHex;
     use crate::prelude::String;
 
     hash_newtype! {
@@ -126,9 +124,12 @@ mod newtypes {
         pub struct QuorumHash(sha256d::Hash);
         /// A hash of a quorum verification vector
         pub struct QuorumVVecHash(sha256d::Hash);
+        pub struct QuorumSigningRequestId(sha256d::Hash);
         /// ProTxHash is a pro-tx hash
         #[hash_newtype(forward)]
         pub struct ProTxHash(sha256d::Hash);
+        /// CycleHash is a cycle hash
+        pub struct CycleHash(sha256d::Hash);
     }
 
     impl_hashencode!(Txid);
@@ -149,7 +150,9 @@ mod newtypes {
 
     impl_hashencode!(QuorumHash);
     impl_hashencode!(QuorumVVecHash);
+    impl_hashencode!(QuorumSigningRequestId);
     impl_hashencode!(PubkeyHash);
+    impl_hashencode!(CycleHash);
 
     impl_asref_push_bytes!(PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash);
 
@@ -204,7 +207,7 @@ mod newtypes {
 
         /// Convert a PubkeyHash to a string
         pub fn to_hex(&self) -> String {
-            self.0.as_byte_array().to_hex_string(Case::Lower)
+            self.0.to_string()
         }
     }
 }
