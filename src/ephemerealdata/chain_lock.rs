@@ -21,7 +21,7 @@ impl_consensus_encoding!(ChainLock, block_height, block_hash, signature);
 
 /// Chain lock is a mechanism used by the Dash network to
 /// confirm latest block using LLMQ signature. This approach
-/// reduces mining uncertenaty and mitigate 51% attack.
+/// reduces mining uncertainty and mitigate 51% attack.
 /// This data structure represents a p2p message containing a data to verify such a lock.
 #[derive(Debug, Clone, Eq, PartialEq)]
 // #[cfg_attr(feature = "use-serde", derive(Serialize, Deserialize))]
