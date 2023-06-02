@@ -61,18 +61,6 @@ impl InstantLock {
     }
 }
 
-impl Default for InstantLock {
-    fn default() -> Self {
-        Self {
-            version: 1,
-            inputs: Vec::new(),
-            txid: Txid::all_zeros(),
-            cyclehash: CycleHash::all_zeros(),
-            signature: BLSSignature::from([0u8; 96]),
-        }
-    }
-}
-
 impl Debug for InstantLock {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> core::fmt::Result {
         formatter.debug_struct("InstantLock")
@@ -87,8 +75,8 @@ impl Debug for InstantLock {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::consensus::{deserialize, serialize};
-    use crate::ephemerealdata::instant_lock::InstantLock;
     use crate::internal_macros::hex;
 
     #[test]
