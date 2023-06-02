@@ -143,7 +143,8 @@ pub use crate::crypto::key::{self, PrivateKey, PublicKey};
 pub use crate::crypto::{ecdsa, sighash};
 pub use crate::error::Error;
 pub use crate::hash_types::{
-    BlockHash, PubkeyHash, ScriptHash, Txid, WPubkeyHash, WScriptHash, Wtxid, ProTxHash,
+    BlockHash, PubkeyHash, ScriptHash, Txid, WPubkeyHash, WScriptHash, Wtxid, ProTxHash, QuorumHash,
+    TxMerkleNode,
 };
 pub use crate::merkle_tree::MerkleBlock;
 pub use crate::network::constants::Network;
