@@ -44,6 +44,8 @@ pub struct CoinbasePayload {
 impl CoinbasePayload {
     /// The size of the payload in bytes.
     /// version(2) + height(4) + merkle_root_masternode_list(32) + merkle_root_quorums(32)
+    /// in addition to the above, if version >= 3: asset_locked_amount(8) + best_cl_height(4) +
+    /// best_cl_signature(VarInt(len) + len)
     pub fn size(&self) -> usize {
         let mut size: usize = 2 + 4 + 32 + 32;
         if self.version >= 3 {

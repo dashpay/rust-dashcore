@@ -506,11 +506,10 @@ impl Transaction {
 
     /// Returns the length of the special transaction payload, if any.
     pub fn special_transaction_len(&self) -> usize {
-        if self.special_transaction_payload.is_none() {
-            return 0
+        match self.special_transaction_payload.as_ref() {
+            Some(payload) => payload.len(),
+            None => return 0,
         }
-        let payload = self.special_transaction_payload.clone().unwrap();
-        payload.len()
     }
 
     /// Shorthand for [`Self::verify_with_flags`] with flag [`bitcoinconsensus::VERIFY_ALL`].
