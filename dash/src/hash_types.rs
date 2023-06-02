@@ -78,7 +78,6 @@ mod newtypes {
 
     hash_newtype! {
         /// A dash transaction hash/transaction ID.
-        ///
         pub struct Txid(sha256d::Hash);
 
         /// A dash witness transaction ID.
