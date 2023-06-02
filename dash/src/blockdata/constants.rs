@@ -9,8 +9,7 @@
 //!
 
 use core::default::Default;
-
-use hashes::{sha256d, Hash};
+use hashes::{Hash, sha256d};
 use hex_lit::hex;
 use internals::impl_array_newtype;
 
@@ -41,19 +40,24 @@ pub const WITNESS_SCALE_FACTOR: usize = 4;
 /// The maximum allowed number of signature check operations in a block.
 pub const MAX_BLOCK_SIGOPS_COST: i64 = 80_000;
 /// Mainnet (dash) pubkey address prefix.
-pub const PUBKEY_ADDRESS_PREFIX_MAIN: u8 = 76; // 0x4C
+pub const PUBKEY_ADDRESS_PREFIX_MAIN: u8 = 76;
+// 0x4C
 /// Mainnet (dash) script address prefix.
-pub const SCRIPT_ADDRESS_PREFIX_MAIN: u8 = 16; // 0x10
+pub const SCRIPT_ADDRESS_PREFIX_MAIN: u8 = 16;
+// 0x10
 /// Test (testnet, devnet, regtest) pubkey address prefix.
-pub const PUBKEY_ADDRESS_PREFIX_TEST: u8 = 140; // 0x8C
+pub const PUBKEY_ADDRESS_PREFIX_TEST: u8 = 140;
+// 0x8C
 /// Test (testnet, devnet, regtest) script address prefix.
-pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 19; // 0x13
+pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 19;
+// 0x13
 /// The maximum allowed script size.
 pub const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
 /// How may blocks between halvings.
 pub const SUBSIDY_HALVING_INTERVAL: u32 = 210_000;
 /// Maximum allowed value for an integer in Script.
-pub const MAX_SCRIPTNUM_VALUE: u32 = 0x80000000; // 2^31
+pub const MAX_SCRIPTNUM_VALUE: u32 = 0x80000000;
+// 2^31
 /// Number of blocks needed for an output from a coinbase transaction to be spendable.
 pub const COINBASE_MATURITY: u32 = 100;
 
@@ -159,23 +163,19 @@ impl ChainHash {
     // Mainnet value can be verified at https://github.com/lightning/bolts/blob/master/00-introduction.md
     /// `ChainHash` for mainnet dash.
     pub const DASH: Self = Self([
-        111, 226, 140, 10, 182, 241, 179, 114, 193, 166, 162, 70, 174, 99, 247, 79, 147, 30, 131,
-        101, 225, 90, 8, 156, 104, 214, 25, 0, 0, 0, 0, 0,
+        4, 56, 21, 192, 10, 42, 23, 242, 90, 219, 163, 1, 98, 89, 58, 167, 5, 4, 25, 91, 183, 218, 230, 227, 167, 85, 39, 96, 51, 189, 13, 217
     ]);
     /// `ChainHash` for testnet dash.
     pub const TESTNET: Self = Self([
-        67, 73, 127, 215, 248, 38, 149, 113, 8, 244, 163, 15, 217, 206, 195, 174, 186, 121, 151,
-        32, 132, 233, 14, 173, 1, 234, 51, 9, 0, 0, 0, 0,
+        16, 238, 202, 52, 44, 112, 187, 96, 147, 134, 134, 75, 156, 55, 90, 205, 70, 74, 202, 97, 112, 87, 40, 133, 32, 84, 236, 123, 183, 28, 220, 240
     ]);
     /// `ChainHash` for devnet dash.
     pub const DEVNET: Self = Self([
-        246, 30, 238, 59, 99, 163, 128, 164, 119, 160, 99, 175, 50, 178, 187, 201, 124, 159, 249,
-        240, 31, 44, 66, 37, 233, 115, 152, 129, 8, 0, 0, 0,
+        164, 119, 85, 190, 121, 37, 150, 111, 131, 181, 177, 164, 204, 209, 202, 105, 29, 197, 235, 240, 250, 179, 224, 6, 46, 238, 40, 136, 23, 215, 12, 88
     ]);
     /// `ChainHash` for regtest dash.
     pub const REGTEST: Self = Self([
-        6, 34, 110, 70, 17, 26, 11, 89, 202, 175, 18, 96, 67, 235, 91, 191, 40, 195, 79, 58, 94,
-        51, 42, 31, 199, 178, 183, 60, 241, 136, 145, 15,
+        16, 251, 76, 138, 72, 44, 63, 251, 228, 123, 87, 245, 131, 191, 84, 111, 117, 107, 92, 205, 105, 10, 247, 249, 131, 113, 112, 200, 29, 102, 142, 242
     ]);
 
     /// Returns the hash of the `network` genesis block for use as a chain hash.
@@ -240,7 +240,7 @@ mod test {
         assert_eq!(gen.header.nonce, 2083236893);
         assert_eq!(
             gen.header.block_hash().to_string(),
-            "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+            "043815c00a2a17f25adba30162593aa70504195bb7dae6e3a755276033bd0dd9"
         );
     }
 
@@ -258,7 +258,7 @@ mod test {
         assert_eq!(gen.header.nonce, 414098458);
         assert_eq!(
             gen.header.block_hash().to_string(),
-            "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"
+            "10eeca342c70bb609386864b9c375acd464aca61705728852054ec7bb71cdcf0"
         );
     }
 
@@ -276,20 +276,16 @@ mod test {
         assert_eq!(gen.header.nonce, 52613770);
         assert_eq!(
             gen.header.block_hash().to_string(),
-            "00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6"
+            "a47755be7925966f83b5b1a4ccd1ca691dc5ebf0fab3e0062eee288817d70c58"
         );
     }
 
     // The *_chain_hash tests are sanity/regression tests, they verify that the const byte array
     // representing the genesis block is the same as that created by hashing the genesis block.
     fn chain_hash_and_genesis_block(network: Network) {
-        use hashes::sha256;
-
         // The genesis block hash is a double-sha256 and it is displayed backwards.
         let genesis_hash = genesis_block(network).block_hash();
-        // We abuse the sha256 hash here so we get a LowerHex impl that does not print the hex backwards.
-        let hash = sha256::Hash::from_slice(genesis_hash.as_byte_array()).unwrap();
-        let want = format!("{:02x}", hash);
+        let want = format!("{:02x}", genesis_hash);
 
         let chain_hash = ChainHash::using_genesis_block(network);
         let got = format!("{:02x}", chain_hash);
@@ -299,10 +295,10 @@ mod test {
 
         #[allow(unreachable_patterns)] // This is specifically trying to catch later added variants.
         match network {
-            Network::Dash => {},
-            Network::Testnet => {},
-            Network::Devnet => {},
-            Network::Regtest => {},
+            Network::Dash => {}
+            Network::Testnet => {}
+            Network::Devnet => {}
+            Network::Regtest => {}
             _ => panic!("Update ChainHash::using_genesis_block and chain_hash_genesis_block with new variants"),
         }
     }
@@ -329,7 +325,7 @@ mod test {
     #[test]
     fn mainnet_chain_hash_test_vector() {
         let got = ChainHash::using_genesis_block(Network::Dash).to_string();
-        let want = "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000";
+        let want = "043815c00a2a17f25adba30162593aa70504195bb7dae6e3a755276033bd0dd9";
         assert_eq!(got, want);
     }
 }

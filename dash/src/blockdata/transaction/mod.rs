@@ -453,6 +453,7 @@ impl Transaction {
                 VarInt(output.script_pubkey.len() as u64).len() +
                 output.script_pubkey.len();
         }
+        let special_tx_len = self.special_transaction_len();
         let non_input_size =
             // version:
             4 +
@@ -461,7 +462,8 @@ impl Transaction {
                 VarInt(self.output.len() as u64).len() +
                 output_size +
                 // lock_time
-                4;
+                4 +
+                special_tx_len;
         non_input_size + input_size
     }
 
@@ -484,6 +486,7 @@ impl Transaction {
                 VarInt(output.script_pubkey.len() as u64).len() +
                 output.script_pubkey.len();
         }
+        let special_tx_len = self.special_transaction_len();
         let non_input_size =
             // version:
             4 +
@@ -492,11 +495,20 @@ impl Transaction {
                 VarInt(self.output.len() as u64).len() +
                 output_size +
                 // lock_time
-                4;
+                4 +
+                special_tx_len;
         if inputs_with_witnesses == 0 {
             non_input_size * scale_factor + input_weight
         } else {
             non_input_size * scale_factor + input_weight + self.input.len() - inputs_with_witnesses + 2
+        }
+    }
+
+    /// Returns the length of the special transaction payload, if any.
+    pub fn special_transaction_len(&self) -> usize {
+        match self.special_transaction_payload.as_ref() {
+            Some(payload) => payload.len(),
+            None => return 0,
         }
     }
 
@@ -612,7 +624,10 @@ impl Encodable for Transaction {
         }
         len += self.lock_time.consensus_encode(w)?;
         if let Some(payload) = &self.special_transaction_payload {
-            len += payload.consensus_encode(w)?;
+            let mut buf = Vec::new();
+            payload.consensus_encode(&mut buf)?;
+            // this is so we get the size of the payload
+            len += buf.consensus_encode(w)?;
         }
         Ok(len)
     }

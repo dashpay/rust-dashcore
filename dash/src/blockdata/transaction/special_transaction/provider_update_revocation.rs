@@ -57,6 +57,13 @@ pub struct ProviderUpdateRevocationPayload {
     payload_sig: BLSSignature,
 }
 
+impl ProviderUpdateRevocationPayload {
+    /// The size of the payload in bytes.
+    pub fn size(&self) -> usize {
+        2 + 32 + 2 + 32 + 96
+    }
+}
+
 impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRevocationPayload {
     fn base_payload_data_encode<S: io::Write>(&self, mut s: S) -> Result<usize, io::Error> {
         let mut len = 0;
@@ -102,4 +109,26 @@ impl Decodable for ProviderUpdateRevocationPayload {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use hashes::Hash;
+    use crate::bls_sig_utils::BLSSignature;
+    use crate::consensus::Encodable;
+    use crate::hash_types::InputsHash;
+    use crate::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
+    use crate::Txid;
+
+    #[test]
+    fn size() {
+        let want = 164;
+        let payload = ProviderUpdateRevocationPayload {
+            version: 0,
+            pro_tx_hash: Txid::all_zeros(),
+            reason: 0,
+            inputs_hash: InputsHash::all_zeros(),
+            payload_sig: BLSSignature::from([0; 96]),
+        };
+        let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
+        assert_eq!(payload.size(), want);
+        assert_eq!(actual, want);
+    }
+}

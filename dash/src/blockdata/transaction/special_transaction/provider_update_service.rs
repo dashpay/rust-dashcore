@@ -35,7 +35,7 @@
 //! The special transaction type used for ProUpServTx Transactions is 2.
 
 
-use crate::io;
+use crate::{io, VarInt};
 use hashes::Hash;
 use crate::ScriptBuf;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
@@ -58,6 +58,15 @@ pub struct ProviderUpdateServicePayload {
     script_payout: ScriptBuf,
     inputs_hash: InputsHash,
     payload_sig: BLSSignature,
+}
+
+impl ProviderUpdateServicePayload {
+    /// The size of the payload in bytes.
+    pub fn size(&self) -> usize {
+        let mut size = 2 + 32 + 16 + 2 + 32 + 96; // 180
+        size += VarInt(self.script_payout.len() as u64).len() + self.script_payout.len();
+        size
+    }
 }
 
 impl SpecialTransactionBasePayloadEncodable for ProviderUpdateServicePayload {
@@ -114,13 +123,15 @@ impl Decodable for ProviderUpdateServicePayload {
 mod tests {
     use core::str::FromStr;
     use std::net::Ipv4Addr;
-    use crate::consensus::deserialize;
+    use hashes::Hash;
+    use crate::consensus::{deserialize, Encodable};
     use crate::{Network, ScriptBuf, Transaction, Txid};
     use crate::blockdata::transaction::special_transaction::{
         provider_update_service::ProviderUpdateServicePayload,
         SpecialTransactionBasePayloadEncodable,
         TransactionPayload::ProviderUpdateServicePayloadType,
     };
+    use crate::bls_sig_utils::BLSSignature;
     use crate::hash_types::InputsHash;
     use crate::internal_macros::hex;
 
@@ -185,5 +196,22 @@ mod tests {
         assert_eq!(transaction, expected_transaction);
 
         assert_eq!(transaction.txid(), tx_id);
+    }
+
+    #[test]
+    fn size() {
+        let want = 191;
+        let payload = ProviderUpdateServicePayload{
+            version: 0,
+            pro_tx_hash: Txid::all_zeros(),
+            ip_address: 0,
+            port: 0,
+            script_payout: ScriptBuf::from(vec![1,2,3,4,5,6,7,8,9,0]),
+            inputs_hash: InputsHash::all_zeros(),
+            payload_sig: BLSSignature::from([0; 96]),
+        };
+        let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
+        assert_eq!(payload.size(), want);
+        assert_eq!(actual, want);
     }
 }

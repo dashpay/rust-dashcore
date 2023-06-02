@@ -22,7 +22,7 @@
 //!
 //! The special transaction type used for AssetUnlockTx Transactions is 9.
 
-use crate::io;
+use crate::{io, VarInt};
 use crate::transaction::TxOut;
 use crate::blockdata::transaction::special_transaction::TransactionType;
 use crate::blockdata::transaction::special_transaction::TransactionType::AssetUnlock;
@@ -43,6 +43,11 @@ pub struct AssetUnlockBasePayload {
     pub index: u64,
     /// The fee used in Duffs (Satoshis)
     pub fee: u32,
+}
+
+impl AssetUnlockBasePayload {
+    /// The size of the payload in bytes.
+    pub fn size(&self) -> usize { 1 + 8 + 4 }
 }
 
 impl Encodable for AssetUnlockBasePayload {
@@ -116,6 +121,14 @@ impl AssetUnlockBaseTransactionInfo {
         };
         self.output.push(output)
     }
+
+    /// The size of the transaction in bytes.
+    pub fn size(&self) -> usize {
+        let mut size = 2 + 2 + 1 + 4;
+        size += self.output.iter().map(|o| o.size()).sum::<usize>();
+        size += VarInt(self.output.len() as u64).len();
+        size + self.base_payload.size()
+    }
 }
 
 impl Encodable for AssetUnlockBaseTransactionInfo {
@@ -137,16 +150,44 @@ impl Decodable for AssetUnlockBaseTransactionInfo {
         let special_transaction_type_u16 = u16::consensus_decode(r)?;
         let special_transaction_type = TransactionType::try_from(special_transaction_type_u16).map_err(|_| encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16))?;
         if special_transaction_type != AssetUnlock {
-            return Err(encode::Error::WrongSpecialTransactionPayloadConversion{ expected: AssetUnlock, actual: special_transaction_type})
+            return Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: AssetUnlock, actual: special_transaction_type });
         }
         Vec::<TxIn>::consensus_decode(r)?; //no inputs
         Ok(AssetUnlockBaseTransactionInfo {
             version,
             output: Decodable::consensus_decode(r)?,
             lock_time: Decodable::consensus_decode(r)?,
-            base_payload: AssetUnlockBasePayload::consensus_decode(r)?
+            base_payload: AssetUnlockBasePayload::consensus_decode(r)?,
         })
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use hashes::Hash;
+    use crate::consensus::Encodable;
+    use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::{AssetUnlockBasePayload, AssetUnlockBaseTransactionInfo};
+    use crate::{ScriptBuf, TxOut};
 
+    #[test]
+    fn size() {
+        let want = 51;
+        let tx1 = TxOut {
+            value: 0,
+            script_pubkey: ScriptBuf::from(vec![1, 2, 3, 4, 5]),
+        };
+        let tx2 = TxOut {
+            value: 0,
+            script_pubkey: ScriptBuf::from(vec![6, 7, 8, 9, 0]),
+        };
+        let payload = AssetUnlockBaseTransactionInfo {
+            version: 0,
+            lock_time: 0,
+            output: vec![tx1, tx2],
+            base_payload: AssetUnlockBasePayload { version: 0, index: 0, fee: 0 },
+        };
+        assert_eq!(payload.size(), want);
+        let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
+        assert_eq!(actual, want);
+    }
+}
