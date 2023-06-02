@@ -123,6 +123,7 @@ mod newtypes {
         pub struct QuorumHash(sha256d::Hash);
         /// A hash of a quorum verification vector
         pub struct QuorumVVecHash(sha256d::Hash);
+        /// A hash of a quorum signing request id
         pub struct QuorumSigningRequestId(sha256d::Hash);
         /// ProTxHash is a pro-tx hash
         #[hash_newtype(forward)]
