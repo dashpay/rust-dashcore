@@ -72,7 +72,7 @@ mod newtypes {
     use crate::alloc::string::ToString;
 
     use core::str::FromStr;
-    use hashes::{sha256, sha256d, hash160, hash_newtype, Hash};
+    use hashes::{sha256, sha256d, hash160, hash_x11, hash_newtype, Hash};
     use hashes::hex::Error;
     use internals::hex::Case;
     use internals::hex::display::DisplayHex;
@@ -86,7 +86,7 @@ mod newtypes {
         /// A dash witness transaction ID.
         pub struct Wtxid(sha256d::Hash);
         /// A dash block hash.
-        pub struct BlockHash(sha256d::Hash);
+        pub struct BlockHash(hash_x11::Hash);
 
         /// A hash of a public key.
         pub struct PubkeyHash(hash160::Hash);

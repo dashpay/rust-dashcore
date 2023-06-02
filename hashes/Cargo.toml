@@ -13,7 +13,7 @@ edition = "2018"
 exclude = ["tests", "contrib"]
 
 [features]
-default = []
+default = ["std"]
 std = ["alloc", "internals/std"]
 alloc = ["internals/alloc"]
 schemars = ["actual-schemars", "dyn-clone"]
@@ -35,6 +35,8 @@ actual-schemars = { package = "schemars", version = "<=0.8.3", optional = true }
 # because 1.0.8 does not build with Rust 1.41.1 (because of useage of `Arc::as_ptr`).
 dyn-clone = { version = "<=1.0.7", default_features = false, optional = true }
 secp256k1 = { default-features = false, features = ["bitcoin_hashes"], version= "0.27.0" }
+
+rs-x11-hash = ">=0.1.5"
 
 [dev-dependencies]
 serde_test = "1.0"

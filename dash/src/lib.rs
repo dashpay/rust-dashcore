@@ -133,7 +133,7 @@ pub use crate::blockdata::block::{self, Block};
 pub use crate::blockdata::fee_rate::FeeRate;
 pub use crate::blockdata::locktime::{self, absolute, relative};
 pub use crate::blockdata::script::{self, Script, ScriptBuf};
-pub use crate::blockdata::transaction::{self, Transaction};
+pub use crate::blockdata::transaction::{self, Transaction, hash_type::EcdsaSighashType};
 pub use crate::transaction::{txin::TxIn, txout::TxOut, outpoint::OutPoint};
 pub use crate::blockdata::weight::Weight;
 pub use crate::blockdata::witness::{self, Witness};
@@ -143,7 +143,8 @@ pub use crate::crypto::key::{self, PrivateKey, PublicKey};
 pub use crate::crypto::{ecdsa, sighash};
 pub use crate::error::Error;
 pub use crate::hash_types::{
-    BlockHash, PubkeyHash, ScriptHash, Txid, WPubkeyHash, WScriptHash, Wtxid,
+    BlockHash, PubkeyHash, ScriptHash, Txid, WPubkeyHash, WScriptHash, Wtxid, ProTxHash, QuorumHash,
+    TxMerkleNode, FilterHash
 };
 pub use crate::merkle_tree::MerkleBlock;
 pub use crate::network::constants::Network;

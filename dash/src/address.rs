@@ -1111,6 +1111,11 @@ impl Address<NetworkUnchecked> {
         let (network, payload) = self.into_parts();
         Address::new(network, payload)
     }
+
+    /// Returns the payload as a vector.
+    pub fn payload_to_vec(&self) -> Vec<u8> {
+        self.0.payload.inner_prog_as_bytes().to_vec()
+    }
 }
 
 // For NetworkUnchecked , it compare Addresses and if network and payload matches then return true.

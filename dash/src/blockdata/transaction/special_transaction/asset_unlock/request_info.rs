@@ -38,6 +38,10 @@ pub struct AssetUnlockRequestInfo {
 }
 
 impl AssetUnlockRequestInfo {
+
+    /// The size of the payload in bytes.
+    pub fn size(&self) -> usize { 4 + 32 }
+
     /// Encodes the asset unlock on top of
     pub fn consensus_append_to_base_encode<S: io::Write>(&self, base_bytes: Vec<u8>, mut s: S) -> Result<usize, io::Error> {
         s.write(base_bytes.as_slice())?;
@@ -64,5 +68,25 @@ impl Decodable for AssetUnlockRequestInfo {
             request_height,
             quorum_hash,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hashes::Hash;
+    use crate::consensus::Encodable;
+    use crate::hash_types::QuorumHash;
+    use crate::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
+
+    #[test]
+    fn size() {
+        let want = 36;
+        let payload = AssetUnlockRequestInfo {
+            request_height: 0,
+            quorum_hash: QuorumHash::all_zeros(),
+        };
+        let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
+        assert_eq!(payload.size(), want);
+        assert_eq!(actual, want);
     }
 }

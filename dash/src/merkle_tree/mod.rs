@@ -124,7 +124,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use hashes::sha256d;
+    use hashes::{sha256d};
 
     use super::*;
     use crate::blockdata::block::Block;

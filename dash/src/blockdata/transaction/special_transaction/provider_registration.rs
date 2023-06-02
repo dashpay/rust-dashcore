@@ -35,7 +35,7 @@
 //! Votes signed with this key are valid while the masternode is in the registered set.
 
 use crate::prelude::*;
-use crate::io;
+use crate::{io, VarInt};
 use hashes::Hash;
 use internals::hex::Case::Lower;
 use crate::{ScriptBuf};
@@ -48,7 +48,6 @@ use crate::bls_sig_utils::BLSPublicKey;
 use crate::hash_types::{PubkeyHash, SpecialTransactionPayloadHash};
 use crate::address::Payload;
 use crate::Network;
-use crate::psbt::serialize::Serialize;
 
 /// A Provider Registration Payload used in a Provider Registration Special Transaction.
 /// This is used to register a Masternode on the network.
@@ -101,10 +100,26 @@ impl ProviderRegistrationPayload {
     /// a string of formatted values proving access to the 1000 Dash and therefore the ability
     /// to register the masternode.
     pub fn payload_collateral_string(&self, network: Network) -> Result<String, encode::Error> {
-        let mut base_payload_hash = self.base_payload_hash().as_raw_hash().serialize();
+        let base_payload_hash = self.base_payload_hash();
+        let mut base_payload_hash = *base_payload_hash.as_raw_hash().as_byte_array();
         base_payload_hash.reverse();
         let base_payload_hash = SpecialTransactionPayloadHash::from_slice(base_payload_hash.as_slice()).unwrap();
         Ok(format!("{}|{}|{}|{}|{}", self.payout_address(network)?, self.operator_reward, self.owner_address(network), self.voting_address(network), base_payload_hash.as_byte_array().to_hex_string(Lower)))
+    }
+
+    /// The size of the payload in bytes.
+    /// version(2) + provider_type(2) + provider_mode(2) + collateral_outpoint(32 + 4) + ip_address(16) +
+    /// port(2) + owner_key_hash(20) + operator_public_key(48) + voting_key_hash(20) + operator_reward(2) +
+    /// script_payout(VarInt(script_payout_len).len() + script_payout_len) +
+    /// inputs_hash(32) +
+    /// payload_sig(VarInt(payload_sig_len).len() + payload_sig_len)
+    pub fn size(&self) -> usize {
+        let mut size = 2 + 2 + 2 + 32 + 4 + 16 + 2 + 20 + 48 + 20 + 2 + 32; // 182 bytes
+        let script_payout_len = self.script_payout.0.len();
+        let payload_sig_len = self.payload_sig.len();
+        size += VarInt(script_payout_len as u64).len() + script_payout_len;
+        size += VarInt(payload_sig_len as u64).len() + payload_sig_len;
+        size
     }
 }
 
@@ -177,15 +192,14 @@ impl Decodable for ProviderRegistrationPayload {
 }
 
 #[cfg(test)]
-#[cfg(feature = "signer")]
 mod tests {
     use core::str::FromStr;
     use std::net::Ipv4Addr;
     use hashes::Hash;
     use hashes::hex::{FromHex};
     use internals::hex::display::DisplayHex;
-    use crate::consensus::{deserialize};
-    use crate::{PrivateKey, Transaction, Txid, Witness};
+    use crate::consensus::{deserialize, Encodable};
+    use crate::{PrivateKey, ScriptBuf, Transaction, Txid, Witness};
     use crate::{Network, OutPoint};
     use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use crate::{Address};
@@ -200,6 +214,7 @@ mod tests {
     use crate::signer::sign_hash;
 
     #[test]
+    #[cfg(feature = "signer")]
     fn test_collateral_provider_registration_transaction() {
         // This is a test for testnet
         let network = Network::Testnet;
@@ -239,13 +254,13 @@ mod tests {
 
         let collateral_outpoint = OutPoint {
             txid: collateral_hash,
-            vout: collateral_index
+            vout: collateral_index,
         };
         assert_eq!(expected_provider_registration_payload.collateral_outpoint, collateral_outpoint);
 
         let address = Ipv4Addr::from_str("1.2.5.6").expect("expected an ipv4 address");
         let [a, b, c, d] = address.octets();
-        let ipv6_bytes: [u8;16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
+        let ipv6_bytes: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
         assert_eq!(ipv6_bytes.to_lower_hex_string(), expected_provider_registration_payload.ip_address.to_le_bytes().to_lower_hex_string());
 
         let port = 19999;
@@ -288,11 +303,11 @@ mod tests {
         let mut transaction = Transaction {
             version: 3,
             lock_time: 0,
-            input: vec![TxIn{
+            input: vec![TxIn {
                 previous_output: OutPoint::new(collateral_hash, 1),
                 script_sig: collateral_address.assume_checked().script_pubkey(),
                 sequence: 4294967295,
-                witness: Default::default()
+                witness: Default::default(),
             }],
             output: vec![TxOut::new_from_address(40777037710, &output_address0.assume_checked())],
             special_transaction_payload: Some(ProviderRegistrationPayloadType(ProviderRegistrationPayload {
@@ -309,7 +324,7 @@ mod tests {
                 script_payout,
                 inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
                 payload_sig: signature.to_vec(),
-            }))
+            })),
         };
         // We are currently not supporting transaction signing
         // So just assume signature is correct
@@ -325,6 +340,7 @@ mod tests {
     //todo finish this somewhat low value test
     #[ignore]
     #[test]
+    #[cfg(feature = "signer")]
     fn test_no_collateral_provider_registration_transaction() {
         // This is a test for testnet
         let network = Network::Testnet;
@@ -435,5 +451,31 @@ mod tests {
         assert_eq!(transaction, expected_transaction);
 
         assert_eq!(transaction.txid(), tx_id);
+    }
+
+    #[test]
+    fn size() {
+        let want = 290;
+        let payload = ProviderRegistrationPayload{
+            version: 0,
+            provider_type: 0,
+            provider_mode: 0,
+            collateral_outpoint: OutPoint{
+                txid: Txid::all_zeros(),
+                vout: 0,
+            },
+            ip_address: 0,
+            port: 0,
+            owner_key_hash: PubkeyHash::all_zeros(),
+            operator_public_key: BLSPublicKey::from([0; 48]),
+            voting_key_hash: PubkeyHash::all_zeros(),
+            operator_reward: 0,
+            script_payout: ScriptBuf::from_hex("00000000000000000000").unwrap(), // 10 bytes
+            inputs_hash: InputsHash::all_zeros(),
+            payload_sig: vec![0; 96],
+        };
+        assert_eq!(payload.size(), want);
+        let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
+        assert_eq!(actual, want);
     }
 }

@@ -441,7 +441,7 @@ mod test {
         let block: Block = deserialize(&raw_block).unwrap();
         let nonce = 18053200567810711460;
         let compact = HeaderAndShortIds::from_block(&block, nonce, 2, &[]).unwrap();
-        let compact_expected = deserialize(&raw_compact).unwrap();
+        let compact_expected: HeaderAndShortIds = deserialize(&raw_compact).unwrap();
 
         assert_eq!(compact, compact_expected);
     }
