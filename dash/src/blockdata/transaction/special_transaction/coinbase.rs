@@ -21,7 +21,7 @@
 use crate::prelude::Vec;
 
 use crate::{io, VarInt};
-use crate::io::{Error, Write, ErrorKind};
+use crate::io::{Error, ErrorKind};
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::consensus::{Decodable, Encodable, encode};
 
