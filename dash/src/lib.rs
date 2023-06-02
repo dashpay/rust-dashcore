@@ -144,7 +144,7 @@ pub use crate::crypto::{ecdsa, sighash};
 pub use crate::error::Error;
 pub use crate::hash_types::{
     BlockHash, PubkeyHash, ScriptHash, Txid, WPubkeyHash, WScriptHash, Wtxid, ProTxHash, QuorumHash,
-    TxMerkleNode,
+    TxMerkleNode, FilterHash
 };
 pub use crate::merkle_tree::MerkleBlock;
 pub use crate::network::constants::Network;
