@@ -1,6 +1,7 @@
-//! Instant send lock is a mechanism used by the Dash network to
-//! confirm transaction within 1 or 2 seconds. This data structure
-//! represents a p2p message containing a data to verify such a lock.
+//! Chain lock is a mechanism used by the Dash network to
+//! confirm latest block using LLMQ signature. This approach
+//! reduces mining uncertenaty and mitigate 51% attack.
+//! This data structure represents a p2p message containing a data to verify such a lock.
 
 #[cfg(all(not(feature = "std"), not(test)))]
 use alloc::vec::Vec;
@@ -18,6 +19,10 @@ const CL_REQUEST_ID_PREFIX: &str = "clsig";
 
 impl_consensus_encoding!(ChainLock, block_height, block_hash, signature);
 
+/// Chain lock is a mechanism used by the Dash network to
+/// confirm latest block using LLMQ signature. This approach
+/// reduces mining uncertenaty and mitigate 51% attack.
+/// This data structure represents a p2p message containing a data to verify such a lock.
 #[derive(Debug, Clone, Eq, PartialEq)]
 // #[cfg_attr(feature = "use-serde", derive(Serialize, Deserialize))]
 pub struct ChainLock {
