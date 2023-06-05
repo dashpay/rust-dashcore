@@ -35,7 +35,7 @@ use core::{fmt, mem, u32};
 
 use hashes::{sha256, sha256d, hash_x11, Hash, hash160};
 use internals::write_err;
-use crate::{address, ScriptBuf};
+use crate::{address, OutPoint, ScriptBuf};
 use crate::transaction::special_transaction::TransactionType;
 use crate::bip152::{PrefilledTransaction, ShortId};
 use crate::transaction::{txin::TxIn, txout::TxOut};
@@ -672,6 +672,7 @@ impl_vec!(u64);
 impl_vec!(TapLeafHash);
 impl_vec!(VarInt);
 impl_vec!(ShortId);
+impl_vec!(OutPoint);
 impl_vec!(PrefilledTransaction);
 
 #[cfg(feature = "std")]
