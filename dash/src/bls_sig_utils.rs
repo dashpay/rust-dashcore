@@ -40,11 +40,6 @@ impl BLSPublicKey {
             Self(payload)
         })
     }
-
-    /// Convert the BLS Public Key to a hex string
-    pub fn to_hex(&self) -> String {
-        self.0.to_lower_hex_string()
-    }
 }
 
 #[cfg(feature = "serde")]
@@ -135,6 +130,15 @@ macro_rules! impl_eq_ord_hash {
     }
 }
 
+macro_rules! impl_to_hex {
+    ($element:ident) => {
+        impl $element {
+            pub fn to_hex(&self) -> String {
+                self.0.to_lower_hex_string()
+            }
+        }
+    };
+}
 
 #[rustversion::before(1.48)]
 impl_eq_ord_hash!(BLSPublicKey, 48);
@@ -143,3 +147,6 @@ impl_eq_ord_hash!(BLSSignature, 96);
 
 impl_elementencode!(BLSPublicKey, 48);
 impl_elementencode!(BLSSignature, 96);
+
+impl_to_hex!(BLSPublicKey);
+impl_to_hex!(BLSSignature);
