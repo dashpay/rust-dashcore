@@ -277,6 +277,11 @@ macro_rules! hash_newtype {
                 let zeros = <$hash>::all_zeros();
                 $newtype(zeros)
             }
+
+            #[inline]
+            fn to_vec(&self) -> Vec<u8> {
+                self.0.to_vec()
+            }
         }
 
         impl $crate::_export::_core::str::FromStr for $newtype {
@@ -425,6 +430,12 @@ pub mod json_hex_string {
 #[cfg(test)]
 mod test {
     use crate::{sha256, Hash};
+
+    #[test]
+    fn hash_to_vec() {
+        let hash = sha256::Hash::hash(&[3, 50]);
+        assert_eq!(hash.to_vec(), hash.as_byte_array().to_vec());
+    }
 
     #[test]
     fn hash_as_ref_array() {

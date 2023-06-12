@@ -181,6 +181,10 @@ impl<T: Hash> Hash for Hmac<T> {
         let zeros = T::all_zeros();
         Hmac(zeros)
     }
+
+    fn to_vec(&self) -> Vec<u8> {
+        self.0.to_vec()
+    }
 }
 
 #[cfg(feature = "serde")]
