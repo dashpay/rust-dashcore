@@ -42,9 +42,9 @@ impl Default for InstantLock {
         Self {
             version: 1,
             inputs: Vec::new(),
-            txid: Default::default(),
-            cyclehash: Default::default(),
-            signature: Default::default(),
+            txid: Txid::all_zeros(),
+            cyclehash: CycleHash::all_zeros(),
+            signature: BLSSignature::from([0; 96]),
         }
     }
 }
