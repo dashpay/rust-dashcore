@@ -40,6 +40,20 @@ pub struct OutPoint {
 #[cfg(feature = "serde")]
 crate::serde_utils::serde_struct_human_string_impl!(OutPoint, "an OutPoint", txid, vout);
 
+impl From<[u8; 36]> for OutPoint {
+    fn from(buffer: [u8; 36]) -> Self {
+        let mut tx_id: [u8; 32] = buffer[0..32].try_into().unwrap();
+        let index: [u8; 4] = buffer[32..36].try_into().unwrap();
+        // Reverse the tx_id to match the endianness of Txid::from_inner
+        tx_id.reverse();
+
+        Self {
+            txid: Txid::from_slice(&tx_id).unwrap(),
+            vout: u32::from_le_bytes(index)
+        }
+    }
+}
+
 impl OutPoint {
     /// Creates a new [`OutPoint`].
     #[inline]
