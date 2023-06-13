@@ -135,6 +135,7 @@ pub use crate::blockdata::fee_rate::FeeRate;
 pub use crate::blockdata::locktime::{self, absolute, relative};
 pub use crate::blockdata::script::{self, Script, ScriptBuf};
 pub use crate::blockdata::transaction::{self, Transaction, hash_type::EcdsaSighashType};
+pub use crate::ephemerealdata::instant_lock::{InstantLock};
 pub use crate::transaction::{txin::TxIn, txout::TxOut, outpoint::OutPoint};
 pub use crate::blockdata::weight::Weight;
 pub use crate::blockdata::witness::{self, Witness};
