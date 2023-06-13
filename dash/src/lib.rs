@@ -112,7 +112,7 @@ pub mod string;
 pub mod taproot;
 pub mod util;
 pub mod bls_sig_utils;
-mod signer;
+pub mod signer;
 pub mod ephemerealdata;
 
 // May depend on crate features and we don't want to bother with it
