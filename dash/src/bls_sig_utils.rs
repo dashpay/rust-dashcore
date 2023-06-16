@@ -21,7 +21,6 @@ use crate::core::fmt;
 use hex::{FromHexError, ToHex};
 use crate::internal_macros::{impl_bytes_newtype};
 use internals::{impl_array_newtype};
-use internals::hex::display::DisplayHex;
 use crate::prelude::String;
 
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core

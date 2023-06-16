@@ -7,7 +7,7 @@ use crate::io;
 
 #[cfg(all(not(feature = "std"), not(test)))]
 use alloc::vec::Vec;
-use core::fmt::{Debug, Formatter};
+use core::fmt::{Debug};
 #[cfg(any(feature = "std", test))]
 pub use std::vec::Vec;
 use hashes::{Hash, HashEngine};
