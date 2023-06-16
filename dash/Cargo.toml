@@ -34,7 +34,7 @@ signer = ["secp-recovery", "rand"]
 # Instead no-std enables additional features required for this crate to be usable without std.
 # As a result, both can be enabled without conflict.
 std = ["secp256k1/std", "dashcore_hashes/std", "bech32/std", "internals/std"]
-no-std = ["core2", "dashcore_hashes/alloc", "dashcore_hashes/core2", "secp256k1/alloc", "bincode"]
+no-std = ["core2", "dashcore_hashes/alloc", "dashcore_hashes/core2", "secp256k1/alloc"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -64,6 +64,7 @@ serde_test = "1.0.19"
 serde_derive = "1.0.103"
 secp256k1 = { features = [ "recovery", "rand-std", "bitcoin_hashes" ], version="0.27.0" }
 bip39 = "2.0.0"
+bincode = "1.3.1"
 
 [[example]]
 name = "bip32"
