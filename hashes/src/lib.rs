@@ -227,9 +227,6 @@ pub trait Hash:
     /// it, however it is used in various places in Bitcoin e.g., the Bitcoin genesis block's
     /// previous blockhash and the coinbase transaction's outpoint txid.
     fn all_zeros() -> Self;
-
-    /// Returns a byte vector representation of the hash
-    fn to_vec(&self) -> Vec<u8>;
 }
 
 #[cfg(test)]

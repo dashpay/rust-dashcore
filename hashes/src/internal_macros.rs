@@ -178,11 +178,6 @@ macro_rules! hash_trait_impls {
             fn all_zeros() -> Self {
                 Hash::internal_new([0x00; $bits / 8])
             }
-
-            #[inline]
-            fn to_vec(&self) -> Vec<u8> {
-                self.0.to_vec()
-            }
         }
     }
 }
