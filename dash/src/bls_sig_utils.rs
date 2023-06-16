@@ -18,7 +18,7 @@
 //!
 
 use crate::core::fmt;
-use hex::FromHexError;
+use hex::{FromHexError, ToHex};
 use crate::internal_macros::{impl_bytes_newtype};
 use internals::{impl_array_newtype};
 use internals::hex::display::DisplayHex;
@@ -55,7 +55,7 @@ impl core::str::FromStr for BLSPublicKey {
 
 impl fmt::Display for BLSPublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_hex())
+        write!(f, "{}", self.encode_hex::<String>())
     }
 }
 
@@ -130,17 +130,6 @@ macro_rules! impl_eq_ord_hash {
     }
 }
 
-macro_rules! impl_to_hex {
-    ($element:ident) => {
-        impl $element {
-            /// Convert to a hex string
-            pub fn to_hex(&self) -> String {
-                self.0.to_lower_hex_string()
-            }
-        }
-    };
-}
-
 #[rustversion::before(1.48)]
 impl_eq_ord_hash!(BLSPublicKey, 48);
 #[rustversion::before(1.48)]
@@ -148,6 +137,3 @@ impl_eq_ord_hash!(BLSSignature, 96);
 
 impl_elementencode!(BLSPublicKey, 48);
 impl_elementencode!(BLSSignature, 96);
-
-impl_to_hex!(BLSPublicKey);
-impl_to_hex!(BLSSignature);
