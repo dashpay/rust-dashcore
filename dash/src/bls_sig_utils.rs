@@ -133,6 +133,7 @@ macro_rules! impl_eq_ord_hash {
 macro_rules! impl_to_hex {
     ($element:ident) => {
         impl $element {
+            /// Convert to a hex string
             pub fn to_hex(&self) -> String {
                 self.0.to_lower_hex_string()
             }
