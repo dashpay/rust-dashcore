@@ -31,7 +31,6 @@ use Txid;
 
 /// A reference to a transaction output.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct OutPoint {
     /// The referenced transaction's txid.
     pub txid: Txid,
