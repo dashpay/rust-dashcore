@@ -31,6 +31,7 @@ use Txid;
 
 /// A reference to a transaction output.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct OutPoint {
     /// The referenced transaction's txid.
     pub txid: Txid,
@@ -53,7 +54,7 @@ impl OutPoint {
     pub fn null() -> OutPoint {
         OutPoint {
             txid: Default::default(),
-            vout: u32::max_value(),
+            vout: u32::MAX,
         }
     }
 
@@ -122,7 +123,7 @@ pub enum ParseOutPointError {
     /// Error in TXID part.
     Txid(hashes::hex::Error),
     /// Error in vout part.
-    Vout(::core::num::ParseIntError),
+    Vout(core::num::ParseIntError),
     /// Error in general format.
     Format,
     /// Size exceeds max.
@@ -132,7 +133,7 @@ pub enum ParseOutPointError {
 }
 
 
-impl ::core::str::FromStr for OutPoint {
+impl core::str::FromStr for OutPoint {
     type Err = ParseOutPointError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

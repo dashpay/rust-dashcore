@@ -38,8 +38,8 @@ use TxOut;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct AssetLockPayload {
-    version: u8,
-    credit_outputs: Vec<TxOut>,
+    pub version: u8,
+    pub credit_outputs: Vec<TxOut>,
 }
 
 impl Encodable for AssetLockPayload {
