@@ -610,6 +610,8 @@ impl Encodable for Transaction {
                 break;
             }
         }
+        // Forcing have_witness to false, as currently Core doesn't support BIP141 SegWit.
+        have_witness= false;
         if !have_witness {
             len += self.input.consensus_encode(w)?;
             len += self.output.consensus_encode(w)?;
@@ -640,7 +642,10 @@ impl Decodable for Transaction {
         let special_transaction_type = TransactionType::try_from(special_transaction_type_u16).map_err(|_| encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16))?;
         let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
         // segwit
-        if input.is_empty() {
+        let mut segwit = input.is_empty();
+        // Forcing segwit to false, as currently Core doesn't support BIP141 SegWit.
+        segwit = false;
+        if segwit {
             let segwit_flag = u8::consensus_decode_from_finite_reader(r)?;
             match segwit_flag {
                 // BIP144 input witnesses
