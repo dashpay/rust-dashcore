@@ -82,7 +82,7 @@ impl SpecialTransactionBasePayloadEncodable for AssetUnlockPayload {
 
 fn build_asset_unlock_tx(withdrawal_info_bytes: &Vec<u8>) -> Result<Transaction, encode::Error>
 {
-    let size_request_info: usize = 36;
+    let size_request_info: usize = AssetUnlockRequestInfo::SIZE;
     let size_asset_unlock_info = withdrawal_info_bytes.len() - size_request_info;
     let bytes_asset_unlock = &withdrawal_info_bytes[0..size_asset_unlock_info].to_vec();
     let bytes_request_info = &withdrawal_info_bytes[size_asset_unlock_info..].to_vec();

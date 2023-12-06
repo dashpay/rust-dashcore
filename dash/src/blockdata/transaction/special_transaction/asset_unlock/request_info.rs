@@ -18,6 +18,7 @@
 //!
 //! The request info should be added once the quorum selection for signing has been made.
 
+use std::mem::size_of;
 use crate::io;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{QuorumHash};
@@ -40,7 +41,8 @@ pub struct AssetUnlockRequestInfo {
 impl AssetUnlockRequestInfo {
 
     /// The size of the payload in bytes.
-    pub fn size(&self) -> usize { 4 + 32 }
+    pub const SIZE: usize = size_of::<u32>() + size_of::<QuorumHash>();
+    pub fn size(&self) -> usize { AssetUnlockRequestInfo::SIZE }
 
     /// Encodes the asset unlock on top of
     pub fn consensus_append_to_base_encode<S: io::Write>(&self, base_bytes: Vec<u8>, mut s: S) -> Result<usize, io::Error> {
