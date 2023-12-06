@@ -22,7 +22,8 @@
 //!
 //! The special transaction type used for CrWithTx Transactions is 9.
 
-use crate::io;
+use std::io::Error;
+use crate::{consensus, io, Transaction, TxIn, TxOut};
 use crate::hash_types::{SpecialTransactionPayloadHash};
 use hashes::Hash;
 use crate::bls_sig_utils::BLSSignature;
@@ -32,6 +33,8 @@ use crate::blockdata::transaction::special_transaction::{
     asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload,
     SpecialTransactionBasePayloadEncodable,
 };
+use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBaseTransactionInfo;
+use crate::transaction::special_transaction::TransactionPayload;
 
 /// A Credit Withdrawal payload. This is contained as the payload of a credit withdrawal special
 /// transaction.
@@ -77,6 +80,25 @@ impl SpecialTransactionBasePayloadEncodable for AssetUnlockPayload {
     }
 }
 
+fn build_asset_unlock_tx(withdrawal_info_bytes: &Vec<u8>) -> Result<Transaction, encode::Error>
+{
+    let size_request_info: usize = 36;
+    let size_asset_unlock_info = withdrawal_info_bytes.len() - size_request_info;
+    let bytes_asset_unlock = &withdrawal_info_bytes[0..size_asset_unlock_info].to_vec();
+    let bytes_request_info = &withdrawal_info_bytes[size_asset_unlock_info..].to_vec();
+    let withdrawal_info: AssetUnlockBaseTransactionInfo = consensus::encode::deserialize(&bytes_asset_unlock)?;
+    let withdrawal_request_info: AssetUnlockRequestInfo = consensus::encode::deserialize(&bytes_request_info)?;
+
+    // Create the AssetUnlockPayload with empty signature
+    let tx_payload_asset_unlock = AssetUnlockPayload { base: withdrawal_info.base_payload, request_info: withdrawal_request_info, quorum_sig: BLSSignature::from([0; 96]) };
+    let tx_special_payload = TransactionPayload::AssetUnlockPayloadType(tx_payload_asset_unlock);
+
+    let empty_input : Vec<TxIn> = Vec::new();
+    let tx_asset_unlock = Transaction { version: 3, lock_time: withdrawal_info.lock_time, input: empty_input, output: withdrawal_info.output, special_transaction_payload: Some(tx_special_payload) };
+
+    Ok(tx_asset_unlock)
+}
+
 impl Encodable for AssetUnlockPayload {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
@@ -102,11 +124,16 @@ impl Decodable for AssetUnlockPayload {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
+    use core::str::FromStr;
+    use hex::FromHex;
+    use hashes::{Hash};
+    use internals::hex::Case;
+    use internals::hex::display::DisplayHex;
     use crate::bls_sig_utils::BLSSignature;
+    use crate::consensus;
     use crate::consensus::Encodable;
     use crate::hash_types::QuorumHash;
-    use crate::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
+    use crate::transaction::special_transaction::asset_unlock::qualified_asset_unlock::{AssetUnlockPayload, build_asset_unlock_tx};
     use crate::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
     use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
 
@@ -124,5 +151,53 @@ mod tests {
         let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
         assert_eq!(payload.size(), want);
         assert_eq!(actual, want);
+    }
+
+    #[test]
+    fn deserialize() {
+        let payload_bytes = Vec::from_hex("012d0100000000000070110100250500004acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448aee468c03feec7caada0599457136ef0dfe9365657a42ef81bb4aa53af383d05d90552b2cd23480cae24036b953ba8480d2f98291271a338e4235265dea94feacb54d1fd96083151001eff4156e7475e998154a8e6082575e2ee461b394d24f7")
+            .unwrap();
+
+        let payload: AssetUnlockPayload = consensus::encode::deserialize(&payload_bytes).unwrap();
+        assert_eq!(payload.base.version, 1);
+        assert_eq!(payload.base.index, 301);
+        assert_eq!(payload.base.fee, 70000);
+        assert_eq!(payload.request_info.request_height, 1317);
+        assert_eq!(payload.request_info.quorum_hash, QuorumHash::from_str("4acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448").unwrap());
+        assert_eq!(payload.quorum_sig, BLSSignature::from_str("aee468c03feec7caada0599457136ef0dfe9365657a42ef81bb4aa53af383d05d90552b2cd23480cae24036b953ba8480d2f98291271a338e4235265dea94feacb54d1fd96083151001eff4156e7475e998154a8e6082575e2ee461b394d24f7").unwrap());
+    }
+
+    #[test]
+    fn serialize() {
+        let payload = AssetUnlockPayload {
+            base: AssetUnlockBasePayload {
+                version: 1,
+                index: 301,
+                fee: 70000,
+            },
+            request_info: AssetUnlockRequestInfo {
+                request_height: 1317,
+                quorum_hash: QuorumHash::from_str("4acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448").unwrap(),
+            },
+            quorum_sig: BLSSignature::from_str("aee468c03feec7caada0599457136ef0dfe9365657a42ef81bb4aa53af383d05d90552b2cd23480cae24036b953ba8480d2f98291271a338e4235265dea94feacb54d1fd96083151001eff4156e7475e998154a8e6082575e2ee461b394d24f7").unwrap()
+        };
+
+        let serialized_bytes = consensus::serialize(&payload);
+
+        let expected_payload_bytes = Vec::from_hex("012d0100000000000070110100250500004acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448aee468c03feec7caada0599457136ef0dfe9365657a42ef81bb4aa53af383d05d90552b2cd23480cae24036b953ba8480d2f98291271a338e4235265dea94feacb54d1fd96083151001eff4156e7475e998154a8e6082575e2ee461b394d24f7")
+            .unwrap();
+        assert_eq!(serialized_bytes, expected_payload_bytes);
+    }
+
+    #[test]
+    fn test_asset_unlock_construction_3() {
+        let tx_bytes = Vec::from_hex("010009000001c8000000000000001976a914c35b782432294088e354bc28aa56d95736cb630288ac0000000001000000000000000070f915129f05000053c006055af6d0ae9aa9627df8615a71c312421a28c4712c8add83c8e1bfdadd").unwrap();
+        let tx_asset_unlock = build_asset_unlock_tx(&tx_bytes).unwrap();
+        let bytes_tx_asset_unlock = consensus::serialize(&tx_asset_unlock);
+        println!("tx_asset_unlock: {:?}", bytes_tx_asset_unlock);
+
+        let hex_tx_asset_unlock = bytes_tx_asset_unlock.to_hex_string(Case::Lower);
+        println!("hex_tx_asset_unlock: {:?}", hex_tx_asset_unlock);
+        println!("OK");
     }
 }
