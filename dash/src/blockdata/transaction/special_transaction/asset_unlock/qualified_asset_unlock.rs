@@ -36,6 +36,7 @@ use crate::blockdata::transaction::special_transaction::{
 use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBaseTransactionInfo;
 use crate::transaction::special_transaction::TransactionPayload;
 
+// Asset unlock tx size is constant since it has zero inputs and single output only
 pub const ASSET_UNLOCK_TX_SIZE: usize = 190;
 
 /// A Credit Withdrawal payload. This is contained as the payload of a credit withdrawal special
