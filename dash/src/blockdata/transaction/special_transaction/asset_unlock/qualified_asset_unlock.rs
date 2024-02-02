@@ -36,6 +36,8 @@ use crate::blockdata::transaction::special_transaction::{
 use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBaseTransactionInfo;
 use crate::transaction::special_transaction::TransactionPayload;
 
+pub const ASSET_UNLOCK_TX_SIZE: usize = 190;
+
 /// A Credit Withdrawal payload. This is contained as the payload of a credit withdrawal special
 /// transaction.
 /// The Credit Withdrawal Special transaction and this payload is described in the Asset Lock DIP2X
@@ -130,12 +132,13 @@ mod tests {
     use internals::hex::Case;
     use internals::hex::display::DisplayHex;
     use crate::bls_sig_utils::BLSSignature;
-    use crate::consensus;
+    use crate::{consensus, ScriptBuf, Transaction, TxOut};
     use crate::consensus::Encodable;
     use crate::hash_types::QuorumHash;
-    use crate::transaction::special_transaction::asset_unlock::qualified_asset_unlock::{AssetUnlockPayload, build_asset_unlock_tx};
+    use crate::transaction::special_transaction::asset_unlock::qualified_asset_unlock::{ASSET_UNLOCK_TX_SIZE, AssetUnlockPayload, build_asset_unlock_tx};
     use crate::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
     use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
+    use crate::transaction::special_transaction::TransactionPayload;
 
     #[test]
     fn size() {
@@ -199,5 +202,36 @@ mod tests {
         let hex_tx_asset_unlock = bytes_tx_asset_unlock.to_hex_string(Case::Lower);
         println!("hex_tx_asset_unlock: {:?}", hex_tx_asset_unlock);
         println!("OK");
+    }
+
+    #[test]
+    fn test_asset_unlock_size() {
+        let payload = AssetUnlockPayload {
+            base: AssetUnlockBasePayload {
+                version: 1,
+                index: 301,
+                fee: 70000,
+            },
+            request_info: AssetUnlockRequestInfo {
+                request_height: 1317,
+                quorum_hash: QuorumHash::from_str("4acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448").unwrap(),
+            },
+            quorum_sig: BLSSignature::from_str("aee468c03feec7caada0599457136ef0dfe9365657a42ef81bb4aa53af383d05d90552b2cd23480cae24036b953ba8480d2f98291271a338e4235265dea94feacb54d1fd96083151001eff4156e7475e998154a8e6082575e2ee461b394d24f7").unwrap()
+        };
+
+        let tx = Transaction {
+            version: 3,
+            lock_time: 0,
+            input: Vec::new(),
+            output: vec![
+                TxOut {
+                    value: 200,
+                    script_pubkey: ScriptBuf::from_hex("76a914c35b782432294088e354bc28aa56d95736cb630288ac").unwrap()
+                }
+            ],
+            special_transaction_payload: Some(TransactionPayload::AssetUnlockPayloadType(payload)),
+        };
+
+        assert_eq!(tx.size(), ASSET_UNLOCK_TX_SIZE);
     }
 }
