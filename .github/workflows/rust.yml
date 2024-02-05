@@ -14,17 +14,17 @@ jobs:
             env:
               DO_COV: true
               AS_DEPENDENCY: true
-              DO_NO_STD: true
+              DO_NO_STD: false
           - rust: beta
             env:
               AS_DEPENDENCY: true
-              DO_NO_STD: true
+              DO_NO_STD: false
           - rust: nightly
             env:
               # TODO: running with DO_BENCH: true causes the test to fail
 #              DO_BENCH: true
               AS_DEPENDENCY: true
-              DO_NO_STD: true
+              DO_NO_STD: false
               DO_DOCS: true
           - rust: 1.65.0
             env:
