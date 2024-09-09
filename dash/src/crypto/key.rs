@@ -797,27 +797,27 @@ mod tests {
 
         // mainnet uncompressed
         let sk =
-            PrivateKey::from_wif("5JYkZjmN7PVMjJUfJWfRFwtuXTGB439XV6faajeHPAM9Z2PT2R3").unwrap();
+            PrivateKey::from_wif("7sU7MdjMtaLYxC4ec2z1zkhzZVBwRzZUcU6gJRzJ94s6UzAwA8c").unwrap();
         assert_eq!(sk.network, Dash);
         assert_eq!(sk.compressed, false);
-        assert_eq!(&sk.to_wif(), "5JYkZjmN7PVMjJUfJWfRFwtuXTGB439XV6faajeHPAM9Z2PT2R3");
+        assert_eq!(&sk.to_wif(), "7sU7MdjMtaLYxC4ec2z1zkhzZVBwRzZUcU6gJRzJ94s6UzAwA8c");
 
         let secp = Secp256k1::new();
         let mut pk = sk.public_key(&secp);
         assert_eq!(pk.compressed, false);
-        assert_eq!(&pk.to_string(), "042e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af191923a2964c177f5b5923ae500fca49e99492d534aa3759d6b25a8bc971b133");
-        assert_eq!(pk, PublicKey::from_str("042e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af191923a2964c177f5b5923ae500fca49e99492d534aa3759d6b25a8bc971b133").unwrap());
+        assert_eq!(&pk.to_string(), "0470bb951360439d31352beb36017357ac9cf442c2ddbd511f3a5e5f394ecc173db7e18f6ad3ef9118d0fd1908f58973d0f51ae5e0e93cec8e7b7bc2b5941f176c");
+        assert_eq!(pk, PublicKey::from_str("0470bb951360439d31352beb36017357ac9cf442c2ddbd511f3a5e5f394ecc173db7e18f6ad3ef9118d0fd1908f58973d0f51ae5e0e93cec8e7b7bc2b5941f176c").unwrap());
         let addr = Address::p2pkh(&pk, sk.network);
-        assert_eq!(&addr.to_string(), "XrPFkVkXHrBAFsnYCfpz996fkCXqZAzuEm");
+        assert_eq!(&addr.to_string(), "XsaMtZkvTLdhAeQyyKoSUtRNf8eTrNAk44");
         pk.compressed = true;
         assert_eq!(
             &pk.to_string(),
-            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af"
+            "0270bb951360439d31352beb36017357ac9cf442c2ddbd511f3a5e5f394ecc173d"
         );
         assert_eq!(
             pk,
             PublicKey::from_str(
-                "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af"
+                "0270bb951360439d31352beb36017357ac9cf442c2ddbd511f3a5e5f394ecc173d"
             )
             .unwrap()
         );
