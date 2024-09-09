@@ -58,8 +58,9 @@ impl fmt::Display for Error {
             Error::Secp256k1(ref e) => write_err!(f, "key secp256k1 error"; e),
             Error::InvalidKeyPrefix(ref b) => write!(f, "key prefix invalid: {}", b),
             Error::Hex(ref e) => write_err!(f, "key hex decoding error"; e),
-            Error::InvalidHexLength(got) =>
-                write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got),
+            Error::InvalidHexLength(got) => {
+                write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got)
+            }
         }
     }
 }
@@ -80,17 +81,23 @@ impl std::error::Error for Error {
 
 #[doc(hidden)]
 impl From<base58::Error> for Error {
-    fn from(e: base58::Error) -> Error { Error::Base58(e) }
+    fn from(e: base58::Error) -> Error {
+        Error::Base58(e)
+    }
 }
 
 #[doc(hidden)]
 impl From<secp256k1::Error> for Error {
-    fn from(e: secp256k1::Error) -> Error { Error::Secp256k1(e) }
+    fn from(e: secp256k1::Error) -> Error {
+        Error::Secp256k1(e)
+    }
 }
 
 #[doc(hidden)]
 impl From<hex::Error> for Error {
-    fn from(e: hex::Error) -> Self { Error::Hex(e) }
+    fn from(e: hex::Error) -> Self {
+        Error::Hex(e)
+    }
 }
 
 /// A Dash ECDSA public key
@@ -123,7 +130,9 @@ impl PublicKey {
     }
 
     /// Returns dash 160-bit hash of the public key
-    pub fn pubkey_hash(&self) -> PubkeyHash { self.with_serialized(PubkeyHash::hash) }
+    pub fn pubkey_hash(&self) -> PubkeyHash {
+        self.with_serialized(PubkeyHash::hash)
+    }
 
     /// Returns dash 160-bit hash of the public key for witness program
     pub fn wpubkey_hash(&self) -> Option<WPubkeyHash> {
@@ -297,7 +306,9 @@ impl FromStr for PublicKey {
 }
 
 impl From<PublicKey> for PubkeyHash {
-    fn from(key: PublicKey) -> PubkeyHash { key.pubkey_hash() }
+    fn from(key: PublicKey) -> PubkeyHash {
+        key.pubkey_hash()
+    }
 }
 
 /// A Dash ECDSA private key
@@ -334,7 +345,9 @@ impl PrivateKey {
     }
 
     /// Serialize the private key to bytes
-    pub fn to_bytes(self) -> Vec<u8> { self.inner[..].to_vec() }
+    pub fn to_bytes(self) -> Vec<u8> {
+        self.inner[..].to_vec()
+    }
 
     /// Deserialize a private key from a slice
     pub fn from_slice(data: &[u8], network: Network) -> Result<PrivateKey, Error> {
@@ -345,7 +358,7 @@ impl PrivateKey {
     pub fn fmt_wif(&self, fmt: &mut dyn fmt::Write) -> fmt::Result {
         let mut ret = [0; 34];
         ret[0] = match self.network {
-            Network::Dash => 128,
+            Network::Dash => 204,
             Network::Testnet | Network::Devnet | Network::Regtest => 239,
         };
         ret[1..33].copy_from_slice(&self.inner[..]);
@@ -379,7 +392,7 @@ impl PrivateKey {
         };
 
         let network = match data[0] {
-            128 => Network::Dash,
+            204 => Network::Dash,
             239 => Network::Testnet,
             x => {
                 return Err(Error::Base58(base58::Error::InvalidAddressVersion(x)));
@@ -395,22 +408,30 @@ impl PrivateKey {
 }
 
 impl fmt::Display for PrivateKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { self.fmt_wif(f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.fmt_wif(f)
+    }
 }
 
 #[cfg(not(feature = "std"))]
 impl fmt::Debug for PrivateKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "[private key data]") }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[private key data]")
+    }
 }
 
 impl FromStr for PrivateKey {
     type Err = Error;
-    fn from_str(s: &str) -> Result<PrivateKey, Error> { PrivateKey::from_wif(s) }
+    fn from_str(s: &str) -> Result<PrivateKey, Error> {
+        PrivateKey::from_wif(s)
+    }
 }
 
 impl ops::Index<ops::RangeFull> for PrivateKey {
     type Output = [u8];
-    fn index(&self, _: ops::RangeFull) -> &[u8] { &self.inner[..] }
+    fn index(&self, _: ops::RangeFull) -> &[u8] {
+        &self.inner[..]
+    }
 }
 
 #[cfg(feature = "serde")]
@@ -533,11 +554,15 @@ pub type UntweakedPublicKey = XOnlyPublicKey;
 pub struct TweakedPublicKey(XOnlyPublicKey);
 
 impl fmt::LowerHex for TweakedPublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::LowerHex::fmt(&self.0, f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
+    }
 }
 
 impl fmt::Display for TweakedPublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&self.0, f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
 }
 
 /// Untweaked BIP-340 key pair
@@ -624,7 +649,9 @@ impl TapTweak for UntweakedPublicKey {
         (TweakedPublicKey(output_key), parity)
     }
 
-    fn dangerous_assume_tweaked(self) -> TweakedPublicKey { TweakedPublicKey(self) }
+    fn dangerous_assume_tweaked(self) -> TweakedPublicKey {
+        TweakedPublicKey(self)
+    }
 }
 
 impl TapTweak for UntweakedKeyPair {
@@ -654,7 +681,9 @@ impl TapTweak for UntweakedKeyPair {
         TweakedKeyPair(tweaked)
     }
 
-    fn dangerous_assume_tweaked(self) -> TweakedKeyPair { TweakedKeyPair(self) }
+    fn dangerous_assume_tweaked(self) -> TweakedKeyPair {
+        TweakedKeyPair(self)
+    }
 }
 
 impl TweakedPublicKey {
@@ -676,13 +705,17 @@ impl TweakedPublicKey {
     }
 
     /// Returns the underlying public key.
-    pub fn to_inner(self) -> XOnlyPublicKey { self.0 }
+    pub fn to_inner(self) -> XOnlyPublicKey {
+        self.0
+    }
 
     /// Serialize the key as a byte-encoded pair of values. In compressed form
     /// the y-coordinate is represented by only a single bit, as x determines
     /// it up to one bit.
     #[inline]
-    pub fn serialize(&self) -> [u8; constants::SCHNORR_PUBLIC_KEY_SIZE] { self.0.serialize() }
+    pub fn serialize(&self) -> [u8; constants::SCHNORR_PUBLIC_KEY_SIZE] {
+        self.0.serialize()
+    }
 }
 
 impl TweakedKeyPair {
@@ -692,11 +725,15 @@ impl TweakedKeyPair {
     /// This method is dangerous and can lead to loss of funds if used incorrectly.
     /// Specifically, in multi-party protocols a peer can provide a value that allows them to steal.
     #[inline]
-    pub fn dangerous_assume_tweaked(pair: KeyPair) -> TweakedKeyPair { TweakedKeyPair(pair) }
+    pub fn dangerous_assume_tweaked(pair: KeyPair) -> TweakedKeyPair {
+        TweakedKeyPair(pair)
+    }
 
     /// Returns the underlying key pair.
     #[inline]
-    pub fn to_inner(self) -> KeyPair { self.0 }
+    pub fn to_inner(self) -> KeyPair {
+        self.0
+    }
 
     /// Returns the [`TweakedPublicKey`] and its [`Parity`] for this [`TweakedKeyPair`].
     #[inline]
@@ -708,17 +745,23 @@ impl TweakedKeyPair {
 
 impl From<TweakedPublicKey> for XOnlyPublicKey {
     #[inline]
-    fn from(pair: TweakedPublicKey) -> Self { pair.0 }
+    fn from(pair: TweakedPublicKey) -> Self {
+        pair.0
+    }
 }
 
 impl From<TweakedKeyPair> for KeyPair {
     #[inline]
-    fn from(pair: TweakedKeyPair) -> Self { pair.0 }
+    fn from(pair: TweakedKeyPair) -> Self {
+        pair.0
+    }
 }
 
 impl From<TweakedKeyPair> for TweakedPublicKey {
     #[inline]
-    fn from(pair: TweakedKeyPair) -> Self { TweakedPublicKey::from_keypair(pair) }
+    fn from(pair: TweakedKeyPair) -> Self {
+        TweakedPublicKey::from_keypair(pair)
+    }
 }
 
 #[cfg(test)]
@@ -736,7 +779,8 @@ mod tests {
     #[test]
     fn test_key_derivation() {
         // testnet compressed
-        let sk = PrivateKey::from_wif("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy").unwrap();
+        let sk =
+            PrivateKey::from_wif("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy").unwrap();
         assert_eq!(sk.network, Testnet);
         assert_eq!(sk.compressed, true);
         assert_eq!(&sk.to_wif(), "cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy");
@@ -752,7 +796,8 @@ mod tests {
         assert_eq!(&sk.to_wif(), &sk_str.to_wif());
 
         // mainnet uncompressed
-        let sk = PrivateKey::from_wif("5JYkZjmN7PVMjJUfJWfRFwtuXTGB439XV6faajeHPAM9Z2PT2R3").unwrap();
+        let sk =
+            PrivateKey::from_wif("5JYkZjmN7PVMjJUfJWfRFwtuXTGB439XV6faajeHPAM9Z2PT2R3").unwrap();
         assert_eq!(sk.network, Dash);
         assert_eq!(sk.compressed, false);
         assert_eq!(&sk.to_wif(), "5JYkZjmN7PVMjJUfJWfRFwtuXTGB439XV6faajeHPAM9Z2PT2R3");
@@ -765,8 +810,17 @@ mod tests {
         let addr = Address::p2pkh(&pk, sk.network);
         assert_eq!(&addr.to_string(), "XrPFkVkXHrBAFsnYCfpz996fkCXqZAzuEm");
         pk.compressed = true;
-        assert_eq!(&pk.to_string(), "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af");
-        assert_eq!(pk, PublicKey::from_str("032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af").unwrap());
+        assert_eq!(
+            &pk.to_string(),
+            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af"
+        );
+        assert_eq!(
+            pk,
+            PublicKey::from_str(
+                "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af"
+            )
+            .unwrap()
+        );
     }
 
     #[test]
