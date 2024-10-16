@@ -48,7 +48,7 @@
 #![cfg_attr(bench, feature(test))]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 // Coding conventions
-#![warn(missing_docs)]
+// #![warn(missing_docs)]
 // Instead of littering the codebase for non-fuzzing code just globally allow.
 #![cfg_attr(fuzzing, allow(dead_code, unused_imports))]
 

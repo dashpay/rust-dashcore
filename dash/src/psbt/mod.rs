@@ -710,8 +710,9 @@ impl fmt::Display for SignError {
             SighashComputation(e) => write!(f, "sighash: {}", e),
             UnknownOutputType => write!(f, "unable to determine the output type"),
             KeyNotFound => write!(f, "unable to find key"),
-            WrongSigningAlgorithm =>
-                write!(f, "attempt to sign an input with the wrong signing algorithm"),
+            WrongSigningAlgorithm => {
+                write!(f, "attempt to sign an input with the wrong signing algorithm")
+            }
             Unsupported => write!(f, "signing request currently unsupported"),
         }
     }
@@ -1782,8 +1783,8 @@ mod tests {
             e => panic!("unexpected error: {:?}", e),
         }
         // overflow
-        t.unsigned_tx.output[0].value = u64::max_value();
-        t.unsigned_tx.output[1].value = u64::max_value();
+        t.unsigned_tx.output[0].value = u64::MAX;
+        t.unsigned_tx.output[1].value = u64::MAX;
         match t.fee().unwrap_err() {
             Error::FeeOverflow => {}
             e => panic!("unexpected error: {:?}", e),

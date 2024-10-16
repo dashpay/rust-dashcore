@@ -107,22 +107,29 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Error::Io(ref e) => write_err!(f, "IO error"; e),
-            Error::OversizedVectorAllocation { requested: ref r, max: ref m } =>
-                write!(f, "allocation of oversized vector: requested {}, maximum {}", r, m),
-            Error::InvalidChecksum { expected: ref e, actual: ref a } =>
-                write!(f, "invalid checksum: expected {:x}, actual {:x}", e.as_hex(), a.as_hex()),
+            Error::OversizedVectorAllocation { requested: ref r, max: ref m } => {
+                write!(f, "allocation of oversized vector: requested {}, maximum {}", r, m)
+            }
+            Error::InvalidChecksum { expected: ref e, actual: ref a } => {
+                write!(f, "invalid checksum: expected {:x}, actual {:x}", e.as_hex(), a.as_hex())
+            }
             Error::NonMinimalVarInt => write!(f, "non-minimal varint"),
             Error::ParseFailed(ref s) => write!(f, "parse failed: {}", s),
-            Error::UnsupportedSegwitFlag(ref swflag) =>
-                write!(f, "unsupported segwit version: {}", swflag),
-            Error::UnknownSpecialTransactionType(ref stt) =>
-                write!(f, "unknown special transaction type: {}", stt),
-            Error::WrongSpecialTransactionPayloadConversion { expected: ref e, actual: ref a } =>
-                write!(f, "wrong special transaction payload conversion expected: {} got: {}", e, a),
-            Error::NonStandardScriptPayout(ref script) =>
-                write!(f, "non standard script payout: {}", script.to_hex_string()),
-            Error::InvalidVectorSize { expected, actual } =>
-                write!(f, "invalid vector size error expected: {} got: {}", expected, actual),
+            Error::UnsupportedSegwitFlag(ref swflag) => {
+                write!(f, "unsupported segwit version: {}", swflag)
+            }
+            Error::UnknownSpecialTransactionType(ref stt) => {
+                write!(f, "unknown special transaction type: {}", stt)
+            }
+            Error::WrongSpecialTransactionPayloadConversion { expected: ref e, actual: ref a } => {
+                write!(f, "wrong special transaction payload conversion expected: {} got: {}", e, a)
+            }
+            Error::NonStandardScriptPayout(ref script) => {
+                write!(f, "non standard script payout: {}", script.to_hex_string())
+            }
+            Error::InvalidVectorSize { expected, actual } => {
+                write!(f, "invalid vector size error expected: {} got: {}", expected, actual)
+            }
             Error::Hex(ref e) => write!(f, "hex error {}", e),
             Error::Address(ref e) => write!(f, "address error {}", e),
         }
@@ -983,7 +990,7 @@ mod tests {
         test_varint_len(VarInt(0x10000), 5);
         test_varint_len(VarInt(0xFFFFFFFF), 5);
         test_varint_len(VarInt(0xFFFFFFFF + 1), 9);
-        test_varint_len(VarInt(u64::max_value()), 9);
+        test_varint_len(VarInt(u64::MAX), 9);
     }
 
     fn test_varint_len(varint: VarInt, expected: usize) {

@@ -199,7 +199,7 @@ impl Height {
     pub const MIN: Self = Self::ZERO;
 
     /// The maximum relative block height.
-    pub const MAX: Self = Height(u16::max_value());
+    pub const MAX: Self = Height(u16::MAX);
 
     /// The minimum relative block height (0), can be included in any block.
     ///
@@ -243,7 +243,7 @@ impl Time {
     pub const MIN: Self = Time::ZERO;
 
     /// The maximum relative block time (33,554,432 seconds or approx 388 days).
-    pub const MAX: Self = Time(u16::max_value());
+    pub const MAX: Self = Time(u16::MAX);
 
     /// The minimum relative block time.
     ///
@@ -307,10 +307,12 @@ impl fmt::Display for Error {
                 "{} seconds is too large to be encoded to a 16 bit 512 second interval",
                 val
             ),
-            Self::IncompatibleHeight(lock, height) =>
-                write!(f, "tried to satisfy lock {} with height: {}", lock, height),
-            Self::IncompatibleTime(lock, time) =>
-                write!(f, "tried to satisfy lock {} with time: {}", lock, time),
+            Self::IncompatibleHeight(lock, height) => {
+                write!(f, "tried to satisfy lock {} with height: {}", lock, height)
+            }
+            Self::IncompatibleTime(lock, time) => {
+                write!(f, "tried to satisfy lock {} with time: {}", lock, time)
+            }
         }
     }
 }

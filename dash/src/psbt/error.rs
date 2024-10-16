@@ -113,8 +113,9 @@ impl fmt::Display for Error {
             Error::PsbtUtxoOutOfbounds =>
                 f.write_str("output index is out of bounds of non witness script output array"),
             Error::InvalidKey(ref rkey) => write!(f, "invalid key: {}", rkey),
-            Error::InvalidProprietaryKey =>
-                write!(f, "non-proprietary key type found when proprietary key was expected"),
+            Error::InvalidProprietaryKey => {
+                write!(f, "non-proprietary key type found when proprietary key was expected")
+            }
             Error::DuplicateKey(ref rkey) => write!(f, "duplicate key: {}", rkey),
             Error::UnsignedTxHasScriptSigs =>
                 f.write_str("the unsigned transaction has script sigs"),
@@ -129,8 +130,9 @@ impl fmt::Display for Error {
                 e.txid(),
                 a.txid()
             ),
-            Error::NonStandardSighashType(ref sht) =>
-                write!(f, "non-standard sighash type: {}", sht),
+            Error::NonStandardSighashType(ref sht) => {
+                write!(f, "non-standard sighash type: {}", sht)
+            }
             Error::HashParse(ref e) => write_err!(f, "hash parse error"; e),
             Error::InvalidPreimageHashPair { ref preimage, ref hash, ref hash_type } => {
                 // directly using debug forms of psbthash enums
@@ -143,8 +145,9 @@ impl fmt::Display for Error {
             Error::NegativeFee => f.write_str("PSBT has a negative fee which is not allowed"),
             Error::FeeOverflow => f.write_str("integer overflow in fee calculation"),
             Error::InvalidPublicKey(ref e) => write_err!(f, "invalid public key"; e),
-            Error::InvalidSecp256k1PublicKey(ref e) =>
-                write_err!(f, "invalid secp256k1 public key"; e),
+            Error::InvalidSecp256k1PublicKey(ref e) => {
+                write_err!(f, "invalid secp256k1 public key"; e)
+            }
             Error::InvalidXOnlyPublicKey => f.write_str("invalid xonly public key"),
             Error::InvalidEcdsaSignature(ref e) => write_err!(f, "invalid ECDSA signature"; e),
             Error::InvalidTaprootSignature(ref e) => write_err!(f, "invalid taproot signature"; e),

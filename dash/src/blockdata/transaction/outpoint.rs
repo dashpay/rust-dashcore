@@ -177,8 +177,9 @@ impl fmt::Display for ParseOutPointError {
             ParseOutPointError::Vout(ref e) => write!(f, "error parsing vout: {}", e),
             ParseOutPointError::Format => write!(f, "OutPoint not in <txid>:<vout> format"),
             ParseOutPointError::TooLong => write!(f, "vout should be at most 10 digits"),
-            ParseOutPointError::VoutNotCanonical =>
-                write!(f, "no leading zeroes or + allowed in vout part"),
+            ParseOutPointError::VoutNotCanonical => {
+                write!(f, "no leading zeroes or + allowed in vout part")
+            }
         }
     }
 }

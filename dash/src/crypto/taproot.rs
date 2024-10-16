@@ -75,10 +75,12 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::InvalidSighashType(hash_ty) =>
-                write!(f, "invalid signature hash type {}", hash_ty),
-            Error::Secp256k1(ref e) =>
-                write_err!(f, "taproot signature has correct len but is malformed"; e),
+            Error::InvalidSighashType(hash_ty) => {
+                write!(f, "invalid signature hash type {}", hash_ty)
+            }
+            Error::Secp256k1(ref e) => {
+                write_err!(f, "taproot signature has correct len but is malformed"; e)
+            }
             Error::InvalidSignatureSize(sz) => write!(f, "invalid taproot signature size: {}", sz),
         }
     }

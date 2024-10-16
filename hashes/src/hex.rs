@@ -41,8 +41,9 @@ impl fmt::Display for Error {
         match *self {
             Error::InvalidChar(ch) => write!(f, "invalid hex character {}", ch),
             Error::OddLengthString(ell) => write!(f, "odd hex string length {}", ell),
-            Error::InvalidLength(ell, ell2) =>
-                write!(f, "bad hex string length {} (expected {})", ell2, ell),
+            Error::InvalidLength(ell, ell2) => {
+                write!(f, "bad hex string length {} (expected {})", ell2, ell)
+            }
         }
     }
 }

@@ -165,8 +165,9 @@ impl fmt::Display for ParseAmountError {
             ParseAmountError::InvalidFormat => f.write_str("invalid number format"),
             ParseAmountError::InputTooLarge => f.write_str("input string was too large"),
             ParseAmountError::InvalidCharacter(c) => write!(f, "invalid character in input: {}", c),
-            ParseAmountError::UnknownDenomination(ref d) =>
-                write!(f, "unknown denomination: {}", d),
+            ParseAmountError::UnknownDenomination(ref d) => {
+                write!(f, "unknown denomination: {}", d)
+            }
             ParseAmountError::PossiblyConfusingDenomination(ref d) => {
                 let (letter, upper, lower) = match d.chars().next() {
                     Some('M') => ('M', "Mega", "milli"),
@@ -506,10 +507,10 @@ impl Amount {
     pub fn to_sat(self) -> u64 { self.0 }
 
     /// The maximum value of an [Amount].
-    pub const fn max_value() -> Amount { Amount(u64::max_value()) }
+    pub const fn max_value() -> Amount { Amount(u64::MAX) }
 
     /// The minimum value of an [Amount].
-    pub const fn min_value() -> Amount { Amount(u64::min_value()) }
+    pub const fn min_value() -> Amount { Amount(u64::MIN) }
 
     /// Convert from a value expressing bitcoins to an [Amount].
     pub fn from_btc(btc: f64) -> Result<Amount, ParseAmountError> {
@@ -525,7 +526,7 @@ impl Amount {
         if negative {
             return Err(ParseAmountError::Negative);
         }
-        if satoshi > i64::max_value() as u64 {
+        if satoshi > i64::MAX as u64 {
             return Err(ParseAmountError::TooBig);
         }
         Ok(Amount::from_sat(satoshi))
@@ -841,10 +842,10 @@ impl SignedAmount {
     pub fn to_sat(self) -> i64 { self.0 }
 
     /// The maximum value of an [SignedAmount].
-    pub const fn max_value() -> SignedAmount { SignedAmount(i64::max_value()) }
+    pub const fn max_value() -> SignedAmount { SignedAmount(i64::MAX) }
 
     /// The minimum value of an [SignedAmount].
-    pub const fn min_value() -> SignedAmount { SignedAmount(i64::min_value()) }
+    pub const fn min_value() -> SignedAmount { SignedAmount(i64::MIN) }
 
     /// Convert from a value expressing bitcoins to an [SignedAmount].
     pub fn from_btc(btc: f64) -> Result<SignedAmount, ParseAmountError> {
@@ -857,7 +858,7 @@ impl SignedAmount {
     /// with denomination, use [FromStr].
     pub fn from_str_in(s: &str, denom: Denomination) -> Result<SignedAmount, ParseAmountError> {
         let (negative, satoshi) = parse_signed_to_satoshi(s, denom)?;
-        if satoshi > i64::max_value() as u64 {
+        if satoshi > i64::MAX as u64 {
             return Err(ParseAmountError::TooBig);
         }
         Ok(match negative {
@@ -1672,8 +1673,8 @@ mod tests {
             Ok(Amount::from_sat(12_345_678_901__123_456_78))
         );
 
-        // make sure satoshi > i64::max_value() is checked.
-        let amount = Amount::from_sat(i64::max_value() as u64);
+        // make sure satoshi > i64::MAX is checked.
+        let amount = Amount::from_sat(i64::MAX as u64);
         assert_eq!(Amount::from_str_in(&amount.to_string_in(sat), sat), Ok(amount));
         assert_eq!(
             Amount::from_str_in(&(amount + Amount(1)).to_string_in(sat), sat),
@@ -1905,15 +1906,12 @@ mod tests {
         let ua = Amount::from_sat;
 
         assert_eq!(Amount::max_value().to_signed(), Err(E::TooBig));
-        assert_eq!(ua(i64::max_value() as u64).to_signed(), Ok(sa(i64::max_value())));
-        assert_eq!(ua(i64::max_value() as u64 + 1).to_signed(), Err(E::TooBig));
+        assert_eq!(ua(i64::MAX as u64).to_signed(), Ok(sa(i64::MAX)));
+        assert_eq!(ua(i64::MAX as u64 + 1).to_signed(), Err(E::TooBig));
 
-        assert_eq!(sa(i64::max_value()).to_unsigned(), Ok(ua(i64::max_value() as u64)));
+        assert_eq!(sa(i64::MAX).to_unsigned(), Ok(ua(i64::MAX as u64)));
 
-        assert_eq!(
-            sa(i64::max_value()).to_unsigned().unwrap().to_signed(),
-            Ok(sa(i64::max_value()))
-        );
+        assert_eq!(sa(i64::MAX).to_unsigned().unwrap().to_signed(), Ok(sa(i64::MAX)));
     }
 
     #[test]
@@ -1998,39 +1996,39 @@ mod tests {
             Ok(ua_sat(1_000_000_000_000))
         );
         assert_eq!(
-            ua_str(&ua_sat(u64::max_value()).to_string_in(D::MilliDash), D::MilliDash),
+            ua_str(&ua_sat(u64::MAX).to_string_in(D::MilliDash), D::MilliDash),
             Err(ParseAmountError::TooBig)
         );
 
         assert_eq!(sa_str(&sa_sat(-1).to_string_in(D::MicroDash), D::MicroDash), Ok(sa_sat(-1)));
 
         assert_eq!(
-            sa_str(&sa_sat(i64::max_value()).to_string_in(D::Satoshi), D::MicroDash),
+            sa_str(&sa_sat(i64::MAX).to_string_in(D::Satoshi), D::MicroDash),
             Err(ParseAmountError::TooBig)
         );
         // Test an overflow bug in `abs()`
         assert_eq!(
-            sa_str(&sa_sat(i64::min_value()).to_string_in(D::Satoshi), D::MicroDash),
+            sa_str(&sa_sat(i64::MIN).to_string_in(D::Satoshi), D::MicroDash),
             Err(ParseAmountError::TooBig)
         );
 
         assert_eq!(sa_str(&sa_sat(-1).to_string_in(D::NanoDash), D::NanoDash), Ok(sa_sat(-1)));
         assert_eq!(
-            sa_str(&sa_sat(i64::max_value()).to_string_in(D::Satoshi), D::NanoDash),
+            sa_str(&sa_sat(i64::MAX).to_string_in(D::Satoshi), D::NanoDash),
             Err(ParseAmountError::TooPrecise)
         );
         assert_eq!(
-            sa_str(&sa_sat(i64::min_value()).to_string_in(D::Satoshi), D::NanoDash),
+            sa_str(&sa_sat(i64::MIN).to_string_in(D::Satoshi), D::NanoDash),
             Err(ParseAmountError::TooPrecise)
         );
 
         assert_eq!(sa_str(&sa_sat(-1).to_string_in(D::PicoDash), D::PicoDash), Ok(sa_sat(-1)));
         assert_eq!(
-            sa_str(&sa_sat(i64::max_value()).to_string_in(D::Satoshi), D::PicoDash),
+            sa_str(&sa_sat(i64::MAX).to_string_in(D::Satoshi), D::PicoDash),
             Err(ParseAmountError::TooPrecise)
         );
         assert_eq!(
-            sa_str(&sa_sat(i64::min_value()).to_string_in(D::Satoshi), D::PicoDash),
+            sa_str(&sa_sat(i64::MIN).to_string_in(D::Satoshi), D::PicoDash),
             Err(ParseAmountError::TooPrecise)
         );
     }
@@ -2232,12 +2230,12 @@ mod tests {
         assert_eq!(Some(Amount::from_sat(1400)), sum);
 
         let amounts =
-            vec![Amount::from_sat(u64::max_value()), Amount::from_sat(1337), Amount::from_sat(21)];
+            vec![Amount::from_sat(u64::MAX), Amount::from_sat(1337), Amount::from_sat(21)];
         let sum = amounts.into_iter().checked_sum();
         assert_eq!(None, sum);
 
         let amounts = vec![
-            SignedAmount::from_sat(i64::min_value()),
+            SignedAmount::from_sat(i64::MIN),
             SignedAmount::from_sat(-1),
             SignedAmount::from_sat(21),
         ];
@@ -2245,7 +2243,7 @@ mod tests {
         assert_eq!(None, sum);
 
         let amounts = vec![
-            SignedAmount::from_sat(i64::max_value()),
+            SignedAmount::from_sat(i64::MAX),
             SignedAmount::from_sat(1),
             SignedAmount::from_sat(21),
         ];

@@ -204,7 +204,7 @@ pub fn read_uint(data: &[u8], size: usize) -> Result<usize, Error> {
 fn read_uint_iter(data: &mut core::slice::Iter<'_, u8>, size: usize) -> Result<usize, UintError> {
     if data.len() < size {
         Err(UintError::EarlyEndOfScript)
-    } else if size > usize::from(u16::max_value() / 8) {
+    } else if size > usize::from(u16::MAX / 8) {
         // Casting to u32 would overflow
         Err(UintError::NumericOverflow)
     } else {
@@ -597,7 +597,7 @@ pub fn bytes_to_asm_fmt(script: &[u8], f: &mut dyn fmt::Write) -> fmt::Result {
                     $formatter.write_str("<unexpected end>")?;
                     break;
                 }
-                // We got the data in a slice which implies it being shorter than `usize::max_value()`
+                // We got the data in a slice which implies it being shorter than `usize::MAX`
                 // So if we got overflow, we can confidently say the number is higher than length of
                 // the slice even though we don't know the exact number. This implies attempt to push
                 // past end.
@@ -737,8 +737,9 @@ impl fmt::Display for Error {
             Error::NumericOverflow =>
                 f.write_str("numeric overflow (number on stack larger than 4 bytes)"),
             #[cfg(feature = "bitcoinconsensus")]
-            Error::BitcoinConsensus(ref e) =>
-                write_err!(f, "bitcoinconsensus verification failed"; bitcoinconsensus_hack::wrap_error(e)),
+            Error::BitcoinConsensus(ref e) => {
+                write_err!(f, "bitcoinconsensus verification failed"; bitcoinconsensus_hack::wrap_error(e))
+            }
             Error::UnknownSpentOutput(ref point) => write!(f, "unknown spent output: {}", point),
             Error::Serialization =>
                 f.write_str("can not serialize the spending transaction in Transaction::verify()"),
