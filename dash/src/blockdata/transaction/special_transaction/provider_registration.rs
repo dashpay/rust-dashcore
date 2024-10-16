@@ -197,26 +197,15 @@ impl Decodable for ProviderRegistrationPayload {
 
 #[cfg(test)]
 mod tests {
-    use core::str::FromStr;
-    use std::net::Ipv4Addr;
 
     use hashes::Hash;
     use hashes::hex::FromHex;
-    use internals::hex::display::DisplayHex;
 
-    use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use crate::bls_sig_utils::BLSPublicKey;
-    use crate::consensus::{Encodable, deserialize};
+    use crate::consensus::Encodable;
     use crate::hash_types::InputsHash;
-    use crate::internal_macros::hex;
-    use crate::sign_message::signed_msg_hash;
-    use crate::signer::sign_hash;
-    use crate::transaction::special_transaction::TransactionPayload::ProviderRegistrationPayloadType;
     use crate::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
-    use crate::{
-        Address, Network, OutPoint, PrivateKey, PubkeyHash, ScriptBuf, Transaction, TxIn, TxOut,
-        Txid, Witness,
-    };
+    use crate::{OutPoint, PubkeyHash, ScriptBuf, Txid};
 
     #[test]
     #[cfg(feature = "signer")]

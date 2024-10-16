@@ -1469,7 +1469,7 @@ mod tests {
         let annex = match annex_hex {
             Some(annex_hex) => {
                 annex_inner = hex!(annex_hex);
-                Some(Annex::new(&annex_inner.as_slice()).unwrap())
+                Some(Annex::new(annex_inner.as_slice()).unwrap())
             }
             None => None,
         };

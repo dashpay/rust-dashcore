@@ -49,13 +49,6 @@ pub(crate) use impl_consensus_encoding;
 #[cfg(test)]
 pub(crate) use test_macros::*;
 
-#[cfg(test)]
-mod test_macros {
-
-    macro_rules! hex (($hex:expr) => (<Vec<u8> as hashes::hex::FromHex>::from_hex($hex).unwrap()));
-    pub(crate) use hex;
-}
-
 /// Implements several traits for byte-based newtypes.
 /// Implements:
 /// - core::fmt::LowerHex
@@ -211,3 +204,10 @@ macro_rules! impl_bytes_newtype {
     };
 }
 pub(crate) use impl_bytes_newtype;
+
+#[cfg(test)]
+mod test_macros {
+
+    macro_rules! hex (($hex:expr) => (<Vec<u8> as hashes::hex::FromHex>::from_hex($hex).unwrap()));
+    pub(crate) use hex;
+}

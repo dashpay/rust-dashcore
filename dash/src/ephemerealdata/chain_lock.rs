@@ -54,9 +54,8 @@ impl ChainLock {
 
 #[cfg(test)]
 mod tests {
-    use core::str::FromStr;
 
-    use hex::{FromHex, ToHex};
+    use hex::FromHex;
 
     use super::*;
     use crate::consensus::deserialize;

@@ -156,7 +156,6 @@ impl Decodable for AssetUnlockBaseTransactionInfo {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use crate::consensus::Encodable;
     use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::{

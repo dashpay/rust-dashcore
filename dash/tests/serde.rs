@@ -27,7 +27,6 @@ use std::convert::TryFrom;
 use std::str::FromStr;
 
 use bincode::serialize;
-use dashcore::address::NetworkUnchecked;
 use dashcore::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
 use dashcore::consensus::deserialize;
 use dashcore::psbt::raw::{Key, Pair, ProprietaryKey};

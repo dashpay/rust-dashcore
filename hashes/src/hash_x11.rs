@@ -41,17 +41,13 @@ crate::internal_macros::hash_type! {
 }
 
 /// Output of the X11 hash function
-fn from_engine(e: HashEngine) -> Hash { return Hash(e.midstate().to_byte_array()); }
+fn from_engine(e: HashEngine) -> Hash { Hash(e.midstate().to_byte_array()) }
 
 /// A hashing engine of X11 algorithm, which bytes can be serialized into
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct HashEngine {
     buf: Vec<u8>,
     length: usize,
-}
-
-impl Default for HashEngine {
-    fn default() -> Self { HashEngine { buf: Vec::new(), length: 0 } }
 }
 
 impl crate::HashEngine for HashEngine {
@@ -65,7 +61,7 @@ impl crate::HashEngine for HashEngine {
 
     fn input(&mut self, data: &[u8]) { self.buf.extend_from_slice(data); }
 
-    fn n_bytes_hashed(&self) -> usize { self.length.clone() }
+    fn n_bytes_hashed(&self) -> usize { self.length }
 }
 
 /// Output of the X11 hash function

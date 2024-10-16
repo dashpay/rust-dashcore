@@ -123,7 +123,6 @@ mod tests {
     use core::str::FromStr;
 
     use hashes::Hash;
-    use hex::ToHex;
 
     use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use crate::bls_sig_utils::BLSPublicKey;

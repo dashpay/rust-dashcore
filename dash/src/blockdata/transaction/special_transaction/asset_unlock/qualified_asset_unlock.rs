@@ -22,8 +22,6 @@
 //!
 //! The special transaction type used for CrWithTx Transactions is 9.
 
-use std::io::Error;
-
 use hashes::Hash;
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
@@ -34,7 +32,7 @@ use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::SpecialTransactionPayloadHash;
 use crate::transaction::special_transaction::TransactionPayload;
 use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBaseTransactionInfo;
-use crate::{Transaction, TxIn, TxOut, consensus, io};
+use crate::{Transaction, TxIn, consensus, io};
 
 // Asset unlock tx size is constant since it has zero inputs and single output only
 pub const ASSET_UNLOCK_TX_SIZE: usize = 190;
@@ -89,9 +87,9 @@ pub fn build_asset_unlock_tx(
     let bytes_asset_unlock = &withdrawal_info_bytes[0..size_asset_unlock_info].to_vec();
     let bytes_request_info = &withdrawal_info_bytes[size_asset_unlock_info..].to_vec();
     let withdrawal_info: AssetUnlockBaseTransactionInfo =
-        consensus::encode::deserialize(&bytes_asset_unlock)?;
+        consensus::encode::deserialize(bytes_asset_unlock)?;
     let withdrawal_request_info: AssetUnlockRequestInfo =
-        consensus::encode::deserialize(&bytes_request_info)?;
+        consensus::encode::deserialize(bytes_request_info)?;
 
     // Create the AssetUnlockPayload with empty signature
     let tx_payload_asset_unlock = AssetUnlockPayload {

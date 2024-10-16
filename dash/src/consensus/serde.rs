@@ -403,10 +403,7 @@ fn consensus_error_into_serde<E: serde::de::Error>(error: ConsensusError) -> E {
         ConsensusError::WrongSpecialTransactionPayloadConversion { expected, actual } =>
             E::invalid_value(
                 Unexpected::Str(actual.to_string().as_str()),
-                &DisplayExpected(format_args!(
-                    "expected transaction type: {}",
-                    expected.to_string()
-                )),
+                &DisplayExpected(format_args!("expected transaction type: {}", expected)),
             ),
         ConsensusError::NonStandardScriptPayout(script_buf) => E::invalid_value(
             Unexpected::Other(script_buf.to_string().as_str()),

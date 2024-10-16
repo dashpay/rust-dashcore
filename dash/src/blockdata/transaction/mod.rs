@@ -505,7 +505,7 @@ impl Transaction {
     pub fn special_transaction_len(&self) -> usize {
         match self.special_transaction_payload.as_ref() {
             Some(payload) => payload.len(),
-            None => return 0,
+            None => 0,
         }
     }
 
@@ -1240,7 +1240,7 @@ mod tests {
 
         tx.add_burn_output(10000, &pk_array);
 
-        let output = tx.output.get(0).unwrap();
+        let output = tx.output.first().unwrap();
 
         assert_eq!(output.value, 10000);
         assert!(output.script_pubkey.is_op_return());

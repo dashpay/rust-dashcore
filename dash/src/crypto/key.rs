@@ -740,7 +740,7 @@ mod tests {
         let sk =
             PrivateKey::from_wif("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy").unwrap();
         assert_eq!(sk.network, Testnet);
-        assert_eq!(sk.compressed, true);
+        assert!(sk.compressed);
         assert_eq!(&sk.to_wif(), "cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy");
 
         let secp = Secp256k1::new();
@@ -757,12 +757,12 @@ mod tests {
         let sk =
             PrivateKey::from_wif("7sU7MdjMtaLYxC4ec2z1zkhzZVBwRzZUcU6gJRzJ94s6UzAwA8c").unwrap();
         assert_eq!(sk.network, Dash);
-        assert_eq!(sk.compressed, false);
+        assert!(!sk.compressed);
         assert_eq!(&sk.to_wif(), "7sU7MdjMtaLYxC4ec2z1zkhzZVBwRzZUcU6gJRzJ94s6UzAwA8c");
 
         let secp = Secp256k1::new();
         let mut pk = sk.public_key(&secp);
-        assert_eq!(pk.compressed, false);
+        assert!(!pk.compressed);
         assert_eq!(
             &pk.to_string(),
             "0470bb951360439d31352beb36017357ac9cf442c2ddbd511f3a5e5f394ecc173db7e18f6ad3ef9118d0fd1908f58973d0f51ae5e0e93cec8e7b7bc2b5941f176c"

@@ -418,7 +418,7 @@ mod tests {
 
         // Long input (>100 bytes => has to use heap)
         let res = encode_slice(
-            &"BitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBit\
+            "BitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBit\
         coinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoin"
                 .as_bytes(),
         );
