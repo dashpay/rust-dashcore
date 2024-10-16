@@ -311,8 +311,8 @@ impl From<u64> for ServiceFlags {
     fn from(f: u64) -> Self { ServiceFlags(f) }
 }
 
-impl Into<u64> for ServiceFlags {
-    fn into(self) -> u64 { self.0 }
+impl From<ServiceFlags> for u64 {
+    fn from(val: ServiceFlags) -> Self { val.0 }
 }
 
 impl ops::BitOr for ServiceFlags {

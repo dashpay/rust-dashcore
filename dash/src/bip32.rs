@@ -291,8 +291,8 @@ impl From<Vec<ChildNumber>> for DerivationPath {
     fn from(numbers: Vec<ChildNumber>) -> Self { DerivationPath(numbers) }
 }
 
-impl Into<Vec<ChildNumber>> for DerivationPath {
-    fn into(self) -> Vec<ChildNumber> { self.0 }
+impl From<DerivationPath> for Vec<ChildNumber> {
+    fn from(val: DerivationPath) -> Self { val.0 }
 }
 
 impl<'a> From<&'a [ChildNumber]> for DerivationPath {

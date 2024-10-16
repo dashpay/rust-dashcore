@@ -12,19 +12,18 @@ pub mod exts {
 
 /// Possible case of hex.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Default)]
 pub enum Case {
     /// Produce lower-case chars (`[0-9a-f]`).
     ///
     /// This is the default.
+    #[default]
     Lower,
 
     /// Produce upper-case chars (`[0-9A-F]`).
     Upper,
 }
 
-impl Default for Case {
-    fn default() -> Self { Case::Lower }
-}
 
 impl Case {
     /// Returns the encoding table.
