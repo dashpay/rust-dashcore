@@ -568,7 +568,6 @@ impl ExtendedPrivKey {
     }
 
     /// Private->Private child key derivation
-    /// Private->Private child key derivation
     pub fn ckd_priv<C: secp256k1::Signing>(
         &self,
         secp: &Secp256k1<C>,
@@ -576,20 +575,20 @@ impl ExtendedPrivKey {
     ) -> Result<ExtendedPrivKey, Error> {
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&self.chain_code[..]);
         match i {
-            ChildNumber::Normal { .. } => {
+            ChildNumber::Normal { index } => {
                 // Non-hardened key: compute public data and use that
                 hmac_engine.input(
                     &secp256k1::PublicKey::from_secret_key(secp, &self.private_key).serialize()[..],
                 );
+                hmac_engine.input(&index.to_be_bytes());
             }
-            ChildNumber::Hardened { .. } => {
+            ChildNumber::Hardened { index } => {
                 // Hardened key: use only secret data to prevent public derivation
                 hmac_engine.input(&[0u8]);
                 hmac_engine.input(&self.private_key[..]);
+                hmac_engine.input(&(index | (1 << 31)).to_be_bytes());
             }
         }
-
-        hmac_engine.input(&u32::from(i).to_be_bytes());
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
         let sk = secp256k1::SecretKey::from_slice(&hmac_result[..32])
             .expect("statistically impossible to hit");
