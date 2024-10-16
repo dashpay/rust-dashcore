@@ -138,11 +138,7 @@ impl MerkleBlock {
     ) -> Result<(), MerkleBlockError> {
         let merkle_root = self.txn.extract_matches(matches, indexes)?;
 
-        if merkle_root.eq(&self.header.merkle_root) {
-            Ok(())
-        } else {
-            Err(MerkleRootMismatch)
-        }
+        if merkle_root.eq(&self.header.merkle_root) { Ok(()) } else { Err(MerkleRootMismatch) }
     }
 }
 
@@ -490,7 +486,10 @@ impl fmt::Display for MerkleBlockError {
         use self::MerkleBlockError::*;
 
         match *self {
-            MerkleRootMismatch => write!(f, "merkle header root doesn't match to the root calculated from the partial merkle tree"),
+            MerkleRootMismatch => write!(
+                f,
+                "merkle header root doesn't match to the root calculated from the partial merkle tree"
+            ),
             NoTransactions => write!(f, "partial merkle tree contains no transactions"),
             TooManyTransactions => write!(f, "too many transactions"),
             TooManyHashes => write!(f, "proof contains more hashes than transactions"),

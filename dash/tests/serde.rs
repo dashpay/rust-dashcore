@@ -27,16 +27,19 @@ use std::convert::TryFrom;
 use std::str::FromStr;
 
 use bincode::serialize;
-use hex_lit::hex;
-use dashcore::{absolute, Address, Block, ecdsa, Network, OutPoint, PrivateKey, PublicKey, relative, ScriptBuf, taproot, Target, Transaction, Txid, TxIn, TxOut, Witness, Work};
 use dashcore::address::NetworkUnchecked;
 use dashcore::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
-use dashcore::consensus::{deserialize};
-use dashcore::psbt::{Input, Output, Psbt, PsbtSighashType, raw};
+use dashcore::consensus::deserialize;
 use dashcore::psbt::raw::{Key, Pair, ProprietaryKey};
+use dashcore::psbt::{Input, Output, Psbt, PsbtSighashType, raw};
 use dashcore::sighash::{EcdsaSighashType, TapSighashType};
-use dashcore::taproot::{ControlBlock, LeafVersion, TaprootBuilder, TapTree};
+use dashcore::taproot::{ControlBlock, LeafVersion, TapTree, TaprootBuilder};
+use dashcore::{
+    Address, Block, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Target, Transaction, TxIn,
+    TxOut, Txid, Witness, Work, absolute, ecdsa, relative, taproot,
+};
 use dashcore_hashes::{Hash, hash160, ripemd160, sha256, sha256d};
+use hex_lit::hex;
 
 /// Implicitly does regression test for `BlockHeader` also.
 #[ignore]
@@ -128,7 +131,7 @@ fn serde_regression_transaction() {
 fn serde_regression_witness() {
     let w0 = hex!("03d2e15674941bad4a996372cb87e1856d3652606d98562fe39c5e9e7e413f2105");
     let w1 = hex!("000000");
-    let vec:Vec<&[u8]> = vec![w0.as_slice(), w1.as_slice()];
+    let vec: Vec<&[u8]> = vec![w0.as_slice(), w1.as_slice()];
     let witness = Witness::from_slice(&vec);
 
     let got = serialize(&witness).unwrap();
@@ -181,7 +184,7 @@ fn serde_regression_ecdsa_sig() {
 #[test]
 fn serde_regression_control_block() {
     let s = include_str!("data/serde/control_block_hex");
-        let block = ControlBlock::decode(&hex::decode(s.trim()).unwrap()).unwrap();
+    let block = ControlBlock::decode(&hex::decode(s.trim()).unwrap()).unwrap();
     let got = serialize(&block).unwrap();
 
     let want = include_bytes!("data/serde/control_block_bincode") as &[_];

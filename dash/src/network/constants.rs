@@ -40,15 +40,17 @@
 //! assert_eq!(&bytes[..], &[0xBF, 0x0C, 0x6B, 0xBD]);
 //! ```
 
-use core::{fmt, ops, convert::From};
+use core::convert::From;
 use core::fmt::Display;
 use core::str::FromStr;
+use core::{fmt, ops};
 
-use crate::io;
 use internals::write_err;
-use crate::consensus::encode::{self, Encodable, Decodable};
+
+use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::constants::ChainHash;
 use crate::error::impl_std_error;
+use crate::io;
 use crate::prelude::{String, ToOwned};
 
 /// Version of the protocol as appearing in network message headers
@@ -103,7 +105,7 @@ impl Network {
             0xFFCAE2CE => Some(Network::Testnet),
             0xCEFFCAE2 => Some(Network::Devnet),
             0xDAB5BFFA => Some(Network::Regtest),
-            _ => None
+            _ => None,
         }
     }
 
@@ -171,7 +173,6 @@ impl fmt::Display for Network {
         write!(f, "{}", s)
     }
 }
-
 
 /// Error in parsing network from chain hash.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,26 +256,18 @@ impl ServiceFlags {
     }
 
     /// Check whether [ServiceFlags] are included in this one.
-    pub fn has(self, flags: ServiceFlags) -> bool {
-        (self.0 | flags.0) == self.0
-    }
+    pub fn has(self, flags: ServiceFlags) -> bool { (self.0 | flags.0) == self.0 }
 
     /// Get the integer representation of this [ServiceFlags].
-    pub fn as_u64(self) -> u64 {
-        self.0
-    }
+    pub fn as_u64(self) -> u64 { self.0 }
 }
 
 impl fmt::LowerHex for ServiceFlags {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::LowerHex::fmt(&self.0, f)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::LowerHex::fmt(&self.0, f) }
 }
 
 impl fmt::UpperHex for ServiceFlags {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::UpperHex::fmt(&self.0, f)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::UpperHex::fmt(&self.0, f) }
 }
 
 impl fmt::Display for ServiceFlags {
@@ -294,7 +287,7 @@ impl fmt::Display for ServiceFlags {
                     write!(f, stringify!($f))?;
                     flags.remove(ServiceFlags::$f);
                 }
-            }
+            };
         }
         write!(f, "ServiceFlags(")?;
         write_flag!(NETWORK);
@@ -315,43 +308,31 @@ impl fmt::Display for ServiceFlags {
 }
 
 impl From<u64> for ServiceFlags {
-    fn from(f: u64) -> Self {
-        ServiceFlags(f)
-    }
+    fn from(f: u64) -> Self { ServiceFlags(f) }
 }
 
 impl Into<u64> for ServiceFlags {
-    fn into(self) -> u64 {
-        self.0
-    }
+    fn into(self) -> u64 { self.0 }
 }
 
 impl ops::BitOr for ServiceFlags {
     type Output = Self;
 
-    fn bitor(mut self, rhs: Self) -> Self {
-        self.add(rhs)
-    }
+    fn bitor(mut self, rhs: Self) -> Self { self.add(rhs) }
 }
 
 impl ops::BitOrAssign for ServiceFlags {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.add(rhs);
-    }
+    fn bitor_assign(&mut self, rhs: Self) { self.add(rhs); }
 }
 
 impl ops::BitXor for ServiceFlags {
     type Output = Self;
 
-    fn bitxor(mut self, rhs: Self) -> Self {
-        self.remove(rhs)
-    }
+    fn bitxor(mut self, rhs: Self) -> Self { self.remove(rhs) }
 }
 
 impl ops::BitXorAssign for ServiceFlags {
-    fn bitxor_assign(&mut self, rhs: Self) {
-        self.remove(rhs);
-    }
+    fn bitxor_assign(&mut self, rhs: Self) { self.remove(rhs); }
 }
 
 impl Encodable for ServiceFlags {

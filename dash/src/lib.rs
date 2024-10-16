@@ -100,7 +100,9 @@ pub mod bip32;
 pub mod blockdata;
 pub mod consensus;
 // Private until we either make this a crate or flatten it - still to be decided.
+pub mod bls_sig_utils;
 pub(crate) mod crypto;
+pub mod ephemerealdata;
 pub mod error;
 pub mod hash_types;
 pub mod merkle_tree;
@@ -108,12 +110,10 @@ pub mod policy;
 pub mod pow;
 pub mod psbt;
 pub mod sign_message;
+pub mod signer;
 pub mod string;
 pub mod taproot;
 pub mod util;
-pub mod bls_sig_utils;
-pub mod signer;
-pub mod ephemerealdata;
 
 // May depend on crate features and we don't want to bother with it
 #[allow(unused)]
@@ -134,24 +134,27 @@ pub use crate::blockdata::block::{self, Block, Header};
 pub use crate::blockdata::fee_rate::FeeRate;
 pub use crate::blockdata::locktime::{self, absolute, relative};
 pub use crate::blockdata::script::{self, Script, ScriptBuf};
-pub use crate::blockdata::transaction::{self, Transaction, hash_type::EcdsaSighashType};
-pub use crate::ephemerealdata::instant_lock::{InstantLock};
-pub use crate::ephemerealdata::chain_lock::{ChainLock};
-pub use crate::transaction::{txin::TxIn, txout::TxOut, outpoint::OutPoint};
+pub use crate::blockdata::transaction::hash_type::EcdsaSighashType;
+pub use crate::blockdata::transaction::{self, Transaction};
 pub use crate::blockdata::weight::Weight;
 pub use crate::blockdata::witness::{self, Witness};
 pub use crate::blockdata::{constants, opcodes};
 pub use crate::consensus::encode::VarInt;
 pub use crate::crypto::key::{self, PrivateKey, PublicKey};
 pub use crate::crypto::{ecdsa, sighash};
+pub use crate::ephemerealdata::chain_lock::ChainLock;
+pub use crate::ephemerealdata::instant_lock::InstantLock;
 pub use crate::error::Error;
 pub use crate::hash_types::{
-    BlockHash, PubkeyHash, ScriptHash, Txid, WPubkeyHash, WScriptHash, Wtxid, ProTxHash, QuorumHash,
-    TxMerkleNode, FilterHash, QuorumSigningRequestId,
+    BlockHash, FilterHash, ProTxHash, PubkeyHash, QuorumHash, QuorumSigningRequestId, ScriptHash,
+    TxMerkleNode, Txid, WPubkeyHash, WScriptHash, Wtxid,
 };
 pub use crate::merkle_tree::MerkleBlock;
 pub use crate::network::constants::Network;
 pub use crate::pow::{CompactTarget, Target, Work};
+pub use crate::transaction::outpoint::OutPoint;
+pub use crate::transaction::txin::TxIn;
+pub use crate::transaction::txout::TxOut;
 
 #[cfg(not(feature = "std"))]
 mod io_extras {
@@ -221,4 +224,3 @@ mod bench {
         fn write_fmt(&mut self, _: Arguments) -> Result<()> { Ok(()) }
     }
 }
-

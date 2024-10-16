@@ -22,6 +22,6 @@
 //!
 //! The special transaction type used for CrWithTx Transactions is 9.
 
-pub mod unqualified_asset_unlock;
 pub mod qualified_asset_unlock;
 pub mod request_info;
+pub mod unqualified_asset_unlock;

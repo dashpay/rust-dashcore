@@ -91,11 +91,7 @@ impl Weight {
 /// Alternative will display the unit.
 impl fmt::Display for Weight {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if f.alternate() {
-            write!(f, "{} wu", self.0)
-        } else {
-            fmt::Display::fmt(&self.0, f)
-        }
+        if f.alternate() { write!(f, "{} wu", self.0) } else { fmt::Display::fmt(&self.0, f) }
     }
 }
 
@@ -255,8 +251,8 @@ impl DivAssign<u64> for Weight {
 
 impl core::iter::Sum for Weight {
     fn sum<I>(iter: I) -> Self
-        where
-            I: Iterator<Item = Self>,
+    where
+        I: Iterator<Item = Self>,
     {
         Weight(iter.map(Weight::to_wu).sum())
     }
@@ -264,8 +260,8 @@ impl core::iter::Sum for Weight {
 
 impl<'a> core::iter::Sum<&'a Weight> for Weight {
     fn sum<I>(iter: I) -> Self
-        where
-            I: Iterator<Item = &'a Weight>,
+    where
+        I: Iterator<Item = &'a Weight>,
     {
         iter.cloned().sum()
     }

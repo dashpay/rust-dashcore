@@ -40,8 +40,7 @@ use dashcore::consensus::encode;
 use dashcore::psbt::{self, Input, Psbt, PsbtSighashType};
 use dashcore::secp256k1::{Secp256k1, Signing, Verification};
 use dashcore::{
-    Address, Amount, Network, OutPoint, PublicKey, ScriptBuf, Transaction, TxIn, TxOut,
-    Witness,
+    Address, Amount, Network, OutPoint, PublicKey, ScriptBuf, Transaction, TxIn, TxOut, Witness,
 };
 
 type Result<T> = std::result::Result<T, Error>;

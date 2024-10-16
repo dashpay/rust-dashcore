@@ -10,12 +10,12 @@
 pub mod block;
 pub mod constants;
 pub mod fee_rate;
+pub mod locktime;
 pub mod opcodes;
+pub mod script;
 pub mod transaction;
 pub mod weight;
 pub mod witness;
-pub mod script;
-pub mod locktime;
 
 pub use fee_rate::FeeRate;
 pub use weight::Weight;

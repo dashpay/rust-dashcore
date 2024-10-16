@@ -5,11 +5,11 @@ use core::convert::TryFrom;
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPubKey, Fingerprint};
 use crate::blockdata::transaction::Transaction;
 use crate::consensus::encode::MAX_VEC_SIZE;
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::io::{self, Cursor, Read};
 use crate::prelude::*;
 use crate::psbt::map::Map;
-use crate::psbt::{raw, Error, PartiallySignedTransaction};
+use crate::psbt::{Error, PartiallySignedTransaction, raw};
 use crate::transaction::special_transaction::TransactionType;
 
 /// Type: Unsigned Transaction PSBT_GLOBAL_UNSIGNED_TX = 0x00
@@ -32,7 +32,9 @@ impl Map for PartiallySignedTransaction {
                 // without witnesses.
                 let mut ret = Vec::new();
                 ret.extend(encode::serialize(&self.unsigned_tx.version));
-                (self.unsigned_tx.tx_type() as u16).consensus_encode(&mut ret).expect("can't encode tx type");
+                (self.unsigned_tx.tx_type() as u16)
+                    .consensus_encode(&mut ret)
+                    .expect("can't encode tx type");
                 let input = encode::serialize(&self.unsigned_tx.input);
                 ret.extend(input);
                 ret.extend(encode::serialize(&self.unsigned_tx.output));
@@ -98,7 +100,8 @@ impl PartiallySignedTransaction {
                                     let vlen: usize = pair.value.len();
                                     let mut decoder = Cursor::new(pair.value);
                                     let version = Decodable::consensus_decode(&mut decoder)?;
-                                    let transaction_type: TransactionType = Decodable::consensus_decode(&mut decoder)?;
+                                    let transaction_type: TransactionType =
+                                        Decodable::consensus_decode(&mut decoder)?;
                                     let input = Decodable::consensus_decode(&mut decoder)?;
                                     let output = Decodable::consensus_decode(&mut decoder)?;
                                     let lock_time = Decodable::consensus_decode(&mut decoder)?;
@@ -111,7 +114,8 @@ impl PartiallySignedTransaction {
                                         lock_time,
                                         input,
                                         output,
-                                        special_transaction_payload: transaction_type.consensus_decode(&mut decoder)?
+                                        special_transaction_payload: transaction_type
+                                            .consensus_decode(&mut decoder)?,
                                     });
 
                                     if decoder.position() != vlen as u64 {

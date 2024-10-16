@@ -21,17 +21,16 @@
 //! Bitcoin data (blocks and transactions) around.
 //!
 
-use crate::prelude::*;
-
 use std::io;
 
 use hashes::sha256d;
 
-use crate::network::constants;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::{BlockHash, Txid, Wtxid};
-use crate::internal_macros::{impl_consensus_encoding};
 use crate::hashes::Hash;
+use crate::internal_macros::impl_consensus_encoding;
+use crate::network::constants;
+use crate::prelude::*;
 
 /// An inventory item.
 #[derive(PartialEq, Eq, Clone, Debug, Copy, Hash, PartialOrd, Ord)]
@@ -128,11 +127,7 @@ pub struct GetHeadersMessage {
 impl GetBlocksMessage {
     /// Construct a new `getblocks` message
     pub fn new(locator_hashes: Vec<BlockHash>, stop_hash: BlockHash) -> GetBlocksMessage {
-        GetBlocksMessage {
-            version: constants::PROTOCOL_VERSION,
-            locator_hashes,
-            stop_hash,
-        }
+        GetBlocksMessage { version: constants::PROTOCOL_VERSION, locator_hashes, stop_hash }
     }
 }
 
@@ -141,11 +136,7 @@ impl_consensus_encoding!(GetBlocksMessage, version, locator_hashes, stop_hash);
 impl GetHeadersMessage {
     /// Construct a new `getheaders` message
     pub fn new(locator_hashes: Vec<BlockHash>, stop_hash: BlockHash) -> GetHeadersMessage {
-        GetHeadersMessage {
-            version: constants::PROTOCOL_VERSION,
-            locator_hashes,
-            stop_hash,
-        }
+        GetHeadersMessage { version: constants::PROTOCOL_VERSION, locator_hashes, stop_hash }
     }
 }
 
@@ -153,16 +144,19 @@ impl_consensus_encoding!(GetHeadersMessage, version, locator_hashes, stop_hash);
 
 #[cfg(test)]
 mod tests {
-    use super::{Vec, GetHeadersMessage, GetBlocksMessage};
-
     use hashes::Hash;
+
+    use super::{GetBlocksMessage, GetHeadersMessage, Vec};
     use crate::consensus::encode::{deserialize, serialize};
     use crate::internal_macros::hex;
 
     #[test]
     fn getblocks_message_test() {
-        let from_sat: Vec<u8> = hex!("72110100014a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b0000000000000000000000000000000000000000000000000000000000000000");
-        let genhash: Vec<u8> = hex!("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b");
+        let from_sat: Vec<u8> = hex!(
+            "72110100014a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        let genhash: Vec<u8> =
+            hex!("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b");
 
         let decode: Result<GetBlocksMessage, _> = deserialize(&from_sat);
         assert!(decode.is_ok());
@@ -177,7 +171,9 @@ mod tests {
 
     #[test]
     fn getheaders_message_test() {
-        let from_sat = hex!("72110100014a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b0000000000000000000000000000000000000000000000000000000000000000");
+        let from_sat = hex!(
+            "72110100014a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b0000000000000000000000000000000000000000000000000000000000000000"
+        );
         let genhash = hex!("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b");
 
         let decode: Result<GetHeadersMessage, _> = deserialize(&from_sat);
@@ -191,4 +187,3 @@ mod tests {
         assert_eq!(serialize(&real_decode), from_sat);
     }
 }
-

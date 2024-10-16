@@ -13,9 +13,9 @@ use core::ops::{Add, Div, Mul, Not, Rem, Shl, Shr, Sub};
 #[cfg(all(test, mutate))]
 use mutagen::mutate;
 
-use crate::consensus::encode::{self, Decodable, Encodable};
 #[cfg(doc)]
 use crate::consensus::Params;
+use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::BlockHash;
 use crate::io::{self, Read, Write};
 use crate::prelude::String;
@@ -155,11 +155,7 @@ impl Target {
         };
 
         // The mantissa is signed but may not be negative.
-        if mant > 0x7F_FFFF {
-            Target::ZERO
-        } else {
-            Target(U256::from(mant) << expt)
-        }
+        if mant > 0x7F_FFFF { Target::ZERO } else { Target(U256::from(mant) << expt) }
     }
 
     /// Computes the compact value from a [`Target`] representation.
@@ -378,21 +374,13 @@ impl U256 {
     /// Returns `self` as a `u128` saturating to `u128::MAX` if `self` is too big.
     // Matagen gives false positive because >= and > both return u128::MAX
     fn saturating_to_u128(&self) -> u128 {
-        if *self > U256::from(u128::max_value()) {
-            u128::max_value()
-        } else {
-            self.low_u128()
-        }
+        if *self > U256::from(u128::max_value()) { u128::max_value() } else { self.low_u128() }
     }
 
     /// Returns the least number of bits needed to represent the number.
     #[cfg_attr(all(test, mutate), mutate)]
     fn bits(&self) -> u32 {
-        if self.0 > 0 {
-            256 - self.0.leading_zeros()
-        } else {
-            128 - self.1.leading_zeros()
-        }
+        if self.0 > 0 { 256 - self.0.leading_zeros() } else { 128 - self.1.leading_zeros() }
     }
 
     /// Wrapping multiplication by `u64`.
@@ -758,11 +746,7 @@ impl Shr<u32> for U256 {
 
 impl fmt::Display for U256 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.is_zero() {
-            f.pad_integral(true, "", "0")
-        } else {
-            self.fmt_decimal(f)
-        }
+        if self.is_zero() { f.pad_integral(true, "", "0") } else { self.fmt_decimal(f) }
     }
 }
 
@@ -807,7 +791,6 @@ impl crate::serde::Serialize for U256 {
 #[cfg(feature = "serde")]
 impl<'de> crate::serde::Deserialize<'de> for U256 {
     fn deserialize<D: crate::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-
         use hashes::hex::FromHex;
 
         use crate::serde::de;
@@ -1459,18 +1442,24 @@ mod tests {
             "deadbeeaa69b455cd41bb662a69b4550a69b455cd41bb662a69b4555deadbeef",
         );
 
-        assert!(::serde_json::from_str::<U256>(
-            "\"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffg\""
-        )
-        .is_err()); // invalid char
-        assert!(::serde_json::from_str::<U256>(
-            "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
-        )
-        .is_err()); // invalid length
-        assert!(::serde_json::from_str::<U256>(
-            "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
-        )
-        .is_err()); // invalid length
+        assert!(
+            ::serde_json::from_str::<U256>(
+                "\"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffg\""
+            )
+            .is_err()
+        ); // invalid char
+        assert!(
+            ::serde_json::from_str::<U256>(
+                "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
+            )
+            .is_err()
+        ); // invalid length
+        assert!(
+            ::serde_json::from_str::<U256>(
+                "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
+            )
+            .is_err()
+        ); // invalid length
     }
 
     #[test]

@@ -61,11 +61,7 @@ impl CommandString {
     }
 
     fn try_from_static_cow(cow: Cow<'static, str>) -> Result<CommandString, CommandStringError> {
-        if cow.len() > 12 {
-            Err(CommandStringError { cow })
-        } else {
-            Ok(CommandString(cow))
-        }
+        if cow.len() > 12 { Err(CommandStringError { cow }) } else { Ok(CommandString(cow)) }
     }
 }
 
@@ -124,13 +120,9 @@ impl Decodable for CommandString {
     #[inline]
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let rawbytes: [u8; 12] = Decodable::consensus_decode(r)?;
-        let rv = iter::FromIterator::from_iter(rawbytes.iter().filter_map(|&u| {
-            if u > 0 {
-                Some(u as char)
-            } else {
-                None
-            }
-        }));
+        let rv = iter::FromIterator::from_iter(
+            rawbytes.iter().filter_map(|&u| if u > 0 { Some(u as char) } else { None }),
+        );
         Ok(CommandString(rv))
     }
 }
@@ -382,7 +374,7 @@ impl Encodable for RawNetworkMessage {
             | NetworkMessage::SendAddrV2 => vec![],
             NetworkMessage::Unknown { payload: ref data, .. } => serialize(data),
         })
-            .consensus_encode(w)?;
+        .consensus_encode(w)?;
         Ok(len)
     }
 }
@@ -521,9 +513,9 @@ impl Decodable for RawNetworkMessage {
 mod test {
     use std::net::Ipv4Addr;
 
+    use hashes::Hash as HashTrait;
     use hashes::hash_x11::Hash as X11Hash;
     use hashes::sha256d::Hash;
-    use hashes::Hash as HashTrait;
 
     use super::message_network::{Reject, RejectReason, VersionMessage};
     use super::{CommandString, NetworkMessage, RawNetworkMessage, *};
@@ -534,7 +526,7 @@ mod test {
     use crate::consensus::encode::{deserialize, deserialize_partial, serialize};
     use crate::internal_macros::hex;
     use crate::network::address::{AddrV2, AddrV2Message, Address};
-    use crate::network::constants::{ServiceFlags};
+    use crate::network::constants::ServiceFlags;
     use crate::network::message_blockdata::{GetBlocksMessage, GetHeadersMessage, Inventory};
     use crate::network::message_bloom::{BloomFlags, FilterAdd, FilterLoad};
     use crate::network::message_compact_blocks::{GetBlockTxn, SendCmpct};
@@ -730,10 +722,7 @@ mod test {
             0x64, 0x64, 0x72, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x5d, 0xf6, 0xe0, 0xe2
         ]);
-        let preimage = RawNetworkMessage {
-            magic: 0xd9b4bef9,
-            payload: NetworkMessage::GetAddr,
-        };
+        let preimage = RawNetworkMessage { magic: 0xd9b4bef9, payload: NetworkMessage::GetAddr };
         assert!(msg.is_ok());
         let msg: RawNetworkMessage = msg.unwrap();
         assert_eq!(preimage.magic, msg.magic);

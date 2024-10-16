@@ -14,16 +14,18 @@
 use core::borrow::{Borrow, BorrowMut};
 use core::{fmt, str};
 
-use hashes::{hash_newtype, sha256, sha256d, sha256t_hash_newtype, Hash};
+use hashes::{Hash, hash_newtype, sha256, sha256d, sha256t_hash_newtype};
 
+use crate::blockdata::transaction::txin::TxIn;
+use crate::blockdata::transaction::txout::TxOut;
+use crate::blockdata::transaction::{EncodeSigningDataResult, Transaction};
 use crate::blockdata::witness::Witness;
-use crate::consensus::{encode, Encodable};
+use crate::consensus::{Encodable, encode};
 use crate::error::impl_std_error;
-use crate::prelude::*;
-use crate::taproot::{LeafVersion, TapLeafHash, TAPROOT_ANNEX_PREFIX};
 use crate::io;
-use crate::blockdata::transaction::{Transaction, EncodeSigningDataResult, txin::TxIn, txout::TxOut};
+use crate::prelude::*;
 use crate::script::{Script, ScriptBuf};
+use crate::taproot::{LeafVersion, TAPROOT_ANNEX_PREFIX, TapLeafHash};
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.
 #[rustfmt::skip]
@@ -115,8 +117,8 @@ struct TaprootCache {
 /// `SIGHASH_ANYONECANPAY`, [`Prevouts::One`] may be used.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Prevouts<'u, T>
-    where
-        T: 'u + Borrow<TxOut>,
+where
+    T: 'u + Borrow<TxOut>,
 {
     /// `One` variant allows provision of the single prevout needed. It's useful, for example, when
     /// modifier `SIGHASH_ANYONECANPAY` is provided, only prevout of the current input is needed.
@@ -249,13 +251,32 @@ impl fmt::Display for Error {
 
         match self {
             Io(error_kind) => write!(f, "writer errored: {:?}", error_kind),
-            IndexOutOfInputsBounds { index, inputs_size } => write!(f, "Requested index ({}) is greater or equal than the number of transaction inputs ({})", index, inputs_size),
-            SingleWithoutCorrespondingOutput { index, outputs_size } => write!(f, "SIGHASH_SINGLE for input ({}) haven't a corresponding output (#outputs:{})", index, outputs_size),
-            PrevoutsSize => write!(f, "Number of supplied prevouts differs from the number of inputs in transaction"),
-            PrevoutIndex => write!(f, "The index requested is greater than available prevouts or different from the provided [Provided::Anyone] index"),
-            PrevoutKind => write!(f, "A single prevout has been provided but all prevouts are needed without `ANYONECANPAY`"),
-            WrongAnnex => write!(f, "Annex must be at least one byte long and the first bytes must be `0x50`"),
-            InvalidSighashType(hash_ty) => write!(f, "Invalid taproot signature hash type : {} ", hash_ty),
+            IndexOutOfInputsBounds { index, inputs_size } => write!(
+                f,
+                "Requested index ({}) is greater or equal than the number of transaction inputs ({})",
+                index, inputs_size
+            ),
+            SingleWithoutCorrespondingOutput { index, outputs_size } => write!(
+                f,
+                "SIGHASH_SINGLE for input ({}) haven't a corresponding output (#outputs:{})",
+                index, outputs_size
+            ),
+            PrevoutsSize => write!(
+                f,
+                "Number of supplied prevouts differs from the number of inputs in transaction"
+            ),
+            PrevoutIndex => write!(
+                f,
+                "The index requested is greater than available prevouts or different from the provided [Provided::Anyone] index"
+            ),
+            PrevoutKind => write!(
+                f,
+                "A single prevout has been provided but all prevouts are needed without `ANYONECANPAY`"
+            ),
+            WrongAnnex =>
+                write!(f, "Annex must be at least one byte long and the first bytes must be `0x50`"),
+            InvalidSighashType(hash_ty) =>
+                write!(f, "Invalid taproot signature hash type : {} ", hash_ty),
         }
     }
 }
@@ -279,8 +300,8 @@ impl std::error::Error for Error {
 }
 
 impl<'u, T> Prevouts<'u, T>
-    where
-        T: Borrow<TxOut>,
+where
+    T: Borrow<TxOut>,
 {
     fn check_all(&self, tx: &Transaction) -> Result<(), Error> {
         if let Prevouts::All(prevouts) = self {
@@ -635,12 +656,12 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
         //      scriptPubKey (35): scriptPubKey of the previous output spent by this input, serialized as script inside CTxOut. Its size is always 35 bytes.
         //      nSequence (4): nSequence of this input.
         if anyone_can_pay {
-            let txin =
-                &self.tx.borrow().input.get(input_index)
-                    .ok_or_else(|| Error::IndexOutOfInputsBounds {
-                        index: input_index,
-                        inputs_size: self.tx.borrow().input.len(),
-                    })?;
+            let txin = &self.tx.borrow().input.get(input_index).ok_or_else(|| {
+                Error::IndexOutOfInputsBounds {
+                    index: input_index,
+                    inputs_size: self.tx.borrow().input.len(),
+                }
+            })?;
             let previous_output = prevouts.get(input_index)?;
             txin.previous_output.consensus_encode(&mut writer)?;
             previous_output.value.consensus_encode(&mut writer)?;
@@ -665,7 +686,10 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
         //      sha_single_output (32): the SHA256 of the corresponding output in CTxOut format.
         if sighash == TapSighashType::Single {
             let mut enc = sha256::Hash::engine();
-            self.tx.borrow().output.get(input_index)
+            self.tx
+                .borrow()
+                .output
+                .get(input_index)
                 .ok_or_else(|| Error::SingleWithoutCorrespondingOutput {
                     index: input_index,
                     outputs_size: self.tx.borrow().output.len(),
@@ -918,7 +942,7 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
                         },
                         sequence: if n != input_index
                             && (sighash == EcdsaSighashType::Single
-                            || sighash == EcdsaSighashType::None)
+                                || sighash == EcdsaSighashType::None)
                         {
                             0
                         } else {
@@ -939,11 +963,7 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
                         .enumerate() // all of them except for this one
                         .map(
                             |(n, out)| {
-                                if n == input_index {
-                                    out.clone()
-                                } else {
-                                    TxOut::default()
-                                }
+                                if n == input_index { out.clone() } else { TxOut::default() }
                             },
                         );
                     output_iter.collect()
@@ -965,7 +985,7 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
                 script_pubkey,
                 sighash_type,
             )
-                .map_err(|e| Error::Io(e.kind())),
+            .map_err(|e| Error::Io(e.kind())),
         )
     }
 
@@ -1206,7 +1226,9 @@ mod tests {
 
     #[test]
     fn test_tap_sighash_hash() {
-        let bytes = hex!("00011b96877db45ffa23b307e9f0ac87b80ef9a80b4c5f0db3fbe734422453e83cc5576f3d542c5d4898fb2b696c15d43332534a7c1d1255fda38993545882df92c3e353ff6d36fbfadc4d168452afd8467f02fe53d71714fcea5dfe2ea759bd00185c4cb02bc76d42620393ca358a1a713f4997f9fc222911890afb3fe56c6a19b202df7bffdcfad08003821294279043746631b00e2dc5e52a111e213bbfe6ef09a19428d418dab0d50000000000");
+        let bytes = hex!(
+            "00011b96877db45ffa23b307e9f0ac87b80ef9a80b4c5f0db3fbe734422453e83cc5576f3d542c5d4898fb2b696c15d43332534a7c1d1255fda38993545882df92c3e353ff6d36fbfadc4d168452afd8467f02fe53d71714fcea5dfe2ea759bd00185c4cb02bc76d42620393ca358a1a713f4997f9fc222911890afb3fe56c6a19b202df7bffdcfad08003821294279043746631b00e2dc5e52a111e213bbfe6ef09a19428d418dab0d50000000000"
+        );
         let expected = hex!("04e808aad07a40b3767a1442fead79af6ef7e7c9316d82dec409bb31e77699b0");
         let mut enc = TapSighash::engine();
         enc.input(&bytes);
@@ -1224,7 +1246,10 @@ mod tests {
             "01365724000000000023542156b39dab4f8f3508e0432cfb41fab110170acaa2d4c42539cb90a4dc7c093bc500",
             0,
             "33ca0ebfb4a945eeee9569fc0f5040221275f88690b7f8592ada88ce3bdf6703",
-            TapSighashType::Default, None, None, None,
+            TapSighashType::Default,
+            None,
+            None,
+            None,
         );
 
         test_taproot_sighash(
@@ -1232,7 +1257,10 @@ mod tests {
             "02591f220000000000225120f25ad35583ea31998d968871d7de1abd2a52f6fe4178b54ea158274806ff4ece48fb310000000000225120f25ad35583ea31998d968871d7de1abd2a52f6fe4178b54ea158274806ff4ece",
             1,
             "626ab955d58c9a8a600a0c580549d06dc7da4e802eb2a531f62a588e430967a8",
-            TapSighashType::All, None, None, None,
+            TapSighashType::All,
+            None,
+            None,
+            None,
         );
 
         test_taproot_sighash(
@@ -1240,7 +1268,10 @@ mod tests {
             "01c4811000000000002251201bf9297d0a2968ae6693aadd0fa514717afefd218087a239afb7418e2d22e65c",
             0,
             "dfa9437f9c9a1d1f9af271f79f2f5482f287cdb0d2e03fa92c8a9b216cc6061c",
-            TapSighashType::AllPlusAnyoneCanPay, None, None, None,
+            TapSighashType::AllPlusAnyoneCanPay,
+            None,
+            None,
+            None,
         );
 
         test_taproot_sighash(
@@ -1248,7 +1279,10 @@ mod tests {
             "0144c84d0000000000225120e3f2107989c88e67296ab2faca930efa2e3a5bd3ff0904835a11c9e807458621",
             0,
             "3129de36a5d05fff97ffca31eb75fcccbbbc27b3147a7a36a9e4b45d8b625067",
-            TapSighashType::None, None, None, None,
+            TapSighashType::None,
+            None,
+            None,
+            None,
         );
 
         test_taproot_sighash(
@@ -1256,7 +1290,10 @@ mod tests {
             "013fed110000000000225120eb536ae8c33580290630fc495046e998086a64f8f33b93b07967d9029b265c55",
             0,
             "2441e8b0e063a2083ee790f14f2045022f07258ddde5ee01de543c9e789d80ae",
-            TapSighashType::NonePlusAnyoneCanPay, None, None, None,
+            TapSighashType::NonePlusAnyoneCanPay,
+            None,
+            None,
+            None,
         );
 
         test_taproot_sighash(
@@ -1264,7 +1301,10 @@ mod tests {
             "01efa558000000000022512007071ea3dc7e331b0687d0193d1e6d6ed10e645ef36f10ef8831d5e522ac9e80",
             0,
             "30239345177cadd0e3ea413d49803580abb6cb27971b481b7788a78d35117a88",
-            TapSighashType::Single, None, None, None,
+            TapSighashType::Single,
+            None,
+            None,
+            None,
         );
 
         test_taproot_sighash(
@@ -1272,7 +1312,10 @@ mod tests {
             "0107af4e00000000002251202c36d243dfc06cb56a248e62df27ecba7417307511a81ae61aa41c597a929c69",
             0,
             "bf9c83f26c6dd16449e4921f813f551c4218e86f2ec906ca8611175b41b566df",
-            TapSighashType::SinglePlusAnyoneCanPay, None, None, None,
+            TapSighashType::SinglePlusAnyoneCanPay,
+            None,
+            None,
+            None,
         );
     }
 
@@ -1285,7 +1328,9 @@ mod tests {
             0,
             "3b003000add359a364a156e73e02846782a59d0d95ca8c4638aaad99f2ef915c",
             TapSighashType::SinglePlusAnyoneCanPay,
-            Some("507b979802e62d397acb29f56743a791894b99372872fc5af06a4f6e8d242d0615cda53062bb20e6ec79756fe39183f0c128adfe85559a8fa042b042c018aa8010143799e44f0893c40e1e"),
+            Some(
+                "507b979802e62d397acb29f56743a791894b99372872fc5af06a4f6e8d242d0615cda53062bb20e6ec79756fe39183f0c128adfe85559a8fa042b042c018aa8010143799e44f0893c40e1e",
+            ),
             None,
             None,
         );
@@ -1329,8 +1374,12 @@ mod tests {
             0,
             "a0042aa434f9a75904b64043f2a283f8b4c143c7f4f7f49a6cbe5b9f745f4c15",
             TapSighashType::All,
-            Some("50a6272b470e1460e3332ade7bb14b81671c564fb6245761bd5bd531394b28860e0b3808ab229fb51791fb6ae6fa82d915b2efb8f6df83ae1f5ab3db13e30928875e2a22b749d89358de481f19286cd4caa792ce27f9559082d227a731c5486882cc707f83da361c51b7aadd9a0cf68fe7480c410fa137b454482d9a1ebf0f96d760b4d61426fc109c6e8e99a508372c45caa7b000a41f8251305da3f206c1849985ba03f3d9592832b4053afbd23ab25d0465df0bc25a36c223aacf8e04ec736a418c72dc319e4da3e972e349713ca600965e7c665f2090d5a70e241ac164115a1f5639f28b1773327715ca307ace64a2de7f0e3df70a2ffee3857689f909c0dad46d8a20fa373a4cc6eed6d4c9806bf146f0d76baae1"),
-            Some("7520ab9160dd8299dc1367659be3e8f66781fe440d52940c7f8d314a89b9f2698d406ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6eadac"),
+            Some(
+                "50a6272b470e1460e3332ade7bb14b81671c564fb6245761bd5bd531394b28860e0b3808ab229fb51791fb6ae6fa82d915b2efb8f6df83ae1f5ab3db13e30928875e2a22b749d89358de481f19286cd4caa792ce27f9559082d227a731c5486882cc707f83da361c51b7aadd9a0cf68fe7480c410fa137b454482d9a1ebf0f96d760b4d61426fc109c6e8e99a508372c45caa7b000a41f8251305da3f206c1849985ba03f3d9592832b4053afbd23ab25d0465df0bc25a36c223aacf8e04ec736a418c72dc319e4da3e972e349713ca600965e7c665f2090d5a70e241ac164115a1f5639f28b1773327715ca307ace64a2de7f0e3df70a2ffee3857689f909c0dad46d8a20fa373a4cc6eed6d4c9806bf146f0d76baae1",
+            ),
+            Some(
+                "7520ab9160dd8299dc1367659be3e8f66781fe440d52940c7f8d314a89b9f2698d406ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6ead6eadac",
+            ),
             None,
         );
     }
@@ -1457,8 +1506,8 @@ mod tests {
     #[test]
     fn bip_341_sighash_tests() {
         fn sighash_deser_numeric<'de, D>(deserializer: D) -> Result<TapSighashType, D::Error>
-            where
-                D: actual_serde::Deserializer<'de>,
+        where
+            D: actual_serde::Deserializer<'de>,
         {
             use actual_serde::de::{Deserialize, Error, Unexpected};
 
@@ -1770,7 +1819,7 @@ mod tests {
              ffffffff0200e9a435000000001976a914389ffce9cd9ae88dcc0631e88a821ffdbe9bfe2688acc0832f\
              05000000001976a9147480a33f950689af511e6e84c138dbbd3c3ee41588ac00000000"
         ))
-            .unwrap();
+        .unwrap();
 
         let witness_script = ScriptBuf::from_hex(
             "56210307b8ae49ac90a048e9b53357a2354b3334e9c8bee813ecb98e99a7e07e8c3ba32103b28f0c28\
@@ -1780,7 +1829,7 @@ mod tests {
              2c07a1789aac162102d8b661b0b3302ee2f162b09e07a55ad5dfbe673a9f01d9f0c19617681024306b\
              56ae",
         )
-            .unwrap();
+        .unwrap();
         let value = 987654321;
 
         let mut cache = SighashCache::new(&tx);

@@ -19,9 +19,10 @@
 //! The request info should be added once the quorum selection for signing has been made.
 
 use std::mem::size_of;
-use crate::io;
+
 use crate::consensus::{Decodable, Encodable, encode};
-use crate::hash_types::{QuorumHash};
+use crate::hash_types::QuorumHash;
+use crate::io;
 use crate::prelude::*;
 
 /// An asset unlock request info
@@ -39,13 +40,16 @@ pub struct AssetUnlockRequestInfo {
 }
 
 impl AssetUnlockRequestInfo {
-
     /// The size of the payload in bytes.
     pub const SIZE: usize = size_of::<u32>() + size_of::<QuorumHash>();
     pub fn size(&self) -> usize { AssetUnlockRequestInfo::SIZE }
 
     /// Encodes the asset unlock on top of
-    pub fn consensus_append_to_base_encode<S: io::Write>(&self, base_bytes: Vec<u8>, mut s: S) -> Result<usize, io::Error> {
+    pub fn consensus_append_to_base_encode<S: io::Write>(
+        &self,
+        base_bytes: Vec<u8>,
+        mut s: S,
+    ) -> Result<usize, io::Error> {
         s.write(base_bytes.as_slice())?;
         let mut len = base_bytes.len();
         len += self.consensus_encode(&mut s)?;
@@ -66,16 +70,14 @@ impl Decodable for AssetUnlockRequestInfo {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let request_height = u32::consensus_decode(r)?;
         let quorum_hash = QuorumHash::consensus_decode(r)?;
-        Ok(AssetUnlockRequestInfo {
-            request_height,
-            quorum_hash,
-        })
+        Ok(AssetUnlockRequestInfo { request_height, quorum_hash })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use hashes::Hash;
+
     use crate::consensus::Encodable;
     use crate::hash_types::QuorumHash;
     use crate::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
@@ -83,10 +85,8 @@ mod tests {
     #[test]
     fn size() {
         let want = 36;
-        let payload = AssetUnlockRequestInfo {
-            request_height: 0,
-            quorum_hash: QuorumHash::all_zeros(),
-        };
+        let payload =
+            AssetUnlockRequestInfo { request_height: 0, quorum_hash: QuorumHash::all_zeros() };
         let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
         assert_eq!(payload.size(), want);
         assert_eq!(actual, want);

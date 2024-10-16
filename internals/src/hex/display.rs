@@ -6,8 +6,8 @@
 use core::borrow::Borrow;
 use core::fmt;
 
-use super::buf_encoder::{BufEncoder, OutBytes};
 use super::Case;
+use super::buf_encoder::{BufEncoder, OutBytes};
 use crate::hex::buf_encoder::FixedLenBuf;
 #[cfg(feature = "alloc")]
 use crate::prelude::*;

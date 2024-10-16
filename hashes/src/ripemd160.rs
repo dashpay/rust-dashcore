@@ -407,7 +407,7 @@ mod tests {
     fn test() {
         use std::convert::TryFrom;
 
-        use crate::{ripemd160, Hash, HashEngine};
+        use crate::{Hash, HashEngine, ripemd160};
 
         #[derive(Clone)]
         struct Test {
@@ -500,9 +500,9 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn ripemd_serde() {
-        use serde_test::{assert_tokens, Configure, Token};
+        use serde_test::{Configure, Token, assert_tokens};
 
-        use crate::{ripemd160, Hash};
+        use crate::{Hash, ripemd160};
 
         #[rustfmt::skip]
         static HASH_BYTES: [u8; 20] = [
@@ -523,7 +523,7 @@ mod tests {
 mod benches {
     use test::Bencher;
 
-    use crate::{ripemd160, Hash, HashEngine};
+    use crate::{Hash, HashEngine, ripemd160};
 
     #[bench]
     pub fn ripemd160_10(bh: &mut Bencher) {

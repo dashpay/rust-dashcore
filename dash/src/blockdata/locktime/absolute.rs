@@ -499,11 +499,7 @@ impl Time {
     /// ```
     #[inline]
     pub fn from_consensus(n: u32) -> Result<Time, Error> {
-        if is_block_time(n) {
-            Ok(Self(n))
-        } else {
-            Err(ConversionError::invalid_time(n).into())
-        }
+        if is_block_time(n) { Ok(Self(n)) } else { Err(ConversionError::invalid_time(n).into()) }
     }
 
     /// Converts this `Time` to its inner `u32` value.

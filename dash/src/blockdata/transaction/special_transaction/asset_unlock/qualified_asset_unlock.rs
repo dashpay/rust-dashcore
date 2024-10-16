@@ -23,18 +23,18 @@
 //! The special transaction type used for CrWithTx Transactions is 9.
 
 use std::io::Error;
-use crate::{consensus, io, Transaction, TxIn, TxOut};
-use crate::hash_types::{SpecialTransactionPayloadHash};
+
 use hashes::Hash;
+
+use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+use crate::blockdata::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
+use crate::blockdata::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::{Decodable, Encodable, encode};
-use crate::blockdata::transaction::special_transaction::{
-    asset_unlock::request_info::AssetUnlockRequestInfo,
-    asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload,
-    SpecialTransactionBasePayloadEncodable,
-};
-use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBaseTransactionInfo;
+use crate::hash_types::SpecialTransactionPayloadHash;
 use crate::transaction::special_transaction::TransactionPayload;
+use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBaseTransactionInfo;
+use crate::{Transaction, TxIn, TxOut, consensus, io};
 
 // Asset unlock tx size is constant since it has zero inputs and single output only
 pub const ASSET_UNLOCK_TX_SIZE: usize = 190;
@@ -63,9 +63,7 @@ pub struct AssetUnlockPayload {
 
 impl AssetUnlockPayload {
     /// The size of the payload in bytes.
-    pub fn size(&self) -> usize {
-        self.base.size() + self.request_info.size() + 96
-    }
+    pub fn size(&self) -> usize { self.base.size() + self.request_info.size() + 96 }
 }
 
 impl SpecialTransactionBasePayloadEncodable for AssetUnlockPayload {
@@ -83,21 +81,34 @@ impl SpecialTransactionBasePayloadEncodable for AssetUnlockPayload {
     }
 }
 
-pub fn build_asset_unlock_tx(withdrawal_info_bytes: &Vec<u8>) -> Result<Transaction, encode::Error>
-{
+pub fn build_asset_unlock_tx(
+    withdrawal_info_bytes: &Vec<u8>,
+) -> Result<Transaction, encode::Error> {
     let size_request_info: usize = AssetUnlockRequestInfo::SIZE;
     let size_asset_unlock_info = withdrawal_info_bytes.len() - size_request_info;
     let bytes_asset_unlock = &withdrawal_info_bytes[0..size_asset_unlock_info].to_vec();
     let bytes_request_info = &withdrawal_info_bytes[size_asset_unlock_info..].to_vec();
-    let withdrawal_info: AssetUnlockBaseTransactionInfo = consensus::encode::deserialize(&bytes_asset_unlock)?;
-    let withdrawal_request_info: AssetUnlockRequestInfo = consensus::encode::deserialize(&bytes_request_info)?;
+    let withdrawal_info: AssetUnlockBaseTransactionInfo =
+        consensus::encode::deserialize(&bytes_asset_unlock)?;
+    let withdrawal_request_info: AssetUnlockRequestInfo =
+        consensus::encode::deserialize(&bytes_request_info)?;
 
     // Create the AssetUnlockPayload with empty signature
-    let tx_payload_asset_unlock = AssetUnlockPayload { base: withdrawal_info.base_payload, request_info: withdrawal_request_info, quorum_sig: BLSSignature::from([0; 96]) };
+    let tx_payload_asset_unlock = AssetUnlockPayload {
+        base: withdrawal_info.base_payload,
+        request_info: withdrawal_request_info,
+        quorum_sig: BLSSignature::from([0; 96]),
+    };
     let tx_special_payload = TransactionPayload::AssetUnlockPayloadType(tx_payload_asset_unlock);
 
-    let empty_input : Vec<TxIn> = Vec::new();
-    let tx_asset_unlock = Transaction { version: 3, lock_time: withdrawal_info.lock_time, input: empty_input, output: withdrawal_info.output, special_transaction_payload: Some(tx_special_payload) };
+    let empty_input: Vec<TxIn> = Vec::new();
+    let tx_asset_unlock = Transaction {
+        version: 3,
+        lock_time: withdrawal_info.lock_time,
+        input: empty_input,
+        output: withdrawal_info.output,
+        special_transaction_payload: Some(tx_special_payload),
+    };
 
     Ok(tx_asset_unlock)
 }
@@ -117,29 +128,29 @@ impl Decodable for AssetUnlockPayload {
         let base = AssetUnlockBasePayload::consensus_decode(r)?;
         let request_info = AssetUnlockRequestInfo::consensus_decode(r)?;
         let quorum_sig = BLSSignature::consensus_decode(r)?;
-        Ok(AssetUnlockPayload {
-            base,
-            request_info,
-            quorum_sig,
-        })
+        Ok(AssetUnlockPayload { base, request_info, quorum_sig })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use core::str::FromStr;
+
+    use hashes::Hash;
     use hex::FromHex;
-    use hashes::{Hash};
     use internals::hex::Case;
     use internals::hex::display::DisplayHex;
+
     use crate::bls_sig_utils::BLSSignature;
-    use crate::{consensus, ScriptBuf, Transaction, TxOut};
     use crate::consensus::Encodable;
     use crate::hash_types::QuorumHash;
-    use crate::transaction::special_transaction::asset_unlock::qualified_asset_unlock::{ASSET_UNLOCK_TX_SIZE, AssetUnlockPayload, build_asset_unlock_tx};
+    use crate::transaction::special_transaction::TransactionPayload;
+    use crate::transaction::special_transaction::asset_unlock::qualified_asset_unlock::{
+        ASSET_UNLOCK_TX_SIZE, AssetUnlockPayload, build_asset_unlock_tx,
+    };
     use crate::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
     use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
-    use crate::transaction::special_transaction::TransactionPayload;
+    use crate::{ScriptBuf, Transaction, TxOut, consensus};
 
     #[test]
     fn size() {
@@ -167,7 +178,13 @@ mod tests {
         assert_eq!(payload.base.index, 301);
         assert_eq!(payload.base.fee, 70000);
         assert_eq!(payload.request_info.request_height, 1317);
-        assert_eq!(payload.request_info.quorum_hash, QuorumHash::from_str("4acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448").unwrap());
+        assert_eq!(
+            payload.request_info.quorum_hash,
+            QuorumHash::from_str(
+                "4acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448"
+            )
+            .unwrap()
+        );
         assert_eq!(payload.quorum_sig, BLSSignature::from_str("aee468c03feec7caada0599457136ef0dfe9365657a42ef81bb4aa53af383d05d90552b2cd23480cae24036b953ba8480d2f98291271a338e4235265dea94feacb54d1fd96083151001eff4156e7475e998154a8e6082575e2ee461b394d24f7").unwrap());
     }
 
@@ -224,12 +241,13 @@ mod tests {
             version: 3,
             lock_time: 0,
             input: Vec::new(),
-            output: vec![
-                TxOut {
-                    value: 200,
-                    script_pubkey: ScriptBuf::from_hex("76a914c35b782432294088e354bc28aa56d95736cb630288ac").unwrap()
-                }
-            ],
+            output: vec![TxOut {
+                value: 200,
+                script_pubkey: ScriptBuf::from_hex(
+                    "76a914c35b782432294088e354bc28aa56d95736cb630288ac",
+                )
+                .unwrap(),
+            }],
             special_transaction_payload: Some(TransactionPayload::AssetUnlockPayloadType(payload)),
         };
 

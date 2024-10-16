@@ -20,11 +20,9 @@
 
 use core::ops::Index;
 use core::slice::SliceIndex;
-use core::{str};
-
+use core::str;
 #[cfg(feature = "std")]
 use std::io;
-
 #[cfg(feature = "std")]
 use std::vec::Vec;
 
@@ -33,8 +31,7 @@ use core2::io;
 
 #[cfg(all(feature = "alloc", not(feature = "std")))]
 use crate::alloc::vec::Vec;
-
-use crate::{hex, Error, HashEngine as _};
+use crate::{Error, HashEngine as _, hex};
 
 crate::internal_macros::hash_type! {
     256,
@@ -44,9 +41,7 @@ crate::internal_macros::hash_type! {
 }
 
 /// Output of the X11 hash function
-fn from_engine(e: HashEngine) -> Hash {
-    return Hash(e.midstate().to_byte_array());
-}
+fn from_engine(e: HashEngine) -> Hash { return Hash(e.midstate().to_byte_array()); }
 
 /// A hashing engine of X11 algorithm, which bytes can be serialized into
 #[derive(Clone)]
@@ -56,12 +51,7 @@ pub struct HashEngine {
 }
 
 impl Default for HashEngine {
-    fn default() -> Self {
-        HashEngine {
-            buf: Vec::new(),
-            length: 0,
-        }
-    }
+    fn default() -> Self { HashEngine { buf: Vec::new(), length: 0 } }
 }
 
 impl crate::HashEngine for HashEngine {
@@ -73,13 +63,9 @@ impl crate::HashEngine for HashEngine {
         Midstate(rs_x11_hash::get_x11_hash(self.buf.as_slice()))
     }
 
-    fn input(&mut self, data: &[u8]) {
-        self.buf.extend_from_slice(data);
-    }
+    fn input(&mut self, data: &[u8]) { self.buf.extend_from_slice(data); }
 
-    fn n_bytes_hashed(&self) -> usize {
-        self.length.clone()
-    }
+    fn n_bytes_hashed(&self) -> usize { self.length.clone() }
 }
 
 /// Output of the X11 hash function
@@ -129,15 +115,13 @@ impl Midstate {
     pub fn to_byte_array(self) -> [u8; 32] { self.0 }
 
     /// Unwraps the [Midstate] and returns the underlying byte array.
-    pub fn into_inner(self) -> [u8; 32] {
-        self.0
-    }
+    pub fn into_inner(self) -> [u8; 32] { self.0 }
 }
 
 impl hex::FromHex for Midstate {
     fn from_byte_iter<I>(iter: I) -> Result<Self, hex::Error>
-        where
-            I: Iterator<Item=Result<u8, hex::Error>> + ExactSizeIterator + DoubleEndedIterator,
+    where
+        I: Iterator<Item = Result<u8, hex::Error>> + ExactSizeIterator + DoubleEndedIterator,
     {
         // DISPLAY_BACKWARD is true
         Ok(Midstate::from_byte_array(hex::FromHex::from_byte_iter(iter.rev())?))

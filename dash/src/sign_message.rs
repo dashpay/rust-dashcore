@@ -21,11 +21,11 @@
 //! library is used with the `secp-recovery` feature.
 //!
 
-use hashes::{sha256d, Hash, HashEngine};
+use hashes::{Hash, HashEngine, sha256d};
 
 #[cfg(feature = "secp-recovery")]
 pub use self::message_signing::{MessageSignature, MessageSignatureError};
-use crate::consensus::{encode, Encodable};
+use crate::consensus::{Encodable, encode};
 
 /// The prefix for signed messages using Dash's message signing protocol.
 pub const DASH_SIGNED_MSG_PREFIX: &[u8] = b"\x19DarkCoin Signed Message:\n";

@@ -26,41 +26,36 @@
 //! This module provides the structures and functions needed to support transactions.
 //!
 
+pub mod hash_type;
+pub mod outpoint;
+pub mod special_transaction;
 pub mod txin;
 pub mod txout;
-pub mod outpoint;
-pub mod hash_type;
-pub mod special_transaction;
 
-use crate::prelude::*;
-
-use crate::io;
-use core::{default::Default};
+use core::default::Default;
 
 use hashes::{Hash, sha256d};
 
 use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature = "bitcoinconsensus")]
 use crate::blockdata::script;
-use crate::{ScriptBuf, Weight};
 use crate::blockdata::script::Script;
+use crate::blockdata::transaction::hash_type::EcdsaSighashType;
+use crate::blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
-use crate::consensus::{encode, Decodable, Encodable};
-use crate::consensus::encode::{VarInt};
-use crate::hash_types::{Txid, Wtxid, InputsHash};
-use crate::blockdata::transaction::hash_type::EcdsaSighashType;
-use crate::blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
-pub use crate::transaction::outpoint::*;
+use crate::consensus::encode::VarInt;
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::hash_types::{InputsHash, Txid, Wtxid};
+use crate::prelude::*;
 use crate::sighash::LegacySighash;
+pub use crate::transaction::outpoint::*;
+use crate::{ScriptBuf, Weight, io};
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.
 const UINT256_ONE: [u8; 32] = [
-    1, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
 /// Result of [`Transaction::encode_signing_data_to`].
@@ -119,8 +114,8 @@ impl<E> EncodeSigningDataResult<E> {
     ///
     /// Like [`Result::map_err`].
     pub fn map_err<E2, F>(self, f: F) -> EncodeSigningDataResult<E2>
-        where
-            F: FnOnce(E) -> E2,
+    where
+        F: FnOnce(E) -> E2,
     {
         match self {
             EncodeSigningDataResult::SighashSingleBug => EncodeSigningDataResult::SighashSingleBug,
@@ -186,7 +181,15 @@ impl Transaction {
         let cloned_tx = Transaction {
             version: self.version,
             lock_time: self.lock_time,
-            input: self.input.iter().map(|txin| TxIn { script_sig: ScriptBuf::new(), witness: Witness::default(), ..*txin }).collect(),
+            input: self
+                .input
+                .iter()
+                .map(|txin| TxIn {
+                    script_sig: ScriptBuf::new(),
+                    witness: Witness::default(),
+                    ..*txin
+                })
+                .collect(),
             output: self.output.clone(),
             special_transaction_payload: self.special_transaction_payload.clone(),
         };
@@ -401,22 +404,16 @@ impl Transaction {
     /// Returns the regular byte-wise consensus-serialized size of this transaction.
     #[inline]
     #[deprecated(since = "0.28.0", note = "Please use `transaction::size` instead.")]
-    pub fn get_size(&self) -> usize {
-        self.size()
-    }
+    pub fn get_size(&self) -> usize { self.size() }
 
     /// Returns the regular byte-wise consensus-serialized size of this transaction.
     #[inline]
-    pub fn size(&self) -> usize {
-        self.scaled_size(1)
-    }
+    pub fn size(&self) -> usize { self.scaled_size(1) }
 
     /// Returns the "virtual size" (vsize) of this transaction.
     #[inline]
     #[deprecated(since = "0.28.0", note = "Please use `transaction::vsize` instead.")]
-    pub fn get_vsize(&self) -> usize {
-        self.vsize()
-    }
+    pub fn get_vsize(&self) -> usize { self.vsize() }
 
     /// Returns the "virtual size" (vsize) of this transaction.
     ///
@@ -435,9 +432,7 @@ impl Transaction {
 
     /// Returns the size of this transaction excluding the witness data.
     #[deprecated(since = "0.28.0", note = "Please use `transaction::strippedsize` instead.")]
-    pub fn get_strippedsize(&self) -> usize {
-        self.strippedsize()
-    }
+    pub fn get_strippedsize(&self) -> usize { self.strippedsize() }
 
     /// Returns the size of this transaction excluding the witness data.
     pub fn strippedsize(&self) -> usize {
@@ -472,7 +467,8 @@ impl Transaction {
         let mut input_weight = 0;
         let mut inputs_with_witnesses = 0;
         for input in &self.input {
-            input_weight += scale_factor * (32 + 4 + 4 + // outpoint (32+4) + nSequence
+            input_weight += scale_factor
+                * (32 + 4 + 4 + // outpoint (32+4) + nSequence
                 VarInt(input.script_sig.len() as u64).len() +
                 input.script_sig.len());
             if !input.witness.is_empty() {
@@ -500,7 +496,8 @@ impl Transaction {
         if inputs_with_witnesses == 0 {
             non_input_size * scale_factor + input_weight
         } else {
-            non_input_size * scale_factor + input_weight + self.input.len() - inputs_with_witnesses + 2
+            non_input_size * scale_factor + input_weight + self.input.len() - inputs_with_witnesses
+                + 2
         }
     }
 
@@ -515,8 +512,8 @@ impl Transaction {
     /// Shorthand for [`Self::verify_with_flags`] with flag [`bitcoinconsensus::VERIFY_ALL`].
     #[cfg(feature = "bitcoinconsensus")]
     pub fn verify<S>(&self, spent: S) -> Result<(), script::Error>
-        where
-            S: FnMut(&OutPoint) -> Option<TxOut>
+    where
+        S: FnMut(&OutPoint) -> Option<TxOut>,
     {
         self.verify_with_flags(spent, ::bitcoinconsensus::VERIFY_ALL)
     }
@@ -525,15 +522,20 @@ impl Transaction {
     /// The `spent` closure should not return the same [`TxOut`] twice!
     #[cfg(feature = "bitcoinconsensus")]
     pub fn verify_with_flags<S, F>(&self, mut spent: S, flags: F) -> Result<(), script::Error>
-        where
-            S: FnMut(&OutPoint) -> Option<TxOut>,
-            F: Into<u32>
+    where
+        S: FnMut(&OutPoint) -> Option<TxOut>,
+        F: Into<u32>,
     {
         let tx = encode::serialize(&*self);
         let flags: u32 = flags.into();
         for (idx, input) in self.input.iter().enumerate() {
             if let Some(output) = spent(&input.previous_output) {
-                output.script_pubkey.verify_with_flags(idx, crate::Amount::from_sat(output.value), tx.as_slice(), flags)?;
+                output.script_pubkey.verify_with_flags(
+                    idx,
+                    crate::Amount::from_sat(output.value),
+                    tx.as_slice(),
+                    flags,
+                )?;
             } else {
                 return Err(script::Error::UnknownSpentOutput(input.previous_output.clone()));
             }
@@ -558,10 +560,7 @@ impl Transaction {
     /// dash on Dash Platform.
     pub fn add_burn_output(&mut self, satoshis_to_burn: u64, data: &[u8; 20]) {
         let burn_script = ScriptBuf::new_op_return(data);
-        let output = TxOut {
-            value: satoshis_to_burn,
-            script_pubkey: burn_script,
-        };
+        let output = TxOut { value: satoshis_to_burn, script_pubkey: burn_script };
         self.output.push(output)
     }
 
@@ -612,7 +611,7 @@ impl Encodable for Transaction {
         }
         // Forcing have_witness to false for AssetUnlock, as currently Core doesn't support BIP141 SegWit.
         if self.tx_type() == TransactionType::AssetUnlock {
-            have_witness= false;
+            have_witness = false;
         }
         if !have_witness {
             len += self.input.consensus_encode(w)?;
@@ -638,15 +637,20 @@ impl Encodable for Transaction {
 }
 
 impl Decodable for Transaction {
-    fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+    fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(
+        r: &mut R,
+    ) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode_from_finite_reader(r)?;
         let special_transaction_type_u16 = u16::consensus_decode(r)?;
-        let special_transaction_type = TransactionType::try_from(special_transaction_type_u16).map_err(|_| encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16))?;
+        let special_transaction_type = TransactionType::try_from(special_transaction_type_u16)
+            .map_err(|_| {
+                encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16)
+            })?;
         let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
         // segwit
         let mut segwit = input.is_empty();
         // Forcing segwit to false for AssetUnlock, as currently Core doesn't support BIP141 SegWit.
-        if special_transaction_type == TransactionType::AssetUnlock  {
+        if special_transaction_type == TransactionType::AssetUnlock {
             segwit = false;
         }
         if segwit {
@@ -667,7 +671,8 @@ impl Decodable for Transaction {
                             input,
                             output,
                             lock_time: Decodable::consensus_decode_from_finite_reader(r)?,
-                            special_transaction_payload: special_transaction_type.consensus_decode(r)?,
+                            special_transaction_payload: special_transaction_type
+                                .consensus_decode(r)?,
                         })
                     }
                 }
@@ -755,9 +760,9 @@ impl InputWeightPrediction {
 
     /// Computes the prediction for a single input.
     pub fn new<T>(input_script_len: usize, witness_element_lengths: T) -> Self
-        where
-            T: IntoIterator,
-            T::Item: Borrow<usize>,
+    where
+        T: IntoIterator,
+        T::Item: Borrow<usize>,
     {
         let (count, total_size) =
             witness_element_lengths.into_iter().fold((0, 0), |(count, total_size), elem_len| {
@@ -839,9 +844,9 @@ impl InputWeightPrediction {
 ///   will have - the code is already broken and checking overflows doesn't help. Unfortunately
 ///   this probably cannot be avoided.
 pub fn predict_weight<I, O>(inputs: I, output_script_lens: O) -> Weight
-    where
-        I: IntoIterator<Item = InputWeightPrediction>,
-        O: IntoIterator<Item = usize>,
+where
+    I: IntoIterator<Item = InputWeightPrediction>,
+    O: IntoIterator<Item = usize>,
 {
     let (input_count, partial_input_weight, inputs_with_witnesses) = inputs.into_iter().fold(
         (0, 0, 0),
@@ -897,18 +902,17 @@ const fn predict_weight_internal(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
-    use crate::consensus::encode::serialize;
-    use crate::consensus::encode::deserialize;
     use hashes::hex::FromHex;
+
+    use super::*;
+    use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
+    use crate::consensus::encode::{deserialize, serialize};
     use crate::internal_macros::hex;
 
     #[test]
     fn test_is_coinbase() {
-        use crate::network::constants::Network;
         use crate::blockdata::constants;
+        use crate::network::constants::Network;
 
         let genesis = constants::genesis_block(Network::Dash);
         assert!(genesis.txdata[0].is_coin_base());
@@ -919,7 +923,9 @@ mod tests {
 
     #[test]
     fn test_nonsegwit_transaction() {
-        let tx_bytes = hex!("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000");
+        let tx_bytes = hex!(
+            "0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000"
+        );
         let tx: Result<Transaction, _> = deserialize(&tx_bytes);
         assert!(tx.is_ok());
         let realtx = tx.unwrap();
@@ -1044,7 +1050,10 @@ mod tests {
         let mut tx: Transaction = deserialize(&tx_bytes).unwrap();
 
         let old_ntxid = tx.ntxid();
-        assert_eq!(format!("{:x}", old_ntxid), "c3573dbea28ce24425c59a189391937e00d255150fa973d59d61caf3a06b601d");
+        assert_eq!(
+            format!("{:x}", old_ntxid),
+            "c3573dbea28ce24425c59a189391937e00d255150fa973d59d61caf3a06b601d"
+        );
         // changing sigs does not affect it
         tx.input[0].script_sig = ScriptBuf::new();
         assert_eq!(old_ntxid, tx.ntxid());
@@ -1144,8 +1153,10 @@ mod tests {
     #[test]
     #[cfg(feature = "bitcoinconsensus")]
     fn test_transaction_verify() {
-        use hashes::hex::FromHex;
         use std::collections::HashMap;
+
+        use hashes::hex::FromHex;
+
         use crate::blockdata::script;
         use crate::blockdata::witness::Witness;
 
@@ -1166,35 +1177,45 @@ mod tests {
         let mut spent2 = spent.clone();
         let mut spent3 = spent.clone();
 
-        spending.verify(|point: &OutPoint| {
-            if let Some(tx) = spent.remove(&point.txid) {
-                return tx.output.get(point.vout as usize).cloned();
-            }
-            None
-        }).unwrap();
+        spending
+            .verify(|point: &OutPoint| {
+                if let Some(tx) = spent.remove(&point.txid) {
+                    return tx.output.get(point.vout as usize).cloned();
+                }
+                None
+            })
+            .unwrap();
 
         // test that we fail with repeated use of same input
         let mut double_spending = spending.clone();
         let re_use = double_spending.input[0].clone();
         double_spending.input.push(re_use);
 
-        assert!(double_spending.verify(|point: &OutPoint| {
-            if let Some(tx) = spent2.remove(&point.txid) {
-                return tx.output.get(point.vout as usize).cloned();
-            }
-            None
-        }).is_err());
+        assert!(
+            double_spending
+                .verify(|point: &OutPoint| {
+                    if let Some(tx) = spent2.remove(&point.txid) {
+                        return tx.output.get(point.vout as usize).cloned();
+                    }
+                    None
+                })
+                .is_err()
+        );
 
         // test that we get a failure if we corrupt a signature
         let mut witness: Vec<_> = spending.input[1].witness.to_vec();
         witness[0][10] = 42;
         spending.input[1].witness = Witness::from_slice(witness.as_slice());
-        match spending.verify(|point: &OutPoint| {
-            if let Some(tx) = spent3.remove(&point.txid) {
-                return tx.output.get(point.vout as usize).cloned();
-            }
-            None
-        }).err().unwrap() {
+        match spending
+            .verify(|point: &OutPoint| {
+                if let Some(tx) = spent3.remove(&point.txid) {
+                    return tx.output.get(point.vout as usize).cloned();
+                }
+                None
+            })
+            .err()
+            .unwrap()
+        {
             script::Error::BitcoinConsensus(_) => {}
             _ => panic!("Wrong error type"),
         }
@@ -1233,11 +1254,12 @@ mod tests {
 
 #[cfg(all(test, feature = "unstable"))]
 mod benches {
-    use super::Transaction;
     use EmptyWrite;
-    use consensus::{deserialize, Encodable};
+    use consensus::{Encodable, deserialize};
     use hashes::hex::FromHex;
-    use test::{black_box, Bencher};
+    use test::{Bencher, black_box};
+
+    use super::Transaction;
 
     const SOME_TX: &'static str = "0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000";
 

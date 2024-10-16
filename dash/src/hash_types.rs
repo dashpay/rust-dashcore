@@ -23,7 +23,6 @@
 //! hash).
 //!
 
-
 #[rustfmt::skip]
 macro_rules! impl_hashencode {
     ($hashtype:ident) => {

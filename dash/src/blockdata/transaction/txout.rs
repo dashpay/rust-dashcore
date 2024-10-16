@@ -20,9 +20,8 @@
 //! A TxOut is an output of a transaction.
 //!
 
-use crate::{PubkeyHash, ScriptBuf, VarInt};
-use crate::{Address, ScriptHash};
 use crate::internal_macros::impl_consensus_encoding;
+use crate::{Address, PubkeyHash, ScriptBuf, ScriptHash, VarInt};
 
 /// A transaction output, which defines new coins to be created from old ones.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
@@ -49,26 +48,17 @@ impl TxOut {
 
     /// Convenience method to get an output from an address
     pub fn new_from_address(value: u64, address: &Address) -> Self {
-        TxOut {
-            value,
-            script_pubkey: address.script_pubkey(),
-        }
+        TxOut { value, script_pubkey: address.script_pubkey() }
     }
 
     /// Convenience method to get an output from a pubkey hash
     pub fn new_from_p2pkh(value: u64, pubkey_hash: &PubkeyHash) -> Self {
-        TxOut {
-            value,
-            script_pubkey: ScriptBuf::new_p2pkh(pubkey_hash),
-        }
+        TxOut { value, script_pubkey: ScriptBuf::new_p2pkh(pubkey_hash) }
     }
 
     /// Convenience method to get an output from a script hash
     pub fn new_from_p2sh(value: u64, script_hash: &ScriptHash) -> Self {
-        TxOut {
-            value,
-            script_pubkey: ScriptBuf::new_p2sh(script_hash),
-        }
+        TxOut { value, script_pubkey: ScriptBuf::new_p2sh(script_hash) }
     }
 }
 

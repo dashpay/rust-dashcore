@@ -272,20 +272,12 @@ impl Witness {
 
     /// Returns the last element in the witness, if any.
     pub fn last(&self) -> Option<&[u8]> {
-        if self.witness_elements == 0 {
-            None
-        } else {
-            self.nth(self.witness_elements - 1)
-        }
+        if self.witness_elements == 0 { None } else { self.nth(self.witness_elements - 1) }
     }
 
     /// Returns the second-to-last element in the witness, if any.
     pub fn second_to_last(&self) -> Option<&[u8]> {
-        if self.witness_elements <= 1 {
-            None
-        } else {
-            self.nth(self.witness_elements - 2)
-        }
+        if self.witness_elements <= 1 { None } else { self.nth(self.witness_elements - 2) }
     }
 
     /// Return the nth element in the witness, if any
@@ -463,9 +455,9 @@ mod test {
     use secp256k1::ecdsa;
 
     use super::*;
+    use crate::Transaction;
     use crate::consensus::{deserialize, serialize};
     use crate::internal_macros::hex;
-    use crate::Transaction;
 
     fn append_u32_vec(mut v: Vec<u8>, n: &[u32]) -> Vec<u8> {
         for &num in n {
@@ -547,14 +539,15 @@ mod test {
     #[test]
     fn test_push_ecdsa_sig() {
         // The very first signature in block 734,958
-        let sig_bytes =
-            hex!("304402207c800d698f4b0298c5aac830b822f011bb02df41eb114ade9a6702f364d5e39c0220366900d2a60cab903e77ef7dd415d46509b1f78ac78906e3296f495aa1b1b541");
+        let sig_bytes = hex!(
+            "304402207c800d698f4b0298c5aac830b822f011bb02df41eb114ade9a6702f364d5e39c0220366900d2a60cab903e77ef7dd415d46509b1f78ac78906e3296f495aa1b1b541"
+        );
         let sig = ecdsa::Signature::from_der(&sig_bytes).unwrap();
         let mut witness = Witness::default();
         witness.push_bitcoin_signature(&sig.serialize_der(), EcdsaSighashType::All);
         let expected_witness = vec![hex!(
-            "304402207c800d698f4b0298c5aac830b822f011bb02df41eb114ade9a6702f364d5e39c0220366900d2a60cab903e77ef7dd415d46509b1f78ac78906e3296f495aa1b1b54101")
-            ];
+            "304402207c800d698f4b0298c5aac830b822f011bb02df41eb114ade9a6702f364d5e39c0220366900d2a60cab903e77ef7dd415d46509b1f78ac78906e3296f495aa1b1b54101"
+        )];
         assert_eq!(witness.to_vec(), expected_witness);
     }
 
@@ -621,7 +614,10 @@ mod test {
         let tx_bytes = hex!(S);
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
 
-        let expected_wit = ["304502210084622878c94f4c356ce49c8e33a063ec90f6ee9c0208540888cfab056cd1fca9022014e8dbfdfa46d318c6887afd92dcfa54510e057565e091d64d2ee3a66488f82c01", "026e181ffb98ebfe5a64c983073398ea4bcd1548e7b971b4c175346a25a1c12e95"];
+        let expected_wit = [
+            "304502210084622878c94f4c356ce49c8e33a063ec90f6ee9c0208540888cfab056cd1fca9022014e8dbfdfa46d318c6887afd92dcfa54510e057565e091d64d2ee3a66488f82c01",
+            "026e181ffb98ebfe5a64c983073398ea4bcd1548e7b971b4c175346a25a1c12e95",
+        ];
         for (i, wit_el) in tx.input[0].witness.iter().enumerate() {
             assert_eq!(expected_wit[i], wit_el.to_lower_hex_string());
         }
@@ -684,7 +680,7 @@ mod test {
 
 #[cfg(bench)]
 mod benches {
-    use test::{black_box, Bencher};
+    use test::{Bencher, black_box};
 
     use super::Witness;
 

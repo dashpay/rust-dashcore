@@ -20,30 +20,40 @@
 //! [dip-0002-special-transactions](https://github.com/dashpay/dips/blob/master/dip-0002-special-transactions.md)
 //!
 
-use core::fmt::{Debug, Display, Formatter};
 use core::convert::TryFrom;
-use crate::io;
+use core::fmt::{Debug, Display, Formatter};
+
+use crate::blockdata::transaction::special_transaction::TransactionPayload::{
+    AssetLockPayloadType, AssetUnlockPayloadType, CoinbasePayloadType,
+    ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType,
+    ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType,
+    QuorumCommitmentPayloadType,
+};
+use crate::blockdata::transaction::special_transaction::TransactionType::{
+    AssetLock, AssetUnlock, Classic, Coinbase, ProviderRegistration, ProviderUpdateRegistrar,
+    ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment,
+};
 use crate::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
-use crate::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
 use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
+use crate::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
 use crate::blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
 use crate::blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
 use crate::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
 use crate::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
 use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumCommitmentPayload;
-use crate::blockdata::transaction::special_transaction::TransactionPayload::{AssetLockPayloadType, AssetUnlockPayloadType, CoinbasePayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType, ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType, QuorumCommitmentPayloadType};
-use crate::blockdata::transaction::special_transaction::TransactionType::{AssetLock, Classic, Coinbase, AssetUnlock, ProviderRegistration, ProviderUpdateRegistrar, ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment};
-use crate::consensus::{Decodable, Encodable, encode, encode::VarInt};
-use crate::hash_types::{SpecialTransactionPayloadHash};
+use crate::consensus::encode::VarInt;
+use crate::consensus::{Decodable, Encodable, encode};
+use crate::hash_types::SpecialTransactionPayloadHash;
+use crate::io;
 
-pub mod provider_registration;
-pub mod provider_update_service;
-pub mod provider_update_registrar;
-pub mod provider_update_revocation;
-pub mod coinbase;
-pub mod quorum_commitment;
 pub mod asset_lock;
 pub mod asset_unlock;
+pub mod coinbase;
+pub mod provider_registration;
+pub mod provider_update_registrar;
+pub mod provider_update_revocation;
+pub mod provider_update_service;
+pub mod quorum_commitment;
 
 /// An enum wrapper around various special transaction payloads.
 /// Special transactions are defined in DIP 2.
@@ -66,20 +76,20 @@ pub enum TransactionPayload {
     /// A wrapper for an Asset Lock payload
     AssetLockPayloadType(AssetLockPayload),
     /// A wrapper for an Asset Unlock payload
-    AssetUnlockPayloadType(AssetUnlockPayload)
+    AssetUnlockPayloadType(AssetUnlockPayload),
 }
 
 impl Encodable for TransactionPayload {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         match self {
-            ProviderRegistrationPayloadType(p) => { p.consensus_encode(w)}
-            ProviderUpdateServicePayloadType(p) => { p.consensus_encode(w)}
-            ProviderUpdateRegistrarPayloadType(p) => {p.consensus_encode(w)}
-            ProviderUpdateRevocationPayloadType(p) => {p.consensus_encode(w)}
-            CoinbasePayloadType(p) => {p.consensus_encode(w)}
-            QuorumCommitmentPayloadType(p) => {p.consensus_encode(w)}
-            AssetLockPayloadType(p) => {p.consensus_encode(w)}
-            AssetUnlockPayloadType(p) => {p.consensus_encode(w)}
+            ProviderRegistrationPayloadType(p) => p.consensus_encode(w),
+            ProviderUpdateServicePayloadType(p) => p.consensus_encode(w),
+            ProviderUpdateRegistrarPayloadType(p) => p.consensus_encode(w),
+            ProviderUpdateRevocationPayloadType(p) => p.consensus_encode(w),
+            CoinbasePayloadType(p) => p.consensus_encode(w),
+            QuorumCommitmentPayloadType(p) => p.consensus_encode(w),
+            AssetLockPayloadType(p) => p.consensus_encode(w),
+            AssetUnlockPayloadType(p) => p.consensus_encode(w),
         }
     }
 }
@@ -88,14 +98,14 @@ impl TransactionPayload {
     /// Gets the Transaction Type for a Special Transaction Payload
     pub fn get_type(&self) -> TransactionType {
         match self {
-            ProviderRegistrationPayloadType(_) => { ProviderRegistration }
-            ProviderUpdateServicePayloadType(_) => { ProviderUpdateService }
-            ProviderUpdateRegistrarPayloadType(_) => { ProviderUpdateRegistrar }
-            ProviderUpdateRevocationPayloadType(_) => { ProviderUpdateRevocation }
-            CoinbasePayloadType(_) => { Coinbase }
-            QuorumCommitmentPayloadType(_) => { QuorumCommitment }
-            AssetLockPayloadType(_) => { AssetLock }
-            AssetUnlockPayloadType(_) => { AssetUnlock }
+            ProviderRegistrationPayloadType(_) => ProviderRegistration,
+            ProviderUpdateServicePayloadType(_) => ProviderUpdateService,
+            ProviderUpdateRegistrarPayloadType(_) => ProviderUpdateRegistrar,
+            ProviderUpdateRevocationPayloadType(_) => ProviderUpdateRevocation,
+            CoinbasePayloadType(_) => Coinbase,
+            QuorumCommitmentPayloadType(_) => QuorumCommitment,
+            AssetLockPayloadType(_) => AssetLock,
+            AssetUnlockPayloadType(_) => AssetUnlock,
         }
     }
 
@@ -103,25 +113,30 @@ impl TransactionPayload {
     pub fn len(&self) -> usize {
         // 1 byte is the size of the special transaction type
         1 + match self {
-            ProviderRegistrationPayloadType(p) => { p.size()}
-            ProviderUpdateServicePayloadType(p) => { p.size() }
-            ProviderUpdateRegistrarPayloadType(p) => {p.size() }
-            ProviderUpdateRevocationPayloadType(p) => {p.size()}
-            CoinbasePayloadType(p) => {p.size()}
-            QuorumCommitmentPayloadType(p) => {p.size()}
-            AssetLockPayloadType(p) => {p.size()}
-            AssetUnlockPayloadType(p) => {p.size()}
+            ProviderRegistrationPayloadType(p) => p.size(),
+            ProviderUpdateServicePayloadType(p) => p.size(),
+            ProviderUpdateRegistrarPayloadType(p) => p.size(),
+            ProviderUpdateRevocationPayloadType(p) => p.size(),
+            CoinbasePayloadType(p) => p.size(),
+            QuorumCommitmentPayloadType(p) => p.size(),
+            AssetLockPayloadType(p) => p.size(),
+            AssetUnlockPayloadType(p) => p.size(),
         }
     }
 
     /// Convenience method that assumes the payload to be a provider registration payload to get it
     /// easier.
     /// Errors if it is not a provider registration payload.
-    pub fn to_provider_registration_payload(self) -> Result<ProviderRegistrationPayload, encode::Error> {
+    pub fn to_provider_registration_payload(
+        self,
+    ) -> Result<ProviderRegistrationPayload, encode::Error> {
         if let ProviderRegistrationPayloadType(payload) = self {
             Ok(payload)
         } else {
-            Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: ProviderRegistration, actual: self.get_type() })
+            Err(encode::Error::WrongSpecialTransactionPayloadConversion {
+                expected: ProviderRegistration,
+                actual: self.get_type(),
+            })
         }
     }
 
@@ -132,29 +147,42 @@ impl TransactionPayload {
         if let ProviderUpdateServicePayloadType(payload) = self {
             Ok(payload)
         } else {
-            Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: ProviderUpdateService, actual: self.get_type() })
+            Err(encode::Error::WrongSpecialTransactionPayloadConversion {
+                expected: ProviderUpdateService,
+                actual: self.get_type(),
+            })
         }
     }
 
     /// Convenience method that assumes the payload to be a provider update registrar payload to get it
     /// easier.
     /// Errors if it is not a provider update registrar payload.
-    pub fn to_update_registrar_payload(self) -> Result<ProviderUpdateRegistrarPayload, encode::Error> {
+    pub fn to_update_registrar_payload(
+        self,
+    ) -> Result<ProviderUpdateRegistrarPayload, encode::Error> {
         if let ProviderUpdateRegistrarPayloadType(payload) = self {
             Ok(payload)
         } else {
-            Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: ProviderUpdateRegistrar, actual: self.get_type() })
+            Err(encode::Error::WrongSpecialTransactionPayloadConversion {
+                expected: ProviderUpdateRegistrar,
+                actual: self.get_type(),
+            })
         }
     }
 
     /// Convenience method that assumes the payload to be a provider update revocation payload to get it
     /// easier.
     /// Errors if it is not a provider update revocation payload.
-    pub fn to_update_revocation_payload(self) -> Result<ProviderUpdateRevocationPayload, encode::Error> {
+    pub fn to_update_revocation_payload(
+        self,
+    ) -> Result<ProviderUpdateRevocationPayload, encode::Error> {
         if let ProviderUpdateRevocationPayloadType(payload) = self {
             Ok(payload)
         } else {
-            Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: ProviderUpdateRevocation, actual: self.get_type() })
+            Err(encode::Error::WrongSpecialTransactionPayloadConversion {
+                expected: ProviderUpdateRevocation,
+                actual: self.get_type(),
+            })
         }
     }
 
@@ -165,7 +193,10 @@ impl TransactionPayload {
         if let CoinbasePayloadType(payload) = self {
             Ok(payload)
         } else {
-            Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: Coinbase, actual: self.get_type() })
+            Err(encode::Error::WrongSpecialTransactionPayloadConversion {
+                expected: Coinbase,
+                actual: self.get_type(),
+            })
         }
     }
 
@@ -176,7 +207,10 @@ impl TransactionPayload {
         if let QuorumCommitmentPayloadType(payload) = self {
             Ok(payload)
         } else {
-            Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: QuorumCommitment, actual: self.get_type() })
+            Err(encode::Error::WrongSpecialTransactionPayloadConversion {
+                expected: QuorumCommitment,
+                actual: self.get_type(),
+            })
         }
     }
 
@@ -187,7 +221,10 @@ impl TransactionPayload {
         if let AssetLockPayloadType(payload) = self {
             Ok(payload)
         } else {
-            Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: AssetLock, actual: self.get_type() })
+            Err(encode::Error::WrongSpecialTransactionPayloadConversion {
+                expected: AssetLock,
+                actual: self.get_type(),
+            })
         }
     }
 
@@ -198,7 +235,10 @@ impl TransactionPayload {
         if let AssetUnlockPayloadType(payload) = self {
             Ok(payload)
         } else {
-            Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: AssetLock, actual: self.get_type() })
+            Err(encode::Error::WrongSpecialTransactionPayloadConversion {
+                expected: AssetLock,
+                actual: self.get_type(),
+            })
         }
     }
 }
@@ -277,7 +317,7 @@ impl TryFrom<u16> for TransactionType {
             6 => Ok(QuorumCommitment),
             8 => Ok(AssetLock),
             9 => Ok(AssetUnlock),
-            _ => Err(encode::Error::UnknownSpecialTransactionType(value))
+            _ => Err(encode::Error::UnknownSpecialTransactionType(value)),
         }
     }
 }
@@ -294,28 +334,40 @@ impl TransactionType {
     /// If the payload in None then we have a Classical Transaction
     pub fn from_optional_payload(payload: &Option<TransactionPayload>) -> Self {
         match payload {
-            None => { Classic}
-            Some(payload) => { payload.get_type()}
+            None => Classic,
+            Some(payload) => payload.get_type(),
         }
     }
 
     /// Decodes the payload based on the transaction type.
-    pub fn consensus_decode<R: io::Read + ?Sized>(self, d: &mut R) -> Result<Option<TransactionPayload>, encode::Error> {
+    pub fn consensus_decode<R: io::Read + ?Sized>(
+        self,
+        d: &mut R,
+    ) -> Result<Option<TransactionPayload>, encode::Error> {
         let _len = match self {
-            Classic => { VarInt(0) }
-            _ => VarInt::consensus_decode(d)?
+            Classic => VarInt(0),
+            _ => VarInt::consensus_decode(d)?,
         };
 
         Ok(match self {
-            Classic => { None }
-            ProviderRegistration => { Some(ProviderRegistrationPayloadType(ProviderRegistrationPayload::consensus_decode(d)?))}
-            ProviderUpdateService => { Some(ProviderUpdateServicePayloadType(ProviderUpdateServicePayload::consensus_decode(d)?))}
-            ProviderUpdateRegistrar => { Some(ProviderUpdateRegistrarPayloadType(ProviderUpdateRegistrarPayload::consensus_decode(d)?))}
-            ProviderUpdateRevocation => { Some(ProviderUpdateRevocationPayloadType(ProviderUpdateRevocationPayload::consensus_decode(d)?))}
-            Coinbase => { Some(CoinbasePayloadType(CoinbasePayload::consensus_decode(d)?))}
-            QuorumCommitment => { Some(QuorumCommitmentPayloadType(QuorumCommitmentPayload::consensus_decode(d)?))}
-            AssetLock => { Some(AssetLockPayloadType(AssetLockPayload::consensus_decode(d)?))}
-            AssetUnlock => { Some(AssetUnlockPayloadType(AssetUnlockPayload::consensus_decode(d)?))}
+            Classic => None,
+            ProviderRegistration => Some(ProviderRegistrationPayloadType(
+                ProviderRegistrationPayload::consensus_decode(d)?,
+            )),
+            ProviderUpdateService => Some(ProviderUpdateServicePayloadType(
+                ProviderUpdateServicePayload::consensus_decode(d)?,
+            )),
+            ProviderUpdateRegistrar => Some(ProviderUpdateRegistrarPayloadType(
+                ProviderUpdateRegistrarPayload::consensus_decode(d)?,
+            )),
+            ProviderUpdateRevocation => Some(ProviderUpdateRevocationPayloadType(
+                ProviderUpdateRevocationPayload::consensus_decode(d)?,
+            )),
+            Coinbase => Some(CoinbasePayloadType(CoinbasePayload::consensus_decode(d)?)),
+            QuorumCommitment =>
+                Some(QuorumCommitmentPayloadType(QuorumCommitmentPayload::consensus_decode(d)?)),
+            AssetLock => Some(AssetLockPayloadType(AssetLockPayload::consensus_decode(d)?)),
+            AssetUnlock => Some(AssetUnlockPayloadType(AssetUnlockPayload::consensus_decode(d)?)),
         })
     }
 }

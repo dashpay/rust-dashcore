@@ -20,14 +20,15 @@
 //! An outpoint is a reference to one of the indexed destinations of a transaction.
 //!
 
-use hashes::{self, Hash};
-
+use core::fmt;
 #[cfg(feature = "std")]
 use std::error;
-use core::fmt;
-use crate::io;
-use crate::consensus::{Decodable, deserialize, Encodable, encode};
+
+use hashes::{self, Hash};
+
+use crate::consensus::{Decodable, Encodable, deserialize, encode};
 use crate::hash_types::Txid;
+use crate::io;
 
 /// A reference to a transaction output.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -67,20 +68,13 @@ impl From<OutPoint> for [u8; 36] {
 impl OutPoint {
     /// Creates a new [`OutPoint`].
     #[inline]
-    pub fn new(txid: Txid, vout: u32) -> OutPoint {
-        OutPoint { txid, vout }
-    }
+    pub fn new(txid: Txid, vout: u32) -> OutPoint { OutPoint { txid, vout } }
 
     /// Creates a "null" `OutPoint`.
     ///
     /// This value is used for coinbase transactions because they don't have any previous outputs.
     #[inline]
-    pub fn null() -> OutPoint {
-        OutPoint {
-            txid: Hash::all_zeros(),
-            vout: u32::MAX,
-        }
-    }
+    pub fn null() -> OutPoint { OutPoint { txid: Hash::all_zeros(), vout: u32::MAX } }
 
     /// Checks if an `OutPoint` is "null".
     ///
@@ -97,15 +91,11 @@ impl OutPoint {
     /// assert!(tx.input[0].previous_output.is_null());
     /// ```
     #[inline]
-    pub fn is_null(&self) -> bool {
-        *self == OutPoint::null()
-    }
+    pub fn is_null(&self) -> bool { *self == OutPoint::null() }
 }
 
 impl Default for OutPoint {
-    fn default() -> Self {
-        OutPoint::null()
-    }
+    fn default() -> Self { OutPoint::null() }
 }
 
 impl fmt::Display for OutPoint {
@@ -187,7 +177,8 @@ impl fmt::Display for ParseOutPointError {
             ParseOutPointError::Vout(ref e) => write!(f, "error parsing vout: {}", e),
             ParseOutPointError::Format => write!(f, "OutPoint not in <txid>:<vout> format"),
             ParseOutPointError::TooLong => write!(f, "vout should be at most 10 digits"),
-            ParseOutPointError::VoutNotCanonical => write!(f, "no leading zeroes or + allowed in vout part"),
+            ParseOutPointError::VoutNotCanonical =>
+                write!(f, "no leading zeroes or + allowed in vout part"),
         }
     }
 }
@@ -218,9 +209,10 @@ fn parse_vout(s: &str) -> Result<u32, ParseOutPointError> {
 #[cfg(test)]
 mod tests {
     use core::str::FromStr;
-    use crate::internal_macros::hex;
-    use crate::Transaction;
+
     use super::*;
+    use crate::Transaction;
+    use crate::internal_macros::hex;
 
     #[test]
     fn test_outpoint() {

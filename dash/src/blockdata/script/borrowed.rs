@@ -16,7 +16,7 @@ use crate::blockdata::opcodes::{self};
 #[cfg(feature = "bitcoinconsensus")]
 use crate::blockdata::script::Error;
 use crate::blockdata::script::{
-    bytes_to_asm_fmt, Builder, Instruction, InstructionIndices, Instructions, ScriptBuf,
+    Builder, Instruction, InstructionIndices, Instructions, ScriptBuf, bytes_to_asm_fmt,
 };
 use crate::consensus::Encodable;
 use crate::hash_types::{ScriptHash, WScriptHash};
@@ -202,13 +202,8 @@ impl Script {
     /// Returns the public key hash if this script is P2PKH.
     #[inline]
     pub fn p2pkh_public_key_hash_bytes(&self) -> Option<&[u8]> {
-        if self.is_p2pkh() {
-            Some(&self.0[3..23])
-        } else {
-            None
-        }
+        if self.is_p2pkh() { Some(&self.0[3..23]) } else { None }
     }
-
 
     /// Returns the public key if this script is P2PK with a **valid** public key.
     ///

@@ -21,9 +21,11 @@
 //! of Bitcoin data and network messages.
 //!
 
-use crate::io;
 use core::fmt;
-#[cfg(feature = "std")] use std::error;
+#[cfg(feature = "std")]
+use std::error;
+
+use crate::io;
 
 pub mod constants;
 
@@ -38,11 +40,11 @@ pub mod message_blockdata;
 #[cfg(feature = "std")]
 pub mod message_bloom;
 #[cfg(feature = "std")]
-pub mod message_network;
+pub mod message_compact_blocks;
 #[cfg(feature = "std")]
 pub mod message_filter;
 #[cfg(feature = "std")]
-pub mod message_compact_blocks;
+pub mod message_network;
 
 /// Network error
 #[derive(Debug)]
@@ -67,9 +69,7 @@ impl fmt::Display for Error {
 
 #[doc(hidden)]
 impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Self {
-        Error::Io(err)
-    }
+    fn from(err: io::Error) -> Self { Error::Io(err) }
 }
 
 #[cfg(feature = "std")]

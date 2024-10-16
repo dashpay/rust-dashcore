@@ -92,7 +92,7 @@ mod benches {
     use test::Bencher;
 
     use crate::cmp::fixed_time_eq;
-    use crate::{sha256, sha512, Hash};
+    use crate::{Hash, sha256, sha512};
 
     #[bench]
     fn bench_32b_constant_time_cmp_ne(bh: &mut Bencher) {

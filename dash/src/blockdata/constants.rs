@@ -9,6 +9,7 @@
 //!
 
 use core::default::Default;
+
 use hashes::{Hash, sha256d};
 use hex_lit::hex;
 use internals::impl_array_newtype;
@@ -17,7 +18,10 @@ use crate::blockdata::block::{self, Block};
 use crate::blockdata::locktime::absolute;
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::script;
-use crate::blockdata::transaction::{outpoint::OutPoint, Transaction, txin::TxIn, txout::TxOut};
+use crate::blockdata::transaction::Transaction;
+use crate::blockdata::transaction::outpoint::OutPoint;
+use crate::blockdata::transaction::txin::TxIn;
+use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
 use crate::internal_macros::impl_bytes_newtype;
 use crate::network::constants::Network;
@@ -91,7 +95,9 @@ fn bitcoin_genesis_tx() -> Transaction {
     });
 
     // Outputs
-    let script_bytes = hex!("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f");
+    let script_bytes = hex!(
+        "04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f"
+    );
     let out_script =
         script::Builder::new().push_slice(script_bytes).push_opcode(OP_CHECKSIG).into_script();
     ret.output.push(TxOut { value: 50 * COIN_VALUE, script_pubkey: out_script });
@@ -163,19 +169,23 @@ impl ChainHash {
     // Mainnet value can be verified at https://github.com/lightning/bolts/blob/master/00-introduction.md
     /// `ChainHash` for mainnet dash.
     pub const DASH: Self = Self([
-        4, 56, 21, 192, 10, 42, 23, 242, 90, 219, 163, 1, 98, 89, 58, 167, 5, 4, 25, 91, 183, 218, 230, 227, 167, 85, 39, 96, 51, 189, 13, 217
+        4, 56, 21, 192, 10, 42, 23, 242, 90, 219, 163, 1, 98, 89, 58, 167, 5, 4, 25, 91, 183, 218,
+        230, 227, 167, 85, 39, 96, 51, 189, 13, 217,
     ]);
     /// `ChainHash` for testnet dash.
     pub const TESTNET: Self = Self([
-        16, 238, 202, 52, 44, 112, 187, 96, 147, 134, 134, 75, 156, 55, 90, 205, 70, 74, 202, 97, 112, 87, 40, 133, 32, 84, 236, 123, 183, 28, 220, 240
+        16, 238, 202, 52, 44, 112, 187, 96, 147, 134, 134, 75, 156, 55, 90, 205, 70, 74, 202, 97,
+        112, 87, 40, 133, 32, 84, 236, 123, 183, 28, 220, 240,
     ]);
     /// `ChainHash` for devnet dash.
     pub const DEVNET: Self = Self([
-        164, 119, 85, 190, 121, 37, 150, 111, 131, 181, 177, 164, 204, 209, 202, 105, 29, 197, 235, 240, 250, 179, 224, 6, 46, 238, 40, 136, 23, 215, 12, 88
+        164, 119, 85, 190, 121, 37, 150, 111, 131, 181, 177, 164, 204, 209, 202, 105, 29, 197, 235,
+        240, 250, 179, 224, 6, 46, 238, 40, 136, 23, 215, 12, 88,
     ]);
     /// `ChainHash` for regtest dash.
     pub const REGTEST: Self = Self([
-        16, 251, 76, 138, 72, 44, 63, 251, 228, 123, 87, 245, 131, 191, 84, 111, 117, 107, 92, 205, 105, 10, 247, 249, 131, 113, 112, 200, 29, 102, 142, 242
+        16, 251, 76, 138, 72, 44, 63, 251, 228, 123, 87, 245, 131, 191, 84, 111, 117, 107, 92, 205,
+        105, 10, 247, 249, 131, 113, 112, 200, 29, 102, 142, 242,
     ]);
 
     /// Returns the hash of the `network` genesis block for use as a chain hash.
@@ -208,13 +218,21 @@ mod test {
         assert_eq!(gen.input.len(), 1);
         assert_eq!(gen.input[0].previous_output.txid, Hash::all_zeros());
         assert_eq!(gen.input[0].previous_output.vout, 0xFFFFFFFF);
-        assert_eq!(serialize(&gen.input[0].script_sig),
-                   hex!("4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73"));
+        assert_eq!(
+            serialize(&gen.input[0].script_sig),
+            hex!(
+                "4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73"
+            )
+        );
 
         assert_eq!(gen.input[0].sequence, u32::MAX);
         assert_eq!(gen.output.len(), 1);
-        assert_eq!(serialize(&gen.output[0].script_pubkey),
-                   hex!("434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac"));
+        assert_eq!(
+            serialize(&gen.output[0].script_pubkey),
+            hex!(
+                "434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac"
+            )
+        );
         assert_eq!(gen.output[0].value, 50 * COIN_VALUE);
         assert_eq!(gen.lock_time, 0);
 
@@ -299,7 +317,9 @@ mod test {
             Network::Testnet => {}
             Network::Devnet => {}
             Network::Regtest => {}
-            _ => panic!("Update ChainHash::using_genesis_block and chain_hash_genesis_block with new variants"),
+            _ => panic!(
+                "Update ChainHash::using_genesis_block and chain_hash_genesis_block with new variants"
+            ),
         }
     }
 

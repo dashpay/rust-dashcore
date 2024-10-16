@@ -2,19 +2,19 @@
 //! confirm transaction within 1 or 2 seconds. This data structure
 //! represents a p2p message containing a data to verify such a lock.
 
-use crate::io;
-
 #[cfg(all(not(feature = "std"), not(test)))]
 use alloc::vec::Vec;
 use core::fmt::{Debug, Formatter};
 #[cfg(any(feature = "std", test))]
 pub use std::vec::Vec;
+
 use hashes::{Hash, HashEngine};
-use crate::hash_types::{CycleHash, QuorumSigningRequestId};
-use crate::{OutPoint, Txid, VarInt};
+
 use crate::bls_sig_utils::BLSSignature;
-use crate::consensus::{Encodable};
+use crate::consensus::Encodable;
+use crate::hash_types::{CycleHash, QuorumSigningRequestId};
 use crate::internal_macros::impl_consensus_encoding;
+use crate::{OutPoint, Txid, VarInt, io};
 
 const IS_LOCK_REQUEST_ID_PREFIX: &str = "islock";
 
@@ -75,7 +75,8 @@ impl InstantLock {
 
 impl Debug for InstantLock {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> core::fmt::Result {
-        formatter.debug_struct("InstantLock")
+        formatter
+            .debug_struct("InstantLock")
             .field("version", &self.version)
             .field("inputs", &format_args!("{:?}", self.inputs))
             .field("txid", &format_args!("{}", self.txid))
@@ -117,7 +118,10 @@ mod tests {
 
         // TODO: check outpoints
 
-        assert_eq!(is_lock.cyclehash.to_string(), "7c30826123d0f29fe4c4a8895d7ba4eb469b1fafa6ad7b23896a1a591766a536");
+        assert_eq!(
+            is_lock.cyclehash.to_string(),
+            "7c30826123d0f29fe4c4a8895d7ba4eb469b1fafa6ad7b23896a1a591766a536"
+        );
 
         let serialized = serialize(&is_lock);
         assert_eq!(serialized, vec);
@@ -128,7 +132,8 @@ mod tests {
         let hex = "010101102862a43d122e6675aba4b507ae307af8e1e17febc77907e08b3efa28f41b000000004b446de00a592c67402c0a65649f4ad69f29084b3e9054f5aa6b85a50b497fe136a56617591a6a89237bada6af1f9b46eba47b5d89a8c4e49ff2d0236182307c85e12d70ca7118c5034004f93e45384079f46c6c2928b45cfc5d3ad640e70dfd87a9a3069899adfb3b1622daeeead19809b74354272ccf95290678f55c13728e3c5ee8f8417fcce3dfdca2a7c9c33ec981abdff1ec35a2e4b558c3698f01c1b8";
         let vec = hex!(hex);
 
-        let expected_request_id = "495be44677e82895a9396fef02c6e9afc1f01d4aff70622b9f78e0e10d57064c";
+        let expected_request_id =
+            "495be44677e82895a9396fef02c6e9afc1f01d4aff70622b9f78e0e10d57064c";
 
         let is_lock: InstantLock = deserialize(vec.as_slice()).unwrap();
 

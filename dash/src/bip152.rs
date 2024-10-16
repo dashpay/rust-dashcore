@@ -10,13 +10,13 @@ use core::{convert, fmt, mem};
 #[cfg(feature = "std")]
 use std::error;
 
-use hashes::{sha256, siphash24, Hash};
+use hashes::{Hash, sha256, siphash24};
 use internals::impl_array_newtype;
 
 use crate::consensus::encode::{self, Decodable, Encodable, VarInt};
 use crate::internal_macros::{impl_bytes_newtype, impl_consensus_encoding};
 use crate::prelude::*;
-use crate::{block, io, Block, BlockHash, Transaction};
+use crate::{Block, BlockHash, Transaction, block, io};
 
 /// A BIP-152 error
 #[derive(Clone, PartialEq, Eq, Debug, Copy, PartialOrd, Ord, Hash)]
@@ -372,16 +372,18 @@ impl BlockTransactions {
 #[cfg(test)]
 mod test {
     use hashes::hex::FromHex;
-    use crate::blockdata::script::ScriptBuf;
-    use crate::blockdata::transaction::{Transaction, txin::TxIn, txout::TxOut, outpoint::OutPoint};
 
     use super::*;
     use crate::blockdata::locktime::absolute;
-    use crate::consensus::encode::{deserialize, serialize};
-    use crate::hash_types::TxMerkleNode;
-    use crate::pow::CompactTarget;
+    use crate::blockdata::script::ScriptBuf;
+    use crate::blockdata::transaction::Transaction;
+    use crate::blockdata::transaction::outpoint::OutPoint;
+    use crate::blockdata::transaction::txin::TxIn;
+    use crate::blockdata::transaction::txout::TxOut;
     use crate::blockdata::witness::Witness;
-    use crate::hash_types::{Txid};
+    use crate::consensus::encode::{deserialize, serialize};
+    use crate::hash_types::{TxMerkleNode, Txid};
+    use crate::pow::CompactTarget;
 
     fn dummy_tx(nonce: &[u8]) -> Transaction {
         Transaction {

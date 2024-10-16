@@ -36,12 +36,13 @@
 
 //! The special transaction type used for Provider Update Revoking Transactions is 4.
 
-use crate::io;
 use hashes::Hash;
+
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, SpecialTransactionPayloadHash, Txid};
+use crate::io;
 
 /// A Provider Update Revocation Payload used in a Provider Update Revocation Special Transaction.
 /// This is used to signal and stop a Masternode from the operator.
@@ -59,9 +60,7 @@ pub struct ProviderUpdateRevocationPayload {
 
 impl ProviderUpdateRevocationPayload {
     /// The size of the payload in bytes.
-    pub fn size(&self) -> usize {
-        2 + 32 + 2 + 32 + 96
-    }
+    pub fn size(&self) -> usize { 2 + 32 + 2 + 32 + 96 }
 }
 
 impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRevocationPayload {
@@ -111,11 +110,12 @@ impl Decodable for ProviderUpdateRevocationPayload {
 #[cfg(test)]
 mod tests {
     use hashes::Hash;
+
+    use crate::Txid;
     use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::Encodable;
     use crate::hash_types::InputsHash;
     use crate::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
-    use crate::Txid;
 
     #[test]
     fn size() {

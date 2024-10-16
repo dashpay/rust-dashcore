@@ -174,7 +174,11 @@ impl fmt::Display for ParseAmountError {
                     // This panic could be avoided by adding enum ConfusingDenomination { Mega, Peta } but is it worth it?
                     _ => panic!("invalid error information"),
                 };
-                write!(f, "the '{}' at the beginning of {} should technically mean '{}' but that denomination is uncommon and maybe '{}' was intended", letter, d, upper, lower)
+                write!(
+                    f,
+                    "the '{}' at the beginning of {} should technically mean '{}' but that denomination is uncommon and maybe '{}' was intended",
+                    letter, d, upper, lower
+                )
             }
         }
     }
@@ -1127,8 +1131,8 @@ pub trait CheckedSum<R>: private::SumSeal<R> {
 }
 
 impl<T> CheckedSum<Amount> for T
-    where
-        T: Iterator<Item = Amount>,
+where
+    T: Iterator<Item = Amount>,
 {
     fn checked_sum(mut self) -> Option<Amount> {
         let first = Some(self.next().unwrap_or_default());
@@ -1138,8 +1142,8 @@ impl<T> CheckedSum<Amount> for T
 }
 
 impl<T> CheckedSum<SignedAmount> for T
-    where
-        T: Iterator<Item = SignedAmount>,
+where
+    T: Iterator<Item = SignedAmount>,
 {
     fn checked_sum(mut self) -> Option<SignedAmount> {
         let first = Some(self.next().unwrap_or_default());
@@ -1283,7 +1287,7 @@ pub mod serde {
             use core::fmt;
             use core::marker::PhantomData;
 
-            use serde::{de, Deserializer, Serializer};
+            use serde::{Deserializer, Serializer, de};
 
             use crate::amount::serde::SerdeAmountForOpt;
 
@@ -1310,14 +1314,14 @@ pub mod serde {
                     }
 
                     fn visit_none<E>(self) -> Result<Self::Value, E>
-                        where
-                            E: de::Error,
+                    where
+                        E: de::Error,
                     {
                         Ok(None)
                     }
                     fn visit_some<D>(self, d: D) -> Result<Self::Value, D::Error>
-                        where
-                            D: Deserializer<'de>,
+                    where
+                        D: Deserializer<'de>,
                     {
                         Ok(Some(X::des_sat(d)?))
                     }
@@ -1350,7 +1354,7 @@ pub mod serde {
             use core::fmt;
             use core::marker::PhantomData;
 
-            use serde::{de, Deserializer, Serializer};
+            use serde::{Deserializer, Serializer, de};
 
             use crate::amount::serde::SerdeAmountForOpt;
 
@@ -1377,14 +1381,14 @@ pub mod serde {
                     }
 
                     fn visit_none<E>(self) -> Result<Self::Value, E>
-                        where
-                            E: de::Error,
+                    where
+                        E: de::Error,
                     {
                         Ok(None)
                     }
                     fn visit_some<D>(self, d: D) -> Result<Self::Value, D::Error>
-                        where
-                            D: Deserializer<'de>,
+                    where
+                        D: Deserializer<'de>,
                     {
                         Ok(Some(X::des_btc(d)?))
                     }
@@ -1988,10 +1992,7 @@ mod tests {
             ua_str(&ua_sat(21_000_000).to_string_in(D::Bit), D::Bit),
             Ok(ua_sat(21_000_000))
         );
-        assert_eq!(
-            ua_str(&ua_sat(1).to_string_in(D::MicroDash), D::MicroDash),
-            Ok(ua_sat(1))
-        );
+        assert_eq!(ua_str(&ua_sat(1).to_string_in(D::MicroDash), D::MicroDash), Ok(ua_sat(1)));
         assert_eq!(
             ua_str(&ua_sat(1_000_000_000_000).to_string_in(D::MilliDash), D::MilliDash),
             Ok(ua_sat(1_000_000_000_000))
@@ -2001,10 +2002,7 @@ mod tests {
             Err(ParseAmountError::TooBig)
         );
 
-        assert_eq!(
-            sa_str(&sa_sat(-1).to_string_in(D::MicroDash), D::MicroDash),
-            Ok(sa_sat(-1))
-        );
+        assert_eq!(sa_str(&sa_sat(-1).to_string_in(D::MicroDash), D::MicroDash), Ok(sa_sat(-1)));
 
         assert_eq!(
             sa_str(&sa_sat(i64::max_value()).to_string_in(D::Satoshi), D::MicroDash),
@@ -2016,10 +2014,7 @@ mod tests {
             Err(ParseAmountError::TooBig)
         );
 
-        assert_eq!(
-            sa_str(&sa_sat(-1).to_string_in(D::NanoDash), D::NanoDash),
-            Ok(sa_sat(-1))
-        );
+        assert_eq!(sa_str(&sa_sat(-1).to_string_in(D::NanoDash), D::NanoDash), Ok(sa_sat(-1)));
         assert_eq!(
             sa_str(&sa_sat(i64::max_value()).to_string_in(D::Satoshi), D::NanoDash),
             Err(ParseAmountError::TooPrecise)
@@ -2029,10 +2024,7 @@ mod tests {
             Err(ParseAmountError::TooPrecise)
         );
 
-        assert_eq!(
-            sa_str(&sa_sat(-1).to_string_in(D::PicoDash), D::PicoDash),
-            Ok(sa_sat(-1))
-        );
+        assert_eq!(sa_str(&sa_sat(-1).to_string_in(D::PicoDash), D::PicoDash), Ok(sa_sat(-1)));
         assert_eq!(
             sa_str(&sa_sat(i64::max_value()).to_string_in(D::Satoshi), D::PicoDash),
             Err(ParseAmountError::TooPrecise)

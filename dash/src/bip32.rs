@@ -21,23 +21,26 @@
 //! at <https://github.com/Dash/bips/blob/master/bip-0032.mediawiki>.
 //!
 
-use crate::prelude::*;
-
-use core::{fmt, str::FromStr, default::Default};
+use core::default::Default;
+use core::fmt;
 use core::ops::Index;
-#[cfg(feature = "std")] use std::error;
-#[cfg(feature = "serde")] use serde;
+use core::str::FromStr;
+#[cfg(feature = "std")]
+use std::error;
 
-use crate::hash_types::XpubIdentifier;
-use hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine, hex};
+use hashes::{Hash, HashEngine, Hmac, HmacEngine, hex, sha512};
+use internals::impl_array_newtype;
 use secp256k1::{self, Secp256k1, XOnlyPublicKey};
+#[cfg(feature = "serde")]
+use serde;
 
-use crate::network::constants::Network;
 use crate::base58;
 use crate::crypto::key::{self, KeyPair, PrivateKey, PublicKey};
+use crate::hash_types::XpubIdentifier;
 use crate::internal_macros::impl_bytes_newtype;
-use internals::{impl_array_newtype};
 use crate::io::Write;
+use crate::network::constants::Network;
+use crate::prelude::*;
 
 /// A chain code
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -72,7 +75,7 @@ pub struct ExtendedPrivKey {
     /// Private key
     pub private_key: secp256k1::SecretKey,
     /// Chain code
-    pub chain_code: ChainCode
+    pub chain_code: ChainCode,
 }
 #[cfg(feature = "serde")]
 crate::serde_utils::serde_string_impl!(ExtendedPrivKey, "a BIP-32 extended private key");
@@ -105,7 +108,7 @@ pub struct ExtendedPubKey {
     /// Public key
     pub public_key: secp256k1::PublicKey,
     /// Chain code
-    pub chain_code: ChainCode
+    pub chain_code: ChainCode,
 }
 #[cfg(feature = "serde")]
 crate::serde_utils::serde_string_impl!(ExtendedPubKey, "a BIP-32 extended public key");
@@ -116,12 +119,12 @@ pub enum ChildNumber {
     /// Non-hardened key
     Normal {
         /// Key index, within [0, 2^31 - 1]
-        index: u32
+        index: u32,
     },
     /// Hardened key
     Hardened {
         /// Key index, within [0, 2^31 - 1]
-        index: u32
+        index: u32,
     },
 }
 
@@ -153,25 +156,23 @@ impl ChildNumber {
     /// Returns `true` if the child number is a [`Normal`] value.
     ///
     /// [`Normal`]: #variant.Normal
-    pub fn is_normal(&self) -> bool {
-        !self.is_hardened()
-    }
+    pub fn is_normal(&self) -> bool { !self.is_hardened() }
 
     /// Returns `true` if the child number is a [`Hardened`] value.
     ///
     /// [`Hardened`]: #variant.Hardened
     pub fn is_hardened(&self) -> bool {
         match self {
-            ChildNumber::Hardened {..} => true,
-            ChildNumber::Normal {..} => false,
+            ChildNumber::Hardened { .. } => true,
+            ChildNumber::Normal { .. } => false,
         }
     }
 
     /// Returns the child number that is a single increment from this one.
     pub fn increment(self) -> Result<ChildNumber, Error> {
         match self {
-            ChildNumber::Normal{ index: idx } => ChildNumber::from_normal_idx(idx+1),
-            ChildNumber::Hardened{ index: idx } => ChildNumber::from_hardened_idx(idx+1),
+            ChildNumber::Normal { index: idx } => ChildNumber::from_normal_idx(idx + 1),
+            ChildNumber::Hardened { index: idx } => ChildNumber::from_hardened_idx(idx + 1),
         }
     }
 }
@@ -202,7 +203,7 @@ impl fmt::Display for ChildNumber {
                 fmt::Display::fmt(&index, f)?;
                 let alt = f.alternate();
                 f.write_str(if alt { "h" } else { "'" })
-            },
+            }
             ChildNumber::Normal { index } => fmt::Display::fmt(&index, f),
         }
     }
@@ -214,7 +215,9 @@ impl FromStr for ChildNumber {
     fn from_str(inp: &str) -> Result<ChildNumber, Error> {
         let is_hardened = inp.chars().last().map_or(false, |l| l == '\'' || l == 'h');
         Ok(if is_hardened {
-            ChildNumber::from_hardened_idx(inp[0..inp.len() - 1].parse().map_err(|_| Error::InvalidChildNumberFormat)?)?
+            ChildNumber::from_hardened_idx(
+                inp[0..inp.len() - 1].parse().map_err(|_| Error::InvalidChildNumberFormat)?,
+            )?
         } else {
             ChildNumber::from_normal_idx(inp.parse().map_err(|_| Error::InvalidChildNumberFormat)?)?
         })
@@ -262,55 +265,45 @@ where
     type Output = <Vec<ChildNumber> as Index<I>>::Output;
 
     #[inline]
-    fn index(&self, index: I) -> &Self::Output {
-        &self.0[index]
-    }
+    fn index(&self, index: I) -> &Self::Output { &self.0[index] }
 }
 
 impl Default for DerivationPath {
-    fn default() -> DerivationPath {
-        DerivationPath::master()
-    }
+    fn default() -> DerivationPath { DerivationPath::master() }
 }
 
-impl<T> IntoDerivationPath for T where T: Into<DerivationPath> {
-    fn into_derivation_path(self) -> Result<DerivationPath, Error> {
-        Ok(self.into())
-    }
+impl<T> IntoDerivationPath for T
+where
+    T: Into<DerivationPath>,
+{
+    fn into_derivation_path(self) -> Result<DerivationPath, Error> { Ok(self.into()) }
 }
 
 impl IntoDerivationPath for String {
-    fn into_derivation_path(self) -> Result<DerivationPath, Error> {
-        self.parse()
-    }
+    fn into_derivation_path(self) -> Result<DerivationPath, Error> { self.parse() }
 }
 
 impl<'a> IntoDerivationPath for &'a str {
-    fn into_derivation_path(self) -> Result<DerivationPath, Error> {
-        self.parse()
-    }
+    fn into_derivation_path(self) -> Result<DerivationPath, Error> { self.parse() }
 }
 
 impl From<Vec<ChildNumber>> for DerivationPath {
-    fn from(numbers: Vec<ChildNumber>) -> Self {
-        DerivationPath(numbers)
-    }
+    fn from(numbers: Vec<ChildNumber>) -> Self { DerivationPath(numbers) }
 }
 
 impl Into<Vec<ChildNumber>> for DerivationPath {
-    fn into(self) -> Vec<ChildNumber> {
-        self.0
-    }
+    fn into(self) -> Vec<ChildNumber> { self.0 }
 }
 
 impl<'a> From<&'a [ChildNumber]> for DerivationPath {
-    fn from(numbers: &'a [ChildNumber]) -> Self {
-        DerivationPath(numbers.to_vec())
-    }
+    fn from(numbers: &'a [ChildNumber]) -> Self { DerivationPath(numbers.to_vec()) }
 }
 
 impl ::core::iter::FromIterator<ChildNumber> for DerivationPath {
-    fn from_iter<T>(iter: T) -> Self where T: IntoIterator<Item=ChildNumber> {
+    fn from_iter<T>(iter: T) -> Self
+    where
+        T: IntoIterator<Item = ChildNumber>,
+    {
         DerivationPath(Vec::from_iter(iter))
     }
 }
@@ -318,15 +311,11 @@ impl ::core::iter::FromIterator<ChildNumber> for DerivationPath {
 impl<'a> ::core::iter::IntoIterator for &'a DerivationPath {
     type Item = &'a ChildNumber;
     type IntoIter = slice::Iter<'a, ChildNumber>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
-    }
+    fn into_iter(self) -> Self::IntoIter { self.0.iter() }
 }
 
 impl AsRef<[ChildNumber]> for DerivationPath {
-    fn as_ref(&self) -> &[ChildNumber] {
-        &self.0
-    }
+    fn as_ref(&self) -> &[ChildNumber] { &self.0 }
 }
 
 impl FromStr for DerivationPath {
@@ -356,10 +345,7 @@ pub struct DerivationPathIterator<'a> {
 impl<'a> DerivationPathIterator<'a> {
     /// Start a new [DerivationPathIterator] at the given child.
     pub fn start_from(path: &'a DerivationPath, start: ChildNumber) -> DerivationPathIterator<'a> {
-        DerivationPathIterator {
-            base: path,
-            next_child: Some(start),
-        }
+        DerivationPathIterator { base: path, next_child: Some(start) }
     }
 }
 
@@ -375,25 +361,17 @@ impl<'a> Iterator for DerivationPathIterator<'a> {
 
 impl DerivationPath {
     /// Returns length of the derivation path
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
+    pub fn len(&self) -> usize { self.0.len() }
 
     /// Returns `true` if the derivation path is empty
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
+    pub fn is_empty(&self) -> bool { self.0.is_empty() }
 
     /// Returns derivation path for a master key (i.e. empty derivation path)
-    pub fn master() -> DerivationPath {
-        DerivationPath(vec![])
-    }
+    pub fn master() -> DerivationPath { DerivationPath(vec![]) }
 
     /// Returns whether derivation path represents master key (i.e. it's length
     /// is empty). True for `m` path.
-    pub fn is_master(&self) -> bool {
-        self.0.is_empty()
-    }
+    pub fn is_master(&self) -> bool { self.0.is_empty() }
 
     /// Create a new [DerivationPath] that is a child of this one.
     pub fn child(&self, cn: ChildNumber) -> DerivationPath {
@@ -417,12 +395,12 @@ impl DerivationPath {
 
     /// Get an [Iterator] over the unhardened children of this [DerivationPath].
     pub fn normal_children(&self) -> DerivationPathIterator {
-        DerivationPathIterator::start_from(self, ChildNumber::Normal{ index: 0 })
+        DerivationPathIterator::start_from(self, ChildNumber::Normal { index: 0 })
     }
 
     /// Get an [Iterator] over the hardened children of this [DerivationPath].
     pub fn hardened_children(&self) -> DerivationPathIterator {
-        DerivationPathIterator::start_from(self, ChildNumber::Hardened{ index: 0 })
+        DerivationPathIterator::start_from(self, ChildNumber::Hardened { index: 0 })
     }
 
     /// Concatenate `self` with `path` and return the resulting new path.
@@ -460,9 +438,7 @@ impl fmt::Display for DerivationPath {
 }
 
 impl fmt::Debug for DerivationPath {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self, f)
-    }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&self, f) }
 }
 
 /// Full information on the used extended public key: fingerprint of the
@@ -497,13 +473,17 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::CannotDeriveFromHardenedKey => f.write_str("cannot derive hardened key from public key"),
+            Error::CannotDeriveFromHardenedKey =>
+                f.write_str("cannot derive hardened key from public key"),
             Error::Secp256k1(ref e) => fmt::Display::fmt(e, f),
-            Error::InvalidChildNumber(ref n) => write!(f, "child number {} is invalid (not within [0, 2^31 - 1])", n),
+            Error::InvalidChildNumber(ref n) =>
+                write!(f, "child number {} is invalid (not within [0, 2^31 - 1])", n),
             Error::InvalidChildNumberFormat => f.write_str("invalid child number format"),
             Error::InvalidDerivationPathFormat => f.write_str("invalid derivation path format"),
-            Error::UnknownVersion(ref bytes) => write!(f, "unknown version magic bytes: {:?}", bytes),
-            Error::WrongExtendedKeyLength(ref len) => write!(f, "encoded extended key data has wrong length {}", len),
+            Error::UnknownVersion(ref bytes) =>
+                write!(f, "unknown version magic bytes: {:?}", bytes),
+            Error::WrongExtendedKeyLength(ref len) =>
+                write!(f, "encoded extended key data has wrong length {}", len),
             Error::Base58(ref err) => write!(f, "base58 encoding error: {}", err),
             Error::Hex(ref e) => write!(f, "Hexadecimal decoding error: {}", e),
             Error::InvalidPublicKeyHexLength(got) =>
@@ -515,11 +495,7 @@ impl fmt::Display for Error {
 #[cfg(feature = "std")]
 impl error::Error for Error {
     fn cause(&self) -> Option<&dyn error::Error> {
-        if let Error::Secp256k1(ref e) = *self {
-            Some(e)
-        } else {
-            None
-        }
+        if let Error::Secp256k1(ref e) = *self { Some(e) } else { None }
     }
 }
 
@@ -540,9 +516,7 @@ impl From<secp256k1::Error> for Error {
 }
 
 impl From<base58::Error> for Error {
-    fn from(err: base58::Error) -> Self {
-        Error::Base58(err)
-    }
+    fn from(err: base58::Error) -> Self { Error::Base58(err) }
 }
 
 impl ExtendedPrivKey {
@@ -564,17 +538,14 @@ impl ExtendedPrivKey {
 
     /// Constructs ECDSA compressed private key matching internal secret key representation.
     pub fn to_priv(&self) -> PrivateKey {
-        PrivateKey {
-            compressed: true,
-            network: self.network,
-            inner: self.private_key
-        }
+        PrivateKey { compressed: true, network: self.network, inner: self.private_key }
     }
 
     /// Constructs BIP340 keypair for Schnorr signatures and Taproot use matching the internal
     /// secret key representation.
     pub fn to_keypair<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> KeyPair {
-        KeyPair::from_seckey_slice(secp, &self.private_key[..]).expect("BIP32 internal private key representation is broken")
+        KeyPair::from_seckey_slice(secp, &self.private_key[..])
+            .expect("BIP32 internal private key representation is broken")
     }
 
     /// Attempts to derive an extended private key from a path.
@@ -690,35 +661,34 @@ impl ExtendedPrivKey {
 impl ExtendedPubKey {
     /// Derives a public key from a private key
     #[deprecated(since = "0.28.0", note = "use ExtendedPubKey::from_priv")]
-    pub fn from_private<C: secp256k1::Signing>(secp: &Secp256k1<C>, sk: &ExtendedPrivKey) -> ExtendedPubKey {
+    pub fn from_private<C: secp256k1::Signing>(
+        secp: &Secp256k1<C>,
+        sk: &ExtendedPrivKey,
+    ) -> ExtendedPubKey {
         ExtendedPubKey::from_priv(secp, sk)
     }
 
     /// Derives a public key from a private key
-    pub fn from_priv<C: secp256k1::Signing>(secp: &Secp256k1<C>, sk: &ExtendedPrivKey) -> ExtendedPubKey {
+    pub fn from_priv<C: secp256k1::Signing>(
+        secp: &Secp256k1<C>,
+        sk: &ExtendedPrivKey,
+    ) -> ExtendedPubKey {
         ExtendedPubKey {
             network: sk.network,
             depth: sk.depth,
             parent_fingerprint: sk.parent_fingerprint,
             child_number: sk.child_number,
             public_key: secp256k1::PublicKey::from_secret_key(secp, &sk.private_key),
-            chain_code: sk.chain_code
+            chain_code: sk.chain_code,
         }
     }
 
     /// Constructs ECDSA compressed public key matching internal public key representation.
-    pub fn to_pub(&self) -> PublicKey {
-        PublicKey {
-            compressed: true,
-            inner: self.public_key
-        }
-    }
+    pub fn to_pub(&self) -> PublicKey { PublicKey { compressed: true, inner: self.public_key } }
 
     /// Constructs BIP340 x-only public key for BIP-340 signatures and Taproot use matching
     /// the internal public key representation.
-    pub fn to_x_only_pub(&self) -> XOnlyPublicKey {
-        XOnlyPublicKey::from(self.public_key)
-    }
+    pub fn to_x_only_pub(&self) -> XOnlyPublicKey { XOnlyPublicKey::from(self.public_key) }
 
     /// Attempts to derive an extended public key from a path.
     ///
@@ -876,14 +846,13 @@ impl FromStr for ExtendedPubKey {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::ChildNumber::{Hardened, Normal};
-
     use core::str::FromStr;
 
-    use secp256k1::{self, Secp256k1};
     use hashes::hex::FromHex;
+    use secp256k1::{self, Secp256k1};
 
+    use super::ChildNumber::{Hardened, Normal};
+    use super::*;
     use crate::network::constants::Network::{self, Dash};
 
     #[test]
@@ -893,7 +862,10 @@ mod tests {
         assert_eq!(DerivationPath::from_str("4/m/5"), Err(Error::InvalidDerivationPathFormat));
         assert_eq!(DerivationPath::from_str("m//3/0'"), Err(Error::InvalidChildNumberFormat));
         assert_eq!(DerivationPath::from_str("m/0h/0x"), Err(Error::InvalidChildNumberFormat));
-        assert_eq!(DerivationPath::from_str("m/2147483648"), Err(Error::InvalidChildNumber(2147483648)));
+        assert_eq!(
+            DerivationPath::from_str("m/2147483648"),
+            Err(Error::InvalidChildNumber(2147483648))
+        );
 
         assert_eq!(DerivationPath::master(), DerivationPath::from_str("m").unwrap());
         assert_eq!(DerivationPath::master(), DerivationPath::default());
@@ -904,7 +876,11 @@ mod tests {
         );
         assert_eq!(
             DerivationPath::from_str("m/0'/1"),
-            Ok(vec![ChildNumber::from_hardened_idx(0).unwrap(), ChildNumber::from_normal_idx(1).unwrap()].into())
+            Ok(vec![
+                ChildNumber::from_hardened_idx(0).unwrap(),
+                ChildNumber::from_normal_idx(1).unwrap()
+            ]
+            .into())
         );
         assert_eq!(
             DerivationPath::from_str("m/0h/1/2'"),
@@ -912,7 +888,8 @@ mod tests {
                 ChildNumber::from_hardened_idx(0).unwrap(),
                 ChildNumber::from_normal_idx(1).unwrap(),
                 ChildNumber::from_hardened_idx(2).unwrap(),
-            ].into())
+            ]
+            .into())
         );
         assert_eq!(
             DerivationPath::from_str("m/0'/1/2h/2"),
@@ -921,7 +898,8 @@ mod tests {
                 ChildNumber::from_normal_idx(1).unwrap(),
                 ChildNumber::from_hardened_idx(2).unwrap(),
                 ChildNumber::from_normal_idx(2).unwrap(),
-            ].into())
+            ]
+            .into())
         );
         assert_eq!(
             DerivationPath::from_str("m/0'/1/2'/2/1000000000"),
@@ -931,7 +909,8 @@ mod tests {
                 ChildNumber::from_hardened_idx(2).unwrap(),
                 ChildNumber::from_normal_idx(2).unwrap(),
                 ChildNumber::from_normal_idx(1000000000).unwrap(),
-            ].into())
+            ]
+            .into())
         );
         let s = "m/0'/50/3'/5/545456";
         assert_eq!(DerivationPath::from_str(s), s.into_derivation_path());
@@ -944,7 +923,10 @@ mod tests {
         let numbers: Vec<ChildNumber> = path.clone().into();
         let path2: DerivationPath = numbers.into();
         assert_eq!(path, path2);
-        assert_eq!(&path[..2], &[ChildNumber::from_hardened_idx(0).unwrap(), ChildNumber::from_normal_idx(1).unwrap()]);
+        assert_eq!(
+            &path[..2],
+            &[ChildNumber::from_hardened_idx(0).unwrap(), ChildNumber::from_normal_idx(1).unwrap()]
+        );
         let indexed: DerivationPath = path[..2].into();
         assert_eq!(indexed, DerivationPath::from_str("m/0h/1").unwrap());
         assert_eq!(indexed.child(ChildNumber::from_hardened_idx(2).unwrap()), path);
@@ -956,8 +938,8 @@ mod tests {
         seed: &[u8],
         path: DerivationPath,
         expected_sk: &str,
-        expected_pk: &str)
-    {
+        expected_pk: &str,
+    ) {
         let mut sk = ExtendedPrivKey::new_master(network, seed).unwrap();
         let mut pk = ExtendedPubKey::from_priv(secp, &sk);
 
@@ -976,16 +958,13 @@ mod tests {
         for &num in path.0.iter() {
             sk = sk.ckd_priv(secp, num).unwrap();
             match num {
-                Normal {..} => {
+                Normal { .. } => {
                     let pk2 = pk.ckd_pub(secp, num).unwrap();
                     pk = ExtendedPubKey::from_priv(secp, &sk);
                     assert_eq!(pk, pk2);
                 }
-                Hardened {..} => {
-                    assert_eq!(
-                        pk.ckd_pub(secp, num),
-                        Err(Error::CannotDeriveFromHardenedKey)
-                    );
+                Hardened { .. } => {
+                    assert_eq!(pk.ckd_pub(secp, num), Err(Error::CannotDeriveFromHardenedKey));
                     pk = ExtendedPubKey::from_priv(secp, &sk);
                 }
             }
@@ -1005,15 +984,15 @@ mod tests {
     fn test_increment() {
         let idx = 9345497; // randomly generated, I promise
         let cn = ChildNumber::from_normal_idx(idx).unwrap();
-        assert_eq!(cn.increment().ok(), Some(ChildNumber::from_normal_idx(idx+1).unwrap()));
+        assert_eq!(cn.increment().ok(), Some(ChildNumber::from_normal_idx(idx + 1).unwrap()));
         let cn = ChildNumber::from_hardened_idx(idx).unwrap();
-        assert_eq!(cn.increment().ok(), Some(ChildNumber::from_hardened_idx(idx+1).unwrap()));
+        assert_eq!(cn.increment().ok(), Some(ChildNumber::from_hardened_idx(idx + 1).unwrap()));
 
-        let max = (1<<31)-1;
+        let max = (1 << 31) - 1;
         let cn = ChildNumber::from_normal_idx(max).unwrap();
-        assert_eq!(cn.increment().err(), Some(Error::InvalidChildNumber(1<<31)));
+        assert_eq!(cn.increment().err(), Some(Error::InvalidChildNumber(1 << 31)));
         let cn = ChildNumber::from_hardened_idx(max).unwrap();
-        assert_eq!(cn.increment().err(), Some(Error::InvalidChildNumber(1<<31)));
+        assert_eq!(cn.increment().err(), Some(Error::InvalidChildNumber(1 << 31)));
 
         let cn = ChildNumber::from_normal_idx(350).unwrap();
         let path = DerivationPath::from_str("m/42'").unwrap();
@@ -1050,34 +1029,64 @@ mod tests {
         let seed = Vec::from_hex("000102030405060708090a0b0c0d0e0f").unwrap();
 
         // m
-        test_path(&secp, Dash, &seed, "m".parse().unwrap(),
-                  "xprv9s21ZrQH143K2jzXqXpjaW7iTFzUsAMqwf5UqbQwjZifUCb3CA5GriZ5EYqp2hfHNjJXApSnygMQWptkbhyUAn7DgjqTL6ATpL3JU47syRi",
-                  "xpub661MyMwAqRbcFE4zwZMjwe4T1HpyGd5hJt15dypZHuFeLzvBjhPXQWsZ5nAdEbyHJinVJZM4N6M8wRtpxi5FJB2gQqpn2DAkUSbgVDsj2yS");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m".parse().unwrap(),
+            "xprv9s21ZrQH143K2jzXqXpjaW7iTFzUsAMqwf5UqbQwjZifUCb3CA5GriZ5EYqp2hfHNjJXApSnygMQWptkbhyUAn7DgjqTL6ATpL3JU47syRi",
+            "xpub661MyMwAqRbcFE4zwZMjwe4T1HpyGd5hJt15dypZHuFeLzvBjhPXQWsZ5nAdEbyHJinVJZM4N6M8wRtpxi5FJB2gQqpn2DAkUSbgVDsj2yS",
+        );
 
         // m/0h
-        test_path(&secp, Dash, &seed, "m/0h".parse().unwrap(),
-                  "xprv9tuj7viMgLkw6gMGe5vNSvEDCddkgH5eu13owFCqkZZFaU1N9363SipgxTFukT8Z6HU5B5iaQA1op6gQL12t6u7k8JtH47s1TMHdJw1X7hg",
-                  "xpub67u5XSFFWiKEKARjk7TNp4AwkfUF5joWGDyQjdcTJu6ETGLWgaQHzX9AomNdVJfgsKiJwgT6ghazw6qVTmFNskBJ5TSYVQjuJeNM931xmNf");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m/0h".parse().unwrap(),
+            "xprv9tuj7viMgLkw6gMGe5vNSvEDCddkgH5eu13owFCqkZZFaU1N9363SipgxTFukT8Z6HU5B5iaQA1op6gQL12t6u7k8JtH47s1TMHdJw1X7hg",
+            "xpub67u5XSFFWiKEKARjk7TNp4AwkfUF5joWGDyQjdcTJu6ETGLWgaQHzX9AomNdVJfgsKiJwgT6ghazw6qVTmFNskBJ5TSYVQjuJeNM931xmNf",
+        );
 
         // m/0h/1
-        test_path(&secp, Dash, &seed, "m/0h/1".parse().unwrap(),
-                  "xprv9xc7kxoRsCeHwh7uK4gPumyqpdGcUVB5XjAKHTjPnrNLr6uMz6ZkpieuVDJykxumA5rWaHrCgRKsDEHnHnVhAHoYkwofb8aWF29xZAsRecq",
-                  "xpub6BbUAULKhaCbABCNR6DQGuvaNf76swtvtx5v5r91MBuKiuEWXdt1NWyPLWgDeT4yFBEyfL5r3y7CDAWmzzwa3EbdGEvJky6cMmTCRg5KPE7");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m/0h/1".parse().unwrap(),
+            "xprv9xc7kxoRsCeHwh7uK4gPumyqpdGcUVB5XjAKHTjPnrNLr6uMz6ZkpieuVDJykxumA5rWaHrCgRKsDEHnHnVhAHoYkwofb8aWF29xZAsRecq",
+            "xpub6BbUAULKhaCbABCNR6DQGuvaNf76swtvtx5v5r91MBuKiuEWXdt1NWyPLWgDeT4yFBEyfL5r3y7CDAWmzzwa3EbdGEvJky6cMmTCRg5KPE7",
+        );
 
         // m/0h/1/2h
-        test_path(&secp, Dash, &seed, "m/0h/1/2h".parse().unwrap(),
-                  "xprv9ydrQzyHdoLuFpcSwdQYp5xTvxV5iKDuVWxjaRnGa6NQsYDFpr7rFbfe3enkdjsgt2E4mxJQPqumAgKxHmyDuRwW8qi6BjgGSenhjrA8L5r",
-                  "xpub6CdCpWWBUAuCUJgv3ewZBDuCUzKa7mwkrjtLNpBt8RuPkLYQNPS6oPz7tu9ERqLjJWoU5rvGjK85qNq64F5fwvf5G14c1q5zFiygt7PyqUf");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m/0h/1/2h".parse().unwrap(),
+            "xprv9ydrQzyHdoLuFpcSwdQYp5xTvxV5iKDuVWxjaRnGa6NQsYDFpr7rFbfe3enkdjsgt2E4mxJQPqumAgKxHmyDuRwW8qi6BjgGSenhjrA8L5r",
+            "xpub6CdCpWWBUAuCUJgv3ewZBDuCUzKa7mwkrjtLNpBt8RuPkLYQNPS6oPz7tu9ERqLjJWoU5rvGjK85qNq64F5fwvf5G14c1q5zFiygt7PyqUf",
+        );
 
         // m/0h/1/2h/2
-        test_path(&secp, Dash, &seed, "m/0h/1/2h/2".parse().unwrap(),
-                  "xprvA1Pn2MUU6kfyCEEa3gU6o1RhBZ9xZkL9HBakSa3xrQzf9fQSYRH6CCFHNAkMZ6UP7UTeAmLeuDAKXkas46T4M5MrjZaV1wzuyiFKmEtH3iC",
-                  "xpub6EP8Rs1Mw8EGQiK39i17A9NRjazSyD3zeQWMExTaQkXe2Tjb5xbLjzZmDUbBpzoGMDZkhChUryc9LYCLj9a6nSghS7DYGrqDqEJKwM1RSZ6");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m/0h/1/2h/2".parse().unwrap(),
+            "xprvA1Pn2MUU6kfyCEEa3gU6o1RhBZ9xZkL9HBakSa3xrQzf9fQSYRH6CCFHNAkMZ6UP7UTeAmLeuDAKXkas46T4M5MrjZaV1wzuyiFKmEtH3iC",
+            "xpub6EP8Rs1Mw8EGQiK39i17A9NRjazSyD3zeQWMExTaQkXe2Tjb5xbLjzZmDUbBpzoGMDZkhChUryc9LYCLj9a6nSghS7DYGrqDqEJKwM1RSZ6",
+        );
 
         // m/0h/1/2h/2/1000000000
-        test_path(&secp, Dash, &seed, "m/0h/1/2h/2/1000000000".parse().unwrap(),
-                  "xprvA38ZJ22mSSEnoCJ2JdayaJCBYkerJFPiyLEaA2TLAqbMrGfA6MpjgfcjmMghz8WbBBVB5eN9RGVRFuR7yd7jhsLtghZVc6JA1whLVHPLSYm",
-                  "xpub6G7uhXZfGoo61gNVQf7ywS8v6nVLhi7aLZAAxQrwjB8Lj4zJdu8zETwDcdceDESZ1CwKjBJYN8TBcgp3PL4HRQJ4qQnZvsLUwC71y7ubyQD");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m/0h/1/2h/2/1000000000".parse().unwrap(),
+            "xprvA38ZJ22mSSEnoCJ2JdayaJCBYkerJFPiyLEaA2TLAqbMrGfA6MpjgfcjmMghz8WbBBVB5eN9RGVRFuR7yd7jhsLtghZVc6JA1whLVHPLSYm",
+            "xpub6G7uhXZfGoo61gNVQf7ywS8v6nVLhi7aLZAAxQrwjB8Lj4zJdu8zETwDcdceDESZ1CwKjBJYN8TBcgp3PL4HRQJ4qQnZvsLUwC71y7ubyQD",
+        );
     }
 
     #[test]
@@ -1086,34 +1095,64 @@ mod tests {
         let seed = Vec::from_hex("fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29f9c999693908d8a8784817e7b7875726f6c696663605d5a5754514e4b484542").unwrap();
 
         // m
-        test_path(&secp, Dash, &seed, "m".parse().unwrap(),
-                  "xprv9s21ZrQH143K3KYj2Y9pojSeFSwFzy7BRcPj5h24q6dUh3nhSqiEPvJd9KW4WBj7fRHKWCtWDTv2pJWprVd61kwv1tULV3A6UcywSZmfaEx",
-                  "xpub661MyMwAqRbcFodC8ZgqAsPNoUmkQRq2nqKKt5RgPSATZr7qzP2Uwid6zaWHK95H9CnftcrubWRib631GpEWrhsDkP9s8a8gyjVw2xZK1fr");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m".parse().unwrap(),
+            "xprv9s21ZrQH143K3KYj2Y9pojSeFSwFzy7BRcPj5h24q6dUh3nhSqiEPvJd9KW4WBj7fRHKWCtWDTv2pJWprVd61kwv1tULV3A6UcywSZmfaEx",
+            "xpub661MyMwAqRbcFodC8ZgqAsPNoUmkQRq2nqKKt5RgPSATZr7qzP2Uwid6zaWHK95H9CnftcrubWRib631GpEWrhsDkP9s8a8gyjVw2xZK1fr",
+        );
 
         // m/0
-        test_path(&secp, Dash, &seed, "m/0".parse().unwrap(),
-                  "xprv9va8t45dhTZr1Nu8PfTbdTfAjMZYaBt23xCVxyWfPuVpXMp7Vd12rAtCDKq9dW8kAqspRS5xAfTb5BrBozzBUq4NV7MS3uXETtzHcLpgkRp",
-                  "xpub69ZVHZcXXq89DrybVgzbzbbuHPQ2yebsRB86mMvGxF2oQA9G3AKHPyCg4aYRHTVwVYqYTnEFd5gvmE8CGHz2VQCALeMT4DHu6ukcc17n1dU");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m/0".parse().unwrap(),
+            "xprv9va8t45dhTZr1Nu8PfTbdTfAjMZYaBt23xCVxyWfPuVpXMp7Vd12rAtCDKq9dW8kAqspRS5xAfTb5BrBozzBUq4NV7MS3uXETtzHcLpgkRp",
+            "xpub69ZVHZcXXq89DrybVgzbzbbuHPQ2yebsRB86mMvGxF2oQA9G3AKHPyCg4aYRHTVwVYqYTnEFd5gvmE8CGHz2VQCALeMT4DHu6ukcc17n1dU",
+        );
 
         // m/0/2147483647h
-        test_path(&secp, Dash, &seed, "m/0/2147483647h".parse().unwrap(),
-                  "xprv9vzqQRvuNb8AqQytGsxjdwp8GTaS7nW9FAGunYNks7Ag6eetiaw9JLYYxjGBVxZBScc1Gnv21W3EsS2Gj9UhFeenawYwYTBKr6sq6GUmWfW",
-                  "xpub69zBowToCxgU3u4MNuVk15krpVQvXFDzcPCWavnNRSheySz3G8FPr8s2ozijxZs37bLKXqGyhEa6jcZx85ikdGZ1JyNAxk44ayTzpLwuGzr");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m/0/2147483647h".parse().unwrap(),
+            "xprv9vzqQRvuNb8AqQytGsxjdwp8GTaS7nW9FAGunYNks7Ag6eetiaw9JLYYxjGBVxZBScc1Gnv21W3EsS2Gj9UhFeenawYwYTBKr6sq6GUmWfW",
+            "xpub69zBowToCxgU3u4MNuVk15krpVQvXFDzcPCWavnNRSheySz3G8FPr8s2ozijxZs37bLKXqGyhEa6jcZx85ikdGZ1JyNAxk44ayTzpLwuGzr",
+        );
 
         // m/0/2147483647h/1
-        test_path(&secp, Dash, &seed, "m/0/2147483647h/1".parse().unwrap(),
-                  "xprv9ypsdp1k6UdM9rmUC1dZDAzWnhodgSQK45augaYjffmvYZPRZJ7qxCagPCXPNvhzPQkxt6GUrmc4EDttkwckFic9zv1LRhuj4R6oe8Mg6mV",
-                  "xpub6CpE3KYdvrBeNLqwJ3AZaJwFLje85u8ARJWWUxxME1JuRMia6qS6VzuAETVauQHTrczxSCyDqo7dVULF8Pxbho8WMnp6YgtuvC58jb2Saxt");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m/0/2147483647h/1".parse().unwrap(),
+            "xprv9ypsdp1k6UdM9rmUC1dZDAzWnhodgSQK45augaYjffmvYZPRZJ7qxCagPCXPNvhzPQkxt6GUrmc4EDttkwckFic9zv1LRhuj4R6oe8Mg6mV",
+            "xpub6CpE3KYdvrBeNLqwJ3AZaJwFLje85u8ARJWWUxxME1JuRMia6qS6VzuAETVauQHTrczxSCyDqo7dVULF8Pxbho8WMnp6YgtuvC58jb2Saxt",
+        );
 
         // m/0/2147483647h/1/2147483646h
-        test_path(&secp, Dash, &seed, "m/0/2147483647h/1/2147483646h".parse().unwrap(),
-                  "xprvA1D4pPPcmJitrPcWK4NeHy9XmY3n9yMduiERDjn2LwoYhxL2xHSd1nCBSDsJMfREaVKuML2GdYHaERuYA1ZHAJGcx7n56dhDPQ2FyezwTXr",
-                  "xpub6ECRDtvWbgHC4sgyR5uef76GKZtGZS5VGwA228BduHLXakfBVpksZaWfHVarMGstw6vfwmsNdj7ikmpds9yLqMLiWMg3YnwFtjD21NMktpB");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m/0/2147483647h/1/2147483646h".parse().unwrap(),
+            "xprvA1D4pPPcmJitrPcWK4NeHy9XmY3n9yMduiERDjn2LwoYhxL2xHSd1nCBSDsJMfREaVKuML2GdYHaERuYA1ZHAJGcx7n56dhDPQ2FyezwTXr",
+            "xpub6ECRDtvWbgHC4sgyR5uef76GKZtGZS5VGwA228BduHLXakfBVpksZaWfHVarMGstw6vfwmsNdj7ikmpds9yLqMLiWMg3YnwFtjD21NMktpB",
+        );
 
         // m/0/2147483647h/1/2147483646h/2
-        test_path(&secp, Dash, &seed, "m/0/2147483647h/1/2147483646h/2".parse().unwrap(),
-                  "xprvA3iwKafNJDC6amJCGWePZMfncdS7QUEva5Lre5VaQjNkgwTYWHm6nBASMTQkwoeGC8RjXrM6SGHPqK5Fi9wN3iUVjsbFfwZHJUh8nMXsP1N",
-                  "xpub6GiHj6CG8akPoFNfNYBPvVcXAfGbovxmwJGTSTuBy4ujZjnh3q5MKyUvCjEcji686T3WNkw2L6Ln5Cxap9S34vY61KYyj8QSNNVdvKp6Kc1");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m/0/2147483647h/1/2147483646h/2".parse().unwrap(),
+            "xprvA3iwKafNJDC6amJCGWePZMfncdS7QUEva5Lre5VaQjNkgwTYWHm6nBASMTQkwoeGC8RjXrM6SGHPqK5Fi9wN3iUVjsbFfwZHJUh8nMXsP1N",
+            "xpub6GiHj6CG8akPoFNfNYBPvVcXAfGbovxmwJGTSTuBy4ujZjnh3q5MKyUvCjEcji686T3WNkw2L6Ln5Cxap9S34vY61KYyj8QSNNVdvKp6Kc1",
+        );
     }
 
     #[test]
@@ -1122,15 +1161,24 @@ mod tests {
         let seed = Vec::from_hex("4b381541583be4423346c643850da4b320e46a87ae3d2a4e6da11eba819cd4acba45d239319ac14f863b8d5ab5a0d0c64d2e8a1e7d1457df2e5a3c51c73235be").unwrap();
 
         // m
-        test_path(&secp, Dash, &seed, "m".parse().unwrap(),
-                  "xprv9s21ZrQH143K2WzvxhjUdopzTAXyGdmoXuYQtahTFgJBwnyN2Fi4B286NDSwW4sMmJq8AgNHYy8L8GenyKaG1fJc6JcJNxihRMn2UJYfoJn",
-                  "xpub661MyMwAqRbcF15Q4jGUzwmj1CNTg6Veu8U1gy74p1qApbJWZo2JipSaDWCc2jM8tvptC5CWRohjjcqCvLhifkGHUJBkdi6v1r7uUu9BG8v");
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m".parse().unwrap(),
+            "xprv9s21ZrQH143K2WzvxhjUdopzTAXyGdmoXuYQtahTFgJBwnyN2Fi4B286NDSwW4sMmJq8AgNHYy8L8GenyKaG1fJc6JcJNxihRMn2UJYfoJn",
+            "xpub661MyMwAqRbcF15Q4jGUzwmj1CNTg6Veu8U1gy74p1qApbJWZo2JipSaDWCc2jM8tvptC5CWRohjjcqCvLhifkGHUJBkdi6v1r7uUu9BG8v",
+        );
 
         // m/0h
-        test_path(&secp, Dash, &seed, "m/0h".parse().unwrap(),
-                  "xprv9vJwFo9uB8DkGQQGj4V85CpJmRWoEMNb9FM9K1Csq6dyUQuXWRuivoJQg6CX66wRhgQ82DFKaiCCqUjwWmDNe74yuujkTfsC6XL2j379caj",
-                  "xpub69JHfJgo1Vn3UtUjq628SLm3KTMHdp6SWUGk7PcVPSAxMDEg3yDyUbctXPE8KdBhAoBHF5uNcKmn59z5jNzzHExi7yJUwL77NP5rGMQez8i");
-
+        test_path(
+            &secp,
+            Dash,
+            &seed,
+            "m/0h".parse().unwrap(),
+            "xprv9vJwFo9uB8DkGQQGj4V85CpJmRWoEMNb9FM9K1Csq6dyUQuXWRuivoJQg6CX66wRhgQ82DFKaiCCqUjwWmDNe74yuujkTfsC6XL2j379caj",
+            "xpub69JHfJgo1Vn3UtUjq628SLm3KTMHdp6SWUGk7PcVPSAxMDEg3yDyUbctXPE8KdBhAoBHF5uNcKmn59z5jNzzHExi7yJUwL77NP5rGMQez8i",
+        );
     }
 
     #[test]
@@ -1148,8 +1196,11 @@ mod tests {
     #[cfg(feature = "serde")]
     pub fn encode_fingerprint_chaincode() {
         use serde_json;
-        let fp = Fingerprint::from([1u8,2,3,42]);
-        let cc = ChainCode::from([1u8,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9,0,1,2]);
+        let fp = Fingerprint::from([1u8, 2, 3, 42]);
+        let cc = ChainCode::from([
+            1u8, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8,
+            9, 0, 1, 2,
+        ]);
 
         serde_round_trip!(fp);
         serde_round_trip!(cc);
@@ -1204,7 +1255,6 @@ mod tests {
         ExtendedPrivKey::from_str(xpriv_str).unwrap();
     }
 
-
     #[test]
     #[should_panic(expected = "Secp256k1(InvalidSecretKey)")]
     fn schnorr_broken_privkey_ffs() {
@@ -1213,4 +1263,3 @@ mod tests {
         ExtendedPrivKey::from_str(xpriv_str).unwrap();
     }
 }
-

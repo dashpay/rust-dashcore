@@ -43,7 +43,7 @@ use core::cmp::{self, Ordering};
 use core::convert::TryInto;
 use core::fmt::{self, Display, Formatter};
 
-use hashes::{siphash24, Hash};
+use hashes::{Hash, siphash24};
 use internals::write_err;
 
 use crate::blockdata::block::Block;
@@ -117,9 +117,9 @@ impl BlockFilter {
 
     /// Computes a SCRIPT_FILTER that contains spent and output scripts.
     pub fn new_script_filter<M, S>(block: &Block, script_for_coin: M) -> Result<BlockFilter, Error>
-        where
-            M: Fn(&OutPoint) -> Result<S, Error>,
-            S: Borrow<Script>,
+    where
+        M: Fn(&OutPoint) -> Result<S, Error>,
+        S: Borrow<Script>,
     {
         let mut out = Vec::new();
         let mut writer = BlockFilterWriter::new(&mut out, block);
@@ -141,9 +141,9 @@ impl BlockFilter {
 
     /// Returns true if any query matches against this [`BlockFilter`].
     pub fn match_any<I>(&self, block_hash: &BlockHash, query: I) -> Result<bool, Error>
-        where
-            I: Iterator,
-            I::Item: Borrow<[u8]>,
+    where
+        I: Iterator,
+        I::Item: Borrow<[u8]>,
     {
         let filter_reader = BlockFilterReader::new(block_hash);
         filter_reader.match_any(&mut self.content.as_slice(), query)
@@ -151,9 +151,9 @@ impl BlockFilter {
 
     /// Returns true if all queries match against this [`BlockFilter`].
     pub fn match_all<I>(&self, block_hash: &BlockHash, query: I) -> Result<bool, Error>
-        where
-            I: Iterator,
-            I::Item: Borrow<[u8]>,
+    where
+        I: Iterator,
+        I::Item: Borrow<[u8]>,
     {
         let filter_reader = BlockFilterReader::new(block_hash);
         filter_reader.match_all(&mut self.content.as_slice(), query)
@@ -189,9 +189,9 @@ impl<'a, W: io::Write> BlockFilterWriter<'a, W> {
 
     /// Adds consumed output scripts of a block to filter.
     pub fn add_input_scripts<M, S>(&mut self, script_for_coin: M) -> Result<(), Error>
-        where
-            M: Fn(&OutPoint) -> Result<S, Error>,
-            S: Borrow<Script>,
+    where
+        M: Fn(&OutPoint) -> Result<S, Error>,
+        S: Borrow<Script>,
     {
         for script in self
             .block
@@ -232,20 +232,20 @@ impl BlockFilterReader {
 
     /// Returns true if any query matches against this [`BlockFilterReader`].
     pub fn match_any<I, R>(&self, reader: &mut R, query: I) -> Result<bool, Error>
-        where
-            I: Iterator,
-            I::Item: Borrow<[u8]>,
-            R: io::Read + ?Sized,
+    where
+        I: Iterator,
+        I::Item: Borrow<[u8]>,
+        R: io::Read + ?Sized,
     {
         self.reader.match_any(reader, query)
     }
 
     /// Returns true if all queries match against this [`BlockFilterReader`].
     pub fn match_all<I, R>(&self, reader: &mut R, query: I) -> Result<bool, Error>
-        where
-            I: Iterator,
-            I::Item: Borrow<[u8]>,
-            R: io::Read + ?Sized,
+    where
+        I: Iterator,
+        I::Item: Borrow<[u8]>,
+        R: io::Read + ?Sized,
     {
         self.reader.match_all(reader, query)
     }
@@ -265,10 +265,10 @@ impl GcsFilterReader {
 
     /// Returns true if any query matches against this [`GcsFilterReader`].
     pub fn match_any<I, R>(&self, reader: &mut R, query: I) -> Result<bool, Error>
-        where
-            I: Iterator,
-            I::Item: Borrow<[u8]>,
-            R: io::Read + ?Sized,
+    where
+        I: Iterator,
+        I::Item: Borrow<[u8]>,
+        R: io::Read + ?Sized,
     {
         let mut decoder = reader;
         let n_elements: VarInt = Decodable::consensus_decode(&mut decoder).unwrap_or(VarInt(0));
@@ -310,10 +310,10 @@ impl GcsFilterReader {
 
     /// Returns true if all queries match against this [`GcsFilterReader`].
     pub fn match_all<I, R>(&self, reader: &mut R, query: I) -> Result<bool, Error>
-        where
-            I: Iterator,
-            I::Item: Borrow<[u8]>,
-            R: io::Read + ?Sized,
+    where
+        I: Iterator,
+        I::Item: Borrow<[u8]>,
+        R: io::Read + ?Sized,
     {
         let mut decoder = reader;
         let n_elements: VarInt = Decodable::consensus_decode(&mut decoder).unwrap_or(VarInt(0));
@@ -423,8 +423,8 @@ impl GcsFilter {
         writer: &mut BitStreamWriter<'_, W>,
         n: u64,
     ) -> Result<usize, io::Error>
-        where
-            W: io::Write,
+    where
+        W: io::Write,
     {
         let mut wrote = 0;
         let mut q = n >> self.p;
@@ -440,8 +440,8 @@ impl GcsFilter {
 
     /// Golomb-Rice decodes a number from a bit stream (parameter 2^k).
     fn golomb_rice_decode<R>(&self, reader: &mut BitStreamReader<R>) -> Result<u64, io::Error>
-        where
-            R: io::Read,
+    where
+        R: io::Read,
     {
         let mut q = 0u64;
         while reader.read(1)? == 1 {
@@ -558,10 +558,10 @@ mod test {
     use serde_json::Value;
 
     use super::*;
+    use crate::ScriptBuf;
     use crate::consensus::encode::deserialize;
     use crate::hash_types::BlockHash;
     use crate::internal_macros::hex;
-    use crate::ScriptBuf;
 
     #[ignore]
     #[test]
@@ -593,36 +593,36 @@ mod test {
             }
 
             let filter = BlockFilter::new_script_filter(&block, |o| {
-                if let Some(s) = txmap.get(o) {
-                    Ok(s.clone())
-                } else {
-                    Err(Error::UtxoMissing(*o))
-                }
+                if let Some(s) = txmap.get(o) { Ok(s.clone()) } else { Err(Error::UtxoMissing(*o)) }
             })
-                .unwrap();
+            .unwrap();
 
             let test_filter = BlockFilter::new(filter_content.as_slice());
 
             assert_eq!(test_filter.content, filter.content);
 
             let block_hash = &block.block_hash();
-            assert!(filter
-                .match_all(
-                    block_hash,
-                    &mut txmap.iter().filter_map(|(_, s)| if !s.is_empty() {
-                        Some(s.as_bytes())
-                    } else {
-                        None
-                    })
-                )
-                .unwrap());
+            assert!(
+                filter
+                    .match_all(
+                        block_hash,
+                        &mut txmap.iter().filter_map(|(_, s)| if !s.is_empty() {
+                            Some(s.as_bytes())
+                        } else {
+                            None
+                        })
+                    )
+                    .unwrap()
+            );
 
             for script in txmap.values() {
                 let query = vec![script];
                 if !script.is_empty() {
-                    assert!(filter
-                        .match_any(block_hash, &mut query.iter().map(|s| s.as_bytes()))
-                        .unwrap());
+                    assert!(
+                        filter
+                            .match_any(block_hash, &mut query.iter().map(|s| s.as_bytes()))
+                            .unwrap()
+                    );
                 }
             }
 
@@ -665,16 +665,20 @@ mod test {
         {
             let query = vec![hex!("abcdef"), hex!("eeeeee")];
             let reader = GcsFilterReader::new(0, 0, M, P);
-            assert!(reader
-                .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                .unwrap());
+            assert!(
+                reader
+                    .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
+                    .unwrap()
+            );
         }
         {
             let query = vec![hex!("abcdef"), hex!("123456")];
             let reader = GcsFilterReader::new(0, 0, M, P);
-            assert!(!reader
-                .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                .unwrap());
+            assert!(
+                !reader
+                    .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
+                    .unwrap()
+            );
         }
         {
             let reader = GcsFilterReader::new(0, 0, M, P);
@@ -682,9 +686,11 @@ mod test {
             for p in &patterns {
                 query.push(p.clone());
             }
-            assert!(reader
-                .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                .unwrap());
+            assert!(
+                reader
+                    .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
+                    .unwrap()
+            );
         }
         {
             let reader = GcsFilterReader::new(0, 0, M, P);
@@ -693,9 +699,11 @@ mod test {
                 query.push(p.clone());
             }
             query.push(hex!("abcdef"));
-            assert!(!reader
-                .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                .unwrap());
+            assert!(
+                !reader
+                    .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
+                    .unwrap()
+            );
         }
     }
 

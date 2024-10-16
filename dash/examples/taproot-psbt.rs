@@ -88,8 +88,8 @@ use dashcore::secp256k1::Secp256k1;
 use dashcore::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use dashcore::taproot::{self, LeafVersion, TapLeafHash, TaprootBuilder, TaprootSpendInfo};
 use dashcore::{
-    absolute, script, Address, Amount, Network, OutPoint, ScriptBuf, Transaction, TxIn, TxOut,
-    Witness,
+    Address, Amount, Network, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Witness, absolute,
+    script,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -491,10 +491,9 @@ impl BenefactorWallet {
                 self.beneficiary_xpub.derive_pub(&self.secp, &new_derivation_path)?.to_x_only_pub();
 
             // Build up the leaf script and combine with internal key into a taproot commitment
-            let lock_time = absolute::LockTime::from_height(
-                psbt.unsigned_tx.lock_time + lock_time_delta,
-            )
-            .unwrap();
+            let lock_time =
+                absolute::LockTime::from_height(psbt.unsigned_tx.lock_time + lock_time_delta)
+                    .unwrap();
             let script = Self::time_lock_script(lock_time, beneficiary_key);
             let leaf_hash = script.tapscript_leaf_hash();
 

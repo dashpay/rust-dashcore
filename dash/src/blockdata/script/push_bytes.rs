@@ -27,11 +27,7 @@ mod primitive {
 
     #[cfg(not(any(target_pointer_width = "16", target_pointer_width = "32")))]
     fn check_limit(len: usize) -> Result<(), PushBytesError> {
-        if len < 0x100000000 {
-            Ok(())
-        } else {
-            Err(PushBytesError { len })
-        }
+        if len < 0x100000000 { Ok(()) } else { Err(PushBytesError { len }) }
     }
 
     /// Byte slices that can be in Bitcoin script.

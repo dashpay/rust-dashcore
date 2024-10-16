@@ -123,6 +123,7 @@ pub mod serde_macros;
 pub mod cmp;
 pub mod error;
 pub mod hash160;
+pub mod hash_x11;
 pub mod hex;
 pub mod hmac;
 #[cfg(any(feature = "std", feature = "core2"))]
@@ -135,7 +136,6 @@ pub mod sha256t;
 pub mod sha512;
 pub mod sha512_256;
 pub mod siphash24;
-pub mod hash_x11;
 
 use core::{borrow, fmt, hash, ops};
 
@@ -231,7 +231,7 @@ pub trait Hash:
 
 #[cfg(test)]
 mod tests {
-    use crate::{sha256d, Hash};
+    use crate::{Hash, sha256d};
 
     hash_newtype! {
         /// A test newtype

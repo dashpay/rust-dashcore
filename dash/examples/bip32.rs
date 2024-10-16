@@ -1,17 +1,14 @@
 extern crate dashcore;
 
-use std::{env, process};
 use std::str::FromStr;
+use std::{env, process};
 
-use dashcore::secp256k1::Secp256k1;
 use dashcore::PublicKey;
-use dashcore::bip32::ExtendedPrivKey;
-use dashcore::bip32::ExtendedPubKey;
-use dashcore::bip32::DerivationPath;
-use dashcore::bip32::ChildNumber;
 use dashcore::address::Address;
-use dashcore::secp256k1::ffi::types::AlignedType;
+use dashcore::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use dashcore::hashes::hex::FromHex;
+use dashcore::secp256k1::Secp256k1;
+use dashcore::secp256k1::ffi::types::AlignedType;
 
 fn main() {
     // This example derives root xprv from a 32-byte seed,
@@ -55,10 +52,7 @@ fn main() {
     // generate first receiving address at m/0/0
     // manually creating indexes this time
     let zero = ChildNumber::from_normal_idx(0).unwrap();
-    let public_key = xpub.derive_pub(&secp, &vec![zero, zero])
-                         .unwrap()
-                         .public_key;
+    let public_key = xpub.derive_pub(&secp, &vec![zero, zero]).unwrap().public_key;
     let address = Address::p2wpkh(&PublicKey::new(public_key), network).unwrap();
     println!("First receiving address: {}", address);
-
 }

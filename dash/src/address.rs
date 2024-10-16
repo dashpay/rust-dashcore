@@ -47,7 +47,7 @@ use core::marker::PhantomData;
 use core::str::FromStr;
 
 use bech32;
-use hashes::{sha256, Hash, HashEngine};
+use hashes::{Hash, HashEngine, sha256};
 use internals::write_err;
 use secp256k1::{Secp256k1, Verification, XOnlyPublicKey};
 
@@ -434,9 +434,9 @@ pub struct WitnessProgram {
 impl WitnessProgram {
     /// Creates a new witness program.
     pub fn new<P>(version: WitnessVersion, program: P) -> Result<Self, Error>
-        where
-            P: TryInto<PushBytesBuf>,
-            <P as TryInto<PushBytesBuf>>::Error: PushBytesErrorReport,
+    where
+        P: TryInto<PushBytesBuf>,
+        <P as TryInto<PushBytesBuf>>::Error: PushBytesErrorReport,
     {
         let program = program
             .try_into()
@@ -766,8 +766,8 @@ struct AddressInner {
 ///
 #[repr(transparent)]
 pub struct Address<V = NetworkChecked>(AddressInner, PhantomData<V>)
-    where
-        V: NetworkValidation;
+where
+    V: NetworkValidation;
 
 #[cfg(feature = "serde")]
 struct DisplayUnchecked<'a>(&'a Address<NetworkUnchecked>);
@@ -786,8 +786,8 @@ crate::serde_utils::serde_string_deserialize_impl!(Address<NetworkUnchecked>, "a
 #[cfg(feature = "serde")]
 impl serde::Serialize for Address<NetworkUnchecked> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer,
+    where
+        S: serde::Serializer,
     {
         serializer.collect_str(&DisplayUnchecked(self))
     }
@@ -1113,9 +1113,7 @@ impl Address<NetworkUnchecked> {
     }
 
     /// Returns the payload as a vector.
-    pub fn payload_to_vec(&self) -> Vec<u8> {
-        self.0.payload.inner_prog_as_bytes().to_vec()
-    }
+    pub fn payload_to_vec(&self) -> Vec<u8> { self.0.payload.inner_prog_as_bytes().to_vec() }
 }
 
 // For NetworkUnchecked , it compare Addresses and if network and payload matches then return true.
@@ -1276,7 +1274,7 @@ mod tests {
     use core::str::FromStr;
 
     use hex_lit::hex;
-    use secp256k1::{XOnlyPublicKey};
+    use secp256k1::XOnlyPublicKey;
 
     use super::*;
     use crate::crypto::key::PublicKey;
@@ -1480,14 +1478,32 @@ mod tests {
     fn test_bip173_350_vectors() {
         // Test vectors valid under both BIP-173 and BIP-350
         let valid_vectors = [
-            ("BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4", "0014751e76e8199196d454941c45d1b3a323f1433bd6"),
-            ("tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7", "00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262"),
-            ("bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7kt5nd6y", "5128751e76e8199196d454941c45d1b3a323f1433bd6751e76e8199196d454941c45d1b3a323f1433bd6"),
+            (
+                "BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4",
+                "0014751e76e8199196d454941c45d1b3a323f1433bd6",
+            ),
+            (
+                "tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7",
+                "00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262",
+            ),
+            (
+                "bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7kt5nd6y",
+                "5128751e76e8199196d454941c45d1b3a323f1433bd6751e76e8199196d454941c45d1b3a323f1433bd6",
+            ),
             ("BC1SW50QGDZ25J", "6002751e"),
             ("bc1zw508d6qejxtdg4y5r3zarvaryvaxxpcs", "5210751e76e8199196d454941c45d1b3a323"),
-            ("tb1qqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesrxh6hy", "0020000000c4a5cad46221b2a187905e5266362b99d5e91c6ce24d165dab93e86433"),
-            ("tb1pqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesf3hn0c", "5120000000c4a5cad46221b2a187905e5266362b99d5e91c6ce24d165dab93e86433"),
-            ("bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0", "512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
+            (
+                "tb1qqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesrxh6hy",
+                "0020000000c4a5cad46221b2a187905e5266362b99d5e91c6ce24d165dab93e86433",
+            ),
+            (
+                "tb1pqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesf3hn0c",
+                "5120000000c4a5cad46221b2a187905e5266362b99d5e91c6ce24d165dab93e86433",
+            ),
+            (
+                "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0",
+                "512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            ),
         ];
         for vector in &valid_vectors {
             let addr: Address = vector.0.parse::<Address<_>>().unwrap().assume_checked();
@@ -1556,7 +1572,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "serde")]
-    #[ignore="TODO: adjust tests for dash addr"]
+    #[ignore = "TODO: adjust tests for dash addr"]
     fn test_json_serialize() {
         use serde_json;
 
@@ -1617,7 +1633,7 @@ mod tests {
             ScriptBuf::from_hex(
                 "00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262"
             )
-                .unwrap()
+            .unwrap()
         );
 
         let addr = Address::from_str("bcrt1q2nfxmhd4n3c8834pj72xagvyr9gl57n5r94fsl")
@@ -1639,10 +1655,9 @@ mod tests {
     #[test]
     fn test_qr_string() {
         for el in
-        ["Xxb77sLZJZMUeYdf3TpWNoRFgEvjQkoi2q", "XanpivH7JqvtWsCkjB5vXqoGBhv4XGBRJn"].iter()
+            ["Xxb77sLZJZMUeYdf3TpWNoRFgEvjQkoi2q", "XanpivH7JqvtWsCkjB5vXqoGBhv4XGBRJn"].iter()
         {
-            let addr =
-                Address::from_str(el).unwrap().require_network(Dash).expect("mainnet");
+            let addr = Address::from_str(el).unwrap().require_network(Dash).expect("mainnet");
             assert_eq!(addr.to_qr_uri(), format!("dash:{}", el));
         }
 
@@ -1665,22 +1680,15 @@ mod tests {
                         WitnessVersion::try_from(version).unwrap(),
                         vec![0xab; 32], // Choose 32 to make test case valid for all witness versions(including v0)
                     )
-                        .unwrap(),
+                    .unwrap(),
                 )
             })
             .collect::<Vec<_>>();
 
         const LEGACY_EQUIVALENCE_CLASSES: &[&[Network]] =
-            &[
-                &[Network::Dash],
-                &[Network::Testnet, Network::Regtest, Network::Devnet],
-            ];
+            &[&[Network::Dash], &[Network::Testnet, Network::Regtest, Network::Devnet]];
         const SEGWIT_EQUIVALENCE_CLASSES: &[&[Network]] =
-            &[
-                &[Network::Dash],
-                &[Network::Regtest],
-                &[Network::Testnet, Network::Devnet],
-            ];
+            &[&[Network::Dash], &[Network::Regtest], &[Network::Testnet, Network::Devnet]];
 
         fn test_addr_type(payloads: &[Payload], equivalence_classes: &[&[Network]]) {
             for pl in payloads {
@@ -1716,7 +1724,7 @@ mod tests {
         let internal_key = XOnlyPublicKey::from_str(
             "cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc115",
         )
-            .unwrap();
+        .unwrap();
         let secp = Secp256k1::verification_only();
         let address = Address::p2tr(&secp, internal_key, None, Network::Dash);
         assert_eq!(
@@ -1745,7 +1753,7 @@ mod tests {
         let unused_pubkey = PublicKey::from_str(
             "02ba604e6ad9d3864eda8dc41c62668514ef7d5417d3b6db46e45cc4533bff001c",
         )
-            .expect("pubkey");
+        .expect("pubkey");
         assert!(!address.is_related_to_pubkey(&unused_pubkey))
     }
 
@@ -1766,7 +1774,7 @@ mod tests {
         let unused_pubkey = PublicKey::from_str(
             "02ba604e6ad9d3864eda8dc41c62668514ef7d5417d3b6db46e45cc4533bff001c",
         )
-            .expect("pubkey");
+        .expect("pubkey");
         assert!(!address.is_related_to_pubkey(&unused_pubkey))
     }
 
@@ -1787,7 +1795,7 @@ mod tests {
         let unused_pubkey = PublicKey::from_str(
             "02ba604e6ad9d3864eda8dc41c62668514ef7d5417d3b6db46e45cc4533bff001c",
         )
-            .expect("pubkey");
+        .expect("pubkey");
         assert!(!address.is_related_to_pubkey(&unused_pubkey))
     }
 
@@ -1808,7 +1816,7 @@ mod tests {
         let unused_pubkey = PublicKey::from_str(
             "02ba604e6ad9d3864eda8dc41c62668514ef7d5417d3b6db46e45cc4533bff001c",
         )
-            .expect("pubkey");
+        .expect("pubkey");
         assert!(!address.is_related_to_pubkey(&unused_pubkey))
     }
 
@@ -1835,7 +1843,7 @@ mod tests {
         let unused_pubkey = PublicKey::from_str(
             "02ba604e6ad9d3864eda8dc41c62668514ef7d5417d3b6db46e45cc4533bff001c",
         )
-            .expect("pubkey");
+        .expect("pubkey");
         assert!(!address.is_related_to_pubkey(&unused_pubkey));
     }
 
@@ -1866,7 +1874,7 @@ mod tests {
         let bad_p2wsh = ScriptBuf::from_hex(
             "00202d4fa2eb233d008cc83206fa2f4f2e60199000f5b857a835e3172323385623",
         )
-            .unwrap();
+        .unwrap();
         let invalid_segwitv0_script =
             ScriptBuf::from_hex("001161458e330389cd0437ee9fe3641d70cc18").unwrap();
         let expected = Err(Error::UnrecognizedScript);

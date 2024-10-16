@@ -5,7 +5,9 @@ use core::convert::TryFrom;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use dashcore::bip32::{ExtendedPrivKey, ExtendedPubKey, Fingerprint, IntoDerivationPath, KeySource};
+use dashcore::bip32::{
+    ExtendedPrivKey, ExtendedPubKey, Fingerprint, IntoDerivationPath, KeySource,
+};
 use dashcore::blockdata::opcodes::OP_0;
 use dashcore::blockdata::script;
 use dashcore::consensus::encode::{deserialize, serialize_hex};
@@ -13,7 +15,10 @@ use dashcore::hashes::hex::FromHex;
 use dashcore::psbt::{Psbt, PsbtSighashType};
 use dashcore::script::PushBytes;
 use dashcore::secp256k1::{self, Secp256k1};
-use dashcore::{Amount, Denomination, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Transaction, TxIn, TxOut, Witness};
+use dashcore::{
+    Amount, Denomination, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Transaction, TxIn,
+    TxOut, Witness,
+};
 
 const NETWORK: Network = Network::Testnet;
 

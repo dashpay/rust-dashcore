@@ -33,13 +33,11 @@
 use core::convert::From;
 use core::{fmt, mem, u32};
 
-use hashes::{sha256, sha256d, hash_x11, Hash, hash160};
+use hashes::{Hash, hash_x11, hash160, sha256, sha256d};
 use internals::write_err;
-use crate::{address, OutPoint, ScriptBuf};
-use crate::transaction::special_transaction::TransactionType;
+
 use crate::bip152::{PrefilledTransaction, ShortId};
-use crate::transaction::{txin::TxIn, txout::TxOut};
-use crate::blockdata::transaction::{Transaction};
+use crate::blockdata::transaction::Transaction;
 use crate::hash_types::{BlockHash, FilterHash, FilterHeader, TxMerkleNode};
 use crate::io::{self, Cursor, Read};
 #[cfg(feature = "std")]
@@ -49,6 +47,10 @@ use crate::network::{
 };
 use crate::prelude::*;
 use crate::taproot::TapLeafHash;
+use crate::transaction::special_transaction::TransactionType;
+use crate::transaction::txin::TxIn;
+use crate::transaction::txout::TxOut;
+use crate::{OutPoint, ScriptBuf, address};
 
 /// Encoding error.
 #[derive(Debug)]
@@ -98,7 +100,7 @@ pub enum Error {
     /// Hex error
     Hex(hashes::hex::Error),
     /// Address error
-    Address(address::Error)
+    Address(address::Error),
 }
 
 impl fmt::Display for Error {
@@ -115,11 +117,12 @@ impl fmt::Display for Error {
                 write!(f, "unsupported segwit version: {}", swflag),
             Error::UnknownSpecialTransactionType(ref stt) =>
                 write!(f, "unknown special transaction type: {}", stt),
-            Error::WrongSpecialTransactionPayloadConversion { expected: ref e, actual: ref a } => write!(f,
-                                                                                                         "wrong special transaction payload conversion expected: {} got: {}", e, a),
-            Error::NonStandardScriptPayout(ref script) => write!(f,
-                                                                 "non standard script payout: {}", script.to_hex_string()),
-            Error::InvalidVectorSize { expected, actual } => write!(f, "invalid vector size error expected: {} got: {}", expected, actual),
+            Error::WrongSpecialTransactionPayloadConversion { expected: ref e, actual: ref a } =>
+                write!(f, "wrong special transaction payload conversion expected: {} got: {}", e, a),
+            Error::NonStandardScriptPayout(ref script) =>
+                write!(f, "non standard script payout: {}", script.to_hex_string()),
+            Error::InvalidVectorSize { expected, actual } =>
+                write!(f, "invalid vector size error expected: {} got: {}", expected, actual),
             Error::Hex(ref e) => write!(f, "hex error {}", e),
             Error::Address(ref e) => write!(f, "address error {}", e),
         }
@@ -143,7 +146,7 @@ impl std::error::Error for Error {
             | Error::NonStandardScriptPayout(..)
             | Error::InvalidVectorSize { .. }
             | Error::Hex(_) => None,
-            | Error::Address(_) => None,
+            Error::Address(_) => None,
         }
     }
 }
@@ -155,9 +158,7 @@ impl From<io::Error> for Error {
 
 #[doc(hidden)]
 impl From<address::Error> for Error {
-    fn from(error: address::Error) -> Self {
-        Error::Address(error)
-    }
+    fn from(error: address::Error) -> Self { Error::Address(error) }
 }
 
 /// Encodes an object into a vector.
@@ -483,27 +484,15 @@ impl Decodable for VarInt {
         match n {
             0xFF => {
                 let x = ReadExt::read_u64(r)?;
-                if x < 0x100000000 {
-                    Err(self::Error::NonMinimalVarInt)
-                } else {
-                    Ok(VarInt(x))
-                }
+                if x < 0x100000000 { Err(self::Error::NonMinimalVarInt) } else { Ok(VarInt(x)) }
             }
             0xFE => {
                 let x = ReadExt::read_u32(r)?;
-                if x < 0x10000 {
-                    Err(self::Error::NonMinimalVarInt)
-                } else {
-                    Ok(VarInt(x as u64))
-                }
+                if x < 0x10000 { Err(self::Error::NonMinimalVarInt) } else { Ok(VarInt(x as u64)) }
             }
             0xFD => {
                 let x = ReadExt::read_u16(r)?;
-                if x < 0xFD {
-                    Err(self::Error::NonMinimalVarInt)
-                } else {
-                    Ok(VarInt(x as u64))
-                }
+                if x < 0xFD { Err(self::Error::NonMinimalVarInt) } else { Ok(VarInt(x as u64)) }
             }
             n => Ok(VarInt(n as u64)),
         }
@@ -909,12 +898,12 @@ impl Decodable for TapLeafHash {
 mod tests {
     use core::fmt;
     use core::mem::{self, discriminant};
-    use crate::{TxIn, TxOut};
 
     use super::*;
-    use crate::consensus::{deserialize_partial, Decodable, Encodable};
+    use crate::consensus::{Decodable, Encodable, deserialize_partial};
     #[cfg(feature = "std")]
-    use crate::network::{message_blockdata::Inventory, Address};
+    use crate::network::{Address, message_blockdata::Inventory};
+    use crate::{TxIn, TxOut};
 
     #[test]
     fn serialize_int_test() {
@@ -1181,11 +1170,13 @@ mod tests {
         assert_eq!(deserialize(&[3u8, 2, 3, 4]).ok(), Some(vec![2u8, 3, 4]));
         assert!((deserialize(&[4u8, 2, 3, 4, 5, 6]) as Result<Vec<u8>, _>).is_err());
         // found by cargo fuzz
-        assert!(deserialize::<Vec<u64>>(&[
-            0xff, 0xff, 0xff, 0xff, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b,
-            0x6b, 0x6b, 0xa, 0xa, 0x3a
-        ])
-            .is_err());
+        assert!(
+            deserialize::<Vec<u64>>(&[
+                0xff, 0xff, 0xff, 0xff, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b,
+                0x6b, 0x6b, 0xa, 0xa, 0x3a
+            ])
+            .is_err()
+        );
 
         let rand_io_err = Error::Io(io::Error::new(io::ErrorKind::Other, ""));
 
@@ -1211,9 +1202,9 @@ mod tests {
     }
 
     fn test_len_is_max_vec<T>()
-        where
-            Vec<T>: Decodable,
-            T: fmt::Debug,
+    where
+        Vec<T>: Decodable,
+        T: fmt::Debug,
     {
         let rand_io_err = Error::Io(io::Error::new(io::ErrorKind::Other, ""));
         let varint = VarInt((super::MAX_VEC_SIZE / mem::size_of::<T>()) as u64);
@@ -1252,7 +1243,7 @@ mod tests {
     #[test]
     #[cfg(feature = "rand-std")]
     fn serialization_round_trips() {
-        use secp256k1::rand::{thread_rng, Rng};
+        use secp256k1::rand::{Rng, thread_rng};
 
         macro_rules! round_trip {
             ($($val_type:ty),*) => {
@@ -1299,7 +1290,7 @@ mod tests {
                     io::Cursor::new(&data),
                     ReadBytesFromFiniteReaderOpts { len: data.len(), chunk_size },
                 )
-                    .unwrap(),
+                .unwrap(),
                 data
             );
         }

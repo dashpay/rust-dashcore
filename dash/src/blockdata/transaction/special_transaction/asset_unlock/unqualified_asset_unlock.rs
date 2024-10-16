@@ -22,14 +22,13 @@
 //!
 //! The special transaction type used for AssetUnlockTx Transactions is 9.
 
-use crate::{io, VarInt};
-use crate::transaction::TxOut;
 use crate::blockdata::transaction::special_transaction::TransactionType;
 use crate::blockdata::transaction::special_transaction::TransactionType::AssetUnlock;
 use crate::consensus::{Decodable, Encodable, encode};
-use crate::{ScriptBuf, TxIn};
-use crate::prelude::*;
 use crate::hash_types::{PubkeyHash, ScriptHash};
+use crate::prelude::*;
+use crate::transaction::TxOut;
+use crate::{ScriptBuf, TxIn, VarInt, io};
 
 /// An Asset Unlock Base payload. This is the base payload of the Asset Unlock. In order to make
 /// it a full payload the request info should be added.
@@ -65,11 +64,7 @@ impl Decodable for AssetUnlockBasePayload {
         let version = u8::consensus_decode(r)?;
         let index = u64::consensus_decode(r)?;
         let fee = u32::consensus_decode(r)?;
-        Ok(AssetUnlockBasePayload {
-            version,
-            index,
-            fee,
-        })
+        Ok(AssetUnlockBasePayload { version, index, fee })
     }
 }
 
@@ -95,30 +90,21 @@ impl AssetUnlockBaseTransactionInfo {
     /// dash on Dash Platform.
     pub fn add_burn_output(&mut self, satoshis_to_burn: u64, data: &[u8; 20]) {
         let burn_script = ScriptBuf::new_op_return(data);
-        let output = TxOut {
-            value: satoshis_to_burn,
-            script_pubkey: burn_script,
-        };
+        let output = TxOut { value: satoshis_to_burn, script_pubkey: burn_script };
         self.output.push(output)
     }
 
     /// Convenience method that adds an output that pays to a public key hash.
     pub fn add_p2pkh_output(&mut self, amount: u64, public_key_hash: &PubkeyHash) {
         let public_key_hash_script = ScriptBuf::new_p2pkh(public_key_hash);
-        let output = TxOut {
-            value: amount,
-            script_pubkey: public_key_hash_script,
-        };
+        let output = TxOut { value: amount, script_pubkey: public_key_hash_script };
         self.output.push(output)
     }
 
     /// Convenience method that adds an output that pays to a public key hash.
     pub fn add_p2sh_output(&mut self, amount: u64, script_hash: &ScriptHash) {
         let pay_to_script_hash_script = ScriptBuf::new_p2sh(script_hash);
-        let output = TxOut {
-            value: amount,
-            script_pubkey: pay_to_script_hash_script,
-        };
+        let output = TxOut { value: amount, script_pubkey: pay_to_script_hash_script };
         self.output.push(output)
     }
 
@@ -148,9 +134,15 @@ impl Decodable for AssetUnlockBaseTransactionInfo {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode(r)?;
         let special_transaction_type_u16 = u16::consensus_decode(r)?;
-        let special_transaction_type = TransactionType::try_from(special_transaction_type_u16).map_err(|_| encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16))?;
+        let special_transaction_type = TransactionType::try_from(special_transaction_type_u16)
+            .map_err(|_| {
+                encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16)
+            })?;
         if special_transaction_type != AssetUnlock {
-            return Err(encode::Error::WrongSpecialTransactionPayloadConversion { expected: AssetUnlock, actual: special_transaction_type });
+            return Err(encode::Error::WrongSpecialTransactionPayloadConversion {
+                expected: AssetUnlock,
+                actual: special_transaction_type,
+            });
         }
         Vec::<TxIn>::consensus_decode(r)?; //no inputs
         Ok(AssetUnlockBaseTransactionInfo {
@@ -165,21 +157,18 @@ impl Decodable for AssetUnlockBaseTransactionInfo {
 #[cfg(test)]
 mod tests {
     use hashes::Hash;
+
     use crate::consensus::Encodable;
-    use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::{AssetUnlockBasePayload, AssetUnlockBaseTransactionInfo};
+    use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::{
+        AssetUnlockBasePayload, AssetUnlockBaseTransactionInfo,
+    };
     use crate::{ScriptBuf, TxOut};
 
     #[test]
     fn size() {
         let want = 51;
-        let tx1 = TxOut {
-            value: 0,
-            script_pubkey: ScriptBuf::from(vec![1, 2, 3, 4, 5]),
-        };
-        let tx2 = TxOut {
-            value: 0,
-            script_pubkey: ScriptBuf::from(vec![6, 7, 8, 9, 0]),
-        };
+        let tx1 = TxOut { value: 0, script_pubkey: ScriptBuf::from(vec![1, 2, 3, 4, 5]) };
+        let tx2 = TxOut { value: 0, script_pubkey: ScriptBuf::from(vec![6, 7, 8, 9, 0]) };
         let payload = AssetUnlockBaseTransactionInfo {
             version: 0,
             lock_time: 0,

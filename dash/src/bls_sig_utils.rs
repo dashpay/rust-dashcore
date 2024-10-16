@@ -17,10 +17,11 @@
 //! and signature.
 //!
 
-use crate::core::fmt;
 use hex::{FromHexError, ToHex};
-use crate::internal_macros::{impl_bytes_newtype};
-use internals::{impl_array_newtype};
+use internals::impl_array_newtype;
+
+use crate::core::fmt;
+use crate::internal_macros::impl_bytes_newtype;
 use crate::prelude::String;
 
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core
@@ -47,9 +48,7 @@ crate::serde_utils::serde_string_impl!(BLSPublicKey, "a BLS Public Key");
 impl core::str::FromStr for BLSPublicKey {
     type Err = FromHexError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        BLSPublicKey::from_hex(s)
-    }
+    fn from_str(s: &str) -> Result<Self, Self::Err> { BLSPublicKey::from_hex(s) }
 }
 
 impl fmt::Display for BLSPublicKey {
@@ -69,14 +68,19 @@ impl_bytes_newtype!(BLSSignature, 96);
 macro_rules! impl_elementencode {
     ($element:ident, $len:expr) => {
         impl $crate::consensus::Encodable for $element {
-            fn consensus_encode<W: $crate::io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, $crate::io::Error> {
+            fn consensus_encode<W: $crate::io::Write + ?Sized>(
+                &self,
+                w: &mut W,
+            ) -> Result<usize, $crate::io::Error> {
                 self.0.consensus_encode(w)
             }
         }
 
         impl $crate::consensus::Decodable for $element {
-            fn consensus_decode<R: $crate::io::Read + ?Sized>(r: &mut R) -> Result<Self, $crate::consensus::encode::Error> {
-                let mut data :[u8;$len] = [0u8; $len];
+            fn consensus_decode<R: $crate::io::Read + ?Sized>(
+                r: &mut R,
+            ) -> Result<Self, $crate::consensus::encode::Error> {
+                let mut data: [u8; $len] = [0u8; $len];
                 r.read_exact(&mut data)?;
                 Ok($element(data))
             }
@@ -87,21 +91,17 @@ macro_rules! impl_elementencode {
 #[rustversion::before(1.48)]
 macro_rules! impl_eq_ord_hash {
     ($element:ident, $len:expr) => {
-
         #[rustversion::before(1.48)]
         impl core::hash::Hash for $element {
-            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-                self.0.to_vec().hash(state)
-            }
+            fn hash<H: core::hash::Hasher>(&self, state: &mut H) { self.0.to_vec().hash(state) }
         }
-
 
         #[rustversion::before(1.48)]
         impl core::cmp::PartialEq<$element> for $element {
             fn eq(&self, other: &$element) -> bool {
                 for i in 0..$len {
-                    if  self[i] != other[i] {
-                        return false
+                    if self[i] != other[i] {
+                        return false;
                     }
                 }
                 true
@@ -124,9 +124,7 @@ macro_rules! impl_eq_ord_hash {
                 self.0.to_vec().cmp(&other.0.to_vec())
             }
         }
-
-
-    }
+    };
 }
 
 #[rustversion::before(1.48)]

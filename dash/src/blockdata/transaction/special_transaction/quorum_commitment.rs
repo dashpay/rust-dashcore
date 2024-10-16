@@ -17,11 +17,11 @@
 //! It is defined in DIP6 [dip-0006.md](https://github.com/dashpay/dips/blob/master/dip-0006.md).
 //!
 
-use crate::prelude::*;
-use crate::{io, VarInt};
-use crate::hash_types::{QuorumHash, QuorumVVecHash};
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::consensus::{Decodable, Encodable, encode};
+use crate::hash_types::{QuorumHash, QuorumVVecHash};
+use crate::prelude::*;
+use crate::{VarInt, io};
 
 /// A Quorum Finalization Commitment. It is described in the finalization section of DIP6:
 /// [dip-0006.md#6-finalization-phase](https://github.com/dashpay/dips/blob/master/dip-0006.md#6-finalization-phase)
@@ -108,9 +108,7 @@ pub struct QuorumCommitmentPayload {
 
 impl QuorumCommitmentPayload {
     /// The size of the payload in bytes.
-    pub fn size(&self) -> usize {
-        2 + 4 + self.finalization_commitment.size()
-    }
+    pub fn size(&self) -> usize { 2 + 4 + self.finalization_commitment.size() }
 }
 
 impl Encodable for QuorumCommitmentPayload {
@@ -128,22 +126,20 @@ impl Decodable for QuorumCommitmentPayload {
         let version = u16::consensus_decode(r)?;
         let height = u32::consensus_decode(r)?;
         let finalization_commitment = QuorumFinalizationCommitment::consensus_decode(r)?;
-        Ok(QuorumCommitmentPayload {
-            version,
-            height,
-            finalization_commitment,
-        })
+        Ok(QuorumCommitmentPayload { version, height, finalization_commitment })
     }
 }
-
 
 #[cfg(test)]
 mod tests {
     use hashes::Hash;
+
     use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use crate::consensus::Encodable;
     use crate::hash_types::{QuorumHash, QuorumVVecHash};
-    use crate::transaction::special_transaction::quorum_commitment::{QuorumCommitmentPayload, QuorumFinalizationCommitment};
+    use crate::transaction::special_transaction::quorum_commitment::{
+        QuorumCommitmentPayload, QuorumFinalizationCommitment,
+    };
 
     #[test]
     fn size() {

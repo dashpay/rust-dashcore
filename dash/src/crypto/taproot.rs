@@ -9,7 +9,7 @@
 use core::fmt;
 
 use internals::write_err;
-pub use secp256k1::{self, constants, KeyPair, Parity, Secp256k1, Verification, XOnlyPublicKey};
+pub use secp256k1::{self, KeyPair, Parity, Secp256k1, Verification, XOnlyPublicKey, constants};
 
 use crate::prelude::*;
 use crate::sighash::TapSighashType;

@@ -347,20 +347,26 @@ mod test {
     fn debug_format_test() {
         let mut flags = ServiceFlags::NETWORK;
         assert_eq!(
-            format!("The address is: {:?}", Address {
-                services: flags.add(ServiceFlags::WITNESS),
-                address: [0, 0, 0, 0, 0, 0xffff, 0x0a00, 0x0001],
-                port: 8333
-            }),
+            format!(
+                "The address is: {:?}",
+                Address {
+                    services: flags.add(ServiceFlags::WITNESS),
+                    address: [0, 0, 0, 0, 0, 0xffff, 0x0a00, 0x0001],
+                    port: 8333
+                }
+            ),
             "The address is: Address {services: ServiceFlags(NETWORK|WITNESS), address: 10.0.0.1, port: 8333}"
         );
 
         assert_eq!(
-            format!("The address is: {:?}", Address {
-                services: ServiceFlags::NETWORK_LIMITED,
-                address: [0xFD87, 0xD87E, 0xEB43, 0, 0, 0xffff, 0x0a00, 0x0001],
-                port: 8333
-            }),
+            format!(
+                "The address is: {:?}",
+                Address {
+                    services: ServiceFlags::NETWORK_LIMITED,
+                    address: [0xFD87, 0xD87E, 0xEB43, 0, 0, 0xffff, 0x0a00, 0x0001],
+                    port: 8333
+                }
+            ),
             "The address is: Address {services: ServiceFlags(NETWORK_LIMITED), address: fd87:d87e:eb43::ffff:a00:1, port: 8333}"
         );
     }
@@ -492,14 +498,14 @@ mod test {
         let ip: AddrV2 = deserialize(&hex!(
             "042079bcc625184b05194975c28b66b66b0469f7f6556fb1ac3189a79b40dda32f1f"
         ))
-            .unwrap();
+        .unwrap();
         assert_eq!(
             ip,
             AddrV2::TorV3(
                 FromHex::from_hex(
                     "79bcc625184b05194975c28b66b66b0469f7f6556fb1ac3189a79b40dda32f1f"
                 )
-                    .unwrap()
+                .unwrap()
             )
         );
 
@@ -510,14 +516,14 @@ mod test {
         let ip: AddrV2 = deserialize(&hex!(
             "0520a2894dabaec08c0051a481a6dac88b64f98232ae42d4b6fd2fa81952dfe36a87"
         ))
-            .unwrap();
+        .unwrap();
         assert_eq!(
             ip,
             AddrV2::I2p(
                 FromHex::from_hex(
                     "a2894dabaec08c0051a481a6dac88b64f98232ae42d4b6fd2fa81952dfe36a87"
                 )
-                    .unwrap()
+                .unwrap()
             )
         );
 

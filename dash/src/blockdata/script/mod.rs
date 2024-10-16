@@ -61,10 +61,10 @@ use serde;
 
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{ScriptHash, WScriptHash};
 use crate::prelude::*;
-use crate::{io, OutPoint};
+use crate::{OutPoint, io};
 
 mod borrowed;
 mod builder;
