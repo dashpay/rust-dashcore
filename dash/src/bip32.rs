@@ -28,7 +28,7 @@ use core::str::FromStr;
 #[cfg(feature = "std")]
 use std::error;
 
-use hashes::{Hash, HashEngine, Hmac, HmacEngine, hex, sha512};
+use hashes::{Hash, HashEngine, Hmac, HmacEngine, hex as hashesHex, sha512};
 use internals::impl_array_newtype;
 use secp256k1::{self, Secp256k1, XOnlyPublicKey};
 #[cfg(feature = "serde")]
@@ -126,6 +126,18 @@ pub enum ChildNumber {
         /// Key index, within [0, 2^31 - 1]
         index: u32,
     },
+
+    /// Non-hardened key
+    Normal256 {
+        /// Key index, within [0, 2^256 - 1]
+        index: [u8; 32],
+    },
+
+    /// Hardened key
+    Hardened256 {
+        /// Key index, within [0, 2^256 - 1]
+        index: [u8; 32],
+    },
 }
 
 impl ChildNumber {
@@ -153,6 +165,14 @@ impl ChildNumber {
         }
     }
 
+    /// Create a non-hardened `ChildNumber` from a 256-bit index.
+    pub fn from_normal_idx_256(index: [u8; 32]) -> ChildNumber { ChildNumber::Normal256 { index } }
+
+    /// Create a hardened `ChildNumber` from a 256-bit index.
+    pub fn from_hardened_idx_256(index: [u8; 32]) -> ChildNumber {
+        ChildNumber::Hardened256 { index }
+    }
+
     /// Returns `true` if the child number is a [`Normal`] value.
     ///
     /// [`Normal`]: #variant.Normal
@@ -165,6 +185,18 @@ impl ChildNumber {
         match self {
             ChildNumber::Hardened { .. } => true,
             ChildNumber::Normal { .. } => false,
+            ChildNumber::Normal256 { .. } => false,
+            ChildNumber::Hardened256 { .. } => true,
+        }
+    }
+
+    /// Returns `true` if the child number is a 256 bit value.
+    pub fn is_256_bits(&self) -> bool {
+        match self {
+            ChildNumber::Hardened { .. } => false,
+            ChildNumber::Normal { .. } => false,
+            ChildNumber::Normal256 { .. } => true,
+            ChildNumber::Hardened256 { .. } => true,
         }
     }
 
@@ -173,6 +205,40 @@ impl ChildNumber {
         match self {
             ChildNumber::Normal { index: idx } => ChildNumber::from_normal_idx(idx + 1),
             ChildNumber::Hardened { index: idx } => ChildNumber::from_hardened_idx(idx + 1),
+            ChildNumber::Normal256 { mut index } => {
+                // Increment the 256-bit big-endian number represented by index
+                let mut carry = 1u8;
+                for byte in index.iter_mut().rev() {
+                    let (new_byte, overflow) = byte.overflowing_add(carry);
+                    *byte = new_byte;
+                    carry = if overflow { 1 } else { 0 };
+                    if carry == 0 {
+                        break;
+                    }
+                }
+                if carry != 0 {
+                    // Overflow occurred
+                    return Err(Error::InvalidChildNumber(0)); // Or define a suitable error
+                }
+                Ok(ChildNumber::Normal256 { index })
+            }
+            ChildNumber::Hardened256 { mut index } => {
+                // Increment the 256-bit big-endian number represented by index
+                let mut carry = 1u8;
+                for byte in index.iter_mut().rev() {
+                    let (new_byte, overflow) = byte.overflowing_add(carry);
+                    *byte = new_byte;
+                    carry = if overflow { 1 } else { 0 };
+                    if carry == 0 {
+                        break;
+                    }
+                }
+                if carry != 0 {
+                    // Overflow occurred
+                    return Err(Error::InvalidChildNumber(0)); // Or define a suitable error
+                }
+                Ok(ChildNumber::Hardened256 { index })
+            }
         }
     }
 }
@@ -192,6 +258,8 @@ impl From<ChildNumber> for u32 {
         match cnum {
             ChildNumber::Normal { index } => index,
             ChildNumber::Hardened { index } => index | (1 << 31),
+            ChildNumber::Normal256 { .. } => u32::MAX,
+            ChildNumber::Hardened256 { .. } => u32::MAX,
         }
     }
 }
@@ -205,6 +273,12 @@ impl fmt::Display for ChildNumber {
                 f.write_str(if alt { "h" } else { "'" })
             }
             ChildNumber::Normal { index } => fmt::Display::fmt(&index, f),
+            ChildNumber::Hardened256 { index } => {
+                write!(f, "0x{}{}", hex::encode(index), if f.alternate() { "h" } else { "'" })
+            }
+            ChildNumber::Normal256 { index } => {
+                write!(f, "0x{}", hex::encode(index))
+            }
         }
     }
 }
@@ -213,14 +287,32 @@ impl FromStr for ChildNumber {
     type Err = Error;
 
     fn from_str(inp: &str) -> Result<ChildNumber, Error> {
-        let is_hardened = inp.chars().last().map_or(false, |l| l == '\'' || l == 'h');
-        Ok(if is_hardened {
-            ChildNumber::from_hardened_idx(
-                inp[0..inp.len() - 1].parse().map_err(|_| Error::InvalidChildNumberFormat)?,
-            )?
+        let is_hardened = inp.ends_with('\'') || inp.ends_with('h');
+        let index_str = if is_hardened { &inp[..inp.len() - 1] } else { inp };
+
+        if index_str.starts_with("0x") || index_str.starts_with("0X") {
+            // Parse as a 256-bit hex number
+            let hex_str = &index_str[2..];
+            let hex_bytes = hex::decode(hex_str).map_err(|_| Error::InvalidChildNumberFormat)?;
+            if hex_bytes.len() != 32 {
+                return Err(Error::InvalidChildNumberFormat);
+            }
+            let mut index_bytes = [0u8; 32];
+            index_bytes[32 - hex_bytes.len()..].copy_from_slice(&hex_bytes);
+            if is_hardened {
+                Ok(ChildNumber::Hardened256 { index: index_bytes })
+            } else {
+                Ok(ChildNumber::Normal256 { index: index_bytes })
+            }
         } else {
-            ChildNumber::from_normal_idx(inp.parse().map_err(|_| Error::InvalidChildNumberFormat)?)?
-        })
+            // Parse as a u32 number
+            let index = index_str.parse::<u32>().map_err(|_| Error::InvalidChildNumberFormat)?;
+            if is_hardened {
+                ChildNumber::from_hardened_idx(index)
+            } else {
+                ChildNumber::from_normal_idx(index)
+            }
+        }
     }
 }
 
@@ -465,7 +557,7 @@ pub enum Error {
     /// Base58 encoding error
     Base58(base58::Error),
     /// Hexadecimal decoding error
-    Hex(hex::Error),
+    Hex(hashesHex::Error),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidPublicKeyHexLength(usize),
 }
@@ -588,6 +680,19 @@ impl ExtendedPrivKey {
                 hmac_engine.input(&self.private_key[..]);
                 hmac_engine.input(&(index | (1 << 31)).to_be_bytes());
             }
+            ChildNumber::Normal256 { index } => {
+                // Non-hardened key with 256-bit index
+                hmac_engine.input(
+                    &secp256k1::PublicKey::from_secret_key(secp, &self.private_key).serialize()[..],
+                );
+                hmac_engine.input(&index);
+            }
+            ChildNumber::Hardened256 { index } => {
+                // Hardened key with 256-bit index
+                hmac_engine.input(&[0u8]);
+                hmac_engine.input(&self.private_key[..]);
+                hmac_engine.input(&index);
+            }
         }
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
         let sk = secp256k1::SecretKey::from_slice(&hmac_result[..32])
@@ -605,8 +710,26 @@ impl ExtendedPrivKey {
         })
     }
 
+    /// Extended private key binary encoding according to BIP 32
+    fn encode(&self) -> Vec<u8> {
+        if self.child_number.is_256_bits() {
+            self.encode_256().to_vec()
+        } else {
+            self.encode_32().to_vec()
+        }
+    }
+
     /// Decoding extended private key from binary data according to BIP 32
-    pub fn decode(data: &[u8]) -> Result<ExtendedPrivKey, Error> {
+    fn decode(data: &[u8]) -> Result<ExtendedPrivKey, Error> {
+        match data.len() {
+            78 => Self::decode_32(data),
+            107 => Self::decode_256(data),
+            _ => Err(Error::WrongExtendedKeyLength(data.len())),
+        }
+    }
+
+    /// Decoding extended private key from binary data according to BIP 32
+    fn decode_32(data: &[u8]) -> Result<ExtendedPrivKey, Error> {
         if data.len() != 78 {
             return Err(Error::WrongExtendedKeyLength(data.len()));
         }
@@ -633,7 +756,7 @@ impl ExtendedPrivKey {
     }
 
     /// Extended private key binary encoding according to BIP 32
-    pub fn encode(&self) -> [u8; 78] {
+    fn encode_32(&self) -> [u8; 78] {
         let mut ret = [0; 78];
         ret[0..4].copy_from_slice(
             &match self.network {
@@ -647,6 +770,91 @@ impl ExtendedPrivKey {
         ret[13..45].copy_from_slice(&self.chain_code[..]);
         ret[45] = 0;
         ret[46..78].copy_from_slice(&self.private_key[..]);
+        ret
+    }
+
+    /// Decoding extended private key from binary data with 256-bit child numbers
+    fn decode_256(data: &[u8]) -> Result<ExtendedPrivKey, Error> {
+        if data.len() != 107 {
+            return Err(Error::WrongExtendedKeyLength(data.len()));
+        }
+
+        let version = &data[0..4];
+        let network = match version {
+            [0x0Eu8, 0xEC, 0xF0, 0x2E] => Network::Dash, // Mainnet private
+            [0x0Eu8, 0xED, 0x27, 0x74] => Network::Testnet, // Testnet private
+            [b0, b1, b2, b3] => return Err(Error::UnknownVersion([*b0, *b1, *b2, *b3])),
+            _ => unreachable!("length checked above"),
+        };
+
+        let depth = data[4];
+        let parent_fingerprint = data[5..9].try_into().expect("4 bytes for fingerprint");
+
+        let hardening_byte = data[9];
+        let is_hardened = match hardening_byte {
+            0x00 => false,
+            _ => true,
+        };
+
+        let child_number_bytes = data[10..42].try_into().expect("32 bytes for child number");
+        let child_number = if is_hardened {
+            ChildNumber::Hardened256 { index: child_number_bytes }
+        } else {
+            ChildNumber::Normal256 { index: child_number_bytes }
+        };
+
+        let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
+        let private_key = secp256k1::SecretKey::from_slice(&data[75..107])?;
+
+        Ok(ExtendedPrivKey {
+            network,
+            depth,
+            parent_fingerprint,
+            child_number,
+            private_key,
+            chain_code: ChainCode(chain_code),
+        })
+    }
+
+    /// Encoding extended private key to binary data with 256-bit child numbers
+    fn encode_256(&self) -> [u8; 107] {
+        let mut ret = [0u8; 107];
+
+        // Version bytes
+        let version: [u8; 4] = match self.network {
+            Network::Dash => [0x0E, 0xEC, 0xF0, 0x2E],
+            Network::Testnet | Network::Devnet | Network::Regtest => [0x0E, 0xED, 0x27, 0x74],
+        };
+        ret[0..4].copy_from_slice(&version);
+
+        // Depth
+        ret[4] = self.depth;
+
+        // Parent fingerprint
+        ret[5..9].copy_from_slice(&self.parent_fingerprint[..]);
+
+        // Hardening byte
+        let hardening_byte = match self.child_number {
+            ChildNumber::Normal256 { .. } => 0x00,
+            ChildNumber::Hardened256 { .. } => 0x01,
+            _ => panic!("Invalid child number for 256-bit format"),
+        };
+        ret[9] = hardening_byte;
+
+        // Child number (32 bytes)
+        let child_number_bytes = match self.child_number {
+            ChildNumber::Normal256 { index } | ChildNumber::Hardened256 { index } => index,
+            _ => panic!("Invalid child number for 256-bit format"),
+        };
+        ret[10..42].copy_from_slice(&child_number_bytes);
+
+        // Chain code (32 bytes)
+        ret[42..74].copy_from_slice(&self.chain_code[..]);
+
+        // Key data (33 bytes)
+        ret[74] = 0x00; // Padding for private key
+        ret[75..107].copy_from_slice(&self.private_key[..]);
+
         ret
     }
 
@@ -715,7 +923,8 @@ impl ExtendedPubKey {
         i: ChildNumber,
     ) -> Result<(secp256k1::SecretKey, ChainCode), Error> {
         match i {
-            ChildNumber::Hardened { .. } => Err(Error::CannotDeriveFromHardenedKey),
+            ChildNumber::Hardened { .. } | ChildNumber::Hardened256 { .. } =>
+                Err(Error::CannotDeriveFromHardenedKey),
             ChildNumber::Normal { index: n } => {
                 let mut hmac_engine: HmacEngine<sha512::Hash> =
                     HmacEngine::new(&self.chain_code[..]);
@@ -726,6 +935,23 @@ impl ExtendedPubKey {
 
                 let private_key = secp256k1::SecretKey::from_slice(&hmac_result[..32])?;
                 let chain_code = ChainCode::from_hmac(hmac_result);
+                Ok((private_key, chain_code))
+            }
+            ChildNumber::Normal256 { index: idx } => {
+                // UInt256 mode (index >= 2^32)
+                let mut hmac_engine: HmacEngine<sha512::Hash> =
+                    HmacEngine::new(&self.chain_code[..]);
+
+                // HMAC Input: serP(Kpar) || ser256(i)
+                hmac_engine.input(&self.public_key.serialize()[..]);
+                hmac_engine.input(&idx);
+
+                let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+
+                // IL must be less than n (order of the curve)
+                let private_key = secp256k1::SecretKey::from_slice(&hmac_result[..32])?;
+                let chain_code = ChainCode::from_hmac(hmac_result);
+
                 Ok((private_key, chain_code))
             }
         }
@@ -750,8 +976,26 @@ impl ExtendedPubKey {
         })
     }
 
-    /// Decoding extended public key from binary data according to BIP 32
+    /// Extended public key binary encoding according to BIP 32 and DIP-14
+    pub fn encode(&self) -> Vec<u8> {
+        if self.child_number.is_256_bits() {
+            self.encode_256().to_vec()
+        } else {
+            self.encode_32().to_vec()
+        }
+    }
+
+    /// Decoding extended public key from binary data according to BIP 32 and DIP-14
     pub fn decode(data: &[u8]) -> Result<ExtendedPubKey, Error> {
+        match data.len() {
+            78 => Self::decode_32(data),
+            107 => Self::decode_256(data),
+            _ => Err(Error::WrongExtendedKeyLength(data.len())),
+        }
+    }
+
+    /// Decoding extended public key from binary data according to BIP 32
+    pub fn decode_32(data: &[u8]) -> Result<ExtendedPubKey, Error> {
         if data.len() != 78 {
             return Err(Error::WrongExtendedKeyLength(data.len()));
         }
@@ -778,7 +1022,7 @@ impl ExtendedPubKey {
     }
 
     /// Extended public key binary encoding according to BIP 32
-    pub fn encode(&self) -> [u8; 78] {
+    pub fn encode_32(&self) -> [u8; 78] {
         let mut ret = [0; 78];
         ret[0..4].copy_from_slice(
             &match self.network {
@@ -792,6 +1036,92 @@ impl ExtendedPubKey {
         ret[13..45].copy_from_slice(&self.chain_code[..]);
         ret[45..78].copy_from_slice(&self.public_key.serialize()[..]);
         ret
+    }
+
+    /// Encoding extended public key to binary data with 256-bit child numbers
+    fn encode_256(&self) -> [u8; 107] {
+        let mut ret = [0u8; 107];
+
+        // Version bytes
+        let version: [u8; 4] = match self.network {
+            Network::Dash => [0x0E, 0xEC, 0xEF, 0xC5],
+            Network::Testnet | Network::Devnet | Network::Regtest => [0x0E, 0xED, 0x27, 0x0B],
+        };
+        ret[0..4].copy_from_slice(&version);
+
+        // Depth
+        ret[4] = self.depth;
+
+        // Parent fingerprint
+        ret[5..9].copy_from_slice(&self.parent_fingerprint[..]);
+
+        // Hardening byte
+        let hardening_byte = match self.child_number {
+            ChildNumber::Normal256 { .. } => 0x00,
+            ChildNumber::Hardened256 { .. } => 0x01,
+            _ => panic!("Invalid child number for 256-bit format"),
+        };
+        ret[9] = hardening_byte;
+
+        // Child number (32 bytes)
+        let child_number_bytes = match self.child_number {
+            ChildNumber::Normal256 { index } | ChildNumber::Hardened256 { index } => index,
+            _ => panic!("Invalid child number for 256-bit format"),
+        };
+        ret[10..42].copy_from_slice(&child_number_bytes);
+
+        // Chain code (32 bytes)
+        ret[42..74].copy_from_slice(&self.chain_code[..]);
+
+        // Key data (33 bytes)
+        ret[74..107].copy_from_slice(&self.public_key.serialize()[..]);
+
+        ret
+    }
+
+    /// Decoding extended public key from binary data with 256-bit child numbers
+    fn decode_256(data: &[u8]) -> Result<ExtendedPubKey, Error> {
+        if data.len() != 107 {
+            return Err(Error::WrongExtendedKeyLength(data.len()));
+        }
+
+        let version = &data[0..4];
+        let network = match version {
+            [0x0Eu8, 0xEC, 0xEF, 0xC5] => Network::Dash, // Mainnet public
+            [0x0Eu8, 0xED, 0x27, 0x0B] => Network::Testnet, // Testnet public
+            [b0, b1, b2, b3] => return Err(Error::UnknownVersion([*b0, *b1, *b2, *b3])),
+            _ => unreachable!("length checked above"),
+        };
+
+        let depth = data[4];
+        let parent_fingerprint = data[5..9].try_into().expect("4 bytes for fingerprint");
+
+        let hardening_byte = data[9];
+        let is_hardened = match hardening_byte {
+            0x00 => false,
+            _ => true,
+        };
+
+        let child_number_bytes = data[10..42].try_into().expect("32 bytes for child number");
+        let child_number = if is_hardened {
+            ChildNumber::Hardened256 { index: child_number_bytes }
+        } else {
+            ChildNumber::Normal256 { index: child_number_bytes }
+        };
+
+        let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
+
+        // Key data (33 bytes)
+        let public_key = secp256k1::PublicKey::from_slice(&data[74..107])?;
+
+        Ok(ExtendedPubKey {
+            network,
+            depth,
+            parent_fingerprint,
+            child_number,
+            public_key,
+            chain_code: ChainCode(chain_code),
+        })
     }
 
     /// Returns the HASH160 of the chaincode
@@ -818,11 +1148,6 @@ impl FromStr for ExtendedPrivKey {
 
     fn from_str(inp: &str) -> Result<ExtendedPrivKey, Error> {
         let data = base58::decode_check(inp)?;
-
-        if data.len() != 78 {
-            return Err(base58::Error::InvalidLength(data.len()).into());
-        }
-
         ExtendedPrivKey::decode(&data)
     }
 }
@@ -838,11 +1163,6 @@ impl FromStr for ExtendedPubKey {
 
     fn from_str(inp: &str) -> Result<ExtendedPubKey, Error> {
         let data = base58::decode_check(inp)?;
-
-        if data.len() != 78 {
-            return Err(base58::Error::InvalidLength(data.len()).into());
-        }
-
         ExtendedPubKey::decode(&data)
     }
 }
@@ -961,12 +1281,12 @@ mod tests {
         for &num in path.0.iter() {
             sk = sk.ckd_priv(secp, num).unwrap();
             match num {
-                Normal { .. } => {
+                Normal { .. } | ChildNumber::Normal256 { .. } => {
                     let pk2 = pk.ckd_pub(secp, num).unwrap();
                     pk = ExtendedPubKey::from_priv(secp, &sk);
                     assert_eq!(pk, pk2);
                 }
-                Hardened { .. } => {
+                Hardened { .. } | ChildNumber::Hardened256 { .. } => {
                     assert_eq!(pk.ckd_pub(secp, num), Err(Error::CannotDeriveFromHardenedKey));
                     pk = ExtendedPubKey::from_priv(secp, &sk);
                 }
@@ -1264,5 +1584,80 @@ mod tests {
         // Xpriv having secret key set to all 0xFF's
         let xpriv_str = "xprv9s21ZrQH143K24Mfq5zL5MhWK9hUhhGbd45hLXo2Pq2oqzMMo63oStZzFAzHGBP2UuGCqWLTAPLcMtD9y5gkZ6Eq3Rjuahrv17fENZ3QzxW";
         ExtendedPrivKey::from_str(xpriv_str).unwrap();
+    }
+
+    #[test]
+    fn test_dashpay_vector_1() {
+        let secp = Secp256k1::new();
+        let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
+
+        // Test Vector 1: Non-hardened / Hardened path example
+        test_path(
+            &secp,
+            Network::Testnet,
+            &seed,
+            "m/0x775d3854c910b7dee436869c4724bed2fe0784e198b8a39f02bbb49d8ebcfc3b/\
+         0xf537439f36d04a15474ff7423e4b904a14373fafb37a41db74c84f1dbb5c89a6'/\
+         0x4c4592ca670c983fc43397dfd21a6f427fac9b4ac53cb4dcdc6522ec51e81e79/0"
+                .parse()
+                .unwrap(),
+            "tprv8iNr6Z8PgAHmYSgMKGbq42kMVAAQmwmzm5iTJdUXoxLf25zG3GeRCvnEdC6HKTHkU59nZkfjvcGk9VW2YHsFQMwsZrQLyNrGx9c37kgb368",
+            "tpubDF4tEyAdpXySRui9CvGRTSQU4BgLwGxuLPKEb9WqEE93raF2ffU1PRQ6oJHCgZ7dArzcMj9iKG8s8EFA1DdwgzWAXs61uFuRE1bQi8kAmLy",
+        );
+    }
+
+    #[test]
+    fn test_dashpay_vector_2() {
+        let secp = Secp256k1::new();
+        let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
+
+        // Test Vector 2: Multiple hardened derivations with final non-hardened index
+        test_path(
+            &secp,
+            Network::Testnet,
+            &seed,
+            "m/9'/5'/15'/0'/\
+         0x555d3854c910b7dee436869c4724bed2fe0784e198b8a39f02bbb49d8ebcfc3a'/\
+         0xa137439f36d04a15474ff7423e4b904a14373fafb37a41db74c84f1dbb5c89b5'/0"
+                .parse()
+                .unwrap(),
+            "tprv8p9LqE2tA2b94gc3ciRNA525WVkFvzkcC9qjpKEcGaTqjb9u2pwTXj41KkZTj3c1a6fJUpyXRfcB4dimsYsLMjQjsTJwi5Ukx6tJ5BpmYpx",
+            "tpubDLqNye58JQGox9dqWN5xZUgC5XGC6KwWmTSX6qGugrGEa5QffDm3iDfsVtX7qyXuWoQsXA6YCSuckKshyjnwiGGoYWHonAv2X98HTU613UH",
+        );
+    }
+
+    #[test]
+    fn test_dashpay_vector_3() {
+        let secp = Secp256k1::new();
+        let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
+
+        // Test Vector 3: Non-hardened derivation
+        test_path(
+            &secp,
+            Network::Testnet,
+            &seed,
+            "m/0x775d3854c910b7dee436869c4724bed2fe0784e198b8a39f02bbb49d8ebcfc3b".parse().unwrap(),
+            "dpts1vgMVEs9mmv1YLwURCeoTn9CFMZ8JMVhyZuxQSKttNSETR3zydMFHMKTTNDQPf6nnupCCtcNnSu3nKZXAJhaguyoJWD4Ju5PE6PSkBqAKWci7HLz37qmFmZZU6GMkLvNLtST2iV8NmqqbX37c45",
+            "dptp1C5gGd8NzvAke5WNKyRfpDRyvV2UZ3jjrZVZU77qk9yZemMGSdZpkWp7y6wt3FzvFxAHSW8VMCaC1p6Ny5EqWuRm2sjvZLUUFMMwXhmW6eS69qjX958RYBH5R8bUCGZkCfUyQ8UVWcx9katkrRr",
+        );
+    }
+
+    #[test]
+    fn test_dashpay_vector_4() {
+        let secp = Secp256k1::new();
+        let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
+
+        // Test Vector 4: Hardened path with complex indices
+        test_path(
+            &secp,
+            Network::Testnet,
+            &seed,
+            "m/0x775d3854c910b7dee436869c4724bed2fe0784e198b8a39f02bbb49d8ebcfc3b/\
+         0xf537439f36d04a15474ff7423e4b904a14373fafb37a41db74c84f1dbb5c89a6'"
+                .parse()
+                .unwrap(),
+            "dpts1vwRsaPMQfqwp59ELpx5UeuYtdaMCJyGTwiGtr8zgf6qWPMWnhPpg8R73hwR1xLibbdKVdh17zfwMxFEMxZzBKUgPwvuosUGDKW4ayZjs3AQB9EGRcVpDoFT8V6nkcc6KzksmZxvmDcd3MqiPEu",
+            "dptp1CLkexeadp6guoi8Fbiwq6CLZm3hT1DJLwHsxWvwYSeAhjenFhcQ9HumZSftfZEr4dyQjFD7gkM5bSn6Aj7F1Jve8KTn4JsMEaj9dFyJkYs4Ga5HSUqeajxGVmzaY1pEioDmvUtZL3J1NCDCmzQ",
+        );
     }
 }
