@@ -70,12 +70,12 @@ impl fmt::Display for Error {
                 write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got)
             }
             Error::NotSupported(ref string) => {
-                write!(f,"{}", string.as_str())
+                write!(f, "{}", string.as_str())
             }
             #[cfg(feature = "bls-signatures")]
-            Error::BLSError(ref string) => write!(f,"{}", string.as_str()),
+            Error::BLSError(ref string) => write!(f, "{}", string.as_str()),
             #[cfg(feature = "ed25519-dalek")]
-            Error::Ed25519Dalek(ref string) => write!(f,"{}", string.as_str()),
+            Error::Ed25519Dalek(ref string) => write!(f, "{}", string.as_str()),
         }
     }
 }

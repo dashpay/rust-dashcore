@@ -78,7 +78,6 @@ pub extern crate secp256k1;
 
 #[cfg(feature = "bls-signatures")]
 pub use bls_signatures;
-
 #[cfg(feature = "ed25519-dalek")]
 pub use ed25519_dalek;
 

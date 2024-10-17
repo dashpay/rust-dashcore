@@ -648,17 +648,17 @@ mod test {
     #[cfg(feature = "serde")]
     #[test]
     fn test_serde_bincode() {
-        use bincode;
+        use bincode_test;
 
         let old_witness_format = vec![vec![0u8], vec![2]];
         let new_witness_format = Witness::from_slice(&old_witness_format);
 
-        let old = bincode::serialize(&old_witness_format).unwrap();
-        let new = bincode::serialize(&new_witness_format).unwrap();
+        let old = bincode_test::serialize(&old_witness_format).unwrap();
+        let new = bincode_test::serialize(&new_witness_format).unwrap();
 
         assert_eq!(old, new);
 
-        let back: Witness = bincode::deserialize(&new).unwrap();
+        let back: Witness = bincode_test::deserialize(&new).unwrap();
         assert_eq!(new_witness_format, back);
     }
 

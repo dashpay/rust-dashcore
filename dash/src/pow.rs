@@ -1419,8 +1419,8 @@ mod tests {
             assert_eq!(::serde_json::to_string(&uint).unwrap(), json);
             assert_eq!(::serde_json::from_str::<U256>(&json).unwrap(), uint);
 
-            let bin_encoded = bincode::serialize(&uint).unwrap();
-            let bin_decoded: U256 = bincode::deserialize(&bin_encoded).unwrap();
+            let bin_encoded = bincode_test::serialize(&uint).unwrap();
+            let bin_decoded: U256 = bincode_test::deserialize(&bin_encoded).unwrap();
             assert_eq!(bin_decoded, uint);
         };
 

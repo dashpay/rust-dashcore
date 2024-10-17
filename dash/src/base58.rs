@@ -60,7 +60,7 @@ pub enum Error {
     Ed25519Dalek(String),
 
     /// A feature is not supported
-    NotSupported(String)
+    NotSupported(String),
 }
 
 impl fmt::Display for Error {

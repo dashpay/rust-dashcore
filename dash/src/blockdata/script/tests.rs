@@ -640,12 +640,12 @@ fn test_script_serde_human_and_not() {
     // Serialize
     let json = serde_json::to_string(&script).unwrap();
     assert_eq!(json, "\"000102\"");
-    let bincode = bincode::serialize(&script).unwrap();
+    let bincode = bincode_test::serialize(&script).unwrap();
     assert_eq!(bincode, [3, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2]); // bincode adds u64 for length, serde_cbor use varint
 
     // Deserialize
     assert_eq!(script, serde_json::from_str::<ScriptBuf>(&json).unwrap());
-    assert_eq!(script, bincode::deserialize::<ScriptBuf>(&bincode).unwrap());
+    assert_eq!(script, bincode_test::deserialize::<ScriptBuf>(&bincode).unwrap());
 }
 
 #[test]

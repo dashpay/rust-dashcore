@@ -1,44 +1,29 @@
+use std::collections::HashMap;
+use std::convert::TryFrom;
+
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
+use lazy_static::lazy_static;
+use secp256k1::Secp256k1;
+use secp256k1::rand::Rng;
+#[cfg(feature = "rand")]
+use secp256k1::rand::SeedableRng;
 #[cfg(feature = "rand")]
 use secp256k1::rand::rngs::StdRng as EcdsaRng;
 #[cfg(feature = "rand")]
-use secp256k1::rand::SeedableRng;
+use secp256k1::rand::rngs::StdRng;
 #[cfg(feature = "serde")]
 use serde_repr::{Deserialize_repr, Serialize_repr};
-use std::collections::HashMap;
-use std::convert::TryFrom;
-use lazy_static::lazy_static;
-use secp256k1::rand::Rng;
-#[cfg(feature = "rand")]
-use secp256k1::rand::rngs::StdRng;
-use secp256k1::Secp256k1;
-use crate::{Network, PrivateKey};
+
 use crate::key::Error;
 use crate::signer::ripemd160_sha256;
+use crate::{Network, PrivateKey};
 
 #[allow(non_camel_case_types)]
 #[repr(u8)]
-#[derive(
-    Debug,
-    PartialEq,
-    Eq,
-    Clone,
-    Copy,
-    Hash,
-    Ord,
-    PartialOrd,
-    Default,
-    strum::EnumIter,
-)]
-#[cfg_attr(
-    feature = "serde",
-    derive(Serialize_repr, Deserialize_repr)
-)]
-#[cfg_attr(
-    feature = "bincode",
-    derive(Encode, Decode)
-)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, Ord, PartialOrd, Default, strum::EnumIter)]
+#[cfg_attr(feature = "serde", derive(Serialize_repr, Deserialize_repr))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum KeyType {
     #[default]
     ECDSA_SECP256K1 = 0,
@@ -64,9 +49,7 @@ pub const KEY_TYPE_MAX_SIZE_TYPE: KeyType = KeyType::BLS12_381;
 
 impl KeyType {
     /// Gets the default size of the public key
-    pub fn default_size(&self) -> usize {
-        KEY_TYPE_SIZES[self]
-    }
+    pub fn default_size(&self) -> usize { KEY_TYPE_SIZES[self] }
 
     /// All key types
     pub fn all_key_types() -> [KeyType; 5] {
@@ -103,10 +86,7 @@ impl KeyType {
 
     #[cfg(feature = "rand")]
     /// Gets the default size of the public key
-    pub fn random_public_key_data(
-        &self,
-        rng: &mut StdRng,
-    ) -> Vec<u8> {
+    pub fn random_public_key_data(&self, rng: &mut StdRng) -> Vec<u8> {
         match self {
             KeyType::ECDSA_SECP256K1 => {
                 let secp = Secp256k1::new();
@@ -124,9 +104,8 @@ impl KeyType {
                     .to_bytes()
                     .to_vec()
             }
-            KeyType::ECDSA_HASH160 | KeyType::BIP13_SCRIPT_HASH | KeyType::EDDSA_25519_HASH160 => {
-                (0..self.default_size()).map(|_| rng.gen::<u8>()).collect()
-            }
+            KeyType::ECDSA_HASH160 | KeyType::BIP13_SCRIPT_HASH | KeyType::EDDSA_25519_HASH160 =>
+                (0..self.default_size()).map(|_| rng.gen::<u8>()).collect(),
         }
     }
 
@@ -172,9 +151,7 @@ impl KeyType {
             KeyType::EDDSA_25519_HASH160 => {
                 #[cfg(feature = "ed25519-dalek")]
                 {
-                    let key_pair = ed25519_dalek::SigningKey::from_bytes(
-                        &private_key_bytes,
-                    );
+                    let key_pair = ed25519_dalek::SigningKey::from_bytes(&private_key_bytes);
                     Ok(ripemd160_sha256(key_pair.verifying_key().to_bytes().as_slice()).to_vec())
                 }
                 #[cfg(not(feature = "ed25519-dalek"))]
@@ -192,17 +169,17 @@ impl KeyType {
 
     #[cfg(feature = "rand")]
     /// Gets the default size of the public key
-    pub fn random_public_and_private_key_data(&self, rng: &mut StdRng) -> Result<(Vec<u8>, Vec<u8>), Error> {
+    pub fn random_public_and_private_key_data(
+        &self,
+        rng: &mut StdRng,
+    ) -> Result<(Vec<u8>, Vec<u8>), Error> {
         match self {
             KeyType::ECDSA_SECP256K1 => {
                 let secp = Secp256k1::new();
                 let mut rng = EcdsaRng::from_rng(rng).unwrap();
                 let secret_key = secp256k1::SecretKey::new(&mut rng);
                 let private_key = PrivateKey::new(secret_key, Network::Dash);
-                Ok((
-                    private_key.public_key(&secp).to_bytes(),
-                    private_key.to_bytes(),
-                ))
+                Ok((private_key.public_key(&secp).to_bytes(), private_key.to_bytes()))
             }
             KeyType::BLS12_381 => {
                 #[cfg(feature = "bls_signatures")]
@@ -261,9 +238,7 @@ impl KeyType {
 }
 
 impl std::fmt::Display for KeyType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{self:?}") }
 }
 
 impl TryFrom<u8> for KeyType {
