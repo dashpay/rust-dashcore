@@ -36,6 +36,12 @@ use serde;
 
 use crate::base58;
 use crate::crypto::key::{self, Keypair, PrivateKey, PublicKey};
+use crate::dip9::{
+    DASH_BIP44_PATH_MAINNET, DASH_BIP44_PATH_TESTNET, IDENTITY_AUTHENTICATION_PATH_MAINNET,
+    IDENTITY_AUTHENTICATION_PATH_TESTNET, IDENTITY_INVITATION_PATH_MAINNET,
+    IDENTITY_INVITATION_PATH_TESTNET, IDENTITY_REGISTRATION_PATH_MAINNET,
+    IDENTITY_REGISTRATION_PATH_TESTNET, IDENTITY_TOPUP_PATH_MAINNET, IDENTITY_TOPUP_PATH_TESTNET,
+};
 use crate::hash_types::XpubIdentifier;
 use crate::internal_macros::impl_bytes_newtype;
 use crate::io::Write;
@@ -346,6 +352,121 @@ pub trait IntoDerivationPath {
 /// A BIP-32 derivation path.
 #[derive(Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub struct DerivationPath(Vec<ChildNumber>);
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(u32)]
+pub enum KeyDerivationType {
+    ECDSA = 0,
+    BLS = 1,
+}
+
+impl Into<u32> for KeyDerivationType {
+    fn into(self) -> u32 {
+        match self {
+            KeyDerivationType::ECDSA => 0,
+            KeyDerivationType::BLS => 1,
+        }
+    }
+}
+
+impl DerivationPath {
+    pub fn bip_44_account(network: Network, account: u32) -> Self {
+        let mut root_derivation_path: DerivationPath = match network {
+            Network::Dash => DASH_BIP44_PATH_MAINNET,
+            _ => DASH_BIP44_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.0.extend(&[ChildNumber::Hardened { index: account }]);
+        root_derivation_path
+    }
+    pub fn bip_44_payment_path(
+        network: Network,
+        account: u32,
+        change: bool,
+        address_index: u32,
+    ) -> Self {
+        let mut root_derivation_path: DerivationPath = match network {
+            Network::Dash => DASH_BIP44_PATH_MAINNET,
+            _ => DASH_BIP44_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.0.extend(&[
+            ChildNumber::Hardened { index: account },
+            ChildNumber::Normal { index: change.into() },
+            ChildNumber::Normal { index: address_index },
+        ]);
+        root_derivation_path
+    }
+
+    pub fn identity_registration_path(network: Network, index: u32) -> Self {
+        let mut root_derivation_path: DerivationPath = match network {
+            Network::Dash => IDENTITY_REGISTRATION_PATH_MAINNET,
+            _ => IDENTITY_REGISTRATION_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.0.extend(&[ChildNumber::Normal { index }]);
+        root_derivation_path
+    }
+
+    pub fn identity_top_up_path(network: Network, index: u32) -> Self {
+        let mut root_derivation_path: DerivationPath = match network {
+            Network::Dash => IDENTITY_TOPUP_PATH_MAINNET,
+            _ => IDENTITY_TOPUP_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.0.extend(&[ChildNumber::Normal { index }]);
+        root_derivation_path
+    }
+
+    pub fn identity_invitation_path(network: Network, index: u32) -> Self {
+        let mut root_derivation_path: DerivationPath = match network {
+            Network::Dash => IDENTITY_INVITATION_PATH_MAINNET,
+            _ => IDENTITY_INVITATION_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.0.extend(&[ChildNumber::Normal { index }]);
+        root_derivation_path
+    }
+
+    pub fn identity_authentication_path(
+        network: Network,
+        key_type: KeyDerivationType,
+        identity_index: u32,
+        key_index: u32,
+    ) -> Self {
+        let mut root_derivation_path: DerivationPath = match network {
+            Network::Dash => IDENTITY_AUTHENTICATION_PATH_MAINNET,
+            _ => IDENTITY_AUTHENTICATION_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.0.extend(&[
+            ChildNumber::Hardened { index: key_type.into() },
+            ChildNumber::Hardened { index: identity_index },
+            ChildNumber::Hardened { index: key_index },
+        ]);
+        root_derivation_path
+    }
+
+    pub fn derive_priv_ecdsa_for_master_seed(
+        &self,
+        seed: &[u8],
+        network: Network,
+    ) -> Result<ExtendedPrivKey, Error> {
+        let secp = Secp256k1::new();
+        let sk = ExtendedPrivKey::new_master(network, seed)?;
+        sk.derive_priv(&secp, &self)
+    }
+
+    pub fn derive_pub_ecdsa_for_master_seed(
+        &self,
+        seed: &[u8],
+        network: Network,
+    ) -> Result<ExtendedPubKey, Error> {
+        let secp = Secp256k1::new();
+        let sk = self.derive_priv_ecdsa_for_master_seed(seed, network)?;
+        Ok(ExtendedPubKey::from_priv(&secp, &sk))
+    }
+}
 
 #[cfg(feature = "serde")]
 crate::serde_utils::serde_string_impl!(DerivationPath, "a BIP-32 derivation path");
@@ -1677,5 +1798,147 @@ mod tests {
             "dpts1vwRsaPMQfqwp59ELpx5UeuYtdaMCJyGTwiGtr8zgf6qWPMWnhPpg8R73hwR1xLibbdKVdh17zfwMxFEMxZzBKUgPwvuosUGDKW4ayZjs3AQB9EGRcVpDoFT8V6nkcc6KzksmZxvmDcd3MqiPEu",
             "dptp1CLkexeadp6guoi8Fbiwq6CLZm3hT1DJLwHsxWvwYSeAhjenFhcQ9HumZSftfZEr4dyQjFD7gkM5bSn6Aj7F1Jve8KTn4JsMEaj9dFyJkYs4Ga5HSUqeajxGVmzaY1pEioDmvUtZL3J1NCDCmzQ",
         );
+    }
+
+    const HEX_SEED: &str = "368a0691faa33e646108368dc0d9a1f9c440e0c5393ffd2def5ed2200d6019d0f7094c24503d6d1209756ac5bfd87731b0e816736de8f5f44ea636d2b830b3bf";
+
+    #[test]
+    fn test_bip_44_account_path() {
+        let path = DerivationPath::bip_44_account(Network::Dash, 0);
+        assert_eq!(path.to_string(), "m/44'/5'/0'");
+    }
+
+    #[test]
+    fn test_bip_44_payment_path() {
+        let path = DerivationPath::bip_44_payment_path(Network::Dash, 0, true, 0);
+        assert_eq!(path.to_string(), "m/44'/5'/0'/1/0");
+
+        let path = DerivationPath::bip_44_payment_path(Network::Testnet, 1, false, 42);
+        assert_eq!(path.to_string(), "m/44'/1'/1'/0/42");
+    }
+
+    #[test]
+    fn test_identity_registration_path() {
+        let path = DerivationPath::identity_registration_path(Network::Dash, 10);
+        assert_eq!(path.to_string(), "m/9'/5'/5'/1'/10");
+    }
+
+    #[test]
+    fn test_identity_top_up_path() {
+        let path = DerivationPath::identity_top_up_path(Network::Testnet, 2);
+        assert_eq!(path.to_string(), "m/9'/1'/5'/2'/2");
+    }
+
+    #[test]
+    fn test_identity_invitation_path() {
+        let path = DerivationPath::identity_invitation_path(Network::Dash, 15);
+        assert_eq!(path.to_string(), "m/9'/5'/5'/3'/15");
+    }
+
+    #[test]
+    fn test_identity_authentication_path() {
+        let path = DerivationPath::identity_authentication_path(
+            Network::Dash,
+            KeyDerivationType::ECDSA,
+            1,
+            2,
+        );
+        assert_eq!(path.to_string(), "m/9'/5'/5'/0'/0'/1'/2'");
+
+        let path = DerivationPath::identity_authentication_path(
+            Network::Testnet,
+            KeyDerivationType::BLS,
+            2,
+            3,
+        );
+        assert_eq!(path.to_string(), "m/9'/1'/5'/0'/1'/2'/3'");
+    }
+
+    #[test]
+    fn test_derive_priv_ecdsa_for_master_seed() {
+        let path = DerivationPath::bip_44_account(Network::Dash, 0);
+        let sk = path
+            .derive_priv_ecdsa_for_master_seed(
+                hex::decode(HEX_SEED).unwrap().as_ref(),
+                Network::Dash,
+            )
+            .unwrap();
+        assert_eq!(
+            sk.to_string(),
+            "xprv9yiAr178GdLQhB7qVbi6YQ76jopjKcUB6gGFZzYjdCNSmq1fU1RG13K3f3UP1EPNPSerY4conJPozCYeKz9QGmmvZ3CFML3qet8YVCwiTrN"
+        );
+        // Add correct expected value
+    }
+
+    #[test]
+    fn test_derive_pub_ecdsa_for_master_seed() {
+        let path = DerivationPath::bip_44_account(Network::Dash, 0);
+        let pk = path
+            .derive_pub_ecdsa_for_master_seed(
+                hex::decode(HEX_SEED).unwrap().as_ref(),
+                Network::Dash,
+            )
+            .unwrap();
+        assert_eq!(
+            pk.to_string(),
+            "xpub6ChXFWe26zthufCJbdF6uY3qHqfDj5C2TuBrNNxMBXuRedLp1YjWYqdXWMnn9eLzbWWZCqbi4Cdnes1SNgK9GRaBUcZPLyLEpPRi3dU3syV"
+        );
+        // Add correct expected value
+    }
+
+    #[test]
+    fn test_derive_priv_ecdsa_payment_change_key() {
+        let path = DerivationPath::bip_44_payment_path(Network::Dash, 0, true, 3);
+        let sk = path
+            .derive_priv_ecdsa_for_master_seed(
+                hex::decode(HEX_SEED).unwrap().as_ref(),
+                Network::Dash,
+            )
+            .unwrap();
+        assert_eq!(sk.to_priv().to_wif(), "XGtY11vBj7wfeoHxJQjhBzpbZem2CpEwa62WCisXkwzCLmmD4jRD");
+        // Add correct expected value
+    }
+
+    #[test]
+    fn test_derive_priv_ecdsa_payment_main_key() {
+        let path = DerivationPath::bip_44_payment_path(Network::Dash, 0, false, 3);
+        let sk = path
+            .derive_priv_ecdsa_for_master_seed(
+                hex::decode(HEX_SEED).unwrap().as_ref(),
+                Network::Dash,
+            )
+            .unwrap();
+        assert_eq!(sk.to_priv().to_wif(), "XJavmPyJdYEpqZwzVAarQVRhpR7mVLiFHgHoZZTuZdzrpEKDhy6f");
+        // Add correct expected value
+    }
+
+    #[test]
+    fn test_derive_pub_ecdsa_payment_change_key() {
+        let path = DerivationPath::bip_44_payment_path(Network::Dash, 0, true, 3);
+        let sk = path
+            .derive_pub_ecdsa_for_master_seed(
+                hex::decode(HEX_SEED).unwrap().as_ref(),
+                Network::Dash,
+            )
+            .unwrap();
+        assert_eq!(
+            sk.public_key.to_string(),
+            "034c155580c961177c91eda529147d93ee5088b49a3d9462f8cd9943533ac2fbc8"
+        ); // Add correct expected value
+    }
+
+    #[test]
+    fn test_derive_pub_ecdsa_payment_external_key() {
+        let path = DerivationPath::bip_44_payment_path(Network::Dash, 0, false, 3);
+        let sk = path
+            .derive_pub_ecdsa_for_master_seed(
+                hex::decode(HEX_SEED).unwrap().as_ref(),
+                Network::Dash,
+            )
+            .unwrap();
+        assert_eq!(
+            sk.public_key.to_string(),
+            "0251b09b90295c4c793e9452af0e14142c3406b67e864541149de708eb2d41d104"
+        ); // Add correct expected value
     }
 }

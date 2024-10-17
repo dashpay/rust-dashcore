@@ -57,6 +57,10 @@ impl<const N: usize> AsRef<[ChildNumber]> for IndexConstPath<N> {
     fn as_ref(&self) -> &[ChildNumber] { self.indexes.as_ref() }
 }
 
+impl<const N: usize> From<IndexConstPath<N>> for DerivationPath {
+    fn from(value: IndexConstPath<N>) -> Self { DerivationPath::from(value.indexes.as_ref()) }
+}
+
 impl<const N: usize> IndexConstPath<N> {
     pub fn append_path(&self, derivation_path: DerivationPath) -> DerivationPath {
         let mut root_derivation_path = DerivationPath::from(self.indexes.as_ref());
@@ -70,7 +74,7 @@ impl<const N: usize> IndexConstPath<N> {
         root_derivation_path
     }
 
-    pub fn derive_priv_for_master_seed(
+    pub fn derive_priv_ecdsa_for_master_seed(
         &self,
         seed: &[u8],
         add_derivation_path: DerivationPath,
@@ -82,14 +86,14 @@ impl<const N: usize> IndexConstPath<N> {
         sk.derive_priv(&secp, &path)
     }
 
-    pub fn derive_pub_for_master_seed(
+    pub fn derive_pub_ecdsa_for_master_seed(
         &self,
         seed: &[u8],
         add_derivation_path: DerivationPath,
         network: Network,
     ) -> Result<ExtendedPubKey, Error> {
         let secp = Secp256k1::new();
-        let sk = self.derive_priv_for_master_seed(seed, add_derivation_path, network)?;
+        let sk = self.derive_priv_ecdsa_for_master_seed(seed, add_derivation_path, network)?;
         Ok(ExtendedPubKey::from_priv(&secp, &sk))
     }
 
@@ -105,6 +109,8 @@ impl<const N: usize> IndexConstPath<N> {
 }
 
 // Constants for feature purposes and sub-features
+pub const BIP44_PURPOSE: u32 = 44;
+// Constants for feature purposes and sub-features
 pub const FEATURE_PURPOSE: u32 = 9;
 pub const DASH_COIN_TYPE: u32 = 5;
 pub const DASH_TESTNET_COIN_TYPE: u32 = 1;
@@ -114,6 +120,24 @@ pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_REGISTRATION: u32 = 1;
 pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_TOPUP: u32 = 2;
 pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_INVITATIONS: u32 = 3;
 pub const FEATURE_PURPOSE_DASHPAY: u32 = 15;
+pub const DASH_BIP44_PATH_MAINNET: IndexConstPath<2> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened { index: BIP44_PURPOSE },
+        ChildNumber::Hardened { index: DASH_COIN_TYPE },
+    ],
+    reference: DerivationPathReference::BIP44,
+    path_type: DerivationPathType::CLEAR_FUNDS,
+};
+
+pub const DASH_BIP44_PATH_TESTNET: IndexConstPath<2> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened { index: BIP44_PURPOSE },
+        ChildNumber::Hardened { index: DASH_TESTNET_COIN_TYPE },
+    ],
+    reference: DerivationPathReference::BIP44,
+    path_type: DerivationPathType::CLEAR_FUNDS,
+};
+
 pub const IDENTITY_REGISTRATION_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
         ChildNumber::Hardened { index: FEATURE_PURPOSE },

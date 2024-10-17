@@ -28,6 +28,8 @@ secp-lowmemory = ["secp256k1/lowmemory"]
 secp-recovery = ["secp256k1/recovery"]
 signer = ["secp-recovery", "rand"]
 core-block-hash-use-x11 = ["dashcore_hashes/x11"]
+bls = ["bls-signatures"]
+eddsa = ["ed25519-dalek"]
 
 # At least one of std, no-std must be enabled.
 #
