@@ -27,7 +27,7 @@ use core::str::FromStr;
 use hashes::hex::FromHex;
 use hashes::{Hash, hash160, hex};
 use internals::write_err;
-pub use secp256k1::{self, KeyPair, Parity, Secp256k1, Verification, XOnlyPublicKey, constants};
+pub use secp256k1::{self, Keypair, Parity, Secp256k1, Verification, XOnlyPublicKey, constants};
 
 use crate::hash_types::{PubkeyHash, WPubkeyHash};
 use crate::network::constants::Network;
@@ -544,7 +544,7 @@ impl fmt::Display for TweakedPublicKey {
 }
 
 /// Untweaked BIP-340 key pair
-pub type UntweakedKeyPair = KeyPair;
+pub type UntweakedKeyPair = Keypair;
 
 /// Tweaked BIP-340 key pair
 ///
@@ -565,7 +565,7 @@ pub type UntweakedKeyPair = KeyPair;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct TweakedKeyPair(KeyPair);
+pub struct TweakedKeyPair(Keypair);
 
 /// A trait for tweaking BIP340 key types (x-only public keys and key pairs).
 pub trait TapTweak {
@@ -695,11 +695,11 @@ impl TweakedKeyPair {
     /// This method is dangerous and can lead to loss of funds if used incorrectly.
     /// Specifically, in multi-party protocols a peer can provide a value that allows them to steal.
     #[inline]
-    pub fn dangerous_assume_tweaked(pair: KeyPair) -> TweakedKeyPair { TweakedKeyPair(pair) }
+    pub fn dangerous_assume_tweaked(pair: Keypair) -> TweakedKeyPair { TweakedKeyPair(pair) }
 
     /// Returns the underlying key pair.
     #[inline]
-    pub fn to_inner(self) -> KeyPair { self.0 }
+    pub fn to_inner(self) -> Keypair { self.0 }
 
     /// Returns the [`TweakedPublicKey`] and its [`Parity`] for this [`TweakedKeyPair`].
     #[inline]
@@ -714,7 +714,7 @@ impl From<TweakedPublicKey> for XOnlyPublicKey {
     fn from(pair: TweakedPublicKey) -> Self { pair.0 }
 }
 
-impl From<TweakedKeyPair> for KeyPair {
+impl From<TweakedKeyPair> for Keypair {
     #[inline]
     fn from(pair: TweakedKeyPair) -> Self { pair.0 }
 }
@@ -1050,7 +1050,7 @@ mod tests {
         use secp256k1::rand;
 
         let secp = Secp256k1::new();
-        let kp = KeyPair::new(&secp, &mut rand::thread_rng());
+        let kp = Keypair::new(&secp, &mut rand::thread_rng());
 
         let _ = PublicKey::new(kp);
         let _ = PublicKey::new_uncompressed(kp);

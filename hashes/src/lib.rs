@@ -123,6 +123,7 @@ pub mod serde_macros;
 pub mod cmp;
 pub mod error;
 pub mod hash160;
+#[cfg(feature = "x11")]
 pub mod hash_x11;
 pub mod hex;
 pub mod hmac;

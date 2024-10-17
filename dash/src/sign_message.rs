@@ -116,7 +116,7 @@ mod message_signing {
             let (recid, raw) = self.signature.serialize_compact();
             let mut serialized = [0u8; 65];
             serialized[0] = 27;
-            serialized[0] += recid.to_i32() as u8;
+            serialized[0] += <RecoveryId as Into<i32>>::into(recid) as u8;
             if self.compressed {
                 serialized[0] += 4;
             }
@@ -135,7 +135,7 @@ mod message_signing {
                     secp256k1::Error::InvalidRecoveryId,
                 ));
             };
-            let recid = RecoveryId::from_i32(((bytes[0] - 27) & 0x03) as i32)?;
+            let recid = RecoveryId::try_from(((bytes[0] - 27) & 0x03) as i32)?;
             Ok(MessageSignature {
                 signature: RecoverableSignature::from_compact(&bytes[1..], recid)?,
                 compressed: ((bytes[0] - 27) & 0x04) != 0,

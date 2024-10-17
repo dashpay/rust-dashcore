@@ -71,9 +71,26 @@ mod newtypes {
     use crate::alloc::string::ToString;
 
     use core::str::FromStr;
-    use hashes::{sha256, sha256d, hash160, hash_x11, hash_newtype};
+    use hashes::{sha256, sha256d, hash160, hash_newtype};
     use hashes::hex::Error;
     use crate::prelude::String;
+    #[cfg(feature = "core-block-hash-use-x11")]
+    use hashes::hash_x11;
+
+    #[cfg(feature = "core-block-hash-use-x11")]
+    hash_newtype! {
+        /// A dash block hash.
+        pub struct BlockHash(hash_x11::Hash);
+        /// CycleHash is a cycle hash
+        pub struct CycleHash(hash_x11::Hash);
+    }
+    #[cfg(not(feature = "core-block-hash-use-x11"))]
+    hash_newtype! {
+        /// A dash block hash.
+        pub struct BlockHash(sha256d::Hash);
+        /// CycleHash is a cycle hash
+        pub struct CycleHash(sha256d::Hash);
+    }
 
     hash_newtype! {
         /// A dash transaction hash/transaction ID.
@@ -81,8 +98,9 @@ mod newtypes {
 
         /// A dash witness transaction ID.
         pub struct Wtxid(sha256d::Hash);
-        /// A dash block hash.
-        pub struct BlockHash(hash_x11::Hash);
+
+
+
 
         /// A hash of a public key.
         pub struct PubkeyHash(hash160::Hash);
@@ -127,8 +145,6 @@ mod newtypes {
         /// ProTxHash is a pro-tx hash
         #[hash_newtype(forward)]
         pub struct ProTxHash(sha256d::Hash);
-        /// CycleHash is a cycle hash
-        pub struct CycleHash(hash_x11::Hash);
     }
 
     impl_hashencode!(Txid);
