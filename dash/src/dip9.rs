@@ -70,7 +70,7 @@ impl<const N: usize> IndexConstPath<N> {
         root_derivation_path
     }
 
-    pub fn derive_priv_for_seed(
+    pub fn derive_priv_for_master_seed(
         &self,
         seed: &[u8],
         add_derivation_path: DerivationPath,
@@ -82,15 +82,25 @@ impl<const N: usize> IndexConstPath<N> {
         sk.derive_priv(&secp, &path)
     }
 
-    pub fn derive_pub_for_seed(
+    pub fn derive_pub_for_master_seed(
         &self,
         seed: &[u8],
         add_derivation_path: DerivationPath,
         network: Network,
     ) -> Result<ExtendedPubKey, Error> {
         let secp = Secp256k1::new();
-        let sk = self.derive_priv_for_seed(seed, add_derivation_path, network)?;
+        let sk = self.derive_priv_for_master_seed(seed, add_derivation_path, network)?;
         Ok(ExtendedPubKey::from_priv(&secp, &sk))
+    }
+
+    pub fn derive_pub_for_master_extended_public_key(
+        &self,
+        master_extended_public_key: ExtendedPubKey,
+        add_derivation_path: DerivationPath,
+    ) -> Result<ExtendedPubKey, Error> {
+        let secp = Secp256k1::new();
+        let path = self.append_path(add_derivation_path);
+        master_extended_public_key.derive_pub(&secp, &path)
     }
 }
 
@@ -104,7 +114,7 @@ pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_REGISTRATION: u32 = 1;
 pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_TOPUP: u32 = 2;
 pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_INVITATIONS: u32 = 3;
 pub const FEATURE_PURPOSE_DASHPAY: u32 = 15;
-pub const IDENTITY_REGISTRATION_PATH: IndexConstPath<4> = IndexConstPath {
+pub const IDENTITY_REGISTRATION_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
         ChildNumber::Hardened { index: FEATURE_PURPOSE },
         ChildNumber::Hardened { index: DASH_COIN_TYPE },
@@ -127,7 +137,7 @@ pub const IDENTITY_REGISTRATION_PATH_TESTNET: IndexConstPath<4> = IndexConstPath
 };
 
 // Identity Top-Up Paths
-pub const IDENTITY_TOPUP_PATH: IndexConstPath<4> = IndexConstPath {
+pub const IDENTITY_TOPUP_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
         ChildNumber::Hardened { index: FEATURE_PURPOSE },
         ChildNumber::Hardened { index: DASH_COIN_TYPE },
@@ -150,7 +160,7 @@ pub const IDENTITY_TOPUP_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
 };
 
 // Identity Invitation Paths
-pub const IDENTITY_INVITATION_PATH: IndexConstPath<4> = IndexConstPath {
+pub const IDENTITY_INVITATION_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
         ChildNumber::Hardened { index: FEATURE_PURPOSE },
         ChildNumber::Hardened { index: DASH_COIN_TYPE },
@@ -173,7 +183,7 @@ pub const IDENTITY_INVITATION_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
 };
 
 // Authentication Keys Paths
-pub const IDENTITY_AUTHENTICATION_PATH: IndexConstPath<4> = IndexConstPath {
+pub const IDENTITY_AUTHENTICATION_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
         ChildNumber::Hardened { index: FEATURE_PURPOSE },
         ChildNumber::Hardened { index: DASH_COIN_TYPE },
