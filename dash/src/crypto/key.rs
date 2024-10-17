@@ -49,6 +49,8 @@ pub enum Error {
     Hex(hex::Error),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidHexLength(usize),
+    /// Something is not supported based on active features
+    NotSupported(String),
 }
 
 impl fmt::Display for Error {
