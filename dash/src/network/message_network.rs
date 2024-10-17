@@ -21,7 +21,10 @@
 //! capabilities.
 //!
 
-use hashes::hash_x11;
+#[cfg(feature = "core-block-hash-use-x11")]
+use hashes::hash_x11 as hashType;
+#[cfg(not(feature = "core-block-hash-use-x11"))]
+use hashes::sha256d as hashType;
 
 use crate::consensus::{Decodable, Encodable, ReadExt, encode};
 use crate::internal_macros::impl_consensus_encoding;
@@ -149,14 +152,17 @@ pub struct Reject {
     /// reason of rejectection
     pub reason: Cow<'static, str>,
     /// reference to rejected item
-    pub hash: hash_x11::Hash,
+    pub hash: hashType::Hash,
 }
 
 impl_consensus_encoding!(Reject, message, ccode, reason, hash);
 
 #[cfg(test)]
 mod tests {
-    use hashes::hash_x11;
+    #[cfg(feature = "core-block-hash-use-x11")]
+    use hashes::hash_x11 as hashType;
+    #[cfg(not(feature = "core-block-hash-use-x11"))]
+    use hashes::sha256d as hashType;
 
     use super::{Reject, RejectReason, VersionMessage};
     use crate::consensus::encode::{deserialize, serialize};
@@ -206,7 +212,7 @@ mod tests {
         assert_eq!("txn-mempool-conflict", conflict.reason);
         assert_eq!(
             "0470f4f2dc4191221b59884bcffaaf00932748ab46356a80413c0b86d354df05"
-                .parse::<hash_x11::Hash>()
+                .parse::<hashType::Hash>()
                 .unwrap(),
             conflict.hash
         );
@@ -217,7 +223,7 @@ mod tests {
         assert_eq!("non-final", nonfinal.reason);
         assert_eq!(
             "0b46a539138b5fde4e341b37f2d945c23d41193b30caa7fcbd8bdb836cbe9b25"
-                .parse::<hash_x11::Hash>()
+                .parse::<hashType::Hash>()
                 .unwrap(),
             nonfinal.hash
         );

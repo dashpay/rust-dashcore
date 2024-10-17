@@ -103,14 +103,14 @@ impl CompactSignature for RecoverableSignature {
 
         RecoverableSignature::from_compact(
             &signature.as_ref()[1..],
-            RecoveryId::from_i32(i).unwrap(),
+            RecoveryId::try_from(i).unwrap(),
         )
         .map_err(anyhow::Error::msg)
     }
 
     fn to_compact_signature(&self, is_compressed: bool) -> [u8; 65] {
         let (recovery_byte, signature) = self.serialize_compact();
-        let mut val = recovery_byte.to_i32() + 27 + 4;
+        let mut val = <RecoveryId as Into<i32>>::into(recovery_byte) + 27 + 4;
         if !is_compressed {
             val -= 4;
         }

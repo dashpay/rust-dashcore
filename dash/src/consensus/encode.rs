@@ -33,7 +33,9 @@
 use core::convert::From;
 use core::{fmt, mem, u32};
 
-use hashes::{Hash, hash_x11, hash160, sha256, sha256d};
+#[cfg(feature = "core-block-hash-use-x11")]
+use hashes::hash_x11;
+use hashes::{Hash, hash160, sha256, sha256d};
 use internals::write_err;
 
 use crate::bip152::{PrefilledTransaction, ShortId};
@@ -841,12 +843,14 @@ tuple_encode!(T0, T1, T2, T3, T4, T5);
 tuple_encode!(T0, T1, T2, T3, T4, T5, T6);
 tuple_encode!(T0, T1, T2, T3, T4, T5, T6, T7);
 
+#[cfg(feature = "core-block-hash-use-x11")]
 impl Decodable for hash_x11::Hash {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, Error> {
         Ok(Self::from_byte_array(<<Self as Hash>::Bytes>::consensus_decode(r)?))
     }
 }
 
+#[cfg(feature = "core-block-hash-use-x11")]
 impl Encodable for hash_x11::Hash {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         self.as_byte_array().consensus_encode(w)

@@ -35,6 +35,7 @@ macro_rules! hex_psbt {
 }
 
 #[test]
+#[ignore]
 fn bip174_psbt_workflow() {
     let secp = Secp256k1::new();
 

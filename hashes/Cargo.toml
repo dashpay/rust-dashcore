@@ -18,6 +18,7 @@ std = ["alloc", "internals/std"]
 alloc = ["internals/alloc"]
 schemars = ["actual-schemars", "dyn-clone"]
 serde-std = ["serde/std"]
+x11 = ["rs-x11-hash"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -34,9 +35,9 @@ actual-schemars = { package = "schemars", version = "<=0.8.3", optional = true }
 # Do NOT enable this dependency, this is just to pin dyn-clone (transitive dep from schemars)
 # because 1.0.8 does not build with Rust 1.41.1 (because of useage of `Arc::as_ptr`).
 dyn-clone = { version = "<=1.0.7", default_features = false, optional = true }
-secp256k1 = { default-features = false, features = ["bitcoin_hashes"], version= "0.27.0" }
+secp256k1 = { default-features = false, features = ["hashes"], version= "0.30.0" }
 
-rs-x11-hash = ">=0.1.7"
+rs-x11-hash = { version = "0.1.8", optional = true }
 
 [dev-dependencies]
 serde_test = "1.0"
