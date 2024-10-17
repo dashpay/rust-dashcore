@@ -1659,7 +1659,7 @@ mod tests {
             };
 
             // tests
-            let keypair = secp256k1::KeyPair::from_secret_key(secp, &internal_priv_key);
+            let keypair = secp256k1::Keypair::from_secret_key(secp, &internal_priv_key);
             let (internal_key, _parity) = XOnlyPublicKey::from_keypair(&keypair);
             let tweak = TapTweakHash::from_key_and_tweak(internal_key, merkle_root);
             let tweaked_keypair = keypair.add_xonly_tweak(secp, &tweak.to_scalar()).unwrap();
@@ -1679,7 +1679,8 @@ mod tests {
                 .unwrap();
 
             let msg = secp256k1::Message::from(sighash);
-            let key_spend_sig = secp.sign_schnorr_with_aux_rand(&msg, &tweaked_keypair, &[0u8; 32]);
+            let key_spend_sig =
+                secp.sign_schnorr_with_aux_rand(msg.as_ref(), &tweaked_keypair, &[0u8; 32]);
 
             assert_eq!(expected.internal_pubkey, internal_key);
             assert_eq!(expected.tweak, tweak);
