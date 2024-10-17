@@ -299,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "dashcore"
-version = "0.30.0"
+version = "0.31.0"
 dependencies = [
  "anyhow",
  "base64-compat",
@@ -333,7 +333,7 @@ version = "0.1.0"
 
 [[package]]
 name = "dashcore_hashes"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "core2",
  "dashcore-private",
