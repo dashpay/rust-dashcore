@@ -560,6 +560,14 @@ pub enum Error {
     Hex(hashesHex::Error),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidPublicKeyHexLength(usize),
+    /// bls signatures related error
+    #[cfg(feature = "bls-signatures")]
+    BLSError(String),
+    /// edwards 25519 related error
+    #[cfg(feature = "ed25519-dalek")]
+    Ed25519Dalek(String),
+    /// Something is not supported based on active features
+    NotSupported(String),
 }
 
 impl fmt::Display for Error {
@@ -584,6 +592,11 @@ impl fmt::Display for Error {
             Error::InvalidPublicKeyHexLength(got) => {
                 write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got)
             }
+            #[cfg(feature = "bls-signatures")]
+            Error::BLSError(ref msg) => write!(f, "BLS signature error: {}", msg),
+            #[cfg(feature = "ed25519-dalek")]
+            Error::Ed25519Dalek(ref msg) => write!(f, "Ed25519 error: {}", msg),
+            Error::NotSupported(ref msg) => write!(f, "Not supported: {}", msg),
         }
     }
 }
@@ -603,6 +616,11 @@ impl From<key::Error> for Error {
             key::Error::InvalidKeyPrefix(_) => Error::Secp256k1(secp256k1::Error::InvalidPublicKey),
             key::Error::Hex(e) => Error::Hex(e),
             key::Error::InvalidHexLength(got) => Error::InvalidPublicKeyHexLength(got),
+            #[cfg(feature = "bls-signatures")]
+            key::Error::BLSError(e) => Error::BLSError(e),
+            #[cfg(feature = "ed25519-dalek")]
+            key::Error::Ed25519Dalek(e) => Error::Ed25519Dalek(e),
+            key::Error::NotSupported(e) => Error::NotSupported(e),
         }
     }
 }

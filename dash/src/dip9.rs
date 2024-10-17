@@ -59,13 +59,13 @@ impl<const N: usize> AsRef<[ChildNumber]> for IndexConstPath<N> {
 
 impl<const N: usize> IndexConstPath<N> {
     pub fn append_path(&self, derivation_path: DerivationPath) -> DerivationPath {
-        let mut root_derivation_path = DerivationPath::from(&self.indexes);
+        let mut root_derivation_path = DerivationPath::from(self.indexes.as_ref());
         root_derivation_path.extend(derivation_path);
         root_derivation_path
     }
 
     pub fn append(&self, child_number: ChildNumber) -> DerivationPath {
-        let mut root_derivation_path = DerivationPath::from(&self.indexes);
+        let mut root_derivation_path = DerivationPath::from(self.indexes.as_ref());
         root_derivation_path.extend(&[child_number]);
         root_derivation_path
     }

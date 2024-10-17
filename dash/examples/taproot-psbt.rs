@@ -738,7 +738,7 @@ fn sign_psbt_taproot(
     hash_ty: TapSighashType,
     secp: &Secp256k1<secp256k1::All>,
 ) {
-    let keypair = secp256k1::KeyPair::from_seckey_slice(secp, secret_key.as_ref()).unwrap();
+    let keypair = secp256k1::Keypair::from_seckey_slice(secp, secret_key.as_ref()).unwrap();
     let keypair = match leaf_hash {
         None => keypair.tap_tweak(secp, psbt_input.tap_merkle_root).to_inner(),
         Some(_) => keypair, // no tweak for script spend

@@ -4,6 +4,7 @@ use bincode::{Decode, Encode};
 use secp256k1::rand::rngs::StdRng as EcdsaRng;
 #[cfg(feature = "rand")]
 use secp256k1::rand::SeedableRng;
+#[cfg(feature = "serde")]
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -24,15 +25,19 @@ use crate::signer::ripemd160_sha256;
     Eq,
     Clone,
     Copy,
-    Serialize_repr,
-    Deserialize_repr,
     Hash,
     Ord,
     PartialOrd,
-    Encode,
-    Decode,
     Default,
     strum::EnumIter,
+)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize_repr, Deserialize_repr)
+)]
+#[cfg_attr(
+    feature = "bincode",
+    derive(Encode, Decode)
 )]
 pub enum KeyType {
     #[default]
@@ -54,13 +59,8 @@ lazy_static! {
     .iter()
     .copied()
     .collect();
-    pub static ref KEY_TYPE_MAX_SIZE_TYPE: KeyType = KEY_TYPE_SIZES
-        .iter()
-        .sorted_by(|a, b| Ord::cmp(&b.1, &a.1))
-        .last()
-        .map(|(key_type, _)| *key_type)
-        .unwrap();
 }
+pub const KEY_TYPE_MAX_SIZE_TYPE: KeyType = KeyType::BLS12_381;
 
 impl KeyType {
     /// Gets the default size of the public key
@@ -133,14 +133,13 @@ impl KeyType {
     /// Gets the public key data for a private key depending on the key type
     pub fn public_key_data_from_private_key_data(
         &self,
-        private_key_bytes: &[u8],
+        private_key_bytes: &[u8; 32],
         network: Network,
     ) -> Result<Vec<u8>, Error> {
         match self {
             KeyType::ECDSA_SECP256K1 => {
                 let secp = Secp256k1::new();
-                let secret_key = secp256k1::SecretKey::from_slice(private_key_bytes)
-                    .map_err(|e| Error::Generic(e.to_string()))?;
+                let secret_key = secp256k1::SecretKey::from_byte_array(private_key_bytes)?;
                 let private_key = PrivateKey::new(secret_key, network);
 
                 Ok(private_key.public_key(&secp).to_bytes())
@@ -150,7 +149,7 @@ impl KeyType {
                 {
                     let private_key =
                         bls_signatures::PrivateKey::from_bytes(private_key_bytes, false)
-                            .map_err(|e| ProtocolError::Generic(e.to_string()))?;
+                            .map_err(|e| Error::BLSError(e.to_string()))?;
                     let public_key_bytes = private_key
                         .g1_element()
                         .expect("expected to get a public key from a bls private key")
@@ -165,8 +164,7 @@ impl KeyType {
             }
             KeyType::ECDSA_HASH160 => {
                 let secp = Secp256k1::new();
-                let secret_key = secp256k1::SecretKey::from_slice(private_key_bytes)
-                    .map_err(|e| Error::Generic(e.to_string()))?;
+                let secret_key = secp256k1::SecretKey::from_byte_array(private_key_bytes)?;
                 let private_key = PrivateKey::new(secret_key, network);
 
                 Ok(ripemd160_sha256(private_key.public_key(&secp).to_bytes().as_slice()).to_vec())
@@ -175,17 +173,12 @@ impl KeyType {
                 #[cfg(feature = "ed25519-dalek")]
                 {
                     let key_pair = ed25519_dalek::SigningKey::from_bytes(
-                        &private_key_bytes.try_into().map_err(|_| {
-                            Error::InvalidVectorSizeError(InvalidVectorSizeError::new(
-                                32,
-                                private_key_bytes.len(),
-                            ))
-                        })?,
+                        &private_key_bytes,
                     );
                     Ok(ripemd160_sha256(key_pair.verifying_key().to_bytes().as_slice()).to_vec())
                 }
                 #[cfg(not(feature = "ed25519-dalek"))]
-                return Err(ProtocolError::NotSupported(
+                return Err(Error::NotSupported(
                     "Converting a private key to a eddsa hash 160 is not supported without the ed25519-dalek feature".to_string(),
                 ));
             }
