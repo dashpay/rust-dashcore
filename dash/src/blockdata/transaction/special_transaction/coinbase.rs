@@ -93,7 +93,14 @@ impl Decodable for CoinbasePayload {
         let height = u32::consensus_decode(r)?;
         let merkle_root_masternode_list = MerkleRootMasternodeList::consensus_decode(r)?;
         let merkle_root_quorums = MerkleRootQuorums::consensus_decode(r)?;
-        let best_cl_height = if version >= 3 { Some(u32::consensus_decode(r)?) } else { None };
+        let best_cl_height = if version >= 3 {
+            let value = u8::consensus_decode(r)?;
+            match value {
+                253 => Some(u16::consensus_decode(r)? as u32),
+                254 => Some(u32::consensus_decode(r)?),
+                _ => Some(value as u32)
+            }
+        } else { None };
         let best_cl_signature =
             if version >= 3 { Some(BLSSignature::consensus_decode(r)?) } else { None };
         let asset_locked_amount = if version >= 3 { Some(u64::consensus_decode(r)?) } else { None };
