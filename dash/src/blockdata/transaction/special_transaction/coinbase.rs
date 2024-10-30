@@ -21,8 +21,8 @@
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::io::{Error, ErrorKind};
-use crate::prelude::Vec;
 use crate::{VarInt, io};
+use crate::bls_sig_utils::BLSSignature;
 
 /// A Coinbase payload. This is contained as the payload of a coinbase special transaction.
 /// The Coinbase payload is described in DIP4.
@@ -36,7 +36,7 @@ pub struct CoinbasePayload {
     pub merkle_root_masternode_list: MerkleRootMasternodeList,
     pub merkle_root_quorums: MerkleRootQuorums,
     pub best_cl_height: Option<u32>,
-    pub best_cl_signature: Option<Vec<u8>>,
+    pub best_cl_signature: Option<BLSSignature>,
     pub asset_locked_amount: Option<u64>,
 }
 
@@ -95,7 +95,7 @@ impl Decodable for CoinbasePayload {
         let merkle_root_quorums = MerkleRootQuorums::consensus_decode(r)?;
         let best_cl_height = if version >= 3 { Some(u32::consensus_decode(r)?) } else { None };
         let best_cl_signature =
-            if version >= 3 { Some(Vec::<u8>::consensus_decode(r)?) } else { None };
+            if version >= 3 { Some(BLSSignature::consensus_decode(r)?) } else { None };
         let asset_locked_amount = if version >= 3 { Some(u64::consensus_decode(r)?) } else { None };
         Ok(CoinbasePayload {
             version,
@@ -112,7 +112,7 @@ impl Decodable for CoinbasePayload {
 #[cfg(test)]
 mod tests {
     use hashes::Hash;
-
+    use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::Encodable;
     use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
     use crate::transaction::special_transaction::coinbase::CoinbasePayload;
@@ -127,7 +127,7 @@ mod tests {
                 merkle_root_masternode_list: MerkleRootMasternodeList::all_zeros(),
                 merkle_root_quorums: MerkleRootQuorums::all_zeros(),
                 best_cl_height: Some(900),
-                best_cl_signature: Some(vec![0; 96]),
+                best_cl_signature: Some(BLSSignature::from([0; 96])),
                 asset_locked_amount: Some(10000),
             };
             assert_eq!(payload.size(), *want);
