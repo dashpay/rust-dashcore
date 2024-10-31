@@ -62,8 +62,10 @@ impl Encodable for QuorumFinalizationCommitment {
         len += self.version.consensus_encode(w)?;
         len += self.llmq_type.consensus_encode(w)?;
         len += self.quorum_hash.consensus_encode(w)?;
-        if self.version == 2 || self.version == 4 {
-            len += self.quorum_index.unwrap().consensus_encode(w)?;
+        if let Some(q_index) = self.quorum_index {
+            if self.version == 2 || self.version == 4 {
+                len += q_index.consensus_encode(w)?;
+            }
         }
         len += self.signers.consensus_encode(w)?;
         len += self.valid_members.consensus_encode(w)?;
