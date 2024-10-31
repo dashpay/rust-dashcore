@@ -144,33 +144,48 @@ impl Decodable for QuorumCommitmentPayload {
     }
 }
 
-fn read_compact_size<R: Read + ?Sized>(r: &mut R) -> io::Result<u64> {
+fn read_compact_size<R: Read + ?Sized>(r: &mut R) -> io::Result<u32> {
     let mut marker = [0u8; 1];
     r.read_exact(&mut marker)?;
     match marker[0] {
         0xFD => {
-            // Read the next 2 bytes as a little-endian u16
             let mut buf = [0u8; 2];
             r.read_exact(&mut buf)?;
-            Ok(u16::from_le_bytes(buf) as u64)
+            Ok(u16::from_le_bytes(buf) as u32)
         }
         0xFE => {
-            // Read the next 4 bytes as a little-endian u32
             let mut buf = [0u8; 4];
             r.read_exact(&mut buf)?;
-            Ok(u32::from_le_bytes(buf) as u64)
+            Ok(u32::from_le_bytes(buf))
         }
         0xFF => {
-            // Read the next 8 bytes as a little-endian u64
-            let mut buf = [0u8; 8];
-            r.read_exact(&mut buf)?;
-            Ok(u64::from_le_bytes(buf))
+            // Value is too large to fit in u32
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "CompactSize value exceeds u32::MAX",
+            ))
         }
-        value => {
-            // For values less than 253, the value is stored directly in the marker byte
-            Ok(value as u64)
-        }
+        value => Ok(value as u32),
     }
+}
+
+fn write_compact_size<W: Write>(w: &mut W, value: u32) -> io::Result<usize> {
+    let bytes_written = if value < 253 {
+        // For values less than 253, write the value as a single byte.
+        w.write_all(&[value as u8])?;
+        1 // 1 byte written
+    } else if value <= 0xFFFF {
+        // For values from 253 to 65535, write 0xFD followed by the value as a little-endian u16.
+        w.write_all(&[0xFDu8])?;
+        w.write_all(&(value as u16).to_le_bytes())?;
+        3 // 1 byte marker + 2 bytes for u16
+    } else {
+        // For values from 65536 to 0xFFFFFFFF, write 0xFE followed by the value as a little-endian u32.
+        w.write_all(&[0xFEu8])?;
+        w.write_all(&value.to_le_bytes())?;
+        5 // 1 byte marker + 4 bytes for u32
+    };
+    Ok(bytes_written)
 }
 
 fn read_fixed_bitset<R: Read + ?Sized>(r: &mut R, size: usize) -> std::io::Result<Vec<bool>> {
@@ -194,14 +209,13 @@ fn read_fixed_bitset<R: Read + ?Sized>(r: &mut R, size: usize) -> std::io::Resul
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
     use hashes::Hash;
 
     use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use crate::consensus::Encodable;
     use crate::hash_types::{QuorumHash, QuorumVVecHash};
-    use crate::transaction::special_transaction::quorum_commitment::{
-        QuorumCommitmentPayload, QuorumFinalizationCommitment,
-    };
+    use crate::transaction::special_transaction::quorum_commitment::{read_compact_size, write_compact_size, QuorumCommitmentPayload, QuorumFinalizationCommitment};
 
     #[test]
     fn size() {
@@ -225,5 +239,49 @@ mod tests {
         let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
         assert_eq!(payload.size(), want);
         assert_eq!(actual, want);
+    }
+
+    #[test]
+    fn test_compact_size_round_trip() {
+        let test_values = vec![
+            0u32,
+            1,
+            252,
+            253,
+            254,
+            255,
+            300,
+            5000,
+            65535,
+            65536,
+            70000,
+            1_000_000,
+            u32::MAX,
+        ];
+
+        for &value in &test_values {
+            let mut buffer = Vec::new();
+            // Write the value to the buffer
+            let bytes_written = write_compact_size(&mut buffer, value).expect("Failed to write");
+            // Read the value back from the buffer
+            let mut cursor = Cursor::new(&buffer);
+            let read_value = read_compact_size(&mut cursor).expect("Failed to read");
+
+            // Assert that the original value matches the deserialized value
+            assert_eq!(
+                value, read_value,
+                "Deserialized value does not match original for value {}",
+                value
+            );
+
+            // Ensure that we've consumed all bytes (no extra bytes left)
+            let position = cursor.position();
+            assert_eq!(
+                position as usize,
+                buffer.len(),
+                "Not all bytes were consumed for value {}",
+                value
+            );
+        }
     }
 }
