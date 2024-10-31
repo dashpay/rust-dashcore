@@ -50,7 +50,7 @@ impl QuorumFinalizationCommitment {
         size += VarInt(self.signers.len() as u64).len() + self.signers.len();
         size += VarInt(self.valid_members.len() as u64).len() + self.valid_members.len();
         if self.version == 2 || self.version == 4 {
-            size += 16;
+            size += 2;
         }
         size
     }
