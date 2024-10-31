@@ -33,6 +33,7 @@ pub struct QuorumFinalizationCommitment {
     pub version: u16,
     pub llmq_type: u8,
     pub quorum_hash: QuorumHash,
+    pub quorum_index: Option<i16>,
     pub signers: Vec<u8>,
     pub valid_members: Vec<u8>,
     pub quorum_public_key: BLSPublicKey,
@@ -47,6 +48,9 @@ impl QuorumFinalizationCommitment {
         let mut size = 2 + 1 + 32 + 48 + 32 + 96 + 96;
         size += VarInt(self.signers.len() as u64).len() + self.signers.len();
         size += VarInt(self.valid_members.len() as u64).len() + self.valid_members.len();
+        if self.version == 2 || self.version == 4 {
+            size += 16;
+        }
         size
     }
 }
@@ -57,6 +61,9 @@ impl Encodable for QuorumFinalizationCommitment {
         len += self.version.consensus_encode(w)?;
         len += self.llmq_type.consensus_encode(w)?;
         len += self.quorum_hash.consensus_encode(w)?;
+        if self.version == 2 || self.version == 4 {
+            len += self.quorum_index.unwrap().consensus_encode(w)?;
+        }
         len += self.signers.consensus_encode(w)?;
         len += self.valid_members.consensus_encode(w)?;
         len += self.quorum_public_key.consensus_encode(w)?;
@@ -72,6 +79,7 @@ impl Decodable for QuorumFinalizationCommitment {
         let version = u16::consensus_decode(r)?;
         let llmq_type = u8::consensus_decode(r)?;
         let quorum_hash = QuorumHash::consensus_decode(r)?;
+        let quorum_index = if version == 2 || version == 4 { Some(i16::consensus_decode(r)?) } else { None };
         let signers = Vec::<u8>::consensus_decode(r)?;
         let valid_members = Vec::<u8>::consensus_decode(r)?;
         let quorum_public_key = BLSPublicKey::consensus_decode(r)?;
@@ -82,6 +90,7 @@ impl Decodable for QuorumFinalizationCommitment {
             version,
             llmq_type,
             quorum_hash,
+            quorum_index,
             signers,
             valid_members,
             quorum_public_key,
@@ -151,6 +160,7 @@ mod tests {
                 version: 0,
                 llmq_type: 0,
                 quorum_hash: QuorumHash::all_zeros(),
+                quorum_index: None,
                 signers: vec![1, 2, 3, 4, 5],
                 valid_members: vec![6, 7, 8, 9, 0],
                 quorum_public_key: BLSPublicKey::from([0; 48]),
