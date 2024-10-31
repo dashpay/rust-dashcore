@@ -17,6 +17,7 @@
 //! It is defined in DIP6 [dip-0006.md](https://github.com/dashpay/dips/blob/master/dip-0006.md).
 //!
 
+use std::io::{Read, Write};
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{QuorumHash, QuorumVVecHash};
@@ -80,8 +81,10 @@ impl Decodable for QuorumFinalizationCommitment {
         let llmq_type = u8::consensus_decode(r)?;
         let quorum_hash = QuorumHash::consensus_decode(r)?;
         let quorum_index = if version == 2 || version == 4 { Some(i16::consensus_decode(r)?) } else { None };
-        let signers = Vec::<u8>::consensus_decode(r)?;
-        let valid_members = Vec::<u8>::consensus_decode(r)?;
+        let signers_count = read_compact_size(r)?;
+        let signers = read_fixed_bitset(r, signers_count as usize)?;
+        let valid_members_count = read_compact_size(r)?;
+        let valid_members = read_fixed_bitset(r, valid_members_count as usize)?;
         let quorum_public_key = BLSPublicKey::consensus_decode(r)?;
         let quorum_vvec_hash = QuorumVVecHash::consensus_decode(r)?;
         let quorum_sig = BLSSignature::consensus_decode(r)?;
@@ -91,8 +94,8 @@ impl Decodable for QuorumFinalizationCommitment {
             llmq_type,
             quorum_hash,
             quorum_index,
-            signers,
-            valid_members,
+            signers: signers.iter().map(|&b| b as u8).collect(),
+            valid_members: valid_members.iter().map(|&b| b as u8).collect(),
             quorum_public_key,
             quorum_vvec_hash,
             quorum_sig,
@@ -137,6 +140,54 @@ impl Decodable for QuorumCommitmentPayload {
         let finalization_commitment = QuorumFinalizationCommitment::consensus_decode(r)?;
         Ok(QuorumCommitmentPayload { version, height, finalization_commitment })
     }
+}
+
+fn read_compact_size<R: Read + ?Sized>(r: &mut R) -> io::Result<u64> {
+    let mut marker = [0u8; 1];
+    r.read_exact(&mut marker)?;
+    match marker[0] {
+        0xFD => {
+            // Read the next 2 bytes as a little-endian u16
+            let mut buf = [0u8; 2];
+            r.read_exact(&mut buf)?;
+            Ok(u16::from_le_bytes(buf) as u64)
+        }
+        0xFE => {
+            // Read the next 4 bytes as a little-endian u32
+            let mut buf = [0u8; 4];
+            r.read_exact(&mut buf)?;
+            Ok(u32::from_le_bytes(buf) as u64)
+        }
+        0xFF => {
+            // Read the next 8 bytes as a little-endian u64
+            let mut buf = [0u8; 8];
+            r.read_exact(&mut buf)?;
+            Ok(u64::from_le_bytes(buf))
+        }
+        value => {
+            // For values less than 253, the value is stored directly in the marker byte
+            Ok(value as u64)
+        }
+    }
+}
+
+fn read_fixed_bitset<R: Read + ?Sized>(r: &mut R, size: usize) -> std::io::Result<Vec<bool>> {
+    // Calculate the number of bytes needed
+    let num_bytes = (size + 7) / 8;
+    let mut bytes = vec![0u8; num_bytes];
+
+    // Read bytes from the reader
+    r.read_exact(&mut bytes)?;
+
+    // Unpack bits into a vector of bools
+    let mut bits = Vec::with_capacity(size);
+    for p in 0..size {
+        let byte = bytes[p / 8];
+        let bit = (byte >> (p % 8)) & 1;
+        bits.push(bit != 0);
+    }
+
+    Ok(bits)
 }
 
 #[cfg(test)]
