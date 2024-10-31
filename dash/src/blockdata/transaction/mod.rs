@@ -653,6 +653,9 @@ impl Decodable for Transaction {
         if special_transaction_type == TransactionType::AssetUnlock {
             segwit = false;
         }
+        if special_transaction_type == TransactionType::QuorumCommitment {
+            segwit = false;
+        }
         if segwit {
             let segwit_flag = u8::consensus_decode_from_finite_reader(r)?;
             match segwit_flag {
