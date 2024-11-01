@@ -51,7 +51,7 @@ impl QuorumFinalizationCommitment {
         size += compact_size_len(self.signers.len() as u32);
         size += fixed_bitset_len(self.signers.as_slice(), self.signers.len());
         size += compact_size_len(self.valid_members.len() as u32);
-        size += fixed_bitset_len(self.valid_members.as_slice(), self.signers.len());
+        size += fixed_bitset_len(self.valid_members.as_slice(), self.valid_members.len());
         if self.version == 2 || self.version == 4 {
             size += 2;
         }

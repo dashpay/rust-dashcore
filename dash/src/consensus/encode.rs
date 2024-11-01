@@ -964,6 +964,14 @@ pub fn compact_size_len(value: u32) -> usize {
 }
 
 pub fn read_fixed_bitset<R: Read + ?Sized>(r: &mut R, size: usize) -> std::io::Result<Vec<bool>> {
+    // Define a reasonable maximum size to prevent excessive memory allocation
+    const MAX_BITSET_SIZE: usize = 1_000_000;
+    if size > MAX_BITSET_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Bitset size exceeds maximum allowed value",
+        ));
+    }
     // Calculate the number of bytes needed
     let num_bytes = (size + 7) / 8;
     let mut bytes = vec![0u8; num_bytes];
@@ -983,6 +991,14 @@ pub fn read_fixed_bitset<R: Read + ?Sized>(r: &mut R, size: usize) -> std::io::R
 }
 
 pub fn write_fixed_bitset<W: Write + ?Sized>(w: &mut W, bits: &[bool], size: usize) -> io::Result<usize> {
+    // Define a reasonable maximum size to prevent excessive memory allocation
+    const MAX_BITSET_SIZE: usize = 1_000_000;
+    if size > MAX_BITSET_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Bitset size exceeds maximum allowed value",
+        ));
+    }
     // Calculate the number of bytes needed to represent 'size' bits
     let num_bytes = (size + 7) / 8;
     let mut bytes = vec![0u8; num_bytes];
