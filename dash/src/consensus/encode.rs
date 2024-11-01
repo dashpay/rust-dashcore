@@ -32,7 +32,7 @@
 
 use core::convert::From;
 use core::{fmt, mem, u32};
-
+use std::io::Write;
 #[cfg(feature = "core-block-hash-use-x11")]
 use hashes::hash_x11;
 use hashes::{Hash, hash160, sha256, sha256d};
@@ -905,6 +905,113 @@ impl Decodable for TapLeafHash {
     }
 }
 
+pub fn read_compact_size<R: Read + ?Sized>(r: &mut R) -> io::Result<u32> {
+    let mut marker = [0u8; 1];
+    r.read_exact(&mut marker)?;
+    match marker[0] {
+        0xFD => {
+            let mut buf = [0u8; 2];
+            r.read_exact(&mut buf)?;
+            Ok(u16::from_le_bytes(buf) as u32)
+        }
+        0xFE => {
+            let mut buf = [0u8; 4];
+            r.read_exact(&mut buf)?;
+            Ok(u32::from_le_bytes(buf))
+        }
+        0xFF => {
+            // Value is too large to fit in u32
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "CompactSize value exceeds u32::MAX",
+            ))
+        }
+        value => Ok(value as u32),
+    }
+}
+
+pub fn write_compact_size<W: Write + ?Sized>(w: &mut W, value: u32) -> io::Result<usize> {
+    let bytes_written = if value < 253 {
+        // For values less than 253, write the value as a single byte.
+        w.write_all(&[value as u8])?;
+        1 // 1 byte written
+    } else if value <= 0xFFFF {
+        // For values from 253 to 65535, write 0xFD followed by the value as a little-endian u16.
+        w.write_all(&[0xFDu8])?;
+        w.write_all(&(value as u16).to_le_bytes())?;
+        3 // 1 byte marker + 2 bytes for u16
+    } else {
+        // For values from 65536 to 0xFFFFFFFF, write 0xFE followed by the value as a little-endian u32.
+        w.write_all(&[0xFEu8])?;
+        w.write_all(&value.to_le_bytes())?;
+        5 // 1 byte marker + 4 bytes for u32
+    };
+    Ok(bytes_written)
+}
+
+pub fn compact_size_len(value: u32) -> usize {
+    let mut size: usize = 0;
+    if value < 253 {
+        size += 1;
+    }
+    else if value < 65536 {
+        size += 3;
+    }
+    else {
+        size += 5;
+    }
+    size
+}
+
+pub fn read_fixed_bitset<R: Read + ?Sized>(r: &mut R, size: usize) -> std::io::Result<Vec<bool>> {
+    // Calculate the number of bytes needed
+    let num_bytes = (size + 7) / 8;
+    let mut bytes = vec![0u8; num_bytes];
+
+    // Read bytes from the reader
+    r.read_exact(&mut bytes)?;
+
+    // Unpack bits into a vector of bools
+    let mut bits = Vec::with_capacity(size);
+    for p in 0..size {
+        let byte = bytes[p / 8];
+        let bit = (byte >> (p % 8)) & 1;
+        bits.push(bit != 0);
+    }
+
+    Ok(bits)
+}
+
+pub fn write_fixed_bitset<W: Write + ?Sized>(w: &mut W, bits: &[bool], size: usize) -> io::Result<usize> {
+    // Calculate the number of bytes needed to represent 'size' bits
+    let num_bytes = (size + 7) / 8;
+    let mut bytes = vec![0u8; num_bytes];
+
+    // Determine the minimum size to handle cases where bits.len() < size
+    let ms = std::cmp::min(size, bits.len());
+
+    // Pack the bits into the byte buffer
+    for p in 0..ms {
+        if bits[p] {
+            bytes[p / 8] |= 1 << (p % 8);
+        }
+    }
+
+    // Write the bytes to the writer
+    w.write_all(&bytes)?;
+
+    // Return the number of bytes written
+    Ok(bytes.len())
+}
+
+pub fn fixed_bitset_len(bits: &[bool], size: usize) -> usize {
+    // Calculate the minimum size between `size` and `bits.len()`
+    let ms = std::cmp::min(size, bits.len());
+
+    // Calculate the number of bytes needed to represent `ms` bits
+    (ms + 7) / 8
+}
+
 #[cfg(test)]
 mod tests {
     use core::fmt;
@@ -1303,6 +1410,106 @@ mod tests {
                 )
                 .unwrap(),
                 data
+            );
+        }
+    }
+
+    #[test]
+    fn test_compact_size_round_trip() {
+        let test_values = vec![
+            0u32,
+            1,
+            252,
+            253,
+            254,
+            255,
+            300,
+            5000,
+            65535,
+            65536,
+            70000,
+            1_000_000,
+            u32::MAX,
+        ];
+
+        for &value in &test_values {
+            let mut buffer = Vec::new();
+            // Write the value to the buffer
+            let bytes_written = write_compact_size(&mut buffer, value).expect("Failed to write");
+            // Read the value back from the buffer
+            let mut cursor = Cursor::new(&buffer);
+            let read_value = read_compact_size(&mut cursor).expect("Failed to read");
+
+            // Assert that the original value matches the deserialized value
+            assert_eq!(
+                value, read_value,
+                "Deserialized value does not match original for value {}",
+                value
+            );
+
+            // Ensure that we've consumed all bytes (no extra bytes left)
+            let position = cursor.position();
+            assert_eq!(
+                position as usize,
+                buffer.len(),
+                "Not all bytes were consumed for value {}",
+                value
+            );
+        }
+    }
+
+    #[test]
+    fn test_fixed_bitset_round_trip() {
+        let test_cases = vec![
+            (vec![], 0),
+            (vec![true, false, true, false, true, false, true, false], 8),
+            (vec![true; 10], 10),
+            (vec![false; 15], 15),
+            (vec![true, false, true], 16), // size greater than bits.len()
+            (
+                vec![
+                    true, false, true, false, true, false, true, false, true, false, true, false,
+                    true, false, true, false, true, false, true, false, true, false, true, false,
+                ],
+                24,
+            ),
+        ];
+
+        for (bits, size) in test_cases {
+            let mut buffer = Vec::new();
+            // Write the bitset to the buffer
+            let bytes_written = write_fixed_bitset(&mut buffer, &bits, size).expect("Failed to write");
+            // Calculate expected bytes written
+            let expected_bytes = (size + 7) / 8;
+            assert_eq!(
+                bytes_written, expected_bytes,
+                "Incorrect number of bytes written for bitset with size {}",
+                size
+            );
+
+            // Read the bitset back from the buffer
+            let mut cursor = Cursor::new(&buffer);
+            let read_bits = read_fixed_bitset(&mut cursor, size).expect("Failed to read");
+
+            // Assert that the original bits match the deserialized bits
+            // For bits beyond bits.len(), they should be false
+            let expected_bits: Vec<bool> = (0..size)
+                .map(|i| bits.get(i).copied().unwrap_or(false))
+                .collect();
+
+            assert_eq!(
+                read_bits, expected_bits,
+                "Deserialized bits do not match original for size {}",
+                size
+            );
+
+            // Ensure that we've consumed all bytes (no extra bytes left)
+            let position = cursor.position();
+            assert_eq!(
+                position as usize,
+                buffer.len(),
+                "Not all bytes were consumed for size {}",
+                size
             );
         }
     }

@@ -23,6 +23,7 @@ use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::io::{Error, ErrorKind};
 use crate::{VarInt, io};
 use crate::bls_sig_utils::BLSSignature;
+use crate::consensus::encode::{compact_size_len, read_compact_size, write_compact_size};
 
 /// A Coinbase payload. This is contained as the payload of a coinbase special transaction.
 /// The Coinbase payload is described in DIP4.
@@ -43,15 +44,16 @@ pub struct CoinbasePayload {
 impl CoinbasePayload {
     /// The size of the payload in bytes.
     /// version(2) + height(4) + merkle_root_masternode_list(32) + merkle_root_quorums(32)
-    /// in addition to the above, if version >= 3: asset_locked_amount(8) + best_cl_height(4) +
-    /// best_cl_signature(VarInt(len) + len)
+    /// in addition to the above, if version >= 3: asset_locked_amount(8) + best_cl_height(compact_size) +
+    /// best_cl_signature(96)
     pub fn size(&self) -> usize {
         let mut size: usize = 2 + 4 + 32 + 32;
         if self.version >= 3 {
-            size += 4 + 8;
-            if let Some(sig) = &self.best_cl_signature {
-                size += VarInt(sig.len() as u64).len() + sig.len()
+            size += 96;
+            if let Some(best_cl_height) = self.best_cl_height {
+                size += compact_size_len(best_cl_height);
             }
+            size += 8;
         }
         size
     }
@@ -66,7 +68,7 @@ impl Encodable for CoinbasePayload {
         len += self.merkle_root_quorums.consensus_encode(w)?;
         if self.version >= 3 {
             if let Some(best_cl_height) = self.best_cl_height {
-                len += best_cl_height.consensus_encode(w)?;
+                len += write_compact_size(w, best_cl_height)?;
             } else {
                 return Err(Error::new(ErrorKind::InvalidInput, "best_cl_height is not set"));
             }
@@ -94,12 +96,7 @@ impl Decodable for CoinbasePayload {
         let merkle_root_masternode_list = MerkleRootMasternodeList::consensus_decode(r)?;
         let merkle_root_quorums = MerkleRootQuorums::consensus_decode(r)?;
         let best_cl_height = if version >= 3 {
-            let value = u8::consensus_decode(r)?;
-            match value {
-                253 => Some(u16::consensus_decode(r)? as u32),
-                254 => Some(u32::consensus_decode(r)?),
-                _ => Some(value as u32)
-            }
+            Some(read_compact_size(r)?)
         } else { None };
         let best_cl_signature =
             if version >= 3 { Some(BLSSignature::consensus_decode(r)?) } else { None };
@@ -126,7 +123,7 @@ mod tests {
 
     #[test]
     fn size() {
-        let test_cases: &[(usize, u16)] = &[(70, 2), (179, 3)];
+        let test_cases: &[(usize, u16)] = &[(70, 2), (177, 3)];
         for (want, version) in test_cases.iter() {
             let payload = CoinbasePayload {
                 height: 1000,
