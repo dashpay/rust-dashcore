@@ -912,12 +912,26 @@ pub fn read_compact_size<R: Read + ?Sized>(r: &mut R) -> io::Result<u32> {
         0xFD => {
             let mut buf = [0u8; 2];
             r.read_exact(&mut buf)?;
-            Ok(u16::from_le_bytes(buf) as u32)
+            let value = u16::from_le_bytes(buf) as u32;
+            if value < 0xFD {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Non-minimal compact size encoding",
+                ));
+            }
+            Ok(value)
         }
         0xFE => {
             let mut buf = [0u8; 4];
             r.read_exact(&mut buf)?;
-            Ok(u32::from_le_bytes(buf))
+            let value = u32::from_le_bytes(buf);
+            if value <= 0xFFFF {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Non-minimal compact size encoding",
+                ));
+            }
+            Ok(value)
         }
         0xFF => {
             // Value is too large to fit in u32
