@@ -398,7 +398,8 @@ impl DerivationPath {
         root_derivation_path
     }
 
-    pub fn identity_registration_path(network: Network, index: u32) -> Self {
+    /// This might have been used in the past
+    pub fn identity_registration_path_child_non_hardened(network: Network, index: u32) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
             Network::Dash => IDENTITY_REGISTRATION_PATH_MAINNET,
             _ => IDENTITY_REGISTRATION_PATH_TESTNET,
@@ -408,13 +409,26 @@ impl DerivationPath {
         root_derivation_path
     }
 
-    pub fn identity_top_up_path(network: Network, index: u32) -> Self {
+    pub fn identity_registration_path(network: Network, index: u32) -> Self {
+        let mut root_derivation_path: DerivationPath = match network {
+            Network::Dash => IDENTITY_REGISTRATION_PATH_MAINNET,
+            _ => IDENTITY_REGISTRATION_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.0.extend(&[ChildNumber::Hardened { index }]);
+        root_derivation_path
+    }
+
+    pub fn identity_top_up_path(network: Network, identity_index: u32, top_up_index: u32) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
             Network::Dash => IDENTITY_TOPUP_PATH_MAINNET,
             _ => IDENTITY_TOPUP_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.0.extend(&[ChildNumber::Normal { index }]);
+        root_derivation_path.0.extend(&[
+            ChildNumber::Hardened { index: identity_index },
+            ChildNumber::Normal { index: top_up_index },
+        ]);
         root_derivation_path
     }
 
@@ -424,7 +438,7 @@ impl DerivationPath {
             _ => IDENTITY_INVITATION_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.0.extend(&[ChildNumber::Normal { index }]);
+        root_derivation_path.0.extend(&[ChildNumber::Hardened { index }]);
         root_derivation_path
     }
 
@@ -1820,13 +1834,13 @@ mod tests {
     #[test]
     fn test_identity_registration_path() {
         let path = DerivationPath::identity_registration_path(Network::Dash, 10);
-        assert_eq!(path.to_string(), "m/9'/5'/5'/1'/10");
+        assert_eq!(path.to_string(), "m/9'/5'/5'/1'/10'");
     }
 
     #[test]
     fn test_identity_top_up_path() {
-        let path = DerivationPath::identity_top_up_path(Network::Testnet, 2);
-        assert_eq!(path.to_string(), "m/9'/1'/5'/2'/2");
+        let path = DerivationPath::identity_top_up_path(Network::Testnet, 2, 3);
+        assert_eq!(path.to_string(), "m/9'/1'/5'/2'/2'/3");
     }
 
     #[test]

@@ -33,6 +33,7 @@
 use core::convert::From;
 use core::{fmt, mem, u32};
 use std::io::Write;
+
 #[cfg(feature = "core-block-hash-use-x11")]
 use hashes::hash_x11;
 use hashes::{Hash, hash160, sha256, sha256d};
@@ -935,10 +936,7 @@ pub fn read_compact_size<R: Read + ?Sized>(r: &mut R) -> io::Result<u32> {
         }
         0xFF => {
             // Value is too large to fit in u32
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "CompactSize value exceeds u32::MAX",
-            ))
+            Err(io::Error::new(io::ErrorKind::InvalidData, "CompactSize value exceeds u32::MAX"))
         }
         value => Ok(value as u32),
     }
@@ -967,11 +965,9 @@ pub fn compact_size_len(value: u32) -> usize {
     let mut size: usize = 0;
     if value < 253 {
         size += 1;
-    }
-    else if value < 65536 {
+    } else if value < 65536 {
         size += 3;
-    }
-    else {
+    } else {
         size += 5;
     }
     size
@@ -1004,7 +1000,11 @@ pub fn read_fixed_bitset<R: Read + ?Sized>(r: &mut R, size: usize) -> std::io::R
     Ok(bits)
 }
 
-pub fn write_fixed_bitset<W: Write + ?Sized>(w: &mut W, bits: &[bool], size: usize) -> io::Result<usize> {
+pub fn write_fixed_bitset<W: Write + ?Sized>(
+    w: &mut W,
+    bits: &[bool],
+    size: usize,
+) -> io::Result<usize> {
     if bits.len() < size {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -1452,21 +1452,8 @@ mod tests {
 
     #[test]
     fn test_compact_size_round_trip() {
-        let test_values = vec![
-            0u32,
-            1,
-            252,
-            253,
-            254,
-            255,
-            300,
-            5000,
-            65535,
-            65536,
-            70000,
-            1_000_000,
-            u32::MAX,
-        ];
+        let test_values =
+            vec![0u32, 1, 252, 253, 254, 255, 300, 5000, 65535, 65536, 70000, 1_000_000, u32::MAX];
 
         for &value in &test_values {
             let mut buffer = Vec::new();

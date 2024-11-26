@@ -18,12 +18,16 @@
 //!
 
 use std::io::{Read, Write};
+
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
+use crate::consensus::encode::{
+    compact_size_len, fixed_bitset_len, read_compact_size, read_fixed_bitset, write_compact_size,
+    write_fixed_bitset,
+};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{QuorumHash, QuorumVVecHash};
 use crate::prelude::*;
 use crate::{VarInt, io};
-use crate::consensus::encode::{compact_size_len, fixed_bitset_len, read_compact_size, read_fixed_bitset, write_compact_size, write_fixed_bitset};
 
 /// A Quorum Finalization Commitment. It is described in the finalization section of DIP6:
 /// [dip-0006.md#6-finalization-phase](https://github.com/dashpay/dips/blob/master/dip-0006.md#6-finalization-phase)
@@ -73,7 +77,8 @@ impl Encodable for QuorumFinalizationCommitment {
         len += write_compact_size(w, self.signers.len() as u32)?;
         len += write_fixed_bitset(w, self.signers.as_slice(), self.signers.iter().len())?;
         len += write_compact_size(w, self.valid_members.len() as u32)?;
-        len += write_fixed_bitset(w, self.valid_members.as_slice(), self.valid_members.iter().len())?;
+        len +=
+            write_fixed_bitset(w, self.valid_members.as_slice(), self.valid_members.iter().len())?;
         len += self.quorum_public_key.consensus_encode(w)?;
         len += self.quorum_vvec_hash.consensus_encode(w)?;
         len += self.quorum_sig.consensus_encode(w)?;
@@ -87,7 +92,8 @@ impl Decodable for QuorumFinalizationCommitment {
         let version = u16::consensus_decode(r)?;
         let llmq_type = u8::consensus_decode(r)?;
         let quorum_hash = QuorumHash::consensus_decode(r)?;
-        let quorum_index = if version == 2 || version == 4 { Some(i16::consensus_decode(r)?) } else { None };
+        let quorum_index =
+            if version == 2 || version == 4 { Some(i16::consensus_decode(r)?) } else { None };
         let signers_count = read_compact_size(r)?;
         let signers = read_fixed_bitset(r, signers_count as usize)?;
         let valid_members_count = read_compact_size(r)?;
@@ -156,7 +162,9 @@ mod tests {
     use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use crate::consensus::Encodable;
     use crate::hash_types::{QuorumHash, QuorumVVecHash};
-    use crate::transaction::special_transaction::quorum_commitment::{QuorumCommitmentPayload, QuorumFinalizationCommitment};
+    use crate::transaction::special_transaction::quorum_commitment::{
+        QuorumCommitmentPayload, QuorumFinalizationCommitment,
+    };
 
     #[test]
     fn size() {
