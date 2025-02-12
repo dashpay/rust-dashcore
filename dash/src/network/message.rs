@@ -28,9 +28,7 @@ use crate::consensus::{encode, serialize};
 use crate::io;
 use crate::merkle_tree::MerkleBlock;
 use crate::network::address::{AddrV2Message, Address};
-use crate::network::{
-    message_blockdata, message_bloom, message_compact_blocks, message_filter, message_network,
-};
+use crate::network::{message_blockdata, message_bloom, message_compact_blocks, message_filter, message_network, message_sml};
 use crate::prelude::*;
 
 /// The maximum number of [super::message_blockdata::Inventory] items in an `inv` message.
@@ -236,6 +234,10 @@ pub enum NetworkMessage {
     AddrV2(Vec<AddrV2Message>),
     /// `sendaddrv2`
     SendAddrV2,
+
+    GetMnListD(message_sml::GetMnListDiff),
+    MnListDiff(message_sml::MnListDiff),
+
 
     /// Any other message.
     Unknown {
