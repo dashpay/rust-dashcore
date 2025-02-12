@@ -122,7 +122,7 @@ pub mod signer;
 pub mod string;
 pub mod taproot;
 pub mod util;
-mod sml;
+pub mod sml;
 
 // May depend on crate features and we don't want to bother with it
 #[allow(unused)]
