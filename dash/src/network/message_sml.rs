@@ -1,7 +1,9 @@
 use hashes::sha256::Hash;
 use crate::{BlockHash, ProTxHash, Transaction};
 use crate::bls_sig_utils::BLSSignature;
+use crate::hash_types::MerkleRootMasternodeList;
 use crate::internal_macros::impl_consensus_encoding;
+use crate::sml::entry::MasternodeListEntry;
 use crate::transaction::special_transaction::quorum_commitment::{QuorumFinalizationCommitment};
 
 /// The getmnlistd message requests a mnlistdiff message that provides either:
@@ -21,12 +23,13 @@ impl_consensus_encoding!(GetMnListDiff, base_block_hash, block_hash);
 /// either a full masternode list or a diff for a range of blocks.
 ///
 /// https://docs.dash.org/en/stable/docs/core/reference/p2p-network-data-messages.html#mnlistdiff
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct MnListDiff {
     pub version: u16,
     pub base_block_hash: BlockHash,
     pub block_hash: BlockHash,
     pub total_transactions: u32,
-    pub merkle_hashes: Vec<Hash>,
+    pub merkle_hashes: Vec<MerkleRootMasternodeList>,
     pub merkle_flags: Vec<u8>,
     pub coinbase_tx: Transaction,
     pub deleted_masternodes: Vec<ProTxHash>,

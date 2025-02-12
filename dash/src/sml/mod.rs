@@ -1,2 +1,2 @@
-mod entry;
-mod address;
+pub mod entry;
+pub mod address;

@@ -99,9 +99,6 @@ mod newtypes {
         /// A dash witness transaction ID.
         pub struct Wtxid(sha256d::Hash);
 
-
-
-
         /// A hash of a public key.
         pub struct PubkeyHash(hash160::Hash);
         /// A hash of Dash Script bytecode.
@@ -145,6 +142,8 @@ mod newtypes {
         /// ProTxHash is a pro-tx hash
         #[hash_newtype(forward)]
         pub struct ProTxHash(sha256d::Hash);
+        pub struct ConfirmedHash(sha256d::Hash);
+        pub struct Sha256dHash(sha256d::Hash);
     }
 
     impl_hashencode!(Txid);
@@ -169,6 +168,10 @@ mod newtypes {
     impl_hashencode!(PubkeyHash);
     impl_hashencode!(CycleHash);
 
+    impl_hashencode!(ConfirmedHash);
+    impl_hashencode!(ProTxHash);
+    impl_hashencode!(Sha256dHash);
+
     impl_asref_push_bytes!(PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash);
 
     impl Txid {
@@ -190,6 +193,30 @@ mod newtypes {
         }
 
         /// Convert a Txid to a string
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
+    }
+
+    impl ConfirmedHash {
+        /// Create a ConfirmedHash from a string
+        pub fn from_hex(s: &str) -> Result<ConfirmedHash, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
+
+        /// Convert a ConfirmedHash to a string
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
+    }
+
+    impl Sha256dHash {
+        /// Create a Sha256dHash from a string
+        pub fn from_hex(s: &str) -> Result<Sha256dHash, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
+
+        /// Convert a ConfirmedHash to a string
         pub fn to_hex(&self) -> String {
             self.0.to_string()
         }

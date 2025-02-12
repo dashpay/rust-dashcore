@@ -41,7 +41,7 @@ use internals::write_err;
 
 use crate::bip152::{PrefilledTransaction, ShortId};
 use crate::blockdata::transaction::Transaction;
-use crate::hash_types::{BlockHash, FilterHash, FilterHeader, TxMerkleNode};
+use crate::hash_types::{BlockHash, FilterHash, FilterHeader, MerkleRootMasternodeList, TxMerkleNode};
 use crate::io::{self, Cursor, Read};
 #[cfg(feature = "std")]
 use crate::network::{
@@ -53,7 +53,11 @@ use crate::taproot::TapLeafHash;
 use crate::transaction::special_transaction::TransactionType;
 use crate::transaction::txin::TxIn;
 use crate::transaction::txout::TxOut;
-use crate::{OutPoint, ScriptBuf, address};
+use crate::{OutPoint, ScriptBuf, address, ProTxHash};
+use crate::bls_sig_utils::BLSSignature;
+use crate::network::message_sml::DeletedQuorum;
+use crate::sml::entry::MasternodeListEntry;
+use crate::transaction::special_transaction::quorum_commitment::QuorumFinalizationCommitment;
 
 /// Encoding error.
 #[derive(Debug)]
@@ -104,11 +108,13 @@ pub enum Error {
     Hex(hashes::hex::Error),
     /// Address error
     Address(address::Error),
+    /// Invalid enum value
+    InvalidEnumValue{max: u16, received: u16, msg: String}
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
+        match self {
             Error::Io(ref e) => write_err!(f, "IO error"; e),
             Error::OversizedVectorAllocation { requested: ref r, max: ref m } => {
                 write!(f, "allocation of oversized vector: requested {}, maximum {}", r, m)
@@ -135,6 +141,7 @@ impl fmt::Display for Error {
             }
             Error::Hex(ref e) => write!(f, "hex error {}", e),
             Error::Address(ref e) => write!(f, "address error {}", e),
+            Error::InvalidEnumValue { max, received, msg } => write!(f, "invalid enum value, max: {} received: {} ({})", max, received, msg),
         }
     }
 }
@@ -155,8 +162,9 @@ impl std::error::Error for Error {
             | Error::WrongSpecialTransactionPayloadConversion { .. }
             | Error::NonStandardScriptPayout(..)
             | Error::InvalidVectorSize { .. }
-            | Error::Hex(_) => None,
-            Error::Address(_) => None,
+            | Error::Hex(_)
+            | Error::Address(_)
+            | InvalidEnumValue {..} => None,
         }
     }
 }
@@ -673,6 +681,12 @@ impl_vec!(VarInt);
 impl_vec!(ShortId);
 impl_vec!(OutPoint);
 impl_vec!(PrefilledTransaction);
+impl_vec!(QuorumFinalizationCommitment);
+impl_vec!(DeletedQuorum);
+impl_vec!(BLSSignature);
+impl_vec!(ProTxHash);
+impl_vec!(MerkleRootMasternodeList);
+impl_vec!(MasternodeListEntry);
 
 #[cfg(feature = "std")]
 impl_vec!(Inventory);

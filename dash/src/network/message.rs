@@ -292,6 +292,8 @@ impl NetworkMessage {
             NetworkMessage::WtxidRelay => "wtxidrelay",
             NetworkMessage::AddrV2(_) => "addrv2",
             NetworkMessage::SendAddrV2 => "sendaddrv2",
+            NetworkMessage::GetMnListD(_) => "getmnlistd",
+            NetworkMessage::MnListDiff(_) => "mnlistdiff",
             NetworkMessage::Unknown { .. } => "unknown",
         }
     }
@@ -375,6 +377,8 @@ impl Encodable for RawNetworkMessage {
             | NetworkMessage::FilterClear
             | NetworkMessage::SendAddrV2 => vec![],
             NetworkMessage::Unknown { payload: ref data, .. } => serialize(data),
+            NetworkMessage::GetMnListD(ref dat) => serialize(dat),
+            NetworkMessage::MnListDiff(ref dat) => serialize(dat),
         })
         .consensus_encode(w)?;
         Ok(len)
