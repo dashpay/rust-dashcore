@@ -504,6 +504,10 @@ impl Decodable for RawNetworkMessage {
             "addrv2" =>
                 NetworkMessage::AddrV2(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?),
             "sendaddrv2" => NetworkMessage::SendAddrV2,
+            "getmnlistd" => NetworkMessage::GetMnListD(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?),
+            "mnlistdiff" => NetworkMessage::MnListDiff(
+                Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
+            ),
             _ => NetworkMessage::Unknown { command: cmd, payload: mem_d.into_inner() },
         };
         Ok(RawNetworkMessage { magic, payload })

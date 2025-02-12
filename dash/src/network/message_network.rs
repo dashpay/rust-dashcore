@@ -58,6 +58,12 @@ pub struct VersionMessage {
     /// if the sender is bandwidth-limited and would like to support bloom
     /// filtering. Defaults to false.
     pub relay: bool,
+    /// The mn auth challenge is a set of random bytes that challenge a masternode to prove
+    /// themselves. The sender sends a random auth challenge, and the masternode will send back
+    /// a response in mn_auth proving they are a masternode by signing this message.
+    pub mn_auth_challenge: [u8;32],
+    /// Indicates if we are doing a quorum probe. Generally this should be set to false.
+    pub masternode_connection: bool,
 }
 
 impl VersionMessage {
@@ -70,6 +76,7 @@ impl VersionMessage {
         nonce: u64,
         user_agent: String,
         start_height: i32,
+        mn_auth_challenge: [u8;32],
     ) -> VersionMessage {
         VersionMessage {
             version: constants::PROTOCOL_VERSION,
@@ -81,6 +88,8 @@ impl VersionMessage {
             user_agent,
             start_height,
             relay: false,
+            mn_auth_challenge,
+            masternode_connection: false,
         }
     }
 }
@@ -95,7 +104,9 @@ impl_consensus_encoding!(
     nonce,
     user_agent,
     start_height,
-    relay
+    relay,
+    mn_auth_challenge,
+    masternode_connection
 );
 
 /// message rejection reason as a code
