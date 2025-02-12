@@ -14,7 +14,7 @@ use serde::de::{SeqAccess, Unexpected, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserializer, Serializer};
 
-use super::encode::Error as ConsensusError;
+use super::encode::{Error as ConsensusError, Error};
 use super::{Decodable, Encodable};
 use crate::alloc::string::ToString;
 use crate::io;
@@ -411,6 +411,10 @@ fn consensus_error_into_serde<E: serde::de::Error>(error: ConsensusError) -> E {
         ),
         ConsensusError::Hex(error) => E::custom(error),
         ConsensusError::Address(error) => E::custom(error),
+        ConsensusError::InvalidEnumValue { max, received, msg } => E::invalid_value(
+            Unexpected::Unsigned(received.into()),
+            &DisplayExpected(format_args!("expected enum value ≤ {}: {}", max, msg)),
+        ),
     }
 }
 
