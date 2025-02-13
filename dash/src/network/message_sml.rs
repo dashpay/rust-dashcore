@@ -1,10 +1,10 @@
-use hashes::sha256::Hash;
-use crate::{BlockHash, ProTxHash, Transaction};
 use crate::bls_sig_utils::BLSSignature;
 use crate::hash_types::MerkleRootMasternodeList;
 use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::entry::MasternodeListEntry;
-use crate::transaction::special_transaction::quorum_commitment::{QuorumFinalizationCommitment};
+use crate::transaction::special_transaction::quorum_commitment::QuorumFinalizationCommitment;
+use crate::{BlockHash, ProTxHash, Transaction};
+use hashes::sha256::Hash;
 
 /// The getmnlistd message requests a mnlistdiff message that provides either:
 /// - A full masternode list (if baseBlockHash is all-zero)
@@ -39,7 +39,21 @@ pub struct MnListDiff {
     pub quorums_chainlock_signatures: Vec<BLSSignature>,
 }
 
-impl_consensus_encoding!(MnListDiff, version, base_block_hash, block_hash, total_transactions, merkle_hashes, merkle_flags, coinbase_tx, deleted_masternodes, new_masternodes, deleted_quorums, new_quorums, quorums_chainlock_signatures);
+impl_consensus_encoding!(
+    MnListDiff,
+    version,
+    base_block_hash,
+    block_hash,
+    total_transactions,
+    merkle_hashes,
+    merkle_flags,
+    coinbase_tx,
+    deleted_masternodes,
+    new_masternodes,
+    deleted_quorums,
+    new_quorums,
+    quorums_chainlock_signatures
+);
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct DeletedQuorum {
@@ -52,3 +66,26 @@ impl_consensus_encoding!(DeletedQuorum, llmq_type, quorum_hash);
 
 // TODO: Add encoding tests with test vectors from Dash Core
 // TODO: Add documentation
+
+#[cfg(test)]
+mod tests {
+
+    use std::fs::File;
+    use std::io::{self, Read};
+    use crate::consensus::deserialize;
+    use crate::network::message::RawNetworkMessage;
+
+    fn read_binary_file(filename: &str) -> io::Result<Vec<u8>> {
+        let mut file = File::open(filename)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    #[test]
+    fn deserialize_mn_list_diff() {
+        let block_hex = include_str!("../../tests/data/test_DML_diffs/DML_0_2221605.hex");
+        let data = hex::decode(block_hex).expect("expected to decode hex");
+        let mn_list_diff: RawNetworkMessage = deserialize(&data).expect("Failed to deserialize MnListDiff");
+    }
+}
