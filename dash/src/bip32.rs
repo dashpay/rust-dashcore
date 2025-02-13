@@ -1846,7 +1846,7 @@ mod tests {
     #[test]
     fn test_identity_invitation_path() {
         let path = DerivationPath::identity_invitation_path(Network::Dash, 15);
-        assert_eq!(path.to_string(), "m/9'/5'/5'/3'/15");
+        assert_eq!(path.to_string(), "m/9'/5'/5'/3'/15'");
     }
 
     #[test]
