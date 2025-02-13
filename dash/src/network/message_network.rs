@@ -187,19 +187,18 @@ mod tests {
             "721101000100000000000000e6e0845300000000010000000000000000000000000000000000ffff0000000000000100000000000000fd87d87eeb4364f22cf54dca59412db7208d47d920cffce83ee8102f5361746f7368693a302e392e39392f2c9f040001"
         );
 
-        let decode: Result<VersionMessage, _> = deserialize(&from_sat);
-        assert!(decode.is_ok());
-        let real_decode = decode.unwrap();
-        assert_eq!(real_decode.version, 70002);
-        assert_eq!(real_decode.services, ServiceFlags::NETWORK);
-        assert_eq!(real_decode.timestamp, 1401217254);
-        // address decodes should be covered by Address tests
-        assert_eq!(real_decode.nonce, 16735069437859780935);
-        assert_eq!(real_decode.user_agent, "/Satoshi:0.9.99/".to_string());
-        assert_eq!(real_decode.start_height, 302892);
-        assert!(real_decode.relay);
+        let message: VersionMessage = deserialize(&from_sat).expect("deserialize message");
 
-        assert_eq!(serialize(&real_decode), from_sat);
+        assert_eq!(message.version, 70002);
+        assert_eq!(message.services, ServiceFlags::NETWORK);
+        assert_eq!(message.timestamp, 1401217254);
+        // address decodes should be covered by Address tests
+        assert_eq!(message.nonce, 16735069437859780935);
+        assert_eq!(message.user_agent, "/Satoshi:0.9.99/".to_string());
+        assert_eq!(message.start_height, 302892);
+        assert!(message.relay);
+
+        assert_eq!(serialize(&message), from_sat);
     }
 
     #[test]

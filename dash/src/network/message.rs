@@ -234,11 +234,10 @@ pub enum NetworkMessage {
     AddrV2(Vec<AddrV2Message>),
     /// `sendaddrv2`
     SendAddrV2,
-
+    /// `getmnlistd`
     GetMnListD(message_sml::GetMnListDiff),
+    /// `mnlistdiff`
     MnListDiff(message_sml::MnListDiff),
-
-
     /// Any other message.
     Unknown {
         /// The command of this message.
@@ -766,10 +765,8 @@ mod test {
             0x10, 0x2f, 0x53, 0x61, 0x74, 0x6f, 0x73, 0x68,
             0x69, 0x3a, 0x30, 0x2e, 0x31, 0x37, 0x2e, 0x31,
             0x2f, 0x93, 0x8c, 0x08, 0x00, 0x01
-        ]);
+        ]).expect("deserialize version message");
 
-        assert!(msg.is_ok());
-        let msg = msg.unwrap();
         assert_eq!(msg.magic, 0xd9b4bef9);
         if let NetworkMessage::Version(version_msg) = msg.payload {
             assert_eq!(version_msg.version, 70015);
@@ -811,10 +808,8 @@ mod test {
             0x69, 0x3a, 0x30, 0x2e, 0x31, 0x37, 0x2e, 0x31,
             0x2f, 0x93, 0x8c, 0x08, 0x00, 0x01, 0x00, 0x00
         ];
-        let msg = deserialize_partial::<RawNetworkMessage>(&data);
-        assert!(msg.is_ok());
+        let (msg, consumed) = deserialize_partial::<RawNetworkMessage>(&data).expect("deserialize partial message");
 
-        let (msg, consumed) = msg.unwrap();
         assert_eq!(consumed, data.to_vec().len() - 2);
         assert_eq!(msg.magic, 0xd9b4bef9);
         if let NetworkMessage::Version(version_msg) = msg.payload {

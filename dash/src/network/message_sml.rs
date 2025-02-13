@@ -80,8 +80,6 @@ pub struct DeletedQuorum {
 
 impl_consensus_encoding!(DeletedQuorum, llmq_type, quorum_hash);
 
-// TODO: Add encoding tests with test vectors from Dash Core
-
 #[cfg(test)]
 mod tests {
     use std::fs::File;
@@ -102,7 +100,7 @@ mod tests {
         let block_hex = include_str!("../../tests/data/test_DML_diffs/DML_0_2221605.hex");
         let data = hex::decode(block_hex).expect("decode hex");
         let mn_list_diff: RawNetworkMessage = deserialize(&data).expect("deserialize MnListDiff");
-
+    
         assert_matches!(mn_list_diff, RawNetworkMessage { magic, payload: NetworkMessage::MnListDiff(_) } if magic == 3177909439);
     }
 }
