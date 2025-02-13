@@ -103,6 +103,6 @@ mod tests {
         let data = hex::decode(block_hex).expect("decode hex");
         let mn_list_diff: RawNetworkMessage = deserialize(&data).expect("deserialize MnListDiff");
 
-        assert_matches!(mn_list_diff, RawNetworkMessage { magic, payload: NetworkMessage::MnListDiff(_) } if magic == 1);
+        assert_matches!(mn_list_diff, RawNetworkMessage { magic, payload: NetworkMessage::MnListDiff(_) } if magic == 3177909439);
     }
 }
