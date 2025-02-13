@@ -1,10 +1,11 @@
+use hashes::sha256::Hash;
+
 use crate::bls_sig_utils::BLSSignature;
 use crate::hash_types::MerkleRootMasternodeList;
 use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::entry::MasternodeListEntry;
 use crate::transaction::special_transaction::quorum_commitment::QuorumFinalizationCommitment;
 use crate::{BlockHash, ProTxHash, Transaction};
-use hashes::sha256::Hash;
 
 /// The `getmnlistd` message requests a `mnlistdiff` message that provides either:
 /// - A full masternode list (if `base_block_hash` is all-zero)
@@ -84,7 +85,9 @@ impl_consensus_encoding!(DeletedQuorum, llmq_type, quorum_hash);
 mod tests {
     use std::fs::File;
     use std::io::{self, Read};
+
     use assert_matches::assert_matches;
+
     use crate::consensus::deserialize;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
 
@@ -100,7 +103,7 @@ mod tests {
         let block_hex = include_str!("../../tests/data/test_DML_diffs/DML_0_2221605.hex");
         let data = hex::decode(block_hex).expect("decode hex");
         let mn_list_diff: RawNetworkMessage = deserialize(&data).expect("deserialize MnListDiff");
-    
+
         assert_matches!(mn_list_diff, RawNetworkMessage { magic, payload: NetworkMessage::MnListDiff(_) } if magic == 3177909439);
     }
 }

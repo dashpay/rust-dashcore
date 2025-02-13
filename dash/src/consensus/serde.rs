@@ -459,8 +459,9 @@ impl<E: fmt::Debug, I: Iterator<Item = Result<u8, E>>> IterReader<E, I> {
         match (result, self.error) {
             (Ok(_), None) if self.iterator.next().is_some() => Err(DecodeError::TooManyBytes),
             (Ok(value), None) => Ok(value),
-            (Ok(_), Some(error)) =>
-                panic!("{} silently ate the error: {:?}", core::any::type_name::<T>(), error),
+            (Ok(_), Some(error)) => {
+                panic!("{} silently ate the error: {:?}", core::any::type_name::<T>(), error)
+            }
             (Err(ConsensusError::Io(io_error)), Some(de_error))
                 if io_error.kind() == io::ErrorKind::Other && io_error.source().is_none() =>
                 Err(DecodeError::Other(de_error)),

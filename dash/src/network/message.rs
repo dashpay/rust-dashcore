@@ -28,7 +28,10 @@ use crate::consensus::{encode, serialize};
 use crate::io;
 use crate::merkle_tree::MerkleBlock;
 use crate::network::address::{AddrV2Message, Address};
-use crate::network::{message_blockdata, message_bloom, message_compact_blocks, message_filter, message_network, message_sml};
+use crate::network::{
+    message_blockdata, message_bloom, message_compact_blocks, message_filter, message_network,
+    message_sml,
+};
 use crate::prelude::*;
 
 /// The maximum number of [super::message_blockdata::Inventory] items in an `inv` message.
@@ -503,7 +506,9 @@ impl Decodable for RawNetworkMessage {
             "addrv2" =>
                 NetworkMessage::AddrV2(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?),
             "sendaddrv2" => NetworkMessage::SendAddrV2,
-            "getmnlistd" => NetworkMessage::GetMnListD(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?),
+            "getmnlistd" => NetworkMessage::GetMnListD(
+                Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
+            ),
             "mnlistdiff" => NetworkMessage::MnListDiff(
                 Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
             ),
@@ -808,7 +813,8 @@ mod test {
             0x69, 0x3a, 0x30, 0x2e, 0x31, 0x37, 0x2e, 0x31,
             0x2f, 0x93, 0x8c, 0x08, 0x00, 0x01, 0x00, 0x00
         ];
-        let (msg, consumed) = deserialize_partial::<RawNetworkMessage>(&data).expect("deserialize partial message");
+        let (msg, consumed) =
+            deserialize_partial::<RawNetworkMessage>(&data).expect("deserialize partial message");
 
         assert_eq!(consumed, data.to_vec().len() - 2);
         assert_eq!(msg.magic, 0xd9b4bef9);

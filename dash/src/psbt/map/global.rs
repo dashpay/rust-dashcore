@@ -198,15 +198,17 @@ impl PartiallySignedTransaction {
                             btree_map::Entry::Vacant(empty_key) => {
                                 empty_key.insert(pair.value);
                             }
-                            btree_map::Entry::Occupied(_) =>
-                                return Err(Error::DuplicateKey(pair.key)),
+                            btree_map::Entry::Occupied(_) => {
+                                return Err(Error::DuplicateKey(pair.key));
+                            }
                         },
                         _ => match unknowns.entry(pair.key) {
                             btree_map::Entry::Vacant(empty_key) => {
                                 empty_key.insert(pair.value);
                             }
-                            btree_map::Entry::Occupied(k) =>
-                                return Err(Error::DuplicateKey(k.key().clone())),
+                            btree_map::Entry::Occupied(k) => {
+                                return Err(Error::DuplicateKey(k.key().clone()));
+                            }
                         },
                     }
                 }

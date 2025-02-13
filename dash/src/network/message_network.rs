@@ -61,7 +61,7 @@ pub struct VersionMessage {
     /// The mn auth challenge is a set of random bytes that challenge a masternode to prove
     /// themselves. The sender sends a random auth challenge, and the masternode will send back
     /// a response in mn_auth proving they are a masternode by signing this message.
-    pub mn_auth_challenge: [u8;32],
+    pub mn_auth_challenge: [u8; 32],
     /// Indicates if we are doing a quorum probe. Generally this should be set to false.
     pub masternode_connection: bool,
 }
@@ -76,7 +76,7 @@ impl VersionMessage {
         nonce: u64,
         user_agent: String,
         start_height: i32,
-        mn_auth_challenge: [u8;32],
+        mn_auth_challenge: [u8; 32],
     ) -> VersionMessage {
         VersionMessage {
             version: constants::PROTOCOL_VERSION,
@@ -94,20 +94,63 @@ impl VersionMessage {
     }
 }
 
-impl_consensus_encoding!(
-    VersionMessage,
-    version,
-    services,
-    timestamp,
-    receiver,
-    sender,
-    nonce,
-    user_agent,
-    start_height,
-    relay,
-    mn_auth_challenge,
-    masternode_connection
-);
+impl Encodable for VersionMessage {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, writer: &mut W) -> Result<usize, io::Error> {
+        let mut len = 0;
+        len += self.version.consensus_encode(writer)?;
+        len += self.services.consensus_encode(writer)?;
+        len += self.timestamp.consensus_encode(writer)?;
+        len += self.receiver.consensus_encode(writer)?;
+        len += self.sender.consensus_encode(writer)?;
+        len += self.nonce.consensus_encode(writer)?;
+        len += self.user_agent.consensus_encode(writer)?;
+        len += self.start_height.consensus_encode(writer)?;
+        len += self.relay.consensus_encode(writer)?;
+        len += self.mn_auth_challenge.consensus_encode(writer)?;
+        len += self.masternode_connection.consensus_encode(writer)?;
+        Ok(len)
+    }
+}
+
+impl Decodable for VersionMessage {
+    fn consensus_decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, encode::Error> {
+        // Required fields
+        let version: u32 = Decodable::consensus_decode(reader)?;
+        let services: ServiceFlags = Decodable::consensus_decode(reader)?;
+        let timestamp: i64 = Decodable::consensus_decode(reader)?;
+        let receiver: Address = Decodable::consensus_decode(reader)?;
+        let sender: Address = Decodable::consensus_decode(reader)?;
+        let nonce: u64 = Decodable::consensus_decode(reader)?;
+        let user_agent: String = Decodable::consensus_decode(reader)?;
+        let start_height: i32 = Decodable::consensus_decode(reader)?;
+
+        // Read optional fields only if there are bytes remaining
+        let relay = if let Ok(val) = reader.read_u8() { val != 0 } else { false };
+
+        let mut mn_auth_challenge = [0u8; 32];
+        if let Ok(_) = reader.read_exact(&mut mn_auth_challenge) {
+            // Successfully read challenge
+        } else {
+            mn_auth_challenge = [0; 32]; // Default value
+        }
+
+        let masternode_connection = if let Ok(val) = reader.read_u8() { val != 0 } else { false };
+
+        Ok(VersionMessage {
+            version,
+            services,
+            timestamp,
+            receiver,
+            sender,
+            nonce,
+            user_agent,
+            start_height,
+            relay,
+            mn_auth_challenge,
+            masternode_connection,
+        })
+    }
+}
 
 /// message rejection reason as a code
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -184,7 +227,7 @@ mod tests {
     fn version_message_test() {
         // This message is from my satoshi node, morning of May 27 2014
         let from_sat = hex!(
-            "721101000100000000000000e6e0845300000000010000000000000000000000000000000000ffff0000000000000100000000000000fd87d87eeb4364f22cf54dca59412db7208d47d920cffce83ee8102f5361746f7368693a302e392e39392f2c9f040001"
+            "721101000100000000000000e6e0845300000000010000000000000000000000000000000000ffff0000000000000100000000000000fd87d87eeb4364f22cf54dca59412db7208d47d920cffce83ee8102f5361746f7368693a302e392e39392f2c9f0400016a4bbaa5155fa3ed24b60975d2b7b9860ccd64ff39c128622184b794256a0cba00"
         );
 
         let message: VersionMessage = deserialize(&from_sat).expect("deserialize message");
@@ -197,7 +240,12 @@ mod tests {
         assert_eq!(message.user_agent, "/Satoshi:0.9.99/".to_string());
         assert_eq!(message.start_height, 302892);
         assert!(message.relay);
-
+        assert_eq!(
+            &message.mn_auth_challenge.to_vec(),
+            &hex::decode("6a4bbaa5155fa3ed24b60975d2b7b9860ccd64ff39c128622184b794256a0cba")
+                .expect("expected to get vec")
+        );
+        assert!(!message.masternode_connection);
         assert_eq!(serialize(&message), from_sat);
     }
 

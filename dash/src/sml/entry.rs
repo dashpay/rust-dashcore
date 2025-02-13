@@ -1,22 +1,21 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
+
 #[cfg(feature = "bls")]
 use blsful::{Bls12381G2Impl, PublicKey};
+
+use crate::bls_sig_utils::BLSPublicKey;
+use crate::consensus::encode::Error;
+use crate::consensus::{Decodable, Encodable};
+use crate::hash_types::{ConfirmedHash, Sha256dHash};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::{ProTxHash, PubkeyHash};
-use crate::bls_sig_utils::BLSPublicKey;
-use crate::consensus::{Decodable, Encodable};
-use crate::consensus::encode::Error;
-use crate::hash_types::{ConfirmedHash, Sha256dHash};
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub enum MasternodeType {
     Regular,
-    HighPerformance {
-        platform_http_port: u16,
-        platform_node_id: PubkeyHash,
-    },
+    HighPerformance { platform_http_port: u16, platform_node_id: PubkeyHash },
 }
 
 impl Encodable for MasternodeType {
@@ -26,14 +25,14 @@ impl Encodable for MasternodeType {
             MasternodeType::Regular => {
                 // Write variant tag 0 for Regular
                 len += 0u8.consensus_encode(writer)?;
-            },
+            }
             MasternodeType::HighPerformance { platform_http_port, platform_node_id } => {
                 // Write variant tag 1 for HighPerformance,
                 // then the u16 port and the PubkeyHash
                 len += 1u8.consensus_encode(writer)?;
                 len += platform_http_port.consensus_encode(writer)?;
                 len += platform_node_id.consensus_encode(writer)?;
-            },
+            }
         }
         Ok(len)
     }
@@ -48,11 +47,8 @@ impl Decodable for MasternodeType {
             1 => {
                 let platform_http_port = Decodable::consensus_decode(reader)?;
                 let platform_node_id = Decodable::consensus_decode(reader)?;
-                Ok(MasternodeType::HighPerformance {
-                    platform_http_port,
-                    platform_node_id
-                })
-            },
+                Ok(MasternodeType::HighPerformance { platform_http_port, platform_node_id })
+            }
             received => Err(Error::InvalidEnumValue {
                 max: 1,
                 received,
