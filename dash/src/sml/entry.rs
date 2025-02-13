@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
+use std::net::SocketAddr;
 #[cfg(feature = "bls")]
 use blsful::{Bls12381G2Impl, PublicKey};
 use crate::internal_macros::impl_consensus_encoding;
@@ -8,7 +9,6 @@ use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::{Decodable, Encodable};
 use crate::consensus::encode::Error;
 use crate::hash_types::{ConfirmedHash, Sha256dHash};
-use crate::sml::address::ServiceAddress;
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub enum MasternodeType {
@@ -25,12 +25,12 @@ impl Encodable for MasternodeType {
         match self {
             MasternodeType::Regular => {
                 // Write variant tag 0 for Regular
-                len += (0u8).consensus_encode(writer)?;
+                len += 0u8.consensus_encode(writer)?;
             },
             MasternodeType::HighPerformance { platform_http_port, platform_node_id } => {
                 // Write variant tag 1 for HighPerformance,
                 // then the u16 port and the PubkeyHash
-                len += (1u8).consensus_encode(writer)?;
+                len += 1u8.consensus_encode(writer)?;
                 len += platform_http_port.consensus_encode(writer)?;
                 len += platform_node_id.consensus_encode(writer)?;
             },
@@ -55,7 +55,7 @@ impl Decodable for MasternodeType {
             },
             received => Err(Error::InvalidEnumValue {
                 max: 1,
-                received: received as u16,
+                received,
                 msg: "Invalid MasternodeType variant".to_string(),
             }),
         }
@@ -64,7 +64,8 @@ impl Decodable for MasternodeType {
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct OperatorPublicKey {
-    pub data: [u8; 48],
+    // TODO: We are using two different public keys here
+    pub data: BLSPublicKey,
     pub version: u16,
 }
 
@@ -75,7 +76,7 @@ pub struct MasternodeListEntry {
     pub version: u16,
     pub pro_reg_tx_hash: ProTxHash,
     pub confirmed_hash: ConfirmedHash,
-    pub service_address: ServiceAddress,
+    pub service_address: SocketAddr,
     pub operator_public_key: BLSPublicKey,
     pub key_id_voting: PubkeyHash,
     pub is_valid: bool,
@@ -102,7 +103,7 @@ impl Decodable for MasternodeListEntry {
         let version: u16 = Decodable::consensus_decode(reader)?;
         let pro_reg_tx_hash: ProTxHash = Decodable::consensus_decode(reader)?;
         let confirmed_hash: ConfirmedHash = Decodable::consensus_decode(reader)?;
-        let service_address: ServiceAddress = Decodable::consensus_decode(reader)?;
+        let service_address: SocketAddr = Decodable::consensus_decode(reader)?;
         let operator_public_key: BLSPublicKey = Decodable::consensus_decode(reader)?;
         let key_id_voting: PubkeyHash = Decodable::consensus_decode(reader)?;
         let is_valid: bool = Decodable::consensus_decode(reader)?;
