@@ -133,8 +133,16 @@ impl Network {
     /// The known dash genesis block hash for mainnet and testnet
     pub fn known_genesis_block_hash(&self) -> Option<BlockHash> {
         match self {
-            Network::Dash => Some(BlockHash::from_byte_array(hex::decode("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6").expect("expected valid hex").try_into().expect("expected 32 bytes"))),
-            Network::Testnet => Some(BlockHash::from_byte_array(hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c").expect("expected valid hex").try_into().expect("expected 32 bytes"))),
+            Network::Dash => {
+                let mut block_hash = hex::decode("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6").expect("expected valid hex");
+                block_hash.reverse();
+                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
+            },
+            Network::Testnet => {
+                let mut block_hash = hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c").expect("expected valid hex");
+                block_hash.reverse();
+                Some(BlockHash::from_byte_array(hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c").expect("expected valid hex").try_into().expect("expected 32 bytes")))
+            },
             Network::Devnet => None,
             Network::Regtest => None,
         }
