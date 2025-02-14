@@ -3,9 +3,10 @@ use hashes::sha256::Hash;
 use crate::bls_sig_utils::BLSSignature;
 use crate::hash_types::MerkleRootMasternodeList;
 use crate::internal_macros::impl_consensus_encoding;
-use crate::sml::entry::MasternodeListEntry;
-use crate::transaction::special_transaction::quorum_commitment::QuorumFinalizationCommitment;
-use crate::{BlockHash, ProTxHash, Transaction};
+use crate::sml::masternode_list_entry::MasternodeListEntry;
+use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+use crate::{BlockHash, ProTxHash, QuorumHash, Transaction};
+use crate::sml::llmq_type::LLMQType;
 
 /// The `getmnlistd` message requests a `mnlistdiff` message that provides either:
 /// - A full masternode list (if `base_block_hash` is all-zero)
@@ -51,7 +52,7 @@ pub struct MnListDiff {
     /// A list of LLMQ type and quorum hashes for LLMQs which were deleted after `base_block_hash`
     pub deleted_quorums: Vec<DeletedQuorum>,
     /// The list of LLMQ commitments for the LLMQs which were added since `base_block_hash`
-    pub new_quorums: Vec<QuorumFinalizationCommitment>,
+    pub new_quorums: Vec<QuorumEntry>,
     /// ChainLock signature used to calculate members per quorum indexes (in `new_quorums`)
     pub quorums_chainlock_signatures: Vec<BLSSignature>,
 }
@@ -75,8 +76,8 @@ impl_consensus_encoding!(
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct DeletedQuorum {
     // TODO: Make it enum
-    pub llmq_type: u8,
-    pub quorum_hash: Hash,
+    pub llmq_type: LLMQType,
+    pub quorum_hash: QuorumHash,
 }
 
 impl_consensus_encoding!(DeletedQuorum, llmq_type, quorum_hash);

@@ -208,6 +208,8 @@ mod prelude {
     pub use crate::io_extras::sink;
 
     pub use internals::hex::display::DisplayHex;
+
+    pub type CoreBlockHeight = u32;
 }
 
 #[cfg(bench)]

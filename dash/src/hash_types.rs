@@ -71,7 +71,7 @@ mod newtypes {
     use crate::alloc::string::ToString;
 
     use core::str::FromStr;
-    use hashes::{sha256, sha256d, hash160, hash_newtype};
+    use hashes::{sha256, sha256d, hash160, hash_newtype, Hash};
     use hashes::hex::Error;
     use crate::prelude::String;
     #[cfg(feature = "core-block-hash-use-x11")]
@@ -195,6 +195,13 @@ mod newtypes {
         /// Convert a Txid to a string
         pub fn to_hex(&self) -> String {
             self.0.to_string()
+        }
+
+        /// Returns a new `ProTxHash` with the bytes reversed.
+        pub fn reverse(&self) -> Self {
+            let mut reversed_bytes = self.0.to_byte_array();
+            reversed_bytes.reverse();
+            Self::from_byte_array(reversed_bytes)
         }
     }
 

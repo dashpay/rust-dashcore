@@ -1,3 +1,6 @@
+mod hash;
+pub mod qualified_masternode_list_entry;
+
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
@@ -77,6 +80,20 @@ pub struct MasternodeListEntry {
     pub key_id_voting: PubkeyHash,
     pub is_valid: bool,
     pub mn_type: MasternodeType,
+}
+
+use std::cmp::Ordering;
+
+impl Ord for MasternodeListEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.pro_reg_tx_hash.cmp(&other.pro_reg_tx_hash)
+    }
+}
+
+impl PartialOrd for MasternodeListEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl Encodable for MasternodeListEntry {

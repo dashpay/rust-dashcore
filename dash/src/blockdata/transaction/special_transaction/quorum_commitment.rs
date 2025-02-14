@@ -27,7 +27,8 @@ use crate::consensus::encode::{
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{QuorumHash, QuorumVVecHash};
 use crate::prelude::*;
-use crate::{VarInt, io};
+use crate::io;
+use crate::sml::llmq_type::LLMQType;
 
 /// A Quorum Finalization Commitment. It is described in the finalization section of DIP6:
 /// [dip-0006.md#6-finalization-phase](https://github.com/dashpay/dips/blob/master/dip-0006.md#6-finalization-phase)
@@ -35,9 +36,9 @@ use crate::{VarInt, io};
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
-pub struct QuorumFinalizationCommitment {
+pub struct QuorumEntry {
     pub version: u16,
-    pub llmq_type: u8,
+    pub llmq_type: LLMQType,
     pub quorum_hash: QuorumHash,
     pub quorum_index: Option<i16>,
     pub signers: Vec<bool>,
@@ -48,7 +49,7 @@ pub struct QuorumFinalizationCommitment {
     pub sig: BLSSignature,
 }
 
-impl QuorumFinalizationCommitment {
+impl QuorumEntry {
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
         let mut size = 2 + 1 + 32 + 48 + 32 + 96 + 96;
@@ -63,7 +64,7 @@ impl QuorumFinalizationCommitment {
     }
 }
 
-impl Encodable for QuorumFinalizationCommitment {
+impl Encodable for QuorumEntry {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.version.consensus_encode(w)?;
@@ -87,10 +88,10 @@ impl Encodable for QuorumFinalizationCommitment {
     }
 }
 
-impl Decodable for QuorumFinalizationCommitment {
+impl Decodable for QuorumEntry {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode(r)?;
-        let llmq_type = u8::consensus_decode(r)?;
+        let llmq_type = LLMQType::consensus_decode(r)?;
         let quorum_hash = QuorumHash::consensus_decode(r)?;
         let quorum_index =
             if version == 2 || version == 4 { Some(i16::consensus_decode(r)?) } else { None };
@@ -102,7 +103,7 @@ impl Decodable for QuorumFinalizationCommitment {
         let quorum_vvec_hash = QuorumVVecHash::consensus_decode(r)?;
         let quorum_sig = BLSSignature::consensus_decode(r)?;
         let sig = BLSSignature::consensus_decode(r)?;
-        Ok(QuorumFinalizationCommitment {
+        Ok(QuorumEntry {
             version,
             llmq_type,
             quorum_hash,
@@ -128,7 +129,7 @@ impl Decodable for QuorumFinalizationCommitment {
 pub struct QuorumCommitmentPayload {
     version: u16,
     height: u32,
-    finalization_commitment: QuorumFinalizationCommitment,
+    finalization_commitment: QuorumEntry,
 }
 
 impl QuorumCommitmentPayload {
@@ -150,7 +151,7 @@ impl Decodable for QuorumCommitmentPayload {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode(r)?;
         let height = u32::consensus_decode(r)?;
-        let finalization_commitment = QuorumFinalizationCommitment::consensus_decode(r)?;
+        let finalization_commitment = QuorumEntry::consensus_decode(r)?;
         Ok(QuorumCommitmentPayload { version, height, finalization_commitment })
     }
 }
@@ -162,8 +163,9 @@ mod tests {
     use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use crate::consensus::Encodable;
     use crate::hash_types::{QuorumHash, QuorumVVecHash};
+    use crate::sml::llmq_type::LLMQType;
     use crate::transaction::special_transaction::quorum_commitment::{
-        QuorumCommitmentPayload, QuorumFinalizationCommitment,
+        QuorumCommitmentPayload, QuorumEntry,
     };
 
     #[test]
@@ -173,9 +175,9 @@ mod tests {
             let payload = QuorumCommitmentPayload {
                 version: 0,
                 height: 0,
-                finalization_commitment: QuorumFinalizationCommitment {
+                finalization_commitment: QuorumEntry {
                     version: 1,
-                    llmq_type: 0,
+                    llmq_type: LLMQType::LlmqtypeUnknown,
                     quorum_hash: QuorumHash::all_zeros(),
                     quorum_index: None,
                     signers: vec![true, false, true, true, false],
@@ -195,9 +197,9 @@ mod tests {
             let payload = QuorumCommitmentPayload {
                 version: 0,
                 height: 0,
-                finalization_commitment: QuorumFinalizationCommitment {
+                finalization_commitment: QuorumEntry {
                     version: 2,
-                    llmq_type: 0,
+                    llmq_type: LLMQType::LlmqtypeUnknown,
                     quorum_hash: QuorumHash::all_zeros(),
                     quorum_index: Some(1),
                     signers: vec![true, false, true, true, false, true, false],
