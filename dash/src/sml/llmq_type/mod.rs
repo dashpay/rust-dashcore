@@ -285,6 +285,8 @@ pub const LLMQ_DEV_PLATFORM: LLMQParams = LLMQParams {
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub enum LLMQType {
     LlmqtypeUnknown = 0,    // other kind of
     Llmqtype50_60 = 1,      // 50 members,  30  (60%) threshold, 24 / day
