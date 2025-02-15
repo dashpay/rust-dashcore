@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use crate::{Network, QuorumHash};
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
@@ -6,6 +7,12 @@ use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 
 impl MasternodeList {
 
+    pub fn quorum_hashes(&self) -> BTreeSet<QuorumHash> {
+        self.quorums
+            .values()
+            .flat_map(|quorum_map| quorum_map.keys().cloned())
+            .collect()
+    }
     pub fn quorum_entry_of_type_for_quorum_hash(
         &self,
         llmq_type: LLMQType,

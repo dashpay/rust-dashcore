@@ -1,8 +1,8 @@
 #[cfg(feature = "quorum_validation")]
 mod validation;
 
-use std::collections::BTreeMap;
-use crate::{BlockHash, Network};
+use std::collections::{BTreeMap, BTreeSet};
+use crate::{BlockHash, Network, QuorumHash};
 use crate::bls_sig_utils::BLSSignature;
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
@@ -31,6 +31,16 @@ impl MasternodeListEngine {
             known_chain_locks: Default::default(),
             network,
         })
+    }
+
+    pub fn latest_masternode_list(&self) -> Option<&MasternodeList> {
+        self.masternode_lists.last_key_value().map(|(_, list)| list)
+    }
+
+    pub fn latest_masternode_list_quorum_hashes(&self) -> BTreeSet<QuorumHash> {
+        self.latest_masternode_list()
+            .map(|list| list.quorum_hashes())
+            .unwrap_or_default()
     }
 
     pub fn masternode_list_and_height_for_block_hash_8_blocks_ago(
