@@ -80,6 +80,8 @@ impl MasternodeListEngine {
         let Some(masternode_list) = maybe_masternode_list else {
             return Err(QuorumValidationError::RequiredMasternodeListNotPresent(known_block_height, llmq_block_hash));
         };
-        quorum.validate(masternode_list.masternodes.values())
+        let quorum_modifier_type = LLMQModifierType::new_quorum_modifier_type(quorum.quorum_entry.llmq_type, masternode_list.block_hash, known_block_height, &self.known_chain_locks, self.network)?;
+        let masternodes : Vec<_> = masternode_list.valid_masternodes_for_quorum(quorum, quorum_modifier_type, self.network);
+        quorum.validate(masternodes.iter().map(|qualified_masternode_list_entry| &qualified_masternode_list_entry.masternode_list_entry))
     }
 }

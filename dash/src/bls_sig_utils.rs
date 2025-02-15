@@ -44,7 +44,7 @@ impl TryFrom<BLSPublicKey> for blsful::PublicKey<Bls12381G2Impl> {
     type Error = QuorumValidationError;
 
     fn try_from(value: BLSPublicKey) -> Result<Self, Self::Error> {
-        Self::try_from(value.0).map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
+        Self::try_from(value.0.as_slice()).map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
     }
 }
 
@@ -53,7 +53,7 @@ impl TryFrom<&BLSPublicKey> for blsful::PublicKey<Bls12381G2Impl> {
     type Error = QuorumValidationError;
 
     fn try_from(value: &BLSPublicKey) -> Result<Self, Self::Error> {
-        Self::try_from(&value.0).map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
+        Self::try_from(value.0.as_slice()).map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
     }
 }
 
@@ -99,7 +99,7 @@ impl TryFrom<BLSSignature> for blsful::Signature<Bls12381G2Impl> {
     type Error = QuorumValidationError;
 
     fn try_from(value: BLSSignature) -> Result<Self, Self::Error> {
-        Self::try_from(&value.0).map_err(|e| QuorumValidationError::InvalidBLSSignature(e.to_string()))
+        Self::try_from(value.0.as_slice()).map_err(|e| QuorumValidationError::InvalidBLSSignature(e.to_string()))
     }
 }
 
@@ -108,7 +108,25 @@ impl TryFrom<&BLSSignature> for blsful::Signature<Bls12381G2Impl> {
     type Error = QuorumValidationError;
 
     fn try_from(value: &BLSSignature) -> Result<Self, Self::Error> {
-        Self::try_from(&value.0).map_err(|e| QuorumValidationError::InvalidBLSSignature(e.to_string()))
+        Self::try_from(value.0.as_slice()).map_err(|e| QuorumValidationError::InvalidBLSSignature(e.to_string()))
+    }
+}
+
+#[cfg(feature = "bls")]
+impl TryFrom<BLSSignature> for blsful::AggregateSignature<Bls12381G2Impl> {
+    type Error = QuorumValidationError;
+
+    fn try_from(value: BLSSignature) -> Result<Self, Self::Error> {
+        Self::try_from(value.0.as_slice()).map_err(|e| QuorumValidationError::InvalidBLSSignature(e.to_string()))
+    }
+}
+
+#[cfg(feature = "bls")]
+impl TryFrom<&BLSSignature> for blsful::AggregateSignature<Bls12381G2Impl> {
+    type Error = QuorumValidationError;
+
+    fn try_from(value: &BLSSignature) -> Result<Self, Self::Error> {
+        Self::try_from(value.0.as_slice()).map_err(|e| QuorumValidationError::InvalidBLSSignature(e.to_string()))
     }
 }
 

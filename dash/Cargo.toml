@@ -19,7 +19,7 @@ edition = "2021"
 
 # Please don't forget to add relevant features to docs.rs below
 [features]
-default = [ "std", "secp-recovery", "core-block-hash-use-x11" ]
+default = [ "std", "secp-recovery", "core-block-hash-use-x11", "quorum_validation" ]
 base64 = [ "base64-compat" ]
 rand-std = ["secp256k1/rand"]
 rand = ["secp256k1/rand"]

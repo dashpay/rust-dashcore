@@ -3,6 +3,7 @@ mod validation;
 
 use std::collections::BTreeMap;
 use crate::{BlockHash, Network};
+use crate::bls_sig_utils::BLSSignature;
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
@@ -15,6 +16,7 @@ pub struct MasternodeListEngine {
     pub block_hashes : BTreeMap<CoreBlockHeight, BlockHash>,
     pub block_heights : BTreeMap<BlockHash, CoreBlockHeight>,
     pub masternode_lists : BTreeMap<CoreBlockHeight, MasternodeList>,
+    pub known_chain_locks: BTreeMap<BlockHash, BLSSignature>,
     pub network: Network,
 }
 
@@ -26,6 +28,7 @@ impl MasternodeListEngine {
             block_hashes: [(block_height, block_hash)].into(),
             block_heights: [(block_hash, block_height)].into(),
             masternode_lists: [(block_height, masternode_list)].into(),
+            known_chain_locks: Default::default(),
             network,
         })
     }
@@ -55,12 +58,12 @@ impl MasternodeListEngine {
 
         let block_hash = masternode_list_diff.block_hash;
 
-        let mut masternode_list = base_masternode_list.apply_diff(masternode_list_diff, diff_end_height)?;
+        let mut masternode_list = base_masternode_list.apply_diff(masternode_list_diff.clone(), diff_end_height)?;
 
         #[cfg(feature = "quorum_validation")]
         if verify_quorums {
             // We only need to verify new quorums
-            for new_quorum in masternode_list_diff.new_quorums {
+            for new_quorum in &masternode_list_diff.new_quorums {
                 let quorum = masternode_list.quorum_entry_of_type_for_quorum_hash_mut(new_quorum.llmq_type, new_quorum.quorum_hash).ok_or(CorruptedCodeExecution("masternode list after diff does not contain new quorum".to_string()))?;
                 self.validate_and_update_quorum_status(quorum);
             }

@@ -8,12 +8,13 @@ use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 
 impl MasternodeList {
-    pub fn valid_masternodes_for_quorum(
+    pub fn valid_masternodes_for_quorum<T>(
         &self,
         quorum: &QualifiedQuorumEntry,
         quorum_modifier: LLMQModifierType,
         network: Network,
-    ) -> Vec<QualifiedMasternodeListEntry> {
+    ) -> T
+    where T: FromIterator<QualifiedMasternodeListEntry> {
         let llmq_type = quorum.quorum_entry.llmq_type;
         let hpmn_only = llmq_type == network.platform_type();
         let quorum_modifier = quorum_modifier.build_llmq_hash();
