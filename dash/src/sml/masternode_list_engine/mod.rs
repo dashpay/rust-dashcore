@@ -23,10 +23,11 @@ pub struct MasternodeListEngine {
 impl MasternodeListEngine {
     pub fn initialize_with_diff_to_height(masternode_list_diff: MnListDiff, block_height: CoreBlockHeight, network: Network) -> Result<Self, SmlError> {
         let block_hash = masternode_list_diff.block_hash;
+        let base_block_hash = masternode_list_diff.base_block_hash;
         let masternode_list = masternode_list_diff.try_into_with_block_hash_lookup(|block_hash| Some(block_height), network)?;
         Ok(Self {
-            block_hashes: [(block_height, block_hash)].into(),
-            block_heights: [(block_hash, block_height)].into(),
+            block_hashes: [(0, base_block_hash), (block_height, block_hash)].into(),
+            block_heights: [(base_block_hash, 0), (block_hash, block_height)].into(),
             masternode_lists: [(block_height, masternode_list)].into(),
             known_chain_locks: Default::default(),
             network,
@@ -40,6 +41,12 @@ impl MasternodeListEngine {
     pub fn latest_masternode_list_quorum_hashes(&self) -> BTreeSet<QuorumHash> {
         self.latest_masternode_list()
             .map(|list| list.quorum_hashes())
+            .unwrap_or_default()
+    }
+
+    pub fn latest_masternode_list_non_rotating_quorum_hashes(&self) -> BTreeSet<QuorumHash> {
+        self.latest_masternode_list()
+            .map(|list| list.non_rotating_quorum_hashes())
             .unwrap_or_default()
     }
 
@@ -59,6 +66,20 @@ impl MasternodeListEngine {
     }
 
     pub fn apply_diff(&mut self, masternode_list_diff: MnListDiff, diff_end_height: CoreBlockHeight, verify_quorums: bool) -> Result<(), SmlError> {
+        if let Some(known_genesis_block_hash) = self.network.known_genesis_block_hash().and_then(self.block_hashes.get(&0)) {
+            if masternode_list_diff.base_block_hash == known_genesis_block_hash {
+                // we are going from the start
+                let block_hash = masternode_list_diff.block_hash;
+
+                let masternode_list = masternode_list_diff.try_into_with_block_hash_lookup(|block_hash| Some(diff_end_height), self.network)?;
+
+                self.masternode_lists.insert(diff_end_height, masternode_list);
+                self.block_hashes.insert(diff_end_height, block_hash);
+                self.block_heights.insert(block_hash, diff_end_height);
+                return Ok(());
+            }
+        }
+
         let Some(base_height) = self.block_heights.get(&masternode_list_diff.base_block_hash) else {
             return Err(SmlError::MissingStartMasternodeList(masternode_list_diff.base_block_hash));
         };

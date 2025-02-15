@@ -13,6 +13,15 @@ impl MasternodeList {
             .flat_map(|quorum_map| quorum_map.keys().cloned())
             .collect()
     }
+
+    pub fn non_rotating_quorum_hashes(&self) -> BTreeSet<QuorumHash> {
+        self.quorums
+            .iter()
+            .filter(|(llmq_type, _)| !llmq_type.is_rotating_quorum_type())
+            .flat_map(|(_, quorums)| quorums.keys().cloned())
+            .collect()
+    }
+
     pub fn quorum_entry_of_type_for_quorum_hash(
         &self,
         llmq_type: LLMQType,

@@ -459,4 +459,13 @@ impl LLMQType {
     pub fn from_u8(index: u8) -> LLMQType {
         LLMQType::from(index)
     }
+
+    pub fn is_rotating_quorum_type(&self) -> bool {
+        match self {
+            LLMQType::Llmqtype60_75
+            | LLMQType::LlmqtypeDevnetDIP0024
+            | LLMQType::LlmqtypeTestDIP0024 => true,
+            _ => false,
+        }
+    }
 }
