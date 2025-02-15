@@ -66,7 +66,7 @@ impl MasternodeListEngine {
     }
 
     pub fn apply_diff(&mut self, masternode_list_diff: MnListDiff, diff_end_height: CoreBlockHeight, verify_quorums: bool) -> Result<(), SmlError> {
-        if let Some(known_genesis_block_hash) = self.network.known_genesis_block_hash().and_then(self.block_hashes.get(&0)) {
+        if let Some(known_genesis_block_hash) = self.network.known_genesis_block_hash().or_else(|| self.block_hashes.get(&0).cloned()) {
             if masternode_list_diff.base_block_hash == known_genesis_block_hash {
                 // we are going from the start
                 let block_hash = masternode_list_diff.block_hash;
