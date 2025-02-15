@@ -29,6 +29,7 @@ use crate::hash_types::{QuorumHash, QuorumVVecHash};
 use crate::prelude::*;
 use crate::io;
 use crate::sml::llmq_type::LLMQType;
+use crate::sml::quorum_validation_error::QuorumValidationError;
 
 /// A Quorum Finalization Commitment. It is described in the finalization section of DIP6:
 /// [dip-0006.md#6-finalization-phase](https://github.com/dashpay/dips/blob/master/dip-0006.md#6-finalization-phase)
@@ -45,8 +46,8 @@ pub struct QuorumEntry {
     pub valid_members: Vec<bool>,
     pub quorum_public_key: BLSPublicKey,
     pub quorum_vvec_hash: QuorumVVecHash,
-    pub quorum_sig: BLSSignature,
-    pub sig: BLSSignature,
+    pub threshold_sig: BLSSignature,
+    pub all_commitment_aggregated_signature: BLSSignature,
 }
 
 impl QuorumEntry {
@@ -61,6 +62,55 @@ impl QuorumEntry {
             size += 2;
         }
         size
+    }
+
+    pub fn validate_structure(&self) -> Result<(), QuorumValidationError> {
+        let quorum_threshold = self.llmq_type.threshold() as u64;
+
+        // Count set bits in signers and valid_members bitvectors
+        let signers_bitset_true_bits_count = self.signers.iter().filter(|&&b| b).count() as u64;
+        let valid_members_bitset_true_bits_count = self.valid_members.iter().filter(|&&b| b).count() as u64;
+
+        // Ensure signers meet the quorum threshold
+        if signers_bitset_true_bits_count < quorum_threshold {
+            return Err(QuorumValidationError::InsufficientSigners {
+                required: quorum_threshold,
+                found: signers_bitset_true_bits_count,
+            });
+        }
+
+        // Ensure valid members meet the quorum threshold
+        if valid_members_bitset_true_bits_count < quorum_threshold {
+            return Err(QuorumValidationError::InsufficientValidMembers {
+                required: quorum_threshold,
+                found: valid_members_bitset_true_bits_count,
+            });
+        }
+
+        // Ensure bitsets have the same length
+        if self.signers.len() != self.valid_members.len() {
+            return Err(QuorumValidationError::MismatchedBitsetLengths {
+                signers_len: self.signers.len(),
+                valid_members_len: self.valid_members.len(),
+            });
+        }
+
+        // Ensure quorum public key is valid (not zeroed)
+        if self.quorum_public_key.is_zeroed() {
+            return Err(QuorumValidationError::InvalidQuorumPublicKey);
+        }
+
+        // Validate quorum signature (not zeroed)
+        if self.threshold_sig.is_zeroed() {
+            return Err(QuorumValidationError::InvalidQuorumSignature);
+        }
+
+        // Validate final signature (not zeroed)
+        if self.all_commitment_aggregated_signature.is_zeroed() {
+            return Err(QuorumValidationError::InvalidFinalSignature);
+        }
+
+        Ok(())
     }
 }
 
@@ -82,8 +132,8 @@ impl Encodable for QuorumEntry {
             write_fixed_bitset(w, self.valid_members.as_slice(), self.valid_members.iter().len())?;
         len += self.quorum_public_key.consensus_encode(w)?;
         len += self.quorum_vvec_hash.consensus_encode(w)?;
-        len += self.quorum_sig.consensus_encode(w)?;
-        len += self.sig.consensus_encode(w)?;
+        len += self.threshold_sig.consensus_encode(w)?;
+        len += self.all_commitment_aggregated_signature.consensus_encode(w)?;
         Ok(len)
     }
 }
@@ -112,8 +162,8 @@ impl Decodable for QuorumEntry {
             valid_members,
             quorum_public_key,
             quorum_vvec_hash,
-            quorum_sig,
-            sig,
+            threshold_sig: quorum_sig,
+            all_commitment_aggregated_signature: sig,
         })
     }
 }
@@ -184,8 +234,8 @@ mod tests {
                     valid_members: vec![false, true, false, true],
                     quorum_public_key: BLSPublicKey::from([0; 48]),
                     quorum_vvec_hash: QuorumVVecHash::all_zeros(),
-                    quorum_sig: BLSSignature::from([0; 96]),
-                    sig: BLSSignature::from([0; 96]),
+                    threshold_sig: BLSSignature::from([0; 96]),
+                    all_commitment_aggregated_signature: BLSSignature::from([0; 96]),
                 },
             };
             let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
@@ -206,8 +256,8 @@ mod tests {
                     valid_members: vec![false, true, false, true, false, true],
                     quorum_public_key: BLSPublicKey::from([0; 48]),
                     quorum_vvec_hash: QuorumVVecHash::all_zeros(),
-                    quorum_sig: BLSSignature::from([0; 96]),
-                    sig: BLSSignature::from([0; 96]),
+                    threshold_sig: BLSSignature::from([0; 96]),
+                    all_commitment_aggregated_signature: BLSSignature::from([0; 96]),
                 },
             };
             let actual = payload.consensus_encode(&mut Vec::new()).unwrap();

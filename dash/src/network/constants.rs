@@ -130,6 +130,20 @@ impl Network {
         }
     }
 
+    /// The known activation height of core v20
+    pub fn core_v20_activation_height(&self) -> u32 {
+        match self {
+            Network::Dash => 1987776,
+            Network::Testnet => 905100,
+            _ => 1, //todo: this might not be 1
+        }
+    }
+
+    /// Helper method to know if core v20 was active
+    pub fn core_v20_is_active_at(&self, core_block_height: u32) -> bool {
+        core_block_height >= self.core_v20_activation_height()
+    }
+
     /// The known dash genesis block hash for mainnet and testnet
     pub fn known_genesis_block_hash(&self) -> Option<BlockHash> {
         match self {

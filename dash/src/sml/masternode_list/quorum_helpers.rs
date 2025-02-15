@@ -15,6 +15,15 @@ impl MasternodeList {
             .get(&llmq_type)?.get(&quorum_hash)
     }
 
+    pub fn quorum_entry_of_type_for_quorum_hash_mut(
+        &mut self,
+        llmq_type: LLMQType,
+        quorum_hash: QuorumHash,
+    ) -> Option<&mut QualifiedQuorumEntry> {
+        self.quorums
+            .get_mut(&llmq_type)?.get_mut(&quorum_hash)
+    }
+
     pub fn quorums_count(&self) -> u64 {
         let mut count: u64 = 0;
         for entry in self.quorums.values() {

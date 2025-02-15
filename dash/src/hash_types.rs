@@ -71,7 +71,8 @@ mod newtypes {
     use crate::alloc::string::ToString;
 
     use core::str::FromStr;
-    use hashes::{sha256, sha256d, hash160, hash_newtype, Hash};
+use std::cmp::Ordering;
+use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
     use hashes::hex::Error;
     use crate::prelude::String;
     #[cfg(feature = "core-block-hash-use-x11")]
@@ -132,9 +133,6 @@ mod newtypes {
         pub struct SpecialTransactionPayloadHash(sha256d::Hash);
         /// A hash of all transaction inputs
         pub struct InputsHash(sha256d::Hash);
-        /// A hash used to identify a quorum
-        #[hash_newtype(forward)]
-        pub struct QuorumHash(sha256d::Hash);
         /// A hash of a quorum verification vector
         pub struct QuorumVVecHash(sha256d::Hash);
         /// A hash of a quorum signing request id
@@ -143,8 +141,37 @@ mod newtypes {
         #[hash_newtype(forward)]
         pub struct ProTxHash(sha256d::Hash);
         pub struct ConfirmedHash(sha256d::Hash);
+        pub struct ConfirmedHashHashedWithProRegTx(sha256d::Hash);
+        pub struct QuorumModifierHash(sha256d::Hash);
+
         pub struct Sha256dHash(sha256d::Hash);
     }
+
+        hash_newtype_no_ord! {
+        pub struct ScoreHash(sha256d::Hash);
+        }
+
+impl Ord for ScoreHash {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let mut self_bytes = self.0.to_byte_array();
+        let mut other_bytes = other.0.to_byte_array();
+
+        self_bytes.reverse();
+        other_bytes.reverse();
+
+        self_bytes.cmp(&other_bytes)
+    }
+}
+
+impl PartialOrd for ScoreHash {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+
+    /// A hash used to identify a quorum
+    pub type QuorumHash = BlockHash;
 
     impl_hashencode!(Txid);
     impl_hashencode!(Wtxid);
@@ -162,13 +189,15 @@ mod newtypes {
     impl_hashencode!(SpecialTransactionPayloadHash);
     impl_hashencode!(InputsHash);
 
-    impl_hashencode!(QuorumHash);
     impl_hashencode!(QuorumVVecHash);
     impl_hashencode!(QuorumSigningRequestId);
     impl_hashencode!(PubkeyHash);
     impl_hashencode!(CycleHash);
 
     impl_hashencode!(ConfirmedHash);
+    impl_hashencode!(ConfirmedHashHashedWithProRegTx);
+    impl_hashencode!(QuorumModifierHash);
+    impl_hashencode!(ScoreHash);
     impl_hashencode!(ProTxHash);
     impl_hashencode!(Sha256dHash);
 
@@ -203,6 +232,41 @@ mod newtypes {
             reversed_bytes.reverse();
             Self::from_byte_array(reversed_bytes)
         }
+    }
+
+        impl ScoreHash {
+        /// Create a Txid from a string
+        pub fn from_hex(s: &str) -> Result<ScoreHash, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
+
+        /// Convert a Txid to a string
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
+
+        /// Returns a new `ProTxHash` with the bytes reversed.
+        pub fn reverse(&self) -> Self {
+            let mut reversed_bytes = self.0.to_byte_array();
+            reversed_bytes.reverse();
+            Self::from_byte_array(reversed_bytes)
+        }
+
+        pub fn create_score(confirmed_hash_hashed_with_pro_reg_tx: Option<ConfirmedHashHashedWithProRegTx>, modifier: QuorumModifierHash) -> Self {
+            let mut bytes = vec![];
+            if let Some(confirmed_hash_hashed_with_pro_reg_tx) = confirmed_hash_hashed_with_pro_reg_tx{
+                bytes.append(&mut confirmed_hash_hashed_with_pro_reg_tx.to_byte_array().to_vec());
+                bytes.append(&mut modifier.to_byte_array().to_vec());
+            }
+            Self::hash(bytes.as_slice())
+        }
+    }
+
+    impl Default for ConfirmedHash {
+    fn default() -> Self {
+        ConfirmedHash::from_byte_array([0;32])
+    }
+
     }
 
     impl ConfirmedHash {

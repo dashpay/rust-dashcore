@@ -316,6 +316,134 @@ macro_rules! hash_newtype {
     };
 }
 
+#[macro_export]
+macro_rules! hash_newtype_no_ord {
+    ($($(#[$($type_attrs:tt)*])* $type_vis:vis struct $newtype:ident($(#[$field_attrs:tt])* $field_vis:vis $hash:path);)+) => {
+        $(
+        $($crate::hash_newtype_known_attrs!(#[ $($type_attrs)* ]);)*
+
+        $crate::hash_newtype_struct_no_ord! {
+            $type_vis struct $newtype($(#[$field_attrs])* $field_vis $hash);
+
+            $({ $($type_attrs)* })*
+        }
+
+        $crate::hex_fmt_impl!(<$newtype as $crate::Hash>::DISPLAY_BACKWARD, $newtype);
+        $crate::serde_impl!($newtype, <$newtype as $crate::Hash>::LEN);
+        $crate::borrow_slice_impl!($newtype);
+
+        impl $newtype {
+            /// Creates this wrapper type from the inner hash type.
+            #[allow(unused)] // the user of macro may not need this
+            pub fn from_raw_hash(inner: $hash) -> $newtype {
+                $newtype(inner)
+            }
+
+            /// Returns the inner hash (sha256, sh256d etc.).
+            #[allow(unused)] // the user of macro may not need this
+            pub fn to_raw_hash(self) -> $hash {
+                self.0
+            }
+
+            /// Returns a reference to the inner hash (sha256, sh256d etc.).
+            #[allow(unused)] // the user of macro may not need this
+            pub fn as_raw_hash(&self) -> &$hash {
+                &self.0
+            }
+        }
+
+        impl $crate::_export::_core::convert::From<$hash> for $newtype {
+            fn from(inner: $hash) -> $newtype {
+                // Due to rust 1.22 we have to use this instead of simple `Self(inner)`
+                Self { 0: inner }
+            }
+        }
+
+        impl $crate::_export::_core::convert::From<$newtype> for $hash {
+            fn from(hashtype: $newtype) -> $hash {
+                hashtype.0
+            }
+        }
+
+        impl $crate::Hash for $newtype {
+            type Engine = <$hash as $crate::Hash>::Engine;
+            type Bytes = <$hash as $crate::Hash>::Bytes;
+
+            const LEN: usize = <$hash as $crate::Hash>::LEN;
+            const DISPLAY_BACKWARD: bool = $crate::hash_newtype_get_direction!($hash, $(#[$($type_attrs)*])*);
+
+            fn engine() -> Self::Engine {
+                <$hash as $crate::Hash>::engine()
+            }
+
+            fn from_engine(e: Self::Engine) -> Self {
+                Self::from(<$hash as $crate::Hash>::from_engine(e))
+            }
+
+            #[inline]
+            fn from_slice(sl: &[u8]) -> Result<$newtype, $crate::Error> {
+                Ok($newtype(<$hash as $crate::Hash>::from_slice(sl)?))
+            }
+
+            #[inline]
+            fn from_byte_array(bytes: Self::Bytes) -> Self {
+                $newtype(<$hash as $crate::Hash>::from_byte_array(bytes))
+            }
+
+            #[inline]
+            fn to_byte_array(self) -> Self::Bytes {
+                self.0.to_byte_array()
+            }
+
+            #[inline]
+            fn as_byte_array(&self) -> &Self::Bytes {
+                self.0.as_byte_array()
+            }
+
+            #[inline]
+            fn all_zeros() -> Self {
+                let zeros = <$hash>::all_zeros();
+                $newtype(zeros)
+            }
+        }
+
+        impl $crate::_export::_core::str::FromStr for $newtype {
+            type Err = $crate::hex::Error;
+            fn from_str(s: &str) -> $crate::_export::_core::result::Result<$newtype, Self::Err> {
+                use $crate::hex::{HexIterator, FromHex};
+                use $crate::Hash;
+
+                let inner: <$hash as Hash>::Bytes = if <Self as $crate::Hash>::DISPLAY_BACKWARD {
+                    FromHex::from_byte_iter(HexIterator::new(s)?.rev())?
+                } else {
+                    FromHex::from_byte_iter(HexIterator::new(s)?)?
+                };
+                Ok($newtype(<$hash>::from_byte_array(inner)))
+            }
+        }
+
+        impl $crate::_export::_core::convert::AsRef<[u8; <$hash as $crate::Hash>::LEN]> for $newtype {
+            fn as_ref(&self) -> &[u8; <$hash as $crate::Hash>::LEN] {
+                AsRef::<[u8; <$hash as $crate::Hash>::LEN]>::as_ref(&self.0)
+            }
+        }
+
+        impl<I: $crate::_export::_core::slice::SliceIndex<[u8]>> $crate::_export::_core::ops::Index<I> for $newtype {
+            type Output = I::Output;
+
+            #[inline]
+            fn index(&self, index: I) -> &Self::Output {
+                &self.0[index]
+            }
+        }
+
+        impl Into<[u8; <$hash as $crate::Hash>::LEN]> for $newtype {
+            fn into(self) -> [u8; <$hash as $crate::Hash>::LEN] { self.0.into() }
+        }
+        )+
+    };
+}
+
 // Generates the struct only (no impls)
 //
 // This is a separate macro to make it more readable and have a separate interface that allows for
@@ -332,6 +460,33 @@ macro_rules! hash_newtype_struct {
     ($(#[$other_attrs:meta])* $type_vis:vis struct $newtype:ident($(#[$field_attrs:meta])* $field_vis:vis $hash:path);) => {
         $(#[$other_attrs])*
         #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        $type_vis struct $newtype($(#[$field_attrs])* $field_vis $hash);
+    };
+    ($(#[$other_attrs:meta])* $type_vis:vis struct $newtype:ident($(#[$field_attrs:meta])* $field_vis:vis $hash:path); { hash_newtype($($ignore:tt)*) } $($type_attrs:tt)*) => {
+        $crate::hash_newtype_struct! {
+            $(#[$other_attrs])*
+            $type_vis struct $newtype($(#[$field_attrs])* $field_vis $hash);
+
+            $($type_attrs)*
+        }
+    };
+    ($(#[$other_attrs:meta])* $type_vis:vis struct $newtype:ident($(#[$field_attrs:meta])* $field_vis:vis $hash:path); { $other_attr:meta } $($type_attrs:tt)*) => {
+        $crate::hash_newtype_struct! {
+            $(#[$other_attrs])*
+            #[$other_attr]
+            $type_vis struct $newtype($(#[$field_attrs])* $field_vis $hash);
+
+            $($type_attrs)*
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! hash_newtype_struct_no_ord {
+    ($(#[$other_attrs:meta])* $type_vis:vis struct $newtype:ident($(#[$field_attrs:meta])* $field_vis:vis $hash:path);) => {
+        $(#[$other_attrs])*
+        #[derive(Copy, Clone, PartialEq, Eq, Hash)]
         $type_vis struct $newtype($(#[$field_attrs])* $field_vis $hash);
     };
     ($(#[$other_attrs:meta])* $type_vis:vis struct $newtype:ident($(#[$field_attrs:meta])* $field_vis:vis $hash:path); { hash_newtype($($ignore:tt)*) } $($type_attrs:tt)*) => {

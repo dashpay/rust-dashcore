@@ -1,5 +1,6 @@
 mod hash;
 pub mod qualified_masternode_list_entry;
+mod score;
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -74,7 +75,7 @@ impl_consensus_encoding!(OperatorPublicKey, data, version);
 pub struct MasternodeListEntry {
     pub version: u16,
     pub pro_reg_tx_hash: ProTxHash,
-    pub confirmed_hash: ConfirmedHash,
+    pub confirmed_hash: Option<ConfirmedHash>,
     pub service_address: SocketAddr,
     pub operator_public_key: BLSPublicKey,
     pub key_id_voting: PubkeyHash,
@@ -83,6 +84,7 @@ pub struct MasternodeListEntry {
 }
 
 use std::cmp::Ordering;
+use hashes::Hash;
 
 impl Ord for MasternodeListEntry {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -101,7 +103,7 @@ impl Encodable for MasternodeListEntry {
         let mut len = 0;
         len += self.version.consensus_encode(writer)?;
         len += self.pro_reg_tx_hash.consensus_encode(writer)?;
-        len += self.confirmed_hash.consensus_encode(writer)?;
+        len += self.confirmed_hash.unwrap_or_default().consensus_encode(writer)?;
         len += self.service_address.consensus_encode(writer)?;
         len += self.operator_public_key.consensus_encode(writer)?;
         len += self.key_id_voting.consensus_encode(writer)?;
@@ -116,6 +118,11 @@ impl Decodable for MasternodeListEntry {
         let version: u16 = Decodable::consensus_decode(reader)?;
         let pro_reg_tx_hash: ProTxHash = Decodable::consensus_decode(reader)?;
         let confirmed_hash: ConfirmedHash = Decodable::consensus_decode(reader)?;
+        let confirmed_hash = if confirmed_hash.to_byte_array() == [0;32] {
+            None
+        } else {
+            Some(confirmed_hash)
+        };
         let service_address: SocketAddr = Decodable::consensus_decode(reader)?;
         let operator_public_key: BLSPublicKey = Decodable::consensus_decode(reader)?;
         let key_id_voting: PubkeyHash = Decodable::consensus_decode(reader)?;
