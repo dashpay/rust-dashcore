@@ -11,6 +11,7 @@ use crate::sml::error::SmlError::CorruptedCodeExecution;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::masternode_list::MasternodeList;
+use crate::sml::quorum_validation_error::QuorumValidationError;
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct MasternodeListEngine {
@@ -109,6 +110,34 @@ impl MasternodeListEngine {
         self.block_hashes.insert(diff_end_height, block_hash);
         self.block_heights.insert(block_hash, diff_end_height);
 
+        Ok(())
+    }
+
+    #[cfg(feature = "quorum_validation")]
+    pub fn verify_masternode_list_quorums(&mut self, block_height: CoreBlockHeight, exclude_quorum_types: &[LLMQType]) -> Result<(), QuorumValidationError>  {
+        let masternode_list = self.masternode_lists.get(&block_height).ok_or(QuorumValidationError::VerifyingMasternodeListNotPresent(block_height))?;
+        let mut results = BTreeMap::new();
+        for (quorum_type, hash_to_quorum_entries) in masternode_list.quorums.iter() {
+            if exclude_quorum_types.contains(quorum_type) {
+                continue;
+            }
+            let mut inner = BTreeMap::new();
+
+            for (quorum_hash, quorum_entry) in hash_to_quorum_entries.iter() {
+                inner.insert(*quorum_hash, self.validate_quorum(quorum_entry));
+            }
+            results.insert(*quorum_type, inner);
+        }
+        let masternode_list = self.masternode_lists.get_mut(&block_height).ok_or(QuorumValidationError::VerifyingMasternodeListNotPresent(block_height))?;
+        for (quorum_type, hash_to_quorum_entries) in masternode_list.quorums.iter_mut() {
+            if exclude_quorum_types.contains(quorum_type) {
+                continue;
+            }
+
+            for (quorum_hash, quorum_entry) in hash_to_quorum_entries.iter_mut() {
+                quorum_entry.update_quorum_status(results.get_mut(quorum_type).unwrap().remove(quorum_hash).unwrap())
+            }
+        }
         Ok(())
     }
 }

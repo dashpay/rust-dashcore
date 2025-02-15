@@ -7,6 +7,9 @@ pub enum QuorumValidationError {
     #[error("Required block not present: {0}")]
     RequiredBlockNotPresent(BlockHash),
 
+    #[error("The masternode list was not present at block height {0}")]
+    VerifyingMasternodeListNotPresent(CoreBlockHeight),
+
     #[error("Required masternode list not present at block height {0}, block hash: {1}")]
     RequiredMasternodeListNotPresent(CoreBlockHeight, BlockHash),
 

@@ -52,20 +52,7 @@ impl MasternodeListEngine {
     //     }
     // }
     pub fn validate_and_update_quorum_status(&self, quorum: &mut QualifiedQuorumEntry) {
-        match self.validate_quorum(quorum) {
-            Err(QuorumValidationError::RequiredBlockNotPresent(block_hash)) => {
-                quorum.verified = LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash.to_byte_array()));
-            }
-            Err(QuorumValidationError::RequiredMasternodeListNotPresent(block_height, block_hash)) => {
-                quorum.verified = LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(block_height, block_hash.to_byte_array()));
-            }
-            Err(e) => {
-                quorum.verified = LLMQEntryVerificationStatus::Invalid(e);
-            }
-            Ok(_) => {
-                quorum.verified = LLMQEntryVerificationStatus::Verified;
-            }
-        }
+        quorum.update_quorum_status(self.validate_quorum(quorum));
     }
 
     pub fn validate_quorum(&self, quorum: &QualifiedQuorumEntry) -> Result<(), QuorumValidationError> {
