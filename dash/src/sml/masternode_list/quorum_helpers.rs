@@ -7,17 +7,25 @@ use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 
 impl MasternodeList {
 
-    pub fn quorum_hashes(&self) -> BTreeSet<QuorumHash> {
-        self.quorums
-            .values()
-            .flat_map(|quorum_map| quorum_map.keys().cloned())
-            .collect()
+    pub fn quorum_hashes(&self, exclude_quorum_types: &[LLMQType]) -> BTreeSet<QuorumHash> {
+        if exclude_quorum_types.is_empty() {
+            self.quorums
+                .values()
+                .flat_map(|quorum_map| quorum_map.keys().cloned())
+                .collect()
+        } else {
+            self.quorums
+                .iter()
+                .filter(|(llmq_type, _)| !exclude_quorum_types.contains(llmq_type))
+                .flat_map(|(_, quorums)| quorums.keys().cloned())
+                .collect()
+        }
     }
 
-    pub fn non_rotating_quorum_hashes(&self) -> BTreeSet<QuorumHash> {
+    pub fn non_rotating_quorum_hashes(&self, exclude_quorum_types: &[LLMQType]) -> BTreeSet<QuorumHash> {
         self.quorums
             .iter()
-            .filter(|(llmq_type, _)| !llmq_type.is_rotating_quorum_type())
+            .filter(|(llmq_type, _)| !llmq_type.is_rotating_quorum_type() && !exclude_quorum_types.contains(llmq_type))
             .flat_map(|(_, quorums)| quorums.keys().cloned())
             .collect()
     }

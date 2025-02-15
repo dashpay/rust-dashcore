@@ -8,6 +8,7 @@ use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 use crate::sml::error::SmlError::CorruptedCodeExecution;
+use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::masternode_list::MasternodeList;
 
@@ -38,15 +39,15 @@ impl MasternodeListEngine {
         self.masternode_lists.last_key_value().map(|(_, list)| list)
     }
 
-    pub fn latest_masternode_list_quorum_hashes(&self) -> BTreeSet<QuorumHash> {
+    pub fn latest_masternode_list_quorum_hashes(&self, exclude_quorum_types: &[LLMQType]) -> BTreeSet<QuorumHash> {
         self.latest_masternode_list()
-            .map(|list| list.quorum_hashes())
+            .map(|list| list.quorum_hashes(exclude_quorum_types))
             .unwrap_or_default()
     }
 
-    pub fn latest_masternode_list_non_rotating_quorum_hashes(&self) -> BTreeSet<QuorumHash> {
+    pub fn latest_masternode_list_non_rotating_quorum_hashes(&self, exclude_quorum_types: &[LLMQType]) -> BTreeSet<QuorumHash> {
         self.latest_masternode_list()
-            .map(|list| list.non_rotating_quorum_hashes())
+            .map(|list| list.non_rotating_quorum_hashes(exclude_quorum_types))
             .unwrap_or_default()
     }
 
