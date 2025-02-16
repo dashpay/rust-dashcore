@@ -76,6 +76,10 @@ impl MasternodeListEngine {
         self.block_hashes.insert(height, block_hash);
     }
 
+    pub fn feed_chain_lock_sig(&mut self, block_hash: BlockHash, chain_lock_sig: BLSSignature) {
+        self.known_chain_locks.insert(block_hash, chain_lock_sig);
+    }
+
     pub fn apply_diff(&mut self, masternode_list_diff: MnListDiff, diff_end_height: CoreBlockHeight, verify_quorums: bool) -> Result<(), SmlError> {
         if let Some(known_genesis_block_hash) = self.network.known_genesis_block_hash().or_else(|| self.block_hashes.get(&0).cloned()) {
             if masternode_list_diff.base_block_hash == known_genesis_block_hash {
