@@ -275,7 +275,7 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
     impl ConfirmedHashHashedWithProRegTx {
             /// Create a ConfirmedHash from a string
         pub fn from_hex(s: &str) -> Result<ConfirmedHashHashedWithProRegTx, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
+            Ok(Self(sha256::Hash::from_str(s)?))
         }
 
         /// Convert a ConfirmedHash to a string
