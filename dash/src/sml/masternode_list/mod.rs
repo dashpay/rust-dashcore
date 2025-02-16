@@ -8,6 +8,7 @@ mod peer_addresses;
 pub mod from_diff;
 mod apply_diff;
 mod scores_for_quorum;
+// mod rotation;
 
 use std::collections::BTreeMap;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
