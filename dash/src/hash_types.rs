@@ -141,7 +141,7 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
         #[hash_newtype(forward)]
         pub struct ProTxHash(sha256d::Hash);
         pub struct ConfirmedHash(sha256d::Hash);
-        pub struct ConfirmedHashHashedWithProRegTx(sha256d::Hash);
+        pub struct ConfirmedHashHashedWithProRegTx(sha256::Hash);
         pub struct QuorumModifierHash(sha256d::Hash);
         pub struct QuorumEntryHash(sha256d::Hash);
         pub struct QuorumCommitmentHash(sha256d::Hash);
