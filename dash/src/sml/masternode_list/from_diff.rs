@@ -89,10 +89,11 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
                     .or_insert_with(BTreeMap::new)
                     .insert(quorum.quorum_hash, {
                         let entry_hash = quorum.calculate_entry_hash();
+                        let commitment_hash = quorum.calculate_commitment_hash();
                         QualifiedQuorumEntry {
                             quorum_entry: quorum,
                             verified: LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::NotMarkedForVerification),
-                            commitment_hash: None,
+                            commitment_hash,
                             entry_hash,
                         }
                     });

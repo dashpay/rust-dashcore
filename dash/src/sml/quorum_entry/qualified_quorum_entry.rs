@@ -1,4 +1,5 @@
 use hashes::Hash;
+use crate::hash_types::{QuorumCommitmentHash, QuorumEntryHash};
 use crate::sml::llmq_entry_verification::{LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus};
 use crate::sml::quorum_validation_error::QuorumValidationError;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
@@ -9,8 +10,8 @@ use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 pub struct QualifiedQuorumEntry {
     pub quorum_entry: QuorumEntry,
     pub verified: LLMQEntryVerificationStatus,
-    pub commitment_hash: Option<[u8; 32]>,
-    pub entry_hash: [u8;32],
+    pub commitment_hash: QuorumCommitmentHash,
+    pub entry_hash: QuorumEntryHash,
 }
 
 impl QualifiedQuorumEntry {

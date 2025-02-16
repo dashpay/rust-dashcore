@@ -143,6 +143,8 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
         pub struct ConfirmedHash(sha256d::Hash);
         pub struct ConfirmedHashHashedWithProRegTx(sha256d::Hash);
         pub struct QuorumModifierHash(sha256d::Hash);
+        pub struct QuorumEntryHash(sha256d::Hash);
+        pub struct QuorumCommitmentHash(sha256d::Hash);
 
         pub struct Sha256dHash(sha256d::Hash);
     }
@@ -197,6 +199,8 @@ impl PartialOrd for ScoreHash {
     impl_hashencode!(ConfirmedHash);
     impl_hashencode!(ConfirmedHashHashedWithProRegTx);
     impl_hashencode!(QuorumModifierHash);
+    impl_hashencode!(QuorumEntryHash);
+    impl_hashencode!(QuorumCommitmentHash);
     impl_hashencode!(ScoreHash);
     impl_hashencode!(ProTxHash);
     impl_hashencode!(Sha256dHash);

@@ -1,5 +1,5 @@
 use hashes::{sha256d, Hash};
-use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums, QuorumCommitmentHash};
 use crate::sml::masternode_list::MasternodeList;
 use crate::Transaction;
 use crate::transaction::special_transaction::TransactionPayload;
@@ -114,7 +114,7 @@ impl MasternodeList {
     pub fn hashes_for_quorum_merkle_root(&self) -> Vec<[u8; 32]> {
         let mut llmq_commitment_hashes = self.quorums
             .values()
-            .flat_map(|q_map| q_map.values().map(|entry| entry.entry_hash))
+            .flat_map(|q_map| q_map.values().map(|entry| entry.entry_hash.to_byte_array()))
             .collect::<Vec<_>>();
         llmq_commitment_hashes.sort();
         llmq_commitment_hashes
