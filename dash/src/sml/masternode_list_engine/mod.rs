@@ -15,6 +15,7 @@ use crate::sml::error::SmlError::CorruptedCodeExecution;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::masternode_list::MasternodeList;
+use crate::sml::order_option::LLMQOrderOption;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
 #[derive(Clone, Eq, PartialEq)]
@@ -144,7 +145,7 @@ impl MasternodeListEngine {
             let mut inner = BTreeMap::new();
 
             for (quorum_hash, quorum_entry) in hash_to_quorum_entries.iter() {
-                inner.insert(*quorum_hash, self.validate_quorum(quorum_entry));
+                inner.insert(*quorum_hash, self.validate_quorum(quorum_entry, &LLMQOrderOption::default()));
             }
             results.insert(*quorum_type, inner);
         }
@@ -159,5 +160,59 @@ impl MasternodeListEngine {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::QuorumHash;
+    use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
+    use crate::sml::llmq_type::LLMQType::{Llmqtype100_67, Llmqtype400_60, Llmqtype400_85, Llmqtype50_60};
+    use crate::sml::masternode_list_engine::MasternodeListEngine;
+    use std::str::FromStr;
+    use crate::sml::order_option::LLMQOrderOption;
+
+    #[test]
+    fn deserialize_mn_list_engine_and_validate_quorums() {
+        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mut mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
+
+        assert_eq!(mn_list_engine.masternode_lists.len(), 27);
+
+        let last_masternode_list_height = *mn_list_engine.masternode_lists.last_key_value().unwrap().0;
+
+        mn_list_engine.verify_masternode_list_quorums(last_masternode_list_height, &[Llmqtype50_60, Llmqtype400_85]).expect("expected to verify quorums");
+
+        let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
+
+        for (quorum_type, quorum_entries) in last_masternode_list.quorums.iter() {
+            if *quorum_type == Llmqtype400_85 || *quorum_type == Llmqtype50_60 || *quorum_type == Llmqtype400_60 {
+                continue;
+            }
+            for (quorum_hash, quorum) in quorum_entries.iter() {
+                let (_, known_block_height) = mn_list_engine.masternode_list_and_height_for_block_hash_8_blocks_ago(&quorum.quorum_entry.quorum_hash).expect("expected to find validating masternode");
+                assert_eq!(quorum.verified, LLMQEntryVerificationStatus::Verified, "could not verify quorum {} of type {} with masternode list {}", quorum_hash, quorum.quorum_entry.llmq_type, known_block_height);
+            }
+        }
+    }
+
+    #[test]
+    fn deserialize_mn_list_engine_and_validate_single_quorum() {
+        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine2.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
+
+        assert_eq!(mn_list_engine.masternode_lists.len(), 27);
+
+        let last_masternode_list_height = *mn_list_engine.masternode_lists.last_key_value().unwrap().0;
+
+        let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
+
+        let quorum = last_masternode_list.quorum_entry_of_type_for_quorum_hash(Llmqtype100_67, QuorumHash::from_str("000000000000001d4ebc43dbf9b25d2af6421641a84a1e04dd58f65d07b7ecf7").expect("expected to get quorum hash")).expect("expected to find quorum");
+
+        for option in LLMQOrderOption::all_combinations() {
+            println!("using {:?} {:?}", option, mn_list_engine.validate_quorum(quorum, &option))
+        }
     }
 }

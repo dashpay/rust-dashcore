@@ -12,13 +12,13 @@ impl QualifiedQuorumEntry {
     {
         let mut message = self.commitment_hash.to_byte_array();
         message.reverse();
-        println!("quorum {}", self.quorum_entry.quorum_hash);
-        println!("using message {}", hex::encode(message));
+        // println!("quorum {}", self.quorum_entry.quorum_hash);
+        // println!("using message {}", hex::encode(message));
         let message = message.as_slice();
         let public_keys : Vec<(blsful::PublicKey<Bls12381G2Impl>)> = operator_keys
             .into_iter().enumerate()
             .map(|(i, key)| {
-                println!("using operator key {}. {}", i, key);
+                // println!("using operator key {}. {}", i, key);
                 key.try_into()
             })
             .collect::<Result<Vec<(blsful::PublicKey<Bls12381G2Impl>)>, QuorumValidationError>>()?;

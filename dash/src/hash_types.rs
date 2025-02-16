@@ -147,29 +147,30 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
         pub struct QuorumCommitmentHash(sha256d::Hash);
 
         pub struct Sha256dHash(sha256d::Hash);
-    }
-
-        hash_newtype_no_ord! {
         pub struct ScoreHash(sha256d::Hash);
-        }
-
-impl Ord for ScoreHash {
-    fn cmp(&self, other: &Self) -> Ordering {
-        let mut self_bytes = self.0.to_byte_array();
-        let mut other_bytes = other.0.to_byte_array();
-
-        self_bytes.reverse();
-        other_bytes.reverse();
-
-        self_bytes.cmp(&other_bytes)
     }
-}
 
-impl PartialOrd for ScoreHash {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
+        // hash_newtype_no_ord! {
+        //
+        // }
+
+// impl Ord for ScoreHash {
+//     fn cmp(&self, other: &Self) -> Ordering {
+//         let mut self_bytes = self.0.to_byte_array();
+//         let mut other_bytes = other.0.to_byte_array();
+//
+//         self_bytes.reverse();
+//         other_bytes.reverse();
+//
+//         self_bytes.cmp(&other_bytes)
+//     }
+// }
+//
+// impl PartialOrd for ScoreHash {
+//     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+//         Some(self.cmp(other))
+//     }
+// }
 
 
     /// A hash used to identify a quorum
@@ -229,13 +230,6 @@ impl PartialOrd for ScoreHash {
         pub fn to_hex(&self) -> String {
             self.0.to_string()
         }
-
-        /// Returns a new `ProTxHash` with the bytes reversed.
-        pub fn reverse(&self) -> Self {
-            let mut reversed_bytes = self.0.to_byte_array();
-            reversed_bytes.reverse();
-            Self::from_byte_array(reversed_bytes)
-        }
     }
 
         impl ScoreHash {
@@ -249,19 +243,12 @@ impl PartialOrd for ScoreHash {
             self.0.to_string()
         }
 
-        /// Returns a new `ProTxHash` with the bytes reversed.
-        pub fn reverse(&self) -> Self {
-            let mut reversed_bytes = self.0.to_byte_array();
-            reversed_bytes.reverse();
-            Self::from_byte_array(reversed_bytes)
-        }
-
         pub fn create_score(confirmed_hash_hashed_with_pro_reg_tx: Option<ConfirmedHashHashedWithProRegTx>, modifier: QuorumModifierHash) -> Self {
             let mut bytes = vec![];
             if let Some(confirmed_hash_hashed_with_pro_reg_tx) = confirmed_hash_hashed_with_pro_reg_tx{
                 bytes.append(&mut confirmed_hash_hashed_with_pro_reg_tx.to_byte_array().to_vec());
-                bytes.append(&mut modifier.to_byte_array().to_vec());
             }
+            bytes.append(&mut modifier.to_byte_array().to_vec());
             Self::hash(bytes.as_slice())
         }
     }

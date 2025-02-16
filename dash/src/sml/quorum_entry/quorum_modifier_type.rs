@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::io::Write;
 use hashes::Hash;
 use crate::consensus::Encodable;
@@ -8,11 +9,25 @@ use crate::{BlockHash, Network};
 use crate::bls_sig_utils::BLSSignature;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_type::LLMQType;
+use crate::sml::order_option::LLMQOrderOption;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
 pub enum LLMQModifierType {
     PreCoreV20(LLMQType, BlockHash),
     CoreV20(LLMQType, CoreBlockHeight, BLSSignature),
+}
+
+impl fmt::Display for LLMQModifierType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LLMQModifierType::PreCoreV20(llmq_type, block_hash) => {
+                write!(f, "PreCoreV20: Type: {}, BlockHash: {}", llmq_type, block_hash)
+            }
+            LLMQModifierType::CoreV20(llmq_type, height, signature) => {
+                write!(f, "CoreV20: Type: {}, Height: {}, Signature: {}", llmq_type, height, signature)
+            }
+        }
+    }
 }
 
 impl LLMQModifierType {
@@ -35,7 +50,6 @@ impl LLMQModifierType {
                 writer.write_all(cl_signature.as_bytes()).unwrap();
             }
         }
-
         QuorumModifierHash::hash(&writer)
     }
 

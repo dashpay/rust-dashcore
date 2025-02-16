@@ -223,6 +223,14 @@ macro_rules! hash_newtype {
             pub fn as_raw_hash(&self) -> &$hash {
                 &self.0
             }
+
+            /// Reverses the bytes of the hash
+            #[allow(unused)]
+            pub fn reverse(&self) -> Self {
+                let mut reversed_bytes = self.0.to_byte_array();
+                reversed_bytes.reverse();
+                Self::from_byte_array(reversed_bytes)
+            }
         }
 
         impl $crate::_export::_core::convert::From<$hash> for $newtype {
