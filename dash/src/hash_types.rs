@@ -272,6 +272,30 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
         }
     }
 
+    impl ConfirmedHashHashedWithProRegTx {
+            /// Create a ConfirmedHash from a string
+        pub fn from_hex(s: &str) -> Result<ConfirmedHashHashedWithProRegTx, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
+
+        /// Convert a ConfirmedHash to a string
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
+
+        /// Hashes the members
+        pub fn hash_members(pro_tx_hash: &ProTxHash, confirmed_hash: &ConfirmedHash) -> Self {
+            Self::hash(&[pro_tx_hash.to_byte_array(), confirmed_hash.to_byte_array()].concat())
+        }
+            /// Hashes the members
+        pub fn hash_members_confirmed_hash_optional(pro_tx_hash: &ProTxHash, confirmed_hash: Option<&ConfirmedHash>) -> Option<Self> {
+                confirmed_hash.map(|confirmed_hash| {
+                   Self::hash(&[pro_tx_hash.to_byte_array(), confirmed_hash.to_byte_array()].concat())
+                })
+
+        }
+    }
+
     impl Sha256dHash {
         /// Create a Sha256dHash from a string
         pub fn from_hex(s: &str) -> Result<Sha256dHash, Error> {
