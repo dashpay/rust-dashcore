@@ -1,4 +1,4 @@
-use blsful::{AggregateSignature, Bls12381G2Impl};
+use blsful::{Bls12381G2Impl, MultiPublicKey, MultiSignature};
 use hashes::Hash;
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
@@ -11,12 +11,13 @@ impl QualifiedQuorumEntry {
         I: IntoIterator<Item = &'a BLSPublicKey>,
     {
         let message = self.commitment_hash.as_byte_array().as_slice();
-        let public_keys : Vec<(blsful::PublicKey<Bls12381G2Impl>, &[u8])> = operator_keys
+        let public_keys : Vec<(blsful::PublicKey<Bls12381G2Impl>)> = operator_keys
             .into_iter()
-            .map(|key| Ok((key.try_into()?, message)))
-            .collect::<Result<Vec<(blsful::PublicKey<Bls12381G2Impl>, &[u8])>, QuorumValidationError>>()?;
-        let signature: AggregateSignature<Bls12381G2Impl> = self.quorum_entry.all_commitment_aggregated_signature.try_into()?;
-        signature.verify(&public_keys).map_err(|e| QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(e.to_string()))
+            .map(|key| key.try_into())
+            .collect::<Result<Vec<(blsful::PublicKey<Bls12381G2Impl>)>, QuorumValidationError>>()?;
+        let signature: MultiSignature<Bls12381G2Impl> = self.quorum_entry.all_commitment_aggregated_signature.try_into()?;
+        let multi_public_key = MultiPublicKey::<Bls12381G2Impl>::from_public_keys(public_keys);
+        signature.verify(multi_public_key, message).map_err(|e| QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(e.to_string()))
     }
 
     pub fn verify_quorum_signature(&self) -> Result<(), QuorumValidationError>  {

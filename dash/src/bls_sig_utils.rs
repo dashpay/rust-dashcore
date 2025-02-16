@@ -127,6 +127,38 @@ impl TryFrom<&BLSSignature> for blsful::Signature<Bls12381G2Impl> {
 }
 
 #[cfg(feature = "bls")]
+impl TryFrom<BLSSignature> for blsful::MultiSignature<Bls12381G2Impl> {
+    type Error = QuorumValidationError;
+
+    fn try_from(value: BLSSignature) -> Result<Self, Self::Error> {
+        let Some(g2_element) =
+            <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
+                .into_option()
+        else {
+            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes()))); // We should not error because the signature could be given by an invalid source
+        };
+
+        Ok(blsful::MultiSignature::Basic(g2_element))
+    }
+}
+
+#[cfg(feature = "bls")]
+impl TryFrom<&BLSSignature> for blsful::MultiSignature<Bls12381G2Impl> {
+    type Error = QuorumValidationError;
+
+    fn try_from(value: &BLSSignature) -> Result<Self, Self::Error> {
+        let Some(g2_element) =
+            <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
+                .into_option()
+        else {
+            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes()))); // We should not error because the signature could be given by an invalid source
+        };
+
+        Ok(blsful::MultiSignature::Basic(g2_element))
+    }
+}
+
+#[cfg(feature = "bls")]
 impl TryFrom<BLSSignature> for blsful::AggregateSignature<Bls12381G2Impl> {
     type Error = QuorumValidationError;
 
