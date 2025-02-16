@@ -17,6 +17,7 @@ use crate::internal_macros::impl_consensus_encoding;
 use crate::{ProTxHash, PubkeyHash};
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum MasternodeType {
     Regular,
     HighPerformance { platform_http_port: u16, platform_node_id: PubkeyHash },
@@ -72,6 +73,7 @@ pub struct OperatorPublicKey {
 impl_consensus_encoding!(OperatorPublicKey, data, version);
 
 #[derive(Clone, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct MasternodeListEntry {
     pub version: u16,
     pub pro_reg_tx_hash: ProTxHash,
@@ -84,6 +86,8 @@ pub struct MasternodeListEntry {
 }
 
 use std::cmp::Ordering;
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
 use hashes::Hash;
 
 impl Ord for MasternodeListEntry {

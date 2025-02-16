@@ -19,7 +19,7 @@ edition = "2021"
 
 # Please don't forget to add relevant features to docs.rs below
 [features]
-default = [ "std", "secp-recovery", "core-block-hash-use-x11", "quorum_validation" ]
+default = [ "std", "secp-recovery", "core-block-hash-use-x11", "quorum_validation", "bincode" ]
 base64 = [ "base64-compat" ]
 rand-std = ["secp256k1/rand"]
 rand = ["secp256k1/rand"]
@@ -31,6 +31,7 @@ core-block-hash-use-x11 = ["dashcore_hashes/x11"]
 bls = ["blsful"]
 eddsa = ["ed25519-dalek"]
 quorum_validation = ["bls"]
+bincode = [ "dep:bincode", "dashcore_hashes/bincode" ]
 
 # At least one of std, no-std must be enabled.
 #

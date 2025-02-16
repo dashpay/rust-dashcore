@@ -17,6 +17,8 @@
 //! and signature.
 //!
 
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
 #[cfg(feature = "bls")]
 use blsful::{Bls12381G2Impl, Pairing};
 use hex::{FromHexError, ToHex};
@@ -29,6 +31,7 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core
 #[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct BLSPublicKey([u8; 48]);
 
 impl BLSPublicKey {
@@ -86,6 +89,7 @@ impl fmt::Display for BLSPublicKey {
 /// A BLS Signature is 96 bytes in the scheme used for Dash Core
 #[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
 #[derive(Clone, Copy)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct BLSSignature([u8; 96]);
 
 impl BLSSignature {

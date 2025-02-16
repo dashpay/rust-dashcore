@@ -18,7 +18,8 @@
 //!
 
 use std::io::{Read, Write};
-
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::consensus::encode::{
     compact_size_len, fixed_bitset_len, read_compact_size, read_fixed_bitset, write_compact_size,
@@ -37,6 +38,7 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct QuorumEntry {
     pub version: u16,
     pub llmq_type: LLMQType,

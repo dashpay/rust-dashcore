@@ -2,6 +2,10 @@
 mod validation;
 
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use crate::{BlockHash, Network, QuorumHash};
 use crate::bls_sig_utils::BLSSignature;
 use crate::network::message_sml::MnListDiff;
@@ -14,6 +18,9 @@ use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
 #[derive(Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct MasternodeListEngine {
     pub block_hashes : BTreeMap<CoreBlockHeight, BlockHash>,
     pub block_heights : BTreeMap<BlockHash, CoreBlockHeight>,

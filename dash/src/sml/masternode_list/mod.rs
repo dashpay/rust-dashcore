@@ -11,6 +11,8 @@ mod scores_for_quorum;
 // mod rotation;
 
 use std::collections::BTreeMap;
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::llmq_type::LLMQType;
 use crate::{BlockHash, ProTxHash, QuorumHash};
@@ -18,6 +20,7 @@ use crate::sml::masternode_list_entry::qualified_masternode_list_entry::Qualifie
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 
 #[derive(Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct MasternodeList {
     pub block_hash: BlockHash,
     pub known_height: u32,

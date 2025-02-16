@@ -1,9 +1,12 @@
 use std::cmp::Ordering;
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
 use hashes::Hash;
 use crate::hash_types::ConfirmedHashHashedWithProRegTx;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 
 #[derive(Clone, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct QualifiedMasternodeListEntry {
     pub masternode_list_entry: MasternodeListEntry,
     pub entry_hash: [u8;32],

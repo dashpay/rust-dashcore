@@ -1,8 +1,11 @@
 use core::fmt::{Display, Formatter};
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
 use crate::prelude::CoreBlockHeight;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
 #[derive(Clone, Ord, PartialOrd, PartialEq, Eq, Hash, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum LLMQEntryVerificationSkipStatus {
     NotMarkedForVerification,
     MissedList(CoreBlockHeight),
@@ -22,6 +25,7 @@ impl Display for LLMQEntryVerificationSkipStatus {
 }
 
 #[derive(Clone, Ord, PartialOrd, PartialEq, Eq, Hash, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum LLMQEntryVerificationStatus {
     Unknown,
     Verified,

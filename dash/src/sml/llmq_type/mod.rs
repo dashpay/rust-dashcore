@@ -5,6 +5,8 @@ mod network;
 
 use std::fmt::{Display, Formatter};
 use std::io;
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
 use crate::bip152::BlockTransactionsRequest;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::Network;
@@ -290,6 +292,7 @@ pub const LLMQ_DEV_PLATFORM: LLMQParams = LLMQParams {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum LLMQType {
     LlmqtypeUnknown = 0,    // other kind of
     Llmqtype50_60 = 1,      // 50 members,  30  (60%) threshold, 24 / day

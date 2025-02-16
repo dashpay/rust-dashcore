@@ -202,6 +202,7 @@ macro_rules! hash_newtype {
 
         $crate::hex_fmt_impl!(<$newtype as $crate::Hash>::DISPLAY_BACKWARD, $newtype);
         $crate::serde_impl!($newtype, <$newtype as $crate::Hash>::LEN);
+        $crate::bincode_impl!($newtype, <$newtype as $crate::Hash>::LEN);
         $crate::borrow_slice_impl!($newtype);
 
         impl $newtype {

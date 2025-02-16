@@ -44,6 +44,8 @@ use core::convert::From;
 use core::fmt::Display;
 use core::str::FromStr;
 use core::{fmt, ops};
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
 use hashes::Hash;
 use internals::write_err;
 
@@ -76,6 +78,7 @@ pub const PROTOCOL_VERSION: u32 = 70220;
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 #[non_exhaustive]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum Network {
     /// Classic Dash Core Payment Chain
     Dash,

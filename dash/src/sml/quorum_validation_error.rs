@@ -1,8 +1,11 @@
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
 use thiserror::Error;
 use crate::BlockHash;
 use crate::prelude::CoreBlockHeight;
 
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum QuorumValidationError {
     #[error("Required block not present: {0}")]
     RequiredBlockNotPresent(BlockHash),

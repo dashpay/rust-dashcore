@@ -1,3 +1,5 @@
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
 use hashes::Hash;
 use crate::hash_types::{QuorumCommitmentHash, QuorumEntryHash};
 use crate::sml::llmq_entry_verification::{LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus};
@@ -7,6 +9,7 @@ use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct QualifiedQuorumEntry {
     pub quorum_entry: QuorumEntry,
     pub verified: LLMQEntryVerificationStatus,

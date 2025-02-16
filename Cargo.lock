@@ -471,6 +471,7 @@ version = "0.1.0"
 name = "dashcore_hashes"
 version = "0.14.0"
 dependencies = [
+ "bincode 2.0.0-rc.3",
  "core2 0.3.3",
  "dashcore-private",
  "dyn-clone",
