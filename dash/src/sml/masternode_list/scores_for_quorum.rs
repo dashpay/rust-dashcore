@@ -20,7 +20,7 @@ impl MasternodeList {
         let hpmn_only = llmq_type == network.platform_type();
         let quorum_modifier = quorum_modifier.build_llmq_hash();
         let score_dictionary = self.scores_for_quorum(quorum_modifier, hpmn_only);
-        if quorum.quorum_entry.quorum_hash.to_byte_array().to_vec() == hex::decode("00000000000000048529d958e7cfa32f51f0ac0584f7037ac34d8448f8a2a684").unwrap() {
+        if quorum.quorum_entry.quorum_hash.to_string() == "00000000000000048529d958e7cfa32f51f0ac0584f7037ac34d8448f8a2a684".to_string() {
             println!("00000000000000048529d958e7cfa32f51f0ac0584f7037ac34d8448f8a2a684 info");
             println!("quorum modifier {}", quorum_modifier);
             for (score, list_entry) in score_dictionary.iter() {
