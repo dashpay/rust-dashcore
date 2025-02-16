@@ -26,6 +26,8 @@ impl MasternodeList {
             for (score, list_entry) in score_dictionary.iter() {
                 println!("score_hash {} -> {}", score, list_entry.masternode_list_entry.pro_reg_tx_hash);
             }
+        } else {
+            println!("trying {}", quorum.quorum_entry.quorum_hash)
         }
         score_dictionary.into_values().take(llmq_type.size() as usize).collect()
     }
