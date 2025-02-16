@@ -10,7 +10,7 @@ impl QualifiedQuorumEntry {
     where
         I: IntoIterator<Item = &'a BLSPublicKey>,
     {
-        let mut message = self.commitment_hash.as_byte_array();
+        let mut message = self.commitment_hash.to_byte_array();
         message.reverse();
         let message = message.as_slice();
         let public_keys : Vec<(blsful::PublicKey<Bls12381G2Impl>)> = operator_keys
