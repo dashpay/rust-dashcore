@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use hashes::Hash;
 use crate::hash_types::{QuorumModifierHash, ScoreHash};
 use crate::Network;
 use crate::sml::masternode_list::MasternodeList;
@@ -19,6 +20,13 @@ impl MasternodeList {
         let hpmn_only = llmq_type == network.platform_type();
         let quorum_modifier = quorum_modifier.build_llmq_hash();
         let score_dictionary = self.scores_for_quorum(quorum_modifier, hpmn_only);
+        if quorum.quorum_entry.quorum_hash.to_byte_array().to_vec() == hex::decode("00000000000000048529d958e7cfa32f51f0ac0584f7037ac34d8448f8a2a684").unwrap() {
+            println!("00000000000000048529d958e7cfa32f51f0ac0584f7037ac34d8448f8a2a684 info");
+            println!("quorum modifier {}", quorum_modifier);
+            for (score, list_entry) in score_dictionary.iter() {
+                println!("score_hash {} -> {}", score, list_entry.masternode_list_entry.pro_reg_tx_hash);
+            }
+        }
         score_dictionary.into_values().take(llmq_type.size() as usize).collect()
     }
 
