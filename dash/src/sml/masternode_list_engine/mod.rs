@@ -55,16 +55,25 @@ impl MasternodeListEngine {
     pub fn masternode_list_and_height_for_block_hash_8_blocks_ago(
         &self,
         block_hash: &BlockHash,
-    ) -> (Option<&MasternodeList>, Option<CoreBlockHeight>) {
+    ) -> Result<(&MasternodeList, CoreBlockHeight), QuorumValidationError> {
         if let Some(height) = self.block_heights.get(block_hash) {
-            (self.masternode_lists.get(&(height.saturating_sub(8))), Some(height.saturating_sub(8)))
+            if let Some(masternode_list) = self.masternode_lists.get(&(height.saturating_sub(8))) {
+                Ok((masternode_list, height.saturating_sub(8)))
+            } else {
+                Err(QuorumValidationError::RequiredMasternodeListNotPresent(height.saturating_sub(8)))
+            }
         } else {
-            (None, None)
+            Err(QuorumValidationError::RequiredBlockNotPresent(*block_hash))
         }
     }
 
     pub fn masternode_list_for_block_hash(&self, block_hash: &BlockHash) -> Option<&MasternodeList> {
         self.block_heights.get(block_hash).and_then(|height| self.masternode_lists.get(height))
+    }
+
+    pub fn feed_block_height(&mut self, height: CoreBlockHeight, block_hash: BlockHash) {
+        self.block_heights.insert(block_hash, height);
+        self.block_hashes.insert(height, block_hash);
     }
 
     pub fn apply_diff(&mut self, masternode_list_diff: MnListDiff, diff_end_height: CoreBlockHeight, verify_quorums: bool) -> Result<(), SmlError> {

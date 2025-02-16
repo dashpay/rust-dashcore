@@ -19,8 +19,8 @@ impl QualifiedQuorumEntry {
             Err(QuorumValidationError::RequiredBlockNotPresent(block_hash)) => {
                 self.verified = LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash.to_byte_array()));
             }
-            Err(QuorumValidationError::RequiredMasternodeListNotPresent(block_height, block_hash)) => {
-                self.verified = LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(block_height, block_hash.to_byte_array()));
+            Err(QuorumValidationError::RequiredMasternodeListNotPresent(block_height)) => {
+                self.verified = LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(block_height));
             }
             Err(e) => {
                 self.verified = LLMQEntryVerificationStatus::Invalid(e);

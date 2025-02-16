@@ -5,7 +5,7 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 #[derive(Clone, Ord, PartialOrd, PartialEq, Eq, Hash, Debug)]
 pub enum LLMQEntryVerificationSkipStatus {
     NotMarkedForVerification,
-    MissedList(CoreBlockHeight, [u8; 32]),
+    MissedList(CoreBlockHeight),
     UnknownBlock([u8; 32]),
     OtherContext(String),
 }
@@ -14,7 +14,7 @@ impl Display for LLMQEntryVerificationSkipStatus {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             LLMQEntryVerificationSkipStatus::NotMarkedForVerification => "NotMarkedForVerification".to_string(),
-            LLMQEntryVerificationSkipStatus::MissedList(block_height, block_hash) => format!("MissedList({}, {})", block_height, hex::encode(block_hash)),
+            LLMQEntryVerificationSkipStatus::MissedList(block_height) => format!("MissedList({})", block_height),
             LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash) => format!("UnknownBlock({})", hex::encode(block_hash)),
             LLMQEntryVerificationSkipStatus::OtherContext(message) => format!("OtherContext({message})"),
         }.as_str())
