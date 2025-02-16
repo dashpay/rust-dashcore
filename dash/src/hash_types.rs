@@ -147,7 +147,7 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
         pub struct QuorumCommitmentHash(sha256d::Hash);
 
         pub struct Sha256dHash(sha256d::Hash);
-        pub struct ScoreHash(sha256d::Hash);
+        pub struct ScoreHash(sha256::Hash);
     }
 
         // hash_newtype_no_ord! {
@@ -235,7 +235,7 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
         impl ScoreHash {
         /// Create a Txid from a string
         pub fn from_hex(s: &str) -> Result<ScoreHash, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
+            Ok(Self(sha256::Hash::from_str(s)?))
         }
 
         /// Convert a Txid to a string
