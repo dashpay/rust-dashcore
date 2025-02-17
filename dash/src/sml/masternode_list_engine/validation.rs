@@ -63,6 +63,18 @@ impl MasternodeListEngine {
         let (masternode_list, known_block_height) = self.masternode_list_and_height_for_block_hash_8_blocks_ago(&llmq_block_hash)?;
         let quorum_modifier_type = LLMQModifierType::new_quorum_modifier_type(quorum.quorum_entry.llmq_type, masternode_list.block_hash, known_block_height, &self.known_chain_locks, self.network)?;
         let masternodes : Vec<_> = masternode_list.valid_masternodes_for_quorum(quorum, quorum_modifier_type, self.network);
-        quorum.validate(masternodes.iter().map(|qualified_masternode_list_entry| &qualified_masternode_list_entry.masternode_list_entry))
+        quorum.validate(masternodes.iter().enumerate().filter_map(|(i, qualified_masternode_list_entry)| {
+            if *quorum.quorum_entry.signers.get(i)? {
+                if *quorum.quorum_entry.valid_members.get(i)? {
+                    Some(&qualified_masternode_list_entry.masternode_list_entry)
+                } else {
+                    println!("{} ({}) isn't a valid member", qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash, qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash.reverse());
+                    None
+                }
+            } else {
+                println!("{} ({}) didn't sign", qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash, qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash.reverse());
+                None
+            }
+        }))
     }
 }

@@ -196,12 +196,10 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_mn_list_engine_and_validate_single_quorum() {
+    fn deserialize_mn_list_engine_and_validate_single_quorum_all_signed_all_members_valid() {
         let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
         let data = hex::decode(block_hex).expect("decode hex");
         let mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
-
-        assert_eq!(mn_list_engine.masternode_lists.len(), 27);
 
         let last_masternode_list_height = *mn_list_engine.masternode_lists.last_key_value().unwrap().0;
 
@@ -209,6 +207,36 @@ mod tests {
 
         let quorum = last_masternode_list.quorum_entry_of_type_for_quorum_hash(Llmqtype100_67, QuorumHash::from_str("000000000000001d4ebc43dbf9b25d2af6421641a84a1e04dd58f65d07b7ecf7").expect("expected to get quorum hash")).expect("expected to find quorum");
 
-        println!("using {:?}", mn_list_engine.validate_quorum(quorum))
+        assert_eq!(mn_list_engine.validate_quorum(quorum), Ok(()));
+    }
+
+    #[test]
+    fn deserialize_mn_list_engine_and_validate_single_quorum_one_didnt_sign_all_members_valid() {
+        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
+
+        let last_masternode_list_height = *mn_list_engine.masternode_lists.last_key_value().unwrap().0;
+
+        let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
+
+        let quorum = last_masternode_list.quorum_entry_of_type_for_quorum_hash(Llmqtype100_67, QuorumHash::from_str("0000000000000003e463cb405c672f2daaacf461fe733c33d5de8298ae6040a2").expect("expected to get quorum hash")).expect("expected to find quorum");
+
+        assert_eq!(mn_list_engine.validate_quorum(quorum), Ok(()));
+    }
+
+    #[test]
+    fn deserialize_mn_list_engine_and_validate_single_quorum_one_didnt_sign_one_member_not_valid_valid() {
+        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
+
+        let last_masternode_list_height = *mn_list_engine.masternode_lists.last_key_value().unwrap().0;
+
+        let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
+
+        let quorum = last_masternode_list.quorum_entry_of_type_for_quorum_hash(Llmqtype100_67, QuorumHash::from_str("0000000000000009d64e57a20b56af7fe8cf8cdff1eea78fdf30ef8429c35d43").expect("expected to get quorum hash")).expect("expected to find quorum");
+
+        assert_eq!(mn_list_engine.validate_quorum(quorum), Ok(()));
     }
 }
