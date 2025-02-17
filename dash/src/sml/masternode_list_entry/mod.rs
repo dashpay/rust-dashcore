@@ -1,6 +1,7 @@
 mod hash;
 pub mod qualified_masternode_list_entry;
 mod score;
+mod helpers;
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
