@@ -297,6 +297,8 @@ impl NetworkMessage {
             NetworkMessage::SendAddrV2 => "sendaddrv2",
             NetworkMessage::GetMnListD(_) => "getmnlistd",
             NetworkMessage::MnListDiff(_) => "mnlistdiff",
+            NetworkMessage::GetQRInfo(_) => "getqrinfo",
+            NetworkMessage::QrInfo(_) => "qrinfo",
             NetworkMessage::Unknown { .. } => "unknown",
         }
     }
@@ -382,6 +384,8 @@ impl Encodable for RawNetworkMessage {
             NetworkMessage::Unknown { payload: ref data, .. } => serialize(data),
             NetworkMessage::GetMnListD(ref dat) => serialize(dat),
             NetworkMessage::MnListDiff(ref dat) => serialize(dat),
+            NetworkMessage::GetQRInfo(ref dat) => serialize(dat),
+            NetworkMessage::QrInfo(ref dat) => serialize(dat),
         })
         .consensus_encode(w)?;
         Ok(len)
