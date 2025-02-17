@@ -13,13 +13,13 @@ use crate::network::message_sml::MnListDiff;
 /// - `block_request_hash`: Hash of the block for which the masternode list diff is requested
 /// - `extra_share`: Optional flag to indicate if an extra share is requested (defaults to false)
 #[derive(PartialEq, Eq, Clone, Debug)]
-pub struct GetQrInfo {
+pub struct GetQRInfo {
     pub base_block_hashes: Vec<BlockHash>,
     pub block_request_hash: BlockHash,
     pub extra_share: bool,
 }
 
-impl_consensus_encoding!(GetQrInfo,
+impl_consensus_encoding!(GetQRInfo,
     base_block_hashes,
     block_request_hash,
     extra_share
@@ -31,7 +31,7 @@ impl_consensus_encoding!(GetQrInfo,
 ///
 /// Note: The “compact size” integers that prefix some arrays are handled by your consensus encoding routines.
 #[derive(PartialEq, Eq, Clone, Debug)]
-pub struct QrInfo {
+pub struct QRInfo {
     // Quorum snapshots for heights h-c, h-2c, h-3c.
     pub quorum_snapshot_at_h_minus_c: QuorumSnapshot,
     pub quorum_snapshot_at_h_minus_2c: QuorumSnapshot,
@@ -60,7 +60,7 @@ pub struct QrInfo {
     pub mn_list_diff_list: Vec<MnListDiff>,
 }
 
-impl Encodable for QrInfo {
+impl Encodable for QRInfo {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         // Encode the three required quorum snapshots.
@@ -90,7 +90,7 @@ impl Encodable for QrInfo {
     }
 }
 
-impl Decodable for QrInfo {
+impl Decodable for QRInfo {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         // Decode the three quorum snapshots.
         let quorum_snapshot_at_h_minus_c = QuorumSnapshot::consensus_decode(r)?;
@@ -119,7 +119,7 @@ impl Decodable for QrInfo {
         let quorum_snapshot_list = Vec::consensus_decode(r)?;
         let mn_list_diff_list = Vec::consensus_decode(r)?;
 
-        Ok(QrInfo {
+        Ok(QRInfo {
             quorum_snapshot_at_h_minus_c,
             quorum_snapshot_at_h_minus_2c,
             quorum_snapshot_at_h_minus_3c,

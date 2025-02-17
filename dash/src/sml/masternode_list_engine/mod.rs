@@ -59,6 +59,12 @@ impl MasternodeListEngine {
             .unwrap_or_default()
     }
 
+    pub fn latest_masternode_list_rotating_quorum_hashes(&self, exclude_quorum_types: &[LLMQType]) -> BTreeSet<QuorumHash> {
+        self.latest_masternode_list()
+            .map(|list| list.rotating_quorum_hashes(exclude_quorum_types))
+            .unwrap_or_default()
+    }
+
     pub fn masternode_list_and_height_for_block_hash_8_blocks_ago(
         &self,
         block_hash: &BlockHash,

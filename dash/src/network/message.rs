@@ -239,9 +239,9 @@ pub enum NetworkMessage {
     /// `mnlistdiff`
     MnListDiff(message_sml::MnListDiff),
     /// `getqrinfo`
-    GetQRInfo(message_qrinfo::GetQrInfo),
+    GetQRInfo(message_qrinfo::GetQRInfo),
     /// `qrinfo`
-    QrInfo(message_qrinfo::QrInfo),
+    QRInfo(message_qrinfo::QRInfo),
     /// Any other message.
     Unknown {
         /// The command of this message.
@@ -298,7 +298,7 @@ impl NetworkMessage {
             NetworkMessage::GetMnListD(_) => "getmnlistd",
             NetworkMessage::MnListDiff(_) => "mnlistdiff",
             NetworkMessage::GetQRInfo(_) => "getqrinfo",
-            NetworkMessage::QrInfo(_) => "qrinfo",
+            NetworkMessage::QRInfo(_) => "qrinfo",
             NetworkMessage::Unknown { .. } => "unknown",
         }
     }
@@ -385,7 +385,7 @@ impl Encodable for RawNetworkMessage {
             NetworkMessage::GetMnListD(ref dat) => serialize(dat),
             NetworkMessage::MnListDiff(ref dat) => serialize(dat),
             NetworkMessage::GetQRInfo(ref dat) => serialize(dat),
-            NetworkMessage::QrInfo(ref dat) => serialize(dat),
+            NetworkMessage::QRInfo(ref dat) => serialize(dat),
         })
         .consensus_encode(w)?;
         Ok(len)
