@@ -9,7 +9,6 @@ use crate::{BlockHash, Network};
 use crate::bls_sig_utils::BLSSignature;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_type::LLMQType;
-use crate::sml::order_option::LLMQOrderOption;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
 pub enum LLMQModifierType {

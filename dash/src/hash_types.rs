@@ -147,30 +147,30 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
         pub struct QuorumCommitmentHash(sha256d::Hash);
 
         pub struct Sha256dHash(sha256d::Hash);
-        pub struct ScoreHash(sha256::Hash);
+
     }
 
-        // hash_newtype_no_ord! {
-        //
-        // }
+        hash_newtype_no_ord! {
+            pub struct ScoreHash(sha256::Hash);
+        }
 
-// impl Ord for ScoreHash {
-//     fn cmp(&self, other: &Self) -> Ordering {
-//         let mut self_bytes = self.0.to_byte_array();
-//         let mut other_bytes = other.0.to_byte_array();
-//
-//         self_bytes.reverse();
-//         other_bytes.reverse();
-//
-//         self_bytes.cmp(&other_bytes)
-//     }
-// }
-//
-// impl PartialOrd for ScoreHash {
-//     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-//         Some(self.cmp(other))
-//     }
-// }
+impl Ord for ScoreHash {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let mut self_bytes = self.0.to_byte_array();
+        let mut other_bytes = other.0.to_byte_array();
+
+        self_bytes.reverse();
+        other_bytes.reverse();
+
+        self_bytes.cmp(&other_bytes)
+    }
+}
+
+impl PartialOrd for ScoreHash {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 
     /// A hash used to identify a quorum

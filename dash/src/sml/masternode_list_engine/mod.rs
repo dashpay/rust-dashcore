@@ -15,7 +15,6 @@ use crate::sml::error::SmlError::CorruptedCodeExecution;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::masternode_list::MasternodeList;
-use crate::sml::order_option::LLMQOrderOption;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
 #[derive(Clone, Eq, PartialEq)]
@@ -145,7 +144,7 @@ impl MasternodeListEngine {
             let mut inner = BTreeMap::new();
 
             for (quorum_hash, quorum_entry) in hash_to_quorum_entries.iter() {
-                inner.insert(*quorum_hash, self.validate_quorum(quorum_entry, &LLMQOrderOption::default()));
+                inner.insert(*quorum_hash, self.validate_quorum(quorum_entry));
             }
             results.insert(*quorum_type, inner);
         }
@@ -170,11 +169,10 @@ mod tests {
     use crate::sml::llmq_type::LLMQType::{Llmqtype100_67, Llmqtype400_60, Llmqtype400_85, Llmqtype50_60};
     use crate::sml::masternode_list_engine::MasternodeListEngine;
     use std::str::FromStr;
-    use crate::sml::order_option::LLMQOrderOption;
 
     #[test]
     fn deserialize_mn_list_engine_and_validate_quorums() {
-        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
+        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine3.hex");
         let data = hex::decode(block_hex).expect("decode hex");
         let mut mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
 
@@ -199,7 +197,7 @@ mod tests {
 
     #[test]
     fn deserialize_mn_list_engine_and_validate_single_quorum() {
-        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine2.hex");
+        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine3.hex");
         let data = hex::decode(block_hex).expect("decode hex");
         let mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
 
@@ -211,8 +209,6 @@ mod tests {
 
         let quorum = last_masternode_list.quorum_entry_of_type_for_quorum_hash(Llmqtype100_67, QuorumHash::from_str("000000000000001d4ebc43dbf9b25d2af6421641a84a1e04dd58f65d07b7ecf7").expect("expected to get quorum hash")).expect("expected to find quorum");
 
-        for option in LLMQOrderOption::all_combinations() {
-            println!("using {:?} {:?}", option, mn_list_engine.validate_quorum(quorum, &option))
-        }
+        println!("using {:?}", mn_list_engine.validate_quorum(quorum))
     }
 }

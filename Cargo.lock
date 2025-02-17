@@ -218,6 +218,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "bls-dash-sys"
+version = "1.2.5"
+source = "git+https://github.com/dashpay/bls-signatures?branch=develop#0bb5c5b03249c463debb5cef5f7e52ee66f3aaab"
+dependencies = [
+ "bindgen",
+ "cc",
+ "glob",
+]
+
+[[package]]
+name = "bls-signatures"
+version = "1.2.5"
+source = "git+https://github.com/dashpay/bls-signatures?branch=develop#0bb5c5b03249c463debb5cef5f7e52ee66f3aaab"
+dependencies = [
+ "bls-dash-sys",
+ "hex",
+ "rand",
+ "serde",
+]
+
+[[package]]
 name = "blsful"
 version = "3.0.0-pre8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -444,6 +465,7 @@ dependencies = [
  "bitcoinconsensus",
  "bitflags 2.6.0",
  "blake3",
+ "bls-signatures",
  "blsful",
  "core2 0.3.3",
  "dashcore-private",

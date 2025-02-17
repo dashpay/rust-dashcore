@@ -1,3 +1,4 @@
+use bls_signatures::{BasicSchemeMPL, G1Element, G2Element, Scheme};
 use blsful::{Bls12381G2Impl, MultiPublicKey, MultiSignature};
 use hashes::Hash;
 use crate::bls_sig_utils::BLSPublicKey;
@@ -11,20 +12,30 @@ impl QualifiedQuorumEntry {
         I: IntoIterator<Item = &'a BLSPublicKey>,
     {
         let mut message = self.commitment_hash.to_byte_array();
-        message.reverse();
         // println!("quorum {}", self.quorum_entry.quorum_hash);
-        // println!("using message {}", hex::encode(message));
+         println!("using message {}", hex::encode(message));
         let message = message.as_slice();
-        let public_keys : Vec<(blsful::PublicKey<Bls12381G2Impl>)> = operator_keys
-            .into_iter().enumerate()
-            .map(|(i, key)| {
-                // println!("using operator key {}. {}", i, key);
-                key.try_into()
-            })
-            .collect::<Result<Vec<(blsful::PublicKey<Bls12381G2Impl>)>, QuorumValidationError>>()?;
-        let signature: MultiSignature<Bls12381G2Impl> = self.quorum_entry.all_commitment_aggregated_signature.try_into()?;
-        let multi_public_key = MultiPublicKey::<Bls12381G2Impl>::from_public_keys(public_keys);
-        signature.verify(multi_public_key, message).map_err(|e| QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(e.to_string()))
+        // let public_keys : Vec<(blsful::PublicKey<Bls12381G2Impl>)> = operator_keys
+        //     .into_iter().enumerate()
+        //     .map(|(i, key)| {
+        //         println!("using operator key {}. {}", i, key);
+        //         key.try_into()
+        //     })
+        //     .collect::<Result<Vec<(blsful::PublicKey<Bls12381G2Impl>)>, QuorumValidationError>>()?;
+        let public_keys2 = operator_keys
+            .into_iter()
+            .filter_map(|key| G1Element::from_bytes(key.as_ref()).ok())
+            .collect::<Vec<_>>();
+        let sig = G2Element::from_bytes(self.quorum_entry.all_commitment_aggregated_signature.as_bytes()).expect("expected sig");
+        let verified = BasicSchemeMPL::new().verify_secure(public_keys2.iter(), message, &sig);
+        if verified {
+            Ok(())
+        } else {
+            Err(QuorumValidationError::AllCommitmentAggregatedSignatureNotValid("signature is not valid for keys and message".to_string()))
+        }
+        // let signature: MultiSignature<Bls12381G2Impl> = self.quorum_entry.all_commitment_aggregated_signature.try_into()?;
+        // let multi_public_key = MultiPublicKey::<Bls12381G2Impl>::from_public_keys(public_keys);
+        // signature.verify(multi_public_key, message).map_err(|e| QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(e.to_string()))
     }
 
     pub fn verify_quorum_signature(&self) -> Result<(), QuorumValidationError>  {
