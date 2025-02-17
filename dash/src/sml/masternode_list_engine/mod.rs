@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn deserialize_mn_list_engine_and_validate_quorums() {
-        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine3.hex");
+        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
         let data = hex::decode(block_hex).expect("decode hex");
         let mut mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
 
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn deserialize_mn_list_engine_and_validate_single_quorum() {
-        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine3.hex");
+        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
         let data = hex::decode(block_hex).expect("decode hex");
         let mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
 
