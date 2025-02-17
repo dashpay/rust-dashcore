@@ -24,12 +24,12 @@ impl MasternodeList {
 
         // Remove deleted masternodes
         for pro_tx_hash in diff.deleted_masternodes {
-            updated_masternodes.remove(&pro_tx_hash);
+            updated_masternodes.remove(&pro_tx_hash.reverse());
         }
 
         // Add or update new masternodes
         for new_mn in diff.new_masternodes {
-            updated_masternodes.insert(new_mn.pro_reg_tx_hash, new_mn.into());
+            updated_masternodes.insert(new_mn.pro_reg_tx_hash.reverse(), new_mn.into());
         }
 
         // Create a new quorums map by cloning the existing one
