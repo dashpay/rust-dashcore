@@ -1,8 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
-use bls_signatures::{BasicSchemeMPL, BlsError, G1Element, G2Element, Scheme};
-use blsful::{Bls12381G2Impl, MultiPublicKey, MultiSignature};
+use bls_signatures::{BasicSchemeMPL, G1Element, G2Element, Scheme};
+use blsful::Bls12381G2Impl;
 use hashes::Hash;
-use crate::bls_sig_utils::BLSPublicKey;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::QuorumValidationError;
@@ -13,8 +11,6 @@ impl QualifiedQuorumEntry {
         I: IntoIterator<Item = &'a MasternodeListEntry>,
     {
         let mut message = self.commitment_hash.to_byte_array();
-        // println!("quorum {}", self.quorum_entry.quorum_hash);
-         println!("using message {}", hex::encode(message));
         let message = message.as_slice();
         let public_keys2 = operator_keys
             .into_iter()
@@ -40,6 +36,8 @@ impl QualifiedQuorumEntry {
         } else {
             Err(QuorumValidationError::AllCommitmentAggregatedSignatureNotValid("signature is not valid for keys and message".to_string()))
         }
+        // This will be the code when we move to blsful
+        // Currently we can't because blsful doesn't support verify secure aggregated nor does it support our legacy serializations.
         // let public_keys : Vec<(blsful::PublicKey<Bls12381G2Impl>)> = operator_keys
         //     .into_iter().enumerate()
         //     .map(|(i, key)| {

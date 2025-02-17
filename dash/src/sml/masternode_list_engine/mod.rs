@@ -169,6 +169,7 @@ mod tests {
     use crate::sml::llmq_type::LLMQType::{Llmqtype100_67, Llmqtype400_60, Llmqtype400_85, Llmqtype50_60};
     use crate::sml::masternode_list_engine::MasternodeListEngine;
     use std::str::FromStr;
+    use crate::sml::llmq_type::LLMQType;
 
     #[test]
     fn deserialize_mn_list_engine_and_validate_quorums() {
@@ -185,7 +186,7 @@ mod tests {
         let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
 
         for (quorum_type, quorum_entries) in last_masternode_list.quorums.iter() {
-            if *quorum_type == Llmqtype400_85 || *quorum_type == Llmqtype50_60 || *quorum_type == Llmqtype400_60 {
+            if *quorum_type == Llmqtype400_85 || *quorum_type == Llmqtype50_60 || *quorum_type == Llmqtype400_60 || *quorum_type == LLMQType::Llmqtype60_75 {
                 continue;
             }
             for (quorum_hash, quorum) in quorum_entries.iter() {

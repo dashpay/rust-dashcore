@@ -65,14 +65,15 @@ impl MasternodeListEngine {
         let masternodes : Vec<_> = masternode_list.valid_masternodes_for_quorum(quorum, quorum_modifier_type, self.network);
         quorum.validate(masternodes.iter().enumerate().filter_map(|(i, qualified_masternode_list_entry)| {
             if *quorum.quorum_entry.signers.get(i)? {
+                // We probably don't need this check because normally you couldn't sign if you are not a valid member.
                 if *quorum.quorum_entry.valid_members.get(i)? {
                     Some(&qualified_masternode_list_entry.masternode_list_entry)
                 } else {
-                    println!("{} ({}) isn't a valid member", qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash, qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash.reverse());
+                    // println!("{} ({}) isn't a valid member", qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash, qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash.reverse());
                     None
                 }
             } else {
-                println!("{} ({}) didn't sign", qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash, qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash.reverse());
+                // println!("{} ({}) didn't sign", qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash, qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash.reverse());
                 None
             }
         }))

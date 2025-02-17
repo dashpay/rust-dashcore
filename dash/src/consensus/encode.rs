@@ -46,7 +46,7 @@ use crate::hash_types::{
     BlockHash, FilterHash, FilterHeader, MerkleRootMasternodeList, TxMerkleNode,
 };
 use crate::io::{self, Cursor, Read};
-use crate::network::message_sml::DeletedQuorum;
+use crate::network::message_sml::{DeletedQuorum, MnListDiff};
 #[cfg(feature = "std")]
 use crate::network::{
     address::{AddrV2Message, Address},
@@ -60,6 +60,7 @@ use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::transaction::txin::TxIn;
 use crate::transaction::txout::TxOut;
 use crate::{OutPoint, ProTxHash, ScriptBuf, address};
+use crate::network::message_qrinfo::QuorumSnapshot;
 
 /// Encoding error.
 #[derive(Debug)]
@@ -691,6 +692,9 @@ impl_vec!(BLSSignature);
 impl_vec!(ProTxHash);
 impl_vec!(MerkleRootMasternodeList);
 impl_vec!(MasternodeListEntry);
+impl_vec!(MnListDiff);
+impl_vec!(QuorumSnapshot);
+impl_vec!(u32);
 
 #[cfg(feature = "std")]
 impl_vec!(Inventory);
