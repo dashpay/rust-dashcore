@@ -1,5 +1,6 @@
 #[cfg(feature = "quorum_validation")]
 mod validation;
+mod rotation;
 
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "bincode")]

@@ -1,5 +1,5 @@
-use crate::sml::llmq_type::snapshot::LLMQSnapshot;
-use crate::sml::masternode_list_entry::MasternodeListEntry;
+use crate::network::message_qrinfo::QuorumSnapshot;
+use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 
 pub enum LLMQQuarterType {
     AtHeightMinus3Cycles,
@@ -12,12 +12,12 @@ pub enum LLMQQuarterType {
 pub enum LLMQQuarterReconstructionType<'a> {
     Snapshot,
     New {
-        previous_quarters: [&'a Vec<Vec<MasternodeListEntry>>; 3],
+        previous_quarters: [&'a Vec<Vec<QualifiedMasternodeListEntry>>; 3],
         skip_removed_masternodes: bool,
     }
 }
 
 pub enum LLMQQuarterUsageType {
-    Snapshot(LLMQSnapshot),
-    New(Vec<Vec<MasternodeListEntry>>)
+    Snapshot(QuorumSnapshot),
+    New(Vec<Vec<QualifiedMasternodeListEntry>>)
 }

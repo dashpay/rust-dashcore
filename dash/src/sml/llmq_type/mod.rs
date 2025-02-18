@@ -1,13 +1,10 @@
 mod network;
-// pub mod rotation;
-// pub mod snapshot;
-// pub mod quorum_snapshot_skip_mode;
+pub mod rotation;
 
 use std::fmt::{Display, Formatter};
 use std::io;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use crate::bip152::BlockTransactionsRequest;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::Network;
 
@@ -24,7 +21,7 @@ pub struct DKGParams {
 #[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]
 pub struct LLMQParams {
-    pub r#type: LLMQType,
+    pub quorum_type: LLMQType,
     pub name: &'static str,
     pub size: u32,
     pub min_size: u32,
@@ -119,7 +116,7 @@ pub const DKG_PLATFORM_DEVNET: DKGParams = DKGParams {
 };
 
 pub const LLMQ_TEST: LLMQParams = LLMQParams {
-    r#type: LLMQType::LlmqtypeTest,
+    quorum_type: LLMQType::LlmqtypeTest,
     name: "llmq_test",
     size: 4,
     min_size: 2,
@@ -130,7 +127,7 @@ pub const LLMQ_TEST: LLMQParams = LLMQParams {
     recovery_members: 3,
 };
 pub const LLMQ_V017: LLMQParams = LLMQParams {
-    r#type: LLMQType::LlmqtypeTestV17,
+    quorum_type: LLMQType::LlmqtypeTestV17,
     name: "llmq_test_v17",
     size: 3,
     min_size: 2,
@@ -141,7 +138,7 @@ pub const LLMQ_V017: LLMQParams = LLMQParams {
     recovery_members: 3,
 };
 pub const LLMQ_0024: LLMQParams = LLMQParams {
-    r#type: LLMQType::LlmqtypeDevnetDIP0024,
+    quorum_type: LLMQType::LlmqtypeDevnetDIP0024,
     name: "llmq_devnet_dip0024",
     size: 8,
     min_size: 6,
@@ -152,7 +149,7 @@ pub const LLMQ_0024: LLMQParams = LLMQParams {
     recovery_members: 4,
 };
 pub const LLMQ_0024_333: LLMQParams = LLMQParams {
-    r#type: LLMQType::LlmqtypeDevnetDIP0024,
+    quorum_type: LLMQType::LlmqtypeDevnetDIP0024,
     name: "llmq_devnet_dip0024",
     size: 8,
     min_size: 6,
@@ -163,7 +160,7 @@ pub const LLMQ_0024_333: LLMQParams = LLMQParams {
     recovery_members: 4,
 };
 pub const LLMQ_TEST_DIP00024: LLMQParams = LLMQParams {
-    r#type: LLMQType::LlmqtypeTestDIP0024,
+    quorum_type: LLMQType::LlmqtypeTestDIP0024,
     name: "llmq_test_dip0024",
     size: 4,
     min_size: 3,
@@ -174,7 +171,7 @@ pub const LLMQ_TEST_DIP00024: LLMQParams = LLMQParams {
     recovery_members: 3,
 };
 pub const LLMQ_TEST_INSTANT_SEND: LLMQParams = LLMQParams {
-    r#type: LLMQType::LlmqtypeTestInstantSend,
+    quorum_type: LLMQType::LlmqtypeTestInstantSend,
     name: "llmq_test_instantsend",
     size: 3,
     min_size: 2,
@@ -186,7 +183,7 @@ pub const LLMQ_TEST_INSTANT_SEND: LLMQParams = LLMQParams {
 };
 
 pub const LLMQ_DEVNET: LLMQParams = LLMQParams {
-    r#type: LLMQType::LlmqtypeDevnet,
+    quorum_type: LLMQType::LlmqtypeDevnet,
     name: "llmq_devnet",
     size: 12,
     min_size: 7,
@@ -198,7 +195,7 @@ pub const LLMQ_DEVNET: LLMQParams = LLMQParams {
 };
 
 pub const LLMQ_50_60: LLMQParams = LLMQParams {
-    r#type: LLMQType::Llmqtype50_60,
+    quorum_type: LLMQType::Llmqtype50_60,
     name: "llmq_50_60",
     size: 50,
     min_size: 40,
@@ -209,7 +206,7 @@ pub const LLMQ_50_60: LLMQParams = LLMQParams {
     recovery_members: 25,
 };
 pub const LLMQ_400_60: LLMQParams = LLMQParams {
-    r#type: LLMQType::Llmqtype400_60,
+    quorum_type: LLMQType::Llmqtype400_60,
     name: "llmq_400_60",
     size: 400,
     min_size: 300,
@@ -220,7 +217,7 @@ pub const LLMQ_400_60: LLMQParams = LLMQParams {
     recovery_members: 100,
 };
 pub const LLMQ_400_85: LLMQParams = LLMQParams {
-    r#type: LLMQType::Llmqtype400_60,
+    quorum_type: LLMQType::Llmqtype400_60,
     name: "llmq_400_85",
     size: 400,
     min_size: 350,
@@ -231,7 +228,7 @@ pub const LLMQ_400_85: LLMQParams = LLMQParams {
     recovery_members: 100,
 };
 pub const LLMQ_100_67: LLMQParams = LLMQParams {
-    r#type: LLMQType::Llmqtype100_67,
+    quorum_type: LLMQType::Llmqtype100_67,
     name: "llmq_100_67",
     size: 100,
     min_size: 80,
@@ -242,7 +239,7 @@ pub const LLMQ_100_67: LLMQParams = LLMQParams {
     recovery_members: 50,
 };
 pub const LLMQ_60_75: LLMQParams = LLMQParams {
-    r#type: LLMQType::Llmqtype60_75,
+    quorum_type: LLMQType::Llmqtype60_75,
     name: "llmq_60_75",
     size: 60,
     min_size: 50,
@@ -254,7 +251,7 @@ pub const LLMQ_60_75: LLMQParams = LLMQParams {
 };
 
 pub const LLMQ_25_67: LLMQParams = LLMQParams {
-    r#type: LLMQType::Llmqtype25_67,
+    quorum_type: LLMQType::Llmqtype25_67,
     name: "llmq_25_67",
     size: 25,
     min_size: 22,
@@ -266,7 +263,7 @@ pub const LLMQ_25_67: LLMQParams = LLMQParams {
 };
 
 pub const LLMQ_TEST_PLATFORM: LLMQParams = LLMQParams {
-    r#type: LLMQType::LlmqtypeTestnetPlatform,
+    quorum_type: LLMQType::LlmqtypeTestnetPlatform,
     name: "llmq_test_platform",
     size: 3,
     min_size: 2,
@@ -278,7 +275,7 @@ pub const LLMQ_TEST_PLATFORM: LLMQParams = LLMQParams {
 };
 
 pub const LLMQ_DEV_PLATFORM: LLMQParams = LLMQParams {
-    r#type: LLMQType::LlmqtypeDevnetPlatform,
+    quorum_type: LLMQType::LlmqtypeDevnetPlatform,
     name: "llmq_dev_platform",
     size: 12,
     min_size: 9,

@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use crate::BlockHash;
+use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_type::{LLMQParams, LLMQType};
 use crate::sml::llmq_type::rotation::LLMQQuarterReconstructionType;
 use crate::sml::masternode_list::MasternodeList;
@@ -6,50 +8,6 @@ use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
 impl MasternodeList {
-    fn quorum_quarter_members_by_reconstruction_type(
-        &self,
-        reconstruction_type: LLMQQuarterReconstructionType,
-        llmq_params: &LLMQParams,
-        work_block_height: u32,
-    ) -> Result<Vec<Vec<MasternodeListEntry>>, QuorumValidationError> {
-        let work_block_hash = self.provider.lookup_block_hash_by_height(work_block_height);
-        if work_block_hash.is_zero() {
-            warn!("quorum_quarter_members_by_reconstruction_type: empty work block hash for {work_block_height}")
-        }
-        let masternode_list = self.masternode_list_for_block_hash(work_block_hash)
-            .ok_or(QuorumValidationError::RequiredMasternodeListNotPresent(work_block_hash))?;
-        let llmq_type = llmq_params.r#type.clone();
-        let quorum_count = llmq_params.signing_active_quorum_count as usize;
-        let quorum_size = llmq_params.size as usize;
-        let quarter_size = quorum_size / 4;
-        let quorum_modifier_type = self.llmq_modifier_type_for(llmq_type, work_block_hash, work_block_height);
-        let quorum_modifier = quorum_modifier_type.build_llmq_hash();
-        match reconstruction_type {
-            LLMQQuarterReconstructionType::New { previous_quarters, skip_removed_masternodes } => {
-                let (used_at_h_masternodes, unused_at_h_masternodes, used_at_h_indexed_masternodes) =
-                    masternode_list.usage_info(previous_quarters, skip_removed_masternodes, quorum_count);
-                Ok(apply_skip_strategy_of_type(LLMQQuarterUsageType::New(used_at_h_indexed_masternodes), used_at_h_masternodes, unused_at_h_masternodes, work_block_height, quorum_modifier, quorum_count, quarter_size))
-            },
-            LLMQQuarterReconstructionType::Snapshot => {
-                if let Some(snapshot) = self.cache.maybe_snapshot(work_block_hash) {
-                    let (used_at_h_masternodes, unused_at_h_masternodes) =
-                        usage_info_from_snapshot(&masternode_list.masternodes, &snapshot, quorum_modifier, work_block_height);
-                    Ok(apply_skip_strategy_of_type(LLMQQuarterUsageType::Snapshot(snapshot), used_at_h_masternodes, unused_at_h_masternodes, work_block_height, quorum_modifier, quorum_count, quarter_size))
-                } else {
-                    Err(CoreProviderError::NoSnapshot)
-                }
-
-                // self.provider.find_snapshot(work_block_hash, &self.cache)
-                //     .map(|snapshot| {
-                //         let (used_at_h_masternodes, unused_at_h_masternodes) =
-                //             usage_info_from_snapshot(masternode_list, &snapshot, quorum_modifier, work_block_height);
-                //         apply_skip_strategy_of_type(LLMQQuarterUsageType::Snapshot(snapshot), used_at_h_masternodes, unused_at_h_masternodes, work_block_height, quorum_modifier, quorum_count, quarter_size)
-                //     })
-            }
-        }
-    }
-
-
     fn rotate_members(
         &self,
         cycle_base_height: u32,
@@ -89,8 +47,8 @@ impl MasternodeList {
     pub fn get_rotated_masternodes_for_quorum(
         &self,
         llmq_type: LLMQType,
-        block_hash: [u8; 32],
-        block_height: u32,
+        block_hash: BlockHash,
+        block_height: CoreBlockHeight,
         skip_removed_masternodes: bool,
     ) -> Result<Vec<MasternodeListEntry>, CoreProviderError> {
         let mut llmq_members_lock = self.cache.llmq_members.write().unwrap();

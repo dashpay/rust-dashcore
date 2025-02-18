@@ -92,7 +92,6 @@ impl Decodable for MnListDiff {
         let deleted_quorums = Vec::<DeletedQuorum>::consensus_decode(r)?;
         let new_quorums = Vec::<QuorumEntry>::consensus_decode(r)?;
         let quorums_chainlock_signatures = Vec::<QuorumCLSigObject>::consensus_decode(r)?;
-        // println!("{}", quorums_chainlock_signatures.iter().map(hex::encode).collect::<Vec<_>>().join("\n"));
 
         Ok(MnListDiff {
             version,

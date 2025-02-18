@@ -1,4 +1,5 @@
-use std::io;
+use core::fmt::{Display, Formatter};
+use std::{fmt, io};
 use crate::BlockHash;
 use crate::consensus::{encode, Decodable, Encodable};
 use crate::consensus::encode::{read_compact_size, read_fixed_bitset, write_fixed_bitset};
@@ -149,18 +150,40 @@ impl Decodable for QRInfo {
 /// - `mn_skip_list`: An array of 4-byte signed integers, one per skip list entry.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct QuorumSnapshot {
-    pub mn_skip_list_mode: MnSkipListMode,
+    pub skip_list_mode: MNSkipListMode,
     pub active_quorum_members: Vec<bool>,   // Bitset, length = (active_quorum_members_count + 7) / 8
-    pub mn_skip_list: Vec<u32>,           // Array of int32_t
+    pub skip_list: Vec<u32>,           // Array of int32_t
 }
+
+impl Display for QuorumSnapshot {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let active_members_display: String = self.active_quorum_members
+            .iter()
+            .map(|&member| if member { '■' } else { 'x' }) // Use `■` for true, `x` for false
+            .collect();
+
+        let skip_list = self.skip_list
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        write!(
+            f,
+            "mode: {} members: [{}] skip_list: [{}]",
+            active_members_display, self.skip_list_mode, skip_list
+        )
+    }
+}
+
 
 impl Encodable for QuorumSnapshot {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.mn_skip_list_mode.consensus_encode(w)?;
+        len += self.skip_list_mode.consensus_encode(w)?;
         len +=
             write_fixed_bitset(w, self.active_quorum_members.as_slice(), self.active_quorum_members.iter().len())?;
-        len += self.mn_skip_list.consensus_encode(w)?;
+        len += self.skip_list.consensus_encode(w)?;
         Ok(len)
     }
 }
@@ -168,14 +191,14 @@ impl Encodable for QuorumSnapshot {
 
 impl Decodable for QuorumSnapshot {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
-        let mn_skip_list_mode = MnSkipListMode::consensus_decode(r)?;
+        let mn_skip_list_mode = MNSkipListMode::consensus_decode(r)?;
         let active_quorum_members_count = read_compact_size(r)?;
         let active_quorum_members = read_fixed_bitset(r, active_quorum_members_count as usize)?;
         let mn_skip_list = Vec::consensus_decode(r)?;
         Ok(QuorumSnapshot {
-            mn_skip_list_mode,
+            skip_list_mode: mn_skip_list_mode,
             active_quorum_members,
-            mn_skip_list,
+            skip_list: mn_skip_list,
         })
     }
 }
@@ -183,37 +206,88 @@ impl Decodable for QuorumSnapshot {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u32)]
-pub enum MnSkipListMode {
+pub enum MNSkipListMode {
     /// Mode 0: No skipping – the skip list is empty.
     NoSkipping = 0,
     /// Mode 1: Skip the first entry; subsequent entries contain relative skips.
-    SkipFirstEntry = 1,
+    ///
+    /// The following entries contain the relative position of subsequent skips.
+    /// For example, if during the initialization phase you skip entries x, y and z of the models
+    /// list, the skip list will contain x, y-x and z-y in this mode.
+    SkipFirst = 1,
     /// Mode 2: Contains the entries which were not skipped.
-    NotSkippedEntries = 2,
+    ///
+    ///
+    /// This is better when there are many skips.
+    /// Mode 2 is more efficient and should be used when 3/4*quorumSize ≥ 1/2*masternodeNb or
+    /// quorumsize ≥ 2/3*masternodeNb
+    SkipExcept = 2,
     /// Mode 3: Every node was skipped – the skip list is empty (no DKG sessions attempted).
-    AllNodesSkipped = 3,
+    SkipAll = 3,
 }
 
-impl Default for MnSkipListMode {
-    fn default() -> Self {
-        MnSkipListMode::NoSkipping
+impl From<u32> for MNSkipListMode {
+    fn from(orig: u32) -> Self {
+        match orig {
+            0 => MNSkipListMode::NoSkipping,
+            1 => MNSkipListMode::SkipFirst,
+            2 => MNSkipListMode::SkipExcept,
+            3 => MNSkipListMode::SkipAll,
+            _ => MNSkipListMode::NoSkipping,
+        }
+    }
+}
+impl From<MNSkipListMode> for u32 {
+    fn from(orig: MNSkipListMode) -> Self {
+        match orig {
+            MNSkipListMode::NoSkipping => 0,
+            MNSkipListMode::SkipFirst => 1,
+            MNSkipListMode::SkipExcept => 2,
+            MNSkipListMode::SkipAll => 3,
+        }
+    }
+}
+impl MNSkipListMode {
+    pub fn index(&self) -> u32 {
+        u32::from(self.clone())
+    }
+}
+pub fn from_index(index: u32) -> MNSkipListMode {
+    MNSkipListMode::from(index)
+}
+
+impl Display for MNSkipListMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let description = match self {
+            MNSkipListMode::NoSkipping => "No Skipping (empty list)",
+            MNSkipListMode::SkipFirst => "Skip First Entry (relative skips)",
+            MNSkipListMode::SkipExcept => "Not Skipped Entries (explicit list)",
+            MNSkipListMode::SkipAll => "All Nodes Skipped (empty list, no DKG)",
+        };
+        write!(f, "{}", description)
     }
 }
 
-impl Encodable for MnSkipListMode {
+impl Default for MNSkipListMode {
+    fn default() -> Self {
+        MNSkipListMode::NoSkipping
+    }
+}
+
+impl Encodable for MNSkipListMode {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         (*self as u32).consensus_encode(w)
     }
 }
 
-impl Decodable for MnSkipListMode {
+impl Decodable for MNSkipListMode {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let value = i32::consensus_decode(r)?;
         match value {
-            0 => Ok(MnSkipListMode::NoSkipping),
-            1 => Ok(MnSkipListMode::SkipFirstEntry),
-            2 => Ok(MnSkipListMode::NotSkippedEntries),
-            3 => Ok(MnSkipListMode::AllNodesSkipped),
+            0 => Ok(MNSkipListMode::NoSkipping),
+            1 => Ok(MNSkipListMode::SkipFirst),
+            2 => Ok(MNSkipListMode::SkipExcept),
+            3 => Ok(MNSkipListMode::SkipAll),
             _ => Err(encode::Error::ParseFailed("Invalid MnSkipListMode")),
         }
     }
