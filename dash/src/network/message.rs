@@ -517,6 +517,12 @@ impl Decodable for RawNetworkMessage {
             "mnlistdiff" => NetworkMessage::MnListDiff(
                 Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
             ),
+            "getqrinfo" => NetworkMessage::GetQRInfo(
+                Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
+            ),
+            "qrinfo" => NetworkMessage::QRInfo(
+                Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
+            ),
             _ => NetworkMessage::Unknown { command: cmd, payload: mem_d.into_inner() },
         };
         Ok(RawNetworkMessage { magic, payload })
