@@ -4,6 +4,7 @@ use crate::consensus::{encode, Decodable, Encodable};
 use crate::consensus::encode::{read_compact_size, read_fixed_bitset, write_fixed_bitset};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::network::message_sml::MnListDiff;
+use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
 /// The `getqrinfo` message requests a `qrinfo` message that provides the information
 /// required to verify quorum details for quorums formed using the quorum rotation process.
@@ -48,8 +49,8 @@ pub struct QRInfo {
     pub quorum_snapshot_and_mn_list_diff_at_h_minus_4c: Option<(QuorumSnapshot, MnListDiff)>,
 
     // lastQuorumHashPerIndex:
-    // A compact size uint (the count) followed by that many 32-byte hashes.
-    pub last_commitment_per_index: Vec<BlockHash>,
+    // A compact size uint (the count) followed by quorum entries.
+    pub last_commitment_per_index: Vec<QuorumEntry>,
 
     // quorumSnapshotList:
     // A compact size uint count followed by that many CQuorumSnapshot entries.
@@ -215,5 +216,32 @@ impl Decodable for MnSkipListMode {
             3 => Ok(MnSkipListMode::AllNodesSkipped),
             _ => Err(encode::Error::ParseFailed("Invalid MnSkipListMode")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+    use std::io::{self, Read};
+
+    use assert_matches::assert_matches;
+
+    use crate::consensus::deserialize;
+    use crate::network::message::{NetworkMessage, RawNetworkMessage};
+
+    fn read_binary_file(filename: &str) -> io::Result<Vec<u8>> {
+        let mut file = File::open(filename)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    #[test]
+    fn deserialize_qr_info() {
+        let block_hex = include_str!("../../tests/data/test_DML_diffs/QR_INFO_0_2224359.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let qr_info: RawNetworkMessage = deserialize(&data).expect("deserialize QR_INFO");
+
+        assert_matches!(qr_info, RawNetworkMessage { magic, payload: NetworkMessage::QRInfo(_) } if magic == 3177909439);
     }
 }
