@@ -9,15 +9,15 @@ pub enum LLMQQuarterType {
 }
 
 #[derive(Clone, Copy)]
-pub enum LLMQQuarterReconstructionType<'a> {
+pub enum LLMQQuarterReconstructionType<'a: 'b, 'b> {
     Snapshot,
     New {
-        previous_quarters: [&'a Vec<Vec<QualifiedMasternodeListEntry>>; 3],
+        previous_quarters: [&'b Vec<Vec<&'a QualifiedMasternodeListEntry>>; 3],
         skip_removed_masternodes: bool,
     }
 }
 
-pub enum LLMQQuarterUsageType {
+pub enum LLMQQuarterUsageType<'a> {
     Snapshot(QuorumSnapshot),
-    New(Vec<Vec<QualifiedMasternodeListEntry>>)
+    New(Vec<Vec<&'a QualifiedMasternodeListEntry>>)
 }

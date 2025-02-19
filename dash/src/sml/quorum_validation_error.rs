@@ -54,4 +54,7 @@ pub enum QuorumValidationError {
 
     #[error("Commitment hash not present")]
     CommitmentHashNotPresent,
+
+    #[error("Required snapshot not present {0}")]
+    RequiredSnapshotNotPresent(BlockHash)
 }

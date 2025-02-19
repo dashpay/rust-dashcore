@@ -1,6 +1,7 @@
 #[cfg(feature = "quorum_validation")]
 mod validation;
-mod rotation;
+mod rotated_quorum_construction;
+mod non_rotated_quorum_construction;
 
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "bincode")]
@@ -9,6 +10,7 @@ use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use crate::{BlockHash, Network, QuorumHash};
 use crate::bls_sig_utils::BLSSignature;
+use crate::network::message_qrinfo::QuorumSnapshot;
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
@@ -27,6 +29,7 @@ pub struct MasternodeListEngine {
     pub block_heights : BTreeMap<BlockHash, CoreBlockHeight>,
     pub masternode_lists : BTreeMap<CoreBlockHeight, MasternodeList>,
     pub known_chain_locks: BTreeMap<BlockHash, BLSSignature>,
+    pub known_snapshots: BTreeMap<BlockHash, QuorumSnapshot>,
     pub network: Network,
 }
 
@@ -40,6 +43,7 @@ impl MasternodeListEngine {
             block_heights: [(base_block_hash, 0), (block_hash, block_height)].into(),
             masternode_lists: [(block_height, masternode_list)].into(),
             known_chain_locks: Default::default(),
+            known_snapshots: Default::default(),
             network,
         })
     }
@@ -64,21 +68,6 @@ impl MasternodeListEngine {
         self.latest_masternode_list()
             .map(|list| list.rotating_quorum_hashes(exclude_quorum_types))
             .unwrap_or_default()
-    }
-
-    pub fn masternode_list_and_height_for_block_hash_8_blocks_ago(
-        &self,
-        block_hash: &BlockHash,
-    ) -> Result<(&MasternodeList, CoreBlockHeight), QuorumValidationError> {
-        if let Some(height) = self.block_heights.get(block_hash) {
-            if let Some(masternode_list) = self.masternode_lists.get(&(height.saturating_sub(8))) {
-                Ok((masternode_list, height.saturating_sub(8)))
-            } else {
-                Err(QuorumValidationError::RequiredMasternodeListNotPresent(height.saturating_sub(8)))
-            }
-        } else {
-            Err(QuorumValidationError::RequiredBlockNotPresent(*block_hash))
-        }
     }
 
     pub fn masternode_list_for_block_hash(&self, block_hash: &BlockHash) -> Option<&MasternodeList> {

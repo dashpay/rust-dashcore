@@ -1,5 +1,6 @@
 use core::fmt::{Display, Formatter};
 use std::{fmt, io};
+use bincode::{Decode, Encode};
 use crate::BlockHash;
 use crate::consensus::{encode, Decodable, Encodable};
 use crate::consensus::encode::{read_compact_size, read_fixed_bitset, write_fixed_bitset};
@@ -149,6 +150,7 @@ impl Decodable for QRInfo {
 /// - `mn_skip_list_size`: A compact-size unsigned integer representing the number of skip list entries.
 /// - `mn_skip_list`: An array of 4-byte signed integers, one per skip list entry.
 #[derive(PartialEq, Eq, Clone, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct QuorumSnapshot {
     pub skip_list_mode: MNSkipListMode,
     pub active_quorum_members: Vec<bool>,   // Bitset, length = (active_quorum_members_count + 7) / 8
@@ -206,6 +208,7 @@ impl Decodable for QuorumSnapshot {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u32)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum MNSkipListMode {
     /// Mode 0: No skipping – the skip list is empty.
     NoSkipping = 0,

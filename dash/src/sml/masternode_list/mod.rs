@@ -9,6 +9,7 @@ pub mod from_diff;
 mod apply_diff;
 mod scores_for_quorum;
 mod rotation;
+mod valid_members_in_rotated_quorum;
 
 use std::collections::BTreeMap;
 #[cfg(feature = "bincode")]

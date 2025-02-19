@@ -1,5 +1,6 @@
 mod network;
 pub mod rotation;
+pub(crate) mod llmq_indexed_hash;
 
 use std::fmt::{Display, Formatter};
 use std::io;
