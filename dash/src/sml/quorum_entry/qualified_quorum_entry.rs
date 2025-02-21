@@ -17,6 +17,19 @@ pub struct QualifiedQuorumEntry {
     pub entry_hash: QuorumEntryHash,
 }
 
+impl From<QuorumEntry> for QualifiedQuorumEntry {
+    fn from(value: QuorumEntry) -> Self {
+        let commitment_hash = value.calculate_commitment_hash();
+        let entry_hash = value.calculate_entry_hash();
+        QualifiedQuorumEntry {
+            quorum_entry: value,
+            verified: LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::NotMarkedForVerification), // Default to unverified
+            commitment_hash,
+            entry_hash,
+        }
+    }
+}
+
 impl QualifiedQuorumEntry {
     pub fn update_quorum_status(&mut self, result: Result<(), QuorumValidationError>) {
         match result {

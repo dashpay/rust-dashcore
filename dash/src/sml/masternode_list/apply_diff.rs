@@ -50,16 +50,7 @@ impl MasternodeList {
             updated_quorums
                 .entry(new_quorum.llmq_type)
                 .or_default()
-                .insert(new_quorum.quorum_hash, {
-                    let commitment_hash = new_quorum.calculate_commitment_hash();
-                    let entry_hash = new_quorum.calculate_entry_hash();
-                    QualifiedQuorumEntry {
-                        quorum_entry: new_quorum,
-                        verified: LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::NotMarkedForVerification), // Default to unverified
-                        commitment_hash,
-                        entry_hash,
-                    }
-                });
+                .insert(new_quorum.quorum_hash, new_quorum.into());
         }
 
         // Create and return the new MasternodeList

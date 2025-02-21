@@ -10,7 +10,7 @@ use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use crate::{BlockHash, Network, QuorumHash};
 use crate::bls_sig_utils::BLSSignature;
-use crate::network::message_qrinfo::QuorumSnapshot;
+use crate::network::message_qrinfo::{QRInfo, QuorumSnapshot};
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
@@ -18,7 +18,9 @@ use crate::sml::error::SmlError::CorruptedCodeExecution;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::masternode_list::MasternodeList;
+use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::QuorumValidationError;
+use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -30,6 +32,7 @@ pub struct MasternodeListEngine {
     pub masternode_lists : BTreeMap<CoreBlockHeight, MasternodeList>,
     pub known_chain_locks: BTreeMap<BlockHash, BLSSignature>,
     pub known_snapshots: BTreeMap<BlockHash, QuorumSnapshot>,
+    pub last_commitment_entries: Vec<QualifiedQuorumEntry>,
     pub network: Network,
 }
 
@@ -44,6 +47,7 @@ impl MasternodeListEngine {
             masternode_lists: [(block_height, masternode_list)].into(),
             known_chain_locks: Default::default(),
             known_snapshots: Default::default(),
+            last_commitment_entries: vec![],
             network,
         })
     }
@@ -79,21 +83,66 @@ impl MasternodeListEngine {
         self.block_hashes.insert(height, block_hash);
     }
 
+    pub fn feed_qr_info(&mut self, qrinfo: QRInfo, verify_rotated_quorums: bool) -> Result<(), QuorumValidationError> {
+        let QRInfo {
+            quorum_snapshot_at_h_minus_c, quorum_snapshot_at_h_minus_2c, quorum_snapshot_at_h_minus_3c, mn_list_diff_tip, mn_list_diff_h, mn_list_diff_at_h_minus_c, mn_list_diff_at_h_minus_2c, mn_list_diff_at_h_minus_3c, quorum_snapshot_and_mn_list_diff_at_h_minus_4c, last_commitment_per_index, quorum_snapshot_list, mn_list_diff_list
+        } = qrinfo;
+        for (snapshot, diff) in quorum_snapshot_list.into_iter().zip(mn_list_diff_list.into_iter()) {
+            self.known_snapshots.insert(diff.block_hash, snapshot);
+            self.apply_diff(diff, None, false)?;
+        }
+
+        self.last_commitment_entries.clear();
+
+        if let Some((quorum_snapshot_at_h_minus_4c, mn_list_diff_at_h_minus_4c)) = quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
+            self.known_snapshots.insert(mn_list_diff_at_h_minus_4c.block_hash, quorum_snapshot_at_h_minus_4c);
+            self.apply_diff(mn_list_diff_at_h_minus_4c, None, false)?;
+        }
+
+        self.known_snapshots.insert(mn_list_diff_at_h_minus_3c.block_hash, quorum_snapshot_at_h_minus_3c);
+        self.apply_diff(mn_list_diff_at_h_minus_3c, None, false)?;
+        self.known_snapshots.insert(mn_list_diff_at_h_minus_2c.block_hash, quorum_snapshot_at_h_minus_2c);
+        self.apply_diff(mn_list_diff_at_h_minus_2c, None, false)?;
+        self.known_snapshots.insert(mn_list_diff_at_h_minus_c.block_hash, quorum_snapshot_at_h_minus_c);
+        self.apply_diff(mn_list_diff_at_h_minus_c, None, false)?;
+        self.apply_diff(mn_list_diff_h, None, false)?;
+        self.apply_diff(mn_list_diff_tip, None, false)?;
+
+        if verify_rotated_quorums {
+            for rotated_quorum in last_commitment_per_index {
+                let mut qualified = rotated_quorum.into();
+                self.validate_and_update_quorum_status(&mut qualified);
+                self.last_commitment_entries.push(qualified);
+            }
+        } else {
+            for quorum in last_commitment_per_index {
+                self.last_commitment_entries.push(quorum.into());
+            }
+        }
+        Ok(())
+    }
+
     pub fn feed_chain_lock_sig(&mut self, block_hash: BlockHash, chain_lock_sig: BLSSignature) {
         self.known_chain_locks.insert(block_hash, chain_lock_sig);
     }
 
-    pub fn apply_diff(&mut self, masternode_list_diff: MnListDiff, diff_end_height: CoreBlockHeight, verify_quorums: bool) -> Result<(), SmlError> {
+    pub fn apply_diff(&mut self, masternode_list_diff: MnListDiff, diff_end_height: Option<CoreBlockHeight>, verify_quorums: bool) -> Result<(), SmlError> {
         if let Some(known_genesis_block_hash) = self.network.known_genesis_block_hash().or_else(|| self.block_hashes.get(&0).cloned()) {
             if masternode_list_diff.base_block_hash == known_genesis_block_hash {
                 // we are going from the start
                 let block_hash = masternode_list_diff.block_hash;
 
-                let masternode_list = masternode_list_diff.try_into_with_block_hash_lookup(|block_hash| Some(diff_end_height), self.network)?;
+                let masternode_list = masternode_list_diff.try_into_with_block_hash_lookup(|block_hash| diff_end_height, self.network)?;
 
+                let diff_end_height = match diff_end_height {
+                    None => self.block_heights.get(&block_hash).ok_or(SmlError::BlockHashLookupFailed(block_hash)).cloned()?,
+                    Some(diff_end_height) => {
+                        self.block_hashes.insert(diff_end_height, block_hash);
+                        self.block_heights.insert(block_hash, diff_end_height);
+                        diff_end_height
+                    },
+                };
                 self.masternode_lists.insert(diff_end_height, masternode_list);
-                self.block_hashes.insert(diff_end_height, block_hash);
-                self.block_heights.insert(block_hash, diff_end_height);
                 return Ok(());
             }
         }
@@ -106,6 +155,11 @@ impl MasternodeListEngine {
         };
 
         let block_hash = masternode_list_diff.block_hash;
+
+        let diff_end_height = match diff_end_height {
+            None => self.block_heights.get(&block_hash).ok_or(SmlError::BlockHashLookupFailed(block_hash)).cloned()?,
+            Some(diff_end_height) => diff_end_height,
+        };
 
         let mut masternode_list = base_masternode_list.apply_diff(masternode_list_diff.clone(), diff_end_height)?;
 
@@ -122,9 +176,9 @@ impl MasternodeListEngine {
             return Err(SmlError::FeatureNotTurnedOn("quorum validation feature is not turned on".to_string()));
         }
 
-        self.masternode_lists.insert(diff_end_height, masternode_list);
         self.block_hashes.insert(diff_end_height, block_hash);
         self.block_heights.insert(block_hash, diff_end_height);
+        self.masternode_lists.insert(diff_end_height, masternode_list);
 
         Ok(())
     }

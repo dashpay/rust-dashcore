@@ -1,7 +1,9 @@
+use bincode::{Decode, Encode};
 use crate::BlockHash;
 use thiserror::Error;
 
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Error, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum SmlError {
     /// Error indicating that the base block is not the genesis block.
     #[error("Base block is not the genesis block: {0}")]

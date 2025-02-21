@@ -3,6 +3,7 @@ use bincode::{Decode, Encode};
 use thiserror::Error;
 use crate::BlockHash;
 use crate::prelude::CoreBlockHeight;
+use crate::sml::error::SmlError;
 
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -56,5 +57,14 @@ pub enum QuorumValidationError {
     CommitmentHashNotPresent,
 
     #[error("Required snapshot not present {0}")]
-    RequiredSnapshotNotPresent(BlockHash)
+    RequiredSnapshotNotPresent(BlockHash),
+
+    #[error("Simplified masternode list error {0}")]
+    SMLError(SmlError),
+}
+
+impl From<SmlError> for QuorumValidationError {
+    fn from(value: SmlError) -> Self {
+        QuorumValidationError::SMLError(value)
+    }
 }
