@@ -131,7 +131,7 @@ impl MasternodeListEngine {
                 // we are going from the start
                 let block_hash = masternode_list_diff.block_hash;
 
-                let masternode_list = masternode_list_diff.try_into_with_block_hash_lookup(|block_hash| diff_end_height, self.network)?;
+                let masternode_list = masternode_list_diff.try_into_with_block_hash_lookup(|block_hash| diff_end_height.and_then(self.block_heights.get(&block_hash)), self.network)?;
 
                 let diff_end_height = match diff_end_height {
                     None => self.block_heights.get(&block_hash).ok_or(SmlError::BlockHashLookupFailed(block_hash)).cloned()?,
