@@ -112,8 +112,8 @@ impl Decodable for MnListDiff {
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct QuorumCLSigObject {
-    signature: BLSSignature,
-    index_set: Vec<u16>,
+    pub signature: BLSSignature,
+    pub index_set: Vec<u16>,
 }
 
 impl_consensus_encoding!(QuorumCLSigObject, signature, index_set);

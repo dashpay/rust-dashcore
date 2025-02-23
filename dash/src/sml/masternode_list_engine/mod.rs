@@ -20,7 +20,6 @@ use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::QuorumValidationError;
-use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
