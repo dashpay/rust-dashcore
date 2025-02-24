@@ -8,6 +8,13 @@ use crate::sml::llmq_type::LLMQType;
 
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub enum ClientDataRetrievalError {
+    #[error("Required block not present: {0}")]
+    RequiredBlockNotPresent(BlockHash),
+}
+
+#[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum QuorumValidationError {
     #[error("Required block not present: {0}")]
     RequiredBlockNotPresent(BlockHash),
@@ -70,10 +77,19 @@ pub enum QuorumValidationError {
     CorruptedCodeExecution(String),
     #[error("Expected only rotated quorums, but got quorum {0} of type {1}")]
     ExpectedOnlyRotatedQuorums(QuorumHash, LLMQType),
+
+    #[error(transparent)]
+    ClientDataRetrievalError(ClientDataRetrievalError)
 }
 
 impl From<SmlError> for QuorumValidationError {
     fn from(value: SmlError) -> Self {
         QuorumValidationError::SMLError(value)
+    }
+}
+
+impl From<ClientDataRetrievalError> for QuorumValidationError {
+    fn from(value: ClientDataRetrievalError) -> Self {
+        QuorumValidationError::ClientDataRetrievalError(value)
     }
 }

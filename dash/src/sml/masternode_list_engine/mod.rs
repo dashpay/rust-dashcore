@@ -19,7 +19,8 @@ use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
-use crate::sml::quorum_validation_error::QuorumValidationError;
+use crate::sml::quorum_validation_error::{ClientDataRetrievalError, QuorumValidationError};
+use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -82,10 +83,93 @@ impl MasternodeListEngine {
         self.block_hashes.insert(height, block_hash);
     }
 
-    pub fn feed_qr_info<FH, FS>(&mut self, qr_info: QRInfo, verify_rotated_quorums: bool,     fetch_block_heights: Option<FH>,
+    fn request_qr_info_block_heights<FH>(&mut self, qr_info: &QRInfo, fetch_block_height: &FH) -> Result<(), ClientDataRetrievalError>
+    where
+        FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError> {
+        let mn_list_diffs = [
+            &qr_info.mn_list_diff_tip,
+            &qr_info.mn_list_diff_h,
+            &qr_info.mn_list_diff_at_h_minus_c,
+            &qr_info.mn_list_diff_at_h_minus_2c,
+            &qr_info.mn_list_diff_at_h_minus_3c,
+        ];
+
+        // If h-4c exists, add it to the list
+        if let Some((_, mn_list_diff_h_minus_4c)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
+            mn_list_diffs.iter().try_for_each(|&mn_list_diff| {
+                self.request_mn_list_diff_heights(mn_list_diff, fetch_block_height)
+            })?;
+
+            // Feed h-4c separately
+            self.request_mn_list_diff_heights(mn_list_diff_h_minus_4c, fetch_block_height)?;
+        } else {
+            mn_list_diffs.iter().try_for_each(|&mn_list_diff| {
+                self.request_mn_list_diff_heights(mn_list_diff, fetch_block_height)
+            })?;
+        }
+
+        // Process `last_commitment_per_index` quorum hashes
+        qr_info.last_commitment_per_index.iter().try_for_each(|quorum_entry| {
+            self.request_quorum_entry_height(quorum_entry, fetch_block_height)
+        })?;
+
+        // Process `mn_list_diff_list` (extra diffs)
+        qr_info.mn_list_diff_list.iter().try_for_each(|mn_list_diff| {
+            self.request_mn_list_diff_heights(mn_list_diff, fetch_block_height)
+        })
+    }
+
+    /// **Helper function:** Feeds the quorum hash height of a `QuorumEntry`
+    fn request_quorum_entry_height<FH>(&mut self, quorum_entry: &QuorumEntry, fetch_block_height: &FH) -> Result<(), ClientDataRetrievalError>
+    where
+        FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError> {
+        let height = fetch_block_height(&quorum_entry.quorum_hash)?;
+        self.feed_block_height(height, quorum_entry.quorum_hash);
+        Ok(())
+    }
+
+    /// **Helper function:** Requests the base and block hash heights of an `MnListDiff`
+    fn request_mn_list_diff_heights<FH>(&mut self, mn_list_diff: &MnListDiff, fetch_block_height: &FH) -> Result<(), ClientDataRetrievalError>
+    where
+        FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError> {
+        // Feed base block hash height
+        let base_height = fetch_block_height(&mn_list_diff.base_block_hash)?;
+        self.feed_block_height(base_height, mn_list_diff.base_block_hash);
+
+        // Feed block hash height
+        let block_height = fetch_block_height(&mn_list_diff.block_hash)?;
+        self.feed_block_height(block_height, mn_list_diff.block_hash);
+        Ok(())
+    }
+
+    fn request_qr_info_cl_sigs<FS>(&mut self, qr_info: &QRInfo, fetch_chain_lock_sigs: &FS) -> Result<(), QuorumValidationError>
+    where FS: Fn(&BlockHash) -> Result<Option<BLSSignature>, ClientDataRetrievalError> {
+        let heights = self.required_cl_sig_heights(qr_info)?;
+        for height in heights {
+            let block_hash = self.block_hashes.get(&height).ok_or(QuorumValidationError::RequiredBlockHeightNotPresent(height))?;
+            let maybe_chain_lock_sig = fetch_chain_lock_sigs(block_hash)?;
+            if let Some(maybe_chain_lock_sig) = maybe_chain_lock_sig {
+                self.feed_chain_lock_sig(*block_hash, maybe_chain_lock_sig);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn feed_qr_info<FH, FS>(&mut self, qr_info: QRInfo, verify_rotated_quorums: bool,     fetch_block_height: Option<FH>,
                                 fetch_chain_lock_sigs: Option<FS>) -> Result<(), QuorumValidationError> where
-        FH: Fn(&QRInfo) -> Result<BTreeSet<u32>, QuorumValidationError>,
-        FS: Fn(u32) -> Result<(BlockHash, Option<BLSSignature>), QuorumValidationError> {
+        FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
+        FS: Fn(&BlockHash) -> Result<Option<BLSSignature>, ClientDataRetrievalError> {
+
+        // Fetch and process block heights using the provided callback
+        if let Some(fetch_height) = fetch_block_height {
+            self.request_qr_info_block_heights(&qr_info, &fetch_height)?;
+        }
+
+        // Fetch and process block heights using the provided callback
+        if let Some(fetch_chain_lock_sigs) = fetch_chain_lock_sigs {
+            self.request_qr_info_cl_sigs(&qr_info, &fetch_chain_lock_sigs)?;
+        }
+
         let QRInfo {
             quorum_snapshot_at_h_minus_c, quorum_snapshot_at_h_minus_2c, quorum_snapshot_at_h_minus_3c, mn_list_diff_tip, mn_list_diff_h, mn_list_diff_at_h_minus_c, mn_list_diff_at_h_minus_2c, mn_list_diff_at_h_minus_3c, quorum_snapshot_and_mn_list_diff_at_h_minus_4c, last_commitment_per_index, quorum_snapshot_list, mn_list_diff_list
         } = qr_info;
@@ -109,25 +193,6 @@ impl MasternodeListEngine {
         self.apply_diff(mn_list_diff_at_h_minus_c, None, false)?;
         self.apply_diff(mn_list_diff_h, None, false)?;
         self.apply_diff(mn_list_diff_tip, None, false)?;
-
-        // // Fetch and process block heights using the provided callback
-        // if let Some(fetch_heights) = fetch_block_heights {
-        //     let heights = fetch_heights(&qr_info)?;
-        //     for height in heights {
-        //         if let Some(fetch_sigs) = fetch_chain_lock_sigs {
-        //             match fetch_sigs(height) {
-        //                 Ok((block_hash, Some(chain_lock_sig))) => {
-        //                     self.feed_chain_lock_sig(block_hash, chain_lock_sig);
-        //                 }
-        //                 Ok((_, None)) => continue, // No chain lock sig available
-        //                 Err(e) => {
-        //                     self.error = Some(e.to_string());
-        //                     return Err(e);
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
 
         let qualified_last_commitment_per_index : Vec<_> = last_commitment_per_index.into_iter().map(|quorum_entry| quorum_entry.into()).collect();
         if verify_rotated_quorums {
