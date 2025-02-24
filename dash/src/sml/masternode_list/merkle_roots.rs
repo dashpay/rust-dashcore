@@ -1,7 +1,8 @@
-use hashes::{sha256d, Hash};
+use hashes::{Hash, sha256d};
+
+use crate::Transaction;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums, QuorumCommitmentHash};
 use crate::sml::masternode_list::MasternodeList;
-use crate::Transaction;
 use crate::transaction::special_transaction::TransactionPayload;
 
 /// Computes the Merkle root from a list of hashes.
@@ -27,7 +28,8 @@ pub fn merkle_root_from_hashes(hashes: Vec<[u8; 32]>) -> Option<[u8; 32]> {
         _ => {
             while level.len() != 1 {
                 let len = level.len();
-                let mut higher_level = Vec::<[u8; 32]>::with_capacity((0.5 * len as f64).ceil() as usize);
+                let mut higher_level =
+                    Vec::<[u8; 32]>::with_capacity((0.5 * len as f64).ceil() as usize);
                 for pair in level.chunks(2) {
                     let mut buffer = Vec::with_capacity(64);
                     buffer.extend_from_slice(&pair[0]);
@@ -56,7 +58,9 @@ impl MasternodeList {
     /// - `true` if the Merkle root matches.
     /// - `false` otherwise.
     pub fn has_valid_mn_list_root(&self, coinbase_transaction: &Transaction) -> bool {
-        let Some(TransactionPayload::CoinbasePayloadType(coinbase_payload)) = &coinbase_transaction.special_transaction_payload else {
+        let Some(TransactionPayload::CoinbasePayloadType(coinbase_payload)) =
+            &coinbase_transaction.special_transaction_payload
+        else {
             return false;
         };
         // we need to check that the coinbase is in the transaction hashes we got back
@@ -83,14 +87,16 @@ impl MasternodeList {
     /// - `true` if the Merkle root matches.
     /// - `false` otherwise.
     pub fn has_valid_llmq_list_root(&self, coinbase_transaction: &Transaction) -> bool {
-        let Some(TransactionPayload::CoinbasePayloadType(coinbase_payload)) = &coinbase_transaction.special_transaction_payload else {
+        let Some(TransactionPayload::CoinbasePayloadType(coinbase_payload)) =
+            &coinbase_transaction.special_transaction_payload
+        else {
             return false;
         };
 
         let q_merkle_root = self.llmq_merkle_root;
         let coinbase_merkle_root_quorums = coinbase_payload.merkle_root_quorums;
-        let has_valid_quorum_list_root = q_merkle_root.is_some()
-            && coinbase_merkle_root_quorums == q_merkle_root.unwrap();
+        let has_valid_quorum_list_root =
+            q_merkle_root.is_some() && coinbase_merkle_root_quorums == q_merkle_root.unwrap();
         if !has_valid_quorum_list_root {
             // warn!("LLMQ Merkle root not valid for DML on block {} version {} ({:?} wanted - {:?} calculated)",
             //          tx.height,
@@ -114,9 +120,13 @@ impl MasternodeList {
     ///
     /// - `Some(MerkleRootMasternodeList)`: The calculated Merkle root.
     /// - `None`: If no hashes are available for the given block height.
-    pub fn calculate_masternodes_merkle_root(&self, block_height: u32) -> Option<MerkleRootMasternodeList> {
+    pub fn calculate_masternodes_merkle_root(
+        &self,
+        block_height: u32,
+    ) -> Option<MerkleRootMasternodeList> {
         self.hashes_for_merkle_root(block_height)
-            .and_then(merkle_root_from_hashes).map(|hash| MerkleRootMasternodeList::from_byte_array(hash))
+            .and_then(merkle_root_from_hashes)
+            .map(|hash| MerkleRootMasternodeList::from_byte_array(hash))
     }
 
     /// Computes the Merkle root for the LLMQ (Long-Living Masternode Quorum) list.
@@ -129,7 +139,8 @@ impl MasternodeList {
     /// - `Some(MerkleRootQuorums)`: The calculated Merkle root.
     /// - `None`: If no quorum commitment hashes are available.
     pub fn calculate_llmq_merkle_root(&self) -> Option<MerkleRootQuorums> {
-        merkle_root_from_hashes(self.hashes_for_quorum_merkle_root()).map(|hash| MerkleRootQuorums::from_byte_array(hash))
+        merkle_root_from_hashes(self.hashes_for_quorum_merkle_root())
+            .map(|hash| MerkleRootQuorums::from_byte_array(hash))
     }
 
     /// Retrieves the list of hashes required to compute the masternode list Merkle root.
@@ -170,7 +181,8 @@ impl MasternodeList {
     ///
     /// - `Vec<[u8; 32]>`: A sorted list of quorum commitment hashes.
     pub fn hashes_for_quorum_merkle_root(&self) -> Vec<[u8; 32]> {
-        let mut llmq_commitment_hashes = self.quorums
+        let mut llmq_commitment_hashes = self
+            .quorums
             .values()
             .flat_map(|q_map| q_map.values().map(|entry| entry.entry_hash.to_byte_array()))
             .collect::<Vec<_>>();

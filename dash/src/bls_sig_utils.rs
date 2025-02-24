@@ -23,6 +23,7 @@ use bincode::{Decode, Encode};
 use blsful::{Bls12381G2Impl, Pairing};
 use hex::{FromHexError, ToHex};
 use internals::impl_array_newtype;
+
 use crate::core::fmt;
 use crate::internal_macros::impl_bytes_newtype;
 use crate::prelude::String;
@@ -35,9 +36,7 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 pub struct BLSPublicKey([u8; 48]);
 
 impl BLSPublicKey {
-    pub fn is_zeroed(&self) -> bool {
-        self.0 == [0;48]
-    }
+    pub fn is_zeroed(&self) -> bool { self.0 == [0; 48] }
 }
 
 impl_array_newtype!(BLSPublicKey, u8, 48);
@@ -47,7 +46,8 @@ impl TryFrom<BLSPublicKey> for blsful::PublicKey<Bls12381G2Impl> {
     type Error = QuorumValidationError;
 
     fn try_from(value: BLSPublicKey) -> Result<Self, Self::Error> {
-        Self::try_from(value.0.as_slice()).map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
+        Self::try_from(value.0.as_slice())
+            .map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
     }
 }
 
@@ -56,7 +56,8 @@ impl TryFrom<&BLSPublicKey> for blsful::PublicKey<Bls12381G2Impl> {
     type Error = QuorumValidationError;
 
     fn try_from(value: &BLSPublicKey) -> Result<Self, Self::Error> {
-        Self::try_from(value.0.as_slice()).map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
+        Self::try_from(value.0.as_slice())
+            .map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
     }
 }
 
@@ -93,9 +94,7 @@ impl fmt::Display for BLSPublicKey {
 pub struct BLSSignature([u8; 96]);
 
 impl BLSSignature {
-    pub fn is_zeroed(&self) -> bool {
-        self.0 == [0;96]
-    }
+    pub fn is_zeroed(&self) -> bool { self.0 == [0; 96] }
 }
 
 #[cfg(feature = "bls")]

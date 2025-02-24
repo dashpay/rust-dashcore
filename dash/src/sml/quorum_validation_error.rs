@@ -1,10 +1,11 @@
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use thiserror::Error;
-use crate::{BlockHash, QuorumHash};
+
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_type::LLMQType;
+use crate::{BlockHash, QuorumHash};
 
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -40,7 +41,9 @@ pub enum QuorumValidationError {
     #[error("Insufficient valid members: required {required}, found {found}")]
     InsufficientValidMembers { required: u64, found: u64 },
 
-    #[error("Mismatched bitset lengths: signers length {signers_len}, valid members length {valid_members_len}")]
+    #[error(
+        "Mismatched bitset lengths: signers length {signers_len}, valid members length {valid_members_len}"
+    )]
     MismatchedBitsetLengths { signers_len: usize, valid_members_len: usize },
 
     #[error("Invalid quorum public key")]
@@ -82,13 +85,11 @@ pub enum QuorumValidationError {
     ExpectedOnlyRotatedQuorums(QuorumHash, LLMQType),
 
     #[error(transparent)]
-    ClientDataRetrievalError(ClientDataRetrievalError)
+    ClientDataRetrievalError(ClientDataRetrievalError),
 }
 
 impl From<SmlError> for QuorumValidationError {
-    fn from(value: SmlError) -> Self {
-        QuorumValidationError::SMLError(value)
-    }
+    fn from(value: SmlError) -> Self { QuorumValidationError::SMLError(value) }
 }
 
 impl From<ClientDataRetrievalError> for QuorumValidationError {

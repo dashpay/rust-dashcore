@@ -28,7 +28,10 @@ use crate::consensus::{encode, serialize};
 use crate::io;
 use crate::merkle_tree::MerkleBlock;
 use crate::network::address::{AddrV2Message, Address};
-use crate::network::{message_blockdata, message_bloom, message_compact_blocks, message_filter, message_network, message_qrinfo, message_sml};
+use crate::network::{
+    message_blockdata, message_bloom, message_compact_blocks, message_filter, message_network,
+    message_qrinfo, message_sml,
+};
 use crate::prelude::*;
 
 /// The maximum number of [super::message_blockdata::Inventory] items in an `inv` message.
@@ -520,9 +523,8 @@ impl Decodable for RawNetworkMessage {
             "getqrinfo" => NetworkMessage::GetQRInfo(
                 Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
             ),
-            "qrinfo" => NetworkMessage::QRInfo(
-                Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
-            ),
+            "qrinfo" =>
+                NetworkMessage::QRInfo(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?),
             _ => NetworkMessage::Unknown { command: cmd, payload: mem_d.into_inner() },
         };
         Ok(RawNetworkMessage { magic, payload })

@@ -1,11 +1,12 @@
 use std::cmp::Ordering;
 use std::net::SocketAddr;
+
 use hashes::Hash;
-use crate::sml::masternode_list::masternode_helpers::reverse_cmp_sup;
+
 use crate::sml::masternode_list::MasternodeList;
+use crate::sml::masternode_list::masternode_helpers::reverse_cmp_sup;
 
 impl MasternodeList {
-
     /// Retrieves a list of peer addresses from the masternode list, sorted using a nonce for deterministic ordering.
     ///
     /// This function generates a sorted list of masternode addresses based on their registration transaction hashes,
@@ -26,7 +27,11 @@ impl MasternodeList {
     /// - The sorting process appends the nonce to each masternode’s transaction hash and applies a BLAKE3 hash
     ///   to determine the order.
     /// - Only valid masternodes (i.e., those marked as valid in the masternode list) are included in the output.
-    pub fn peer_addresses_with_connectivity_nonce(&self, nonce: u64, max_count: usize) -> Vec<SocketAddr> {
+    pub fn peer_addresses_with_connectivity_nonce(
+        &self,
+        nonce: u64,
+        max_count: usize,
+    ) -> Vec<SocketAddr> {
         let registration_transaction_hashes: Vec<_> = self.masternodes.keys().cloned().collect();
         let mut sorted_hashes = registration_transaction_hashes.clone();
         sorted_hashes.sort_by(|hash1, hash2| {
@@ -46,8 +51,14 @@ impl MasternodeList {
         sorted_hashes
             .into_iter()
             .take(max_count.min(self.masternodes.len()))
-            .filter_map(|hash| self.masternodes.get(&hash)
-                .and_then(|entry| entry.masternode_list_entry.is_valid.then_some(entry.masternode_list_entry.service_address.clone())))
+            .filter_map(|hash| {
+                self.masternodes.get(&hash).and_then(|entry| {
+                    entry
+                        .masternode_list_entry
+                        .is_valid
+                        .then_some(entry.masternode_list_entry.service_address.clone())
+                })
+            })
             .collect()
     }
 }

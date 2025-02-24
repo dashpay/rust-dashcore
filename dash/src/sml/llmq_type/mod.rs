@@ -1,13 +1,15 @@
+pub(crate) mod llmq_indexed_hash;
 mod network;
 pub mod rotation;
-pub(crate) mod llmq_indexed_hash;
 
 use std::fmt::{Display, Formatter};
 use std::io;
+
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use crate::consensus::{Decodable, Encodable, encode};
+
 use crate::Network;
+use crate::consensus::{Decodable, Encodable, encode};
 
 #[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]
@@ -292,17 +294,17 @@ pub const LLMQ_DEV_PLATFORM: LLMQParams = LLMQParams {
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum LLMQType {
-    LlmqtypeUnknown = 0,    // other kind of
-    Llmqtype50_60 = 1,      // 50 members,  30  (60%) threshold, 24 / day
-    Llmqtype400_60 = 2,     // 400 members, 240 (60%) threshold, 2  / day
-    Llmqtype400_85 = 3,     // 400 members, 340 (85%) threshold, 1  / day
-    Llmqtype100_67 = 4,     // 100 members, 67  (67%) threshold, 24 / day
-    Llmqtype60_75 = 5,      // 60 members,  45  (75%) threshold, 2  / day
-    Llmqtype25_67 = 6,      // 25 members,  67  (67%) threshold, 24 / day
+    LlmqtypeUnknown = 0, // other kind of
+    Llmqtype50_60 = 1,   // 50 members,  30  (60%) threshold, 24 / day
+    Llmqtype400_60 = 2,  // 400 members, 240 (60%) threshold, 2  / day
+    Llmqtype400_85 = 3,  // 400 members, 340 (85%) threshold, 1  / day
+    Llmqtype100_67 = 4,  // 100 members, 67  (67%) threshold, 24 / day
+    Llmqtype60_75 = 5,   // 60 members,  45  (75%) threshold, 2  / day
+    Llmqtype25_67 = 6,   // 25 members,  67  (67%) threshold, 24 / day
 
     // dev-only
-    LlmqtypeTest = 100,             // 3 members, 2 (66%) threshold, one per hour
-    LlmqtypeDevnet = 101,           // 10 members, 6 (60%) threshold, one per hour
+    LlmqtypeTest = 100,            // 3 members, 2 (66%) threshold, one per hour
+    LlmqtypeDevnet = 101,          // 10 members, 6 (60%) threshold, one per hour
     LlmqtypeTestV17 = 102, // 3 members, 2 (66%) threshold, one per hour. Params might differ when -llmqtestparams is used
     LlmqtypeTestDIP0024 = 103, // 4 members, 2 (66%) threshold, one per hour. Params might differ when -llmqtestparams is used
     LlmqtypeTestInstantSend = 104, // 3 members, 2 (66%) threshold, one per hour. Params might differ when -llmqtestparams is used
@@ -313,23 +315,27 @@ pub enum LLMQType {
 
 impl Display for LLMQType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            LLMQType::LlmqtypeUnknown => "0_Unknown",
-            LLMQType::Llmqtype50_60 => "1_50/60",
-            LLMQType::Llmqtype400_60 => "2_400/60",
-            LLMQType::Llmqtype400_85 => "3_400/85",
-            LLMQType::Llmqtype100_67 => "4_100/67",
-            LLMQType::Llmqtype60_75 => "5_60/75",
-            LLMQType::Llmqtype25_67 => "6_25/67",
-            LLMQType::LlmqtypeTest => "100_Test",
-            LLMQType::LlmqtypeDevnet => "101_Dev",
-            LLMQType::LlmqtypeTestV17 => "102_Test-v17",
-            LLMQType::LlmqtypeTestDIP0024 => "103_Test-dip-24",
-            LLMQType::LlmqtypeTestInstantSend => "104_Test-IS",
-            LLMQType::LlmqtypeDevnetDIP0024 => "105_Dev-dip-24",
-            LLMQType::LlmqtypeTestnetPlatform => "106_Test-Platform",
-            LLMQType::LlmqtypeDevnetPlatform => "107_Dev-Platform",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                LLMQType::LlmqtypeUnknown => "0_Unknown",
+                LLMQType::Llmqtype50_60 => "1_50/60",
+                LLMQType::Llmqtype400_60 => "2_400/60",
+                LLMQType::Llmqtype400_85 => "3_400/85",
+                LLMQType::Llmqtype100_67 => "4_100/67",
+                LLMQType::Llmqtype60_75 => "5_60/75",
+                LLMQType::Llmqtype25_67 => "6_25/67",
+                LLMQType::LlmqtypeTest => "100_Test",
+                LLMQType::LlmqtypeDevnet => "101_Dev",
+                LLMQType::LlmqtypeTestV17 => "102_Test-v17",
+                LLMQType::LlmqtypeTestDIP0024 => "103_Test-dip-24",
+                LLMQType::LlmqtypeTestInstantSend => "104_Test-IS",
+                LLMQType::LlmqtypeDevnetDIP0024 => "105_Dev-dip-24",
+                LLMQType::LlmqtypeTestnetPlatform => "106_Test-Platform",
+                LLMQType::LlmqtypeDevnetPlatform => "107_Dev-Platform",
+            }
+        )
     }
 }
 
@@ -353,17 +359,11 @@ impl LLMQType {
             LLMQType::LlmqtypeUnknown => LLMQ_DEVNET,
         }
     }
-    pub fn size(&self) -> u32 {
-        self.params().size
-    }
+    pub fn size(&self) -> u32 { self.params().size }
 
-    pub fn threshold(&self) -> u32 {
-        self.params().threshold
-    }
+    pub fn threshold(&self) -> u32 { self.params().threshold }
 
-    pub fn active_quorum_count(&self) -> u32 {
-        self.params().signing_active_quorum_count
-    }
+    pub fn active_quorum_count(&self) -> u32 { self.params().signing_active_quorum_count }
 }
 
 impl From<u8> for LLMQType {
@@ -437,32 +437,19 @@ impl Encodable for LLMQType {
 }
 
 impl Decodable for LLMQType {
-    fn consensus_decode<D: io::Read + ?Sized>(
-        mut d: &mut D,
-    ) -> Result<LLMQType, encode::Error> {
-        u8::consensus_decode(&mut d)
-            .map(LLMQType::from)
+    fn consensus_decode<D: io::Read + ?Sized>(mut d: &mut D) -> Result<LLMQType, encode::Error> {
+        u8::consensus_decode(&mut d).map(LLMQType::from)
     }
 }
 
 pub fn dkg_rotation_params(network: Network) -> DKGParams {
-    if network == Network::Devnet {
-        DKG_DEVNET_DIP_0024
-    } else {
-        DKG_60_75
-    }
+    if network == Network::Devnet { DKG_DEVNET_DIP_0024 } else { DKG_60_75 }
 }
 
 impl LLMQType {
-    pub fn index(&self) -> u8 {
-        u8::from(self.clone())
-    }
-    pub fn from_u16(index: u16) -> LLMQType {
-        LLMQType::from(index as u8)
-    }
-    pub fn from_u8(index: u8) -> LLMQType {
-        LLMQType::from(index)
-    }
+    pub fn index(&self) -> u8 { u8::from(self.clone()) }
+    pub fn from_u16(index: u16) -> LLMQType { LLMQType::from(index as u8) }
+    pub fn from_u8(index: u8) -> LLMQType { LLMQType::from(index) }
 
     pub fn is_rotating_quorum_type(&self) -> bool {
         match self {

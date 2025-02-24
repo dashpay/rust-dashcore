@@ -44,6 +44,7 @@ use core::convert::From;
 use core::fmt::Display;
 use core::str::FromStr;
 use core::{fmt, ops};
+
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::Hash;
@@ -52,8 +53,8 @@ use internals::write_err;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::constants::ChainHash;
 use crate::error::impl_std_error;
-use crate::{io, BlockHash};
 use crate::prelude::{String, ToOwned};
+use crate::{BlockHash, io};
 
 /// Version of the protocol as appearing in network message headers
 /// This constant is used to signal to other peers which features you support.
@@ -151,15 +152,24 @@ impl Network {
     pub fn known_genesis_block_hash(&self) -> Option<BlockHash> {
         match self {
             Network::Dash => {
-                let mut block_hash = hex::decode("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6").expect("expected valid hex");
+                let mut block_hash =
+                    hex::decode("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6")
+                        .expect("expected valid hex");
                 block_hash.reverse();
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            },
+            }
             Network::Testnet => {
-                let mut block_hash = hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c").expect("expected valid hex");
+                let mut block_hash =
+                    hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c")
+                        .expect("expected valid hex");
                 block_hash.reverse();
-                Some(BlockHash::from_byte_array(hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c").expect("expected valid hex").try_into().expect("expected 32 bytes")))
-            },
+                Some(BlockHash::from_byte_array(
+                    hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c")
+                        .expect("expected valid hex")
+                        .try_into()
+                        .expect("expected 32 bytes"),
+                ))
+            }
             Network::Devnet => None,
             Network::Regtest => None,
         }

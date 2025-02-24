@@ -1,6 +1,7 @@
 use bincode::{Decode, Encode};
-use crate::BlockHash;
 use thiserror::Error;
+
+use crate::BlockHash;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -23,10 +24,7 @@ pub enum SmlError {
 
     /// The base block hash in the diff does not match the expected base block hash.
     #[error("Base block hash mismatch: expected {expected}, but found {found}")]
-    BaseBlockHashMismatch {
-        expected: BlockHash,
-        found: BlockHash,
-    },
+    BaseBlockHashMismatch { expected: BlockHash, found: BlockHash },
 
     /// Error indicating an unknown issue.
     #[error("An unknown SML error occurred")]
@@ -35,7 +33,6 @@ pub enum SmlError {
     /// Error indicating something that should never happen.
     #[error("Corrupted code execution: {0}")]
     CorruptedCodeExecution(String),
-
 
     /// Error indicating that a required feature is not turned on.
     #[error("Feature not turned on: {0}")]

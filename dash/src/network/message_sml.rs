@@ -1,14 +1,15 @@
 use std::io;
+
 use hashes::sha256::Hash;
 
 use crate::bls_sig_utils::BLSSignature;
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::MerkleRootMasternodeList;
 use crate::internal_macros::impl_consensus_encoding;
+use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::{BlockHash, ProTxHash, QuorumHash, Transaction};
-use crate::consensus::{encode, Decodable, Encodable};
-use crate::sml::llmq_type::LLMQType;
 
 /// The `getmnlistd` message requests a `mnlistdiff` message that provides either:
 /// - A full masternode list (if `base_block_hash` is all-zero)

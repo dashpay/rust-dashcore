@@ -5,18 +5,12 @@ pub struct LLMQIndexedHash {
 }
 
 impl LLMQIndexedHash {
-    pub fn new(hash: [u8; 32], index: u32) -> Self {
-        LLMQIndexedHash { index, hash }
-    }
+    pub fn new(hash: [u8; 32], index: u32) -> Self { LLMQIndexedHash { index, hash } }
 }
 
 impl From<([u8; 32], usize)> for LLMQIndexedHash {
-    fn from(value: ([u8; 32], usize)) -> Self {
-        Self::new(value.0, value.1 as u32)
-    }
+    fn from(value: ([u8; 32], usize)) -> Self { Self::new(value.0, value.1 as u32) }
 }
 impl From<([u8; 32], u32)> for LLMQIndexedHash {
-    fn from(value: ([u8; 32], u32)) -> Self {
-        Self::new(value.0, value.1)
-    }
+    fn from(value: ([u8; 32], u32)) -> Self { Self::new(value.0, value.1) }
 }

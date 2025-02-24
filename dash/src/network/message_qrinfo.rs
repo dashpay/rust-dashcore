@@ -1,9 +1,11 @@
 use core::fmt::{Display, Formatter};
 use std::{fmt, io};
+
 use bincode::{Decode, Encode};
+
 use crate::BlockHash;
-use crate::consensus::{encode, Decodable, Encodable};
 use crate::consensus::encode::{read_compact_size, read_fixed_bitset, write_fixed_bitset};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::network::message_sml::MnListDiff;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
@@ -22,11 +24,7 @@ pub struct GetQRInfo {
     pub extra_share: bool,
 }
 
-impl_consensus_encoding!(GetQRInfo,
-    base_block_hashes,
-    block_request_hash,
-    extra_share
-);
+impl_consensus_encoding!(GetQRInfo, base_block_hashes, block_request_hash, extra_share);
 
 /// The `qrinfo` message sends quorum rotation information for a given block height.
 ///
@@ -139,7 +137,6 @@ impl Decodable for QRInfo {
     }
 }
 
-
 /// A snapshot of quorum-related information at a given cycle height.
 ///
 /// Fields:
@@ -153,22 +150,19 @@ impl Decodable for QRInfo {
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct QuorumSnapshot {
     pub skip_list_mode: MNSkipListMode,
-    pub active_quorum_members: Vec<bool>,   // Bitset, length = (active_quorum_members_count + 7) / 8
-    pub skip_list: Vec<u32>,           // Array of int32_t
+    pub active_quorum_members: Vec<bool>, // Bitset, length = (active_quorum_members_count + 7) / 8
+    pub skip_list: Vec<u32>,              // Array of int32_t
 }
 
 impl Display for QuorumSnapshot {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let active_members_display: String = self.active_quorum_members
+        let active_members_display: String = self
+            .active_quorum_members
             .iter()
             .map(|&member| if member { '■' } else { 'x' }) // Use `■` for true, `x` for false
             .collect();
 
-        let skip_list = self.skip_list
-            .iter()
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
+        let skip_list = self.skip_list.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
 
         write!(
             f,
@@ -178,18 +172,19 @@ impl Display for QuorumSnapshot {
     }
 }
 
-
 impl Encodable for QuorumSnapshot {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.skip_list_mode.consensus_encode(w)?;
-        len +=
-            write_fixed_bitset(w, self.active_quorum_members.as_slice(), self.active_quorum_members.iter().len())?;
+        len += write_fixed_bitset(
+            w,
+            self.active_quorum_members.as_slice(),
+            self.active_quorum_members.iter().len(),
+        )?;
         len += self.skip_list.consensus_encode(w)?;
         Ok(len)
     }
 }
-
 
 impl Decodable for QuorumSnapshot {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
@@ -204,7 +199,6 @@ impl Decodable for QuorumSnapshot {
         })
     }
 }
-
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u32)]
@@ -251,13 +245,9 @@ impl From<MNSkipListMode> for u32 {
     }
 }
 impl MNSkipListMode {
-    pub fn index(&self) -> u32 {
-        u32::from(self.clone())
-    }
+    pub fn index(&self) -> u32 { u32::from(self.clone()) }
 }
-pub fn from_index(index: u32) -> MNSkipListMode {
-    MNSkipListMode::from(index)
-}
+pub fn from_index(index: u32) -> MNSkipListMode { MNSkipListMode::from(index) }
 
 impl Display for MNSkipListMode {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -272,9 +262,7 @@ impl Display for MNSkipListMode {
 }
 
 impl Default for MNSkipListMode {
-    fn default() -> Self {
-        MNSkipListMode::NoSkipping
-    }
+    fn default() -> Self { MNSkipListMode::NoSkipping }
 }
 
 impl Encodable for MNSkipListMode {

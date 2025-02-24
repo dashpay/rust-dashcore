@@ -120,6 +120,7 @@ mod internal_macros;
 mod util;
 #[macro_use]
 pub mod serde_macros;
+mod bincode_macros;
 pub mod cmp;
 pub mod error;
 pub mod hash160;
@@ -137,7 +138,6 @@ pub mod sha256t;
 pub mod sha512;
 pub mod sha512_256;
 pub mod siphash24;
-mod bincode_macros;
 
 use core::{borrow, fmt, hash, ops};
 

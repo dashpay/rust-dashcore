@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
-use crate::{BlockHash, Network};
+
 use crate::network::message_sml::MnListDiff;
 use crate::sml::error::SmlError;
-use crate::sml::llmq_entry_verification::{LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus};
+use crate::sml::llmq_entry_verification::{
+    LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
+};
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use crate::{BlockHash, Network};
 
 pub trait TryFromWithBlockHashLookup<T>: Sized {
     type Error;
@@ -48,13 +51,16 @@ where
     }
 }
 
-
 impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
     type Error = SmlError;
 
-    fn try_from_with_block_hash_lookup<F>(diff: MnListDiff, block_hash_lookup: F, network: Network) -> Result<Self, Self::Error>
+    fn try_from_with_block_hash_lookup<F>(
+        diff: MnListDiff,
+        block_hash_lookup: F,
+        network: Network,
+    ) -> Result<Self, Self::Error>
     where
-        F: Fn(&BlockHash) -> Option<u32>
+        F: Fn(&BlockHash) -> Option<u32>,
     {
         if let Some(genesis_block_hash) = network.known_genesis_block_hash() {
             // Check if the base block is the genesis block
@@ -76,29 +82,27 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
         let masternodes = diff
             .new_masternodes
             .into_iter()
-            .map(|entry| {
-                (entry.pro_reg_tx_hash.reverse(), entry.into())
-            })
+            .map(|entry| (entry.pro_reg_tx_hash.reverse(), entry.into()))
             .collect::<BTreeMap<_, _>>();
 
-        let quorums = diff
-            .new_quorums
-            .into_iter()
-            .fold(BTreeMap::new(), |mut map, quorum| {
-                map.entry(quorum.llmq_type.into())
-                    .or_insert_with(BTreeMap::new)
-                    .insert(quorum.quorum_hash, {
-                        let entry_hash = quorum.calculate_entry_hash();
-                        let commitment_hash = quorum.calculate_commitment_hash();
-                        QualifiedQuorumEntry {
-                            quorum_entry: quorum,
-                            verified: LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::NotMarkedForVerification),
-                            commitment_hash,
-                            entry_hash,
-                        }
-                    });
-                map
-            });
+        let quorums = diff.new_quorums.into_iter().fold(BTreeMap::new(), |mut map, quorum| {
+            map.entry(quorum.llmq_type.into()).or_insert_with(BTreeMap::new).insert(
+                quorum.quorum_hash,
+                {
+                    let entry_hash = quorum.calculate_entry_hash();
+                    let commitment_hash = quorum.calculate_commitment_hash();
+                    QualifiedQuorumEntry {
+                        quorum_entry: quorum,
+                        verified: LLMQEntryVerificationStatus::Skipped(
+                            LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
+                        ),
+                        commitment_hash,
+                        entry_hash,
+                    }
+                },
+            );
+            map
+        });
 
         // Construct `MasternodeList`
         Ok(MasternodeList {

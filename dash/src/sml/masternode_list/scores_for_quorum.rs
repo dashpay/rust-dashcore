@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
-use crate::hash_types::{QuorumModifierHash, ScoreHash};
+
 use crate::Network;
+use crate::hash_types::{QuorumModifierHash, ScoreHash};
 use crate::network::message_qrinfo::QuorumSnapshot;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::MasternodeList;
@@ -16,7 +17,9 @@ impl MasternodeList {
         quorum_modifier: LLMQModifierType,
         network: Network,
     ) -> T
-    where T: FromIterator<&'a QualifiedMasternodeListEntry> {
+    where
+        T: FromIterator<&'a QualifiedMasternodeListEntry>,
+    {
         let llmq_type = quorum.quorum_entry.llmq_type;
         let hpmn_only = llmq_type == network.platform_type();
         let quorum_modifier = quorum_modifier.build_llmq_hash();
@@ -30,18 +33,18 @@ impl MasternodeList {
         quorum_modifier: LLMQModifierType,
         quorum_snapshot: &QuorumSnapshot,
         network: Network,
-    ) -> (Vec<&QualifiedMasternodeListEntry>, Vec<&QualifiedMasternodeListEntry>)
-     {
+    ) -> (Vec<&QualifiedMasternodeListEntry>, Vec<&QualifiedMasternodeListEntry>) {
         let hpmn_only = quorum_llmq_type == network.platform_type();
         let quorum_modifier = quorum_modifier.build_llmq_hash();
         let score_dictionary = self.scores_for_quorum(quorum_modifier, hpmn_only);
-         let masternode_entry_list: Vec<&QualifiedMasternodeListEntry> = score_dictionary.into_values().rev().collect();
-         let mut i = 0;
-         masternode_entry_list.into_iter().partition(|(_)| {
-                let used = quorum_snapshot.active_quorum_members.get(i).copied().unwrap_or_default();
-             i += 1;
-                used
-            })
+        let masternode_entry_list: Vec<&QualifiedMasternodeListEntry> =
+            score_dictionary.into_values().rev().collect();
+        let mut i = 0;
+        masternode_entry_list.into_iter().partition(|(_)| {
+            let used = quorum_snapshot.active_quorum_members.get(i).copied().unwrap_or_default();
+            i += 1;
+            used
+        })
     }
 
     pub fn scores_for_quorum_for_masternodes<'a, T>(
@@ -50,15 +53,23 @@ impl MasternodeList {
         hpmn_only: bool,
     ) -> BTreeMap<ScoreHash, &'a QualifiedMasternodeListEntry>
     where
-        T: IntoIterator<Item = &'a QualifiedMasternodeListEntry> {
-        entries.into_iter().filter_map(|entry| {
-            if !hpmn_only || matches!(entry.masternode_list_entry.mn_type, MasternodeType::HighPerformance{..}) {
-                entry.score(quorum_modifier)
-                    .map(|score| (score, entry))
-            } else {
-                None
-            }
-        }).collect()
+        T: IntoIterator<Item = &'a QualifiedMasternodeListEntry>,
+    {
+        entries
+            .into_iter()
+            .filter_map(|entry| {
+                if !hpmn_only
+                    || matches!(
+                        entry.masternode_list_entry.mn_type,
+                        MasternodeType::HighPerformance { .. }
+                    )
+                {
+                    entry.score(quorum_modifier).map(|score| (score, entry))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub fn scores_for_quorum(
@@ -66,6 +77,10 @@ impl MasternodeList {
         quorum_modifier: QuorumModifierHash,
         hpmn_only: bool,
     ) -> BTreeMap<ScoreHash, &QualifiedMasternodeListEntry> {
-        Self::scores_for_quorum_for_masternodes(self.masternodes.values(), quorum_modifier, hpmn_only)
+        Self::scores_for_quorum_for_masternodes(
+            self.masternodes.values(),
+            quorum_modifier,
+            hpmn_only,
+        )
     }
 }

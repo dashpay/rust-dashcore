@@ -18,8 +18,10 @@
 //!
 
 use std::io::{Read, Write};
+
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
+
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::consensus::encode::{
     compact_size_len, fixed_bitset_len, read_compact_size, read_fixed_bitset, write_compact_size,
@@ -27,8 +29,8 @@ use crate::consensus::encode::{
 };
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{QuorumHash, QuorumVVecHash};
-use crate::prelude::*;
 use crate::io;
+use crate::prelude::*;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
@@ -71,7 +73,8 @@ impl QuorumEntry {
 
         // Count set bits in signers and valid_members bitvectors
         let signers_bitset_true_bits_count = self.signers.iter().filter(|&&b| b).count() as u64;
-        let valid_members_bitset_true_bits_count = self.valid_members.iter().filter(|&&b| b).count() as u64;
+        let valid_members_bitset_true_bits_count =
+            self.valid_members.iter().filter(|&&b| b).count() as u64;
 
         // Ensure signers meet the quorum threshold
         if signers_bitset_true_bits_count < quorum_threshold {

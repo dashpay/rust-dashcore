@@ -1,8 +1,11 @@
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::Hash;
+
 use crate::hash_types::{QuorumCommitmentHash, QuorumEntryHash};
-use crate::sml::llmq_entry_verification::{LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus};
+use crate::sml::llmq_entry_verification::{
+    LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
+};
 use crate::sml::quorum_validation_error::QuorumValidationError;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
@@ -31,7 +34,9 @@ impl From<QuorumEntry> for QualifiedQuorumEntry {
         let entry_hash = value.calculate_entry_hash();
         QualifiedQuorumEntry {
             quorum_entry: value,
-            verified: LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::NotMarkedForVerification), // Default to unverified
+            verified: LLMQEntryVerificationStatus::Skipped(
+                LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
+            ), // Default to unverified
             commitment_hash,
             entry_hash,
         }
@@ -53,10 +58,14 @@ impl QualifiedQuorumEntry {
     pub fn update_quorum_status(&mut self, result: Result<(), QuorumValidationError>) {
         match result {
             Err(QuorumValidationError::RequiredBlockNotPresent(block_hash)) => {
-                self.verified = LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash.to_byte_array()));
+                self.verified = LLMQEntryVerificationStatus::Skipped(
+                    LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash.to_byte_array()),
+                );
             }
             Err(QuorumValidationError::RequiredMasternodeListNotPresent(block_height)) => {
-                self.verified = LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(block_height));
+                self.verified = LLMQEntryVerificationStatus::Skipped(
+                    LLMQEntryVerificationSkipStatus::MissedList(block_height),
+                );
             }
             Err(e) => {
                 self.verified = LLMQEntryVerificationStatus::Invalid(e);

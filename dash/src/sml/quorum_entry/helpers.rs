@@ -1,7 +1,8 @@
-use hashes::{sha256d, Hash};
+use hashes::{Hash, sha256d};
+
+use crate::VarInt;
 use crate::consensus::Encodable;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
-use crate::VarInt;
 
 impl QualifiedQuorumEntry {
     /// Computes a unique ordering hash based on the quorum and a given request ID.
