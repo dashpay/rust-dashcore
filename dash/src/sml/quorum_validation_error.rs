@@ -1,9 +1,10 @@
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use thiserror::Error;
-use crate::BlockHash;
+use crate::{BlockHash, QuorumHash};
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
+use crate::sml::llmq_type::LLMQType;
 
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -61,6 +62,14 @@ pub enum QuorumValidationError {
 
     #[error("Simplified masternode list error {0}")]
     SMLError(SmlError),
+
+    #[error("Required quorum index not present for quorum hash: {0}")]
+    RequiredQuorumIndexNotPresent(QuorumHash),
+
+    #[error("Corrupted code execution: {0}")]
+    CorruptedCodeExecution(String),
+    #[error("Expected only rotated quorums, but got quorum {0} of type {1}")]
+    ExpectedOnlyRotatedQuorums(QuorumHash, LLMQType),
 }
 
 impl From<SmlError> for QuorumValidationError {

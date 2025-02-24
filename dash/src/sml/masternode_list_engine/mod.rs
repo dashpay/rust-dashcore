@@ -129,16 +129,15 @@ impl MasternodeListEngine {
         //     }
         // }
 
+        let qualified_last_commitment_per_index : Vec<_> = last_commitment_per_index.into_iter().map(|quorum_entry| quorum_entry.into()).collect();
         if verify_rotated_quorums {
-            for rotated_quorum in last_commitment_per_index {
-                let mut qualified = rotated_quorum.into();
-                self.validate_and_update_quorum_status(&mut qualified);
-                self.last_commitment_entries.push(qualified);
+            let validation_statuses = self.validate_rotation_cycle_quorums_validation_statuses(qualified_last_commitment_per_index.as_slice());
+            for mut rotated_quorum in qualified_last_commitment_per_index {
+                rotated_quorum.verified = validation_statuses.get(&rotated_quorum.quorum_entry.quorum_hash).cloned().unwrap_or_default();
+                self.last_commitment_entries.push(rotated_quorum);
             }
         } else {
-            for quorum in last_commitment_per_index {
-                self.last_commitment_entries.push(quorum.into());
-            }
+            self.last_commitment_entries = qualified_last_commitment_per_index;
         }
         Ok(())
     }
@@ -315,7 +314,7 @@ mod tests {
     // }
 
     #[test]
-    fn deserialize_mn_list_engine_and_validate_rotated_quorums() {
+    fn deserialize_mn_list_engine_and_validate_rotated_quorums_individually() {
         let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
         let data = hex::decode(block_hex).expect("decode hex");
         let mut mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
@@ -327,6 +326,19 @@ mod tests {
         for (i, quorum) in mn_list_engine.last_commitment_entries.iter().enumerate() {
             mn_list_engine.validate_quorum(quorum).expect(format!("expected to validate quorum {}", i).as_str());
         }
+    }
+
+    #[test]
+    fn deserialize_mn_list_engine_and_validate_rotated_quorums_collectively() {
+        let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mut mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
+
+        assert_eq!(mn_list_engine.masternode_lists.len(), 27);
+
+        // height 2227678
+
+        mn_list_engine.validate_rotation_cycle_quorums(mn_list_engine.last_commitment_entries.as_slice()).expect("expected to validated quorums");
     }
 
     // #[test]

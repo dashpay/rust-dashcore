@@ -24,9 +24,10 @@ impl Display for LLMQEntryVerificationSkipStatus {
     }
 }
 
-#[derive(Clone, Ord, PartialOrd, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Ord, PartialOrd, PartialEq, Eq, Hash, Debug, Default)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum LLMQEntryVerificationStatus {
+    #[default]
     Unknown,
     Verified,
     Skipped(LLMQEntryVerificationSkipStatus),

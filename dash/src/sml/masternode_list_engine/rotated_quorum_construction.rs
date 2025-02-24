@@ -1,7 +1,8 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use crate::hash_types::QuorumModifierHash;
 use crate::network::message_qrinfo::{MNSkipListMode, QRInfo};
 use crate::prelude::CoreBlockHeight;
+use crate::QuorumHash;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::llmq_type::rotation::{LLMQQuarterReconstructionType, LLMQQuarterUsageType};
 use crate::sml::masternode_list_engine::MasternodeListEngine;
@@ -31,11 +32,45 @@ impl MasternodeListEngine {
             return Err(QuorumValidationError::RequiredBlockNotPresent(quorum.quorum_entry.quorum_hash));
         };
         let llmq_type = quorum.quorum_entry.llmq_type;
-        let quorum_index = quorum_block_height % llmq_type.params().dkg_params.interval;
-        let cycle_base_height = quorum_block_height - quorum_index;
-        let rotated_members = self.masternode_list_entry_members_for_rotated_quorum(llmq_type, cycle_base_height)?.into_iter().flatten().collect();
+        let Some(quorum_index) = quorum.quorum_entry.quorum_index else {
+            return Err(QuorumValidationError::RequiredQuorumIndexNotPresent(quorum.quorum_entry.quorum_hash));
+        };
+        let cycle_base_height = quorum_block_height - quorum_index as u32;
+        let rotated_members = self.masternode_list_entry_members_for_rotated_quorum(llmq_type, cycle_base_height)?.get(quorum_index as usize).ok_or(QuorumValidationError::CorruptedCodeExecution(format!("expected masternode list entry members for {}", quorum_index)))?.clone();
 
         Ok(rotated_members)
+    }
+
+    pub(in crate::sml::masternode_list_engine) fn find_rotated_masternodes_for_quorums<'a>(
+        &'a self,
+        quorums: &'a[QualifiedQuorumEntry],
+    ) -> Result<BTreeMap<QuorumHash, Vec<&'a QualifiedMasternodeListEntry>>, QuorumValidationError> {
+        let mut return_btree_map = BTreeMap::new();
+        let mut cycles : BTreeMap<CoreBlockHeight, Vec<Vec<&QualifiedMasternodeListEntry>>> = BTreeMap::new();
+        for quorum in quorums {
+            let Some(quorum_block_height) = self.block_heights.get(&quorum.quorum_entry.quorum_hash) else {
+                return Err(QuorumValidationError::RequiredBlockNotPresent(quorum.quorum_entry.quorum_hash));
+            };
+            let llmq_type = quorum.quorum_entry.llmq_type;
+            let Some(quorum_index) = quorum.quorum_entry.quorum_index else {
+                return Err(QuorumValidationError::RequiredQuorumIndexNotPresent(quorum.quorum_entry.quorum_hash));
+            };
+            let cycle_base_height = quorum_block_height - quorum_index as u32;
+            // Check if we already have the masternode list entries for this cycle base height
+            let masternode_list_entries_by_index = if let Some(entries) = cycles.get(&cycle_base_height) {
+                entries
+            } else {
+                // Fetch the masternode list entries
+                let new_entries = self.masternode_list_entry_members_for_rotated_quorum(llmq_type, cycle_base_height)?;
+                cycles.insert(cycle_base_height, new_entries);
+                cycles.get(&cycle_base_height).expect("Entry must exist")
+            };
+
+            let masternode_list_entries = masternode_list_entries_by_index.get(quorum_index as usize).ok_or(QuorumValidationError::CorruptedCodeExecution(format!("expected masternode list entry members for {}", quorum_index)))?.clone();
+            return_btree_map.insert(quorum.quorum_entry.quorum_hash, masternode_list_entries);
+        }
+
+        Ok(return_btree_map)
     }
 
     /// Determines the required block heights for ChainLock signatures based on the provided `QRInfo`.
@@ -99,14 +134,13 @@ impl MasternodeListEngine {
             Vec::<Vec<&QualifiedMasternodeListEntry>>::with_capacity(num_quorums);
 
         (0..num_quorums).for_each(|index| {
-            println!("members for quorum index {}:", index);
             // println!("quarter 0 (-3c):");
             Self::add_quorum_members_from_quarter(&mut quorum_members, &q_h_m_3c, index);
             // println!("quarter 1 (-2c):");
             Self::add_quorum_members_from_quarter(&mut quorum_members, &q_h_m_2c, index);
             // println!("quarter 2 (-c):");
             Self::add_quorum_members_from_quarter(&mut quorum_members, &q_h_m_c, index);
-            println!("quarter 3:");
+            // println!("quarter 3:");
             Self::add_quorum_members_from_quarter(&mut quorum_members, &last_quarter, index);
         });
         Ok(quorum_members)
@@ -126,9 +160,6 @@ impl MasternodeListEngine {
         index: usize,
     ) {
         if let Some(indexed_quarter) = quarter.get(index) {
-            for member in indexed_quarter.iter() {
-                println!("{}",member.masternode_list_entry.pro_reg_tx_hash.reverse());
-            }
             quorum_members.resize_with(index + 1, Vec::new);
             quorum_members[index].extend(indexed_quarter);
         }
@@ -164,9 +195,9 @@ impl MasternodeListEngine {
         let quarter_size = quorum_size / 4;
         let quorum_modifier_type = LLMQModifierType::new_quorum_modifier_type(llmq_type, *work_block_hash, work_block_height, &self.known_chain_locks, self.network)?;
         let quorum_modifier = quorum_modifier_type.build_llmq_hash();
-        println!("quorum modifier is {}", quorum_modifier);
-        println!("work block height is {}", work_block_height);
-        println!("work block hash is {}", work_block_hash);
+        // println!("quorum modifier is {}", quorum_modifier);
+        // println!("work block height is {}", work_block_height);
+        // println!("work block hash is {}", work_block_hash);
         match reconstruction_type {
             LLMQQuarterReconstructionType::New { previous_quarters } => {
                 let (used_masternodes, unused_masternodes, used_indexed_masternodes) =
@@ -212,13 +243,13 @@ impl MasternodeListEngine {
         let sorted_unused_mns_list = MasternodeList::scores_for_quorum_for_masternodes(
             unused_at_h_masternodes,
             quorum_modifier, false);
-        if matches!(skip_type, LLMQQuarterUsageType::New(_)) {
-            let used_masternodes_string = sorted_used_mns_list.values().rev().map(|m| m.masternode_list_entry.pro_reg_tx_hash.reverse().to_string().split_at(4).0.to_string()).collect::<Vec<_>>().join("|");
-            let unused_masternodes_string = sorted_unused_mns_list.values().rev().map(|m| m.masternode_list_entry.pro_reg_tx_hash.reverse().to_string().split_at(4).0.to_string()).collect::<Vec<_>>().join("|");
-
-            println!("used masternodes [{}]", used_masternodes_string);
-            println!("unused masternodes [{}]", unused_masternodes_string);
-        }
+        // if matches!(skip_type, LLMQQuarterUsageType::New(_)) {
+        //     let used_masternodes_string = sorted_used_mns_list.values().rev().map(|m| m.masternode_list_entry.pro_reg_tx_hash.reverse().to_string().split_at(4).0.to_string()).collect::<Vec<_>>().join("|");
+        //     let unused_masternodes_string = sorted_unused_mns_list.values().rev().map(|m| m.masternode_list_entry.pro_reg_tx_hash.reverse().to_string().split_at(4).0.to_string()).collect::<Vec<_>>().join("|");
+        //
+        //     println!("used masternodes [{}]", used_masternodes_string);
+        //     println!("unused masternodes [{}]", unused_masternodes_string);
+        // }
         let sorted_combined_mns_list = Vec::from_iter(sorted_unused_mns_list.into_values().rev().chain(sorted_used_mns_list.into_values().rev()));
         match skip_type {
             LLMQQuarterUsageType::Snapshot(snapshot) => {
