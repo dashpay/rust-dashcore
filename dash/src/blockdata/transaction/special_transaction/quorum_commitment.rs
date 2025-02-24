@@ -217,8 +217,10 @@ mod tests {
     use hashes::Hash;
 
     use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
-    use crate::consensus::Encodable;
+    use crate::consensus::{Encodable, deserialize, serialize};
     use crate::hash_types::{QuorumHash, QuorumVVecHash};
+    use crate::network::message::{NetworkMessage, RawNetworkMessage};
+    use crate::network::message_sml::MnListDiff;
     use crate::sml::llmq_type::LLMQType;
     use crate::transaction::special_transaction::quorum_commitment::{
         QuorumCommitmentPayload, QuorumEntry,
@@ -269,6 +271,20 @@ mod tests {
             let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
             assert_eq!(payload.size(), want);
             assert_eq!(actual, want);
+        }
+    }
+
+    #[test]
+    fn deserialize_serialize_mn_list_diff() {
+        let block_hex = include_str!("../../../../tests/data/test_DML_diffs/DML_0_2221605.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mn_list_diff: RawNetworkMessage = deserialize(&data).expect("deserialize MnListDiff");
+        if let NetworkMessage::MnListDiff(diff) = mn_list_diff.payload {
+            let quorum = diff.new_quorums.first().expect("expected a quorum");
+            let serialized = serialize(&quorum);
+            let deserialized: QuorumEntry =
+                deserialize(serialized.as_slice()).expect("expected to deserialize");
+            assert_eq!(quorum, &deserialized);
         }
     }
 }

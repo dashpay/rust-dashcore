@@ -145,8 +145,9 @@ mod tests {
 
     use assert_matches::assert_matches;
 
-    use crate::consensus::deserialize;
+    use crate::consensus::{deserialize, serialize};
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
+    use crate::network::message_sml::MnListDiff;
 
     fn read_binary_file(filename: &str) -> io::Result<Vec<u8>> {
         let mut file = File::open(filename)?;
@@ -162,5 +163,17 @@ mod tests {
         let mn_list_diff: RawNetworkMessage = deserialize(&data).expect("deserialize MnListDiff");
 
         assert_matches!(mn_list_diff, RawNetworkMessage { magic, payload: NetworkMessage::MnListDiff(_) } if magic == 3177909439);
+    }
+
+    #[test]
+    fn deserialize_serialize_mn_list_diff() {
+        let block_hex = include_str!("../../tests/data/test_DML_diffs/DML_0_2221605.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mn_list_diff: RawNetworkMessage = deserialize(&data).expect("deserialize MnListDiff");
+        if let NetworkMessage::MnListDiff(diff) = mn_list_diff.payload {
+            let serialized = serialize(&diff);
+            let deserialized: MnListDiff =
+                deserialize(serialized.as_slice()).expect("expected to deserialize");
+        }
     }
 }

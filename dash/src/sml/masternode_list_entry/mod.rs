@@ -28,12 +28,12 @@ impl Encodable for MasternodeType {
         match self {
             MasternodeType::Regular => {
                 // Write variant tag 0 for Regular
-                len += 0u8.consensus_encode(writer)?;
+                len += 0u16.consensus_encode(writer)?;
             }
             MasternodeType::HighPerformance { platform_http_port, platform_node_id } => {
                 // Write variant tag 1 for HighPerformance,
                 // then the u16 port and the PubkeyHash
-                len += 1u8.consensus_encode(writer)?;
+                len += 1u16.consensus_encode(writer)?;
                 len += platform_http_port.consensus_encode(writer)?;
                 len += platform_node_id.consensus_encode(writer)?;
             }
@@ -105,12 +105,18 @@ impl Encodable for MasternodeListEntry {
         let mut len = 0;
         len += self.version.consensus_encode(writer)?;
         len += self.pro_reg_tx_hash.consensus_encode(writer)?;
-        len += self.confirmed_hash.unwrap_or_default().consensus_encode(writer)?;
+        if let Some(confirmed_hash) = self.confirmed_hash {
+            len += confirmed_hash.consensus_encode(writer)?;
+        } else {
+            len += [0; 32].consensus_encode(writer)?;
+        }
         len += self.service_address.consensus_encode(writer)?;
         len += self.operator_public_key.consensus_encode(writer)?;
         len += self.key_id_voting.consensus_encode(writer)?;
         len += self.is_valid.consensus_encode(writer)?;
-        len += self.mn_type.consensus_encode(writer)?;
+        if self.version >= 2 {
+            len += self.mn_type.consensus_encode(writer)?;
+        }
         Ok(len)
     }
 }

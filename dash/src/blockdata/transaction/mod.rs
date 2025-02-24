@@ -913,6 +913,8 @@ mod tests {
     use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
     use crate::consensus::encode::{deserialize, serialize};
     use crate::internal_macros::hex;
+    use crate::network::message::{NetworkMessage, RawNetworkMessage};
+    use crate::network::message_sml::MnListDiff;
 
     #[test]
     fn test_is_coinbase() {
@@ -1254,6 +1256,18 @@ mod tests {
 
         assert_eq!(data.len(), 20);
         assert_eq!(&data, &pk_data.as_slice());
+    }
+
+    #[test]
+    fn deserialize_serialize_coinbase_transaction_in_dml() {
+        let block_hex = include_str!("../../../tests/data/test_DML_diffs/DML_0_2221605.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mn_list_diff: RawNetworkMessage = deserialize(&data).expect("deserialize MnListDiff");
+        if let NetworkMessage::MnListDiff(diff) = mn_list_diff.payload {
+            let serialized = serialize(&diff.coinbase_tx);
+            let deserialized: Transaction =
+                deserialize(serialized.as_slice()).expect("expected to deserialize");
+        }
     }
 }
 
