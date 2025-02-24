@@ -108,7 +108,7 @@ impl Decodable for QRInfo {
         // Decode extra_share.
         let extra_share: bool = Decodable::consensus_decode(r)?;
         // If extra_share is true, then decode the optional fields.
-        let (quorum_snapshot_and_mn_list_diff_at_h_minus_4c) = if extra_share {
+        let quorum_snapshot_and_mn_list_diff_at_h_minus_4c = if extra_share {
             let qs4c = QuorumSnapshot::consensus_decode(r)?;
             let mnd4c = MnListDiff::consensus_decode(r)?;
             Some((qs4c, mnd4c))
@@ -148,6 +148,8 @@ impl Decodable for QRInfo {
 /// - `mn_skip_list`: An array of 4-byte signed integers, one per skip list entry.
 #[derive(PartialEq, Eq, Clone, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct QuorumSnapshot {
     pub skip_list_mode: MNSkipListMode,
     pub active_quorum_members: Vec<bool>, // Bitset, length = (active_quorum_members_count + 7) / 8
@@ -203,6 +205,8 @@ impl Decodable for QuorumSnapshot {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u32)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub enum MNSkipListMode {
     /// Mode 0: No skipping – the skip list is empty.
     NoSkipping = 0,

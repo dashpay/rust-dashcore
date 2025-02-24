@@ -89,7 +89,7 @@ fn from_engine<T: Tag>(e: sha256::HashEngine) -> Hash<T> {
 /// The syntax is:
 ///
 /// ```
-/// # use dashcore_hashes::sha256t_hash_newtype;
+/// # use dashcore_hashes::{sha256t_hash_newtype, Hash};
 /// sha256t_hash_newtype! {
 ///     /// Optional documentation details here.
 ///     /// Summary is always generated.

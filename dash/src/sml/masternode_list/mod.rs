@@ -22,6 +22,8 @@ use crate::{BlockHash, ProTxHash, QuorumHash};
 
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct MasternodeList {
     pub block_hash: BlockHash,
     pub known_height: u32,

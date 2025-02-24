@@ -40,7 +40,7 @@ impl MasternodeList {
         let masternode_entry_list: Vec<&QualifiedMasternodeListEntry> =
             score_dictionary.into_values().rev().collect();
         let mut i = 0;
-        masternode_entry_list.into_iter().partition(|(_)| {
+        masternode_entry_list.into_iter().partition(|_| {
             let used = quorum_snapshot.active_quorum_members.get(i).copied().unwrap_or_default();
             i += 1;
             used

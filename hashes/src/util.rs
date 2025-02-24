@@ -112,7 +112,8 @@ macro_rules! engine_input_impl(
 /// The syntax is similar to the usual tuple struct syntax:
 ///
 /// ```
-/// # use dashcore_hashes::{hash_newtype, sha256};
+/// # use dashcore_hashes::{hash_newtype, sha256, Hash};
+///
 /// hash_newtype! {
 ///     /// Hash of `Foo`.
 ///     pub struct MyNewtype(pub sha256::Hash);
@@ -126,7 +127,8 @@ macro_rules! engine_input_impl(
 /// override it like this:
 ///
 /// ```
-/// # use dashcore_hashes::{hash_newtype, sha256};
+/// # use dashcore_hashes::{hash_newtype, sha256, Hash};
+///
 /// hash_newtype! {
 ///     #[hash_newtype(backward)]
 ///     struct MyNewtype(sha256::Hash);
@@ -144,7 +146,7 @@ macro_rules! engine_input_impl(
 /// You can also define multiple newtypes within one macro call:
 ///
 /// ```
-/// # use dashcore_hashes::{hash_newtype, sha256, hash160};
+/// # use dashcore_hashes::{hash_newtype, sha256, hash160, Hash};
 ///
 /// hash_newtype! {
 ///     /// My custom type 1

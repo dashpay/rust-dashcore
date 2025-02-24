@@ -12,6 +12,8 @@ use crate::sml::masternode_list_entry::MasternodeListEntry;
 /// recompute them.
 #[derive(Clone, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct QualifiedMasternodeListEntry {
     /// The underlying masternode list entry
     pub masternode_list_entry: MasternodeListEntry,
