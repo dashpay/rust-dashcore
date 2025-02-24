@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use crate::hash_types::QuorumModifierHash;
-use crate::network::message_qrinfo::MNSkipListMode;
+use crate::network::message_qrinfo::{MNSkipListMode, QRInfo};
 use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_type::LLMQParams;
 use crate::sml::llmq_type::rotation::{LLMQQuarterReconstructionType, LLMQQuarterUsageType};
@@ -34,13 +34,13 @@ impl MasternodeListEngine {
         Ok(rotated_members)
     }
 
-    pub fn required_cl_sig_heights(&self) -> Result<BTreeSet<u32>, QuorumValidationError> {
+    pub fn required_cl_sig_heights(&self, qrinfo: &QRInfo) -> Result<BTreeSet<u32>, QuorumValidationError> {
         let mut required_heights = BTreeSet::new();
-        for quorum in &self.last_commitment_entries {
-            let Some(quorum_block_height) = self.block_heights.get(&quorum.quorum_entry.quorum_hash) else {
-                return Err(QuorumValidationError::RequiredBlockNotPresent(quorum.quorum_entry.quorum_hash));
+        for quorum in &qrinfo.last_commitment_per_index {
+            let Some(quorum_block_height) = self.block_heights.get(&quorum.quorum_hash) else {
+                return Err(QuorumValidationError::RequiredBlockNotPresent(quorum.quorum_hash));
             };
-            let llmq_params = quorum.quorum_entry.llmq_type.params();
+            let llmq_params = quorum.llmq_type.params();
             let quorum_index = quorum_block_height % llmq_params.dkg_params.interval;
             let cycle_base_height = quorum_block_height - quorum_index;
             let cycle_length = llmq_params.dkg_params.interval;
