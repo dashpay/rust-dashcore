@@ -415,7 +415,6 @@ impl MasternodeListEngine {
 
 #[cfg(test)]
 mod tests {
-    use alloc::fmt::format;
 
     use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
     use crate::sml::llmq_type::LLMQType;
@@ -532,7 +531,7 @@ mod tests {
 
         assert_eq!(mn_list_engine.masternode_lists.len(), 27);
 
-        // height 2227678
+        // height 2228036
 
         for (i, quorum) in mn_list_engine.last_commitment_entries.iter().enumerate() {
             mn_list_engine
@@ -553,7 +552,7 @@ mod tests {
 
         assert_eq!(mn_list_engine.masternode_lists.len(), 27);
 
-        // height 2227678
+        // height 2228036
 
         mn_list_engine
             .validate_rotation_cycle_quorums(mn_list_engine.last_commitment_entries.as_slice())
