@@ -1,6 +1,7 @@
 use core::fmt::{Display, Formatter};
 use std::{fmt, io};
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
 use crate::BlockHash;

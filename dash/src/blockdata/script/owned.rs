@@ -4,6 +4,7 @@
 #[cfg(doc)]
 use core::ops::Deref;
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::hex;
 use secp256k1::{Secp256k1, Verification};

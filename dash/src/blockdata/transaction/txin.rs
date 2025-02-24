@@ -20,6 +20,7 @@
 //! A TxIn is an input to a transaction.
 //!
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
 use crate::blockdata::script::ScriptBuf;

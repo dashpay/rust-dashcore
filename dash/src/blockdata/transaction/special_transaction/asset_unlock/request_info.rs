@@ -20,6 +20,7 @@
 
 use std::mem::size_of;
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
 use crate::consensus::{Decodable, Encodable, encode};

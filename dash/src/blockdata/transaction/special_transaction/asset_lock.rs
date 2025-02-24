@@ -22,6 +22,7 @@
 //!
 //! The special transaction type used for AssetLockTx Transactions is 8.
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
 use crate::consensus::{Decodable, Encodable, encode};

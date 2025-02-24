@@ -18,6 +18,7 @@
 //! It is defined in DIP4 [dip-0004](https://github.com/dashpay/dips/blob/master/dip-0004.md).
 //!
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
 use crate::bls_sig_utils::BLSSignature;

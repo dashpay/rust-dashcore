@@ -24,6 +24,7 @@ use core::fmt;
 #[cfg(feature = "std")]
 use std::error;
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::{self, Hash};
 

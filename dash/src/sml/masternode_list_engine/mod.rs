@@ -269,8 +269,11 @@ impl MasternodeListEngine {
         self.apply_diff(mn_list_diff_h, None, false)?;
         self.apply_diff(mn_list_diff_tip, None, false)?;
 
-        let qualified_last_commitment_per_index: Vec<_> =
-            last_commitment_per_index.into_iter().map(|quorum_entry| quorum_entry.into()).collect();
+        let qualified_last_commitment_per_index = last_commitment_per_index
+            .into_iter()
+            .map(|quorum_entry| quorum_entry.into())
+            .collect::<Vec<QualifiedQuorumEntry>>();
+        #[cfg(feature = "quorum_validation")]
         if verify_rotated_quorums {
             let validation_statuses = self.validate_rotation_cycle_quorums_validation_statuses(
                 qualified_last_commitment_per_index.as_slice(),
@@ -284,6 +287,12 @@ impl MasternodeListEngine {
             }
         } else {
             self.last_commitment_entries = qualified_last_commitment_per_index;
+        }
+        #[cfg(not(feature = "quorum_validation"))]
+        if verify_rotated_quorums {
+            return Err(QuorumValidationError::FeatureNotTurnedOn(
+                "quorum validation feature is not turned on".to_string(),
+            ));
         }
         Ok(())
     }

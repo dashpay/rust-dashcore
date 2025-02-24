@@ -29,6 +29,7 @@
 //!
 //! The special transaction type used for ProUpRegTx Transactions is 3.
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::Hash;
 

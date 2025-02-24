@@ -20,6 +20,7 @@
 //! A TxOut is an output of a transaction.
 //!
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
 use crate::internal_macros::impl_consensus_encoding;

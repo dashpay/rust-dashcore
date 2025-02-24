@@ -23,6 +23,7 @@
 use core::convert::TryFrom;
 use core::fmt::{Debug, Display, Formatter};
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
 use crate::blockdata::transaction::special_transaction::TransactionPayload::{

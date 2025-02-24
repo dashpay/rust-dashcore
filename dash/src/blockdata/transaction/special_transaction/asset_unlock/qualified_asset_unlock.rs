@@ -22,6 +22,7 @@
 //!
 //! The special transaction type used for CrWithTx Transactions is 9.
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::Hash;
 

@@ -8,6 +8,7 @@
 use core::convert::TryInto;
 use core::ops::Index;
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use secp256k1::ecdsa;
 

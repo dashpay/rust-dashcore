@@ -1,7 +1,7 @@
 use std::io;
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::sha256::Hash;
 
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::{Decodable, Encodable, encode};

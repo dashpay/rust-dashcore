@@ -22,6 +22,7 @@
 //!
 //! The special transaction type used for AssetUnlockTx Transactions is 9.
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
 use crate::blockdata::transaction::special_transaction::TransactionType;

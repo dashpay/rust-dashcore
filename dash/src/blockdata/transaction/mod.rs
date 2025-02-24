@@ -34,6 +34,7 @@ pub mod txout;
 
 use core::default::Default;
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::{Hash, sha256d};
 

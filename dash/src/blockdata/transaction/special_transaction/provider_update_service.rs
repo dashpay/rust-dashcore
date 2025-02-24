@@ -34,6 +34,7 @@
 //!
 //! The special transaction type used for ProUpServTx Transactions is 2.
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::Hash;
 

@@ -36,6 +36,7 @@
 
 //! The special transaction type used for Provider Update Revoking Transactions is 4.
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::Hash;
 

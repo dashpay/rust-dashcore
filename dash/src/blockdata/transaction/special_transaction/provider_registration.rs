@@ -34,6 +34,7 @@
 //! KeyIdVoting (renamed to voting_key_hash): This is the public key ID used for proposal voting.
 //! Votes signed with this key are valid while the masternode is in the registered set.
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::Hash;
 use internals::hex::Case::Lower;

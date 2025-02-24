@@ -1,3 +1,4 @@
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use thiserror::Error;
 

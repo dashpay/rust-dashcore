@@ -90,6 +90,10 @@ pub enum QuorumValidationError {
 
     #[error(transparent)]
     ClientDataRetrievalError(ClientDataRetrievalError),
+
+    /// Error indicating that a required feature is not turned on.
+    #[error("Feature not turned on: {0}")]
+    FeatureNotTurnedOn(String),
 }
 
 impl From<SmlError> for QuorumValidationError {
