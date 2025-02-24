@@ -82,10 +82,13 @@ impl MasternodeListEngine {
         self.block_hashes.insert(height, block_hash);
     }
 
-    pub fn feed_qr_info(&mut self, qrinfo: QRInfo, verify_rotated_quorums: bool) -> Result<(), QuorumValidationError> {
+    pub fn feed_qr_info<FH, FS>(&mut self, qr_info: QRInfo, verify_rotated_quorums: bool,     fetch_block_heights: Option<FH>,
+                                fetch_chain_lock_sigs: Option<FS>) -> Result<(), QuorumValidationError> where
+        FH: Fn(&QRInfo) -> Result<BTreeSet<u32>, QuorumValidationError>,
+        FS: Fn(u32) -> Result<(BlockHash, Option<BLSSignature>), QuorumValidationError> {
         let QRInfo {
             quorum_snapshot_at_h_minus_c, quorum_snapshot_at_h_minus_2c, quorum_snapshot_at_h_minus_3c, mn_list_diff_tip, mn_list_diff_h, mn_list_diff_at_h_minus_c, mn_list_diff_at_h_minus_2c, mn_list_diff_at_h_minus_3c, quorum_snapshot_and_mn_list_diff_at_h_minus_4c, last_commitment_per_index, quorum_snapshot_list, mn_list_diff_list
-        } = qrinfo;
+        } = qr_info;
         for (snapshot, diff) in quorum_snapshot_list.into_iter().zip(mn_list_diff_list.into_iter()) {
             self.known_snapshots.insert(diff.block_hash, snapshot);
             self.apply_diff(diff, None, false)?;
@@ -106,6 +109,25 @@ impl MasternodeListEngine {
         self.apply_diff(mn_list_diff_at_h_minus_c, None, false)?;
         self.apply_diff(mn_list_diff_h, None, false)?;
         self.apply_diff(mn_list_diff_tip, None, false)?;
+
+        // // Fetch and process block heights using the provided callback
+        // if let Some(fetch_heights) = fetch_block_heights {
+        //     let heights = fetch_heights(&qr_info)?;
+        //     for height in heights {
+        //         if let Some(fetch_sigs) = fetch_chain_lock_sigs {
+        //             match fetch_sigs(height) {
+        //                 Ok((block_hash, Some(chain_lock_sig))) => {
+        //                     self.feed_chain_lock_sig(block_hash, chain_lock_sig);
+        //                 }
+        //                 Ok((_, None)) => continue, // No chain lock sig available
+        //                 Err(e) => {
+        //                     self.error = Some(e.to_string());
+        //                     return Err(e);
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
         if verify_rotated_quorums {
             for rotated_quorum in last_commitment_per_index {
@@ -213,11 +235,10 @@ impl MasternodeListEngine {
 
 #[cfg(test)]
 mod tests {
-    use crate::QuorumHash;
+    use alloc::fmt::format;
     use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
-    use crate::sml::llmq_type::LLMQType::{Llmqtype100_67, Llmqtype400_60, Llmqtype400_85, Llmqtype50_60};
+    use crate::sml::llmq_type::LLMQType::{Llmqtype400_60, Llmqtype400_85, Llmqtype50_60};
     use crate::sml::masternode_list_engine::MasternodeListEngine;
-    use std::str::FromStr;
     use crate::sml::llmq_type::LLMQType;
 
     #[test]
@@ -303,8 +324,8 @@ mod tests {
 
         // height 2227678
 
-        for quorum in &mn_list_engine.last_commitment_entries {
-            mn_list_engine.validate_quorum(quorum).expect("expected to validate quorum");
+        for (i, quorum) in mn_list_engine.last_commitment_entries.iter().enumerate() {
+            mn_list_engine.validate_quorum(quorum).expect(format!("expected to validate quorum {}", i).as_str());
         }
     }
 

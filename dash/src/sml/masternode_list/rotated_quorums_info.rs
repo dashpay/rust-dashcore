@@ -13,7 +13,7 @@ impl MasternodeList {
                 if let Some(quarter_nodes) = quarter.get(i) {
                     for node in quarter_nodes {
                         let hash = node.masternode_list_entry.pro_reg_tx_hash;
-                        if self.has_valid_masternode(&hash) {
+                        if self.has_valid_masternode(&hash.reverse()) {
                             if !used_masternodes.iter().any(|m| m.masternode_list_entry.pro_reg_tx_hash == hash) {
                                 used_masternodes.push(node);
                             }

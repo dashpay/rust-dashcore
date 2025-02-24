@@ -42,15 +42,15 @@ impl MasternodeListEngine {
     ///
     /// # Arguments
     ///
-    /// * `qrinfo` - A reference to the `QRInfo` structure containing last commitments per index.
+    /// * `qr_info` - A reference to the `QRInfo` structure containing last commitments per index.
     ///
     /// # Returns
     ///
     /// * `Ok(BTreeSet<u32>)` - A set of block heights where ChainLock signatures are required.
     /// * `Err(QuorumValidationError)` - If a required block height is not present in the engine.
-    pub fn required_cl_sig_heights(&self, qrinfo: &QRInfo) -> Result<BTreeSet<u32>, QuorumValidationError> {
+    pub fn required_cl_sig_heights(&self, qr_info: &QRInfo) -> Result<BTreeSet<u32>, QuorumValidationError> {
         let mut required_heights = BTreeSet::new();
-        for quorum in &qrinfo.last_commitment_per_index {
+        for quorum in &qr_info.last_commitment_per_index {
             let Some(quorum_block_height) = self.block_heights.get(&quorum.quorum_hash) else {
                 return Err(QuorumValidationError::RequiredBlockNotPresent(quorum.quorum_hash));
             };
@@ -164,11 +164,14 @@ impl MasternodeListEngine {
         let quarter_size = quorum_size / 4;
         let quorum_modifier_type = LLMQModifierType::new_quorum_modifier_type(llmq_type, *work_block_hash, work_block_height, &self.known_chain_locks, self.network)?;
         let quorum_modifier = quorum_modifier_type.build_llmq_hash();
+        println!("quorum modifier is {}", quorum_modifier);
+        println!("work block height is {}", work_block_height);
+        println!("work block hash is {}", work_block_hash);
         match reconstruction_type {
             LLMQQuarterReconstructionType::New { previous_quarters } => {
-                let (used_masternodes, unused_masternodes, used_at_h_indexed_masternodes) =
+                let (used_masternodes, unused_masternodes, used_indexed_masternodes) =
                     masternode_list.usage_info(previous_quarters, quorum_count);
-                Ok(Self::apply_skip_strategy_of_type(LLMQQuarterUsageType::New(used_at_h_indexed_masternodes), used_masternodes, unused_masternodes, quorum_modifier, quorum_count, quarter_size))
+                Ok(Self::apply_skip_strategy_of_type(LLMQQuarterUsageType::New(used_indexed_masternodes), used_masternodes, unused_masternodes, quorum_modifier, quorum_count, quarter_size))
             },
             LLMQQuarterReconstructionType::Snapshot => {
                 if let Some(snapshot) = self.known_snapshots.get(work_block_hash) {
@@ -209,6 +212,13 @@ impl MasternodeListEngine {
         let sorted_unused_mns_list = MasternodeList::scores_for_quorum_for_masternodes(
             unused_at_h_masternodes,
             quorum_modifier, false);
+        if matches!(skip_type, LLMQQuarterUsageType::New(_)) {
+            let used_masternodes_string = sorted_used_mns_list.values().rev().map(|m| m.masternode_list_entry.pro_reg_tx_hash.reverse().to_string().split_at(4).0.to_string()).collect::<Vec<_>>().join("|");
+            let unused_masternodes_string = sorted_unused_mns_list.values().rev().map(|m| m.masternode_list_entry.pro_reg_tx_hash.reverse().to_string().split_at(4).0.to_string()).collect::<Vec<_>>().join("|");
+
+            println!("used masternodes [{}]", used_masternodes_string);
+            println!("unused masternodes [{}]", unused_masternodes_string);
+        }
         let sorted_combined_mns_list = Vec::from_iter(sorted_unused_mns_list.into_values().rev().chain(sorted_used_mns_list.into_values().rev()));
         match skip_type {
             LLMQQuarterUsageType::Snapshot(snapshot) => {
