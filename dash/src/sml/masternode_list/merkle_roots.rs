@@ -1,7 +1,7 @@
 use hashes::{Hash, sha256d};
 
 use crate::Transaction;
-use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums, QuorumCommitmentHash};
+use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::masternode_list::MasternodeList;
 use crate::transaction::special_transaction::TransactionPayload;
 

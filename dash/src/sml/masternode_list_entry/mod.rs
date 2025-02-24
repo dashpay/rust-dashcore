@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::encode::Error;
 use crate::consensus::{Decodable, Encodable};
-use crate::hash_types::{ConfirmedHash, Sha256dHash};
+use crate::hash_types::ConfirmedHash;
 use crate::internal_macros::impl_consensus_encoding;
 use crate::{ProTxHash, PubkeyHash};
 

@@ -17,8 +17,6 @@
 //! It is defined in DIP6 [dip-0006.md](https://github.com/dashpay/dips/blob/master/dip-0006.md).
 //!
 
-use std::io::{Read, Write};
-
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 

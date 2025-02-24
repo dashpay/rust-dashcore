@@ -5,7 +5,6 @@ use hashes::Hash;
 
 use crate::ProTxHash;
 use crate::sml::masternode_list::MasternodeList;
-use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 
 impl MasternodeList {

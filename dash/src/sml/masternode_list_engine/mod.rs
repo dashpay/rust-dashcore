@@ -15,7 +15,6 @@ use crate::network::message_qrinfo::{QRInfo, QuorumSnapshot};
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
-use crate::sml::error::SmlError::CorruptedCodeExecution;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
@@ -355,34 +354,41 @@ impl MasternodeListEngine {
             Some(diff_end_height) => diff_end_height,
         };
 
-        let mut masternode_list =
-            base_masternode_list.apply_diff(masternode_list_diff.clone(), diff_end_height)?;
-
         #[cfg(feature = "quorum_validation")]
-        if verify_quorums {
-            // We only need to verify new quorums
-            for new_quorum in &masternode_list_diff.new_quorums {
-                let quorum = masternode_list
-                    .quorum_entry_of_type_for_quorum_hash_mut(
-                        new_quorum.llmq_type,
-                        new_quorum.quorum_hash,
-                    )
-                    .ok_or(CorruptedCodeExecution(
-                        "masternode list after diff does not contain new quorum".to_string(),
-                    ))?;
-                self.validate_and_update_quorum_status(quorum);
+        {
+            let mut masternode_list =
+                base_masternode_list.apply_diff(masternode_list_diff.clone(), diff_end_height)?;
+            if verify_quorums {
+                // We only need to verify new quorums
+                for new_quorum in &masternode_list_diff.new_quorums {
+                    let quorum = masternode_list
+                        .quorum_entry_of_type_for_quorum_hash_mut(
+                            new_quorum.llmq_type,
+                            new_quorum.quorum_hash,
+                        )
+                        .ok_or(SmlError::CorruptedCodeExecution(
+                            "masternode list after diff does not contain new quorum".to_string(),
+                        ))?;
+                    self.validate_and_update_quorum_status(quorum);
+                }
             }
+            self.masternode_lists.insert(diff_end_height, masternode_list);
         }
+
         #[cfg(not(feature = "quorum_validation"))]
-        if verify_quorums {
-            return Err(SmlError::FeatureNotTurnedOn(
-                "quorum validation feature is not turned on".to_string(),
-            ));
+        {
+            let masternode_list =
+                base_masternode_list.apply_diff(masternode_list_diff.clone(), diff_end_height)?;
+            if verify_quorums {
+                return Err(SmlError::FeatureNotTurnedOn(
+                    "quorum validation feature is not turned on".to_string(),
+                ));
+            }
+            self.masternode_lists.insert(diff_end_height, masternode_list);
         }
 
         self.block_hashes.insert(diff_end_height, block_hash);
         self.block_heights.insert(block_hash, diff_end_height);
-        self.masternode_lists.insert(diff_end_height, masternode_list);
 
         Ok(())
     }
@@ -440,6 +446,8 @@ impl MasternodeListEngine {
 
 #[cfg(test)]
 mod tests {
+
+    use bincode::Decode;
 
     use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
     use crate::sml::llmq_type::LLMQType;

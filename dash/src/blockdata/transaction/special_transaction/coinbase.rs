@@ -25,8 +25,8 @@ use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::encode::{compact_size_len, read_compact_size, write_compact_size};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+use crate::io;
 use crate::io::{Error, ErrorKind};
-use crate::{VarInt, io};
 
 /// A Coinbase payload. This is contained as the payload of a coinbase special transaction.
 /// The Coinbase payload is described in DIP4.

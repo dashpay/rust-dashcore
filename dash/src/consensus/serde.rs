@@ -14,7 +14,7 @@ use serde::de::{SeqAccess, Unexpected, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserializer, Serializer};
 
-use super::encode::{Error as ConsensusError, Error};
+use super::encode::Error as ConsensusError;
 use super::{Decodable, Encodable};
 use crate::alloc::string::ToString;
 use crate::io;

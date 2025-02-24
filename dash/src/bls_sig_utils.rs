@@ -27,6 +27,7 @@ use internals::impl_array_newtype;
 use crate::core::fmt;
 use crate::internal_macros::impl_bytes_newtype;
 use crate::prelude::String;
+#[cfg(feature = "bls")]
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
 /// A BLS Public key is 48 bytes in the scheme used for Dash Core
