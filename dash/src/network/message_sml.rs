@@ -1,5 +1,6 @@
 use std::io;
 
+use bincode::{Decode, Encode};
 use hashes::sha256::Hash;
 
 use crate::bls_sig_utils::BLSSignature;
@@ -32,6 +33,9 @@ impl_consensus_encoding!(GetMnListDiff, base_block_hash, block_hash);
 ///
 /// https://docs.dash.org/en/stable/docs/core/reference/p2p-network-data-messages.html#mnlistdiff
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct MnListDiff {
     /// Version of the message (currently 1).
     /// In protocol versions 70225 through 70228 this field was located between the `coinbase_tx` and `deleted_masternodes` fields.
@@ -112,6 +116,9 @@ impl Decodable for MnListDiff {
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct QuorumCLSigObject {
     pub signature: BLSSignature,
     pub index_set: Vec<u16>,
@@ -120,6 +127,9 @@ pub struct QuorumCLSigObject {
 impl_consensus_encoding!(QuorumCLSigObject, signature, index_set);
 
 #[derive(PartialEq, Eq, Clone, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct DeletedQuorum {
     // TODO: Make it enum
     pub llmq_type: LLMQType,

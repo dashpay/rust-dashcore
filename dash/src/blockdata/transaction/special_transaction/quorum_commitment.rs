@@ -179,6 +179,7 @@ impl Decodable for QuorumEntry {
 ///
 /// Miners take the best final commitment for a DKG session and mine it into a block.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct QuorumCommitmentPayload {

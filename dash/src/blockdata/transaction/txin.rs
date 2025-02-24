@@ -20,6 +20,8 @@
 //! A TxIn is an input to a transaction.
 //!
 
+use bincode::{Decode, Encode};
+
 use crate::blockdata::script::ScriptBuf;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::transaction::outpoint::OutPoint;
@@ -29,6 +31,7 @@ use crate::{Witness, io};
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct TxIn {
     /// The reference to the previous output that is being used an an input.
     pub previous_output: OutPoint,

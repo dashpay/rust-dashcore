@@ -8,6 +8,7 @@
 use core::convert::TryInto;
 use core::ops::Index;
 
+use bincode::{Decode, Encode};
 use secp256k1::ecdsa;
 
 use crate::consensus::encode::{Error, MAX_VEC_SIZE};
@@ -29,6 +30,7 @@ use crate::{Script, VarInt};
 ///
 /// [segwit upgrade]: <https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki>
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct Witness {
     /// Contains the witness `Vec<Vec<u8>>` serialization without the initial varint indicating the
     /// number of elements (which is stored in `witness_elements`).

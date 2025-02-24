@@ -18,6 +18,8 @@
 //! It is defined in DIP4 [dip-0004](https://github.com/dashpay/dips/blob/master/dip-0004.md).
 //!
 
+use bincode::{Decode, Encode};
+
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::encode::{compact_size_len, read_compact_size, write_compact_size};
 use crate::consensus::{Decodable, Encodable, encode};
@@ -29,6 +31,7 @@ use crate::{VarInt, io};
 /// The Coinbase payload is described in DIP4.
 ///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct CoinbasePayload {

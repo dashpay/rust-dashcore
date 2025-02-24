@@ -34,6 +34,7 @@
 //!
 //! The special transaction type used for ProUpServTx Transactions is 2.
 
+use bincode::{Decode, Encode};
 use hashes::Hash;
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
@@ -47,6 +48,7 @@ use crate::{ScriptBuf, VarInt, io};
 /// It must be signed by the operator's key that was set either at registration or by the last
 /// registrar update of the masternode.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct ProviderUpdateServicePayload {

@@ -20,6 +20,8 @@
 //! A TxOut is an output of a transaction.
 //!
 
+use bincode::{Decode, Encode};
+
 use crate::internal_macros::impl_consensus_encoding;
 use crate::{Address, PubkeyHash, ScriptBuf, ScriptHash, VarInt};
 
@@ -27,6 +29,7 @@ use crate::{Address, PubkeyHash, ScriptBuf, ScriptHash, VarInt};
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct TxOut {
     /// The value of the output, in satoshis.
     pub value: u64,

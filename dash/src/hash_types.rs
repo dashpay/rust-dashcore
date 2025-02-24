@@ -126,8 +126,10 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
         /// Dash Additions
         ///
         /// The merkle root of the masternode list
+        #[hash_newtype(forward)]
         pub struct MerkleRootMasternodeList(sha256d::Hash);
         /// The merkle root of the quorums
+        #[hash_newtype(forward)]
         pub struct MerkleRootQuorums(sha256d::Hash);
         /// A special transaction payload hash
         pub struct SpecialTransactionPayloadHash(sha256d::Hash);

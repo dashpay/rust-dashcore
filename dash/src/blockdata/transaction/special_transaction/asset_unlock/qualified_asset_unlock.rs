@@ -22,6 +22,7 @@
 //!
 //! The special transaction type used for CrWithTx Transactions is 9.
 
+use bincode::{Decode, Encode};
 use hashes::Hash;
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
@@ -46,6 +47,7 @@ pub const ASSET_UNLOCK_TX_SIZE: usize = 190;
 /// Transaction using it have no inputs. Hence the proof of validity lies solely on the BLS signature.
 ///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct AssetUnlockPayload {

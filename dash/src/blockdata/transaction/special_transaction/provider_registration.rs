@@ -34,6 +34,7 @@
 //! KeyIdVoting (renamed to voting_key_hash): This is the public key ID used for proposal voting.
 //! Votes signed with this key are valid while the masternode is in the registered set.
 
+use bincode::{Decode, Encode};
 use hashes::Hash;
 use internals::hex::Case::Lower;
 
@@ -58,6 +59,7 @@ use crate::{Address, Network, OutPoint, ScriptBuf, VarInt, io};
 /// *The script payout is the script to which one wants to have the masternode pay out.
 /// *The inputs hash is used to guarantee the uniqueness of the payload sig.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct ProviderRegistrationPayload {

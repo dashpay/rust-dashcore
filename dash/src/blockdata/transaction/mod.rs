@@ -34,6 +34,7 @@ pub mod txout;
 
 use core::default::Default;
 
+use bincode::{Decode, Encode};
 use hashes::{Hash, sha256d};
 
 use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
@@ -158,6 +159,7 @@ impl<E> EncodeSigningDataResult<E> {
 /// We therefore deviate from the spec by always using the Segwit witness encoding
 /// for 0-input transactions, which results in unambiguously parseable transactions.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct Transaction {

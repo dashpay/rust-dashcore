@@ -22,6 +22,8 @@
 //!
 //! The special transaction type used for AssetLockTx Transactions is 8.
 
+use bincode::{Decode, Encode};
+
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::prelude::*;
 use crate::transaction::txout::TxOut;
@@ -35,6 +37,7 @@ use crate::{VarInt, io};
 /// Each TxOut refers to a funding of an Identity.
 ///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct AssetLockPayload {

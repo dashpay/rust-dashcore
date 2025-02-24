@@ -36,6 +36,7 @@
 
 //! The special transaction type used for Provider Update Revoking Transactions is 4.
 
+use bincode::{Decode, Encode};
 use hashes::Hash;
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
@@ -48,6 +49,7 @@ use crate::io;
 /// This is used to signal and stop a Masternode from the operator.
 /// It must be signed by the operator's key that was set at registration or registrar update.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct ProviderUpdateRevocationPayload {

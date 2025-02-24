@@ -22,6 +22,8 @@
 //!
 //! The special transaction type used for AssetUnlockTx Transactions is 9.
 
+use bincode::{Decode, Encode};
+
 use crate::blockdata::transaction::special_transaction::TransactionType;
 use crate::blockdata::transaction::special_transaction::TransactionType::AssetUnlock;
 use crate::consensus::{Decodable, Encodable, encode};
@@ -33,6 +35,7 @@ use crate::{ScriptBuf, TxIn, VarInt, io};
 /// An Asset Unlock Base payload. This is the base payload of the Asset Unlock. In order to make
 /// it a full payload the request info should be added.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct AssetUnlockBasePayload {
