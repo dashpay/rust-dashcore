@@ -384,7 +384,7 @@ impl MasternodeListEngine {
             .ok_or(QuorumValidationError::VerifyingMasternodeListNotPresent(block_height))?;
         let mut results = BTreeMap::new();
         for (quorum_type, hash_to_quorum_entries) in masternode_list.quorums.iter() {
-            if exclude_quorum_types.contains(quorum_type) {
+            if exclude_quorum_types.contains(quorum_type) || quorum_type.is_rotating_quorum_type() {
                 continue;
             }
             let mut inner = BTreeMap::new();
@@ -402,11 +402,19 @@ impl MasternodeListEngine {
             if exclude_quorum_types.contains(quorum_type) {
                 continue;
             }
-
-            for (quorum_hash, quorum_entry) in hash_to_quorum_entries.iter_mut() {
-                quorum_entry.update_quorum_status(
-                    results.get_mut(quorum_type).unwrap().remove(quorum_hash).unwrap(),
-                )
+            if quorum_type.is_rotating_quorum_type() {
+                // only update based on the last commitment entries
+                for quorum in &self.last_commitment_entries {
+                    if let Some(quorum_entry) = hash_to_quorum_entries.get_mut(&quorum.quorum_entry.quorum_hash) {
+                        quorum_entry.verified = quorum.verified.clone();
+                    }
+                }
+            } else {
+                for (quorum_hash, quorum_entry) in hash_to_quorum_entries.iter_mut() {
+                    quorum_entry.update_quorum_status(
+                        results.get_mut(quorum_type).unwrap().remove(quorum_hash).unwrap(),
+                    )
+                }
             }
         }
         Ok(())
