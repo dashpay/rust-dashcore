@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use crate::hash_types::QuorumModifierHash;
 use crate::network::message_qrinfo::MNSkipListMode;
 use crate::prelude::CoreBlockHeight;
@@ -31,6 +32,23 @@ impl MasternodeListEngine {
         let rotated_members = self.masternode_list_entry_members_for_rotated_quorum(quorum, cycle_base_height, llmq_params, skip_removed_masternodes)?.into_iter().flatten().collect();
 
         Ok(rotated_members)
+    }
+
+    pub fn required_cl_sig_heights(&self) -> Result<BTreeSet<u32>, QuorumValidationError> {
+        let mut required_heights = BTreeSet::new();
+        for quorum in self.last_commitment_entries {
+            let Some(quorum_block_height) = self.block_heights.get(&quorum.quorum_entry.quorum_hash) else {
+                return Err(QuorumValidationError::RequiredBlockNotPresent(quorum.quorum_entry.quorum_hash));
+            };
+            let llmq_params = quorum.quorum_entry.llmq_type.params();
+            let quorum_index = quorum_block_height % llmq_params.dkg_params.interval;
+            let cycle_base_height = quorum_block_height - quorum_index;
+            let cycle_length = llmq_params.dkg_params.interval;
+            for i in 0..=3 {
+                required_heights.insert(cycle_base_height - i * cycle_length - 8);
+            }
+        }
+        Ok(required_heights)
     }
 
     fn masternode_list_entry_members_for_rotated_quorum<'a>(
