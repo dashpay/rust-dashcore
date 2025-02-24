@@ -405,7 +405,9 @@ impl MasternodeListEngine {
             if quorum_type.is_rotating_quorum_type() {
                 // only update based on the last commitment entries
                 for quorum in &self.last_commitment_entries {
-                    if let Some(quorum_entry) = hash_to_quorum_entries.get_mut(&quorum.quorum_entry.quorum_hash) {
+                    if let Some(quorum_entry) =
+                        hash_to_quorum_entries.get_mut(&quorum.quorum_entry.quorum_hash)
+                    {
                         quorum_entry.verified = quorum.verified.clone();
                     }
                 }
