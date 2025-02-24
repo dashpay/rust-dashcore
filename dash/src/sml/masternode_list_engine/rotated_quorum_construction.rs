@@ -36,7 +36,7 @@ impl MasternodeListEngine {
 
     pub fn required_cl_sig_heights(&self) -> Result<BTreeSet<u32>, QuorumValidationError> {
         let mut required_heights = BTreeSet::new();
-        for quorum in self.last_commitment_entries {
+        for quorum in &self.last_commitment_entries {
             let Some(quorum_block_height) = self.block_heights.get(&quorum.quorum_entry.quorum_hash) else {
                 return Err(QuorumValidationError::RequiredBlockNotPresent(quorum.quorum_entry.quorum_hash));
             };
