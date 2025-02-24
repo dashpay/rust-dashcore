@@ -154,8 +154,10 @@ impl MasternodeListEngine {
     where
         FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
     {
-        let height = fetch_block_height(&quorum_entry.quorum_hash)?;
-        self.feed_block_height(height, quorum_entry.quorum_hash);
+        if !self.block_heights.contains_key(&quorum_entry.quorum_hash) {
+            let height = fetch_block_height(&quorum_entry.quorum_hash)?;
+            self.feed_block_height(height, quorum_entry.quorum_hash);
+        }
         Ok(())
     }
 
@@ -168,13 +170,17 @@ impl MasternodeListEngine {
     where
         FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
     {
-        // Feed base block hash height
-        let base_height = fetch_block_height(&mn_list_diff.base_block_hash)?;
-        self.feed_block_height(base_height, mn_list_diff.base_block_hash);
+        if !self.block_heights.contains_key(&mn_list_diff.base_block_hash) {
+            // Feed base block hash height
+            let base_height = fetch_block_height(&mn_list_diff.base_block_hash)?;
+            self.feed_block_height(base_height, mn_list_diff.base_block_hash);
+        }
 
-        // Feed block hash height
-        let block_height = fetch_block_height(&mn_list_diff.block_hash)?;
-        self.feed_block_height(block_height, mn_list_diff.block_hash);
+        if !self.block_heights.contains_key(&mn_list_diff.block_hash) {
+            // Feed block hash height
+            let block_height = fetch_block_height(&mn_list_diff.block_hash)?;
+            self.feed_block_height(block_height, mn_list_diff.block_hash);
+        }
         Ok(())
     }
 
