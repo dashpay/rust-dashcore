@@ -4,6 +4,20 @@ use crate::sml::masternode_list::MasternodeList;
 use crate::Transaction;
 use crate::transaction::special_transaction::TransactionPayload;
 
+/// Computes the Merkle root from a list of hashes.
+///
+/// This function constructs a Merkle tree from the provided vector of 32-byte hashes.
+/// If the vector is empty, it returns `None`. Otherwise, it iteratively hashes pairs
+/// of nodes until a single root hash is obtained.
+///
+/// # Parameters
+///
+/// - `hashes`: A vector of 32-byte hashes representing the leaves of the Merkle tree.
+///
+/// # Returns
+///
+/// - `Some([u8; 32])`: The computed Merkle root if at least one hash is provided.
+/// - `None`: If the input vector is empty.
 #[inline]
 pub fn merkle_root_from_hashes(hashes: Vec<[u8; 32]>) -> Option<[u8; 32]> {
     let length = hashes.len();
@@ -28,6 +42,19 @@ pub fn merkle_root_from_hashes(hashes: Vec<[u8; 32]>) -> Option<[u8; 32]> {
 }
 
 impl MasternodeList {
+    /// Validates whether the stored masternode list Merkle root matches the one in the coinbase transaction.
+    ///
+    /// This function compares the calculated masternode Merkle root with the one provided
+    /// in the coinbase transaction payload to verify the integrity of the masternode list.
+    ///
+    /// # Parameters
+    ///
+    /// - `coinbase_transaction`: The coinbase transaction containing the expected Merkle root.
+    ///
+    /// # Returns
+    ///
+    /// - `true` if the Merkle root matches.
+    /// - `false` otherwise.
     pub fn has_valid_mn_list_root(&self, coinbase_transaction: &Transaction) -> bool {
         let Some(TransactionPayload::CoinbasePayloadType(coinbase_payload)) = &coinbase_transaction.special_transaction_payload else {
             return false;
@@ -42,6 +69,19 @@ impl MasternodeList {
         }
     }
 
+    /// Validates whether the stored LLMQ list Merkle root matches the one in the coinbase transaction.
+    ///
+    /// This function compares the calculated quorum Merkle root with the one provided
+    /// in the coinbase transaction payload to verify the integrity of the quorum list.
+    ///
+    /// # Parameters
+    ///
+    /// - `coinbase_transaction`: The coinbase transaction containing the expected Merkle root.
+    ///
+    /// # Returns
+    ///
+    /// - `true` if the Merkle root matches.
+    /// - `false` otherwise.
     pub fn has_valid_llmq_list_root(&self, coinbase_transaction: &Transaction) -> bool {
         let Some(TransactionPayload::CoinbasePayloadType(coinbase_payload)) = &coinbase_transaction.special_transaction_payload else {
             return false;
@@ -61,23 +101,50 @@ impl MasternodeList {
         has_valid_quorum_list_root
     }
 
+    /// Computes the Merkle root for the masternode list at a given block height.
+    ///
+    /// This function generates a Merkle root for the masternode list based on the
+    /// masternode entries at the specified block height.
+    ///
+    /// # Parameters
+    ///
+    /// - `block_height`: The block height at which to compute the Merkle root.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(MerkleRootMasternodeList)`: The calculated Merkle root.
+    /// - `None`: If no hashes are available for the given block height.
     pub fn calculate_masternodes_merkle_root(&self, block_height: u32) -> Option<MerkleRootMasternodeList> {
         self.hashes_for_merkle_root(block_height)
             .and_then(merkle_root_from_hashes).map(|hash| MerkleRootMasternodeList::from_byte_array(hash))
     }
-    // pub fn calculate_masternodes_merkle_root_with_block_height_lookup<BL: Fn(*const std::os::raw::c_void, [u8; 32]) -> u32>(
-    //     &self,
-    //     context: *const std::os::raw::c_void,
-    //     block_height_lookup: BL
-    // ) -> Option<[u8; 32]> {
-    //     self.hashes_for_merkle_root_with_block_height_lookup(context, block_height_lookup)
-    //         .and_then(merkle_root_from_hashes)
-    // }
 
+    /// Computes the Merkle root for the LLMQ (Long-Living Masternode Quorum) list.
+    ///
+    /// This function constructs a Merkle tree using the commitment hashes of all known LLMQs
+    /// and returns the root hash.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(MerkleRootQuorums)`: The calculated Merkle root.
+    /// - `None`: If no quorum commitment hashes are available.
     pub fn calculate_llmq_merkle_root(&self) -> Option<MerkleRootQuorums> {
         merkle_root_from_hashes(self.hashes_for_quorum_merkle_root()).map(|hash| MerkleRootQuorums::from_byte_array(hash))
     }
 
+    /// Retrieves the list of hashes required to compute the masternode list Merkle root.
+    ///
+    /// This function sorts the masternode list by pro-reg transaction hash and extracts
+    /// the entry hashes for the given block height.
+    ///
+    /// # Parameters
+    ///
+    /// - `block_height`: The block height for which to retrieve the hashes.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(Vec<[u8; 32]>)`: A sorted list of masternode entry hashes.
+    /// - `None`: If the block height is invalid (`u32::MAX`).
     pub fn hashes_for_merkle_root(&self, block_height: u32) -> Option<Vec<[u8; 32]>> {
         (block_height != u32::MAX).then_some({
             let mut pro_tx_hashes = self.reversed_pro_reg_tx_hashes();
@@ -94,23 +161,14 @@ impl MasternodeList {
         })
     }
 
-    // pub fn hashes_for_merkle_root_with_block_height_lookup<BL: Fn(*const std::os::raw::c_void, [u8; 32]) -> u32>(
-    //     &self,
-    //     context: *const std::os::raw::c_void,
-    //     block_height_lookup: BL
-    // ) -> Option<Vec<[u8; 32]>> {
-    //     let pro_tx_hashes = self.provider_tx_ordered_hashes();
-    //     let block_height = block_height_lookup(context, self.block_hash);
-    //     if block_height == u32::MAX {
-    //         println!("Block height lookup queried an unknown block {}", self.block_hash);
-    //         return None; //this should never happen
-    //     }
-    //     Some(pro_tx_hashes
-    //         .into_iter()
-    //         .map(|hash| (&self.masternodes[&hash]).entry_hash_at(block_height))
-    //         .collect::<Vec<_>>())
-    // }
-
+    /// Retrieves the list of hashes required to compute the quorum Merkle root.
+    ///
+    /// This function collects and sorts the entry hashes of all known quorums
+    /// to construct a Merkle tree.
+    ///
+    /// # Returns
+    ///
+    /// - `Vec<[u8; 32]>`: A sorted list of quorum commitment hashes.
     pub fn hashes_for_quorum_merkle_root(&self) -> Vec<[u8; 32]> {
         let mut llmq_commitment_hashes = self.quorums
             .values()

@@ -6,6 +6,26 @@ use crate::sml::masternode_list::MasternodeList;
 
 impl MasternodeList {
 
+    /// Retrieves a list of peer addresses from the masternode list, sorted using a nonce for deterministic ordering.
+    ///
+    /// This function generates a sorted list of masternode addresses based on their registration transaction hashes,
+    /// using a provided nonce to create a deterministic but unpredictable order. The resulting list is truncated
+    /// to the specified maximum count.
+    ///
+    /// # Parameters
+    ///
+    /// - `nonce`: A 64-bit unsigned integer used to influence the sorting order.
+    /// - `max_count`: The maximum number of peer addresses to return.
+    ///
+    /// # Returns
+    ///
+    /// - `Vec<SocketAddr>`: A list of masternode service addresses, sorted using the nonce and limited to `max_count`.
+    ///
+    /// # Notes
+    ///
+    /// - The sorting process appends the nonce to each masternode’s transaction hash and applies a BLAKE3 hash
+    ///   to determine the order.
+    /// - Only valid masternodes (i.e., those marked as valid in the masternode list) are included in the output.
     pub fn peer_addresses_with_connectivity_nonce(&self, nonce: u64, max_count: usize) -> Vec<SocketAddr> {
         let registration_transaction_hashes: Vec<_> = self.masternodes.keys().cloned().collect();
         let mut sorted_hashes = registration_transaction_hashes.clone();

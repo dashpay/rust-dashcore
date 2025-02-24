@@ -9,7 +9,7 @@ impl MasternodeListEngine {
         quorum: &'a QualifiedQuorumEntry,
     ) -> Result<Vec<&'a QualifiedMasternodeListEntry>, QuorumValidationError> {
         if quorum.quorum_entry.llmq_type.is_rotating_quorum_type() {
-            self.find_rotated_masternodes_for_quorum(quorum, true)
+            self.find_rotated_masternodes_for_quorum(quorum)
         } else {
             self.find_non_rotated_masternodes_for_quorum(quorum)
         }

@@ -13,7 +13,6 @@ pub enum LLMQQuarterReconstructionType<'a: 'b, 'b> {
     Snapshot,
     New {
         previous_quarters: [&'b Vec<Vec<&'a QualifiedMasternodeListEntry>>; 3],
-        skip_removed_masternodes: bool,
     }
 }
 

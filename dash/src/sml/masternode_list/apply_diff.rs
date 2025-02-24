@@ -1,11 +1,33 @@
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
-use crate::sml::llmq_entry_verification::{LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus};
 use crate::sml::masternode_list::MasternodeList;
-use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 
 impl MasternodeList {
+    /// Applies an `MnListDiff` to update the current masternode list.
+    ///
+    /// This function processes a masternode list diff (`MnListDiff`) and applies
+    /// the changes to the existing masternode list. It performs the following operations:
+    /// - Ensures the base block hash matches the expected value.
+    /// - Removes deleted masternodes from the list.
+    /// - Adds or updates new masternodes.
+    /// - Removes deleted quorums.
+    /// - Adds or updates new quorums.
+    ///
+    /// # Parameters
+    ///
+    /// - `diff`: The `MnListDiff` containing the changes to apply.
+    /// - `diff_end_height`: The block height at which the diff ends.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(MasternodeList)`: A new `MasternodeList` reflecting the applied changes.
+    /// - `Err(SmlError)`: An error if the base block hash does not match the expected value.
+    ///
+    /// # Errors
+    ///
+    /// - Returns `SmlError::BaseBlockHashMismatch` if the `base_block_hash` of the `diff`
+    ///   does not match the expected block hash of the current masternode list.
     pub fn apply_diff(
         &self,
         diff: MnListDiff,

@@ -30,6 +30,24 @@ impl fmt::Display for LLMQModifierType {
 }
 
 impl LLMQModifierType {
+    /// Constructs a unique quorum modifier hash.
+    ///
+    /// This function builds a hash that uniquely identifies a quorum based on its type and relevant
+    /// contextual information (block hash or height and chain lock signature).
+    ///
+    /// # Returns
+    ///
+    /// * `QuorumModifierHash` - The computed hash representing the quorum modifier.
+    ///
+    /// # Notes
+    ///
+    /// * For pre-Core v20 quorums, the hash consists of:
+    ///   - LLMQ type (encoded as a `VarInt`).
+    ///   - Block hash (as raw bytes).
+    /// * For Core v20+ quorums, the hash consists of:
+    ///   - LLMQ type (encoded as a `VarInt`).
+    ///   - Block height.
+    ///   - Chain lock signature (as raw bytes).
     pub fn build_llmq_hash(&self) -> QuorumModifierHash {
         let mut writer = vec![];
 
@@ -52,6 +70,29 @@ impl LLMQModifierType {
         QuorumModifierHash::hash(&writer)
     }
 
+    /// Creates a new `LLMQModifierType` based on the network activation rules.
+    ///
+    /// This function determines whether the quorum modifier should be based on a block hash (pre-Core v20)
+    /// or a chain lock signature (Core v20+), depending on the network state at a given block height.
+    ///
+    /// # Arguments
+    ///
+    /// * `llmq_type` - The type of LLMQ being processed.
+    /// * `work_block_hash` - The block hash of the work block.
+    /// * `work_block_height` - The height of the work block.
+    /// * `known_chain_locks` - A map of known chain lock signatures indexed by block hash.
+    /// * `network` - The current network configuration.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(LLMQModifierType::CoreV20)` - If Core v20 is active at the given height, using a chain lock signature.
+    /// * `Ok(LLMQModifierType::PreCoreV20)` - If Core v20 is not active, using a block hash.
+    /// * `Err(QuorumValidationError::RequiredChainLockNotPresent)` - If Core v20 is active but no chain lock signature is found.
+    ///
+    /// # Notes
+    ///
+    /// * Core v20 introduces the use of chain lock signatures instead of block hashes for quorum modifiers.
+    /// * This function checks if Core v20 is active at the given block height before selecting the appropriate modifier type.
     pub fn new_quorum_modifier_type(llmq_type: LLMQType, work_block_hash: BlockHash, work_block_height: CoreBlockHeight, known_chain_locks: &BTreeMap<BlockHash, BLSSignature>, network: Network) -> Result<LLMQModifierType, QuorumValidationError> {
         if network.core_v20_is_active_at(work_block_height) {
             let best_cl_signature = known_chain_locks.get(&work_block_hash).ok_or(QuorumValidationError::RequiredChainLockNotPresent(work_block_height, work_block_hash))?;

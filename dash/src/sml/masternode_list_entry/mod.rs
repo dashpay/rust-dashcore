@@ -3,12 +3,8 @@ pub mod qualified_masternode_list_entry;
 mod score;
 mod helpers;
 
-use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
-
-#[cfg(feature = "bls")]
-use blsful::{Bls12381G2Impl, PublicKey};
 
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::encode::Error;
@@ -149,17 +145,4 @@ impl Decodable for MasternodeListEntry {
             mn_type,
         })
     }
-}
-#[cfg(feature = "bls")]
-#[derive(Clone, Eq, PartialEq)]
-pub struct MasternodeListEntryInfo {
-    pub base_entry: MasternodeListEntry,
-    pub loaded_operator_public_key: Option<PublicKey<Bls12381G2Impl>>,
-    pub confirmed_hash_hashed_with_provider_registration_transaction_hash: ConfirmedHash,
-    pub previous_operator_public_keys: BTreeMap<u64, OperatorPublicKey>,
-    pub previous_entry_hashes: BTreeMap<u64, [u8; 32]>,
-    pub previous_validity: BTreeMap<u64, bool>,
-    pub known_confirmed_at_height: Option<u32>,
-    pub update_height: u32,
-    pub entry_hash: Sha256dHash,
 }

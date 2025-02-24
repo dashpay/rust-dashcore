@@ -6,6 +6,26 @@ use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
 impl QualifiedQuorumEntry {
+    /// Verifies the aggregated commitment signature for the quorum.
+    ///
+    /// This function checks whether the aggregated BLS signature over the quorum's commitment hash
+    /// is valid using the operator public keys of the participating masternodes.
+    ///
+    /// # Arguments
+    ///
+    /// * `operator_keys` - An iterator over `MasternodeListEntry` items, representing the operator public keys.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - If the aggregated commitment signature is valid.
+    /// * `Err(QuorumValidationError)` - If the signature is invalid or if any errors occur during verification.
+    ///
+    /// # Notes
+    ///
+    /// * Supports both legacy and modern BLS key formats.
+    /// * Prints an error message if a public key fails to parse.
+    /// * Uses `BasicSchemeMPL` for secure signature verification.
+    /// * This method will transition to `blsful` in the future once it supports secure aggregated verification.
     pub fn verify_aggregated_commitment_signature<'a, I>(&self, operator_keys: I) -> Result<(), QuorumValidationError>
     where
         I: IntoIterator<Item = &'a MasternodeListEntry>,
@@ -52,6 +72,20 @@ impl QualifiedQuorumEntry {
         // signature.verify(multi_public_key, message).map_err(|e| QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(e.to_string()))
     }
 
+    /// Verifies the quorum's threshold signature.
+    ///
+    /// This function checks the validity of the quorum's threshold signature against the commitment hash
+    /// using the quorum's public key.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - If the threshold signature is valid.
+    /// * `Err(QuorumValidationError)` - If the signature is invalid or cannot be verified.
+    ///
+    /// # Notes
+    ///
+    /// * Uses `blsful::Signature` and `blsful::PublicKey` for verification.
+    /// * Converts the quorum's public key and signature into `blsful` types before verification.
     pub fn verify_quorum_signature(&self) -> Result<(), QuorumValidationError>  {
         let message = &self.commitment_hash;
         let public_key : blsful::PublicKey<Bls12381G2Impl> = self.quorum_entry.quorum_public_key.try_into()?;
@@ -59,6 +93,26 @@ impl QualifiedQuorumEntry {
         signature.verify(&public_key, message).map_err(|e| QuorumValidationError::ThresholdSignatureNotValid(e.to_string()))
     }
 
+
+    /// Performs full quorum validation by verifying all necessary signatures.
+    ///
+    /// This function validates the quorum by checking:
+    /// 1. The aggregated commitment signature using valid masternodes.
+    /// 2. The quorum's threshold signature.
+    ///
+    /// # Arguments
+    ///
+    /// * `valid_masternodes` - An iterator over `MasternodeListEntry` items representing the set of valid masternodes.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - If the quorum is valid.
+    /// * `Err(QuorumValidationError)` - If any signature verification fails.
+    ///
+    /// # Notes
+    ///
+    /// * Calls `verify_aggregated_commitment_signature` first.
+    /// * Calls `verify_quorum_signature` second.
     pub fn validate<'a, I>(&self, valid_masternodes: I) -> Result<(), QuorumValidationError>
     where
         I: IntoIterator<Item = &'a MasternodeListEntry>,
