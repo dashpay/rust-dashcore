@@ -11,6 +11,9 @@ use crate::sml::llmq_type::LLMQType;
 pub enum ClientDataRetrievalError {
     #[error("Required block not present: {0}")]
     RequiredBlockNotPresent(BlockHash),
+
+    #[error("Coinbase not found on block: {0}")]
+    CoinbaseNotFoundOnBlock(BlockHash),
 }
 
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
