@@ -39,8 +39,6 @@ secp256k1 = { default-features = false, features = ["hashes"], version= "0.30.0"
 
 rs-x11-hash = { version = "0.1.8", optional = true }
 bincode = { version= "2.0.0-rc.3", optional = true }
-ferment = { git = "https://github.com/dashpay/ferment", branch = "feat/lifetime-support", package = "ferment" }
-ferment-macro = { git = "https://github.com/dashpay/ferment", branch = "feat/lifetime-support", package = "ferment-macro" }
 
 [dev-dependencies]
 serde_test = "1.0"
