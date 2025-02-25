@@ -31,7 +31,7 @@ impl MasternodeList {
             self.known_height,
             hex::encode(self.block_hash),
             self.masternode_merkle_root.map_or("None".to_string(), hex::encode),
-            self.masternode_count(),
+            self.masternodes.len(),
             self.llmq_merkle_root.map_or("None".to_string(), hex::encode),
             self.quorums_short_description()
         )

@@ -59,7 +59,7 @@ impl QualifiedQuorumEntry {
         match result {
             Err(QuorumValidationError::RequiredBlockNotPresent(block_hash)) => {
                 self.verified = LLMQEntryVerificationStatus::Skipped(
-                    LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash.to_byte_array()),
+                    LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash),
                 );
             }
             Err(QuorumValidationError::RequiredMasternodeListNotPresent(block_height)) => {

@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::Hash;
+use hashes::{sha256d, Hash};
 
 use crate::hash_types::ConfirmedHashHashedWithProRegTx;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
@@ -18,7 +18,7 @@ pub struct QualifiedMasternodeListEntry {
     /// The underlying masternode list entry
     pub masternode_list_entry: MasternodeListEntry,
     /// The computed entry hash
-    pub entry_hash: [u8; 32],
+    pub entry_hash: sha256d::Hash,
     /// The confirmed hash hashed with the pro_reg_tx if the confirmed hash is set
     pub confirmed_hash_hashed_with_pro_reg_tx: Option<ConfirmedHashHashedWithProRegTx>,
 }

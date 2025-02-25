@@ -2,7 +2,7 @@ use core::fmt::{Display, Formatter};
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-
+use crate::BlockHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
@@ -13,7 +13,7 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 pub enum LLMQEntryVerificationSkipStatus {
     NotMarkedForVerification,
     MissedList(CoreBlockHeight),
-    UnknownBlock([u8; 32]),
+    UnknownBlock(BlockHash),
     OtherContext(String),
 }
 
@@ -27,7 +27,7 @@ impl Display for LLMQEntryVerificationSkipStatus {
                     format!("MissedList({})", block_height)
                 }
                 LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash) => {
-                    format!("UnknownBlock({})", hex::encode(block_hash))
+                    format!("UnknownBlock({})", block_hash)
                 }
                 LLMQEntryVerificationSkipStatus::OtherContext(message) => {
                     format!("OtherContext({message})")
