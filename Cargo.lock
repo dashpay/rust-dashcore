@@ -453,7 +453,7 @@ dependencies = [
 
 [[package]]
 name = "dashcore"
-version = "0.35.0"
+version = "0.36.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -491,7 +491,7 @@ version = "0.1.0"
 
 [[package]]
 name = "dashcore_hashes"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "bincode 2.0.0-rc.3",
  "core2 0.3.3",

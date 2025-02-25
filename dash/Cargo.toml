@@ -1,6 +1,6 @@
 [package]
 name = "dashcore"
-version = "0.35.0"
+version = "0.36.0"
 authors = [
     "Samuel Westrich <sam@dash.org>",
     "Anton Suprunchuk <anton@dash.org>",
