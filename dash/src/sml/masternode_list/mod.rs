@@ -24,6 +24,7 @@ use crate::{BlockHash, ProTxHash, QuorumHash};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[ferment_macro::export]
 pub struct MasternodeList {
     pub block_hash: BlockHash,
     pub known_height: u32,
