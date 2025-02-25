@@ -78,11 +78,7 @@ impl MasternodeList {
     }
 
     pub fn compare_masternodes(&self, list: MasternodeList) -> bool {
-        let mut vec1 = Vec::from_iter(self.masternodes.values());
-        vec1.sort();
-        let mut vec2 = Vec::from_iter(list.masternodes.values());
-        vec2.sort();
-        vec1.eq(&vec2)
+        self.masternodes.values().eq(list.masternodes.values())
     }
 }
 
