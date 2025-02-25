@@ -154,7 +154,7 @@ impl Decodable for QRInfo {
 pub struct QuorumSnapshot {
     pub skip_list_mode: MNSkipListMode,
     pub active_quorum_members: Vec<bool>, // Bitset, length = (active_quorum_members_count + 7) / 8
-    pub skip_list: Vec<u32>,              // Array of int32_t
+    pub skip_list: Vec<u32>,              // Array of uint32_t
 }
 
 impl Display for QuorumSnapshot {

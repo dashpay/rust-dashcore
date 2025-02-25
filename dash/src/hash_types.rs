@@ -223,28 +223,36 @@ impl PartialOrd for ScoreHash {
     }
 
     impl ProTxHash {
-        /// Create a Txid from a string
+        /// Create a ProTxHash from a string
         pub fn from_hex(s: &str) -> Result<ProTxHash, Error> {
             Ok(Self(sha256d::Hash::from_str(s)?))
         }
 
-        /// Convert a Txid to a string
+        /// Convert a ProTxHash to a string
         pub fn to_hex(&self) -> String {
             self.0.to_string()
         }
     }
 
         impl ScoreHash {
-        /// Create a Txid from a string
+        /// Create a ScoreHash from a string
         pub fn from_hex(s: &str) -> Result<ScoreHash, Error> {
             Ok(Self(sha256::Hash::from_str(s)?))
         }
 
-        /// Convert a Txid to a string
+        /// Convert a ScoreHash to a string
         pub fn to_hex(&self) -> String {
             self.0.to_string()
         }
 
+        /// Creates a score based on the optional confirmed hash and the quorum modifier.
+        ///
+        /// # Arguments
+        /// * `confirmed_hash_hashed_with_pro_reg_tx` - An optional hash combining the confirmed hash and ProRegTx.
+        /// * `modifier` - A quorum modifier hash used in the calculation.
+        ///
+        /// # Returns
+        /// * A hashed score derived from the input values.
         pub fn create_score(confirmed_hash_hashed_with_pro_reg_tx: Option<ConfirmedHashHashedWithProRegTx>, modifier: QuorumModifierHash) -> Self {
             let mut bytes = vec![];
             if let Some(confirmed_hash_hashed_with_pro_reg_tx) = confirmed_hash_hashed_with_pro_reg_tx{

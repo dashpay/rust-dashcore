@@ -23,12 +23,15 @@ impl Display for LLMQEntryVerificationSkipStatus {
             match self {
                 LLMQEntryVerificationSkipStatus::NotMarkedForVerification =>
                     "NotMarkedForVerification".to_string(),
-                LLMQEntryVerificationSkipStatus::MissedList(block_height) =>
-                    format!("MissedList({})", block_height),
-                LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash) =>
-                    format!("UnknownBlock({})", hex::encode(block_hash)),
-                LLMQEntryVerificationSkipStatus::OtherContext(message) =>
-                    format!("OtherContext({message})"),
+                LLMQEntryVerificationSkipStatus::MissedList(block_height) => {
+                    format!("MissedList({})", block_height)
+                }
+                LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash) => {
+                    format!("UnknownBlock({})", hex::encode(block_hash))
+                }
+                LLMQEntryVerificationSkipStatus::OtherContext(message) => {
+                    format!("OtherContext({message})")
+                }
             }
             .as_str(),
         )

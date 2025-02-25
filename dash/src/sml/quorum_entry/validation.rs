@@ -58,7 +58,9 @@ impl QualifiedQuorumEntry {
             .collect::<Vec<_>>();
         let sig =
             G2Element::from_bytes(self.quorum_entry.all_commitment_aggregated_signature.as_bytes())
-                .expect("expected sig");
+                .map_err(|e| {
+                    QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(e.to_string())
+                })?;
         let verified = BasicSchemeMPL::new().verify_secure(public_keys2.iter(), message, &sig);
         if verified {
             Ok(())

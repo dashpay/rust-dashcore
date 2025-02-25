@@ -151,17 +151,6 @@ pub const LLMQ_0024: LLMQParams = LLMQParams {
     keep_old_connections: 4,
     recovery_members: 4,
 };
-pub const LLMQ_0024_333: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::LlmqtypeDevnetDIP0024,
-    name: "llmq_devnet_dip0024",
-    size: 8,
-    min_size: 6,
-    threshold: 4,
-    dkg_params: DKG_DEVNET_DIP_0024,
-    signing_active_quorum_count: 2,
-    keep_old_connections: 4,
-    recovery_members: 4,
-};
 pub const LLMQ_TEST_DIP00024: LLMQParams = LLMQParams {
     quorum_type: LLMQType::LlmqtypeTestDIP0024,
     name: "llmq_test_dip0024",

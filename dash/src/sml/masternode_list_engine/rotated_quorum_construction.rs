@@ -382,11 +382,11 @@ impl MasternodeListEngine {
                             snapshot
                                 .skip_list
                                 .iter()
-                                .filter_map(|unskipped| {
-                                    sorted_combined_mns_list.get(*unskipped as usize)
+                                .filter_map(|not_skipped| {
+                                    sorted_combined_mns_list.get(*not_skipped as usize)
                                 })
                                 .take(quarter_size)
-                                .cloned()
+                                .copied()
                                 .collect()
                         })
                         .collect(),
@@ -400,9 +400,9 @@ impl MasternodeListEngine {
             LLMQQuarterUsageType::New(mut used_indexed_masternodes) => {
                 let mut quarter_quorum_members =
                     vec![Vec::<&QualifiedMasternodeListEntry>::new(); quorum_count];
-                let mut skip_list = Vec::<i32>::new();
-                let mut first_skipped_index = 0i32;
-                let mut idx = 0i32;
+                let mut skip_list = Vec::<u32>::new();
+                let mut first_skipped_index = 0u32;
+                let mut idx = 0u32;
                 for i in 0..quorum_count {
                     let masternodes_used_at_h_indexed_at_i = used_indexed_masternodes
                         .get_mut(i)
@@ -430,7 +430,7 @@ impl MasternodeListEngine {
                             updated = true;
                         }
                         idx += 1;
-                        if idx == sorted_combined_mns_list_len as i32 {
+                        if idx == sorted_combined_mns_list_len as u32 {
                             idx = 0;
                         }
                         if idx == initial_loop_idx {
