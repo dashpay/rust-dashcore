@@ -80,6 +80,7 @@ secp256k1 = { features = [ "recovery", "rand", "hashes" ], version="0.30.0" }
 bip39 = "2.0.0"
 bincode_test = {package = "bincode", version= "1.3.3" }
 assert_matches = "1.5.0"
+dashcore = { path = ".", features = ["core-block-hash-use-x11"] }
 
 [[example]]
 name = "bip32"
