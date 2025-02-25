@@ -164,11 +164,6 @@ impl MasternodeList {
                 .into_iter()
                 .map(|hash| self.masternodes[hash].entry_hash)
                 .collect::<Vec<_>>()
-            //this was the following: (with entry_hash_at)
-            // pro_tx_hashes
-            //     .into_iter()
-            //     .map(|hash| (&self.masternodes[hash]).entry_hash_at(block_height))
-            //     .collect::<Vec<_>>()
         })
     }
 
