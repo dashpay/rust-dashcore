@@ -1,7 +1,7 @@
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
-use crate::sml::masternode_list::MasternodeList;
+use crate::sml::masternode_list::{MasternodeList, MasternodeListBuilder};
 
 impl MasternodeList {
     /// Applies an `MnListDiff` to update the current masternode list.
@@ -76,12 +76,13 @@ impl MasternodeList {
         }
 
         // Create and return the new MasternodeList
-        Ok(MasternodeList::new(
+        let builder = MasternodeListBuilder::new(
             updated_masternodes,
             updated_quorums,
             diff.block_hash,
-            diff_end_height,
-            true, // Assume quorums are active
-        ))
+            diff_end_height, 
+        );
+        
+        Ok(builder.build())
     }
 }

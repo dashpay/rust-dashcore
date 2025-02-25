@@ -8,8 +8,11 @@ mod peer_addresses;
 mod quorum_helpers;
 mod rotated_quorums_info;
 mod scores_for_quorum;
+mod builder;
 
 use std::collections::BTreeMap;
+
+pub use builder::MasternodeListBuilder;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
@@ -33,48 +36,4 @@ pub struct MasternodeList {
     // todo, see if we should remove this reversal
     pub masternodes: BTreeMap<ProTxHash, QualifiedMasternodeListEntry>,
     pub quorums: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
-}
-
-impl MasternodeList {
-    pub fn empty(block_hash: BlockHash, block_height: u32, quorums_active: bool) -> Self {
-        Self::new(BTreeMap::default(), BTreeMap::new(), block_hash, block_height, quorums_active)
-    }
-    pub fn new(
-        masternodes: BTreeMap<ProTxHash, QualifiedMasternodeListEntry>,
-        quorums: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
-        block_hash: BlockHash,
-        block_height: u32,
-        quorums_active: bool,
-    ) -> Self {
-        let mut list = Self {
-            quorums,
-            block_hash,
-            known_height: block_height,
-            masternode_merkle_root: None,
-            llmq_merkle_root: None,
-            masternodes,
-        };
-        list.masternode_merkle_root = list.calculate_masternodes_merkle_root(block_height);
-        if quorums_active {
-            list.llmq_merkle_root = list.calculate_llmq_merkle_root();
-        }
-        list
-    }
-    pub fn with_merkle_roots(
-        masternodes: BTreeMap<ProTxHash, QualifiedMasternodeListEntry>,
-        quorums: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
-        block_hash: BlockHash,
-        block_height: u32,
-        masternode_merkle_root: MerkleRootMasternodeList,
-        llmq_merkle_root: Option<MerkleRootQuorums>,
-    ) -> Self {
-        Self {
-            quorums,
-            block_hash,
-            known_height: block_height,
-            masternode_merkle_root: Some(masternode_merkle_root),
-            llmq_merkle_root,
-            masternodes,
-        }
-    }
 }
