@@ -154,6 +154,8 @@ impl MasternodeListEngine {
             &qr_info.mn_list_diff_at_h_minus_3c,
         ];
 
+        let should_request_for_previous_validation = qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some();
+
         // If h-4c exists, add it to the list
         if let Some((_, mn_list_diff_h_minus_4c)) =
             &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c
@@ -174,6 +176,16 @@ impl MasternodeListEngine {
         qr_info.last_commitment_per_index.iter().try_for_each(|quorum_entry| {
             self.request_quorum_entry_height(quorum_entry, fetch_block_height)
         })?;
+
+        if should_request_for_previous_validation {
+            qr_info.mn_list_diff_h.new_quorums.iter().try_for_each(|quorum_entry| {
+                if quorum_entry.llmq_type.is_rotating_quorum_type() {
+                    self.request_quorum_entry_height(quorum_entry, fetch_block_height)
+                } else {
+                    Ok(())
+                }
+            })?;
+        }
 
         // Process `mn_list_diff_list` (extra diffs)
         qr_info.mn_list_diff_list.iter().try_for_each(|mn_list_diff| {
