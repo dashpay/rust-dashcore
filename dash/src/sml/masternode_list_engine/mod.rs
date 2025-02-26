@@ -547,22 +547,6 @@ impl MasternodeListEngine {
             let mut masternode_list =
                 base_masternode_list.apply_diff(masternode_list_diff.clone(), diff_end_height)?;
             if verify_quorums {
-                // // We only need to verify new quorums
-                // for new_quorum in &masternode_list_diff.new_quorums {
-                //     let quorum = masternode_list
-                //         .quorum_entry_of_type_for_quorum_hash_mut(
-                //             new_quorum.llmq_type,
-                //             new_quorum.quorum_hash,
-                //         )
-                //         .ok_or(SmlError::CorruptedCodeExecution(
-                //             "masternode list after diff does not contain new quorum".to_string(),
-                //         ))?;
-                //     self.validate_and_update_quorum_status(quorum);
-                //     let masternode_lists_having_quorum_hash_for_quorum_type = self.masternode_lists_having_quorum_hash.entry(new_quorum.llmq_type).or_default();
-                //     let (heights, status) = masternode_lists_having_quorum_hash_for_quorum_type.entry(quorum.quorum_entry.quorum_hash).or_default();
-                //     heights.insert(diff_end_height);
-                //     *status = quorum.verified.clone();
-                // }
                 // We should go through all quorums of the masternode list to update those that were not yet verified
                 for (quorum_type, quorums) in masternode_list.quorums.iter_mut() {
                     for quorum in quorums.values_mut() {
