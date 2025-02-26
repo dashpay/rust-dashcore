@@ -134,8 +134,11 @@ impl MasternodeListEngine {
         if qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some() {
             for quorum in &qr_info.mn_list_diff_h.new_quorums {
                 if quorum.llmq_type.is_rotating_quorum_type() {
-                    let Some(quorum_block_height) = self.block_heights.get(&quorum.quorum_hash) else {
-                        return Err(QuorumValidationError::RequiredBlockNotPresent(quorum.quorum_hash));
+                    let Some(quorum_block_height) = self.block_heights.get(&quorum.quorum_hash)
+                    else {
+                        return Err(QuorumValidationError::RequiredBlockNotPresent(
+                            quorum.quorum_hash,
+                        ));
                     };
                     let llmq_params = quorum.llmq_type.params();
                     let quorum_index = quorum_block_height % llmq_params.dkg_params.interval;

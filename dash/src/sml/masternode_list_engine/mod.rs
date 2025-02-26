@@ -154,7 +154,8 @@ impl MasternodeListEngine {
             &qr_info.mn_list_diff_at_h_minus_3c,
         ];
 
-        let should_request_for_previous_validation = qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some();
+        let should_request_for_previous_validation =
+            qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some();
 
         // If h-4c exists, add it to the list
         if let Some((_, mn_list_diff_h_minus_4c)) =
@@ -583,13 +584,14 @@ impl MasternodeListEngine {
                     }
                 }
             } else {
-                for (quorum_type, quorums) in &masternode_list.quorums {
-                    let masternode_lists_having_quorum_hash_for_quorum_type =
-                        self.quorum_statuses.entry(*quorum_type).or_default();
-                    for quorum_hash in quorums.keys() {
-                        let (heights, _) = masternode_lists_having_quorum_hash_for_quorum_type
-                            .entry(*quorum_hash)
+                for (quorum_type, quorums) in masternode_list.quorums.iter_mut() {
+                    for quorum in quorums.values_mut() {
+                        let masternode_lists_having_quorum_hash_for_quorum_type =
+                            self.quorum_statuses.entry(*quorum_type).or_default();
+                        let (heights, status) = masternode_lists_having_quorum_hash_for_quorum_type
+                            .entry(quorum.quorum_entry.quorum_hash)
                             .or_default();
+                        quorum.verified = status.clone();
                         heights.insert(diff_end_height);
                     }
                 }
