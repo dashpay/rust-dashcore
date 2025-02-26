@@ -26,7 +26,10 @@ impl MasternodeListEngine {
     /// - If `core_block_height` matches a key exactly, it may be included in the first return value.
     /// - The function does not mutate the underlying data structure.
     /// - Uses efficient `BTreeMap` traversal to find surrounding heights.
-    pub fn masternode_lists_around_height(&self, core_block_height: CoreBlockHeight) -> (Option<&MasternodeList>, Option<&MasternodeList>) {
+    pub fn masternode_lists_around_height(
+        &self,
+        core_block_height: CoreBlockHeight,
+    ) -> (Option<&MasternodeList>, Option<&MasternodeList>) {
         let mut lower = None;
         let mut upper = None;
 

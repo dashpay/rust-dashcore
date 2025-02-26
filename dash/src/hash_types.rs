@@ -77,8 +77,9 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
     use crate::prelude::String;
     #[cfg(feature = "core-block-hash-use-x11")]
     use hashes::hash_x11;
+use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
-    #[cfg(feature = "core-block-hash-use-x11")]
+#[cfg(feature = "core-block-hash-use-x11")]
     hash_newtype! {
         /// A dash block hash.
         pub struct BlockHash(hash_x11::Hash);
@@ -152,6 +153,7 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
 
         hash_newtype_no_ord! {
             pub struct ScoreHash(sha256::Hash);
+            pub struct QuorumOrderingHash(sha256::Hash);
         }
 
 impl Ord for ScoreHash {
@@ -166,7 +168,25 @@ impl Ord for ScoreHash {
     }
 }
 
+impl Ord for QuorumOrderingHash {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let mut self_bytes = self.0.to_byte_array();
+        let mut other_bytes = other.0.to_byte_array();
+
+        self_bytes.reverse();
+        other_bytes.reverse();
+
+        self_bytes.cmp(&other_bytes)
+    }
+}
+
 impl PartialOrd for ScoreHash {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+    impl PartialOrd for QuorumOrderingHash {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -205,6 +225,7 @@ impl PartialOrd for ScoreHash {
     impl_hashencode!(QuorumEntryHash);
     impl_hashencode!(QuorumCommitmentHash);
     impl_hashencode!(ScoreHash);
+    impl_hashencode!(QuorumOrderingHash);
     impl_hashencode!(ProTxHash);
     impl_hashencode!(Sha256dHash);
 
@@ -259,6 +280,33 @@ impl PartialOrd for ScoreHash {
                 bytes.append(&mut confirmed_hash_hashed_with_pro_reg_tx.to_byte_array().to_vec());
             }
             bytes.append(&mut modifier.to_byte_array().to_vec());
+            Self::hash(bytes.as_slice())
+        }
+    }
+
+    impl QuorumOrderingHash {
+        /// Create a ScoreHash from a string
+        pub fn from_hex(s: &str) -> Result<QuorumOrderingHash, Error> {
+            Ok(Self(sha256::Hash::from_str(s)?))
+        }
+
+        /// Convert a ScoreHash to a string
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
+
+        /// Creates an ordering hash based on the quorum and request id.
+        ///
+        /// # Arguments
+        /// * `quorum` - The quorum to create the ordering hash.
+        /// * `request_id` - The request id.
+        ///
+        /// # Returns
+        /// * A hashed score derived from the input values.
+        pub fn create(quorum: &QuorumEntry, request_id: &QuorumSigningRequestId) -> Self {
+            let mut bytes = vec![quorum.llmq_type as u8];
+            bytes.extend_from_slice(quorum.quorum_hash.as_byte_array());
+            bytes.extend_from_slice(request_id.as_byte_array());
             Self::hash(bytes.as_slice())
         }
     }

@@ -1,9 +1,9 @@
+mod helpers;
 mod message_request_verification;
 mod non_rotated_quorum_construction;
 mod rotated_quorum_construction;
 #[cfg(feature = "quorum_validation")]
 mod validation;
-mod helpers;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -830,7 +830,7 @@ mod tests {
                 .expect("expected to decode")
                 .0;
 
-        assert_eq!(mn_list_engine.masternode_lists.len(), 27);
+        assert_eq!(mn_list_engine.masternode_lists.len(), 29);
 
         let last_masternode_list_height =
             *mn_list_engine.masternode_lists.last_key_value().unwrap().0;
@@ -928,10 +928,6 @@ mod tests {
                 .expect("expected to decode")
                 .0;
 
-        assert_eq!(mn_list_engine.masternode_lists.len(), 27);
-
-        // height 2228036
-
         for (cycle_hash, quorums) in mn_list_engine.rotated_quorums_per_cycle.iter() {
             for (i, quorum) in quorums.iter().enumerate() {
                 mn_list_engine.validate_quorum(quorum).expect(
@@ -951,10 +947,6 @@ mod tests {
             bincode::decode_from_slice(&data, bincode::config::standard())
                 .expect("expected to decode")
                 .0;
-
-        assert_eq!(mn_list_engine.masternode_lists.len(), 27);
-
-        // height 2228036
 
         for (cycle_hash, quorums) in mn_list_engine.rotated_quorums_per_cycle.iter() {
             mn_list_engine

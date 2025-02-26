@@ -13,10 +13,10 @@ use hashes::{Hash, HashEngine};
 
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::Encodable;
-use crate::internal_macros::impl_consensus_encoding;
-use crate::{BlockHash, QuorumSigningRequestId, VarInt, io, QuorumHash};
 use crate::hash_types::QuorumSigningSignId;
+use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::llmq_type::LLMQType;
+use crate::{BlockHash, QuorumHash, QuorumSigningRequestId, VarInt, io};
 
 const CL_REQUEST_ID_PREFIX: &str = "clsig";
 
@@ -53,7 +53,12 @@ impl ChainLock {
         Ok(QuorumSigningRequestId::from_engine(engine))
     }
 
-    pub fn sign_id(&self, quorum_type: LLMQType, quorum_hash: QuorumHash, precomputed_request_id: Option<QuorumSigningRequestId>) -> Result<QuorumSigningSignId, io::Error> {
+    pub fn sign_id(
+        &self,
+        quorum_type: LLMQType,
+        quorum_hash: QuorumHash,
+        precomputed_request_id: Option<QuorumSigningRequestId>,
+    ) -> Result<QuorumSigningSignId, io::Error> {
         let mut engine = QuorumSigningSignId::engine();
 
         engine.input(&[quorum_type as u8]);
