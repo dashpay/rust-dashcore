@@ -42,7 +42,28 @@ pub struct MasternodeListEngine {
     pub network: Network,
 }
 
+impl Default for MasternodeListEngine {
+    fn default() -> Self {
+        Self {
+            block_hashes: Default::default(),
+            block_heights: Default::default(),
+            masternode_lists: Default::default(),
+            known_chain_locks: Default::default(),
+            known_snapshots: Default::default(),
+            last_commitment_entries: vec![],
+            masternode_lists_having_quorum_hash: Default::default(),
+            network: Network::Dash,
+        }
+    }
+}
+
 impl MasternodeListEngine {
+    pub fn default_for_network(network: Network) -> Self {
+        Self {
+            network,
+            ..Default::default()
+        }
+    }
     pub fn initialize_with_diff_to_height(
         masternode_list_diff: MnListDiff,
         block_height: CoreBlockHeight,
