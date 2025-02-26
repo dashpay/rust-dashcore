@@ -58,12 +58,7 @@ impl Default for MasternodeListEngine {
 }
 
 impl MasternodeListEngine {
-    pub fn default_for_network(network: Network) -> Self {
-        Self {
-            network,
-            ..Default::default()
-        }
-    }
+    pub fn default_for_network(network: Network) -> Self { Self { network, ..Default::default() } }
     pub fn initialize_with_diff_to_height(
         masternode_list_diff: MnListDiff,
         block_height: CoreBlockHeight,
@@ -426,10 +421,8 @@ impl MasternodeListEngine {
                             self.validate_and_update_quorum_status(quorum);
                             status_changed = old_status != quorum.verified;
                         }
-                        let masternode_lists_having_quorum_hash_for_quorum_type = self
-                            .quorum_statuses
-                            .entry(*quorum_type)
-                            .or_default();
+                        let masternode_lists_having_quorum_hash_for_quorum_type =
+                            self.quorum_statuses.entry(*quorum_type).or_default();
                         let (heights, status) = masternode_lists_having_quorum_hash_for_quorum_type
                             .entry(quorum.quorum_entry.quorum_hash)
                             .or_default();
@@ -479,6 +472,16 @@ impl MasternodeListEngine {
                     "quorum validation feature is not turned on".to_string(),
                 ));
             }
+            for (quorum_type, quorums) in &masternode_list.quorums {
+                let masternode_lists_having_quorum_hash_for_quorum_type =
+                    self.quorum_statuses.entry(*quorum_type).or_default();
+                for quorum_hash in quorums.keys() {
+                    let (heights, _) = masternode_lists_having_quorum_hash_for_quorum_type
+                        .entry(*quorum_hash)
+                        .or_default();
+                    heights.insert(diff_end_height);
+                }
+            }
             self.masternode_lists.insert(diff_end_height, masternode_list);
         }
 
@@ -498,7 +501,9 @@ impl MasternodeListEngine {
             .masternode_lists
             .get(&block_height)
             .ok_or(QuorumValidationError::VerifyingMasternodeListNotPresent(block_height))?;
+
         let mut results = BTreeMap::new();
+
         for (quorum_type, hash_to_quorum_entries) in masternode_list.quorums.iter() {
             if exclude_quorum_types.contains(quorum_type) || quorum_type.is_rotating_quorum_type() {
                 continue;
@@ -510,31 +515,70 @@ impl MasternodeListEngine {
             }
             results.insert(*quorum_type, inner);
         }
+
         let masternode_list = self
             .masternode_lists
             .get_mut(&block_height)
             .ok_or(QuorumValidationError::VerifyingMasternodeListNotPresent(block_height))?;
+
         for (quorum_type, hash_to_quorum_entries) in masternode_list.quorums.iter_mut() {
             if exclude_quorum_types.contains(quorum_type) {
                 continue;
             }
+
+            let masternode_lists_having_quorum_hash_for_quorum_type =
+                self.quorum_statuses.entry(*quorum_type).or_default();
+
             if quorum_type.is_rotating_quorum_type() {
-                // only update based on the last commitment entries
+                // Only update rotating quorum statuses based on last commitment entries
                 for quorum in &self.last_commitment_entries {
                     if let Some(quorum_entry) =
                         hash_to_quorum_entries.get_mut(&quorum.quorum_entry.quorum_hash)
                     {
                         quorum_entry.verified = quorum.verified.clone();
                     }
+
+                    let (heights, status) = masternode_lists_having_quorum_hash_for_quorum_type
+                        .entry(quorum.quorum_entry.quorum_hash)
+                        .or_default();
+
+                    heights.insert(block_height);
+                    *status = quorum.verified.clone();
                 }
             } else {
                 for (quorum_hash, quorum_entry) in hash_to_quorum_entries.iter_mut() {
+                    let old_status = quorum_entry.verified.clone();
                     quorum_entry.update_quorum_status(
                         results.get_mut(quorum_type).unwrap().remove(quorum_hash).unwrap(),
-                    )
+                    );
+
+                    let (heights, status) = masternode_lists_having_quorum_hash_for_quorum_type
+                        .entry(*quorum_hash)
+                        .or_default();
+
+                    if old_status != quorum_entry.verified {
+                        // Update all past occurrences of the same quorum hash
+                        for height in heights.iter() {
+                            if let Some(masternode_list_at_height) =
+                                self.masternode_lists.get_mut(height)
+                            {
+                                if let Some(quorum_entry_at_height) = masternode_list_at_height
+                                    .quorums
+                                    .get_mut(quorum_type)
+                                    .and_then(|quorums| quorums.get_mut(quorum_hash))
+                                {
+                                    quorum_entry_at_height.verified = quorum_entry.verified.clone();
+                                }
+                            }
+                        }
+                    }
+
+                    heights.insert(block_height);
+                    *status = quorum_entry.verified.clone();
                 }
             }
         }
+
         Ok(())
     }
 }
