@@ -44,7 +44,7 @@ impl MasternodeListEngine {
 
     pub fn validate_rotation_cycle_quorums(
         &self,
-        quorums: &[QualifiedQuorumEntry],
+        quorums: &[&QualifiedQuorumEntry],
     ) -> Result<(), QuorumValidationError> {
         // first let's do basic structure validation
         for quorum in quorums {
@@ -81,7 +81,7 @@ impl MasternodeListEngine {
 
     pub fn validate_rotation_cycle_quorums_validation_statuses(
         &self,
-        quorums: &[QualifiedQuorumEntry],
+        quorums: &[&QualifiedQuorumEntry],
     ) -> BTreeMap<QuorumHash, LLMQEntryVerificationStatus> {
         let mut return_statuses: BTreeMap<QuorumHash, LLMQEntryVerificationStatus> = quorums
             .iter()

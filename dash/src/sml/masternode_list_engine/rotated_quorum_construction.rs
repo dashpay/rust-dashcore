@@ -55,7 +55,7 @@ impl MasternodeListEngine {
 
     pub(in crate::sml::masternode_list_engine) fn find_rotated_masternodes_for_quorums<'a>(
         &'a self,
-        quorums: &'a [QualifiedQuorumEntry],
+        quorums: &'a [&'a QualifiedQuorumEntry],
     ) -> Result<BTreeMap<QuorumHash, Vec<&'a QualifiedMasternodeListEntry>>, QuorumValidationError>
     {
         let mut return_btree_map = BTreeMap::new();
