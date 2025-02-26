@@ -3,6 +3,7 @@ mod non_rotated_quorum_construction;
 mod rotated_quorum_construction;
 #[cfg(feature = "quorum_validation")]
 mod validation;
+mod helpers;
 
 use std::collections::{BTreeMap, BTreeSet};
 

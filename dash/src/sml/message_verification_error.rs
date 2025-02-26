@@ -5,6 +5,7 @@ use thiserror::Error;
 use crate::QuorumHash;
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::hash_types::CycleHash;
+use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
@@ -18,6 +19,9 @@ pub enum MessageVerificationError {
 
     #[error("Required cycle present but has no quorum: {0}")]
     CycleHashEmpty(CycleHash),
+
+    #[error("Masternode list at height {0} has no quorums")]
+    MasternodeListHasNoQuorums(CoreBlockHeight),
 
     #[error(
         "Threshold signature {0} is not valid for digest {1} using public key {2} for quorum {3} of type {4}, error is: {5}"

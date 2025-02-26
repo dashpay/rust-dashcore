@@ -12,9 +12,10 @@ use hashes::{Hash, HashEngine};
 
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::Encodable;
-use crate::hash_types::{CycleHash, QuorumSigningRequestId};
+use crate::hash_types::{CycleHash, QuorumSigningRequestId, QuorumSigningSignId};
 use crate::internal_macros::impl_consensus_encoding;
-use crate::{OutPoint, Txid, VarInt, io};
+use crate::{OutPoint, Txid, VarInt, io, QuorumHash};
+use crate::sml::llmq_type::LLMQType;
 
 const IS_LOCK_REQUEST_ID_PREFIX: &str = "islock";
 
@@ -70,6 +71,18 @@ impl InstantLock {
         }
 
         Ok(QuorumSigningRequestId::from_engine(engine))
+    }
+
+    /// Returns the sign id
+    pub fn sign_id(&self, quorum_type: LLMQType, quorum_hash: QuorumHash, precomputed_request_id: Option<QuorumSigningRequestId>) -> Result<QuorumSigningSignId, io::Error> {
+        let mut engine = QuorumSigningSignId::engine();
+
+        engine.input(&[quorum_type as u8]);
+        engine.input(quorum_hash.reverse().as_byte_array());
+        engine.input(precomputed_request_id.unwrap_or(self.request_id()?).as_byte_array());
+        engine.input(self.txid.as_byte_array());
+
+        Ok(QuorumSigningSignId::from_engine(engine))
     }
 }
 

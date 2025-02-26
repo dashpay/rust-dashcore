@@ -134,8 +134,9 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
         /// A hash of a quorum verification vector
         pub struct QuorumVVecHash(sha256d::Hash);
         /// A hash of a quorum signing request id
-        #[hash_newtype(forward)]
         pub struct QuorumSigningRequestId(sha256d::Hash);
+        /// A hash of a quorum signing sign id
+        pub struct QuorumSigningSignId(sha256d::Hash);
         /// ProTxHash is a pro-tx hash
         #[hash_newtype(forward)]
         pub struct ProTxHash(sha256d::Hash);

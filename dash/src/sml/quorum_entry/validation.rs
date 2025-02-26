@@ -144,7 +144,7 @@ impl QualifiedQuorumEntry {
     ///
     pub fn verify_message_digest(
         &self,
-        message_digest: sha256d::Hash,
+        message_digest: [u8; 32],
         signature: BLSSignature,
     ) -> Result<(), MessageVerificationError> {
         let public_key: blsful::PublicKey<Bls12381G2Impl> =
@@ -153,7 +153,7 @@ impl QualifiedQuorumEntry {
         bls_signature.verify(&public_key, message_digest).map_err(|e| {
             MessageVerificationError::ThresholdSignatureNotValid(
                 signature,
-                message_digest,
+                sha256d::Hash::from_byte_array(message_digest),
                 self.quorum_entry.quorum_public_key,
                 self.quorum_entry.quorum_hash,
                 self.quorum_entry.llmq_type,
