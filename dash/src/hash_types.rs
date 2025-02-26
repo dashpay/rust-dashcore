@@ -82,15 +82,11 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
     hash_newtype! {
         /// A dash block hash.
         pub struct BlockHash(hash_x11::Hash);
-        /// CycleHash is a cycle hash
-        pub struct CycleHash(hash_x11::Hash);
     }
     #[cfg(not(feature = "core-block-hash-use-x11"))]
     hash_newtype! {
         /// A dash block hash.
         pub struct BlockHash(sha256d::Hash);
-        /// CycleHash is a cycle hash
-        pub struct CycleHash(sha256d::Hash);
     }
 
     hash_newtype! {
@@ -138,6 +134,7 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
         /// A hash of a quorum verification vector
         pub struct QuorumVVecHash(sha256d::Hash);
         /// A hash of a quorum signing request id
+        #[hash_newtype(forward)]
         pub struct QuorumSigningRequestId(sha256d::Hash);
         /// ProTxHash is a pro-tx hash
         #[hash_newtype(forward)]
@@ -178,6 +175,9 @@ impl PartialOrd for ScoreHash {
     /// A hash used to identify a quorum
     pub type QuorumHash = BlockHash;
 
+    /// A hash used to identity a cycle
+    pub type CycleHash = BlockHash;
+
     impl_hashencode!(Txid);
     impl_hashencode!(Wtxid);
     impl_hashencode!(BlockHash);
@@ -197,7 +197,6 @@ impl PartialOrd for ScoreHash {
     impl_hashencode!(QuorumVVecHash);
     impl_hashencode!(QuorumSigningRequestId);
     impl_hashencode!(PubkeyHash);
-    impl_hashencode!(CycleHash);
 
     impl_hashencode!(ConfirmedHash);
     impl_hashencode!(ConfirmedHashHashedWithProRegTx);

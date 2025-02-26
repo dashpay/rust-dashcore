@@ -1,3 +1,4 @@
+mod message_request_verification;
 mod non_rotated_quorum_construction;
 mod rotated_quorum_construction;
 #[cfg(feature = "quorum_validation")]
