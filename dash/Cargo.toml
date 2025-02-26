@@ -63,7 +63,7 @@ anyhow = { version= "1.0" }
 hex = { version= "0.4" }
 bincode = { version= "2.0.0-rc.3", optional = true }
 bitflags = "2.6.0"
-blsful = { version = "3.0.0-pre8", optional = true }
+blsful = { version = "3.0.0-pre6", optional = true }
 serde_repr = "0.1.19"
 strum = { version = "0.26", features = ["derive"] }
 lazy_static = "1.5.0"
