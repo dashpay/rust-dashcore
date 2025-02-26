@@ -35,7 +35,7 @@ pub struct MasternodeListEngine {
     pub known_chain_locks: BTreeMap<BlockHash, BLSSignature>,
     pub known_snapshots: BTreeMap<BlockHash, QuorumSnapshot>,
     pub last_commitment_entries: Vec<QualifiedQuorumEntry>,
-    pub masternode_lists_having_quorum_hash: BTreeMap<
+    pub quorum_statuses: BTreeMap<
         LLMQType,
         BTreeMap<QuorumHash, (BTreeSet<CoreBlockHeight>, LLMQEntryVerificationStatus)>,
     >,
@@ -51,7 +51,7 @@ impl Default for MasternodeListEngine {
             known_chain_locks: Default::default(),
             known_snapshots: Default::default(),
             last_commitment_entries: vec![],
-            masternode_lists_having_quorum_hash: Default::default(),
+            quorum_statuses: Default::default(),
             network: Network::Dash,
         }
     }
@@ -80,7 +80,7 @@ impl MasternodeListEngine {
             known_chain_locks: Default::default(),
             known_snapshots: Default::default(),
             last_commitment_entries: vec![],
-            masternode_lists_having_quorum_hash: Default::default(),
+            quorum_statuses: Default::default(),
             network,
         })
     }
@@ -427,7 +427,7 @@ impl MasternodeListEngine {
                             status_changed = old_status != quorum.verified;
                         }
                         let masternode_lists_having_quorum_hash_for_quorum_type = self
-                            .masternode_lists_having_quorum_hash
+                            .quorum_statuses
                             .entry(*quorum_type)
                             .or_default();
                         let (heights, status) = masternode_lists_having_quorum_hash_for_quorum_type
@@ -457,7 +457,7 @@ impl MasternodeListEngine {
             } else {
                 for (quorum_type, quorums) in &masternode_list.quorums {
                     let masternode_lists_having_quorum_hash_for_quorum_type =
-                        self.masternode_lists_having_quorum_hash.entry(*quorum_type).or_default();
+                        self.quorum_statuses.entry(*quorum_type).or_default();
                     for quorum_hash in quorums.keys() {
                         let (heights, _) = masternode_lists_having_quorum_hash_for_quorum_type
                             .entry(*quorum_hash)
