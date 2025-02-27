@@ -1,6 +1,6 @@
 [package]
 name = "dashcore"
-version = "0.36.1"
+version = "0.36.2"
 authors = [
     "Samuel Westrich <sam@dash.org>",
     "Anton Suprunchuk <anton@dash.org>",
@@ -19,7 +19,7 @@ edition = "2021"
 
 # Please don't forget to add relevant features to docs.rs below
 [features]
-default = [ "std", "secp-recovery", "bincode", "quorum_validation" ]
+default = [ "std", "secp-recovery", "bincode" ]
 base64 = [ "base64-compat" ]
 rand-std = ["secp256k1/rand"]
 rand = ["secp256k1/rand"]
@@ -31,6 +31,7 @@ core-block-hash-use-x11 = ["dashcore_hashes/x11"]
 bls = ["blsful"]
 eddsa = ["ed25519-dalek"]
 quorum_validation = ["bls"]
+message_verification = ["bls"]
 bincode = [ "dep:bincode", "dashcore_hashes/bincode" ]
 
 # At least one of std, no-std must be enabled.
@@ -80,7 +81,7 @@ secp256k1 = { features = [ "recovery", "rand", "hashes" ], version="0.30.0" }
 bip39 = "2.0.0"
 bincode_test = {package = "bincode", version= "1.3.3" }
 assert_matches = "1.5.0"
-dashcore = { path = ".", features = ["core-block-hash-use-x11"] }
+dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation"] }
 
 [[example]]
 name = "bip32"
