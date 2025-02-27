@@ -1,7 +1,7 @@
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
-use crate::sml::masternode_list::{MasternodeList, MasternodeListBuilder};
+use crate::sml::masternode_list::MasternodeList;
 
 impl MasternodeList {
     /// Applies an `MnListDiff` to update the current masternode list.
