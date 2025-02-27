@@ -11,7 +11,7 @@ impl MasternodeListEngine {
     fn is_lock_potential_quorums(
         &self,
         instant_lock: &InstantLock,
-    ) -> Result<(&Vec<QualifiedQuorumEntry>), MessageVerificationError> {
+    ) -> Result<&Vec<QualifiedQuorumEntry>, MessageVerificationError> {
         // Retrieve the cycle hash from the Instant Lock
         let cycle_hash = instant_lock.cyclehash;
 

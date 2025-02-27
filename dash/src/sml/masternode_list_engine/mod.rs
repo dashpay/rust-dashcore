@@ -923,7 +923,7 @@ mod tests {
         let block_hex =
             include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
         let data = hex::decode(block_hex).expect("decode hex");
-        let mut mn_list_engine: MasternodeListEngine =
+        let mn_list_engine: MasternodeListEngine =
             bincode::decode_from_slice(&data, bincode::config::standard())
                 .expect("expected to decode")
                 .0;
@@ -943,7 +943,7 @@ mod tests {
         let block_hex =
             include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
         let data = hex::decode(block_hex).expect("decode hex");
-        let mut mn_list_engine: MasternodeListEngine =
+        let mn_list_engine: MasternodeListEngine =
             bincode::decode_from_slice(&data, bincode::config::standard())
                 .expect("expected to decode")
                 .0;
@@ -954,19 +954,4 @@ mod tests {
                 .expect("expected to validated quorums");
         }
     }
-
-    // #[test]
-    // fn deserialize_mn_list_engine_and_validate_rotated_quorums() {
-    //     let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-    //     let data = hex::decode(block_hex).expect("decode hex");
-    //     let mut mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
-    //
-    //     assert_eq!(mn_list_engine.masternode_lists.len(), 27);
-    //
-    //     // height 2227678
-    //
-    //     for quorum in &mn_list_engine.last_commitment_entries {
-    //         mn_list_engine.validate_quorum(quorum).expect("expected to validate quorum");
-    //     }
-    // }
 }

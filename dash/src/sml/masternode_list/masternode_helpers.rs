@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+
 use crate::ProTxHash;
 use crate::sml::masternode_list::MasternodeList;
 

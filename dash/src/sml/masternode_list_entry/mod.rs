@@ -93,15 +93,11 @@ use bincode::{Decode, Encode};
 use hashes::Hash;
 
 impl Ord for MasternodeListEntry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.pro_reg_tx_hash.cmp(&other.pro_reg_tx_hash)
-    }
+    fn cmp(&self, other: &Self) -> Ordering { self.pro_reg_tx_hash.cmp(&other.pro_reg_tx_hash) }
 }
 
 impl PartialOrd for MasternodeListEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
 }
 
 impl Encodable for MasternodeListEntry {

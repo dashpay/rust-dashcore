@@ -1,10 +1,11 @@
+use std::collections::BTreeMap;
+
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::{BlockHash, ProTxHash, QuorumHash};
-use std::collections::BTreeMap;
 
 pub struct MasternodeListBuilder {
     pub block_hash: BlockHash,

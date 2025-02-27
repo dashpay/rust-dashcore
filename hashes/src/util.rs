@@ -335,6 +335,7 @@ macro_rules! hash_newtype {
     };
 }
 
+/// Same as newtype without ord
 #[macro_export]
 macro_rules! hash_newtype_no_ord {
     ($($(#[$($type_attrs:tt)*])* $type_vis:vis struct $newtype:ident($(#[$field_attrs:tt])* $field_vis:vis $hash:path);)+) => {
