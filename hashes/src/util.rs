@@ -12,8 +12,6 @@
 // If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 //
 
-use crate::Hash;
-
 #[macro_export]
 /// Adds hexadecimal formatting implementation of a trait `$imp` to a given type `$ty`.
 macro_rules! hex_fmt_impl(
