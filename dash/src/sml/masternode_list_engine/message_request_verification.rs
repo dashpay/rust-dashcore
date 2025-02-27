@@ -1,11 +1,11 @@
 use hashes::{Hash, HashEngine};
 
 use crate::hash_types::QuorumOrderingHash;
+use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::message_verification_error::MessageVerificationError;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::{ChainLock, InstantLock, QuorumSigningRequestId};
-use crate::sml::masternode_list::MasternodeList;
 
 impl MasternodeListEngine {
     fn is_lock_potential_quorums(
@@ -267,19 +267,46 @@ impl MasternodeListEngine {
         // Retrieve masternode lists surrounding the signing height (block_height - 8)
         let (before, after) = self.masternode_lists_around_height(chain_lock.block_height - 8);
 
+        if before.is_none() && after.is_none() {
+            return Err(MessageVerificationError::NoMasternodeLists);
+        }
         // Compute the signing request ID
         let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
 
         // Attempt verification using the "before" masternode list
-        if let Some(before) = before {
-            if let Ok(_) = self.verify_chain_lock_with_masternode_list(chain_lock, &before, &request_id) {
+        let initial_error = if let Some(before) = before {
+            let Err(e) =
+                self.verify_chain_lock_with_masternode_list(chain_lock, &before, &request_id)
+            else {
                 return Ok(());
-            }
-        }
+            };
+            Some(e)
+        } else {
+            None
+        };
+
+        let chain_lock_quorum_type = self.network.chain_locks_type();
 
         // If "before" verification fails, attempt verification using the "after" masternode list
         if let Some(after) = after {
-            return self.verify_chain_lock_with_masternode_list(chain_lock, &after, &request_id);
+            // Only do this verification if the quorums actually changed
+            let do_check = if let Some(before) = before {
+                before.quorums.get(&chain_lock_quorum_type)
+                    != after.quorums.get(&chain_lock_quorum_type)
+            } else {
+                true
+            };
+            if do_check {
+                return self.verify_chain_lock_with_masternode_list(
+                    chain_lock,
+                    &after,
+                    &request_id,
+                );
+            } else {
+                if let Some(initial_error) = initial_error {
+                    return Err(initial_error);
+                }
+            }
         }
 
         Ok(())
@@ -295,15 +322,16 @@ impl MasternodeListEngine {
         // Get the quorum type for ChainLocks in the current network
         let chain_lock_quorum_type = self.network.chain_locks_type();
 
-        let quorums_of_type = masternode_list
-            .quorums
-            .get(&chain_lock_quorum_type)
-            .ok_or(MessageVerificationError::MasternodeListHasNoQuorums(masternode_list.known_height))?;
+        let quorums_of_type = masternode_list.quorums.get(&chain_lock_quorum_type).ok_or(
+            MessageVerificationError::MasternodeListHasNoQuorums(masternode_list.known_height),
+        )?;
 
         let quorum = quorums_of_type
             .values()
             .min_by_key(|quorum| QuorumOrderingHash::create(&quorum.quorum_entry, request_id))
-            .ok_or(MessageVerificationError::MasternodeListHasNoQuorums(masternode_list.known_height))?;
+            .ok_or(MessageVerificationError::MasternodeListHasNoQuorums(
+                masternode_list.known_height,
+            ))?;
 
         let sign_id = chain_lock
             .sign_id(
@@ -319,11 +347,14 @@ impl MasternodeListEngine {
 
 #[cfg(test)]
 mod tests {
+    use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::deserialize;
     use crate::hashes::Hash;
+    use crate::hashes::hex::FromHex;
     use crate::sml::llmq_type::LLMQType;
     use crate::sml::masternode_list_engine::MasternodeListEngine;
-    use crate::{InstantLock, QuorumHash};
+    use crate::{BlockHash, ChainLock, InstantLock, QuorumHash};
+
     #[test]
     pub fn is_lock_verification() {
         let block_hex =
@@ -376,5 +407,34 @@ mod tests {
         let height = mn_list_engine.latest_masternode_list().expect("height").known_height;
 
         assert_eq!(height, 2229204);
+
+        let chain_lock = ChainLock {
+            block_height: 2229204,
+            block_hash: BlockHash::from_slice(hex::decode("000000000000000c0568e1ffe5d14ed34cd19fccda425bc5923fc119c131ee0c").unwrap().as_slice()).unwrap().reverse(),
+            signature: BLSSignature::from_hex("b6366341f97e1fd5a8dbc81e7f6c5c67acbed02bac2b7e10316f5c97fd07767e3544214386312687b7646d1b92539acc1069ecb3640e37d97fd2e5fdb2d37a3b6bf16b511bf22a41aa87038145caaeb38485d58d72b31add18deaf7e8c07684e").unwrap(),
+        };
+
+        let request_id = chain_lock.request_id().expect("expected to make request id");
+        assert_eq!(
+            hex::encode(request_id),
+            "88346d49ddf5c06528f3ede253e01a8ab54048935ff944d88bb149aaeef956f2"
+        );
+
+        let quorum = mn_list_engine
+            .chain_lock_potential_quorum_under(&chain_lock)
+            .expect("expected under")
+            .expect("expected");
+
+        let expected_quorum_hash: QuorumHash = QuorumHash::from_slice(
+            hex::decode("000000000000001de4e594585627fb5e2612ef983c913ee13add9a454e5faa6d")
+                .expect("expected bytes")
+                .as_slice(),
+        )
+        .expect("expected quorum hash")
+        .reverse();
+
+        assert_eq!(quorum.quorum_entry.quorum_hash, expected_quorum_hash);
+
+        mn_list_engine.verify_chain_lock(&chain_lock).expect("expected to verify chain lock");
     }
 }

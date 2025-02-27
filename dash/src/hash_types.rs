@@ -153,7 +153,7 @@ use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
         hash_newtype_no_ord! {
             pub struct ScoreHash(sha256::Hash);
-            pub struct QuorumOrderingHash(sha256::Hash);
+            pub struct QuorumOrderingHash(sha256d::Hash);
         }
 
 impl Ord for ScoreHash {
@@ -287,7 +287,7 @@ impl PartialOrd for ScoreHash {
     impl QuorumOrderingHash {
         /// Create a ScoreHash from a string
         pub fn from_hex(s: &str) -> Result<QuorumOrderingHash, Error> {
-            Ok(Self(sha256::Hash::from_str(s)?))
+            Ok(Self(sha256d::Hash::from_str(s)?))
         }
 
         /// Convert a ScoreHash to a string
@@ -305,7 +305,7 @@ impl PartialOrd for ScoreHash {
         /// * A hashed score derived from the input values.
         pub fn create(quorum: &QuorumEntry, request_id: &QuorumSigningRequestId) -> Self {
             let mut bytes = vec![quorum.llmq_type as u8];
-            bytes.extend_from_slice(quorum.quorum_hash.as_byte_array());
+            bytes.extend_from_slice(quorum.quorum_hash.reverse().as_byte_array());
             bytes.extend_from_slice(request_id.as_byte_array());
             Self::hash(bytes.as_slice())
         }

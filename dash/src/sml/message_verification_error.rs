@@ -20,6 +20,9 @@ pub enum MessageVerificationError {
     #[error("Required cycle present but has no quorum: {0}")]
     CycleHashEmpty(CycleHash),
 
+    #[error("No masternode lists in engine")]
+    NoMasternodeLists,
+
     #[error("Masternode list at height {0} has no quorums")]
     MasternodeListHasNoQuorums(CoreBlockHeight),
 

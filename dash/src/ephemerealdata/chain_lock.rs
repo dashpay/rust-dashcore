@@ -62,7 +62,7 @@ impl ChainLock {
         let mut engine = QuorumSigningSignId::engine();
 
         engine.input(&[quorum_type as u8]);
-        engine.input(quorum_hash.reverse().as_byte_array());
+        engine.input(quorum_hash.as_byte_array());
         engine.input(precomputed_request_id.unwrap_or(self.request_id()?).as_byte_array());
         engine.input(self.block_hash.as_byte_array());
 
