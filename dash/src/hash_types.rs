@@ -167,27 +167,9 @@ mod newtypes {
         }
     }
 
-    // impl Ord for QuorumOrderingHash {
-    //     fn cmp(&self, other: &Self) -> Ordering {
-    //         let mut self_bytes = self.0.to_byte_array();
-    //         let mut other_bytes = other.0.to_byte_array();
-    //
-    //         self_bytes.reverse();
-    //         other_bytes.reverse();
-    //
-    //         self_bytes.cmp(&other_bytes)
-    //     }
-    // }
-
     impl PartialOrd for ScoreHash {
         fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
     }
-
-    //     impl PartialOrd for QuorumOrderingHash {
-    //     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    //         Some(self.cmp(other))
-    //     }
-    // }
 
     /// A hash used to identify a quorum
     pub type QuorumHash = BlockHash;

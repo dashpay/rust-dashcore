@@ -112,7 +112,7 @@ impl MasternodeListEngine {
                             let Some(block_height) = self.block_heights.get(quorum_hash) else {
                                 return true;
                             };
-                            self.masternode_lists.get(block_height).is_none()
+                            !self.masternode_lists.contains_key(block_height)
                         })
                         .collect()
                 } else {
@@ -138,7 +138,7 @@ impl MasternodeListEngine {
                             let Some(block_height) = self.block_heights.get(quorum_hash) else {
                                 return true;
                             };
-                            self.masternode_lists.get(block_height).is_none()
+                            !self.masternode_lists.contains_key(block_height)
                         })
                         .collect()
                 } else {

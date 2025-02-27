@@ -457,14 +457,14 @@ mod tests {
             .expect("expected");
 
         let expected_quorum_hash: QuorumHash = QuorumHash::from_slice(
-            hex::decode("000000000000001de4e594585627fb5e2612ef983c913ee13add9a454e5faa6d")
+            hex::decode("000000000000000bbd0b1bb95540351e7ee99c5b08efde076b3d712a57ea74d6")
                 .expect("expected bytes")
                 .as_slice(),
         )
         .expect("expected quorum hash")
         .reverse();
 
-        //assert_eq!(quorum.quorum_entry.quorum_hash, expected_quorum_hash);
+        assert_eq!(quorum.quorum_entry.quorum_hash, expected_quorum_hash);
 
         mn_list_engine.verify_chain_lock(&chain_lock).expect("expected to verify chain lock");
     }
