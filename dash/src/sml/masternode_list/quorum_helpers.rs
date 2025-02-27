@@ -4,9 +4,21 @@ use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
-use crate::{Network, QuorumHash};
+use crate::{Network, QuorumHash, QuorumSigningRequestId};
+use crate::hash_types::QuorumOrderingHash;
+use crate::sml::message_verification_error::MessageVerificationError;
 
 impl MasternodeList {
+    pub fn quorum_for_request(&self, quorum_type: LLMQType, request_id: &QuorumSigningRequestId) -> Result<&QualifiedQuorumEntry, MessageVerificationError> {
+        let quorums_of_type = self
+            .quorums
+            .get(&quorum_type)
+            .ok_or(MessageVerificationError::MasternodeListHasNoQuorums(self.known_height))?;
+        quorums_of_type
+            .values()
+            .min_by_key(|quorum| QuorumOrderingHash::create(&quorum.quorum_entry, request_id))
+            .ok_or(MessageVerificationError::MasternodeListHasNoQuorums(self.known_height))
+    }
     /// Returns a set of quorum hashes, optionally excluding specified quorum types.
     ///
     /// # Parameters

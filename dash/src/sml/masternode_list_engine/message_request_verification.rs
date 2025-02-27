@@ -5,6 +5,7 @@ use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::message_verification_error::MessageVerificationError;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::{ChainLock, InstantLock, QuorumSigningRequestId};
+use crate::sml::masternode_list::MasternodeList;
 
 impl MasternodeListEngine {
     fn is_lock_potential_quorums(
@@ -155,26 +156,164 @@ impl MasternodeListEngine {
         Ok(())
     }
 
+    /// Retrieves the potential quorum for verifying a ChainLock from the masternode list **before or at**
+    /// block height **(chain_lock.block_height - 8)**.
+    ///
+    /// This function attempts to find the quorum responsible for signing the ChainLock by looking at
+    /// the masternode list at or before the signing height, following DIP 24 logic.
+    ///
+    /// # Arguments
+    /// * `chain_lock` - A reference to the `ChainLock` for which the quorum is needed.
+    ///
+    /// # Returns
+    /// * `Ok(Some(&QualifiedQuorumEntry))` - The quorum responsible for signing the ChainLock.
+    /// * `Ok(None)` - No suitable quorum was found.
+    /// * `Err(MessageVerificationError)` - If request ID computation fails or quorum retrieval fails.
+    ///
+    /// # Errors
+    /// - **Masternode list missing**: If no masternode list is found at the required height.
+    /// - **Invalid request ID**: If computing the request ID for the ChainLock fails.
+    /// - **Quorum retrieval failure**: If the quorum for the request ID cannot be determined.
+    pub fn chain_lock_potential_quorum_under(
+        &self,
+        chain_lock: &ChainLock,
+    ) -> Result<Option<&QualifiedQuorumEntry>, MessageVerificationError> {
+        // Retrieve the masternode list at or before (block_height - 8)
+        let (before, _) = self.masternode_lists_around_height(chain_lock.block_height - 8);
+
+        // Compute the signing request ID
+        let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
+
+        // Get the ChainLock quorum type for the current network
+        let chain_lock_quorum_type = self.network.chain_locks_type();
+
+        // Retrieve the responsible quorum if the masternode list exists
+        if let Some(before) = before {
+            let quorum = before.quorum_for_request(chain_lock_quorum_type, &request_id)?;
+            Ok(Some(quorum))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Retrieves the potential quorum for verifying a ChainLock from the masternode list **after**
+    /// block height **(chain_lock.block_height - 8)**.
+    ///
+    /// This function looks at the next available masternode list to determine if a quorum exists
+    /// for signing the ChainLock, following DIP 24.
+    ///
+    /// # Arguments
+    /// * `chain_lock` - A reference to the `ChainLock` for which the quorum is needed.
+    ///
+    /// # Returns
+    /// * `Ok(Some(&QualifiedQuorumEntry))` - The quorum responsible for signing the ChainLock.
+    /// * `Ok(None)` - No suitable quorum was found.
+    /// * `Err(MessageVerificationError)` - If request ID computation fails or quorum retrieval fails.
+    ///
+    /// # Errors
+    /// - **Masternode list missing**: If no masternode list is found at the required height.
+    /// - **Invalid request ID**: If computing the request ID for the ChainLock fails.
+    /// - **Quorum retrieval failure**: If the quorum for the request ID cannot be determined.
+    pub fn chain_lock_potential_quorum_over(
+        &self,
+        chain_lock: &ChainLock,
+    ) -> Result<Option<&QualifiedQuorumEntry>, MessageVerificationError> {
+        // Retrieve the masternode list after (block_height - 8)
+        let (_, after) = self.masternode_lists_around_height(chain_lock.block_height - 8);
+
+        // Compute the signing request ID
+        let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
+
+        // Get the ChainLock quorum type for the current network
+        let chain_lock_quorum_type = self.network.chain_locks_type();
+
+        // Retrieve the responsible quorum if the masternode list exists
+        if let Some(after) = after {
+            let quorum = after.quorum_for_request(chain_lock_quorum_type, &request_id)?;
+            Ok(Some(quorum))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Verifies a ChainLock (`ChainLock`) by checking its signature against the responsible quorum.
+    ///
+    /// This function attempts to validate the `ChainLock` signature using the correct quorum at
+    /// **block height - 8**, as required by DIP 24. If the verification fails for the "before" masternode
+    /// list, it retries using the "after" masternode list (if available).
+    ///
+    /// # Arguments
+    /// * `chain_lock` - A reference to the `ChainLock` that needs to be verified.
+    ///
+    /// # Returns
+    /// * `Ok(())` if the `ChainLock` is verified successfully.
+    /// * `Err(MessageVerificationError)` if:
+    ///   - The masternode lists do not contain the required quorum.
+    ///   - Signature verification fails for both "before" and "after" masternode lists.
+    ///
+    /// # Errors
+    /// - `MasternodeListHasNoQuorums`: The masternode list at a given height does not contain any quorums of the required type.
+    /// - `Other`: If computing the request ID or signing ID fails.
+    ///
+    /// # Implementation Details
+    /// - Retrieves masternode lists **before and after** `chain_lock.block_height - 8`.
+    /// - Finds the **quorum with the lowest ordering hash** for the signing request.
+    /// - Computes the **signing ID** and verifies the ChainLock signature.
+    /// - If verification fails with the "before" list, it attempts verification with the "after" list.
     pub fn verify_chain_lock(
         &self,
         chain_lock: &ChainLock,
     ) -> Result<(), MessageVerificationError> {
-        // todo maybe we can know for sure based on height so we don't need to check 2?
+        // Retrieve masternode lists surrounding the signing height (block_height - 8)
         let (before, after) = self.masternode_lists_around_height(chain_lock.block_height - 8);
 
+        // Compute the signing request ID
         let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
-        let chain_lock_quorum_type = self.network.chain_locks_type();
+
+        // Attempt verification using the "before" masternode list
         if let Some(before) = before {
-            let quorums_of_type = before
-                .quorums
-                .get(&chain_lock_quorum_type)
-                .ok_or(MessageVerificationError::MasternodeListHasNoQuorums(before.known_height))?;
-            let quorum = quorums_of_type
-                .values()
-                .min_by_key(|quorum| QuorumOrderingHash::create(&quorum.quorum_entry, &request_id))
-                .ok_or(MessageVerificationError::MasternodeListHasNoQuorums(before.known_height))?;
+            if let Ok(_) = self.verify_chain_lock_with_masternode_list(chain_lock, &before, &request_id) {
+                return Ok(());
+            }
         }
+
+        // If "before" verification fails, attempt verification using the "after" masternode list
+        if let Some(after) = after {
+            return self.verify_chain_lock_with_masternode_list(chain_lock, &after, &request_id);
+        }
+
         Ok(())
+    }
+
+    /// Helper function to verify a ChainLock using a specific masternode list.
+    fn verify_chain_lock_with_masternode_list(
+        &self,
+        chain_lock: &ChainLock,
+        masternode_list: &MasternodeList,
+        request_id: &QuorumSigningRequestId,
+    ) -> Result<(), MessageVerificationError> {
+        // Get the quorum type for ChainLocks in the current network
+        let chain_lock_quorum_type = self.network.chain_locks_type();
+
+        let quorums_of_type = masternode_list
+            .quorums
+            .get(&chain_lock_quorum_type)
+            .ok_or(MessageVerificationError::MasternodeListHasNoQuorums(masternode_list.known_height))?;
+
+        let quorum = quorums_of_type
+            .values()
+            .min_by_key(|quorum| QuorumOrderingHash::create(&quorum.quorum_entry, request_id))
+            .ok_or(MessageVerificationError::MasternodeListHasNoQuorums(masternode_list.known_height))?;
+
+        let sign_id = chain_lock
+            .sign_id(
+                quorum.quorum_entry.llmq_type,
+                quorum.quorum_entry.quorum_hash,
+                Some(*request_id),
+            )
+            .map_err(|e| e.to_string())?;
+
+        quorum.verify_message_digest(sign_id.to_byte_array(), chain_lock.signature)
     }
 }
 
@@ -222,5 +361,20 @@ mod tests {
             "0eaeba3a982f59144913b8d8150b2dfbb2dd2ba43bbcb54a3964a0d8d7ead62b"
         );
         mn_list_engine.verify_is_lock(&lock).expect("expected to verify is lock");
+    }
+
+    #[test]
+    pub fn chain_lock_verification() {
+        let block_hex =
+            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mn_list_engine: MasternodeListEngine =
+            bincode::decode_from_slice(&data, bincode::config::standard())
+                .expect("expected to decode")
+                .0;
+
+        let height = mn_list_engine.latest_masternode_list().expect("height").known_height;
+
+        assert_eq!(height, 2229204);
     }
 }
