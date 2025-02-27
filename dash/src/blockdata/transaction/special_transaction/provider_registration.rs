@@ -52,12 +52,12 @@ use crate::{Address, Network, OutPoint, ScriptBuf, VarInt, io};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
-pub enum MasternodeType {
+pub enum ProviderMasternodeType {
     Regular = 0,
     HighPerformance = 1,
 }
 
-impl Encodable for MasternodeType {
+impl Encodable for ProviderMasternodeType {
     fn consensus_encode<W: io::Write + ?Sized>(&self, mut w: &mut W) -> Result<usize, io::Error> {
         let variant = self;
         let len = (*variant as u16).consensus_encode(&mut w)?;
@@ -65,12 +65,12 @@ impl Encodable for MasternodeType {
     }
 }
 
-impl Decodable for MasternodeType {
+impl Decodable for ProviderMasternodeType {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let variant = u16::consensus_decode(r)?;
         match variant {
-            0 => Ok(MasternodeType::Regular),
-            1 => Ok(MasternodeType::HighPerformance),
+            0 => Ok(ProviderMasternodeType::Regular),
+            1 => Ok(ProviderMasternodeType::HighPerformance),
             received => Err(encode::Error::InvalidEnumValue {
                 max: 1,
                 received,
@@ -98,8 +98,8 @@ impl Decodable for MasternodeType {
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct ProviderRegistrationPayload {
     pub version: u16,
-    pub provider_type: MasternodeType,
-    pub provider_mode: u16,
+    pub masternode_type: ProviderMasternodeType,
+    pub masternode_mode: u16,
     pub collateral_outpoint: OutPoint,
     pub service_address: SocketAddr,
     pub owner_key_hash: PubkeyHash,
@@ -108,7 +108,7 @@ pub struct ProviderRegistrationPayload {
     pub operator_reward: u16,
     pub script_payout: ScriptBuf,
     pub inputs_hash: InputsHash,
-    pub payload_sig: Vec<u8>,
+    pub signature: Vec<u8>,
     pub platform_node_id: Option<PubkeyHash>,
     pub platform_p2p_port: Option<u16>,
     pub platform_http_port: Option<u16>,
@@ -158,9 +158,9 @@ impl ProviderRegistrationPayload {
     pub fn size(&self) -> usize {
         let mut size = 2 + 2 + 2 + 32 + 4 + 16 + 2 + 20 + 48 + 20 + 2 + 32; // 182 bytes
         let script_payout_len = self.script_payout.0.len();
-        let payload_sig_len = self.payload_sig.len();
+        let signature_len = self.signature.len();
         size += VarInt(script_payout_len as u64).len() + script_payout_len;
-        size += VarInt(payload_sig_len as u64).len() + payload_sig_len;
+        size += VarInt(signature_len as u64).len() + signature_len;
         size
     }
 }
@@ -170,8 +170,8 @@ impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
         let mut len = 0;
 
         len += self.version.consensus_encode(&mut s)?;
-        len += self.provider_type.consensus_encode(&mut s)?;
-        len += self.provider_mode.consensus_encode(&mut s)?;
+        len += self.masternode_type.consensus_encode(&mut s)?;
+        len += self.masternode_mode.consensus_encode(&mut s)?;
         len += self.collateral_outpoint.consensus_encode(&mut s)?;
         len += self.service_address.consensus_encode(&mut s)?;
         len += self.owner_key_hash.consensus_encode(&mut s)?;
@@ -181,10 +181,10 @@ impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
         len += self.script_payout.consensus_encode(&mut s)?;
         len += self.inputs_hash.consensus_encode(&mut s)?;
 
-        if self.version >= 2 && self.provider_type == MasternodeType::HighPerformance {
+        if self.version >= 2 && self.masternode_type == ProviderMasternodeType::HighPerformance {
             len += self
                 .platform_node_id
-                .unwrap_or_else(|| PubkeyHash::all_zeros())
+                .unwrap_or_else(PubkeyHash::all_zeros)
                 .consensus_encode(&mut s)?;
             len += self.platform_p2p_port.unwrap_or_default().consensus_encode(&mut s)?;
             len += self.platform_http_port.unwrap_or_default().consensus_encode(&mut s)?;
@@ -204,7 +204,7 @@ impl Encodable for ProviderRegistrationPayload {
     fn consensus_encode<W: io::Write + ?Sized>(&self, mut w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.base_payload_data_encode(&mut w)?;
-        len += self.payload_sig.consensus_encode(&mut w)?;
+        len += self.signature.consensus_encode(&mut w)?;
         Ok(len)
     }
 }
@@ -212,7 +212,7 @@ impl Encodable for ProviderRegistrationPayload {
 impl Decodable for ProviderRegistrationPayload {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode(r)?;
-        let provider_type = MasternodeType::consensus_decode(r)?;
+        let provider_type = ProviderMasternodeType::consensus_decode(r)?;
         let provider_mode = u16::consensus_decode(r)?;
         let collateral_outpoint = OutPoint::consensus_decode(r)?;
         let service_address = SocketAddr::consensus_decode(r)?;
@@ -227,7 +227,7 @@ impl Decodable for ProviderRegistrationPayload {
         let mut platform_p2p_port = None;
         let mut platform_http_port = None;
 
-        if version >= 2 && provider_type == MasternodeType::HighPerformance {
+        if version >= 2 && provider_type == ProviderMasternodeType::HighPerformance {
             platform_node_id = Some(PubkeyHash::consensus_decode(r)?);
             platform_p2p_port = Some(u16::consensus_decode(r)?);
             platform_http_port = Some(u16::consensus_decode(r)?);
@@ -237,8 +237,8 @@ impl Decodable for ProviderRegistrationPayload {
 
         Ok(ProviderRegistrationPayload {
             version,
-            provider_type,
-            provider_mode,
+            masternode_type: provider_type,
+            masternode_mode: provider_mode,
             collateral_outpoint,
             service_address,
             owner_key_hash,
@@ -247,7 +247,7 @@ impl Decodable for ProviderRegistrationPayload {
             operator_reward,
             script_payout,
             inputs_hash,
-            payload_sig,
+            signature: payload_sig,
             platform_node_id,
             platform_p2p_port,
             platform_http_port,
@@ -266,7 +266,7 @@ mod tests {
     use crate::hash_types::InputsHash;
     use crate::internal_macros::hex;
     use crate::transaction::special_transaction::provider_registration::{
-        MasternodeType, ProviderRegistrationPayload,
+        ProviderMasternodeType, ProviderRegistrationPayload,
     };
     use crate::{OutPoint, PubkeyHash, ScriptBuf, Transaction, Txid};
 
@@ -333,9 +333,9 @@ mod tests {
                 provider_registration_payload_version
             );
             let provider_type = 0;
-            assert_eq!(expected_provider_registration_payload.provider_type, provider_type);
+            assert_eq!(expected_provider_registration_payload.masternode_type, provider_type);
             let provider_mode = 0;
-            assert_eq!(expected_provider_registration_payload.provider_mode, provider_mode);
+            assert_eq!(expected_provider_registration_payload.masternode_mode, provider_mode);
 
             let collateral_outpoint = OutPoint { txid: collateral_hash, vout: collateral_index };
             assert_eq!(
@@ -420,7 +420,7 @@ mod tests {
                 "message digest signatures don't match"
             );
 
-            assert_eq!(expected_provider_registration_payload.payload_sig, signature.to_vec());
+            assert_eq!(expected_provider_registration_payload.signature, signature.to_vec());
 
             assert_eq!(expected_transaction.txid(), tx_id);
 
@@ -440,8 +440,8 @@ mod tests {
                 special_transaction_payload: Some(ProviderRegistrationPayloadType(
                     ProviderRegistrationPayload {
                         version: provider_registration_payload_version,
-                        provider_type,
-                        provider_mode,
+                        masternode_type: provider_type,
+                        masternode_mode: provider_mode,
                         collateral_outpoint,
                         service_address,
                         owner_key_hash: PubkeyHash::from_hex(owner_key_hash_hex).unwrap(),
@@ -450,7 +450,7 @@ mod tests {
                         operator_reward,
                         script_payout,
                         inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
-                        payload_sig: signature.to_vec(),
+                        signature: signature.to_vec(),
                         platform_node_id: None,
                         platform_p2p_port: None,
                         platform_http_port: None,
@@ -515,9 +515,9 @@ mod tests {
                 provider_registration_payload_version
             );
             let provider_type = 0;
-            assert_eq!(expected_provider_registration_payload.provider_type, provider_type);
+            assert_eq!(expected_provider_registration_payload.masternode_type, provider_type);
             let provider_mode = 0;
-            assert_eq!(expected_provider_registration_payload.provider_mode, provider_mode);
+            assert_eq!(expected_provider_registration_payload.masternode_mode, provider_mode);
 
             let collateral_outpoint = OutPoint { txid: collateral_hash, vout: 0 };
             assert_eq!(
@@ -604,7 +604,7 @@ mod tests {
                 "message digest signatures don't match"
             );
 
-            assert_eq!(expected_provider_registration_payload.payload_sig, signature.to_vec());
+            assert_eq!(expected_provider_registration_payload.signature, signature.to_vec());
 
             assert_eq!(expected_transaction.txid(), tx_id);
 
@@ -624,8 +624,8 @@ mod tests {
                 special_transaction_payload: Some(ProviderRegistrationPayloadType(
                     ProviderRegistrationPayload {
                         version: provider_registration_payload_version,
-                        provider_type,
-                        provider_mode,
+                        masternode_type: provider_type,
+                        masternode_mode: provider_mode,
                         collateral_outpoint,
                         service_address,
                         owner_key_hash: PubkeyHash::from_hex(owner_key_hash_hex).unwrap(),
@@ -634,7 +634,7 @@ mod tests {
                         operator_reward,
                         script_payout,
                         inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
-                        payload_sig: signature.to_vec(),
+                        signature: signature.to_vec(),
                         platform_node_id: None,
                         platform_p2p_port: None,
                         platform_http_port: None,
@@ -658,8 +658,8 @@ mod tests {
         let want = 290;
         let payload = ProviderRegistrationPayload {
             version: 0,
-            provider_type: MasternodeType::Regular,
-            provider_mode: 0,
+            masternode_type: ProviderMasternodeType::Regular,
+            masternode_mode: 0,
             collateral_outpoint: OutPoint { txid: Txid::all_zeros(), vout: 0 },
             service_address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from_bits(0), 0)),
             owner_key_hash: PubkeyHash::all_zeros(),
@@ -668,7 +668,7 @@ mod tests {
             operator_reward: 0,
             script_payout: ScriptBuf::from_hex("00000000000000000000").unwrap(), // 10 bytes
             inputs_hash: InputsHash::all_zeros(),
-            payload_sig: vec![0; 96],
+            signature: vec![0; 96],
             platform_node_id: None,
             platform_p2p_port: None,
             platform_http_port: None,
