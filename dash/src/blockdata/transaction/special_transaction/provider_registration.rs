@@ -261,7 +261,6 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
     use hashes::Hash;
-    use hashes::hex::FromHex;
 
     use crate::bls_sig_utils::BLSPublicKey;
     use crate::consensus::{Encodable, deserialize};
