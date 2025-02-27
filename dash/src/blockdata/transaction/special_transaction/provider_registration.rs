@@ -269,7 +269,7 @@ mod tests {
     use crate::transaction::special_transaction::provider_registration::{
         ProviderMasternodeType, ProviderRegistrationPayload,
     };
-    use crate::{OutPoint, PubkeyHash, ScriptBuf, Transaction, Txid};
+    use crate::{OutPoint, PubkeyHash, ScriptBuf, Txid};
 
     #[cfg(feature = "signer")]
     mod signer {

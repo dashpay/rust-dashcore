@@ -1,3 +1,4 @@
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::sha256d;
 use thiserror::Error;
