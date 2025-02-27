@@ -76,13 +76,13 @@ impl MasternodeList {
         }
 
         // Create and return the new MasternodeList
-        let builder = MasternodeListBuilder::new(
+        let builder = MasternodeList::build(
             updated_masternodes,
             updated_quorums,
             diff.block_hash,
-            diff_end_height, 
+            diff_end_height,
         );
-        
+
         Ok(builder.build())
     }
 }

@@ -1,4 +1,5 @@
 mod apply_diff;
+mod builder;
 mod debug_helpers;
 pub mod from_diff;
 mod is_lock_methods;
@@ -8,7 +9,6 @@ mod peer_addresses;
 mod quorum_helpers;
 mod rotated_quorums_info;
 mod scores_for_quorum;
-mod builder;
 
 use std::collections::BTreeMap;
 
@@ -36,4 +36,19 @@ pub struct MasternodeList {
     // todo, see if we should remove this reversal
     pub masternodes: BTreeMap<ProTxHash, QualifiedMasternodeListEntry>,
     pub quorums: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
+}
+
+impl MasternodeList {
+    pub fn empty(block_hash: BlockHash, block_height: u32) -> Self {
+        Self::build(BTreeMap::default(), BTreeMap::new(), block_hash, block_height).build()
+    }
+
+    pub fn build(
+        masternodes: BTreeMap<ProTxHash, QualifiedMasternodeListEntry>,
+        quorums: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
+        block_hash: BlockHash,
+        block_height: u32,
+    ) -> MasternodeListBuilder {
+        MasternodeListBuilder::new(masternodes, quorums, block_hash, block_height)
+    }
 }

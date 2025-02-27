@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
-use crate::{BlockHash, ProTxHash, QuorumHash};
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use crate::{BlockHash, ProTxHash, QuorumHash};
+use std::collections::BTreeMap;
 
 pub struct MasternodeListBuilder {
     pub block_hash: BlockHash,
@@ -16,10 +16,6 @@ pub struct MasternodeListBuilder {
 }
 
 impl MasternodeListBuilder {
-    pub fn empty(block_hash: BlockHash, block_height: u32) -> Self {
-        Self::new(BTreeMap::default(), BTreeMap::new(), block_hash, block_height)
-    }
-
     pub fn new(
         masternodes: BTreeMap<ProTxHash, QualifiedMasternodeListEntry>,
         quorums: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
