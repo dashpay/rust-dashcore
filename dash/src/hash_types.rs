@@ -148,12 +148,12 @@ use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
         pub struct QuorumCommitmentHash(sha256d::Hash);
 
         pub struct Sha256dHash(sha256d::Hash);
-
+        pub struct QuorumOrderingHash(sha256d::Hash);
     }
 
         hash_newtype_no_ord! {
             pub struct ScoreHash(sha256::Hash);
-            pub struct QuorumOrderingHash(sha256d::Hash);
+
         }
 
 impl Ord for ScoreHash {
@@ -168,17 +168,17 @@ impl Ord for ScoreHash {
     }
 }
 
-impl Ord for QuorumOrderingHash {
-    fn cmp(&self, other: &Self) -> Ordering {
-        let mut self_bytes = self.0.to_byte_array();
-        let mut other_bytes = other.0.to_byte_array();
-
-        self_bytes.reverse();
-        other_bytes.reverse();
-
-        self_bytes.cmp(&other_bytes)
-    }
-}
+// impl Ord for QuorumOrderingHash {
+//     fn cmp(&self, other: &Self) -> Ordering {
+//         let mut self_bytes = self.0.to_byte_array();
+//         let mut other_bytes = other.0.to_byte_array();
+//
+//         self_bytes.reverse();
+//         other_bytes.reverse();
+//
+//         self_bytes.cmp(&other_bytes)
+//     }
+// }
 
 impl PartialOrd for ScoreHash {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -186,11 +186,11 @@ impl PartialOrd for ScoreHash {
     }
 }
 
-    impl PartialOrd for QuorumOrderingHash {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
+//     impl PartialOrd for QuorumOrderingHash {
+//     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+//         Some(self.cmp(other))
+//     }
+// }
 
 
     /// A hash used to identify a quorum
@@ -305,7 +305,7 @@ impl PartialOrd for ScoreHash {
         /// * A hashed score derived from the input values.
         pub fn create(quorum: &QuorumEntry, request_id: &QuorumSigningRequestId) -> Self {
             let mut bytes = vec![quorum.llmq_type as u8];
-            bytes.extend_from_slice(quorum.quorum_hash.reverse().as_byte_array());
+            bytes.extend_from_slice(quorum.quorum_hash.as_byte_array());
             bytes.extend_from_slice(request_id.as_byte_array());
             Self::hash(bytes.as_slice())
         }

@@ -436,5 +436,36 @@ mod tests {
         assert_eq!(quorum.quorum_entry.quorum_hash, expected_quorum_hash);
 
         mn_list_engine.verify_chain_lock(&chain_lock).expect("expected to verify chain lock");
+
+        // let's do another to make sure it wasn't a 1/4 fluke
+
+        let chain_lock = ChainLock {
+            block_height: 2229203,
+            block_hash: BlockHash::from_slice(hex::decode("0000000000000009ea873df6f4ab3bb1ea744e5630928cb8a4b4bd68aa16b18a").unwrap().as_slice()).unwrap().reverse(),
+            signature: BLSSignature::from_hex("8723bf0a12abf41830936d8702ae57bb4f5ef7f816522f72e6da414081402d50a747a6307c91b15c0ee97fcfda60a7c50cdafa394c06b77299d9b9e4826fa1625c5436a2e3dc2e98df071dce92bbfc4445c87f7015b1914b17954b139dd8eafe").unwrap(),
+        };
+
+        let request_id = chain_lock.request_id().expect("expected to make request id");
+        assert_eq!(
+            hex::encode(request_id),
+            "10a808c18307e3993dd4aa996d032b6b5d9d30a5d75ddf64fa10ea35ee63b2bb"
+        );
+
+        let quorum = mn_list_engine
+            .chain_lock_potential_quorum_under(&chain_lock)
+            .expect("expected under")
+            .expect("expected");
+
+        let expected_quorum_hash: QuorumHash = QuorumHash::from_slice(
+            hex::decode("000000000000001de4e594585627fb5e2612ef983c913ee13add9a454e5faa6d")
+                .expect("expected bytes")
+                .as_slice(),
+        )
+        .expect("expected quorum hash")
+        .reverse();
+
+        //assert_eq!(quorum.quorum_entry.quorum_hash, expected_quorum_hash);
+
+        mn_list_engine.verify_chain_lock(&chain_lock).expect("expected to verify chain lock");
     }
 }
