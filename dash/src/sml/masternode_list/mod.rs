@@ -2,7 +2,6 @@ mod apply_diff;
 mod builder;
 mod debug_helpers;
 pub mod from_diff;
-mod is_lock_methods;
 mod masternode_helpers;
 mod merkle_roots;
 mod peer_addresses;
