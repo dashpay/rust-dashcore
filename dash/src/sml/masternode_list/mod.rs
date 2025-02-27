@@ -2,7 +2,6 @@ mod apply_diff;
 mod builder;
 mod debug_helpers;
 pub mod from_diff;
-mod is_lock_methods;
 mod masternode_helpers;
 mod merkle_roots;
 mod peer_addresses;
@@ -12,10 +11,9 @@ mod scores_for_quorum;
 
 use std::collections::BTreeMap;
 
-pub use builder::MasternodeListBuilder;
-
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
+pub use builder::MasternodeListBuilder;
 
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::llmq_type::LLMQType;

@@ -1,3 +1,5 @@
+mod helpers;
+mod message_request_verification;
 mod non_rotated_quorum_construction;
 mod rotated_quorum_construction;
 #[cfg(feature = "quorum_validation")]
@@ -10,11 +12,12 @@ use bincode::{Decode, Encode};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::bls_sig_utils::BLSSignature;
+use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::network::message_qrinfo::{QRInfo, QuorumSnapshot};
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
+use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
@@ -33,11 +36,34 @@ pub struct MasternodeListEngine {
     pub masternode_lists: BTreeMap<CoreBlockHeight, MasternodeList>,
     pub known_chain_locks: BTreeMap<BlockHash, BLSSignature>,
     pub known_snapshots: BTreeMap<BlockHash, QuorumSnapshot>,
-    pub last_commitment_entries: Vec<QualifiedQuorumEntry>,
+    pub rotated_quorums_per_cycle: BTreeMap<BlockHash, Vec<QualifiedQuorumEntry>>,
+    pub quorum_statuses: BTreeMap<
+        LLMQType,
+        BTreeMap<
+            QuorumHash,
+            (BTreeSet<CoreBlockHeight>, BLSPublicKey, LLMQEntryVerificationStatus),
+        >,
+    >,
     pub network: Network,
 }
 
+impl Default for MasternodeListEngine {
+    fn default() -> Self {
+        Self {
+            block_hashes: Default::default(),
+            block_heights: Default::default(),
+            masternode_lists: Default::default(),
+            known_chain_locks: Default::default(),
+            known_snapshots: Default::default(),
+            rotated_quorums_per_cycle: Default::default(),
+            quorum_statuses: Default::default(),
+            network: Network::Dash,
+        }
+    }
+}
+
 impl MasternodeListEngine {
+    pub fn default_for_network(network: Network) -> Self { Self { network, ..Default::default() } }
     pub fn initialize_with_diff_to_height(
         masternode_list_diff: MnListDiff,
         block_height: CoreBlockHeight,
@@ -53,7 +79,8 @@ impl MasternodeListEngine {
             masternode_lists: [(block_height, masternode_list)].into(),
             known_chain_locks: Default::default(),
             known_snapshots: Default::default(),
-            last_commitment_entries: vec![],
+            rotated_quorums_per_cycle: Default::default(),
+            quorum_statuses: Default::default(),
             network,
         })
     }
@@ -74,9 +101,50 @@ impl MasternodeListEngine {
     pub fn latest_masternode_list_non_rotating_quorum_hashes(
         &self,
         exclude_quorum_types: &[LLMQType],
+        only_return_block_hashes_with_missing_masternode_lists_from_engine: bool,
     ) -> BTreeSet<QuorumHash> {
         self.latest_masternode_list()
-            .map(|list| list.non_rotating_quorum_hashes(exclude_quorum_types))
+            .map(|list| {
+                if only_return_block_hashes_with_missing_masternode_lists_from_engine {
+                    list.non_rotating_quorum_hashes(exclude_quorum_types)
+                        .into_iter()
+                        .filter(|quorum_hash| {
+                            let Some(block_height) = self.block_heights.get(quorum_hash) else {
+                                return true;
+                            };
+                            !self.masternode_lists.contains_key(block_height)
+                        })
+                        .collect()
+                } else {
+                    list.non_rotating_quorum_hashes(exclude_quorum_types)
+                }
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn masternode_list_non_rotating_quorum_hashes(
+        &self,
+        height: CoreBlockHeight,
+        exclude_quorum_types: &[LLMQType],
+        only_return_block_hashes_with_missing_masternode_lists_from_engine: bool,
+    ) -> BTreeSet<QuorumHash> {
+        self.masternode_lists
+            .get(&height)
+            .map(|list| {
+                if only_return_block_hashes_with_missing_masternode_lists_from_engine {
+                    list.non_rotating_quorum_hashes(exclude_quorum_types)
+                        .into_iter()
+                        .filter(|quorum_hash| {
+                            let Some(block_height) = self.block_heights.get(quorum_hash) else {
+                                return true;
+                            };
+                            !self.masternode_lists.contains_key(block_height)
+                        })
+                        .collect()
+                } else {
+                    list.non_rotating_quorum_hashes(exclude_quorum_types)
+                }
+            })
             .unwrap_or_default()
     }
 
@@ -117,6 +185,9 @@ impl MasternodeListEngine {
             &qr_info.mn_list_diff_at_h_minus_3c,
         ];
 
+        let should_request_for_previous_validation =
+            qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some();
+
         // If h-4c exists, add it to the list
         if let Some((_, mn_list_diff_h_minus_4c)) =
             &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c
@@ -137,6 +208,16 @@ impl MasternodeListEngine {
         qr_info.last_commitment_per_index.iter().try_for_each(|quorum_entry| {
             self.request_quorum_entry_height(quorum_entry, fetch_block_height)
         })?;
+
+        if should_request_for_previous_validation {
+            qr_info.mn_list_diff_h.new_quorums.iter().try_for_each(|quorum_entry| {
+                if quorum_entry.llmq_type.is_rotating_quorum_type() {
+                    self.request_quorum_entry_height(quorum_entry, fetch_block_height)
+                } else {
+                    Ok(())
+                }
+            })?;
+        }
 
         // Process `mn_list_diff_list` (extra diffs)
         qr_info.mn_list_diff_list.iter().try_for_each(|mn_list_diff| {
@@ -221,7 +302,7 @@ impl MasternodeListEngine {
             self.request_qr_info_block_heights(&qr_info, &fetch_height)?;
         }
 
-        // Fetch and process block heights using the provided callback
+        // Fetch and process chain lock signatures using the provided callback
         if let Some(fetch_chain_lock_sigs) = fetch_chain_lock_sigs {
             self.request_qr_info_cl_sigs(&qr_info, &fetch_chain_lock_sigs)?;
         }
@@ -240,13 +321,29 @@ impl MasternodeListEngine {
             quorum_snapshot_list,
             mn_list_diff_list,
         } = qr_info;
+
+        // Apply quorum snapshots and masternode list diffs
         for (snapshot, diff) in quorum_snapshot_list.into_iter().zip(mn_list_diff_list.into_iter())
         {
             self.known_snapshots.insert(diff.block_hash, snapshot);
             self.apply_diff(diff, None, false)?;
         }
 
-        self.last_commitment_entries.clear();
+        let can_verify_previous = quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some();
+
+        let h_height = self
+            .block_heights
+            .get(&mn_list_diff_h.block_hash)
+            .copied()
+            .ok_or(QuorumValidationError::RequiredBlockNotPresent(mn_list_diff_h.block_hash))?;
+        let tip_height =
+            self.block_heights.get(&mn_list_diff_tip.block_hash).copied().ok_or(
+                QuorumValidationError::RequiredBlockNotPresent(mn_list_diff_tip.block_hash),
+            )?;
+        let rotation_quorum_type = last_commitment_per_index
+            .first()
+            .map(|quorum_entry| quorum_entry.llmq_type)
+            .unwrap_or(self.network.isd_llmq_type());
 
         if let Some((quorum_snapshot_at_h_minus_4c, mn_list_diff_at_h_minus_4c)) =
             quorum_snapshot_and_mn_list_diff_at_h_minus_4c
@@ -272,27 +369,171 @@ impl MasternodeListEngine {
             .into_iter()
             .map(|quorum_entry| quorum_entry.into())
             .collect::<Vec<QualifiedQuorumEntry>>();
+
         #[cfg(feature = "quorum_validation")]
         if verify_rotated_quorums {
             let validation_statuses = self.validate_rotation_cycle_quorums_validation_statuses(
-                qualified_last_commitment_per_index.as_slice(),
+                qualified_last_commitment_per_index.iter().collect::<Vec<_>>().as_slice(),
             );
+
+            let mut updates: Vec<(
+                BTreeSet<CoreBlockHeight>,
+                LLMQType,
+                QuorumHash,
+                LLMQEntryVerificationStatus,
+            )> = Vec::new();
+
+            let mut qualified_rotated_quorums_per_cycle =
+                qualified_last_commitment_per_index.first().map(|quorum_entry| {
+                    self.rotated_quorums_per_cycle
+                        .entry(quorum_entry.quorum_entry.quorum_hash)
+                        .or_default()
+                });
+
             for mut rotated_quorum in qualified_last_commitment_per_index {
                 rotated_quorum.verified = validation_statuses
                     .get(&rotated_quorum.quorum_entry.quorum_hash)
                     .cloned()
                     .unwrap_or_default();
-                self.last_commitment_entries.push(rotated_quorum);
+
+                qualified_rotated_quorums_per_cycle.as_mut().unwrap().push(rotated_quorum.clone());
+
+                // Store status updates separately to prevent multiple mutable borrows
+                let masternode_lists_having_quorum_hash_for_quorum_type =
+                    self.quorum_statuses.entry(rotated_quorum.quorum_entry.llmq_type).or_default();
+                let (heights, _, status) = masternode_lists_having_quorum_hash_for_quorum_type
+                    .entry(rotated_quorum.quorum_entry.quorum_hash)
+                    .or_insert((
+                        BTreeSet::default(),
+                        rotated_quorum.quorum_entry.quorum_public_key,
+                        LLMQEntryVerificationStatus::Unknown,
+                    ));
+
+                updates.push((
+                    heights.clone(),
+                    rotated_quorum.quorum_entry.llmq_type,
+                    rotated_quorum.quorum_entry.quorum_hash,
+                    rotated_quorum.verified.clone(),
+                ));
+                heights.insert(tip_height);
+                *status = rotated_quorum.verified.clone();
+            }
+
+            // Apply collected updates after iteration to avoid borrow conflicts
+            for (heights, quorum_type, quorum_hash, new_status) in updates {
+                for height in heights {
+                    if let Some(masternode_list_at_height) = self.masternode_lists.get_mut(&height)
+                    {
+                        if let Some(quorum_entry_at_height) = masternode_list_at_height
+                            .quorums
+                            .get_mut(&quorum_type)
+                            .and_then(|quorums| quorums.get_mut(&quorum_hash))
+                        {
+                            quorum_entry_at_height.verified = new_status.clone();
+                        }
+                    }
+                }
+            }
+
+            // if we can verify previous we should also verify the previous rotation
+            if can_verify_previous {
+                let validation_statuses = {
+                    let masternode_list = self
+                        .masternode_lists
+                        .get(&h_height)
+                        .ok_or(QuorumValidationError::RequiredMasternodeListNotPresent(h_height))?;
+
+                    if let Some(rotated_quorums_at_h) =
+                        masternode_list.quorums.get(&rotation_quorum_type)
+                    {
+                        let quorums = rotated_quorums_at_h.values().collect::<Vec<_>>();
+
+                        self.validate_rotation_cycle_quorums_validation_statuses(quorums.as_slice())
+                    } else {
+                        BTreeMap::new()
+                    }
+                };
+
+                let mut updates: Vec<(
+                    BTreeSet<CoreBlockHeight>,
+                    LLMQType,
+                    QuorumHash,
+                    LLMQEntryVerificationStatus,
+                )> = Vec::new();
+
+                if let Some(masternode_list_at_h) = self.masternode_lists.get_mut(&h_height) {
+                    if let Some(rotated_quorums_at_h) =
+                        masternode_list_at_h.quorums.get_mut(&rotation_quorum_type)
+                    {
+                        for (quorum_hash, quorum_entry) in rotated_quorums_at_h.iter_mut() {
+                            if let Some(new_status) = validation_statuses.get(quorum_hash) {
+                                if &quorum_entry.verified != new_status {
+                                    quorum_entry.verified = new_status.clone();
+                                    let masternode_lists_having_quorum_hash_for_quorum_type = self
+                                        .quorum_statuses
+                                        .entry(rotation_quorum_type)
+                                        .or_default();
+
+                                    let (heights, _, status) =
+                                        masternode_lists_having_quorum_hash_for_quorum_type
+                                            .entry(*quorum_hash)
+                                            .or_insert((
+                                                BTreeSet::default(),
+                                                quorum_entry.quorum_entry.quorum_public_key,
+                                                LLMQEntryVerificationStatus::Unknown,
+                                            ));
+
+                                    updates.push((
+                                        heights.clone(),
+                                        rotation_quorum_type,
+                                        *quorum_hash,
+                                        new_status.clone(),
+                                    ));
+
+                                    heights.insert(h_height);
+                                    *status = new_status.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Apply collected updates after iteration to avoid borrow conflicts
+                for (heights, quorum_type, quorum_hash, new_status) in updates {
+                    for height in heights {
+                        if let Some(masternode_list_at_height) =
+                            self.masternode_lists.get_mut(&height)
+                        {
+                            if let Some(quorum_entry_at_height) = masternode_list_at_height
+                                .quorums
+                                .get_mut(&quorum_type)
+                                .and_then(|quorums| quorums.get_mut(&quorum_hash))
+                            {
+                                quorum_entry_at_height.verified = new_status.clone();
+                            }
+                        }
+                    }
+                }
             }
         } else {
-            self.last_commitment_entries = qualified_last_commitment_per_index;
+            if let Some(qualified_rotated_quorums_per_cycle) =
+                qualified_last_commitment_per_index.first().map(|quorum_entry| {
+                    self.rotated_quorums_per_cycle
+                        .entry(quorum_entry.quorum_entry.quorum_hash)
+                        .or_default()
+                })
+            {
+                *qualified_rotated_quorums_per_cycle = qualified_last_commitment_per_index;
+            }
         }
+
         #[cfg(not(feature = "quorum_validation"))]
         if verify_rotated_quorums {
             return Err(QuorumValidationError::FeatureNotTurnedOn(
                 "quorum validation feature is not turned on".to_string(),
             ));
         }
+
         Ok(())
     }
 
@@ -359,19 +600,65 @@ impl MasternodeListEngine {
             let mut masternode_list =
                 base_masternode_list.apply_diff(masternode_list_diff.clone(), diff_end_height)?;
             if verify_quorums {
-                // We only need to verify new quorums
-                for new_quorum in &masternode_list_diff.new_quorums {
-                    let quorum = masternode_list
-                        .quorum_entry_of_type_for_quorum_hash_mut(
-                            new_quorum.llmq_type,
-                            new_quorum.quorum_hash,
-                        )
-                        .ok_or(SmlError::CorruptedCodeExecution(
-                            "masternode list after diff does not contain new quorum".to_string(),
-                        ))?;
-                    self.validate_and_update_quorum_status(quorum);
+                // We should go through all quorums of the masternode list to update those that were not yet verified
+                for (quorum_type, quorums) in masternode_list.quorums.iter_mut() {
+                    for quorum in quorums.values_mut() {
+                        let mut status_changed = false;
+                        let old_status = quorum.verified.clone();
+                        if quorum.verified != LLMQEntryVerificationStatus::Verified {
+                            self.validate_and_update_quorum_status(quorum);
+                            status_changed = old_status != quorum.verified;
+                        }
+                        let masternode_lists_having_quorum_hash_for_quorum_type =
+                            self.quorum_statuses.entry(*quorum_type).or_default();
+                        let (heights, _, status) =
+                            masternode_lists_having_quorum_hash_for_quorum_type
+                                .entry(quorum.quorum_entry.quorum_hash)
+                                .or_insert((
+                                    BTreeSet::default(),
+                                    quorum.quorum_entry.quorum_public_key,
+                                    LLMQEntryVerificationStatus::Unknown,
+                                ));
+                        if status_changed {
+                            for height in heights.iter() {
+                                if let Some(masternode_list_at_height) =
+                                    self.masternode_lists.get_mut(height)
+                                {
+                                    if let Some(quorum_entry) = masternode_list_at_height
+                                        .quorums
+                                        .get_mut(quorum_type)
+                                        .and_then(|quorums| {
+                                            quorums.get_mut(&quorum.quorum_entry.quorum_hash)
+                                        })
+                                    {
+                                        quorum_entry.verified = quorum.verified.clone();
+                                    }
+                                }
+                            }
+                        }
+                        heights.insert(diff_end_height);
+                        *status = quorum.verified.clone();
+                    }
+                }
+            } else {
+                for (quorum_type, quorums) in masternode_list.quorums.iter_mut() {
+                    for quorum in quorums.values_mut() {
+                        let masternode_lists_having_quorum_hash_for_quorum_type =
+                            self.quorum_statuses.entry(*quorum_type).or_default();
+                        let (heights, _, status) =
+                            masternode_lists_having_quorum_hash_for_quorum_type
+                                .entry(quorum.quorum_entry.quorum_hash)
+                                .or_insert((
+                                    BTreeSet::default(),
+                                    quorum.quorum_entry.quorum_public_key,
+                                    LLMQEntryVerificationStatus::Unknown,
+                                ));
+                        quorum.verified = status.clone();
+                        heights.insert(diff_end_height);
+                    }
                 }
             }
+
             self.masternode_lists.insert(diff_end_height, masternode_list);
         }
 
@@ -384,6 +671,20 @@ impl MasternodeListEngine {
                     "quorum validation feature is not turned on".to_string(),
                 ));
             }
+            for (quorum_type, quorums) in &masternode_list.quorums {
+                let masternode_lists_having_quorum_hash_for_quorum_type =
+                    self.quorum_statuses.entry(*quorum_type).or_default();
+                for (quorum_hash, quorum_entry) in quorums {
+                    let (heights, _, _) = masternode_lists_having_quorum_hash_for_quorum_type
+                        .entry(*quorum_hash)
+                        .or_insert((
+                            BTreeSet::default(),
+                            quorum_entry.quorum_entry.quorum_public_key,
+                            LLMQEntryVerificationStatus::Unknown,
+                        ));
+                    heights.insert(diff_end_height);
+                }
+            }
             self.masternode_lists.insert(diff_end_height, masternode_list);
         }
 
@@ -394,52 +695,117 @@ impl MasternodeListEngine {
     }
 
     #[cfg(feature = "quorum_validation")]
-    pub fn verify_masternode_list_quorums(
+    pub fn verify_non_rotating_masternode_list_quorums(
         &mut self,
         block_height: CoreBlockHeight,
         exclude_quorum_types: &[LLMQType],
     ) -> Result<(), QuorumValidationError> {
-        let masternode_list = self
-            .masternode_lists
-            .get(&block_height)
-            .ok_or(QuorumValidationError::VerifyingMasternodeListNotPresent(block_height))?;
+        let Some(masternode_list) = self.masternode_lists.get(&block_height) else {
+            return Err(QuorumValidationError::VerifyingMasternodeListNotPresent(block_height));
+        };
+
         let mut results = BTreeMap::new();
-        for (quorum_type, hash_to_quorum_entries) in masternode_list.quorums.iter() {
+        for (quorum_type, hash_to_quorum_entries) in &masternode_list.quorums {
             if exclude_quorum_types.contains(quorum_type) || quorum_type.is_rotating_quorum_type() {
                 continue;
             }
-            let mut inner = BTreeMap::new();
 
-            for (quorum_hash, quorum_entry) in hash_to_quorum_entries.iter() {
+            let mut inner = BTreeMap::new();
+            for (quorum_hash, quorum_entry) in hash_to_quorum_entries {
                 inner.insert(*quorum_hash, self.validate_quorum(quorum_entry));
             }
             results.insert(*quorum_type, inner);
         }
-        let masternode_list = self
-            .masternode_lists
-            .get_mut(&block_height)
-            .ok_or(QuorumValidationError::VerifyingMasternodeListNotPresent(block_height))?;
-        for (quorum_type, hash_to_quorum_entries) in masternode_list.quorums.iter_mut() {
+
+        // Collect updates to avoid mutable borrow conflicts
+        let mut updates: Vec<(CoreBlockHeight, LLMQType, QuorumHash, LLMQEntryVerificationStatus)> =
+            Vec::new();
+
+        let Some(masternode_list) = self.masternode_lists.get_mut(&block_height) else {
+            return Err(QuorumValidationError::VerifyingMasternodeListNotPresent(block_height));
+        };
+
+        for (quorum_type, hash_to_quorum_entries) in &mut masternode_list.quorums {
             if exclude_quorum_types.contains(quorum_type) {
                 continue;
             }
+
+            let masternode_lists_having_quorum_hash_for_quorum_type =
+                self.quorum_statuses.entry(*quorum_type).or_default();
+
             if quorum_type.is_rotating_quorum_type() {
-                // only update based on the last commitment entries
-                for quorum in &self.last_commitment_entries {
-                    if let Some(quorum_entry) =
-                        hash_to_quorum_entries.get_mut(&quorum.quorum_entry.quorum_hash)
-                    {
-                        quorum_entry.verified = quorum.verified.clone();
+                if let Some(cycle_hash) = hash_to_quorum_entries
+                    .values()
+                    .find(|quorum_entry| quorum_entry.quorum_entry.quorum_index == Some(0))
+                    .map(|quorum_entry| quorum_entry.quorum_entry.quorum_hash)
+                {
+                    if let Some(cycle_quorums) = self.rotated_quorums_per_cycle.get(&cycle_hash) {
+                        // Only update rotating quorum statuses based on last commitment entries
+                        for quorum in cycle_quorums {
+                            if let Some(quorum_entry) =
+                                hash_to_quorum_entries.get_mut(&quorum.quorum_entry.quorum_hash)
+                            {
+                                quorum_entry.verified = quorum.verified.clone();
+                            }
+
+                            let (heights, _, status) =
+                                masternode_lists_having_quorum_hash_for_quorum_type
+                                    .entry(quorum.quorum_entry.quorum_hash)
+                                    .or_insert((
+                                        BTreeSet::default(),
+                                        quorum.quorum_entry.quorum_public_key,
+                                        LLMQEntryVerificationStatus::Unknown,
+                                    ));
+
+                            heights.insert(block_height);
+                            *status = quorum.verified.clone();
+                        }
                     }
                 }
             } else {
                 for (quorum_hash, quorum_entry) in hash_to_quorum_entries.iter_mut() {
+                    let old_status = quorum_entry.verified.clone();
                     quorum_entry.update_quorum_status(
                         results.get_mut(quorum_type).unwrap().remove(quorum_hash).unwrap(),
-                    )
+                    );
+
+                    let (heights, _, status) = masternode_lists_having_quorum_hash_for_quorum_type
+                        .entry(*quorum_hash)
+                        .or_insert((
+                            BTreeSet::default(),
+                            quorum_entry.quorum_entry.quorum_public_key,
+                            LLMQEntryVerificationStatus::Unknown,
+                        ));
+
+                    if old_status != quorum_entry.verified {
+                        for height in heights.iter() {
+                            updates.push((
+                                *height,
+                                *quorum_type,
+                                *quorum_hash,
+                                quorum_entry.verified.clone(),
+                            ));
+                        }
+                    }
+
+                    heights.insert(block_height);
+                    *status = quorum_entry.verified.clone();
                 }
             }
         }
+
+        for (height, quorum_type, quorum_hash, new_status) in updates {
+            if let Some(masternode_list_at_height) = self.masternode_lists.get_mut(&height) {
+                if let Some(quorum_entry_at_height) = masternode_list_at_height
+                    .quorums
+                    .get_mut(&quorum_type)
+                    .and_then(|quorums| quorums.get_mut(&quorum_hash))
+                {
+                    quorum_entry_at_height.verified = new_status;
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -464,13 +830,13 @@ mod tests {
                 .expect("expected to decode")
                 .0;
 
-        assert_eq!(mn_list_engine.masternode_lists.len(), 27);
+        assert_eq!(mn_list_engine.masternode_lists.len(), 29);
 
         let last_masternode_list_height =
             *mn_list_engine.masternode_lists.last_key_value().unwrap().0;
 
         mn_list_engine
-            .verify_masternode_list_quorums(
+            .verify_non_rotating_masternode_list_quorums(
                 last_masternode_list_height,
                 &[Llmqtype50_60, Llmqtype400_85],
             )
@@ -557,19 +923,18 @@ mod tests {
         let block_hex =
             include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
         let data = hex::decode(block_hex).expect("decode hex");
-        let mut mn_list_engine: MasternodeListEngine =
+        let mn_list_engine: MasternodeListEngine =
             bincode::decode_from_slice(&data, bincode::config::standard())
                 .expect("expected to decode")
                 .0;
 
-        assert_eq!(mn_list_engine.masternode_lists.len(), 27);
-
-        // height 2228036
-
-        for (i, quorum) in mn_list_engine.last_commitment_entries.iter().enumerate() {
-            mn_list_engine
-                .validate_quorum(quorum)
-                .expect(format!("expected to validate quorum {}", i).as_str());
+        for (cycle_hash, quorums) in mn_list_engine.rotated_quorums_per_cycle.iter() {
+            for (i, quorum) in quorums.iter().enumerate() {
+                mn_list_engine.validate_quorum(quorum).expect(
+                    format!("expected to validate quorum {} in cycle hash {}", i, cycle_hash)
+                        .as_str(),
+                );
+            }
         }
     }
 
@@ -578,32 +943,15 @@ mod tests {
         let block_hex =
             include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
         let data = hex::decode(block_hex).expect("decode hex");
-        let mut mn_list_engine: MasternodeListEngine =
+        let mn_list_engine: MasternodeListEngine =
             bincode::decode_from_slice(&data, bincode::config::standard())
                 .expect("expected to decode")
                 .0;
 
-        assert_eq!(mn_list_engine.masternode_lists.len(), 27);
-
-        // height 2228036
-
-        mn_list_engine
-            .validate_rotation_cycle_quorums(mn_list_engine.last_commitment_entries.as_slice())
-            .expect("expected to validated quorums");
+        for (cycle_hash, quorums) in mn_list_engine.rotated_quorums_per_cycle.iter() {
+            mn_list_engine
+                .validate_rotation_cycle_quorums(quorums.iter().collect::<Vec<_>>().as_slice())
+                .expect("expected to validated quorums");
+        }
     }
-
-    // #[test]
-    // fn deserialize_mn_list_engine_and_validate_rotated_quorums() {
-    //     let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-    //     let data = hex::decode(block_hex).expect("decode hex");
-    //     let mut mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
-    //
-    //     assert_eq!(mn_list_engine.masternode_lists.len(), 27);
-    //
-    //     // height 2227678
-    //
-    //     for quorum in &mn_list_engine.last_commitment_entries {
-    //         mn_list_engine.validate_quorum(quorum).expect("expected to validate quorum");
-    //     }
-    // }
 }

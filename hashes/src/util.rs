@@ -320,6 +320,12 @@ macro_rules! hash_newtype {
             }
         }
 
+        impl From<[u8; <$hash as $crate::Hash>::LEN]> for $newtype {
+            fn from(bytes: [u8; <$hash as Hash>::LEN]) -> Self {
+                $newtype(<$hash as $crate::Hash>::from_byte_array(bytes))
+            }
+        }
+
         impl Into<[u8; <$hash as $crate::Hash>::LEN]> for $newtype {
             fn into(self) -> [u8; <$hash as $crate::Hash>::LEN] { self.0.into() }
         }
@@ -327,6 +333,7 @@ macro_rules! hash_newtype {
     };
 }
 
+/// Same as newtype without ord
 #[macro_export]
 macro_rules! hash_newtype_no_ord {
     ($($(#[$($type_attrs:tt)*])* $type_vis:vis struct $newtype:ident($(#[$field_attrs:tt])* $field_vis:vis $hash:path);)+) => {
@@ -445,6 +452,12 @@ macro_rules! hash_newtype_no_ord {
             #[inline]
             fn index(&self, index: I) -> &Self::Output {
                 &self.0[index]
+            }
+        }
+
+        impl From<[u8; <$hash as $crate::Hash>::LEN]> for $newtype {
+            fn from(bytes: [u8; <$hash as Hash>::LEN]) -> Self {
+                $newtype(<$hash as $crate::Hash>::from_byte_array(bytes))
             }
         }
 

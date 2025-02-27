@@ -2,6 +2,7 @@ use core::fmt::{Display, Formatter};
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
+
 use crate::BlockHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::quorum_validation_error::QuorumValidationError;

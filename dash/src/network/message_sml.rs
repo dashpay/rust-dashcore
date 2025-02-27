@@ -64,7 +64,21 @@ pub struct MnListDiff {
     pub quorums_chainlock_signatures: Vec<QuorumCLSigObject>,
 }
 
-impl_consensus_encoding!(MnListDiff, version, base_block_hash, block_hash, total_transactions, merkle_hashes, merkle_flags, coinbase_tx, deleted_masternodes, new_masternodes, deleted_quorums, new_quorums, quorums_chainlock_signatures);
+impl_consensus_encoding!(
+    MnListDiff,
+    version,
+    base_block_hash,
+    block_hash,
+    total_transactions,
+    merkle_hashes,
+    merkle_flags,
+    coinbase_tx,
+    deleted_masternodes,
+    new_masternodes,
+    deleted_quorums,
+    new_quorums,
+    quorums_chainlock_signatures
+);
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]

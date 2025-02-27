@@ -34,11 +34,12 @@
 //! KeyIdVoting (renamed to voting_key_hash): This is the public key ID used for proposal voting.
 //! Votes signed with this key are valid while the masternode is in the registered set.
 
+use std::net::SocketAddr;
+
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::Hash;
 use internals::hex::Case::Lower;
-use std::net::SocketAddr;
 
 use crate::address::Payload;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
@@ -257,9 +258,9 @@ impl Decodable for ProviderRegistrationPayload {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
-    use hashes::hex::FromHex;
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+
+    use hashes::Hash;
 
     use crate::bls_sig_utils::BLSPublicKey;
     use crate::consensus::{Encodable, deserialize};
@@ -272,10 +273,11 @@ mod tests {
 
     #[cfg(feature = "signer")]
     mod signer {
+        use internals::hex::display::DisplayHex;
+
         use super::*;
         use crate::Network;
         use crate::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-        use internals::hex::display::DisplayHex;
 
         #[test]
         fn test_collateral_provider_registration_transaction() {

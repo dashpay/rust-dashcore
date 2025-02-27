@@ -46,8 +46,9 @@ impl Decodable for SocketAddr {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::net::Ipv4Addr;
+
+    use super::*;
 
     #[test]
     fn encode_decode_ipv4() {
