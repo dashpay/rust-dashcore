@@ -1,4 +1,4 @@
-use hashes::{Hash, HashEngine};
+use hashes::Hash;
 
 use crate::hash_types::QuorumOrderingHash;
 use crate::sml::masternode_list::MasternodeList;
