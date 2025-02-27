@@ -1,10 +1,7 @@
-use std::io;
-
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
 use crate::bls_sig_utils::BLSSignature;
-use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::MerkleRootMasternodeList;
 use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::llmq_type::LLMQType;

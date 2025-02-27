@@ -72,7 +72,7 @@ impl MasternodeListEngine {
         let block_hash = masternode_list_diff.block_hash;
         let base_block_hash = masternode_list_diff.base_block_hash;
         let masternode_list = masternode_list_diff
-            .try_into_with_block_hash_lookup(|block_hash| Some(block_height), network)?;
+            .try_into_with_block_hash_lookup(|_block_hash| Some(block_height), network)?;
         Ok(Self {
             block_hashes: [(0, base_block_hash), (block_height, block_hash)].into(),
             block_heights: [(base_block_hash, 0), (block_hash, block_height)].into(),
@@ -812,9 +812,6 @@ impl MasternodeListEngine {
 
 #[cfg(test)]
 mod tests {
-
-    use bincode::Decode;
-
     use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
     use crate::sml::llmq_type::LLMQType;
     use crate::sml::llmq_type::LLMQType::{Llmqtype50_60, Llmqtype400_60, Llmqtype400_85};
@@ -948,7 +945,7 @@ mod tests {
                 .expect("expected to decode")
                 .0;
 
-        for (cycle_hash, quorums) in mn_list_engine.rotated_quorums_per_cycle.iter() {
+        for quorums in mn_list_engine.rotated_quorums_per_cycle.values() {
             mn_list_engine
                 .validate_rotation_cycle_quorums(quorums.iter().collect::<Vec<_>>().as_slice())
                 .expect("expected to validated quorums");
