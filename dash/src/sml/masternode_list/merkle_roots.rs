@@ -20,7 +20,7 @@ use crate::transaction::special_transaction::TransactionPayload;
 /// - `Some([u8; 32])`: The computed Merkle root if at least one hash is provided.
 /// - `None`: If the input vector is empty.
 #[inline]
-pub fn merkle_root_from_hashes(hashes: Vec<[u8; 32]>) -> Option<[u8; 32]> {
+pub fn merkle_root_from_hashes(hashes: Vec<sha256d::Hash>) -> Option<sha256d::Hash> {
     let length = hashes.len();
     let mut level = hashes;
     match length {
@@ -29,12 +29,12 @@ pub fn merkle_root_from_hashes(hashes: Vec<[u8; 32]>) -> Option<[u8; 32]> {
             while level.len() != 1 {
                 let len = level.len();
                 let mut higher_level =
-                    Vec::<[u8; 32]>::with_capacity((0.5 * len as f64).ceil() as usize);
+                    Vec::<sha256d::Hash>::with_capacity((0.5 * len as f64).ceil() as usize);
                 for pair in level.chunks(2) {
                     let mut buffer = Vec::with_capacity(64);
-                    buffer.extend_from_slice(&pair[0]);
-                    buffer.extend_from_slice(pair.get(1).unwrap_or(&pair[0]));
-                    higher_level.push(sha256d::Hash::hash(&buffer).to_byte_array());
+                    buffer.extend_from_slice(pair[0].as_byte_array());
+                    buffer.extend_from_slice(pair.get(1).unwrap_or(&pair[0]).as_byte_array());
+                    higher_level.push(sha256d::Hash::hash(&buffer));
                 }
                 level = higher_level;
             }
@@ -126,7 +126,7 @@ impl MasternodeList {
     ) -> Option<MerkleRootMasternodeList> {
         self.hashes_for_merkle_root(block_height)
             .and_then(merkle_root_from_hashes)
-            .map(|hash| MerkleRootMasternodeList::from_byte_array(hash))
+            .map(MerkleRootMasternodeList::from_raw_hash)
     }
 
     /// Computes the Merkle root for the LLMQ (Long-Living Masternode Quorum) list.
@@ -140,7 +140,7 @@ impl MasternodeList {
     /// - `None`: If no quorum commitment hashes are available.
     pub fn calculate_llmq_merkle_root(&self) -> Option<MerkleRootQuorums> {
         merkle_root_from_hashes(self.hashes_for_quorum_merkle_root())
-            .map(|hash| MerkleRootQuorums::from_byte_array(hash))
+            .map(MerkleRootQuorums::from_raw_hash)
     }
 
     /// Retrieves the list of hashes required to compute the masternode list Merkle root.
@@ -154,9 +154,9 @@ impl MasternodeList {
     ///
     /// # Returns
     ///
-    /// - `Some(Vec<[u8; 32]>)`: A sorted list of masternode entry hashes.
+    /// - `Some(Vec<sha256d::Hash>)`: A sorted list of masternode entry hashes.
     /// - `None`: If the block height is invalid (`u32::MAX`).
-    pub fn hashes_for_merkle_root(&self, block_height: u32) -> Option<Vec<[u8; 32]>> {
+    pub fn hashes_for_merkle_root(&self, block_height: u32) -> Option<Vec<sha256d::Hash>> {
         (block_height != u32::MAX).then_some({
             let mut pro_tx_hashes = self.reversed_pro_reg_tx_hashes();
             pro_tx_hashes.sort_by(|&s1, &s2| s1.reverse().cmp(&s2.reverse()));
@@ -164,11 +164,6 @@ impl MasternodeList {
                 .into_iter()
                 .map(|hash| self.masternodes[hash].entry_hash)
                 .collect::<Vec<_>>()
-            //this was the following: (with entry_hash_at)
-            // pro_tx_hashes
-            //     .into_iter()
-            //     .map(|hash| (&self.masternodes[hash]).entry_hash_at(block_height))
-            //     .collect::<Vec<_>>()
         })
     }
 
@@ -180,11 +175,11 @@ impl MasternodeList {
     /// # Returns
     ///
     /// - `Vec<[u8; 32]>`: A sorted list of quorum commitment hashes.
-    pub fn hashes_for_quorum_merkle_root(&self) -> Vec<[u8; 32]> {
+    pub fn hashes_for_quorum_merkle_root(&self) -> Vec<sha256d::Hash> {
         let mut llmq_commitment_hashes = self
             .quorums
             .values()
-            .flat_map(|q_map| q_map.values().map(|entry| entry.entry_hash.to_byte_array()))
+            .flat_map(|q_map| q_map.values().map(|entry| entry.entry_hash.to_raw_hash()))
             .collect::<Vec<_>>();
         llmq_commitment_hashes.sort();
         llmq_commitment_hashes
