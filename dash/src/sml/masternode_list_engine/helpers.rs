@@ -30,19 +30,18 @@ impl MasternodeListEngine {
         &self,
         core_block_height: CoreBlockHeight,
     ) -> (Option<&MasternodeList>, Option<&MasternodeList>) {
-        let mut lower = None;
-        let mut upper = None;
+    let lower = self
+        .masternode_lists
+        .range(..=core_block_height)
+        .next_back()
+        .map(|(_, list)| list);
 
-        for (&height, list) in self.masternode_lists.range(..=core_block_height).rev() {
-            lower = Some(list);
-            break;
-        }
+    let upper = self
+        .masternode_lists
+        .range(core_block_height + 1..)
+        .next()
+        .map(|(_, list)| list);
 
-        for (&height, list) in self.masternode_lists.range(core_block_height + 1..) {
-            upper = Some(list);
-            break;
-        }
-
-        (lower, upper)
+    (lower, upper)
     }
 }
