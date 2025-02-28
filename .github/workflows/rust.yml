@@ -22,7 +22,7 @@ jobs:
           - rust: nightly
             env:
               # TODO: running with DO_BENCH: true causes the test to fail
-#              DO_BENCH: true
+              #              DO_BENCH: true
               AS_DEPENDENCY: true
               DO_NO_STD: false
               DO_DOCS: true
@@ -86,3 +86,61 @@ jobs:
 #        run: cd hashes/embedded && cargo run --target thumbv7m-none-eabi
 #      - name: Run hashes/embedded with alloc
 #        run: cd hashes/embedded && cargo run --target thumbv7m-none-eabi --features=alloc
+
+    rpc-tests:
+      name: Tests
+      runs-on: ubuntu-latest
+      strategy:
+        matrix:
+          include:
+            - rust: stable
+              env:
+                RUSTFMTCHK: true
+            - rust: nightly
+              env:
+                RUSTFMTCHK: false
+            - rust: 1.29.0
+              env:
+                PIN_VERSIONS: true
+      steps:
+        - name: Checkout Crate
+          uses: actions/checkout@v2
+        - name: Checkout Toolchain
+          uses: actions-rs/toolchain@v1
+          with:
+            profile: minimal
+            toolchain: ${{ matrix.rust }}
+            override: true
+        - name: Running test script
+          env: ${{ matrix.env }}
+          run: ./contrib/test.sh
+
+    integrations-tests:
+      name: Integration Tests
+      runs-on: ubuntu-latest
+      strategy:
+        matrix:
+          rust: [stable]
+          bitcoinversion:
+            [
+              "0.18.0",
+              "0.18.1",
+              "0.19.0.1",
+              "0.19.1",
+              "0.20.0",
+              "0.20.1",
+              "0.21.0",
+            ]
+      steps:
+        - name: Checkout Crate
+          uses: actions/checkout@v2
+        - name: Checkout Toolchain
+          uses: actions-rs/toolchain@v1
+          with:
+            profile: minimal
+            toolchain: ${{ matrix.rust }}
+            override: true
+        - name: Running test script
+          env:
+            BITCOINVERSION: ${{ matrix.bitcoinversion }}
+          run: ./contrib/test.sh

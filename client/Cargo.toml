@@ -1,0 +1,31 @@
+[package]
+name = "dashcore-rpc"
+version = { workspace = true }
+authors = [
+    "Steven Roose <steven@stevenroose.org>",
+    "Jean Pierre Dudey <jeandudey@hotmail.com>",
+    "Dawid Ciężarkiewicz <dpc@dpc.pw>",
+]
+license = "CC0-1.0"
+homepage = "https://github.com/dashevo/rust-dashcore/"
+repository = "https://github.com/dashevo/rust-dashcore/"
+description = "RPC client library for the Dash Core JSON-RPC API."
+keywords = ["crypto", "dash", "dash-core", "rpc"]
+readme = "README.md"
+edition = "2021"
+
+[lib]
+name = "dashcore_rpc"
+path = "src/lib.rs"
+
+[dependencies]
+dashcore-rpc-json = { version = "0.16", path = "../json" }
+
+log = "0.4.5"
+jsonrpc = "0.14.0"
+
+# Used for deserialization of JSON.
+serde = { version = "1.0.132", features = ["derive"] }
+serde_json = { version="1.0", features=["preserve_order"] }
+
+hex = { version="0.4", features=["serde"]}

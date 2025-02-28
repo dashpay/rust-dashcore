@@ -1,0 +1,30 @@
+[package]
+name = "dashcore-rpc-json"
+version = { workspace = true }
+authors = [
+    "Steven Roose <steven@stevenroose.org>",
+    "Jean Pierre Dudey <jeandudey@hotmail.com>",
+    "Dawid Ciężarkiewicz <dpc@dpc.pw>"
+]
+license = "CC0-1.0"
+homepage = "https://github.com/dashevo/rust-dashcore/"
+repository = "https://github.com/dashevo/rust-dashcore/"
+description = "JSON-enabled type structs for dashcore-rpc crate."
+keywords = [ "crypto", "dash", "dashcore", "rpc" ]
+readme = "README.md"
+edition = "2021"
+
+[lib]
+name = "dashcore_rpc_json"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1.0.132", features = ["derive"] }
+serde_json = { version="1.0", features=["preserve_order"] }
+serde_with = "2.1.0"
+serde_repr = "0.1"
+hex = { version="0.4", features=["serde"]}
+
+dashcore = { git="https://github.com/dashpay/rust-dashcore.git", features=["std", "secp-recovery", "rand-std", "signer", "serde"], default-features = false, tag = "v0.36.2" }
+
+bincode = { version = "2.0.0-rc.3", features = ["serde"] }
