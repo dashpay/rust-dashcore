@@ -1,6 +1,6 @@
 [package]
 name = "dashcore-private"
-version = "0.1.0"
+version = { workspace = true }
 authors = ["Samuel Westrich <sam@dash.org>", "The Rust Dash developers"]
 license = "CC0-1.0"
 repository = "https://github.com/rust-dashcore/rust-dashcore/"

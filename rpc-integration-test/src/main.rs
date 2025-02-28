@@ -1520,7 +1520,7 @@ fn test_get_protx_info(cl: &Client) {
     let pro_tx_hash =
         ProTxHash::from_str("000000000c9eddd5d2a707281b7e30d5aac974dac600ff10f01937e1ca36066f")
             .unwrap();
-    let protx_info = cl.get_protx_info(&pro_tx_hash).unwrap();
+    let protx_info = cl.get_protx_info(&pro_tx_hash, None).unwrap();
 
     match protx_info {
         ProTxInfo {

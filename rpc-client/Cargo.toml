@@ -19,7 +19,7 @@ name = "dashcore_rpc"
 path = "src/lib.rs"
 
 [dependencies]
-dashcore-rpc-json = { version = "0.16", path = "../json" }
+dashcore-rpc-json = { path = "../rpc-json" }
 
 log = "0.4.5"
 jsonrpc = "0.14.0"

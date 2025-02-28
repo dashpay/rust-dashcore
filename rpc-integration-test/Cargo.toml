@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-dashcore-rpc = { path = "../client" }
+dashcore-rpc = { path = "../rpc-client" }
 lazy_static = "1.4.0"
 log = "0.4"
 hex = "0.4.3"
