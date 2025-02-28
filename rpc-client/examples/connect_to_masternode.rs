@@ -165,7 +165,7 @@ fn main() {
     println!("\nProtx diff: \n{:?}", protx_diff);
 
     // Get Protx info
-    let protx_info = rpc.get_protx_info(&mn0_pro_tx_hash).unwrap();
+    let protx_info = rpc.get_protx_info(&mn0_pro_tx_hash, None).unwrap();
     println!("\nProtx info: \n{:?}", protx_info);
 
     // Get Protx list
