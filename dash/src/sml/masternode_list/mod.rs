@@ -15,16 +15,16 @@ use std::collections::BTreeMap;
 use bincode::{Decode, Encode};
 pub use builder::MasternodeListBuilder;
 
-use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+use crate::hash_types::{BlockHash, MerkleRootMasternodeList, MerkleRootQuorums, ProTxHash, QuorumHash};
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
-use crate::{BlockHash, ProTxHash, QuorumHash};
 
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[ferment_macro::export]
 pub struct MasternodeList {
     pub block_hash: BlockHash,
     pub known_height: u32,

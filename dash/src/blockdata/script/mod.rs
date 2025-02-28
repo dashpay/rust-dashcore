@@ -69,7 +69,7 @@ use crate::{OutPoint, io};
 mod borrowed;
 mod builder;
 mod instruction;
-mod owned;
+pub mod owned;
 mod push_bytes;
 #[cfg(test)]
 mod tests;

@@ -30,7 +30,7 @@ use crate::blockdata::transaction::special_transaction::TransactionType::AssetUn
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{PubkeyHash, ScriptHash};
 use crate::prelude::*;
-use crate::transaction::TxOut;
+use crate::blockdata::transaction::txout::TxOut;
 use crate::{ScriptBuf, TxIn, VarInt, io};
 
 /// An Asset Unlock Base payload. This is the base payload of the Asset Unlock. In order to make
@@ -39,6 +39,7 @@ use crate::{ScriptBuf, TxIn, VarInt, io};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[ferment_macro::export]
 pub struct AssetUnlockBasePayload {
     /// The payload protocol version, is currently expected to be 0.
     pub version: u8,

@@ -34,7 +34,8 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 #[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-pub struct BLSPublicKey([u8; 48]);
+#[ferment_macro::export]
+pub struct BLSPublicKey(pub [u8; 48]);
 
 impl BLSPublicKey {
     pub fn is_zeroed(&self) -> bool { self.0 == [0; 48] }
@@ -92,7 +93,8 @@ impl fmt::Display for BLSPublicKey {
 #[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-pub struct BLSSignature([u8; 96]);
+#[ferment_macro::export]
+pub struct BLSSignature(pub [u8; 96]);
 
 impl BLSSignature {
     pub fn is_zeroed(&self) -> bool { self.0 == [0; 96] }

@@ -27,7 +27,7 @@ use bincode::{Decode, Encode};
 
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::prelude::*;
-use crate::transaction::txout::TxOut;
+use crate::blockdata::transaction::txout::TxOut;
 use crate::{VarInt, io};
 
 /// An Asset Lock payload. This is contained as the payload of an asset lock special transaction.
@@ -41,6 +41,7 @@ use crate::{VarInt, io};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[ferment_macro::export]
 pub struct AssetLockPayload {
     pub version: u8,
     pub credit_outputs: Vec<TxOut>,

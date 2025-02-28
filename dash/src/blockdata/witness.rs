@@ -32,20 +32,21 @@ use crate::{Script, VarInt};
 /// [segwit upgrade]: <https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki>
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[ferment_macro::export]
 pub struct Witness {
     /// Contains the witness `Vec<Vec<u8>>` serialization without the initial varint indicating the
     /// number of elements (which is stored in `witness_elements`).
-    content: Vec<u8>,
+    pub content: Vec<u8>,
 
     /// The number of elements in the witness.
     ///
     /// Stored separately (instead of as a VarInt in the initial part of content) so that methods
     /// like [`Witness::push`] don't have to shift the entire array.
-    witness_elements: usize,
+    pub witness_elements: usize,
 
     /// This is the valid index pointing to the beginning of the index area. This area is 4 *
     /// stack_size bytes at the end of the content vector which stores the indices of each item.
-    indices_start: usize,
+    pub indices_start: usize,
 }
 
 /// An iterator returning individual witness elements.
