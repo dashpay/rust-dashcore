@@ -143,4 +143,4 @@ jobs:
         - name: Running test script
           env:
             BITCOINVERSION: ${{ matrix.bitcoinversion }}
-          run: ./contrib/test.sh
+          run: ./contrib/test-rpc.sh
