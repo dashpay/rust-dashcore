@@ -18,20 +18,20 @@ use crate::{ProTxHash, PubkeyHash};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[ferment_macro::export]
-pub enum MasternodeType {
+pub enum EntryMasternodeType {
     Regular,
     HighPerformance { platform_http_port: u16, platform_node_id: PubkeyHash },
 }
 
-impl Encodable for MasternodeType {
+impl Encodable for EntryMasternodeType {
     fn consensus_encode<W: Write + ?Sized>(&self, writer: &mut W) -> Result<usize, std::io::Error> {
         let mut len = 0;
         match self {
-            MasternodeType::Regular => {
+            EntryMasternodeType::Regular => {
                 // Write variant tag 0 for Regular
                 len += 0u16.consensus_encode(writer)?;
             }
-            MasternodeType::HighPerformance { platform_http_port, platform_node_id } => {
+            EntryMasternodeType::HighPerformance { platform_http_port, platform_node_id } => {
                 // Write variant tag 1 for HighPerformance,
                 // then the u16 port and the PubkeyHash
                 len += 1u16.consensus_encode(writer)?;
@@ -43,16 +43,16 @@ impl Encodable for MasternodeType {
     }
 }
 
-impl Decodable for MasternodeType {
+impl Decodable for EntryMasternodeType {
     fn consensus_decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
         // First decode the variant tag.
         let variant: u16 = Decodable::consensus_decode(reader)?;
         match variant {
-            0 => Ok(MasternodeType::Regular),
+            0 => Ok(EntryMasternodeType::Regular),
             1 => {
                 let platform_http_port = Decodable::consensus_decode(reader)?;
                 let platform_node_id = Decodable::consensus_decode(reader)?;
-                Ok(MasternodeType::HighPerformance { platform_http_port, platform_node_id })
+                Ok(EntryMasternodeType::HighPerformance { platform_http_port, platform_node_id })
             }
             received => Err(Error::InvalidEnumValue {
                 max: 1,
@@ -86,7 +86,7 @@ pub struct MasternodeListEntry {
     pub operator_public_key: BLSPublicKey,
     pub key_id_voting: PubkeyHash,
     pub is_valid: bool,
-    pub mn_type: MasternodeType,
+    pub mn_type: EntryMasternodeType,
 }
 
 use std::cmp::Ordering;
@@ -135,10 +135,10 @@ impl Decodable for MasternodeListEntry {
         let operator_public_key: BLSPublicKey = Decodable::consensus_decode(reader)?;
         let key_id_voting: PubkeyHash = Decodable::consensus_decode(reader)?;
         let is_valid: bool = Decodable::consensus_decode(reader)?;
-        let mn_type: MasternodeType = if version >= 2 {
+        let mn_type: EntryMasternodeType = if version >= 2 {
             Decodable::consensus_decode(reader)?
         } else {
-            MasternodeType::Regular
+            EntryMasternodeType::Regular
         };
 
         Ok(MasternodeListEntry {

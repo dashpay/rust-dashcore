@@ -1,6 +1,6 @@
 [package]
 name = "dashcore_hashes"
-version = "0.15.0"
+version = "0.15.2"
 authors = ["Samuel Westrich <sam@dash.org>"]
 license = "CC0-1.0"
 repository = "https://github.com/rust-dashcore/dash_hashes/"

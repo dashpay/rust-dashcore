@@ -34,7 +34,7 @@ impl QualifiedQuorumEntry {
     where
         I: IntoIterator<Item = &'a MasternodeListEntry>,
     {
-        let mut message = self.commitment_hash.to_byte_array();
+        let message = self.commitment_hash.to_byte_array();
         let message = message.as_slice();
         let public_keys2 = operator_keys
             .into_iter()

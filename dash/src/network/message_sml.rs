@@ -1,10 +1,7 @@
-use std::io;
-
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
 use crate::bls_sig_utils::BLSSignature;
-use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::MerkleRootMasternodeList;
 use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::llmq_type::LLMQType;
@@ -64,56 +61,21 @@ pub struct MnListDiff {
     pub quorums_chainlock_signatures: Vec<QuorumCLSigObject>,
 }
 
-impl Encodable for MnListDiff {
-    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
-        let mut len = 0;
-        len += self.version.consensus_encode(w)?;
-        len += self.base_block_hash.consensus_encode(w)?;
-        len += self.block_hash.consensus_encode(w)?;
-        len += self.total_transactions.consensus_encode(w)?;
-        len += self.merkle_hashes.consensus_encode(w)?;
-        len += self.merkle_flags.consensus_encode(w)?;
-        len += self.coinbase_tx.consensus_encode(w)?;
-        len += self.deleted_masternodes.consensus_encode(w)?;
-        len += self.new_masternodes.consensus_encode(w)?;
-        len += self.deleted_quorums.consensus_encode(w)?;
-        len += self.new_quorums.consensus_encode(w)?;
-        len += self.quorums_chainlock_signatures.consensus_encode(w)?;
-        Ok(len)
-    }
-}
-
-impl Decodable for MnListDiff {
-    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
-        let version = u16::consensus_decode(r)?;
-        let base_block_hash = BlockHash::consensus_decode(r)?;
-        let block_hash = BlockHash::consensus_decode(r)?;
-        let total_transactions = u32::consensus_decode(r)?;
-        let merkle_hashes = Vec::<MerkleRootMasternodeList>::consensus_decode(r)?;
-        let merkle_flags = Vec::<u8>::consensus_decode(r)?;
-        let coinbase_tx = Transaction::consensus_decode(r)?;
-        let deleted_masternodes = Vec::<ProTxHash>::consensus_decode(r)?;
-        let new_masternodes = Vec::<MasternodeListEntry>::consensus_decode(r)?;
-        let deleted_quorums = Vec::<DeletedQuorum>::consensus_decode(r)?;
-        let new_quorums = Vec::<QuorumEntry>::consensus_decode(r)?;
-        let quorums_chainlock_signatures = Vec::<QuorumCLSigObject>::consensus_decode(r)?;
-
-        Ok(MnListDiff {
-            version,
-            base_block_hash,
-            block_hash,
-            total_transactions,
-            merkle_hashes,
-            merkle_flags,
-            coinbase_tx,
-            deleted_masternodes,
-            new_masternodes,
-            deleted_quorums,
-            new_quorums,
-            quorums_chainlock_signatures,
-        })
-    }
-}
+impl_consensus_encoding!(
+    MnListDiff,
+    version,
+    base_block_hash,
+    block_hash,
+    total_transactions,
+    merkle_hashes,
+    merkle_flags,
+    coinbase_tx,
+    deleted_masternodes,
+    new_masternodes,
+    deleted_quorums,
+    new_quorums,
+    quorums_chainlock_signatures
+);
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -131,7 +93,6 @@ impl_consensus_encoding!(QuorumCLSigObject, signature, index_set);
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct DeletedQuorum {
-    // TODO: Make it enum
     pub llmq_type: LLMQType,
     pub quorum_hash: QuorumHash,
 }

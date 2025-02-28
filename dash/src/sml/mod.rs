@@ -5,6 +5,7 @@ pub mod llmq_type;
 pub mod masternode_list;
 pub mod masternode_list_engine;
 pub mod masternode_list_entry;
+mod message_verification_error;
 mod order_option;
 pub mod quorum_entry;
 pub mod quorum_validation_error;

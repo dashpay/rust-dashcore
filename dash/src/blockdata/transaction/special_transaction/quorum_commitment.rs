@@ -220,7 +220,6 @@ mod tests {
     use crate::consensus::{Encodable, deserialize, serialize};
     use crate::hash_types::{QuorumHash, QuorumVVecHash};
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
-    use crate::network::message_sml::MnListDiff;
     use crate::sml::llmq_type::LLMQType;
     use crate::transaction::special_transaction::quorum_commitment::{
         QuorumCommitmentPayload, QuorumEntry,

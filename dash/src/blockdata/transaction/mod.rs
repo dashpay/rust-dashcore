@@ -916,7 +916,6 @@ mod tests {
     use crate::consensus::encode::{deserialize, serialize};
     use crate::internal_macros::hex;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
-    use crate::network::message_sml::MnListDiff;
 
     #[test]
     fn test_is_coinbase() {

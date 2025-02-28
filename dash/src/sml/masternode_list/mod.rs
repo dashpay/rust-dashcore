@@ -1,7 +1,7 @@
 mod apply_diff;
+mod builder;
 mod debug_helpers;
 pub mod from_diff;
-mod is_lock_methods;
 mod masternode_helpers;
 mod merkle_roots;
 mod peer_addresses;
@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
+pub use builder::MasternodeListBuilder;
 
 use crate::hash_types::{BlockHash, MerkleRootMasternodeList, MerkleRootQuorums, ProTxHash, QuorumHash};
 use crate::sml::llmq_type::LLMQType;
@@ -36,45 +37,16 @@ pub struct MasternodeList {
 }
 
 impl MasternodeList {
-    pub fn empty(block_hash: BlockHash, block_height: u32, quorums_active: bool) -> Self {
-        Self::new(BTreeMap::default(), BTreeMap::new(), block_hash, block_height, quorums_active)
+    pub fn empty(block_hash: BlockHash, block_height: u32) -> Self {
+        Self::build(BTreeMap::default(), BTreeMap::new(), block_hash, block_height).build()
     }
-    pub fn new(
+
+    pub fn build(
         masternodes: BTreeMap<ProTxHash, QualifiedMasternodeListEntry>,
         quorums: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
         block_hash: BlockHash,
         block_height: u32,
-        quorums_active: bool,
-    ) -> Self {
-        let mut list = Self {
-            quorums,
-            block_hash,
-            known_height: block_height,
-            masternode_merkle_root: None,
-            llmq_merkle_root: None,
-            masternodes,
-        };
-        list.masternode_merkle_root = list.calculate_masternodes_merkle_root(block_height);
-        if quorums_active {
-            list.llmq_merkle_root = list.calculate_llmq_merkle_root();
-        }
-        list
-    }
-    pub fn with_merkle_roots(
-        masternodes: BTreeMap<ProTxHash, QualifiedMasternodeListEntry>,
-        quorums: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
-        block_hash: BlockHash,
-        block_height: u32,
-        masternode_merkle_root: MerkleRootMasternodeList,
-        llmq_merkle_root: Option<MerkleRootQuorums>,
-    ) -> Self {
-        Self {
-            quorums,
-            block_hash,
-            known_height: block_height,
-            masternode_merkle_root: Some(masternode_merkle_root),
-            llmq_merkle_root,
-            masternodes,
-        }
+    ) -> MasternodeListBuilder {
+        MasternodeListBuilder::new(masternodes, quorums, block_hash, block_height)
     }
 }

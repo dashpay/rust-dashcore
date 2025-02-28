@@ -65,32 +65,29 @@ macro_rules! impl_asref_push_bytes {
 // newtypes module is solely here so we can rustfmt::skip.
 pub use newtypes::*;
 
-#[rustfmt::skip]
 mod newtypes {
 
-    use crate::alloc::string::ToString;
-
     use core::str::FromStr;
-use std::cmp::Ordering;
-use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
-    use hashes::hex::Error;
-    use crate::prelude::String;
+    use std::cmp::Ordering;
+
     #[cfg(feature = "core-block-hash-use-x11")]
     use hashes::hash_x11;
+    use hashes::hex::Error;
+    use hashes::{Hash, hash_newtype, hash_newtype_no_ord, hash160, sha256, sha256d};
+
+    use crate::alloc::string::ToString;
+    use crate::prelude::String;
+    use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
     #[cfg(feature = "core-block-hash-use-x11")]
     hash_newtype! {
         /// A dash block hash.
         pub struct BlockHash(hash_x11::Hash);
-        /// CycleHash is a cycle hash
-        pub struct CycleHash(hash_x11::Hash);
     }
     #[cfg(not(feature = "core-block-hash-use-x11"))]
     hash_newtype! {
         /// A dash block hash.
         pub struct BlockHash(sha256d::Hash);
-        /// CycleHash is a cycle hash
-        pub struct CycleHash(sha256d::Hash);
     }
 
     hash_newtype! {
@@ -139,6 +136,8 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
         pub struct QuorumVVecHash(sha256d::Hash);
         /// A hash of a quorum signing request id
         pub struct QuorumSigningRequestId(sha256d::Hash);
+        /// A hash of a quorum signing sign id
+        pub struct QuorumSigningSignId(sha256d::Hash);
         /// ProTxHash is a pro-tx hash
         #[hash_newtype(forward)]
         pub struct ProTxHash(sha256d::Hash);
@@ -149,34 +148,34 @@ use hashes::{sha256, sha256d, hash160, hash_newtype, Hash, hash_newtype_no_ord};
         pub struct QuorumCommitmentHash(sha256d::Hash);
 
         pub struct Sha256dHash(sha256d::Hash);
-
+        pub struct QuorumOrderingHash(sha256d::Hash);
     }
 
-        hash_newtype_no_ord! {
-            pub struct ScoreHash(sha256::Hash);
+    hash_newtype_no_ord! {
+        pub struct ScoreHash(sha256::Hash);
+    }
+
+    impl Ord for ScoreHash {
+        fn cmp(&self, other: &Self) -> Ordering {
+            let mut self_bytes = self.0.to_byte_array();
+            let mut other_bytes = other.0.to_byte_array();
+
+            self_bytes.reverse();
+            other_bytes.reverse();
+
+            self_bytes.cmp(&other_bytes)
         }
-
-impl Ord for ScoreHash {
-    fn cmp(&self, other: &Self) -> Ordering {
-        let mut self_bytes = self.0.to_byte_array();
-        let mut other_bytes = other.0.to_byte_array();
-
-        self_bytes.reverse();
-        other_bytes.reverse();
-
-        self_bytes.cmp(&other_bytes)
     }
-}
 
-impl PartialOrd for ScoreHash {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+    impl PartialOrd for ScoreHash {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
     }
-}
-
 
     /// A hash used to identify a quorum
     pub type QuorumHash = BlockHash;
+
+    /// A hash used to identity a cycle
+    pub type CycleHash = BlockHash;
 
     impl_hashencode!(Txid);
     impl_hashencode!(Wtxid);
@@ -197,7 +196,6 @@ impl PartialOrd for ScoreHash {
     impl_hashencode!(QuorumVVecHash);
     impl_hashencode!(QuorumSigningRequestId);
     impl_hashencode!(PubkeyHash);
-    impl_hashencode!(CycleHash);
 
     impl_hashencode!(ConfirmedHash);
     impl_hashencode!(ConfirmedHashHashedWithProRegTx);
@@ -205,6 +203,7 @@ impl PartialOrd for ScoreHash {
     impl_hashencode!(QuorumEntryHash);
     impl_hashencode!(QuorumCommitmentHash);
     impl_hashencode!(ScoreHash);
+    impl_hashencode!(QuorumOrderingHash);
     impl_hashencode!(ProTxHash);
     impl_hashencode!(Sha256dHash);
 
@@ -212,14 +211,10 @@ impl PartialOrd for ScoreHash {
 
     impl Txid {
         /// Create a Txid from a string
-        pub fn from_hex(s: &str) -> Result<Txid, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
+        pub fn from_hex(s: &str) -> Result<Txid, Error> { Ok(Self(sha256d::Hash::from_str(s)?)) }
 
         /// Convert a Txid to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
+        pub fn to_hex(&self) -> String { self.0.to_string() }
     }
 
     impl ProTxHash {
@@ -229,21 +224,17 @@ impl PartialOrd for ScoreHash {
         }
 
         /// Convert a ProTxHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
+        pub fn to_hex(&self) -> String { self.0.to_string() }
     }
 
-        impl ScoreHash {
+    impl ScoreHash {
         /// Create a ScoreHash from a string
         pub fn from_hex(s: &str) -> Result<ScoreHash, Error> {
             Ok(Self(sha256::Hash::from_str(s)?))
         }
 
         /// Convert a ScoreHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
+        pub fn to_hex(&self) -> String { self.0.to_string() }
 
         /// Creates a score based on the optional confirmed hash and the quorum modifier.
         ///
@@ -253,9 +244,14 @@ impl PartialOrd for ScoreHash {
         ///
         /// # Returns
         /// * A hashed score derived from the input values.
-        pub fn create_score(confirmed_hash_hashed_with_pro_reg_tx: Option<ConfirmedHashHashedWithProRegTx>, modifier: QuorumModifierHash) -> Self {
+        pub fn create_score(
+            confirmed_hash_hashed_with_pro_reg_tx: Option<ConfirmedHashHashedWithProRegTx>,
+            modifier: QuorumModifierHash,
+        ) -> Self {
             let mut bytes = vec![];
-            if let Some(confirmed_hash_hashed_with_pro_reg_tx) = confirmed_hash_hashed_with_pro_reg_tx{
+            if let Some(confirmed_hash_hashed_with_pro_reg_tx) =
+                confirmed_hash_hashed_with_pro_reg_tx
+            {
                 bytes.append(&mut confirmed_hash_hashed_with_pro_reg_tx.to_byte_array().to_vec());
             }
             bytes.append(&mut modifier.to_byte_array().to_vec());
@@ -263,11 +259,33 @@ impl PartialOrd for ScoreHash {
         }
     }
 
-    impl Default for ConfirmedHash {
-    fn default() -> Self {
-        ConfirmedHash::from_byte_array([0;32])
+    impl QuorumOrderingHash {
+        /// Create a ScoreHash from a string
+        pub fn from_hex(s: &str) -> Result<QuorumOrderingHash, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
+
+        /// Convert a ScoreHash to a string
+        pub fn to_hex(&self) -> String { self.0.to_string() }
+
+        /// Creates an ordering hash based on the quorum and request id.
+        ///
+        /// # Arguments
+        /// * `quorum` - The quorum to create the ordering hash.
+        /// * `request_id` - The request id.
+        ///
+        /// # Returns
+        /// * A hashed score derived from the input values.
+        pub fn create(quorum: &QuorumEntry, request_id: &QuorumSigningRequestId) -> Self {
+            let mut bytes = vec![quorum.llmq_type as u8];
+            bytes.extend_from_slice(quorum.quorum_hash.as_byte_array());
+            bytes.extend_from_slice(request_id.as_byte_array());
+            Self::hash(bytes.as_slice())
+        }
     }
 
+    impl Default for ConfirmedHash {
+        fn default() -> Self { ConfirmedHash::from_byte_array([0; 32]) }
     }
 
     impl ConfirmedHash {
@@ -277,32 +295,30 @@ impl PartialOrd for ScoreHash {
         }
 
         /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
+        pub fn to_hex(&self) -> String { self.0.to_string() }
     }
 
     impl ConfirmedHashHashedWithProRegTx {
-            /// Create a ConfirmedHash from a string
+        /// Create a ConfirmedHash from a string
         pub fn from_hex(s: &str) -> Result<ConfirmedHashHashedWithProRegTx, Error> {
             Ok(Self(sha256::Hash::from_str(s)?))
         }
 
         /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
+        pub fn to_hex(&self) -> String { self.0.to_string() }
 
         /// Hashes the members
         pub fn hash_members(pro_tx_hash: &ProTxHash, confirmed_hash: &ConfirmedHash) -> Self {
             Self::hash(&[pro_tx_hash.to_byte_array(), confirmed_hash.to_byte_array()].concat())
         }
-            /// Hashes the members
-        pub fn hash_members_confirmed_hash_optional(pro_tx_hash: &ProTxHash, confirmed_hash: Option<&ConfirmedHash>) -> Option<Self> {
-                confirmed_hash.map(|confirmed_hash| {
-                   Self::hash(&[pro_tx_hash.to_byte_array(), confirmed_hash.to_byte_array()].concat())
-                })
-
+        /// Hashes the members
+        pub fn hash_members_confirmed_hash_optional(
+            pro_tx_hash: &ProTxHash,
+            confirmed_hash: Option<&ConfirmedHash>,
+        ) -> Option<Self> {
+            confirmed_hash.map(|confirmed_hash| {
+                Self::hash(&[pro_tx_hash.to_byte_array(), confirmed_hash.to_byte_array()].concat())
+            })
         }
     }
 
@@ -313,9 +329,7 @@ impl PartialOrd for ScoreHash {
         }
 
         /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
+        pub fn to_hex(&self) -> String { self.0.to_string() }
     }
 
     impl InputsHash {
@@ -325,16 +339,12 @@ impl PartialOrd for ScoreHash {
         }
 
         /// Convert an InputsHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
+        pub fn to_hex(&self) -> String { self.0.to_string() }
     }
 
     impl SpecialTransactionPayloadHash {
         /// Create a SpecialTransactionPayloadHash from a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
+        pub fn to_hex(&self) -> String { self.0.to_string() }
     }
 
     impl PubkeyHash {
@@ -344,8 +354,6 @@ impl PartialOrd for ScoreHash {
         }
 
         /// Convert a PubkeyHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
+        pub fn to_hex(&self) -> String { self.0.to_string() }
     }
 }

@@ -76,12 +76,13 @@ impl MasternodeList {
         }
 
         // Create and return the new MasternodeList
-        Ok(MasternodeList::new(
+        let builder = MasternodeList::build(
             updated_masternodes,
             updated_quorums,
             diff.block_hash,
             diff_end_height,
-            true, // Assume quorums are active
-        ))
+        );
+
+        Ok(builder.build())
     }
 }
