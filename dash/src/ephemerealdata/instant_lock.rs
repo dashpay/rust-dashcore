@@ -2,20 +2,21 @@
 //! confirm transaction within 1 or 2 seconds. This data structure
 //! represents a p2p message containing a data to verify such a lock.
 
-#[cfg(all(not(feature = "std"), not(test)))]
-use alloc::vec::Vec;
+// #[cfg(all(not(feature = "std"), not(test)))]
+// use alloc::vec::Vec;
 use core::fmt::{Debug, Formatter};
-#[cfg(any(feature = "std", test))]
-pub use std::vec::Vec;
+// #[cfg(any(feature = "std", test))]
+// pub use std::vec::Vec;
 
 use hashes::{Hash, HashEngine};
 
+use crate::blockdata::transaction::outpoint::OutPoint;
 use crate::bls_sig_utils::BLSSignature;
-use crate::consensus::Encodable;
-use crate::hash_types::{CycleHash, QuorumSigningRequestId, QuorumSigningSignId};
+use crate::consensus::{Encodable, encode::VarInt};
+use crate::hash_types::{CycleHash, QuorumHash, QuorumSigningRequestId, QuorumSigningSignId, Txid};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::llmq_type::LLMQType;
-use crate::{OutPoint, QuorumHash, Txid, VarInt, io};
+use crate::io;
 
 const IS_LOCK_REQUEST_ID_PREFIX: &str = "islock";
 
@@ -23,6 +24,7 @@ const IS_LOCK_REQUEST_ID_PREFIX: &str = "islock";
 /// Instant send lock is a mechanism used by the Dash network to
 /// confirm transaction within 1 or 2 seconds. This data structure
 /// represents a p2p message containing a data to verify such a lock.
+#[ferment_macro::export]
 pub struct InstantLock {
     /// Instant lock version
     pub version: u8,
