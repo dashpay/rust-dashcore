@@ -2,7 +2,7 @@ use std::io;
 use std::io::Write;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 
 impl Encodable for SocketAddr {
     fn consensus_encode<W: Write + ?Sized>(&self, writer: &mut W) -> Result<usize, io::Error> {
@@ -17,7 +17,9 @@ impl Encodable for SocketAddr {
         let mut len = 0;
 
         // Encode the 16-byte IP address.
-        len += ip.consensus_encode(writer)?;
+        let ip_bytes: [u8; 16] = ip.to_be_bytes();
+        writer.write_all(&ip_bytes)?;
+        len += ip_bytes.len();
 
         // Encode the port: the legacy code swaps the port’s bytes before encoding.
         len += self.port().swap_bytes().consensus_encode(writer)?;
@@ -29,12 +31,14 @@ impl Encodable for SocketAddr {
 impl Decodable for SocketAddr {
     fn consensus_decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, encode::Error> {
         // Decode the 16-byte IP address.
-        let ip = u128::consensus_decode(reader)?;
+        let mut ip_bytes = [0u8; 16];
+        reader.read_exact(&mut ip_bytes)?;
+        let ip = u128::from_be_bytes(ip_bytes);
 
         // Decode the port (which was stored in swapped order).
         let port = u16::consensus_decode(reader)?.swap_bytes();
 
-        let ipv6 = Ipv6Addr::from(ip);
+        let ipv6 = Ipv6Addr::from_bits(ip);
 
         if let Some(ipv4) = ipv6.to_ipv4() {
             Ok(SocketAddr::V4(SocketAddrV4::new(ipv4, port)))

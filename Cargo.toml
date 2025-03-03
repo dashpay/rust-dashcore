@@ -1,6 +1,12 @@
 [workspace]
-members = ["dash", "hashes", "internals", "fuzz"]
+members = ["dash", "hashes", "internals", "fuzz", "rpc-client", "rpc-json", "rpc-integration-test"]
 resolver = "2"
+
+[workspace.package]
+version = "0.37.0"
 
 [patch.crates-io.dashcore_hashes]
 path = "hashes"
+
+
+

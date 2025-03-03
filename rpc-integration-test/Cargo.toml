@@ -1,0 +1,12 @@
+[package]
+name = "integration_test"
+authors = ["Steven Roose <steven@stevenroose.org>"]
+edition = "2021"
+publish = false
+
+[dependencies]
+dashcore-rpc = { path = "../rpc-client" }
+lazy_static = "1.4.0"
+log = "0.4"
+hex = "0.4.3"
+dotenvy = "0.15.7"
