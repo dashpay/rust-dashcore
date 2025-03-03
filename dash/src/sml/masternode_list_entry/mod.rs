@@ -17,7 +17,7 @@ use crate::{ProTxHash, PubkeyHash};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
-#[ferment_macro::export]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum EntryMasternodeType {
     Regular,
     HighPerformance { platform_http_port: u16, platform_node_id: PubkeyHash },
@@ -64,7 +64,7 @@ impl Decodable for EntryMasternodeType {
 }
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
-#[ferment_macro::export]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct OperatorPublicKey {
     // TODO: We are using two different public keys here
     pub data: BLSPublicKey,
@@ -77,7 +77,7 @@ impl_consensus_encoding!(OperatorPublicKey, data, version);
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
-#[ferment_macro::export]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct MasternodeListEntry {
     pub version: u16,
     pub pro_reg_tx_hash: ProTxHash,

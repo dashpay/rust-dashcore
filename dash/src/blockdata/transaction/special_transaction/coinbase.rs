@@ -35,7 +35,7 @@ use crate::io::{Error, ErrorKind};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
-#[ferment_macro::export]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct CoinbasePayload {
     pub version: u16,
     pub height: u32,

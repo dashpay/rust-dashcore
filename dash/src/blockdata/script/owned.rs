@@ -29,7 +29,7 @@ use crate::taproot::TapNodeHash;
 /// [deref coercions]: https://doc.rust-lang.org/std/ops/trait.Deref.html#more-on-deref-coercion
 #[derive(Default, Clone, PartialOrd, Ord, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-#[ferment_macro::export]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct ScriptBuf(pub Vec<u8>);
 
 impl ScriptBuf {

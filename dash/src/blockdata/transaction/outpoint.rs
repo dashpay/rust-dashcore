@@ -35,7 +35,7 @@ use crate::io;
 /// A reference to a transaction output.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-#[ferment_macro::export]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct OutPoint {
     /// The referenced transaction's txid.
     pub txid: Txid,

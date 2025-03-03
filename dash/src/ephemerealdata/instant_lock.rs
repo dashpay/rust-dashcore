@@ -24,7 +24,7 @@ const IS_LOCK_REQUEST_ID_PREFIX: &str = "islock";
 /// Instant send lock is a mechanism used by the Dash network to
 /// confirm transaction within 1 or 2 seconds. This data structure
 /// represents a p2p message containing a data to verify such a lock.
-#[ferment_macro::export]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct InstantLock {
     /// Instant lock version
     pub version: u8,

@@ -43,7 +43,7 @@ impl Display for LLMQEntryVerificationSkipStatus {
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
-#[ferment_macro::export]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum LLMQEntryVerificationStatus {
     #[default]
     Unknown,

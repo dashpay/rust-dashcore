@@ -39,7 +39,7 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-#[ferment_macro::export]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct QuorumEntry {
     pub version: u16,
     pub llmq_type: LLMQType,
@@ -181,7 +181,7 @@ impl Decodable for QuorumEntry {
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
-#[ferment_macro::export]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct QuorumCommitmentPayload {
     pub version: u16,
     pub height: u32,
