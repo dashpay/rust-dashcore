@@ -162,7 +162,7 @@ impl MasternodeList {
             pro_tx_hashes.sort_by(|&s1, &s2| s1.reverse().cmp(&s2.reverse()));
             pro_tx_hashes
                 .into_iter()
-                .map(|hash| self.masternodes[hash].entry_hash)
+                .map(|hash| self.masternodes[hash].entry_hash.to_raw_hash())
                 .collect::<Vec<_>>()
         })
     }
