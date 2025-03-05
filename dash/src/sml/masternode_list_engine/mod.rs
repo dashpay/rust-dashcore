@@ -809,6 +809,11 @@ impl MasternodeListEngine {
 
         Ok(())
     }
+
+    pub fn find_quorum_public_key(&self, quorum_type: &LLMQType, quorum_hash: &QuorumHash) -> Option<BLSPublicKey> {
+        self.masternode_lists.values()
+            .find_map(|masternode_list| masternode_list.find_quorum_public_key(quorum_type, quorum_hash))
+    }
 }
 
 #[cfg(test)]
