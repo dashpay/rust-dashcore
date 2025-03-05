@@ -151,6 +151,7 @@ impl Decodable for QRInfo {
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct QuorumSnapshot {
     pub skip_list_mode: MNSkipListMode,
     pub active_quorum_members: Vec<bool>, // Bitset, length = (active_quorum_members_count + 7) / 8
@@ -208,6 +209,7 @@ impl Decodable for QuorumSnapshot {
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum MNSkipListMode {
     /// Mode 0: No skipping – the skip list is empty.
     NoSkipping = 0,
