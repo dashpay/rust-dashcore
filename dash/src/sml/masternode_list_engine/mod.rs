@@ -6,12 +6,8 @@ mod rotated_quorum_construction;
 #[cfg(feature = "quorum_validation")]
 mod validation;
 
+use crate::hash_types::BlockCompatibleRawHash;
 use std::collections::{BTreeMap, BTreeSet};
-
-#[cfg(feature = "bincode")]
-use bincode::{Decode, Encode};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::network::message_qrinfo::{QRInfo, QuorumSnapshot};
@@ -20,12 +16,16 @@ use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
-use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
+use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::{ClientDataRetrievalError, QuorumValidationError};
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::{BlockHash, Network, QuorumHash};
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -33,11 +33,11 @@ use crate::{BlockHash, Network, QuorumHash};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct MasternodeListEngine {
     pub block_hashes: BTreeMap<CoreBlockHeight, BlockHash>,
-    pub block_heights: BTreeMap<BlockHash, CoreBlockHeight>,
+    pub block_heights: BTreeMap<BlockCompatibleRawHash, CoreBlockHeight>,
     pub masternode_lists: BTreeMap<CoreBlockHeight, MasternodeList>,
     pub known_chain_locks: BTreeMap<BlockHash, BLSSignature>,
     pub known_snapshots: BTreeMap<BlockHash, QuorumSnapshot>,
-    pub rotated_quorums_per_cycle: BTreeMap<BlockHash, Vec<QualifiedQuorumEntry>>,
+    pub rotated_quorums_per_cycle: BTreeMap<BlockCompatibleRawHash, Vec<QualifiedQuorumEntry>>,
     pub quorum_statuses: BTreeMap<
         LLMQType,
         BTreeMap<
@@ -64,7 +64,12 @@ impl Default for MasternodeListEngine {
 }
 
 impl MasternodeListEngine {
-    pub fn default_for_network(network: Network) -> Self { Self { network, ..Default::default() } }
+    pub fn default_for_network(network: Network) -> Self {
+        Self {
+            network,
+            ..Default::default()
+        }
+    }
     pub fn initialize_with_diff_to_height(
         masternode_list_diff: MnListDiff,
         block_height: CoreBlockHeight,
@@ -76,7 +81,11 @@ impl MasternodeListEngine {
             .try_into_with_block_hash_lookup(|_block_hash| Some(block_height), network)?;
         Ok(Self {
             block_hashes: [(0, base_block_hash), (block_height, block_hash)].into(),
-            block_heights: [(base_block_hash, 0), (block_hash, block_height)].into(),
+            block_heights: [
+                (base_block_hash.to_raw_hash(), 0),
+                (block_hash.to_raw_hash(), block_height),
+            ]
+            .into(),
             masternode_lists: [(block_height, masternode_list)].into(),
             known_chain_locks: Default::default(),
             known_snapshots: Default::default(),
@@ -110,7 +119,9 @@ impl MasternodeListEngine {
                     list.non_rotating_quorum_hashes(exclude_quorum_types)
                         .into_iter()
                         .filter(|quorum_hash| {
-                            let Some(block_height) = self.block_heights.get(quorum_hash) else {
+                            let Some(block_height) =
+                                self.block_heights.get(quorum_hash.as_raw_hash())
+                            else {
                                 return true;
                             };
                             !self.masternode_lists.contains_key(block_height)
@@ -136,7 +147,9 @@ impl MasternodeListEngine {
                     list.non_rotating_quorum_hashes(exclude_quorum_types)
                         .into_iter()
                         .filter(|quorum_hash| {
-                            let Some(block_height) = self.block_heights.get(quorum_hash) else {
+                            let Some(block_height) =
+                                self.block_heights.get(quorum_hash.as_raw_hash())
+                            else {
                                 return true;
                             };
                             !self.masternode_lists.contains_key(block_height)
@@ -162,12 +175,18 @@ impl MasternodeListEngine {
         &self,
         block_hash: &BlockHash,
     ) -> Option<&MasternodeList> {
-        self.block_heights.get(block_hash).and_then(|height| self.masternode_lists.get(height))
+        self.block_heights
+            .get(block_hash.as_raw_hash())
+            .and_then(|height| self.masternode_lists.get(height))
     }
 
-    pub fn feed_block_height(&mut self, height: CoreBlockHeight, block_hash: BlockHash) {
-        self.block_heights.insert(block_hash, height);
-        self.block_hashes.insert(height, block_hash);
+    pub fn feed_block_height(
+        &mut self,
+        height: CoreBlockHeight,
+        block_raw_hash: BlockCompatibleRawHash,
+    ) {
+        self.block_heights.insert(block_raw_hash, height);
+        self.block_hashes.insert(height, block_raw_hash.into());
     }
 
     fn request_qr_info_block_heights<FH>(
@@ -176,7 +195,7 @@ impl MasternodeListEngine {
         fetch_block_height: &FH,
     ) -> Result<(), ClientDataRetrievalError>
     where
-        FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
+        FH: Fn(&BlockCompatibleRawHash) -> Result<u32, ClientDataRetrievalError>,
     {
         let mn_list_diffs = [
             &qr_info.mn_list_diff_tip,
@@ -233,11 +252,11 @@ impl MasternodeListEngine {
         fetch_block_height: &FH,
     ) -> Result<(), ClientDataRetrievalError>
     where
-        FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
+        FH: Fn(&BlockCompatibleRawHash) -> Result<u32, ClientDataRetrievalError>,
     {
-        if !self.block_heights.contains_key(&quorum_entry.quorum_hash) {
-            let height = fetch_block_height(&quorum_entry.quorum_hash)?;
-            self.feed_block_height(height, quorum_entry.quorum_hash);
+        if !self.block_heights.contains_key(quorum_entry.quorum_hash.as_raw_hash()) {
+            let height = fetch_block_height(quorum_entry.quorum_hash.as_raw_hash())?;
+            self.feed_block_height(height, quorum_entry.quorum_hash.to_raw_hash());
         }
         Ok(())
     }
@@ -249,18 +268,18 @@ impl MasternodeListEngine {
         fetch_block_height: &FH,
     ) -> Result<(), ClientDataRetrievalError>
     where
-        FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
+        FH: Fn(&BlockCompatibleRawHash) -> Result<u32, ClientDataRetrievalError>,
     {
-        if !self.block_heights.contains_key(&mn_list_diff.base_block_hash) {
+        if !self.block_heights.contains_key(mn_list_diff.base_block_hash.as_raw_hash()) {
             // Feed base block hash height
-            let base_height = fetch_block_height(&mn_list_diff.base_block_hash)?;
-            self.feed_block_height(base_height, mn_list_diff.base_block_hash);
+            let base_height = fetch_block_height(mn_list_diff.base_block_hash.as_raw_hash())?;
+            self.feed_block_height(base_height, *mn_list_diff.base_block_hash.as_raw_hash());
         }
 
-        if !self.block_heights.contains_key(&mn_list_diff.block_hash) {
+        if !self.block_heights.contains_key(mn_list_diff.block_hash.as_raw_hash()) {
             // Feed block hash height
-            let block_height = fetch_block_height(&mn_list_diff.block_hash)?;
-            self.feed_block_height(block_height, mn_list_diff.block_hash);
+            let block_height = fetch_block_height(mn_list_diff.block_hash.as_raw_hash())?;
+            self.feed_block_height(block_height, *mn_list_diff.block_hash.as_raw_hash());
         }
         Ok(())
     }
@@ -295,7 +314,7 @@ impl MasternodeListEngine {
         fetch_chain_lock_sigs: Option<FS>,
     ) -> Result<(), QuorumValidationError>
     where
-        FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
+        FH: Fn(&BlockCompatibleRawHash) -> Result<u32, ClientDataRetrievalError>,
         FS: Fn(&BlockHash) -> Result<Option<BLSSignature>, ClientDataRetrievalError>,
     {
         // Fetch and process block heights using the provided callback
@@ -334,11 +353,11 @@ impl MasternodeListEngine {
 
         let h_height = self
             .block_heights
-            .get(&mn_list_diff_h.block_hash)
+            .get(mn_list_diff_h.block_hash.as_raw_hash())
             .copied()
             .ok_or(QuorumValidationError::RequiredBlockNotPresent(mn_list_diff_h.block_hash))?;
         let tip_height =
-            self.block_heights.get(&mn_list_diff_tip.block_hash).copied().ok_or(
+            self.block_heights.get(mn_list_diff_tip.block_hash.as_raw_hash()).copied().ok_or(
                 QuorumValidationError::RequiredBlockNotPresent(mn_list_diff_tip.block_hash),
             )?;
         let rotation_quorum_type = last_commitment_per_index
@@ -387,7 +406,7 @@ impl MasternodeListEngine {
             let mut qualified_rotated_quorums_per_cycle =
                 qualified_last_commitment_per_index.first().map(|quorum_entry| {
                     self.rotated_quorums_per_cycle
-                        .entry(quorum_entry.quorum_entry.quorum_hash)
+                        .entry(*quorum_entry.quorum_entry.quorum_hash.as_raw_hash())
                         .or_default()
                 });
 
@@ -516,16 +535,14 @@ impl MasternodeListEngine {
                     }
                 }
             }
-        } else {
-            if let Some(qualified_rotated_quorums_per_cycle) =
-                qualified_last_commitment_per_index.first().map(|quorum_entry| {
-                    self.rotated_quorums_per_cycle
-                        .entry(quorum_entry.quorum_entry.quorum_hash)
-                        .or_default()
-                })
-            {
-                *qualified_rotated_quorums_per_cycle = qualified_last_commitment_per_index;
-            }
+        } else if let Some(qualified_rotated_quorums_per_cycle) =
+            qualified_last_commitment_per_index.first().map(|quorum_entry| {
+                self.rotated_quorums_per_cycle
+                    .entry(quorum_entry.quorum_entry.quorum_hash.to_raw_hash())
+                    .or_default()
+            })
+        {
+            *qualified_rotated_quorums_per_cycle = qualified_last_commitment_per_index;
         }
 
         #[cfg(not(feature = "quorum_validation"))]
@@ -556,19 +573,22 @@ impl MasternodeListEngine {
                 let block_hash = masternode_list_diff.block_hash;
 
                 let masternode_list = masternode_list_diff.try_into_with_block_hash_lookup(
-                    |block_hash| diff_end_height.or(self.block_heights.get(block_hash).copied()),
+                    |block_hash| {
+                        diff_end_height
+                            .or(self.block_heights.get(block_hash.as_raw_hash()).copied())
+                    },
                     self.network,
                 )?;
 
                 let diff_end_height = match diff_end_height {
                     None => self
                         .block_heights
-                        .get(&block_hash)
+                        .get(block_hash.as_raw_hash())
                         .ok_or(SmlError::BlockHashLookupFailed(block_hash))
                         .cloned()?,
                     Some(diff_end_height) => {
                         self.block_hashes.insert(diff_end_height, block_hash);
-                        self.block_heights.insert(block_hash, diff_end_height);
+                        self.block_heights.insert(block_hash.to_raw_hash(), diff_end_height);
                         diff_end_height
                     }
                 };
@@ -577,7 +597,8 @@ impl MasternodeListEngine {
             }
         }
 
-        let Some(base_height) = self.block_heights.get(&masternode_list_diff.base_block_hash)
+        let Some(base_height) =
+            self.block_heights.get(masternode_list_diff.base_block_hash.as_raw_hash())
         else {
             return Err(SmlError::MissingStartMasternodeList(masternode_list_diff.base_block_hash));
         };
@@ -590,7 +611,7 @@ impl MasternodeListEngine {
         let diff_end_height = match diff_end_height {
             None => self
                 .block_heights
-                .get(&block_hash)
+                .get(block_hash.as_raw_hash())
                 .ok_or(SmlError::BlockHashLookupFailed(block_hash))
                 .cloned()?,
             Some(diff_end_height) => diff_end_height,
@@ -690,7 +711,7 @@ impl MasternodeListEngine {
         }
 
         self.block_hashes.insert(diff_end_height, block_hash);
-        self.block_heights.insert(block_hash, diff_end_height);
+        self.block_heights.insert(block_hash.to_raw_hash(), diff_end_height);
 
         Ok(())
     }
@@ -740,7 +761,9 @@ impl MasternodeListEngine {
                     .find(|quorum_entry| quorum_entry.quorum_entry.quorum_index == Some(0))
                     .map(|quorum_entry| quorum_entry.quorum_entry.quorum_hash)
                 {
-                    if let Some(cycle_quorums) = self.rotated_quorums_per_cycle.get(&cycle_hash) {
+                    if let Some(cycle_quorums) =
+                        self.rotated_quorums_per_cycle.get(cycle_hash.as_raw_hash())
+                    {
                         // Only update rotating quorum statuses based on last commitment entries
                         for quorum in cycle_quorums {
                             if let Some(quorum_entry) =
@@ -815,7 +838,7 @@ impl MasternodeListEngine {
 mod tests {
     use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
     use crate::sml::llmq_type::LLMQType;
-    use crate::sml::llmq_type::LLMQType::{Llmqtype50_60, Llmqtype400_60, Llmqtype400_85};
+    use crate::sml::llmq_type::LLMQType::{Llmqtype400_60, Llmqtype400_85, Llmqtype50_60};
     use crate::sml::masternode_list_engine::MasternodeListEngine;
 
     #[test]
@@ -853,7 +876,7 @@ mod tests {
             for (quorum_hash, quorum) in quorum_entries.iter() {
                 let (_, known_block_height) = mn_list_engine
                     .masternode_list_and_height_for_block_hash_8_blocks_ago(
-                        &quorum.quorum_entry.quorum_hash,
+                        quorum.quorum_entry.quorum_hash.as_raw_hash(),
                     )
                     .expect("expected to find validating masternode");
                 assert_eq!(

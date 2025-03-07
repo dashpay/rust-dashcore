@@ -26,15 +26,15 @@
 use bincode::{Decode, Encode};
 use hashes::Hash;
 
-use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::blockdata::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
 use crate::blockdata::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
+use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::SpecialTransactionPayloadHash;
-use crate::transaction::special_transaction::TransactionPayload;
 use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBaseTransactionInfo;
-use crate::{Transaction, TxIn, consensus, io};
+use crate::transaction::special_transaction::TransactionPayload;
+use crate::{consensus, io, Transaction, TxIn};
 
 // Asset unlock tx size is constant since it has zero inputs and single output only
 pub const ASSET_UNLOCK_TX_SIZE: usize = 190;
@@ -64,7 +64,9 @@ pub struct AssetUnlockPayload {
 
 impl AssetUnlockPayload {
     /// The size of the payload in bytes.
-    pub fn size(&self) -> usize { self.base.size() + self.request_info.size() + 96 }
+    pub fn size(&self) -> usize {
+        self.base.size() + self.request_info.size() + 96
+    }
 }
 
 impl SpecialTransactionBasePayloadEncodable for AssetUnlockPayload {
@@ -129,7 +131,11 @@ impl Decodable for AssetUnlockPayload {
         let base = AssetUnlockBasePayload::consensus_decode(r)?;
         let request_info = AssetUnlockRequestInfo::consensus_decode(r)?;
         let quorum_sig = BLSSignature::consensus_decode(r)?;
-        Ok(AssetUnlockPayload { base, request_info, quorum_sig })
+        Ok(AssetUnlockPayload {
+            base,
+            request_info,
+            quorum_sig,
+        })
     }
 }
 
@@ -139,25 +145,29 @@ mod tests {
 
     use hashes::Hash;
     use hex::FromHex;
-    use internals::hex::Case;
     use internals::hex::display::DisplayHex;
+    use internals::hex::Case;
 
     use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::Encodable;
     use crate::hash_types::QuorumHash;
-    use crate::transaction::special_transaction::TransactionPayload;
     use crate::transaction::special_transaction::asset_unlock::qualified_asset_unlock::{
-        ASSET_UNLOCK_TX_SIZE, AssetUnlockPayload, build_asset_unlock_tx,
+        build_asset_unlock_tx, AssetUnlockPayload, ASSET_UNLOCK_TX_SIZE,
     };
     use crate::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
     use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
-    use crate::{ScriptBuf, Transaction, TxOut, consensus};
+    use crate::transaction::special_transaction::TransactionPayload;
+    use crate::{consensus, ScriptBuf, Transaction, TxOut};
 
     #[test]
     fn size() {
         let want = 145;
         let payload = AssetUnlockPayload {
-            base: AssetUnlockBasePayload { version: 0, index: 0, fee: 0 },
+            base: AssetUnlockBasePayload {
+                version: 0,
+                index: 0,
+                fee: 0,
+            },
             request_info: AssetUnlockRequestInfo {
                 request_height: 0,
                 quorum_hash: QuorumHash::all_zeros(),
@@ -185,7 +195,6 @@ mod tests {
                 "4acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448"
             )
             .unwrap()
-            .reverse()
         );
         assert_eq!(payload.quorum_sig, BLSSignature::from_str("aee468c03feec7caada0599457136ef0dfe9365657a42ef81bb4aa53af383d05d90552b2cd23480cae24036b953ba8480d2f98291271a338e4235265dea94feacb54d1fd96083151001eff4156e7475e998154a8e6082575e2ee461b394d24f7").unwrap());
     }
@@ -200,7 +209,7 @@ mod tests {
             },
             request_info: AssetUnlockRequestInfo {
                 request_height: 1317,
-                quorum_hash: QuorumHash::from_str("4acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448").unwrap().reverse(),
+                quorum_hash: QuorumHash::from_str("4acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448").unwrap(),
             },
             quorum_sig: BLSSignature::from_str("aee468c03feec7caada0599457136ef0dfe9365657a42ef81bb4aa53af383d05d90552b2cd23480cae24036b953ba8480d2f98291271a338e4235265dea94feacb54d1fd96083151001eff4156e7475e998154a8e6082575e2ee461b394d24f7").unwrap()
         };
@@ -216,11 +225,11 @@ mod tests {
         let tx_bytes = Vec::from_hex("010009000001c8000000000000001976a914c35b782432294088e354bc28aa56d95736cb630288ac0000000001000000000000000070f915129f05000053c006055af6d0ae9aa9627df8615a71c312421a28c4712c8add83c8e1bfdadd").unwrap();
         let tx_asset_unlock = build_asset_unlock_tx(&tx_bytes).unwrap();
         let bytes_tx_asset_unlock = consensus::serialize(&tx_asset_unlock);
-        println!("tx_asset_unlock: {:?}", bytes_tx_asset_unlock);
+        // println!("tx_asset_unlock: {:?}", bytes_tx_asset_unlock);
 
         let hex_tx_asset_unlock = bytes_tx_asset_unlock.to_hex_string(Case::Lower);
-        println!("hex_tx_asset_unlock: {:?}", hex_tx_asset_unlock);
-        println!("OK");
+        // println!("hex_tx_asset_unlock: {:?}", hex_tx_asset_unlock);
+        // println!("OK");
     }
 
     #[test]

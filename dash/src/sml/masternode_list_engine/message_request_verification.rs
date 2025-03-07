@@ -18,7 +18,7 @@ impl MasternodeListEngine {
         // Get the list of quorums associated with this cycle hash
         let quorums = self
             .rotated_quorums_per_cycle
-            .get(&cycle_hash)
+            .get(cycle_hash.as_raw_hash())
             .ok_or(MessageVerificationError::CycleHashNotPresent(cycle_hash))?;
 
         // Ensure that at least one quorum exists for this cycle
@@ -94,8 +94,8 @@ impl MasternodeListEngine {
         let quorum_count = self.network.isd_llmq_type().active_quorum_count();
         let n = quorum_count.ilog2();
         let quorum_index_mask = (1 << n) - 1; // Extracts the last log2(quorum_count) bits
-        // Extract the last `n` bits from the selection hash
-        // Only God and maybe Odysseus knows why (64 - n - 1)
+                                              // Extract the last `n` bits from the selection hash
+                                              // Only God and maybe Odysseus knows why (64 - n - 1)
         let quorum_index = quorum_index_mask & (selection_hash_64 >> (64 - n - 1)) as usize;
 
         // Retrieve the selected quorum
@@ -276,7 +276,7 @@ impl MasternodeListEngine {
         // Attempt verification using the "before" masternode list
         let initial_error = if let Some(before) = before {
             let Err(e) =
-                self.verify_chain_lock_with_masternode_list(chain_lock, &before, &request_id)
+                self.verify_chain_lock_with_masternode_list(chain_lock, before, &request_id)
             else {
                 return Ok(());
             };
@@ -297,15 +297,9 @@ impl MasternodeListEngine {
                 true
             };
             if do_check {
-                return self.verify_chain_lock_with_masternode_list(
-                    chain_lock,
-                    &after,
-                    &request_id,
-                );
-            } else {
-                if let Some(initial_error) = initial_error {
-                    return Err(initial_error);
-                }
+                return self.verify_chain_lock_with_masternode_list(chain_lock, after, &request_id);
+            } else if let Some(initial_error) = initial_error {
+                return Err(initial_error);
             }
         }
 
@@ -349,8 +343,8 @@ impl MasternodeListEngine {
 mod tests {
     use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::deserialize;
-    use crate::hashes::Hash;
     use crate::hashes::hex::FromHex;
+    use crate::hashes::Hash;
     use crate::sml::llmq_type::LLMQType;
     use crate::sml::masternode_list_engine::MasternodeListEngine;
     use crate::{BlockHash, ChainLock, InstantLock, QuorumHash};

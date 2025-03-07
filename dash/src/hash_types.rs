@@ -73,7 +73,7 @@ mod newtypes {
     #[cfg(feature = "core-block-hash-use-x11")]
     use hashes::hash_x11;
     use hashes::hex::Error;
-    use hashes::{Hash, hash_newtype, hash_newtype_no_ord, hash160, sha256, sha256d};
+    use hashes::{hash160, hash_newtype, hash_newtype_no_ord, sha256, sha256d, Hash};
 
     use crate::alloc::string::ToString;
     use crate::prelude::String;
@@ -83,12 +83,27 @@ mod newtypes {
     hash_newtype! {
         /// A dash block hash.
         pub struct BlockHash(hash_x11::Hash);
+        /// A hash used to identify a quorum
+        #[hash_newtype(forward)]
+        pub struct QuorumHash(hash_x11::Hash);
     }
+
+    #[cfg(feature = "core-block-hash-use-x11")]
+    /// A raw hash that is compatible with quorum and block hash.
+    pub type BlockCompatibleRawHash = hash_x11::Hash;
+
     #[cfg(not(feature = "core-block-hash-use-x11"))]
     hash_newtype! {
         /// A dash block hash.
         pub struct BlockHash(sha256d::Hash);
+        /// A hash used to identify a quorum
+        #[hash_newtype(forward)]
+        pub struct QuorumHash(sha256d::Hash)
     }
+
+    #[cfg(not(feature = "core-block-hash-use-x11"))]
+    /// A raw hash that is compatible with quorum and block hash.
+    pub type BlockCompatibleRawHash = sha256d::Hash;
 
     hash_newtype! {
         /// A dash transaction hash/transaction ID.
@@ -168,11 +183,10 @@ mod newtypes {
     }
 
     impl PartialOrd for ScoreHash {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
     }
-
-    /// A hash used to identify a quorum
-    pub type QuorumHash = BlockHash;
 
     /// A hash used to identity a cycle
     pub type CycleHash = BlockHash;
@@ -193,6 +207,7 @@ mod newtypes {
     impl_hashencode!(SpecialTransactionPayloadHash);
     impl_hashencode!(InputsHash);
 
+    impl_hashencode!(QuorumHash);
     impl_hashencode!(QuorumVVecHash);
     impl_hashencode!(QuorumSigningRequestId);
     impl_hashencode!(PubkeyHash);
@@ -211,10 +226,14 @@ mod newtypes {
 
     impl Txid {
         /// Create a Txid from a string
-        pub fn from_hex(s: &str) -> Result<Txid, Error> { Ok(Self(sha256d::Hash::from_str(s)?)) }
+        pub fn from_hex(s: &str) -> Result<Txid, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
 
         /// Convert a Txid to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 
     impl ProTxHash {
@@ -224,7 +243,9 @@ mod newtypes {
         }
 
         /// Convert a ProTxHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 
     impl ScoreHash {
@@ -234,7 +255,9 @@ mod newtypes {
         }
 
         /// Convert a ScoreHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
 
         /// Creates a score based on the optional confirmed hash and the quorum modifier.
         ///
@@ -266,7 +289,9 @@ mod newtypes {
         }
 
         /// Convert a ScoreHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
 
         /// Creates an ordering hash based on the quorum and request id.
         ///
@@ -285,7 +310,9 @@ mod newtypes {
     }
 
     impl Default for ConfirmedHash {
-        fn default() -> Self { ConfirmedHash::from_byte_array([0; 32]) }
+        fn default() -> Self {
+            ConfirmedHash::from_byte_array([0; 32])
+        }
     }
 
     impl ConfirmedHash {
@@ -295,7 +322,9 @@ mod newtypes {
         }
 
         /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 
     impl ConfirmedHashHashedWithProRegTx {
@@ -305,7 +334,9 @@ mod newtypes {
         }
 
         /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
 
         /// Hashes the members
         pub fn hash_members(pro_tx_hash: &ProTxHash, confirmed_hash: &ConfirmedHash) -> Self {
@@ -329,7 +360,9 @@ mod newtypes {
         }
 
         /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 
     impl InputsHash {
@@ -339,12 +372,16 @@ mod newtypes {
         }
 
         /// Convert an InputsHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 
     impl SpecialTransactionPayloadHash {
         /// Create a SpecialTransactionPayloadHash from a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 
     impl PubkeyHash {
@@ -354,6 +391,8 @@ mod newtypes {
         }
 
         /// Convert a PubkeyHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 }

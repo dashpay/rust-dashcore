@@ -1,4 +1,4 @@
-use crate::BlockHash;
+use crate::hash_types::BlockCompatibleRawHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
@@ -6,11 +6,12 @@ use crate::sml::masternode_list_entry::qualified_masternode_list_entry::Qualifie
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
+use crate::BlockHash;
 
 impl MasternodeListEngine {
     pub(crate) fn masternode_list_and_height_for_block_hash_8_blocks_ago(
         &self,
-        block_hash: &BlockHash,
+        block_hash: &BlockCompatibleRawHash,
     ) -> Result<(&MasternodeList, CoreBlockHeight), QuorumValidationError> {
         if let Some(height) = self.block_heights.get(block_hash) {
             if let Some(masternode_list) = self.masternode_lists.get(&(height.saturating_sub(8))) {
@@ -21,7 +22,9 @@ impl MasternodeListEngine {
                 ))
             }
         } else {
-            Err(QuorumValidationError::RequiredBlockNotPresent(*block_hash))
+            Err(QuorumValidationError::RequiredBlockNotPresent(BlockHash::from_raw_hash(
+                *block_hash,
+            )))
         }
     }
 
@@ -31,7 +34,7 @@ impl MasternodeListEngine {
     ) -> Result<Vec<&QualifiedMasternodeListEntry>, QuorumValidationError> {
         let (masternode_list, known_block_height) = self
             .masternode_list_and_height_for_block_hash_8_blocks_ago(
-                &quorum.quorum_entry.quorum_hash,
+                quorum.quorum_entry.quorum_hash.as_raw_hash(),
             )?;
         let quorum_modifier_type = LLMQModifierType::new_quorum_modifier_type(
             quorum.quorum_entry.llmq_type,
