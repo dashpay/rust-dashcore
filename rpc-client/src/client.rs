@@ -21,7 +21,12 @@ use serde;
 use serde_json::{self, Value};
 
 use crate::dashcore::address::NetworkUnchecked;
+use crate::dashcore::secp256k1::hashes::hex::DisplayHex;
 use crate::dashcore::{block, consensus, ScriptBuf};
+use crate::error::*;
+use crate::json;
+use crate::queryable;
+use crate::Error::UnexpectedStructure;
 use dashcore::hashes::hex::FromHex;
 use dashcore::secp256k1::ecdsa::Signature;
 use dashcore::{
@@ -32,11 +37,6 @@ use dashcore_rpc_json::dashcore::{BlockHash, ChainLock};
 use dashcore_rpc_json::{ProTxInfo, ProTxListType, QuorumType};
 use hex::ToHex;
 use log::Level::{Debug, Trace, Warn};
-use crate::dashcore::secp256k1::hashes::hex::DisplayHex;
-use crate::error::*;
-use crate::json;
-use crate::queryable;
-use crate::Error::UnexpectedStructure;
 
 /// Crate-specific Result type, shorthand for `std::result::Result` with our
 /// crate-specific Error type;
@@ -446,12 +446,10 @@ pub trait RpcApi: Sized {
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
-    fn get_instant_locks(
-        &self,
-        txids: Vec<&dashcore::Txid>,
-    ) -> Result<Vec<String>> {
+    fn get_instant_locks(&self, txids: Vec<&dashcore::Txid>) -> Result<Vec<String>> {
         let mut args = [into_json(txids)?];
-        let instant_locks: Vec<String> = self.call("getislocks", handle_defaults(&mut args, &[null()]))?;
+        let instant_locks: Vec<String> =
+            self.call("getislocks", handle_defaults(&mut args, &[null()]))?;
         Ok(instant_locks)
     }
 
@@ -1236,6 +1234,30 @@ pub trait RpcApi: Sized {
         self.call::<json::ExtendedQuorumListResult>("quorum", handle_defaults(&mut args, &[]))
     }
 
+    /// Returns an extended list of on-chain quorums with quorum hashes reversed
+    /// This is incorrect response format, but it was used by platform and we need to support it
+    fn get_quorum_listextended_reversed(
+        &self,
+        height: Option<u32>,
+    ) -> Result<json::ExtendedQuorumListResult> {
+        let mut result = self.get_quorum_listextended(height)?;
+
+        result.quorums_by_type = result
+            .quorums_by_type
+            .into_iter()
+            .map(|(quorum_type, quorums)| {
+                let reversed_quorums = quorums
+                    .into_iter()
+                    .map(|(quorum_hash, details)| (quorum_hash.reverse(), details))
+                    .collect();
+
+                (quorum_type, reversed_quorums)
+            })
+            .collect();
+
+        Ok(result)
+    }
+
     /// Returns information about a specific quorum
     fn get_quorum_info(
         &self,
@@ -1397,7 +1419,11 @@ pub trait RpcApi: Sized {
     }
 
     /// Returns a returns detailed information about a deterministic masternode
-    fn get_protx_info(&self, protx_hash: &ProTxHash, block_hash: Option<&BlockHash>) -> Result<json::ProTxInfo> {
+    fn get_protx_info(
+        &self,
+        protx_hash: &ProTxHash,
+        block_hash: Option<&BlockHash>,
+    ) -> Result<json::ProTxInfo> {
         let mut args = ["info".into(), into_json(protx_hash.to_hex())?, opt_into_json(block_hash)?];
 
         self.call::<json::ProTxInfo>("protx", handle_defaults(&mut args, &[null()]))
