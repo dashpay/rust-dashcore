@@ -209,6 +209,7 @@ mod prelude {
 
     pub use internals::hex::display::DisplayHex;
 
+    #[cfg_attr(feature = "apple", ferment_macro::export)]
     pub type CoreBlockHeight = u32;
 }
 
