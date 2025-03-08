@@ -1274,6 +1274,22 @@ pub trait RpcApi: Sized {
         self.call::<json::QuorumInfoResult>("quorum", handle_defaults(&mut args, &[null()]))
     }
 
+    /// Returns information about a specific quorum with quorum hash reversed
+    /// This is incorrect response format, but it was used by platform and we need to support it
+    fn get_quorum_info_reversed(
+        &self,
+        llmq_type: QuorumType,
+        quorum_hash: &QuorumHash,
+        include_sk_share: Option<bool>,
+    ) -> Result<json::QuorumInfoResult> {
+        let mut result =
+            self.get_quorum_info(llmq_type, &quorum_hash.reverse(), include_sk_share)?;
+
+        result.quorum_hash = quorum_hash.reverse();
+
+        Ok(result)
+    }
+
     /// Returns the status of the current DKG process
     fn get_quorum_dkgstatus(&self, detail_level: Option<u8>) -> Result<json::QuorumDKGStatus> {
         let mut args = ["dkgstatus".into(), opt_into_json(detail_level)?];
