@@ -185,7 +185,7 @@ mod io_extras {
 }
 
 #[rustfmt::skip]
-mod prelude {
+pub mod prelude {
     #[cfg(all(not(feature = "std"), not(test)))]
     pub use alloc::{string::{String, ToString}, vec::Vec, boxed::Box, borrow::{Borrow, Cow, ToOwned}, slice, rc};
 
