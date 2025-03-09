@@ -148,7 +148,7 @@ macro_rules! hash_trait_impls {
         }
 
         #[cfg(feature = "bincode")]
-        impl<$($gen: $gent),*> bincode::Decode for Hash<$($gen),*> {
+        impl<Context, $($gen: $gent),*> bincode::Decode<Context> for Hash<$($gen),*> {
             fn decode<D: bincode::de::Decoder>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
                 use crate::Hash;
                 // Decode a fixed-length byte array and then create the Hash
@@ -158,7 +158,7 @@ macro_rules! hash_trait_impls {
         }
 
         #[cfg(feature = "bincode")]
-        impl<'de, $($gen: $gent),*> bincode::BorrowDecode<'de> for Hash<$($gen),*> {
+        impl<'de, Context, $($gen: $gent),*> bincode::BorrowDecode<'de, Context> for Hash<$($gen),*> {
             fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
                 use crate::Hash;
                 use std::convert::TryInto;
