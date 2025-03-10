@@ -435,6 +435,7 @@ pub fn dkg_rotation_params(network: Network) -> DKGParams {
     if network == Network::Devnet { DKG_DEVNET_DIP_0024 } else { DKG_60_75 }
 }
 
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 impl LLMQType {
     pub fn index(&self) -> u8 { u8::from(self.clone()) }
     pub fn from_u16(index: u16) -> LLMQType { LLMQType::from(index as u8) }
