@@ -86,6 +86,16 @@ impl MasternodeListEngine {
         })
     }
 
+    pub fn clear(&mut self) {
+        self.block_hashes.clear();
+        self.block_heights.clear();
+        self.masternode_lists.clear();
+        self.known_chain_locks.clear();
+        self.known_snapshots.clear();
+        self.rotated_quorums_per_cycle.clear();
+        self.quorum_statuses.clear();
+    }
+
     pub fn latest_masternode_list(&self) -> Option<&MasternodeList> {
         self.masternode_lists.last_key_value().map(|(_, list)| list)
     }
