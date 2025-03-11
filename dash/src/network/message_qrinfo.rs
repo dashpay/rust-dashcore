@@ -9,7 +9,7 @@ use crate::consensus::encode::{read_compact_size, read_fixed_bitset, write_fixed
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::network::message_sml::MnListDiff;
-use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
 /// The `getqrinfo` message requests a `qrinfo` message that provides the information
 /// required to verify quorum details for quorums formed using the quorum rotation process.

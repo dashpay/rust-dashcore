@@ -57,7 +57,7 @@ use crate::prelude::*;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::taproot::TapLeafHash;
 use crate::transaction::special_transaction::TransactionType;
-use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::transaction::txin::TxIn;
 use crate::transaction::txout::TxOut;
 use crate::{OutPoint, ProTxHash, ScriptBuf, address};

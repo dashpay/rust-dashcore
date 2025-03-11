@@ -6,7 +6,7 @@ use crate::hash_types::MerkleRootMasternodeList;
 use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
-use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::{BlockHash, ProTxHash, QuorumHash, Transaction};
 
 /// The `getmnlistd` message requests a `mnlistdiff` message that provides either:

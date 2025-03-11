@@ -24,7 +24,7 @@ use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::{ClientDataRetrievalError, QuorumValidationError};
-use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::{BlockHash, Network, QuorumHash};
 
 #[derive(Clone, Eq, PartialEq)]
