@@ -1285,7 +1285,7 @@ pub trait RpcApi: Sized {
         let mut result =
             self.get_quorum_info(llmq_type, &quorum_hash.reverse(), include_sk_share)?;
 
-        result.quorum_hash = quorum_hash.reverse();
+        result.quorum_hash = result.quorum_hash.reverse();
 
         Ok(result)
     }
