@@ -77,7 +77,7 @@ mod newtypes {
 
     use crate::alloc::string::ToString;
     use crate::prelude::String;
-    use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+    use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
     #[cfg(feature = "core-block-hash-use-x11")]
     hash_newtype! {

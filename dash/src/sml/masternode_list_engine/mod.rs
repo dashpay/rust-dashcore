@@ -1,6 +1,6 @@
 mod helpers;
 #[cfg(feature = "message_verification")]
-mod message_request_verification;
+pub mod message_request_verification;
 mod non_rotated_quorum_construction;
 mod rotated_quorum_construction;
 #[cfg(feature = "quorum_validation")]
@@ -24,7 +24,7 @@ use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::{ClientDataRetrievalError, QuorumValidationError};
-use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::{BlockHash, Network, QuorumHash};
 
 #[derive(Clone, Eq, PartialEq)]
@@ -84,6 +84,16 @@ impl MasternodeListEngine {
             quorum_statuses: Default::default(),
             network,
         })
+    }
+
+    pub fn clear(&mut self) {
+        self.block_hashes.clear();
+        self.block_heights.clear();
+        self.masternode_lists.clear();
+        self.known_chain_locks.clear();
+        self.known_snapshots.clear();
+        self.rotated_quorums_per_cycle.clear();
+        self.quorum_statuses.clear();
     }
 
     pub fn latest_masternode_list(&self) -> Option<&MasternodeList> {
@@ -547,14 +557,14 @@ impl MasternodeListEngine {
         masternode_list_diff: MnListDiff,
         diff_end_height: Option<CoreBlockHeight>,
         verify_quorums: bool,
-    ) -> Result<(), SmlError> {
+    ) -> Result<(BlockHash, BlockHash), SmlError> {
+        let base_block_hash = masternode_list_diff.base_block_hash;
+        let block_hash = masternode_list_diff.block_hash;
         if let Some(known_genesis_block_hash) =
             self.network.known_genesis_block_hash().or_else(|| self.block_hashes.get(&0).cloned())
         {
-            if masternode_list_diff.base_block_hash == known_genesis_block_hash {
+            if base_block_hash == known_genesis_block_hash {
                 // we are going from the start
-                let block_hash = masternode_list_diff.block_hash;
-
                 let masternode_list = masternode_list_diff.try_into_with_block_hash_lookup(
                     |block_hash| diff_end_height.or(self.block_heights.get(block_hash).copied()),
                     self.network,
@@ -573,7 +583,7 @@ impl MasternodeListEngine {
                     }
                 };
                 self.masternode_lists.insert(diff_end_height, masternode_list);
-                return Ok(());
+                return Ok((base_block_hash, block_hash));
             }
         }
 
@@ -692,7 +702,7 @@ impl MasternodeListEngine {
         self.block_hashes.insert(diff_end_height, block_hash);
         self.block_heights.insert(block_hash, diff_end_height);
 
-        Ok(())
+        Ok((base_block_hash, block_hash))
     }
 
     #[cfg(feature = "quorum_validation")]
@@ -808,6 +818,11 @@ impl MasternodeListEngine {
         }
 
         Ok(())
+    }
+
+    pub fn find_quorum_public_key(&self, quorum_type: &LLMQType, quorum_hash: &QuorumHash) -> Option<BLSPublicKey> {
+        self.masternode_lists.values()
+            .find_map(|masternode_list| masternode_list.find_quorum_public_key(quorum_type, quorum_hash))
     }
 }
 

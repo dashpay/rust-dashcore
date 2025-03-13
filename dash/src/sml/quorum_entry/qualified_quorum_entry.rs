@@ -6,7 +6,7 @@ use crate::sml::llmq_entry_verification::{
     LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
 };
 use crate::sml::quorum_validation_error::QuorumValidationError;
-use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
 /// A structured representation of a quorum entry with additional validation status and commitment hashes.
 ///
@@ -16,6 +16,7 @@ use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct QualifiedQuorumEntry {
     /// The underlying quorum entry
     pub quorum_entry: QuorumEntry,

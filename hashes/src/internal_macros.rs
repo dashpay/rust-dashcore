@@ -241,7 +241,7 @@ macro_rules! hash_type {
         pub struct Hash(
             #[cfg_attr(feature = "schemars", schemars(schema_with = $schemars))] [u8; $bits / 8],
         );
-
+        
         impl Hash {
             fn internal_new(arr: [u8; $bits / 8]) -> Self { Hash(arr) }
 
