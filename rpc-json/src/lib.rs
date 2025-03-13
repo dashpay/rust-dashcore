@@ -3260,7 +3260,9 @@ mod tests {
     use dashcore::hashes::Hash;
     use serde_json::json;
 
-    use crate::{deserialize_u32_opt, MasternodeListDiff, MnSyncStatus};
+    use crate::{
+        deserialize_u32_opt, ExtendedQuorumListResult, MasternodeListDiff, MnSyncStatus, QuorumType,
+    };
 
     #[test]
     fn test_deserialize_u32_opt() {
@@ -3278,35 +3280,50 @@ mod tests {
         assert_eq!(result.field, None);
     }
 
-    // #[test]
-    // fn deserialize_quorum_listextended() {
-    //     let json_list = r#"{
-    //           "llmq_50_60": [
-    //             {
-    //               "000000da4509523408c751905d4e48df335e3ee565b4d2288800c7e51d592e2f": {
-    //                 "creationHeight": 871992,
-    //                 "minedBlockHash": "000000cd7f101437069956c0ca9f4180b41f0506827a828d57e85b35f215487e",
-    //                 "numValidMembers": 50,
-    //                 "healthRatio": "1.00"
-    //               }
-    //             }
-    //           ]
-    //         }"#;
-    //     let result: ExtendedQuorumListResult =
-    //         serde_json::from_str(json_list).expect("expected to deserialize json");
-    //     println!("{:#?}", result);
-    //     let first_type = result.quorums_by_type.get(&QuorumType::Llmq50_60).unwrap();
-    //     let first_quorum = first_type.into_iter().nth(0).unwrap();
-    //
-    //     assert_eq!(
-    //         "000000da4509523408c751905d4e48df335e3ee565b4d2288800c7e51d592e2f",
-    //         first_quorum.0.to_hex()
-    //     );
-    //     assert_eq!(
-    //         "000000cd7f101437069956c0ca9f4180b41f0506827a828d57e85b35f215487e",
-    //         first_quorum.1.mined_block_hash.to_hex()
-    //     );
-    // }
+    #[test]
+    fn deserialize_quorum_listextended() {
+        let json_list = r#"{
+              "llmq_50_60": [
+                {
+                  "000000da4509523408c751905d4e48df335e3ee565b4d2288800c7e51d592e2f": {
+                    "creationHeight": 871992,
+                    "minedBlockHash": "000000cd7f101437069956c0ca9f4180b41f0506827a828d57e85b35f215487e",
+                    "numValidMembers": 50,
+                    "healthRatio": "1.00"
+                  }
+                }
+              ]
+            }"#;
+        let result: ExtendedQuorumListResult =
+            serde_json::from_str(json_list).expect("expected to deserialize json");
+        let first_type = result.quorums_by_type.get(&QuorumType::Llmq50_60).unwrap();
+        let first_quorum = first_type.into_iter().nth(0).unwrap();
+
+        assert_eq!(
+            first_quorum.0.to_byte_array(),
+            [
+                47, 46, 89, 29, 229, 199, 0, 136, 40, 210, 180, 101, 229, 62, 94, 51, 223, 72, 78,
+                93, 144, 81, 199, 8, 52, 82, 9, 69, 218, 0, 0, 0,
+            ]
+        );
+
+        assert_eq!(
+            first_quorum.1.mined_block_hash.to_byte_array(),
+            [
+                126, 72, 21, 242, 53, 91, 232, 87, 141, 130, 122, 130, 6, 5, 31, 180, 128, 65, 159,
+                202, 192, 86, 153, 6, 55, 20, 16, 127, 205, 0, 0, 0,
+            ]
+        );
+
+        assert_eq!(
+            "000000da4509523408c751905d4e48df335e3ee565b4d2288800c7e51d592e2f",
+            first_quorum.0.to_string()
+        );
+        assert_eq!(
+            "000000cd7f101437069956c0ca9f4180b41f0506827a828d57e85b35f215487e",
+            first_quorum.1.mined_block_hash.to_string()
+        );
+    }
 
     #[test]
     fn deserialize_mn_listdiff() {

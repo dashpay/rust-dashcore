@@ -73,7 +73,7 @@ mod newtypes {
     #[cfg(feature = "core-block-hash-use-x11")]
     use hashes::hash_x11;
     use hashes::hex::Error;
-    use hashes::{Hash, hash_newtype, hash_newtype_no_ord, hash160, sha256, sha256d};
+    use hashes::{hash160, hash_newtype, hash_newtype_no_ord, sha256, sha256d, Hash};
 
     use crate::alloc::string::ToString;
     use crate::prelude::String;
@@ -168,7 +168,9 @@ mod newtypes {
     }
 
     impl PartialOrd for ScoreHash {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
     }
 
     /// A hash used to identify a quorum
@@ -211,10 +213,14 @@ mod newtypes {
 
     impl Txid {
         /// Create a Txid from a string
-        pub fn from_hex(s: &str) -> Result<Txid, Error> { Ok(Self(sha256d::Hash::from_str(s)?)) }
+        pub fn from_hex(s: &str) -> Result<Txid, Error> {
+            Ok(Self(sha256d::Hash::from_str(s)?))
+        }
 
         /// Convert a Txid to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 
     impl ProTxHash {
@@ -224,7 +230,9 @@ mod newtypes {
         }
 
         /// Convert a ProTxHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 
     impl ScoreHash {
@@ -234,7 +242,9 @@ mod newtypes {
         }
 
         /// Convert a ScoreHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
 
         /// Creates a score based on the optional confirmed hash and the quorum modifier.
         ///
@@ -266,7 +276,9 @@ mod newtypes {
         }
 
         /// Convert a ScoreHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
 
         /// Creates an ordering hash based on the quorum and request id.
         ///
@@ -285,7 +297,9 @@ mod newtypes {
     }
 
     impl Default for ConfirmedHash {
-        fn default() -> Self { ConfirmedHash::from_byte_array([0; 32]) }
+        fn default() -> Self {
+            ConfirmedHash::from_byte_array([0; 32])
+        }
     }
 
     impl ConfirmedHash {
@@ -295,7 +309,9 @@ mod newtypes {
         }
 
         /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 
     impl ConfirmedHashHashedWithProRegTx {
@@ -305,7 +321,9 @@ mod newtypes {
         }
 
         /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
 
         /// Hashes the members
         pub fn hash_members(pro_tx_hash: &ProTxHash, confirmed_hash: &ConfirmedHash) -> Self {
@@ -329,7 +347,9 @@ mod newtypes {
         }
 
         /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 
     impl InputsHash {
@@ -339,12 +359,16 @@ mod newtypes {
         }
 
         /// Convert an InputsHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 
     impl SpecialTransactionPayloadHash {
         /// Create a SpecialTransactionPayloadHash from a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 
     impl PubkeyHash {
@@ -354,6 +378,8 @@ mod newtypes {
         }
 
         /// Convert a PubkeyHash to a string
-        pub fn to_hex(&self) -> String { self.0.to_string() }
+        pub fn to_hex(&self) -> String {
+            self.0.to_string()
+        }
     }
 }
