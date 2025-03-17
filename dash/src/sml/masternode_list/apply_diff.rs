@@ -1,7 +1,10 @@
+use crate::bls_sig_utils::BLSSignature;
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
+use crate::sml::llmq_entry_verification::{LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus};
 use crate::sml::masternode_list::MasternodeList;
+use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 
 impl MasternodeList {
     /// Applies an `MnListDiff` to update the current masternode list.
@@ -67,12 +70,31 @@ impl MasternodeList {
             }
         }
 
+        // Build a lookup table for quorum signatures for efficiency
+        let quorum_sig_lookup: Vec<&BLSSignature> = diff
+            .quorums_chainlock_signatures
+            .iter()
+            .flat_map(|sig_obj| sig_obj.index_set.iter().map(move |_| &sig_obj.signature))
+            .collect();
+
         // Add or update new quorums
-        for new_quorum in diff.new_quorums {
+        for (idx, new_quorum) in diff.new_quorums.into_iter().enumerate() {
             updated_quorums
                 .entry(new_quorum.llmq_type)
                 .or_default()
-                .insert(new_quorum.quorum_hash, new_quorum.into());
+                .insert(new_quorum.quorum_hash, {
+                    let commitment_hash = new_quorum.calculate_commitment_hash();
+                    let entry_hash = new_quorum.calculate_entry_hash();
+                    QualifiedQuorumEntry {
+                        quorum_entry: new_quorum,
+                        verified: LLMQEntryVerificationStatus::Skipped(
+                            LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
+                        ), // Default to unverified
+                        commitment_hash,
+                        entry_hash,
+                        verifying_chain_lock_signature: quorum_sig_lookup.get(idx).copied().copied(),
+                    }
+                });
         }
 
         // Create and return the new MasternodeList
