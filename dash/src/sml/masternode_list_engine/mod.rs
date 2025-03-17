@@ -93,6 +93,12 @@ impl MasternodeListEngineBlockContainer {
             map.feed_block_height(height, block_hash)
         } }
     }
+
+    pub fn known_block_count(&self) -> usize {
+        match self { MasternodeListEngineBlockContainer::BTreeMapContainer(map) => {
+            map.block_hashes.len()
+        } }
+    }
 }
 
 #[derive(Clone, Eq, PartialEq)]
