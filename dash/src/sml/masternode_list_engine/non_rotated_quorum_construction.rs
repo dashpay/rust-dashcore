@@ -12,7 +12,7 @@ impl MasternodeListEngine {
         &self,
         block_hash: &BlockHash,
     ) -> Result<(&MasternodeList, CoreBlockHeight), QuorumValidationError> {
-        if let Some(height) = self.block_heights.get(block_hash) {
+        if let Some(height) = self.block_container.get_height(block_hash) {
             if let Some(masternode_list) = self.masternode_lists.get(&(height.saturating_sub(8))) {
                 Ok((masternode_list, height.saturating_sub(8)))
             } else {

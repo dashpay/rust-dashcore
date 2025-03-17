@@ -28,7 +28,7 @@ impl MasternodeListEngine {
         &'a self,
         quorum: &'a QualifiedQuorumEntry,
     ) -> Result<Vec<&'a QualifiedMasternodeListEntry>, QuorumValidationError> {
-        let Some(quorum_block_height) = self.block_heights.get(&quorum.quorum_entry.quorum_hash)
+        let Some(quorum_block_height) = self.block_container.get_height(&quorum.quorum_entry.quorum_hash)
         else {
             return Err(QuorumValidationError::RequiredBlockNotPresent(
                 quorum.quorum_entry.quorum_hash,
@@ -63,7 +63,7 @@ impl MasternodeListEngine {
             BTreeMap::new();
         for quorum in quorums {
             let Some(quorum_block_height) =
-                self.block_heights.get(&quorum.quorum_entry.quorum_hash)
+                self.block_container.get_height(&quorum.quorum_entry.quorum_hash)
             else {
                 return Err(QuorumValidationError::RequiredBlockNotPresent(
                     quorum.quorum_entry.quorum_hash,
@@ -119,7 +119,7 @@ impl MasternodeListEngine {
     ) -> Result<BTreeSet<u32>, QuorumValidationError> {
         let mut required_heights = BTreeSet::new();
         for quorum in &qr_info.last_commitment_per_index {
-            let Some(quorum_block_height) = self.block_heights.get(&quorum.quorum_hash) else {
+            let Some(quorum_block_height) = self.block_container.get_height(&quorum.quorum_hash) else {
                 return Err(QuorumValidationError::RequiredBlockNotPresent(quorum.quorum_hash));
             };
             let llmq_params = quorum.llmq_type.params();
@@ -134,7 +134,7 @@ impl MasternodeListEngine {
         if qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some() {
             for quorum in &qr_info.mn_list_diff_h.new_quorums {
                 if quorum.llmq_type.is_rotating_quorum_type() {
-                    let Some(quorum_block_height) = self.block_heights.get(&quorum.quorum_hash)
+                    let Some(quorum_block_height) = self.block_container.get_height(&quorum.quorum_hash)
                     else {
                         return Err(QuorumValidationError::RequiredBlockNotPresent(
                             quorum.quorum_hash,
@@ -254,7 +254,7 @@ impl MasternodeListEngine {
         work_block_height: CoreBlockHeight,
     ) -> Result<Vec<Vec<&'a QualifiedMasternodeListEntry>>, QuorumValidationError> {
         let llmq_params = quorum_llmq_type.params();
-        let Some(work_block_hash) = self.block_hashes.get(&work_block_height) else {
+        let Some(work_block_hash) = self.block_container.get_hash(&work_block_height) else {
             return Err(QuorumValidationError::RequiredBlockHeightNotPresent(work_block_height));
         };
         let masternode_list = self
