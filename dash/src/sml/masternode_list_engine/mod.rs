@@ -323,6 +323,19 @@ impl MasternodeListEngine {
             mn_list_diff_list,
         } = qr_info;
 
+        print_diff_info("tip", &mn_list_diff_tip);
+        print_diff_info("h", &mn_list_diff_h);
+        print_diff_info("-c", &mn_list_diff_at_h_minus_c);
+        print_diff_info("-2c", &mn_list_diff_at_h_minus_2c);
+        print_diff_info("-3c", &mn_list_diff_at_h_minus_3c);
+        if let Some((_, mn_list_diff_at_h_minus_4c)) = quorum_snapshot_and_mn_list_diff_at_h_minus_4c.as_ref() {
+            print_diff_info("-4c", mn_list_diff_at_h_minus_4c);
+        }
+        for (i, diff) in mn_list_diff_list.iter().enumerate() {
+            print_diff_info(i.to_string().as_str(), diff);
+        }
+
+
         // Apply quorum snapshots and masternode list diffs
         for (snapshot, diff) in quorum_snapshot_list.into_iter().zip(mn_list_diff_list.into_iter())
         {
@@ -811,6 +824,24 @@ impl MasternodeListEngine {
     }
 }
 
+
+/// Helper function to print useful debug information about MnListDiff
+fn print_diff_info(label: &str, diff: &MnListDiff) {
+    println!("MnListDiff ({}) info:", label);
+    println!("  Block Hash: {}", diff.block_hash);
+    println!("  Base Block Hash: {}", diff.base_block_hash);
+    println!("  Total Transactions: {}", diff.total_transactions);
+    println!("  Deleted Masternodes: {}", diff.deleted_masternodes.len());
+    println!("  New Masternodes: {}", diff.new_masternodes.len());
+    println!("  Deleted Quorums: {}", diff.deleted_quorums.len());
+    println!("  New Quorums: {}", diff.new_quorums.len());
+    println!("  ChainLock Signatures: {}", diff.quorums_chainlock_signatures.len());
+
+    for (i, clsig) in diff.quorums_chainlock_signatures.iter().enumerate() {
+        println!("    ChainLock Signature [{}]: Block Hash: {:?}, Signature: {:?}", i, clsig.index_set, clsig.signature);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
@@ -829,6 +860,57 @@ mod tests {
                 .0;
 
         assert_eq!(mn_list_engine.masternode_lists.len(), 29);
+
+        let last_masternode_list_height =
+            *mn_list_engine.masternode_lists.last_key_value().unwrap().0;
+
+        mn_list_engine
+            .verify_non_rotating_masternode_list_quorums(
+                last_masternode_list_height,
+                &[Llmqtype50_60, Llmqtype400_85],
+            )
+            .expect("expected to verify quorums");
+
+        let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
+
+        for (quorum_type, quorum_entries) in last_masternode_list.quorums.iter() {
+            if *quorum_type == Llmqtype400_85
+                || *quorum_type == Llmqtype50_60
+                || *quorum_type == Llmqtype400_60
+                || *quorum_type == LLMQType::Llmqtype60_75
+            {
+                continue;
+            }
+            for (quorum_hash, quorum) in quorum_entries.iter() {
+                let (_, known_block_height) = mn_list_engine
+                    .masternode_list_and_height_for_block_hash_8_blocks_ago(
+                        &quorum.quorum_entry.quorum_hash,
+                    )
+                    .expect("expected to find validating masternode");
+                assert_eq!(
+                    quorum.verified,
+                    LLMQEntryVerificationStatus::Verified,
+                    "could not verify quorum {} of type {} with masternode list {}",
+                    quorum_hash,
+                    quorum.quorum_entry.llmq_type,
+                    known_block_height
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn deserialize_mn_list_engine_and_validate_non_rotated_quorums_when_reconstructing_chain_locks() {
+        let block_hex =
+            include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
+        let data = hex::decode(block_hex).expect("decode hex");
+        let mut mn_list_engine: MasternodeListEngine =
+            bincode::decode_from_slice(&data, bincode::config::standard())
+                .expect("expected to decode")
+                .0;
+
+        assert_eq!(mn_list_engine.masternode_lists.len(), 29);
+        println!("{:#?}",mn_list_engine.known_chain_locks);
 
         let last_masternode_list_height =
             *mn_list_engine.masternode_lists.last_key_value().unwrap().0;

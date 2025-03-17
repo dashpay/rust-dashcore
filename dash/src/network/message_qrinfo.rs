@@ -310,8 +310,11 @@ mod tests {
     fn deserialize_qr_info() {
         let block_hex = include_str!("../../tests/data/test_DML_diffs/QR_INFO_0_2224359.hex");
         let data = hex::decode(block_hex).expect("decode hex");
-        let qr_info: RawNetworkMessage = deserialize(&data).expect("deserialize QR_INFO");
+        let network_qr_info: RawNetworkMessage = deserialize(&data).expect("deserialize QR_INFO");
 
-        assert_matches!(qr_info, RawNetworkMessage { magic, payload: NetworkMessage::QRInfo(_) } if magic == 3177909439);
+        let RawNetworkMessage { magic, payload: NetworkMessage::QRInfo(qr_info)} = network_qr_info else {
+            panic!("expected qr_info message");
+        };
+        assert_eq!(magic, 3177909439);
     }
 }

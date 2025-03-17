@@ -266,11 +266,17 @@ impl MasternodeListEngine {
         let quorum_count = llmq_params.signing_active_quorum_count as usize;
         let quorum_size = llmq_params.size as usize;
         let quarter_size = quorum_size / 4;
+        let best_cl_signature = self.known_chain_locks.get(work_block_hash).ok_or(
+            QuorumValidationError::RequiredChainLockNotPresent(
+                work_block_height,
+                *work_block_hash,
+            ),
+        )?;
         let quorum_modifier_type = LLMQModifierType::new_quorum_modifier_type(
             llmq_type,
             *work_block_hash,
             work_block_height,
-            &self.known_chain_locks,
+            *best_cl_signature,
             self.network,
         )?;
         let quorum_modifier = quorum_modifier_type.build_llmq_hash();

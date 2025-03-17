@@ -37,7 +37,7 @@ impl MasternodeListEngine {
             quorum.quorum_entry.llmq_type,
             masternode_list.block_hash,
             known_block_height,
-            &self.known_chain_locks,
+            quorum.verifying_chain_lock_signature.ok_or(QuorumValidationError::RequiredChainLockNotPresent(known_block_height, masternode_list.block_hash))?,
             self.network,
         )?;
         let masternodes: Vec<&QualifiedMasternodeListEntry> = masternode_list

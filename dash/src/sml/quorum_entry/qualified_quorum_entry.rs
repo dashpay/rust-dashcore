@@ -1,6 +1,6 @@
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-
+use crate::bls_sig_utils::BLSSignature;
 use crate::hash_types::{QuorumCommitmentHash, QuorumEntryHash};
 use crate::sml::llmq_entry_verification::{
     LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
@@ -25,6 +25,8 @@ pub struct QualifiedQuorumEntry {
     pub commitment_hash: QuorumCommitmentHash,
     /// The computed hash of the quorum entry.
     pub entry_hash: QuorumEntryHash,
+    /// The chain lock signature that can be used for the quorum entry
+    pub verifying_chain_lock_signature: Option<BLSSignature>,
 }
 
 impl From<QuorumEntry> for QualifiedQuorumEntry {
@@ -38,6 +40,7 @@ impl From<QuorumEntry> for QualifiedQuorumEntry {
             ), // Default to unverified
             commitment_hash,
             entry_hash,
+            verifying_chain_lock_signature: None,
         }
     }
 }

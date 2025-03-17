@@ -8,6 +8,7 @@ use crate::sml::llmq_entry_verification::{
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::{BlockHash, Network};
+use crate::bls_sig_utils::BLSSignature;
 
 pub trait TryFromWithBlockHashLookup<T>: Sized {
     type Error;
@@ -85,7 +86,14 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
             .map(|entry| (entry.pro_reg_tx_hash.reverse(), entry.into()))
             .collect::<BTreeMap<_, _>>();
 
-        let quorums = diff.new_quorums.into_iter().fold(BTreeMap::new(), |mut map, quorum| {
+        // Build a lookup table for quorum signatures for efficiency
+        let quorum_sig_lookup: Vec<&BLSSignature> = diff
+            .quorums_chainlock_signatures
+            .iter()
+            .flat_map(|sig_obj| sig_obj.index_set.iter().map(move |_| &sig_obj.signature))
+            .collect();
+
+        let quorums = diff.new_quorums.into_iter().enumerate().fold(BTreeMap::new(), |mut map, (idx, quorum)| {
             map.entry(quorum.llmq_type.into()).or_insert_with(BTreeMap::new).insert(
                 quorum.quorum_hash,
                 {
@@ -98,6 +106,7 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
                         ),
                         commitment_hash,
                         entry_hash,
+                        verifying_chain_lock_signature: quorum_sig_lookup.get(idx).copied().copied(),
                     }
                 },
             );
