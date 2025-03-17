@@ -109,7 +109,7 @@ pub mod consensus;
 // Private until we either make this a crate or flatten it - still to be decided.
 pub mod bls_sig_utils;
 pub(crate) mod crypto;
-mod dip9;
+pub mod dip9;
 pub mod ephemerealdata;
 pub mod error;
 pub mod hash_types;
