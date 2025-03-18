@@ -71,6 +71,15 @@ pub struct OperatorPublicKey {
     pub version: u16,
 }
 
+impl OperatorPublicKey {
+    pub fn is_basic(&self) -> bool {
+        self.version >= 2
+    }
+    pub fn is_legacy(&self) -> bool {
+        self.version < 2
+    }
+}
+
 impl_consensus_encoding!(OperatorPublicKey, data, version);
 
 #[derive(Clone, Eq, PartialEq, Debug)]
