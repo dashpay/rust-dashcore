@@ -52,7 +52,7 @@ use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, Txid, Wtxid};
 use crate::prelude::*;
 use crate::sighash::LegacySighash;
-pub use crate::transaction::outpoint::*;
+pub use crate::transaction::outpoint::OutPoint;
 use crate::{ScriptBuf, Weight, io};
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.
