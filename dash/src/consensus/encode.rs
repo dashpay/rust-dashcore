@@ -46,6 +46,7 @@ use crate::hash_types::{
     BlockHash, FilterHash, FilterHeader, MerkleRootMasternodeList, TxMerkleNode,
 };
 use crate::io::{self, Cursor, Read};
+use crate::hash_types::ProTxHash;
 use crate::network::message_qrinfo::QuorumSnapshot;
 use crate::network::message_sml::{DeletedQuorum, MnListDiff, QuorumCLSigObject};
 #[cfg(feature = "std")]
@@ -56,11 +57,13 @@ use crate::network::{
 use crate::prelude::*;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::taproot::TapLeafHash;
-use crate::transaction::special_transaction::TransactionType;
+use crate::blockdata::script::ScriptBuf;
+use crate::blockdata::transaction::OutPoint;
+use crate::blockdata::transaction::special_transaction::TransactionType;
 use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
-use crate::transaction::txin::TxIn;
-use crate::transaction::txout::TxOut;
-use crate::{OutPoint, ProTxHash, ScriptBuf, address};
+use crate::blockdata::transaction::txin::TxIn;
+use crate::blockdata::transaction::txout::TxOut;
+use crate::address;
 
 /// Encoding error.
 #[derive(Debug)]

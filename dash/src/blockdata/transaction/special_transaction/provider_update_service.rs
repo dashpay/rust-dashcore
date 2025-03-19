@@ -37,12 +37,12 @@
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::Hash;
-
+use crate::blockdata::script::ScriptBuf;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, SpecialTransactionPayloadHash, Txid};
-use crate::{ScriptBuf, VarInt, io};
+use crate::{VarInt, io};
 
 /// A Provider Update Service Payload used in a Provider Update Service Special Transaction.
 /// This is used to update the operational aspects a Masternode on the network.

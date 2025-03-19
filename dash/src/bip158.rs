@@ -558,7 +558,7 @@ mod test {
     use serde_json::Value;
 
     use super::*;
-    use crate::ScriptBuf;
+    use crate::blockdata::script::ScriptBuf;
     use crate::consensus::encode::deserialize;
     use crate::hash_types::BlockHash;
     use crate::internal_macros::hex;

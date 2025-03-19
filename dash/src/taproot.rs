@@ -14,12 +14,13 @@ use hashes::{Hash, HashEngine, sha256t_hash_newtype};
 use internals::write_err;
 use secp256k1::{self, Scalar, Secp256k1};
 
+use crate::blockdata::script::{Script, ScriptBuf};
 use crate::consensus::Encodable;
 use crate::crypto::key::{TapTweak, TweakedPublicKey, UntweakedPublicKey, XOnlyPublicKey};
 // Re-export these so downstream only has to use one `taproot` module.
 pub use crate::crypto::taproot::{Error, Signature};
 use crate::prelude::*;
-use crate::{Script, ScriptBuf, io};
+use crate::io;
 
 // Taproot test vectors from BIP-341 state the hashes without any reversing
 sha256t_hash_newtype! {

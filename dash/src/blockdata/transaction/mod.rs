@@ -41,7 +41,7 @@ use hashes::{Hash, sha256d};
 use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature = "bitcoinconsensus")]
 use crate::blockdata::script;
-use crate::blockdata::script::Script;
+use crate::blockdata::script::{Script, ScriptBuf};
 use crate::blockdata::transaction::hash_type::EcdsaSighashType;
 use crate::blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
 use crate::blockdata::transaction::txin::TxIn;
@@ -53,7 +53,7 @@ use crate::hash_types::{InputsHash, Txid, Wtxid};
 use crate::prelude::*;
 use crate::sighash::LegacySighash;
 pub use crate::transaction::outpoint::OutPoint;
-use crate::{ScriptBuf, Weight, io};
+use crate::{Weight, io};
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.
 const UINT256_ONE: [u8; 32] = [
