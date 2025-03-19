@@ -33,6 +33,9 @@ impl_consensus_encoding!(GetQRInfo, base_block_hashes, block_request_hash, extra
 ///
 /// Note: The “compact size” integers that prefix some arrays are handled by your consensus encoding routines.
 #[derive(PartialEq, Eq, Clone, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct QRInfo {
     // Quorum snapshots for heights h-c, h-2c, h-3c.
     pub quorum_snapshot_at_h_minus_c: QuorumSnapshot,
