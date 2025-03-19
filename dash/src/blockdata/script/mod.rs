@@ -77,7 +77,7 @@ mod tests;
 pub use self::borrowed::*;
 pub use self::builder::*;
 pub use self::instruction::*;
-pub use self::owned::*;
+pub use self::owned::ScriptBuf;
 pub use self::push_bytes::*;
 
 /// Encodes an integer in script(minimal CScriptNum) format.
