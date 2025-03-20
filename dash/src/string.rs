@@ -44,7 +44,9 @@ pub enum FromHexError<E> {
 }
 
 impl<E> From<E> for FromHexError<E> {
-    fn from(e: E) -> Self { FromHexError::ParseHex(e) }
+    fn from(e: E) -> Self {
+        FromHexError::ParseHex(e)
+    }
 }
 
 impl<E: fmt::Display> fmt::Display for FromHexError<E> {

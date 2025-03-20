@@ -33,7 +33,10 @@ impl Signature {
                 // default type
                 let sig =
                     secp256k1::schnorr::Signature::from_slice(sl).map_err(Error::Secp256k1)?;
-                Ok(Signature { sig, hash_ty: TapSighashType::Default })
+                Ok(Signature {
+                    sig,
+                    hash_ty: TapSighashType::Default,
+                })
             }
             65 => {
                 let (hash_ty, sig) = sl.split_last().expect("Slice len checked == 65");
@@ -41,7 +44,10 @@ impl Signature {
                     .map_err(|_| Error::InvalidSighashType(*hash_ty))?;
                 let sig =
                     secp256k1::schnorr::Signature::from_slice(sig).map_err(Error::Secp256k1)?;
-                Ok(Signature { sig, hash_ty })
+                Ok(Signature {
+                    sig,
+                    hash_ty,
+                })
             }
             len => Err(Error::InvalidSignatureSize(len)),
         }
@@ -99,5 +105,7 @@ impl std::error::Error for Error {
 }
 
 impl From<secp256k1::Error> for Error {
-    fn from(e: secp256k1::Error) -> Error { Error::Secp256k1(e) }
+    fn from(e: secp256k1::Error) -> Error {
+        Error::Secp256k1(e)
+    }
 }

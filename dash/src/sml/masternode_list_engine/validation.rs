@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
-use crate::QuorumHash;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::QuorumValidationError;
+use crate::QuorumHash;
 
 impl MasternodeListEngine {
     fn find_valid_masternodes_for_quorum<'a>(

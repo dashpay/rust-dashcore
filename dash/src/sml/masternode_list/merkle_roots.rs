@@ -1,9 +1,9 @@
-use hashes::{Hash, sha256d};
+use hashes::{sha256d, Hash};
 
-use crate::Transaction;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::masternode_list::MasternodeList;
 use crate::transaction::special_transaction::TransactionPayload;
+use crate::Transaction;
 
 /// Computes the Merkle root from a list of hashes.
 ///

@@ -1,17 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::QuorumHash;
 use crate::hash_types::QuorumModifierHash;
 use crate::network::message_qrinfo::{MNSkipListMode, QRInfo};
 use crate::prelude::CoreBlockHeight;
-use crate::sml::llmq_type::LLMQType;
 use crate::sml::llmq_type::rotation::{LLMQQuarterReconstructionType, LLMQQuarterUsageType};
+use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
+use crate::QuorumHash;
 
 impl MasternodeListEngine {
     /// Determines which masternodes are responsible for signing at the given quorum index.
@@ -28,7 +28,8 @@ impl MasternodeListEngine {
         &'a self,
         quorum: &'a QualifiedQuorumEntry,
     ) -> Result<Vec<&'a QualifiedMasternodeListEntry>, QuorumValidationError> {
-        let Some(quorum_block_height) = self.block_container.get_height(&quorum.quorum_entry.quorum_hash)
+        let Some(quorum_block_height) =
+            self.block_container.get_height(&quorum.quorum_entry.quorum_hash)
         else {
             return Err(QuorumValidationError::RequiredBlockNotPresent(
                 quorum.quorum_entry.quorum_hash,
@@ -119,7 +120,8 @@ impl MasternodeListEngine {
     ) -> Result<BTreeSet<u32>, QuorumValidationError> {
         let mut required_heights = BTreeSet::new();
         for quorum in &qr_info.last_commitment_per_index {
-            let Some(quorum_block_height) = self.block_container.get_height(&quorum.quorum_hash) else {
+            let Some(quorum_block_height) = self.block_container.get_height(&quorum.quorum_hash)
+            else {
                 return Err(QuorumValidationError::RequiredBlockNotPresent(quorum.quorum_hash));
             };
             let llmq_params = quorum.llmq_type.params();
@@ -134,7 +136,8 @@ impl MasternodeListEngine {
         if qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some() {
             for quorum in &qr_info.mn_list_diff_h.new_quorums {
                 if quorum.llmq_type.is_rotating_quorum_type() {
-                    let Some(quorum_block_height) = self.block_container.get_height(&quorum.quorum_hash)
+                    let Some(quorum_block_height) =
+                        self.block_container.get_height(&quorum.quorum_hash)
                     else {
                         return Err(QuorumValidationError::RequiredBlockNotPresent(
                             quorum.quorum_hash,
@@ -267,10 +270,7 @@ impl MasternodeListEngine {
         let quorum_size = llmq_params.size as usize;
         let quarter_size = quorum_size / 4;
         let best_cl_signature = self.known_chain_locks.get(work_block_hash).ok_or(
-            QuorumValidationError::RequiredChainLockNotPresent(
-                work_block_height,
-                *work_block_hash,
-            ),
+            QuorumValidationError::RequiredChainLockNotPresent(work_block_height, *work_block_hash),
         )?;
         let quorum_modifier_type = LLMQModifierType::new_quorum_modifier_type(
             llmq_type,
@@ -284,7 +284,9 @@ impl MasternodeListEngine {
         // println!("work block height is {}", work_block_height);
         // println!("work block hash is {}", work_block_hash);
         match reconstruction_type {
-            LLMQQuarterReconstructionType::New { previous_quarters } => {
+            LLMQQuarterReconstructionType::New {
+                previous_quarters,
+            } => {
                 let (used_masternodes, unused_masternodes, used_indexed_masternodes) =
                     masternode_list.usage_info(previous_quarters, quorum_count);
                 Ok(Self::apply_skip_strategy_of_type(

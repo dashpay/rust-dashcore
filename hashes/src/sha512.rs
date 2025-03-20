@@ -74,7 +74,9 @@ impl crate::HashEngine for HashEngine {
 
     const BLOCK_SIZE: usize = 128;
 
-    fn n_bytes_hashed(&self) -> usize { self.length }
+    fn n_bytes_hashed(&self) -> usize {
+        self.length
+    }
 
     engine_input_impl!();
 }
@@ -92,9 +94,13 @@ pub struct Hash(
 );
 
 impl Hash {
-    fn internal_new(arr: [u8; 64]) -> Self { Hash(arr) }
+    fn internal_new(arr: [u8; 64]) -> Self {
+        Hash(arr)
+    }
 
-    fn internal_engine() -> HashEngine { Default::default() }
+    fn internal_engine() -> HashEngine {
+        Default::default()
+    }
 }
 
 #[cfg(not(fuzzing))]
@@ -267,7 +273,7 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn test() {
-        use crate::{Hash, HashEngine, sha512};
+        use crate::{sha512, Hash, HashEngine};
 
         #[derive(Clone)]
         struct Test {
@@ -344,9 +350,9 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn sha512_serde() {
-        use serde_test::{Configure, Token, assert_tokens};
+        use serde_test::{assert_tokens, Configure, Token};
 
-        use crate::{Hash, sha512};
+        use crate::{sha512, Hash};
 
         #[rustfmt::skip]
         static HASH_BYTES: [u8; 64] = [
@@ -376,7 +382,7 @@ mod tests {
 mod benches {
     use test::Bencher;
 
-    use crate::{Hash, HashEngine, sha512};
+    use crate::{sha512, Hash, HashEngine};
 
     #[bench]
     pub fn sha512_10(bh: &mut Bencher) {

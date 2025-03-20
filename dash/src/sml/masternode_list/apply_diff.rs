@@ -2,7 +2,9 @@ use crate::bls_sig_utils::BLSSignature;
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
-use crate::sml::llmq_entry_verification::{LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus};
+use crate::sml::llmq_entry_verification::{
+    LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
+};
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 
@@ -79,10 +81,9 @@ impl MasternodeList {
 
         // Add or update new quorums
         for (idx, new_quorum) in diff.new_quorums.into_iter().enumerate() {
-            updated_quorums
-                .entry(new_quorum.llmq_type)
-                .or_default()
-                .insert(new_quorum.quorum_hash, {
+            updated_quorums.entry(new_quorum.llmq_type).or_default().insert(
+                new_quorum.quorum_hash,
+                {
                     let commitment_hash = new_quorum.calculate_commitment_hash();
                     let entry_hash = new_quorum.calculate_entry_hash();
                     QualifiedQuorumEntry {
@@ -92,9 +93,13 @@ impl MasternodeList {
                         ), // Default to unverified
                         commitment_hash,
                         entry_hash,
-                        verifying_chain_lock_signature: quorum_sig_lookup.get(idx).copied().copied(),
+                        verifying_chain_lock_signature: quorum_sig_lookup
+                            .get(idx)
+                            .copied()
+                            .copied(),
                     }
-                });
+                },
+            );
         }
 
         // Create and return the new MasternodeList

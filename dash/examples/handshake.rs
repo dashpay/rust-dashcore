@@ -5,7 +5,7 @@ use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpStream};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, process};
 
-use dashcore::consensus::{Decodable, encode};
+use dashcore::consensus::{encode, Decodable};
 use dashcore::network::{address, constants, message, message_network};
 use dashcore::secp256k1;
 use dashcore::secp256k1::rand::Rng;

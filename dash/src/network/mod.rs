@@ -73,7 +73,9 @@ impl fmt::Display for Error {
 
 #[doc(hidden)]
 impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Self { Error::Io(err) }
+    fn from(err: io::Error) -> Self {
+        Error::Io(err)
+    }
 }
 
 #[cfg(feature = "std")]

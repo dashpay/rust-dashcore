@@ -21,8 +21,8 @@
 //! chains (such as mainnet, testnet).
 //!
 
-use crate::Work;
 use crate::network::constants::Network;
+use crate::Work;
 
 /// Parameters that influence chain consensus.
 #[non_exhaustive]

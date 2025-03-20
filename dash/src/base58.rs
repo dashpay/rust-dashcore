@@ -23,7 +23,7 @@
 
 use core::{fmt, iter, slice, str};
 
-use hashes::{Hash, hex, sha256d};
+use hashes::{hex, sha256d, Hash};
 use secp256k1;
 
 use crate::key;
@@ -102,7 +102,11 @@ struct SmallVec<T> {
 
 impl<T: Default + Copy> SmallVec<T> {
     pub fn new() -> SmallVec<T> {
-        SmallVec { len: 0, stack: [T::default(); 100], heap: Vec::new() }
+        SmallVec {
+            len: 0,
+            stack: [T::default(); 100],
+            heap: Vec::new(),
+        }
     }
 
     pub fn push(&mut self, val: T) {
@@ -259,7 +263,9 @@ static BASE58_DIGITS: [Option<u8>; 128] = [
 ];
 
 /// Decode base58-encoded string into a byte vector
-pub fn from(data: &str) -> Result<Vec<u8>, Error> { decode(data) }
+pub fn from(data: &str) -> Result<Vec<u8>, Error> {
+    decode(data)
+}
 
 /// Decodes a base58-encoded string into a byte vector.
 pub fn decode(data: &str) -> Result<Vec<u8>, Error> {
@@ -294,7 +300,9 @@ pub fn decode(data: &str) -> Result<Vec<u8>, Error> {
 
 /// Decodes a base58check-encoded string into a byte vector verifying the checksum.
 #[deprecated(since = "0.30.0", note = "Use base58::decode_check() instead")]
-pub fn from_check(data: &str) -> Result<Vec<u8>, Error> { decode_check(data) }
+pub fn from_check(data: &str) -> Result<Vec<u8>, Error> {
+    decode_check(data)
+}
 
 /// Decodes a base58check-encoded string into a byte vector verifying the checksum.
 pub fn decode_check(data: &str) -> Result<Vec<u8>, Error> {
@@ -370,7 +378,9 @@ where
 }
 
 /// Directly encode a slice as base58
-pub fn encode_slice(data: &[u8]) -> String { encode_iter(data.iter().cloned()) }
+pub fn encode_slice(data: &[u8]) -> String {
+    encode_iter(data.iter().cloned())
+}
 
 /// Encodes `data` as a base58 string including the checksum.
 ///
@@ -445,7 +455,8 @@ mod tests {
         coinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoin"
                 .as_bytes(),
         );
-        let exp = "ZqC5ZdfpZRi7fjA8hbhX5pEE96MdH9hEaC1YouxscPtbJF16qVWksHWR4wwvx7MotFcs2ChbJqK8KJ9X\
+        let exp =
+            "ZqC5ZdfpZRi7fjA8hbhX5pEE96MdH9hEaC1YouxscPtbJF16qVWksHWR4wwvx7MotFcs2ChbJqK8KJ9X\
         wZznwWn1JFDhhTmGo9v6GjAVikzCsBWZehu7bm22xL8b5zBR5AsBygYRwbFJsNwNkjpyFuDKwmsUTKvkULCvucPJrN5\
         QUdxpGakhqkZFL7RU4yT";
         assert_eq!(&res, exp);

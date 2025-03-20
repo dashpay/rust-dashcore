@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::bls_sig_utils::BLSSignature;
 use crate::network::message_sml::MnListDiff;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::{
@@ -8,7 +9,6 @@ use crate::sml::llmq_entry_verification::{
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::{BlockHash, Network};
-use crate::bls_sig_utils::BLSSignature;
 
 pub trait TryFromWithBlockHashLookup<T>: Sized {
     type Error;
@@ -86,32 +86,54 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
             .map(|entry| (entry.pro_reg_tx_hash.reverse(), entry.into()))
             .collect::<BTreeMap<_, _>>();
 
-        // Build a lookup table for quorum signatures for efficiency
-        let quorum_sig_lookup: Vec<&BLSSignature> = diff
-            .quorums_chainlock_signatures
-            .iter()
-            .flat_map(|sig_obj| sig_obj.index_set.iter().map(move |_| &sig_obj.signature))
-            .collect();
+        // Build a vector of optional signatures with slots matching new_quorums length
+        let mut quorum_sig_lookup: Vec<Option<&BLSSignature>> = vec![None; diff.new_quorums.len()];
 
-        let quorums = diff.new_quorums.into_iter().enumerate().fold(BTreeMap::new(), |mut map, (idx, quorum)| {
-            map.entry(quorum.llmq_type.into()).or_insert_with(BTreeMap::new).insert(
-                quorum.quorum_hash,
-                {
-                    let entry_hash = quorum.calculate_entry_hash();
-                    let commitment_hash = quorum.calculate_commitment_hash();
-                    QualifiedQuorumEntry {
-                        quorum_entry: quorum,
-                        verified: LLMQEntryVerificationStatus::Skipped(
-                            LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
-                        ),
-                        commitment_hash,
-                        entry_hash,
-                        verifying_chain_lock_signature: quorum_sig_lookup.get(idx).copied().copied(),
-                    }
-                },
-            );
-            map
-        });
+        // Fill each slot with the corresponding signature
+        for quorum_sig_obj in &diff.quorums_chainlock_signatures {
+            for &index in &quorum_sig_obj.index_set {
+                if let Some(slot) = quorum_sig_lookup.get_mut(index as usize) {
+                    *slot = Some(&quorum_sig_obj.signature);
+                } else {
+                    return Err(SmlError::InvalidIndexInSignatureSet(index));
+                }
+            }
+        }
+
+        // Verify all slots have been filled
+        if quorum_sig_lookup.iter().any(Option::is_none) {
+            return Err(SmlError::IncompleteSignatureSet);
+        }
+
+        //println!("quorum_sig_obj for known height {} {:#?}", known_height, quorum_sig_lookup);
+
+        let quorums = diff.new_quorums.into_iter().enumerate().fold(
+            BTreeMap::new(),
+            |mut map, (idx, quorum)| {
+                map.entry(quorum.llmq_type.into()).or_insert_with(BTreeMap::new).insert(
+                    quorum.quorum_hash,
+                    {
+                        let entry_hash = quorum.calculate_entry_hash();
+                        let commitment_hash = quorum.calculate_commitment_hash();
+
+                        let e = QualifiedQuorumEntry {
+                            quorum_entry: quorum,
+                            verified: LLMQEntryVerificationStatus::Skipped(
+                                LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
+                            ),
+                            commitment_hash,
+                            entry_hash,
+                            verifying_chain_lock_signature: quorum_sig_lookup[idx].copied(),
+                        };
+
+                        println!("quorum entry {:?}", e);
+
+                        e
+                    },
+                );
+                map
+            },
+        );
 
         // Construct `MasternodeList`
         Ok(MasternodeList {

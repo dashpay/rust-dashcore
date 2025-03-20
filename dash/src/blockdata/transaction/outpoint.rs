@@ -28,7 +28,7 @@ use std::error;
 use bincode::{Decode, Encode};
 use hashes::{self, Hash};
 
-use crate::consensus::{Decodable, Encodable, deserialize, encode};
+use crate::consensus::{deserialize, encode, Decodable, Encodable};
 use crate::hash_types::Txid;
 use crate::io;
 
@@ -71,13 +71,23 @@ impl From<OutPoint> for [u8; 36] {
 impl OutPoint {
     /// Creates a new [`OutPoint`].
     #[inline]
-    pub fn new(txid: Txid, vout: u32) -> OutPoint { OutPoint { txid, vout } }
+    pub fn new(txid: Txid, vout: u32) -> OutPoint {
+        OutPoint {
+            txid,
+            vout,
+        }
+    }
 
     /// Creates a "null" `OutPoint`.
     ///
     /// This value is used for coinbase transactions because they don't have any previous outputs.
     #[inline]
-    pub fn null() -> OutPoint { OutPoint { txid: Hash::all_zeros(), vout: u32::MAX } }
+    pub fn null() -> OutPoint {
+        OutPoint {
+            txid: Hash::all_zeros(),
+            vout: u32::MAX,
+        }
+    }
 
     /// Checks if an `OutPoint` is "null".
     ///
@@ -94,11 +104,15 @@ impl OutPoint {
     /// assert!(tx.input[0].previous_output.is_null());
     /// ```
     #[inline]
-    pub fn is_null(&self) -> bool { *self == OutPoint::null() }
+    pub fn is_null(&self) -> bool {
+        *self == OutPoint::null()
+    }
 }
 
 impl Default for OutPoint {
-    fn default() -> Self { OutPoint::null() }
+    fn default() -> Self {
+        OutPoint::null()
+    }
 }
 
 impl fmt::Display for OutPoint {
@@ -215,8 +229,8 @@ mod tests {
     use core::str::FromStr;
 
     use super::*;
-    use crate::Transaction;
     use crate::internal_macros::hex;
+    use crate::Transaction;
 
     #[test]
     fn test_outpoint() {

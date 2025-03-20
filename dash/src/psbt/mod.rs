@@ -14,16 +14,16 @@ use std::collections::{HashMap, HashSet};
 use internals::write_err;
 use secp256k1::{Message, Secp256k1, Signing};
 
-use crate::Amount;
 use crate::bip32::{self, ExtendedPrivKey, ExtendedPubKey, KeySource};
 use crate::blockdata::script::ScriptBuf;
-use crate::blockdata::transaction::Transaction;
 use crate::blockdata::transaction::txout::TxOut;
+use crate::blockdata::transaction::Transaction;
 use crate::crypto::ecdsa;
 use crate::crypto::key::{PrivateKey, PublicKey};
 use crate::prelude::*;
 pub use crate::sighash::Prevouts;
 use crate::sighash::{self, EcdsaSighashType, SighashCache};
+use crate::Amount;
 
 #[macro_use]
 mod macros;
@@ -247,7 +247,11 @@ impl PartiallySignedTransaction {
                 }
             };
         }
-        if errors.is_empty() { Ok(used) } else { Err((used, errors)) }
+        if errors.is_empty() {
+            Ok(used)
+        } else {
+            Err((used, errors))
+        }
     }
 
     /// Attempts to create all signatures required by this PSBT's `bip32_derivation` field, adding
@@ -290,8 +294,10 @@ impl PartiallySignedTransaction {
                 Ok((msg, sighash_ty)) => (msg, sighash_ty),
             };
 
-            let sig =
-                ecdsa::Signature { sig: secp.sign_ecdsa(&msg, &sk.inner), hash_ty: sighash_ty };
+            let sig = ecdsa::Signature {
+                sig: secp.sign_ecdsa(&msg, &sk.inner),
+                hash_ty: sighash_ty,
+            };
 
             let pk = sk.public_key(secp);
 
@@ -591,8 +597,9 @@ impl fmt::Display for GetKeyError {
 
         match *self {
             Bip32(ref e) => write_err!(f, "a bip23 error"; e),
-            NotSupported =>
-                f.write_str("the GetKey operation is not supported for this key request"),
+            NotSupported => {
+                f.write_str("the GetKey operation is not supported for this key request")
+            }
         }
     }
 }
@@ -610,7 +617,9 @@ impl std::error::Error for GetKeyError {
 }
 
 impl From<bip32::Error> for GetKeyError {
-    fn from(e: bip32::Error) -> Self { GetKeyError::Bip32(e) }
+    fn from(e: bip32::Error) -> Self {
+        GetKeyError::Bip32(e)
+    }
 }
 
 /// The various output types supported by the Bitcoin network.
@@ -743,7 +752,9 @@ impl std::error::Error for SignError {
 }
 
 impl From<sighash::Error> for SignError {
-    fn from(e: sighash::Error) -> Self { SignError::SighashComputation(e) }
+    fn from(e: sighash::Error) -> Self {
+        SignError::SighashComputation(e)
+    }
 }
 
 #[cfg(feature = "base64")]
@@ -812,24 +823,24 @@ pub use self::display_from_str::PsbtParseError;
 mod tests {
     use std::collections::BTreeMap;
 
-    use hashes::{Hash, hash160, ripemd160, sha256};
+    use hashes::{hash160, ripemd160, sha256, Hash};
     use secp256k1::{self, Secp256k1};
     #[cfg(feature = "rand-std")]
     use secp256k1::{All, SecretKey};
 
     use super::*;
-    use crate::Network::Dash;
     use crate::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
     use crate::blockdata::script::ScriptBuf;
-    use crate::blockdata::transaction::Transaction;
     use crate::blockdata::transaction::outpoint::OutPoint;
     use crate::blockdata::transaction::txin::TxIn;
     use crate::blockdata::transaction::txout::TxOut;
+    use crate::blockdata::transaction::Transaction;
     use crate::blockdata::witness::Witness;
     use crate::internal_macros::hex;
     use crate::psbt::map::{Input, Output};
     use crate::psbt::raw;
     use crate::psbt::serialize::{Deserialize, Serialize};
+    use crate::Network::Dash;
 
     #[test]
     fn trivial_psbt() {
@@ -955,7 +966,10 @@ mod tests {
     #[test]
     fn serialize_then_deserialize_psbtkvpair() {
         let expected = raw::Pair {
-            key: raw::Key { type_value: 0u8, key: vec![42u8, 69u8] },
+            key: raw::Key {
+                type_value: 0u8,
+                key: vec![42u8, 69u8],
+            },
             value: vec![69u8, 42u8, 4u8],
         };
 
@@ -1006,10 +1020,15 @@ mod tests {
             }],
             special_transaction_payload: None,
         };
-        let unknown: BTreeMap<raw::Key, Vec<u8>> =
-            vec![(raw::Key { type_value: 1, key: vec![0, 1] }, vec![3, 4, 5])]
-                .into_iter()
-                .collect();
+        let unknown: BTreeMap<raw::Key, Vec<u8>> = vec![(
+            raw::Key {
+                type_value: 1,
+                key: vec![0, 1],
+            },
+            vec![3, 4, 5],
+        )]
+        .into_iter()
+        .collect();
         let key_source = ("deadbeef".parse().unwrap(), "m/0'/1".parse().unwrap());
         let keypaths: BTreeMap<secp256k1::PublicKey, KeySource> = vec![(
             "0339880dc92394b7355e3d0439fa283c31de7590812ea011c4245c0674a685e883".parse().unwrap(),
@@ -1092,13 +1111,13 @@ mod tests {
 
         use super::*;
         use crate::blockdata::script::ScriptBuf;
-        use crate::blockdata::transaction::Transaction;
         use crate::blockdata::transaction::outpoint::OutPoint;
         use crate::blockdata::transaction::txin::TxIn;
         use crate::blockdata::transaction::txout::TxOut;
+        use crate::blockdata::transaction::Transaction;
         use crate::blockdata::witness::Witness;
         use crate::psbt::map::{Input, Map, Output};
-        use crate::psbt::{Error, PartiallySignedTransaction, raw};
+        use crate::psbt::{raw, Error, PartiallySignedTransaction};
         use crate::sighash::EcdsaSighashType;
 
         #[test]
@@ -1320,11 +1339,9 @@ mod tests {
             let psbt_non_witness_utxo = psbt.inputs[0].non_witness_utxo.as_ref().unwrap();
 
             assert_eq!(tx_input.previous_output.txid, psbt_non_witness_utxo.txid());
-            assert!(
-                psbt_non_witness_utxo.output[tx_input.previous_output.vout as usize]
-                    .script_pubkey
-                    .is_p2pkh()
-            );
+            assert!(psbt_non_witness_utxo.output[tx_input.previous_output.vout as usize]
+                .script_pubkey
+                .is_p2pkh());
             assert_eq!(
                 psbt.inputs[0].sighash_type.as_ref().unwrap().ecdsa_hash_ty().unwrap(),
                 EcdsaSighashType::All
@@ -1393,7 +1410,10 @@ mod tests {
             );
 
             let mut unknown: BTreeMap<raw::Key, Vec<u8>> = BTreeMap::new();
-            let key: raw::Key = raw::Key { type_value: 0x0fu8, key: hex!("010203040506070809") };
+            let key: raw::Key = raw::Key {
+                type_value: 0x0fu8,
+                key: hex!("010203040506070809"),
+            };
             let value: Vec<u8> = hex!("0102030405060708090a0b0c0d0e0f");
 
             unknown.insert(key, value);
@@ -1622,7 +1642,11 @@ mod tests {
     fn serialize_and_deserialize_proprietary() {
         let mut psbt: PartiallySignedTransaction = hex_psbt!("70736274ff0100a00200000002ab0949a08c5af7c49b8212f417e2f15ab3f5c33dcf153821a8139f877a5b7be40000000000feffffffab0949a08c5af7c49b8212f417e2f15ab3f5c33dcf153821a8139f877a5b7be40100000000feffffff02603bea0b000000001976a914768a40bbd740cbe81d988e71de2a4d5c71396b1d88ac8e240000000000001976a9146f4620b553fa095e721b9ee0efe9fa039cca459788ac000000000001076a47304402204759661797c01b036b25928948686218347d89864b719e1f7fcf57d1e511658702205309eabf56aa4d8891ffd111fdf1336f3a29da866d7f8486d75546ceedaf93190121035cdc61fc7ba971c0b501a646a2a83b102cb43881217ca682dc86e2d73fa882920001012000e1f5050000000017a9143545e6e33b832c47050f24d3eeb93c9c03948bc787010416001485d13537f2e265405a34dbafa9e3dda01fb82308000000").unwrap();
         psbt.proprietary.insert(
-            raw::ProprietaryKey { prefix: b"test".to_vec(), subtype: 0u8, key: b"test".to_vec() },
+            raw::ProprietaryKey {
+                prefix: b"test".to_vec(),
+                subtype: 0u8,
+                key: b"test".to_vec(),
+            },
             b"test".to_vec(),
         );
         assert!(!psbt.proprietary.is_empty());
@@ -1794,9 +1818,9 @@ mod tests {
     #[test]
     #[cfg(feature = "rand-std")]
     fn sign_psbt() {
-        use crate::WPubkeyHash;
         use crate::address::WitnessProgram;
         use crate::bip32::{DerivationPath, Fingerprint};
+        use crate::WPubkeyHash;
 
         let unsigned_tx = Transaction {
             version: 2,
@@ -1828,8 +1852,10 @@ mod tests {
         // Second input is unspendable by us e.g., from another wallet that supports future upgrades.
         let unknown_prog =
             WitnessProgram::new(crate::address::WitnessVersion::V4, vec![0xaa; 34]).unwrap();
-        let txout_unknown_future =
-            TxOut { value: 10, script_pubkey: ScriptBuf::new_witness_program(&unknown_prog) };
+        let txout_unknown_future = TxOut {
+            value: 10,
+            script_pubkey: ScriptBuf::new_witness_program(&unknown_prog),
+        };
         psbt.inputs[1].witness_utxo = Some(txout_unknown_future);
 
         let sigs = psbt.sign(&key_map, &secp).unwrap();

@@ -1,5 +1,3 @@
-#[cfg(feature = "bincode")]
-use bincode::{Decode, Encode};
 use crate::bls_sig_utils::BLSSignature;
 use crate::hash_types::{QuorumCommitmentHash, QuorumEntryHash};
 use crate::sml::llmq_entry_verification::{
@@ -7,6 +5,8 @@ use crate::sml::llmq_entry_verification::{
 };
 use crate::sml::quorum_validation_error::QuorumValidationError;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
 
 /// A structured representation of a quorum entry with additional validation status and commitment hashes.
 ///

@@ -10,13 +10,13 @@ use core::{convert, fmt, mem};
 #[cfg(feature = "std")]
 use std::error;
 
-use hashes::{Hash, sha256, siphash24};
+use hashes::{sha256, siphash24, Hash};
 use internals::impl_array_newtype;
 
 use crate::consensus::encode::{self, Decodable, Encodable, VarInt};
 use crate::internal_macros::{impl_bytes_newtype, impl_consensus_encoding};
 use crate::prelude::*;
-use crate::{Block, BlockHash, Transaction, block, io};
+use crate::{block, io, Block, BlockHash, Transaction};
 
 /// A BIP-152 error
 #[derive(Clone, PartialEq, Eq, Debug, Copy, PartialOrd, Ord, Hash)]
@@ -68,7 +68,9 @@ pub struct PrefilledTransaction {
 }
 
 impl convert::AsRef<Transaction> for PrefilledTransaction {
-    fn as_ref(&self) -> &Transaction { &self.tx }
+    fn as_ref(&self) -> &Transaction {
+        &self.tx
+    }
 }
 
 impl Encodable for PrefilledTransaction {
@@ -87,7 +89,10 @@ impl Decodable for PrefilledTransaction {
         let idx = u16::try_from(idx)
             .map_err(|_| encode::Error::ParseFailed("BIP152 prefilled tx index out of bounds"))?;
         let tx = Transaction::consensus_decode(&mut d)?;
-        Ok(PrefilledTransaction { idx, tx })
+        Ok(PrefilledTransaction {
+            idx,
+            tx,
+        })
     }
 }
 
@@ -376,10 +381,10 @@ mod test {
     use super::*;
     use crate::blockdata::locktime::absolute;
     use crate::blockdata::script::ScriptBuf;
-    use crate::blockdata::transaction::Transaction;
     use crate::blockdata::transaction::outpoint::OutPoint;
     use crate::blockdata::transaction::txin::TxIn;
     use crate::blockdata::transaction::txout::TxOut;
+    use crate::blockdata::transaction::Transaction;
     use crate::blockdata::witness::Witness;
     use crate::consensus::encode::{deserialize, serialize};
     use crate::hash_types::{TxMerkleNode, Txid};
@@ -395,7 +400,10 @@ mod test {
                 sequence: 1,
                 witness: Witness::new(),
             }],
-            output: vec![TxOut { value: 1, script_pubkey: ScriptBuf::new() }],
+            output: vec![TxOut {
+                value: 1,
+                script_pubkey: ScriptBuf::new(),
+            }],
             special_transaction_payload: None,
         }
     }

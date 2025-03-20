@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 
-use crate::ProTxHash;
 use crate::sml::masternode_list::MasternodeList;
+use crate::ProTxHash;
 
 impl MasternodeList {
     pub fn has_valid_masternode(&self, pro_reg_tx_hash: &ProTxHash) -> bool {

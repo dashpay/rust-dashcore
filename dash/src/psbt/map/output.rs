@@ -9,7 +9,7 @@ use crate::bip32::KeySource;
 use crate::blockdata::script::ScriptBuf;
 use crate::prelude::*;
 use crate::psbt::map::Map;
-use crate::psbt::{Error, raw};
+use crate::psbt::{raw, Error};
 use crate::taproot::{TapLeafHash, TapTree};
 
 /// Type: Redeem ScriptBuf PSBT_OUT_REDEEM_SCRIPT = 0x00
@@ -58,7 +58,10 @@ pub struct Output {
 
 impl Output {
     pub(super) fn insert_pair(&mut self, pair: raw::Pair) -> Result<(), Error> {
-        let raw::Pair { key: raw_key, value: raw_value } = pair;
+        let raw::Pair {
+            key: raw_key,
+            value: raw_value,
+        } = pair;
 
         match raw_key.type_value {
             PSBT_OUT_REDEEM_SCRIPT => {
@@ -154,11 +157,17 @@ impl Map for Output {
         }
 
         for (key, value) in self.proprietary.iter() {
-            rv.push(raw::Pair { key: key.to_key(), value: value.clone() });
+            rv.push(raw::Pair {
+                key: key.to_key(),
+                value: value.clone(),
+            });
         }
 
         for (key, value) in self.unknown.iter() {
-            rv.push(raw::Pair { key: key.clone(), value: value.clone() });
+            rv.push(raw::Pair {
+                key: key.clone(),
+                value: value.clone(),
+            });
         }
 
         rv
