@@ -15,6 +15,7 @@ pub enum DerivationPathReference {
     BlockchainIdentityCreditTopupFunding = 12,
     BlockchainIdentityCreditInvitationFunding = 13,
     ProviderPlatformNodeKeys = 14,
+    CoinJoin = 15,
     Root = 255,
 }
 
@@ -114,6 +115,7 @@ pub const BIP44_PURPOSE: u32 = 44;
 pub const FEATURE_PURPOSE: u32 = 9;
 pub const DASH_COIN_TYPE: u32 = 5;
 pub const DASH_TESTNET_COIN_TYPE: u32 = 1;
+pub const FEATURE_PURPOSE_COINJOIN: u32 = 4;
 pub const FEATURE_PURPOSE_IDENTITIES: u32 = 5;
 pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_AUTHENTICATION: u32 = 0;
 pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_REGISTRATION: u32 = 1;
@@ -136,6 +138,26 @@ pub const DASH_BIP44_PATH_TESTNET: IndexConstPath<2> = IndexConstPath {
     ],
     reference: DerivationPathReference::BIP44,
     path_type: DerivationPathType::CLEAR_FUNDS,
+};
+// CoinJoin Paths
+
+pub const COINJOIN_PATH_MAINNET: IndexConstPath<3> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened { index: FEATURE_PURPOSE },
+        ChildNumber::Hardened { index: DASH_COIN_TYPE },
+        ChildNumber::Hardened { index: FEATURE_PURPOSE_COINJOIN },
+    ],
+    reference: DerivationPathReference::CoinJoin,
+    path_type: DerivationPathType::ANONYMOUS_FUNDS,
+};
+pub const COINJOIN_PATH_TESTNET: IndexConstPath<3> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened { index: FEATURE_PURPOSE },
+        ChildNumber::Hardened { index: DASH_TESTNET_COIN_TYPE },
+        ChildNumber::Hardened { index: FEATURE_PURPOSE_COINJOIN },
+    ],
+    reference: DerivationPathReference::CoinJoin,
+    path_type: DerivationPathType::ANONYMOUS_FUNDS,
 };
 
 pub const IDENTITY_REGISTRATION_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {

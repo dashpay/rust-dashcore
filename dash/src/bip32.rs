@@ -36,12 +36,7 @@ use serde;
 
 use crate::base58;
 use crate::crypto::key::{self, Keypair, PrivateKey, PublicKey};
-use crate::dip9::{
-    DASH_BIP44_PATH_MAINNET, DASH_BIP44_PATH_TESTNET, IDENTITY_AUTHENTICATION_PATH_MAINNET,
-    IDENTITY_AUTHENTICATION_PATH_TESTNET, IDENTITY_INVITATION_PATH_MAINNET,
-    IDENTITY_INVITATION_PATH_TESTNET, IDENTITY_REGISTRATION_PATH_MAINNET,
-    IDENTITY_REGISTRATION_PATH_TESTNET, IDENTITY_TOPUP_PATH_MAINNET, IDENTITY_TOPUP_PATH_TESTNET,
-};
+use crate::dip9::{COINJOIN_PATH_MAINNET, COINJOIN_PATH_TESTNET, DASH_BIP44_PATH_MAINNET, DASH_BIP44_PATH_TESTNET, IDENTITY_AUTHENTICATION_PATH_MAINNET, IDENTITY_AUTHENTICATION_PATH_TESTNET, IDENTITY_INVITATION_PATH_MAINNET, IDENTITY_INVITATION_PATH_TESTNET, IDENTITY_REGISTRATION_PATH_MAINNET, IDENTITY_REGISTRATION_PATH_TESTNET, IDENTITY_TOPUP_PATH_MAINNET, IDENTITY_TOPUP_PATH_TESTNET};
 use crate::hash_types::XpubIdentifier;
 use crate::internal_macros::impl_bytes_newtype;
 use crate::io::Write;
@@ -395,6 +390,18 @@ impl DerivationPath {
             ChildNumber::Normal { index: change.into() },
             ChildNumber::Normal { index: address_index },
         ]);
+        root_derivation_path
+    }
+    pub fn coinjoin_path(
+        network: Network,
+        account: u32,
+    ) -> Self {
+        let mut root_derivation_path: DerivationPath = match network {
+            Network::Dash => COINJOIN_PATH_MAINNET,
+            _ => COINJOIN_PATH_TESTNET,
+        }
+        .into();
+        root_derivation_path.0.extend(&[ChildNumber::Hardened { index: account }]);
         root_derivation_path
     }
 
@@ -1829,6 +1836,15 @@ mod tests {
 
         let path = DerivationPath::bip_44_payment_path(Network::Testnet, 1, false, 42);
         assert_eq!(path.to_string(), "m/44'/1'/1'/0/42");
+    }
+
+    #[test]
+    fn test_coinjoin_path() {
+        let path = DerivationPath::coinjoin_path(Network::Dash, 0);
+        assert_eq!(path.to_string(), "m/9'/5'/4'/0'");
+
+        let path = DerivationPath::coinjoin_path(Network::Testnet, 1);
+        assert_eq!(path.to_string(), "m/9'/1'/4'/1'");
     }
 
     #[test]
