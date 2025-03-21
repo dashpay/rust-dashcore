@@ -72,12 +72,24 @@ impl MasternodeList {
             }
         }
 
-        // Build a lookup table for quorum signatures for efficiency
-        let quorum_sig_lookup: Vec<&BLSSignature> = diff
-            .quorums_chainlock_signatures
-            .iter()
-            .flat_map(|sig_obj| sig_obj.index_set.iter().map(move |_| &sig_obj.signature))
-            .collect();
+        // Build a vector of optional signatures with slots matching new_quorums length
+        let mut quorum_sig_lookup: Vec<Option<&BLSSignature>> = vec![None; diff.new_quorums.len()];
+
+        // Fill each slot with the corresponding signature
+        for quorum_sig_obj in &diff.quorums_chainlock_signatures {
+            for &index in &quorum_sig_obj.index_set {
+                if let Some(slot) = quorum_sig_lookup.get_mut(index as usize) {
+                    *slot = Some(&quorum_sig_obj.signature);
+                } else {
+                    return Err(SmlError::InvalidIndexInSignatureSet(index));
+                }
+            }
+        }
+
+        // Verify all slots have been filled
+        if quorum_sig_lookup.iter().any(Option::is_none) {
+            return Err(SmlError::IncompleteSignatureSet);
+        }
 
         // Add or update new quorums
         for (idx, new_quorum) in diff.new_quorums.into_iter().enumerate() {
@@ -93,10 +105,7 @@ impl MasternodeList {
                         ), // Default to unverified
                         commitment_hash,
                         entry_hash,
-                        verifying_chain_lock_signature: quorum_sig_lookup
-                            .get(idx)
-                            .copied()
-                            .copied(),
+                        verifying_chain_lock_signature: quorum_sig_lookup[idx].copied(),
                     }
                 },
             );

@@ -65,11 +65,11 @@ impl QualifiedQuorumEntry {
         if verified {
             Ok(())
         } else {
-            let sig =
+            let verifying_chain_lock_signature =
                 self.verifying_chain_lock_signature.map(hex::encode).unwrap_or("None".to_string());
             Err(QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(format!(
                 "signature is not valid for keys and message using chain lock sig {}",
-                sig
+                verifying_chain_lock_signature
             )))
         }
         // This will be the code when we move to blsful

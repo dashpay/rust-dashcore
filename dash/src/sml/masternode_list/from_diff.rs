@@ -116,7 +116,7 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
                         let entry_hash = quorum.calculate_entry_hash();
                         let commitment_hash = quorum.calculate_commitment_hash();
 
-                        let e = QualifiedQuorumEntry {
+                        QualifiedQuorumEntry {
                             quorum_entry: quorum,
                             verified: LLMQEntryVerificationStatus::Skipped(
                                 LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
@@ -124,11 +124,7 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
                             commitment_hash,
                             entry_hash,
                             verifying_chain_lock_signature: quorum_sig_lookup[idx].copied(),
-                        };
-
-                        println!("quorum entry {:?}", e);
-
-                        e
+                        }
                     },
                 );
                 map
