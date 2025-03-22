@@ -65,12 +65,9 @@ impl QualifiedQuorumEntry {
         if verified {
             Ok(())
         } else {
-            let verifying_chain_lock_signature =
-                self.verifying_chain_lock_signature.map(hex::encode).unwrap_or("None".to_string());
-            Err(QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(format!(
-                "signature is not valid for keys and message using chain lock sig {}",
-                verifying_chain_lock_signature
-            )))
+            Err(QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(
+                "signature is not valid for keys and message".to_string()
+            ))
         }
         // This will be the code when we move to blsful
         // Currently we can't because blsful doesn't support verify secure aggregated nor does it support our legacy serializations.

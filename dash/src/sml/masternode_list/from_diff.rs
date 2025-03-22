@@ -7,7 +7,7 @@ use crate::sml::llmq_entry_verification::{
     LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
 };
 use crate::sml::masternode_list::MasternodeList;
-use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use crate::sml::quorum_entry::qualified_quorum_entry::{QualifiedQuorumEntry, VerifyingChainLockSignaturesType};
 use crate::{BlockHash, Network};
 
 pub trait TryFromWithBlockHashLookup<T>: Sized {
@@ -123,7 +123,7 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
                             ),
                             commitment_hash,
                             entry_hash,
-                            verifying_chain_lock_signature: quorum_sig_lookup[idx].copied(),
+                            verifying_chain_lock_signature: quorum_sig_lookup[idx].copied().map(VerifyingChainLockSignaturesType::NonRotating),
                         }
                     },
                 );

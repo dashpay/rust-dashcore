@@ -8,6 +8,15 @@ use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub enum VerifyingChainLockSignaturesType {
+    Rotating([BLSSignature; 4]),
+    NonRotating(BLSSignature),
+}
+
 /// A structured representation of a quorum entry with additional validation status and commitment hashes.
 ///
 /// This struct wraps a `QuorumEntry` and includes additional metadata used to track the verification
@@ -26,7 +35,7 @@ pub struct QualifiedQuorumEntry {
     /// The computed hash of the quorum entry.
     pub entry_hash: QuorumEntryHash,
     /// The chain lock signature that can be used for the quorum entry
-    pub verifying_chain_lock_signature: Option<BLSSignature>,
+    pub verifying_chain_lock_signature: Option<VerifyingChainLockSignaturesType>,
 }
 
 impl From<QuorumEntry> for QualifiedQuorumEntry {
