@@ -46,11 +46,11 @@ impl QualifiedQuorumEntry {
                 };
                 match result {
                     Ok(public_key) => Some(public_key),
-                    Err(e) => {
-                        println!(
-                            "error {} with key for masternode {}",
-                            e, masternode_list_entry.pro_reg_tx_hash
-                        );
+                    Err(_e) => {
+                        // println!(
+                        //     "error {} with key for masternode {}",
+                        //     e, masternode_list_entry.pro_reg_tx_hash
+                        // );
                         None
                     }
                 }
@@ -66,7 +66,7 @@ impl QualifiedQuorumEntry {
             Ok(())
         } else {
             Err(QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(
-                "signature is not valid for keys and message".to_string()
+                "signature is not valid for keys and message".to_string(),
             ))
         }
         // This will be the code when we move to blsful

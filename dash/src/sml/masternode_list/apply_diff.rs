@@ -6,7 +6,9 @@ use crate::sml::llmq_entry_verification::{
     LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
 };
 use crate::sml::masternode_list::MasternodeList;
-use crate::sml::quorum_entry::qualified_quorum_entry::{QualifiedQuorumEntry, VerifyingChainLockSignaturesType};
+use crate::sml::quorum_entry::qualified_quorum_entry::{
+    QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
+};
 
 impl MasternodeList {
     /// Applies an `MnListDiff` to update the current masternode list.
@@ -37,7 +39,7 @@ impl MasternodeList {
         &self,
         diff: MnListDiff,
         diff_end_height: CoreBlockHeight,
-        previous_chain_lock_sigs: Option<[BLSSignature;3]>,
+        previous_chain_lock_sigs: Option<[BLSSignature; 3]>,
     ) -> Result<(MasternodeList, Option<BLSSignature>), SmlError> {
         // Ensure the base block hash matches
         if self.block_hash != diff.base_block_hash {
@@ -101,31 +103,34 @@ impl MasternodeList {
                 {
                     let commitment_hash = new_quorum.calculate_commitment_hash();
                     let entry_hash = new_quorum.calculate_entry_hash();
-                    let verifying_chain_lock_signature = if new_quorum.llmq_type.is_rotating_quorum_type() {
-                        if rotating_sig.is_none() {
-                            if let Some(sig) = quorum_sig_lookup[idx] {
-                                rotating_sig = Some(*sig)
-                            } else {
-                                return Err(SmlError::IncompleteSignatureSet);
+                    let verifying_chain_lock_signature =
+                        if new_quorum.llmq_type.is_rotating_quorum_type() {
+                            if rotating_sig.is_none() {
+                                if let Some(sig) = quorum_sig_lookup[idx] {
+                                    rotating_sig = Some(*sig)
+                                } else {
+                                    return Err(SmlError::IncompleteSignatureSet);
+                                }
                             }
-                        }
-                        if let Some(previous_chain_lock_sigs) = previous_chain_lock_sigs {
-                            if let Some(sig) = quorum_sig_lookup[idx] {
-                                Some(VerifyingChainLockSignaturesType::Rotating([
-                                    previous_chain_lock_sigs[0],
-                                    previous_chain_lock_sigs[1],
-                                    previous_chain_lock_sigs[2],
-                                    *sig,
-                                ]))
+                            if let Some(previous_chain_lock_sigs) = previous_chain_lock_sigs {
+                                if let Some(sig) = quorum_sig_lookup[idx] {
+                                    Some(VerifyingChainLockSignaturesType::Rotating([
+                                        previous_chain_lock_sigs[0],
+                                        previous_chain_lock_sigs[1],
+                                        previous_chain_lock_sigs[2],
+                                        *sig,
+                                    ]))
+                                } else {
+                                    return Err(SmlError::IncompleteSignatureSet);
+                                }
                             } else {
-                                return Err(SmlError::IncompleteSignatureSet);
+                                None
                             }
                         } else {
-                            None
-                        }
-                    } else {
-                        quorum_sig_lookup[idx].copied().map(VerifyingChainLockSignaturesType::NonRotating)
-                    };
+                            quorum_sig_lookup[idx]
+                                .copied()
+                                .map(VerifyingChainLockSignaturesType::NonRotating)
+                        };
                     QualifiedQuorumEntry {
                         quorum_entry: new_quorum,
                         verified: LLMQEntryVerificationStatus::Skipped(

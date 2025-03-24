@@ -66,7 +66,6 @@ impl MasternodeList {
         // we need to check that the coinbase is in the transaction hashes we got back
         // and is in the merkle block
         if let Some(mn_merkle_root) = self.masternode_merkle_root {
-            //println!("has_valid_mn_list_root: {} == {}", tx.merkle_root_mn_list, mn_merkle_root);
             coinbase_payload.merkle_root_masternode_list == mn_merkle_root
         } else {
             false

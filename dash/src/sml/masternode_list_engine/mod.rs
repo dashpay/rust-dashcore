@@ -22,7 +22,9 @@ use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::masternode_list::MasternodeList;
-use crate::sml::quorum_entry::qualified_quorum_entry::{QualifiedQuorumEntry, VerifyingChainLockSignaturesType};
+use crate::sml::quorum_entry::qualified_quorum_entry::{
+    QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
+};
 use crate::sml::quorum_validation_error::{ClientDataRetrievalError, QuorumValidationError};
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::{BlockHash, Network, QuorumHash};
@@ -355,35 +357,12 @@ impl MasternodeListEngine {
         Ok(())
     }
 
-    // fn request_qr_info_cl_sigs<FS>(
-    //     &mut self,
-    //     qr_info: &QRInfo,
-    //     fetch_chain_lock_sigs: &FS,
-    // ) -> Result<(), QuorumValidationError>
-    // where
-    //     FS: Fn(&BlockHash) -> Result<Option<BLSSignature>, ClientDataRetrievalError>,
-    // {
-    //     let heights = self.required_cl_sig_heights(qr_info)?;
-    //     for height in heights {
-    //         let block_hash = self
-    //             .block_container
-    //             .get_hash(&height)
-    //             .ok_or(QuorumValidationError::RequiredBlockHeightNotPresent(height))?;
-    //         let maybe_chain_lock_sig = fetch_chain_lock_sigs(block_hash)?;
-    //         if let Some(maybe_chain_lock_sig) = maybe_chain_lock_sig {
-    //             self.feed_chain_lock_sig(*block_hash, maybe_chain_lock_sig);
-    //         }
-    //     }
-    //     Ok(())
-    // }
-
     pub fn feed_qr_info<FH, FS>(
         &mut self,
         qr_info: QRInfo,
         verify_tip_non_rotated_quorums: bool,
         verify_rotated_quorums: bool,
         fetch_block_height: Option<FH>,
-        fetch_chain_lock_sigs: Option<FS>,
     ) -> Result<(), QuorumValidationError>
     where
         FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
@@ -393,11 +372,6 @@ impl MasternodeListEngine {
         if let Some(fetch_height) = fetch_block_height {
             self.request_qr_info_block_heights(&qr_info, &fetch_height)?;
         }
-
-        // // Fetch and process chain lock signatures using the provided callback
-        // if let Some(fetch_chain_lock_sigs) = fetch_chain_lock_sigs {
-        //     self.request_qr_info_cl_sigs(&qr_info, &fetch_chain_lock_sigs)?;
-        // }
 
         let QRInfo {
             quorum_snapshot_at_h_minus_c,
@@ -413,20 +387,6 @@ impl MasternodeListEngine {
             quorum_snapshot_list,
             mn_list_diff_list,
         } = qr_info;
-
-        // print_diff_info("tip", &mn_list_diff_tip);
-        // print_diff_info("h", &mn_list_diff_h);
-        // print_diff_info("-c", &mn_list_diff_at_h_minus_c);
-        // print_diff_info("-2c", &mn_list_diff_at_h_minus_2c);
-        // print_diff_info("-3c", &mn_list_diff_at_h_minus_3c);
-        // if let Some((_, mn_list_diff_at_h_minus_4c)) =
-        //     quorum_snapshot_and_mn_list_diff_at_h_minus_4c.as_ref()
-        // {
-        //     print_diff_info("-4c", mn_list_diff_at_h_minus_4c);
-        // }
-        // for (i, diff) in mn_list_diff_list.iter().enumerate() {
-        //     print_diff_info(i.to_string().as_str(), diff);
-        // }
 
         // Apply quorum snapshots and masternode list diffs
         for (snapshot, diff) in quorum_snapshot_list.into_iter().zip(mn_list_diff_list.into_iter())
@@ -462,25 +422,58 @@ impl MasternodeListEngine {
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_3c.block_hash, quorum_snapshot_at_h_minus_3c);
         let mn_list_diff_at_h_minus_3c_block_hash = mn_list_diff_at_h_minus_3c.block_hash;
-        let sigm3 = self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?.ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(3, mn_list_diff_at_h_minus_3c_block_hash))?;
+        self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?.ok_or(
+            QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
+                3,
+                mn_list_diff_at_h_minus_3c_block_hash,
+            ),
+        )?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_2c.block_hash, quorum_snapshot_at_h_minus_2c);
         let mn_list_diff_at_h_minus_2c_block_hash = mn_list_diff_at_h_minus_2c.block_hash;
-        let sigm2 = self.apply_diff(mn_list_diff_at_h_minus_2c, None, false, None)?.ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(2, mn_list_diff_at_h_minus_2c_block_hash))?;
+        let sigm2 = self.apply_diff(mn_list_diff_at_h_minus_2c, None, false, None)?.ok_or(
+            QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
+                2,
+                mn_list_diff_at_h_minus_2c_block_hash,
+            ),
+        )?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_c.block_hash, quorum_snapshot_at_h_minus_c);
         let mn_list_diff_at_h_minus_c_block_hash = mn_list_diff_at_h_minus_c.block_hash;
-        let sigm1 = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?.ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(1, mn_list_diff_at_h_minus_c_block_hash))?;
+        let sigm1 = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?.ok_or(
+            QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
+                1,
+                mn_list_diff_at_h_minus_c_block_hash,
+            ),
+        )?;
         let mn_list_diff_at_h_block_hash = mn_list_diff_h.block_hash;
-        let sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?.ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(0, mn_list_diff_at_h_block_hash))?;
+        let sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?.ok_or(
+            QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
+                0,
+                mn_list_diff_at_h_block_hash,
+            ),
+        )?;
         let mn_list_diff_tip_block_hash = mn_list_diff_tip.block_hash;
-        let sigmtip = self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, Some([sigm2, sigm1, sigm0]))?.ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(0, mn_list_diff_tip_block_hash))?;
+        let sigmtip = self
+            .apply_diff(
+                mn_list_diff_tip,
+                None,
+                verify_tip_non_rotated_quorums,
+                Some([sigm2, sigm1, sigm0]),
+            )?
+            .ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
+                0,
+                mn_list_diff_tip_block_hash,
+            ))?;
 
         let qualified_last_commitment_per_index = last_commitment_per_index
             .into_iter()
             .map(|quorum_entry| {
                 let mut qualified_quorum_entry: QualifiedQuorumEntry = quorum_entry.into();
-                qualified_quorum_entry.verifying_chain_lock_signature = Some(VerifyingChainLockSignaturesType::Rotating([sigm2, sigm1, sigm0, sigmtip]));
+                qualified_quorum_entry.verifying_chain_lock_signature =
+                    Some(VerifyingChainLockSignaturesType::Rotating([
+                        sigm2, sigm1, sigm0, sigmtip,
+                    ]));
                 qualified_quorum_entry
             })
             .collect::<Vec<QualifiedQuorumEntry>>();
@@ -657,7 +650,7 @@ impl MasternodeListEngine {
         masternode_list_diff: MnListDiff,
         diff_end_height: Option<CoreBlockHeight>,
         verify_quorums: bool,
-        previous_chain_lock_sigs: Option<[BLSSignature;3]>,
+        previous_chain_lock_sigs: Option<[BLSSignature; 3]>,
     ) -> Result<Option<BLSSignature>, SmlError> {
         if let Some(known_genesis_block_hash) = self
             .network
@@ -711,11 +704,13 @@ impl MasternodeListEngine {
             Some(diff_end_height) => diff_end_height,
         };
 
-
         #[cfg(feature = "quorum_validation")]
         let rotation_sig = {
-            let (mut masternode_list, rotation_sig) =
-                base_masternode_list.apply_diff(masternode_list_diff.clone(), diff_end_height, previous_chain_lock_sigs)?;
+            let (mut masternode_list, rotation_sig) = base_masternode_list.apply_diff(
+                masternode_list_diff.clone(),
+                diff_end_height,
+                previous_chain_lock_sigs,
+            )?;
             if verify_quorums {
                 // We should go through all quorums of the masternode list to update those that were not yet verified
                 for (quorum_type, quorums) in masternode_list.quorums.iter_mut() {
@@ -928,26 +923,6 @@ impl MasternodeListEngine {
     }
 }
 
-/// Helper function to print useful debug information about MnListDiff
-fn print_diff_info(label: &str, diff: &MnListDiff) {
-    println!("MnListDiff ({}) info:", label);
-    println!("  Block Hash: {}", diff.block_hash);
-    println!("  Base Block Hash: {}", diff.base_block_hash);
-    println!("  Total Transactions: {}", diff.total_transactions);
-    println!("  Deleted Masternodes: {}", diff.deleted_masternodes.len());
-    println!("  New Masternodes: {}", diff.new_masternodes.len());
-    println!("  Deleted Quorums: {}", diff.deleted_quorums.len());
-    println!("  New Quorums: {}", diff.new_quorums.len());
-    println!("  ChainLock Signatures: {}", diff.quorums_chainlock_signatures.len());
-
-    for (i, clsig) in diff.quorums_chainlock_signatures.iter().enumerate() {
-        println!(
-            "    ChainLock Signature [{}]: Block Hash: {:?}, Signature: {:?}",
-            i, clsig.index_set, clsig.signature
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::consensus::deserialize;
@@ -956,17 +931,19 @@ mod tests {
     use crate::prelude::CoreBlockHeight;
     use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
     use crate::sml::llmq_type::LLMQType;
-    use crate::sml::llmq_type::LLMQType::{Llmqtype400_60, Llmqtype400_85, Llmqtype50_60, Llmqtype60_75};
+    use crate::sml::llmq_type::LLMQType::{
+        Llmqtype400_60, Llmqtype400_85, Llmqtype50_60, Llmqtype60_75,
+    };
     use crate::sml::masternode_list::MasternodeList;
     use crate::sml::masternode_list_engine::BLSSignature;
     use crate::sml::masternode_list_engine::{
         MasternodeListEngine, MasternodeListEngineBlockContainer,
     };
+    use crate::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
     use crate::sml::quorum_validation_error::ClientDataRetrievalError;
     use crate::BlockHash;
     use crate::Network;
     use std::collections::BTreeMap;
-    use crate::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
 
     fn verify_masternode_list_quorums(
         mn_list_engine: &MasternodeListEngine,
@@ -974,8 +951,7 @@ mod tests {
         exclude_quorum_types: &[LLMQType],
     ) {
         for (quorum_type, quorum_entries) in masternode_list.quorums.iter() {
-            if exclude_quorum_types.contains(quorum_type)
-            {
+            if exclude_quorum_types.contains(quorum_type) {
                 continue;
             }
             for (quorum_hash, quorum) in quorum_entries.iter() {
@@ -1068,7 +1044,9 @@ mod tests {
 
         for (quorum_hash, quorum) in quorums {
             let quorum_hash_hex = format!("{:x}", quorum_hash);
-            let Some(VerifyingChainLockSignaturesType::NonRotating(actual_signature)) = quorum.verifying_chain_lock_signature else {
+            let Some(VerifyingChainLockSignaturesType::NonRotating(actual_signature)) =
+                quorum.verifying_chain_lock_signature
+            else {
                 panic!("expected non rotating");
             };
 
@@ -1134,7 +1112,6 @@ mod tests {
                 true,
                 true,
                 None,
-                None
             )
             .expect("expected to feed_qr_info");
 
@@ -1145,7 +1122,7 @@ mod tests {
                 .last_key_value()
                 .expect("expected a last master node list")
                 .1,
-            &[Llmqtype400_85, Llmqtype50_60, Llmqtype400_60]
+            &[Llmqtype400_85, Llmqtype50_60, Llmqtype400_60],
         );
     }
 
@@ -1180,7 +1157,7 @@ mod tests {
                 .last_key_value()
                 .expect("expected a last master node list")
                 .1,
-            &[Llmqtype400_85, Llmqtype50_60, Llmqtype400_60, Llmqtype60_75]
+            &[Llmqtype400_85, Llmqtype50_60, Llmqtype400_60, Llmqtype60_75],
         );
     }
 
@@ -1216,57 +1193,9 @@ mod tests {
                 .last_key_value()
                 .expect("expected a last master node list")
                 .1,
-            &[Llmqtype400_85, Llmqtype50_60, Llmqtype400_60, Llmqtype60_75]
+            &[Llmqtype400_85, Llmqtype50_60, Llmqtype400_60, Llmqtype60_75],
         );
     }
-
-    // These are no longer needed and would slow down the CI, however we keep them here in case we would ever need to debug
-    // an issue.
-    //
-    // #[test]
-    // fn deserialize_mn_list_engine_and_validate_single_quorum_all_signed_all_members_valid() {
-    //     let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-    //     let data = hex::decode(block_hex).expect("decode hex");
-    //     let mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
-    //
-    //     let last_masternode_list_height = *mn_list_engine.masternode_lists.last_key_value().unwrap().0;
-    //
-    //     let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
-    //
-    //     let quorum = last_masternode_list.quorum_entry_of_type_for_quorum_hash(Llmqtype100_67, QuorumHash::from_str("000000000000001d4ebc43dbf9b25d2af6421641a84a1e04dd58f65d07b7ecf7").expect("expected to get quorum hash")).expect("expected to find quorum");
-    //
-    //     assert_eq!(mn_list_engine.validate_quorum(quorum), Ok(()));
-    // }
-    //
-    // #[test]
-    // fn deserialize_mn_list_engine_and_validate_single_quorum_one_didnt_sign_all_members_valid() {
-    //     let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-    //     let data = hex::decode(block_hex).expect("decode hex");
-    //     let mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
-    //
-    //     let last_masternode_list_height = *mn_list_engine.masternode_lists.last_key_value().unwrap().0;
-    //
-    //     let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
-    //
-    //     let quorum = last_masternode_list.quorum_entry_of_type_for_quorum_hash(Llmqtype100_67, QuorumHash::from_str("0000000000000003e463cb405c672f2daaacf461fe733c33d5de8298ae6040a2").expect("expected to get quorum hash")).expect("expected to find quorum");
-    //
-    //     assert_eq!(mn_list_engine.validate_quorum(quorum), Ok(()));
-    // }
-    //
-    // #[test]
-    // fn deserialize_mn_list_engine_and_validate_single_quorum_one_didnt_sign_one_member_not_valid_valid() {
-    //     let block_hex = include_str!("../../../tests/data/test_DML_diffs/masternode_list_engine.hex");
-    //     let data = hex::decode(block_hex).expect("decode hex");
-    //     let mn_list_engine: MasternodeListEngine = bincode::decode_from_slice(&data, bincode::config::standard()).expect("expected to decode").0;
-    //
-    //     let last_masternode_list_height = *mn_list_engine.masternode_lists.last_key_value().unwrap().0;
-    //
-    //     let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
-    //
-    //     let quorum = last_masternode_list.quorum_entry_of_type_for_quorum_hash(Llmqtype100_67, QuorumHash::from_str("0000000000000009d64e57a20b56af7fe8cf8cdff1eea78fdf30ef8429c35d43").expect("expected to get quorum hash")).expect("expected to find quorum");
-    //
-    //     assert_eq!(mn_list_engine.validate_quorum(quorum), Ok(()));
-    // }
 
     #[test]
     fn deserialize_mn_list_engine_and_validate_rotated_quorums_individually() {
