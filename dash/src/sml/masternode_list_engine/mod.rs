@@ -473,13 +473,14 @@ impl MasternodeListEngine {
         let sigm1 = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?.ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(1, mn_list_diff_at_h_minus_c_block_hash))?;
         let mn_list_diff_at_h_block_hash = mn_list_diff_h.block_hash;
         let sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?.ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(0, mn_list_diff_at_h_block_hash))?;
-        self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, Some([sigm2, sigm1, sigm0]))?;
+        let mn_list_diff_tip_block_hash = mn_list_diff_tip.block_hash;
+        let sigmtip = self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, Some([sigm2, sigm1, sigm0]))?.ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(0, mn_list_diff_tip_block_hash))?;
 
         let qualified_last_commitment_per_index = last_commitment_per_index
             .into_iter()
             .map(|quorum_entry| {
                 let mut qualified_quorum_entry: QualifiedQuorumEntry = quorum_entry.into();
-                qualified_quorum_entry.verifying_chain_lock_signature = Some(VerifyingChainLockSignaturesType::Rotating([sigm3, sigm2, sigm1, sigm0]));
+                qualified_quorum_entry.verifying_chain_lock_signature = Some(VerifyingChainLockSignaturesType::Rotating([sigm2, sigm1, sigm0, sigmtip]));
                 qualified_quorum_entry
             })
             .collect::<Vec<QualifiedQuorumEntry>>();
