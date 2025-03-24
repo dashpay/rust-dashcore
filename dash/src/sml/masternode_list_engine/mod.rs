@@ -473,7 +473,7 @@ impl MasternodeListEngine {
         let sigm1 = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?.ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(1, mn_list_diff_at_h_minus_c_block_hash))?;
         let mn_list_diff_at_h_block_hash = mn_list_diff_h.block_hash;
         let sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?.ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(0, mn_list_diff_at_h_block_hash))?;
-        self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, Some([sigm3, sigm2, sigm1]))?;
+        self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, Some([sigm2, sigm1, sigm0]))?;
 
         let qualified_last_commitment_per_index = last_commitment_per_index
             .into_iter()
