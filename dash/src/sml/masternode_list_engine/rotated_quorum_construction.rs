@@ -1,4 +1,5 @@
 use crate::bls_sig_utils::BLSSignature;
+use std::collections::{BTreeMap, BTreeSet};
 use crate::hash_types::QuorumModifierHash;
 use crate::network::message_qrinfo::{MNSkipListMode, QRInfo};
 use crate::prelude::CoreBlockHeight;
@@ -13,7 +14,6 @@ use crate::sml::quorum_entry::qualified_quorum_entry::{
 use crate::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 use crate::QuorumHash;
-use std::collections::{BTreeMap, BTreeSet};
 
 impl MasternodeListEngine {
     /// Determines which masternodes are responsible for signing at the given quorum index.
