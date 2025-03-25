@@ -376,7 +376,7 @@ impl MasternodeListEngine {
         Ok(())
     }
 
-    pub fn feed_qr_info<FH, FS>(
+    pub fn feed_qr_info<FH>(
         &mut self,
         qr_info: QRInfo,
         verify_tip_non_rotated_quorums: bool,
