@@ -20,7 +20,7 @@ use core::ops::Index;
 use core::slice::SliceIndex;
 use core::{cmp, str};
 
-use crate::{Error, HashEngine as _, hex, sha256d};
+use crate::{hex, sha256d, Error, HashEngine as _};
 
 crate::internal_macros::hash_type! {
     256,
@@ -104,7 +104,9 @@ impl crate::HashEngine for HashEngine {
 
     const BLOCK_SIZE: usize = 64;
 
-    fn n_bytes_hashed(&self) -> usize { self.length }
+    fn n_bytes_hashed(&self) -> usize {
+        self.length
+    }
 
     engine_input_impl!();
 }
@@ -118,7 +120,9 @@ impl Hash {
     /// Computes hash from `bytes` in `const` context.
     ///
     /// Warning: this function is inefficient. It should be only used in `const` context.
-    pub const fn const_hash(bytes: &[u8]) -> Self { Hash(Midstate::const_hash(bytes, true).0) }
+    pub const fn const_hash(bytes: &[u8]) -> Self {
+        Hash(Midstate::const_hash(bytes, true).0)
+    }
 }
 
 /// Output of the SHA256 hash function.
@@ -133,12 +137,16 @@ impl<I: SliceIndex<[u8]>> Index<I> for Midstate {
     type Output = I::Output;
 
     #[inline]
-    fn index(&self, index: I) -> &Self::Output { &self.0[index] }
+    fn index(&self, index: I) -> &Self::Output {
+        &self.0[index]
+    }
 }
 
 impl str::FromStr for Midstate {
     type Err = hex::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> { hex::FromHex::from_hex(s) }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        hex::FromHex::from_hex(s)
+    }
 }
 
 impl Midstate {
@@ -151,7 +159,9 @@ impl Midstate {
     const DISPLAY_BACKWARD: bool = true;
 
     /// Construct a new [`Midstate`] from the inner value.
-    pub const fn from_byte_array(inner: [u8; 32]) -> Self { Midstate(inner) }
+    pub const fn from_byte_array(inner: [u8; 32]) -> Self {
+        Midstate(inner)
+    }
 
     /// Copies a byte slice into the [`Midstate`] object.
     pub fn from_slice(sl: &[u8]) -> Result<Midstate, Error> {
@@ -165,7 +175,9 @@ impl Midstate {
     }
 
     /// Unwraps the [`Midstate`] and returns the underlying byte array.
-    pub fn to_byte_array(self) -> [u8; 32] { self.0 }
+    pub fn to_byte_array(self) -> [u8; 32] {
+        self.0
+    }
 
     /// Creates midstate for tagged hashes.
     ///
@@ -399,7 +411,11 @@ impl HashEngine {
             *ret_val = u32::from_be_bytes(midstate_bytes.try_into().expect("4 byte slice"));
         }
 
-        HashEngine { buffer: [0; BLOCK_SIZE], h: ret, length }
+        HashEngine {
+            buffer: [0; BLOCK_SIZE],
+            h: ret,
+            length,
+        }
     }
 
     // Algorithm copied from libsecp256k1
@@ -500,12 +516,14 @@ impl HashEngine {
 }
 
 impl secp256k1::ThirtyTwoByteHash for Hash {
-    fn into_32(self) -> [u8; 32] { self.0 }
+    fn into_32(self) -> [u8; 32] {
+        self.0
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{Hash, HashEngine, sha256};
+    use crate::{sha256, Hash, HashEngine};
 
     #[test]
     #[cfg(feature = "alloc")]
@@ -682,7 +700,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn sha256_serde() {
-        use serde_test::{Configure, Token, assert_tokens};
+        use serde_test::{assert_tokens, Configure, Token};
 
         #[rustfmt::skip]
         static HASH_BYTES: [u8; 32] = [
@@ -718,7 +736,7 @@ mod tests {
 mod benches {
     use test::Bencher;
 
-    use crate::{Hash, HashEngine, sha256};
+    use crate::{sha256, Hash, HashEngine};
 
     #[bench]
     pub fn sha256_10(bh: &mut Bencher) {

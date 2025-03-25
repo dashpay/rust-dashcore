@@ -61,7 +61,9 @@ macro_rules! impl_bytes_newtype {
         impl $t {
             /// Returns a reference the underlying bytes.
             #[inline]
-            pub fn as_bytes(&self) -> &[u8; $len] { &self.0 }
+            pub fn as_bytes(&self) -> &[u8; $len] {
+                &self.0
+            }
 
             /// Returns the underlying bytes.
             #[inline]
@@ -77,14 +79,14 @@ macro_rules! impl_bytes_newtype {
 
         impl core::fmt::LowerHex for $t {
             fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-                use internals::hex::{Case, display};
+                use internals::hex::{display, Case};
                 display::fmt_hex_exact!(f, $len, &self.0, Case::Lower)
             }
         }
 
         impl core::fmt::UpperHex for $t {
             fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-                use internals::hex::{Case, display};
+                use internals::hex::{display, Case};
                 display::fmt_hex_exact!(f, $len, &self.0, Case::Upper)
             }
         }

@@ -20,8 +20,8 @@ use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
-use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
+use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::{ClientDataRetrievalError, QuorumValidationError};
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
@@ -64,7 +64,12 @@ impl Default for MasternodeListEngine {
 }
 
 impl MasternodeListEngine {
-    pub fn default_for_network(network: Network) -> Self { Self { network, ..Default::default() } }
+    pub fn default_for_network(network: Network) -> Self {
+        Self {
+            network,
+            ..Default::default()
+        }
+    }
     pub fn initialize_with_diff_to_height(
         masternode_list_diff: MnListDiff,
         block_height: CoreBlockHeight,
@@ -815,7 +820,7 @@ impl MasternodeListEngine {
 mod tests {
     use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
     use crate::sml::llmq_type::LLMQType;
-    use crate::sml::llmq_type::LLMQType::{Llmqtype50_60, Llmqtype400_60, Llmqtype400_85};
+    use crate::sml::llmq_type::LLMQType::{Llmqtype400_60, Llmqtype400_85, Llmqtype50_60};
     use crate::sml::masternode_list_engine::MasternodeListEngine;
 
     #[test]

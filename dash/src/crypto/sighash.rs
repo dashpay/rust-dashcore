@@ -14,18 +14,18 @@
 use core::borrow::{Borrow, BorrowMut};
 use core::{fmt, str};
 
-use hashes::{Hash, hash_newtype, sha256, sha256d, sha256t_hash_newtype};
+use hashes::{hash_newtype, sha256, sha256d, sha256t_hash_newtype, Hash};
 
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::transaction::{EncodeSigningDataResult, Transaction};
 use crate::blockdata::witness::Witness;
-use crate::consensus::{Encodable, encode};
+use crate::consensus::{encode, Encodable};
 use crate::error::impl_std_error;
 use crate::io;
 use crate::prelude::*;
 use crate::script::{Script, ScriptBuf};
-use crate::taproot::{LeafVersion, TAPROOT_ANNEX_PREFIX, TapLeafHash};
+use crate::taproot::{LeafVersion, TapLeafHash, TAPROOT_ANNEX_PREFIX};
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.
 #[rustfmt::skip]
@@ -39,7 +39,9 @@ pub(crate) const UINT256_ONE: [u8; 32] = [
 macro_rules! impl_thirty_two_byte_hash {
     ($ty:ident) => {
         impl secp256k1::ThirtyTwoByteHash for $ty {
-            fn into_32(self) -> [u8; 32] { self.to_byte_array() }
+            fn into_32(self) -> [u8; 32] {
+                self.to_byte_array()
+            }
         }
     };
 }
@@ -196,7 +198,9 @@ impl str::FromStr for TapSighashType {
             "SIGHASH_ALL|SIGHASH_ANYONECANPAY" => Ok(AllPlusAnyoneCanPay),
             "SIGHASH_NONE|SIGHASH_ANYONECANPAY" => Ok(NonePlusAnyoneCanPay),
             "SIGHASH_SINGLE|SIGHASH_ANYONECANPAY" => Ok(SinglePlusAnyoneCanPay),
-            _ => Err(SighashTypeParseError { unrecognized: s.to_owned() }),
+            _ => Err(SighashTypeParseError {
+                unrecognized: s.to_owned(),
+            }),
         }
     }
 }
@@ -290,8 +294,12 @@ impl std::error::Error for Error {
 
         match self {
             Io(_)
-            | IndexOutOfInputsBounds { .. }
-            | SingleWithoutCorrespondingOutput { .. }
+            | IndexOutOfInputsBounds {
+                ..
+            }
+            | SingleWithoutCorrespondingOutput {
+                ..
+            }
             | PrevoutsSize
             | PrevoutIndex
             | PrevoutKind
@@ -323,14 +331,16 @@ where
 
     fn get(&self, input_index: usize) -> Result<&TxOut, Error> {
         match self {
-            Prevouts::One(index, prevout) =>
+            Prevouts::One(index, prevout) => {
                 if input_index == *index {
                     Ok(prevout.borrow())
                 } else {
                     Err(Error::PrevoutIndex)
-                },
-            Prevouts::All(prevouts) =>
-                prevouts.get(input_index).map(|x| x.borrow()).ok_or(Error::PrevoutIndex),
+                }
+            }
+            Prevouts::All(prevouts) => {
+                prevouts.get(input_index).map(|x| x.borrow()).ok_or(Error::PrevoutIndex)
+            }
         }
     }
 }
@@ -338,10 +348,15 @@ where
 impl<'s> ScriptPath<'s> {
     /// Creates a new `ScriptPath` structure.
     pub fn new(script: &'s Script, leaf_version: LeafVersion) -> Self {
-        ScriptPath { script, leaf_version }
+        ScriptPath {
+            script,
+            leaf_version,
+        }
     }
     /// Creates a new `ScriptPath` structure using default leaf version value.
-    pub fn with_defaults(script: &'s Script) -> Self { Self::new(script, LeafVersion::TapScript) }
+    pub fn with_defaults(script: &'s Script) -> Self {
+        Self::new(script, LeafVersion::TapScript)
+    }
     /// Computes the leaf hash for this `ScriptPath`.
     pub fn leaf_hash(&self) -> TapLeafHash {
         let mut enc = TapLeafHash::engine();
@@ -357,7 +372,9 @@ impl<'s> ScriptPath<'s> {
 }
 
 impl<'s> From<ScriptPath<'s>> for TapLeafHash {
-    fn from(script_path: ScriptPath<'s>) -> TapLeafHash { script_path.leaf_hash() }
+    fn from(script_path: ScriptPath<'s>) -> TapLeafHash {
+        script_path.leaf_hash()
+    }
 }
 
 /// Hashtype of an input's signature, encoded in the last byte of the signature.
@@ -414,7 +431,9 @@ impl str::FromStr for EcdsaSighashType {
             "SIGHASH_ALL|SIGHASH_ANYONECANPAY" => Ok(AllPlusAnyoneCanPay),
             "SIGHASH_NONE|SIGHASH_ANYONECANPAY" => Ok(NonePlusAnyoneCanPay),
             "SIGHASH_SINGLE|SIGHASH_ANYONECANPAY" => Ok(SinglePlusAnyoneCanPay),
-            _ => Err(SighashTypeParseError { unrecognized: s.to_owned() }),
+            _ => Err(SighashTypeParseError {
+                unrecognized: s.to_owned(),
+            }),
         }
     }
 }
@@ -488,7 +507,9 @@ impl EcdsaSighashType {
     /// Converts [`EcdsaSighashType`] to a `u32` sighash flag.
     ///
     /// The returned value is guaranteed to be a valid according to standardness rules.
-    pub fn to_u32(self) -> u32 { self as u32 }
+    pub fn to_u32(self) -> u32 {
+        self as u32
+    }
 }
 
 impl From<EcdsaSighashType> for TapSighashType {
@@ -576,14 +597,23 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
     /// sighashes to be valid, no fields in the transaction may change except for script_sig and
     /// witness.
     pub fn new(tx: R) -> Self {
-        SighashCache { tx, common_cache: None, taproot_cache: None, segwit_cache: None }
+        SighashCache {
+            tx,
+            common_cache: None,
+            taproot_cache: None,
+            segwit_cache: None,
+        }
     }
 
     /// Returns the reference to the cached transaction.
-    pub fn transaction(&self) -> &Transaction { self.tx.borrow() }
+    pub fn transaction(&self) -> &Transaction {
+        self.tx.borrow()
+    }
 
     /// Destroys the cache and recovers the stored transaction.
-    pub fn into_transaction(self) -> R { self.tx }
+    pub fn into_transaction(self) -> R {
+        self.tx
+    }
 
     /// Encodes the BIP341 signing data for any flag type into a given object implementing a
     /// [`io::Write`] trait.
@@ -963,11 +993,13 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
                         .iter()
                         .take(input_index + 1) // sign all outputs up to and including this one, but erase
                         .enumerate() // all of them except for this one
-                        .map(
-                            |(n, out)| {
-                                if n == input_index { out.clone() } else { TxOut::default() }
-                            },
-                        );
+                        .map(|(n, out)| {
+                            if n == input_index {
+                                out.clone()
+                            } else {
+                                TxOut::default()
+                            }
+                        });
                     output_iter.collect()
                 }
                 EcdsaSighashType::None => vec![],
@@ -1112,7 +1144,9 @@ impl<R: BorrowMut<Transaction>> SighashCache<R> {
 }
 
 impl From<io::Error> for Error {
-    fn from(e: io::Error) -> Self { Error::Io(e.kind()) }
+    fn from(e: io::Error) -> Self {
+        Error::Io(e.kind())
+    }
 }
 
 /// The `Annex` struct is a slice wrapper enforcing first byte is `0x50`.
@@ -1130,7 +1164,9 @@ impl<'a> Annex<'a> {
     }
 
     /// Returns the Annex bytes data (including first byte `0x50`).
-    pub fn as_bytes(&self) -> &[u8] { self.0 }
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0
+    }
 }
 
 impl<'a> Encodable for Annex<'a> {
@@ -1627,7 +1663,10 @@ mod tests {
             .given
             .utxos_spent
             .into_iter()
-            .map(|txo| TxOut { value: txo.value, script_pubkey: txo.script_pubkey })
+            .map(|txo| TxOut {
+                value: txo.value,
+                script_pubkey: txo.script_pubkey,
+            })
             .collect::<Vec<_>>();
 
         // Test intermediary

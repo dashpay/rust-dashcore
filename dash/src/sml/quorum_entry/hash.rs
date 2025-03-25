@@ -1,7 +1,7 @@
 use hashes::Hash;
 
-use crate::consensus::Encodable;
 use crate::consensus::encode::{write_compact_size, write_fixed_bitset};
+use crate::consensus::Encodable;
 use crate::hash_types::{QuorumCommitmentHash, QuorumEntryHash};
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 

@@ -36,7 +36,9 @@ pub struct Hmac<T: Hash>(T);
 
 impl<T: Hash + str::FromStr> str::FromStr for Hmac<T> {
     type Err = <T as str::FromStr>::Err;
-    fn from_str(s: &str) -> Result<Self, Self::Err> { Ok(Hmac(str::FromStr::from_str(s)?)) }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Hmac(str::FromStr::from_str(s)?))
+    }
 }
 
 /// Pair of underlying hash midstates which represent the current state of an `HmacEngine`.
@@ -55,7 +57,9 @@ pub struct HmacEngine<T: Hash> {
 }
 
 impl<T: Hash> Default for HmacEngine<T> {
-    fn default() -> Self { HmacEngine::new(&[]) }
+    fn default() -> Self {
+        HmacEngine::new(&[])
+    }
 }
 
 impl<T: Hash> HmacEngine<T> {
@@ -71,7 +75,10 @@ impl<T: Hash> HmacEngine<T> {
 
         let mut ipad = [0x36u8; 128];
         let mut opad = [0x5cu8; 128];
-        let mut ret = HmacEngine { iengine: <T as Hash>::engine(), oengine: <T as Hash>::engine() };
+        let mut ret = HmacEngine {
+            iengine: <T as Hash>::engine(),
+            oengine: <T as Hash>::engine(),
+        };
 
         if key.len() > T::Engine::BLOCK_SIZE {
             let hash = <T as Hash>::hash(key);
@@ -97,7 +104,10 @@ impl<T: Hash> HmacEngine<T> {
 
     /// A special constructor giving direct access to the underlying "inner" and "outer" engines.
     pub fn from_inner_engines(iengine: T::Engine, oengine: T::Engine) -> HmacEngine<T> {
-        HmacEngine { iengine, oengine }
+        HmacEngine {
+            iengine,
+            oengine,
+        }
     }
 }
 
@@ -105,55 +115,80 @@ impl<T: Hash> HashEngine for HmacEngine<T> {
     type MidState = HmacMidState<T>;
 
     fn midstate(&self) -> Self::MidState {
-        HmacMidState { inner: self.iengine.midstate(), outer: self.oengine.midstate() }
+        HmacMidState {
+            inner: self.iengine.midstate(),
+            outer: self.oengine.midstate(),
+        }
     }
 
     const BLOCK_SIZE: usize = T::Engine::BLOCK_SIZE;
 
-    fn n_bytes_hashed(&self) -> usize { self.iengine.n_bytes_hashed() }
+    fn n_bytes_hashed(&self) -> usize {
+        self.iengine.n_bytes_hashed()
+    }
 
-    fn input(&mut self, buf: &[u8]) { self.iengine.input(buf) }
+    fn input(&mut self, buf: &[u8]) {
+        self.iengine.input(buf)
+    }
 }
 
 impl<T: Hash> fmt::Debug for Hmac<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Debug::fmt(&self.0, f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
 }
 
 impl<T: Hash> fmt::Display for Hmac<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&self.0, f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
 }
 
 impl<T: Hash> fmt::LowerHex for Hmac<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::LowerHex::fmt(&self.0, f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
+    }
 }
 
 impl<T: Hash> ops::Index<usize> for Hmac<T> {
     type Output = u8;
-    fn index(&self, index: usize) -> &u8 { &self.0[index] }
+    fn index(&self, index: usize) -> &u8 {
+        &self.0[index]
+    }
 }
 
 impl<T: Hash> ops::Index<ops::Range<usize>> for Hmac<T> {
     type Output = [u8];
-    fn index(&self, index: ops::Range<usize>) -> &[u8] { &self.0[index] }
+    fn index(&self, index: ops::Range<usize>) -> &[u8] {
+        &self.0[index]
+    }
 }
 
 impl<T: Hash> ops::Index<ops::RangeFrom<usize>> for Hmac<T> {
     type Output = [u8];
-    fn index(&self, index: ops::RangeFrom<usize>) -> &[u8] { &self.0[index] }
+    fn index(&self, index: ops::RangeFrom<usize>) -> &[u8] {
+        &self.0[index]
+    }
 }
 
 impl<T: Hash> ops::Index<ops::RangeTo<usize>> for Hmac<T> {
     type Output = [u8];
-    fn index(&self, index: ops::RangeTo<usize>) -> &[u8] { &self.0[index] }
+    fn index(&self, index: ops::RangeTo<usize>) -> &[u8] {
+        &self.0[index]
+    }
 }
 
 impl<T: Hash> ops::Index<ops::RangeFull> for Hmac<T> {
     type Output = [u8];
-    fn index(&self, index: ops::RangeFull) -> &[u8] { &self.0[index] }
+    fn index(&self, index: ops::RangeFull) -> &[u8] {
+        &self.0[index]
+    }
 }
 
 impl<T: Hash> borrow::Borrow<[u8]> for Hmac<T> {
-    fn borrow(&self) -> &[u8] { &self[..] }
+    fn borrow(&self) -> &[u8] {
+        &self[..]
+    }
 }
 
 impl<T: Hash> Hash for Hmac<T> {
@@ -169,13 +204,21 @@ impl<T: Hash> Hash for Hmac<T> {
 
     const LEN: usize = T::LEN;
 
-    fn from_slice(sl: &[u8]) -> Result<Hmac<T>, Error> { T::from_slice(sl).map(Hmac) }
+    fn from_slice(sl: &[u8]) -> Result<Hmac<T>, Error> {
+        T::from_slice(sl).map(Hmac)
+    }
 
-    fn to_byte_array(self) -> Self::Bytes { self.0.to_byte_array() }
+    fn to_byte_array(self) -> Self::Bytes {
+        self.0.to_byte_array()
+    }
 
-    fn as_byte_array(&self) -> &Self::Bytes { self.0.as_byte_array() }
+    fn as_byte_array(&self) -> &Self::Bytes {
+        self.0.as_byte_array()
+    }
 
-    fn from_byte_array(bytes: T::Bytes) -> Self { Hmac(T::from_byte_array(bytes)) }
+    fn from_byte_array(bytes: T::Bytes) -> Self {
+        Hmac(T::from_byte_array(bytes))
+    }
 
     fn all_zeros() -> Self {
         let zeros = T::all_zeros();
@@ -203,7 +246,7 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn test() {
-        use crate::{Hash, HashEngine, Hmac, HmacEngine, sha256};
+        use crate::{sha256, Hash, HashEngine, Hmac, HmacEngine};
 
         #[derive(Clone)]
         struct Test {
@@ -329,9 +372,9 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn hmac_sha512_serde() {
-        use serde_test::{Configure, Token, assert_tokens};
+        use serde_test::{assert_tokens, Configure, Token};
 
-        use crate::{Hash, Hmac, sha512};
+        use crate::{sha512, Hash, Hmac};
 
         #[rustfmt::skip]
         static HASH_BYTES: [u8; 64] = [
@@ -361,7 +404,7 @@ mod tests {
 mod benches {
     use test::Bencher;
 
-    use crate::{Hash, HashEngine, Hmac, sha256};
+    use crate::{sha256, Hash, HashEngine, Hmac};
 
     #[bench]
     pub fn hmac_sha256_10(bh: &mut Bencher) {

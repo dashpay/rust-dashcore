@@ -1,17 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::QuorumHash;
 use crate::hash_types::QuorumModifierHash;
 use crate::network::message_qrinfo::{MNSkipListMode, QRInfo};
 use crate::prelude::CoreBlockHeight;
-use crate::sml::llmq_type::LLMQType;
 use crate::sml::llmq_type::rotation::{LLMQQuarterReconstructionType, LLMQQuarterUsageType};
+use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
+use crate::QuorumHash;
 
 impl MasternodeListEngine {
     /// Determines which masternodes are responsible for signing at the given quorum index.
@@ -278,7 +278,9 @@ impl MasternodeListEngine {
         // println!("work block height is {}", work_block_height);
         // println!("work block hash is {}", work_block_hash);
         match reconstruction_type {
-            LLMQQuarterReconstructionType::New { previous_quarters } => {
+            LLMQQuarterReconstructionType::New {
+                previous_quarters,
+            } => {
                 let (used_masternodes, unused_masternodes, used_indexed_masternodes) =
                     masternode_list.usage_info(previous_quarters, quorum_count);
                 Ok(Self::apply_skip_strategy_of_type(

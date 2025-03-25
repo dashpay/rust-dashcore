@@ -31,7 +31,7 @@ use core2::io;
 
 #[cfg(all(feature = "alloc", not(feature = "std")))]
 use crate::alloc::vec::Vec;
-use crate::{Error, HashEngine as _, hex};
+use crate::{hex, Error, HashEngine as _};
 
 crate::internal_macros::hash_type! {
     256,
@@ -41,7 +41,9 @@ crate::internal_macros::hash_type! {
 }
 
 /// Output of the X11 hash function
-fn from_engine(e: HashEngine) -> Hash { Hash(e.midstate().to_byte_array()) }
+fn from_engine(e: HashEngine) -> Hash {
+    Hash(e.midstate().to_byte_array())
+}
 
 /// A hashing engine of X11 algorithm, which bytes can be serialized into
 #[derive(Clone, Default)]
@@ -59,9 +61,13 @@ impl crate::HashEngine for HashEngine {
         Midstate(rs_x11_hash::get_x11_hash(self.buf.as_slice()))
     }
 
-    fn input(&mut self, data: &[u8]) { self.buf.extend_from_slice(data); }
+    fn input(&mut self, data: &[u8]) {
+        self.buf.extend_from_slice(data);
+    }
 
-    fn n_bytes_hashed(&self) -> usize { self.length }
+    fn n_bytes_hashed(&self) -> usize {
+        self.length
+    }
 }
 
 /// Output of the X11 hash function
@@ -76,12 +82,16 @@ impl<I: SliceIndex<[u8]>> Index<I> for Midstate {
     type Output = I::Output;
 
     #[inline]
-    fn index(&self, index: I) -> &Self::Output { &self.0[index] }
+    fn index(&self, index: I) -> &Self::Output {
+        &self.0[index]
+    }
 }
 
 impl str::FromStr for Midstate {
     type Err = hex::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> { hex::FromHex::from_hex(s) }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        hex::FromHex::from_hex(s)
+    }
 }
 
 impl Midstate {
@@ -94,7 +104,9 @@ impl Midstate {
     const DISPLAY_BACKWARD: bool = true;
 
     /// Construct a new [`Midstate`] from the inner value.
-    pub const fn from_byte_array(inner: [u8; 32]) -> Self { Midstate(inner) }
+    pub const fn from_byte_array(inner: [u8; 32]) -> Self {
+        Midstate(inner)
+    }
 
     /// Copies a byte slice into the [`Midstate`] object.
     pub fn from_slice(sl: &[u8]) -> Result<Midstate, Error> {
@@ -108,10 +120,14 @@ impl Midstate {
     }
 
     /// Unwraps the [`Midstate`] and returns the underlying byte array.
-    pub fn to_byte_array(self) -> [u8; 32] { self.0 }
+    pub fn to_byte_array(self) -> [u8; 32] {
+        self.0
+    }
 
     /// Unwraps the [Midstate] and returns the underlying byte array.
-    pub fn into_inner(self) -> [u8; 32] { self.0 }
+    pub fn into_inner(self) -> [u8; 32] {
+        self.0
+    }
 }
 
 impl hex::FromHex for Midstate {
@@ -129,5 +145,7 @@ impl io::Write for HashEngine {
         self.input(buf);
         Ok(buf.len())
     }
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }

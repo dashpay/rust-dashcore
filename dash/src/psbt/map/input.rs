@@ -9,15 +9,15 @@ use secp256k1::XOnlyPublicKey;
 
 use crate::bip32::KeySource;
 use crate::blockdata::script::ScriptBuf;
-use crate::blockdata::transaction::Transaction;
 use crate::blockdata::transaction::txout::TxOut;
+use crate::blockdata::transaction::Transaction;
 use crate::blockdata::witness::Witness;
 use crate::crypto::key::PublicKey;
 use crate::crypto::{ecdsa, taproot};
 use crate::prelude::*;
 use crate::psbt::map::Map;
 use crate::psbt::serialize::Deserialize;
-use crate::psbt::{self, Error, error, raw};
+use crate::psbt::{self, error, raw, Error};
 use crate::sighash::{
     self, EcdsaSighashType, NonStandardSighashType, SighashTypeParseError, TapSighashType,
 };
@@ -170,21 +170,29 @@ impl FromStr for PsbtSighashType {
 
         // We accept non-standard sighash values.
         if let Ok(inner) = u32::from_str_radix(s.trim_start_matches("0x"), 16) {
-            return Ok(PsbtSighashType { inner });
+            return Ok(PsbtSighashType {
+                inner,
+            });
         }
 
-        Err(SighashTypeParseError { unrecognized: s.to_owned() })
+        Err(SighashTypeParseError {
+            unrecognized: s.to_owned(),
+        })
     }
 }
 impl From<EcdsaSighashType> for PsbtSighashType {
     fn from(ecdsa_hash_ty: EcdsaSighashType) -> Self {
-        PsbtSighashType { inner: ecdsa_hash_ty as u32 }
+        PsbtSighashType {
+            inner: ecdsa_hash_ty as u32,
+        }
     }
 }
 
 impl From<TapSighashType> for PsbtSighashType {
     fn from(taproot_hash_ty: TapSighashType) -> Self {
-        PsbtSighashType { inner: taproot_hash_ty as u32 }
+        PsbtSighashType {
+            inner: taproot_hash_ty as u32,
+        }
     }
 }
 
@@ -209,12 +217,18 @@ impl PsbtSighashType {
     ///
     /// Allows construction of a non-standard or non-valid sighash flag
     /// ([`EcdsaSighashType`], [`TapSighashType`] respectively).
-    pub fn from_u32(n: u32) -> PsbtSighashType { PsbtSighashType { inner: n } }
+    pub fn from_u32(n: u32) -> PsbtSighashType {
+        PsbtSighashType {
+            inner: n,
+        }
+    }
 
     /// Converts [`PsbtSighashType`] to a raw `u32` sighash flag.
     ///
     /// No guarantees are made as to the standardness or validity of the returned value.
-    pub fn to_u32(self) -> u32 { self.inner }
+    pub fn to_u32(self) -> u32 {
+        self.inner
+    }
 }
 
 impl Input {
@@ -243,7 +257,10 @@ impl Input {
     }
 
     pub(super) fn insert_pair(&mut self, pair: raw::Pair) -> Result<(), Error> {
-        let raw::Pair { key: raw_key, value: raw_value } = pair;
+        let raw::Pair {
+            key: raw_key,
+            value: raw_value,
+        } = pair;
 
         match raw_key.type_value {
             PSBT_IN_NON_WITNESS_UTXO => {
@@ -484,11 +501,17 @@ impl Map for Input {
             rv.push(self.tap_merkle_root, PSBT_IN_TAP_MERKLE_ROOT)
         }
         for (key, value) in self.proprietary.iter() {
-            rv.push(raw::Pair { key: key.to_key(), value: value.clone() });
+            rv.push(raw::Pair {
+                key: key.to_key(),
+                value: value.clone(),
+            });
         }
 
         for (key, value) in self.unknown.iter() {
-            rv.push(raw::Pair { key: key.clone(), value: value.clone() });
+            rv.push(raw::Pair {
+                key: key.clone(),
+                value: value.clone(),
+            });
         }
 
         rv
@@ -571,7 +594,9 @@ mod test {
     #[test]
     fn psbt_sighash_type_notstd() {
         let nonstd = 0xdddddddd;
-        let sighash = PsbtSighashType { inner: nonstd };
+        let sighash = PsbtSighashType {
+            inner: nonstd,
+        };
         let s = format!("{}", sighash);
         let back = PsbtSighashType::from_str(&s).unwrap();
 

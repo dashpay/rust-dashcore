@@ -28,7 +28,7 @@ use core::str::FromStr;
 #[cfg(feature = "std")]
 use std::error;
 
-use hashes::{Hash, HashEngine, Hmac, HmacEngine, hex as hashesHex, sha512};
+use hashes::{hex as hashesHex, sha512, Hash, HashEngine, Hmac, HmacEngine};
 use internals::impl_array_newtype;
 use secp256k1::{self, Secp256k1, XOnlyPublicKey};
 #[cfg(feature = "serde")]
@@ -153,7 +153,9 @@ impl ChildNumber {
     /// [`Normal`]: #variant.Normal
     pub fn from_normal_idx(index: u32) -> Result<Self, Error> {
         if index & (1 << 31) == 0 {
-            Ok(ChildNumber::Normal { index })
+            Ok(ChildNumber::Normal {
+                index,
+            })
         } else {
             Err(Error::InvalidChildNumber(index))
         }
@@ -165,59 +167,95 @@ impl ChildNumber {
     /// [`Hardened`]: #variant.Hardened
     pub fn from_hardened_idx(index: u32) -> Result<Self, Error> {
         if index & (1 << 31) == 0 {
-            Ok(ChildNumber::Hardened { index })
+            Ok(ChildNumber::Hardened {
+                index,
+            })
         } else {
             Err(Error::InvalidChildNumber(index))
         }
     }
 
     /// Create a non-hardened `ChildNumber` from a 256-bit index.
-    pub fn from_normal_idx_256(index: [u8; 32]) -> ChildNumber { ChildNumber::Normal256 { index } }
+    pub fn from_normal_idx_256(index: [u8; 32]) -> ChildNumber {
+        ChildNumber::Normal256 {
+            index,
+        }
+    }
 
     /// Create a hardened `ChildNumber` from a 256-bit index.
     pub fn from_hardened_idx_256(index: [u8; 32]) -> ChildNumber {
-        ChildNumber::Hardened256 { index }
+        ChildNumber::Hardened256 {
+            index,
+        }
     }
 
     /// Returns `true` if the child number is a [`Normal`] value.
     ///
     /// [`Normal`]: #variant.Normal
-    pub fn is_normal(&self) -> bool { !self.is_hardened() }
+    pub fn is_normal(&self) -> bool {
+        !self.is_hardened()
+    }
 
     /// Returns `true` if the child number is a [`Hardened`] value.
     ///
     /// [`Hardened`]: #variant.Hardened
     pub fn is_hardened(&self) -> bool {
         match self {
-            ChildNumber::Hardened { .. } => true,
-            ChildNumber::Normal { .. } => false,
-            ChildNumber::Normal256 { .. } => false,
-            ChildNumber::Hardened256 { .. } => true,
+            ChildNumber::Hardened {
+                ..
+            } => true,
+            ChildNumber::Normal {
+                ..
+            } => false,
+            ChildNumber::Normal256 {
+                ..
+            } => false,
+            ChildNumber::Hardened256 {
+                ..
+            } => true,
         }
     }
 
     /// Returns `true` if the child number is a 256 bit value.
     pub fn is_256_bits(&self) -> bool {
         match self {
-            ChildNumber::Hardened { .. } => false,
-            ChildNumber::Normal { .. } => false,
-            ChildNumber::Normal256 { .. } => true,
-            ChildNumber::Hardened256 { .. } => true,
+            ChildNumber::Hardened {
+                ..
+            } => false,
+            ChildNumber::Normal {
+                ..
+            } => false,
+            ChildNumber::Normal256 {
+                ..
+            } => true,
+            ChildNumber::Hardened256 {
+                ..
+            } => true,
         }
     }
 
     /// Returns the child number that is a single increment from this one.
     pub fn increment(self) -> Result<ChildNumber, Error> {
         match self {
-            ChildNumber::Normal { index: idx } => ChildNumber::from_normal_idx(idx + 1),
-            ChildNumber::Hardened { index: idx } => ChildNumber::from_hardened_idx(idx + 1),
-            ChildNumber::Normal256 { mut index } => {
+            ChildNumber::Normal {
+                index: idx,
+            } => ChildNumber::from_normal_idx(idx + 1),
+            ChildNumber::Hardened {
+                index: idx,
+            } => ChildNumber::from_hardened_idx(idx + 1),
+            ChildNumber::Normal256 {
+                mut index,
+            } => {
                 // Increment the 256-bit big-endian number represented by index
                 let mut carry = 1u8;
                 for byte in index.iter_mut().rev() {
                     let (new_byte, overflow) = byte.overflowing_add(carry);
                     *byte = new_byte;
-                    carry = if overflow { 1 } else { 0 };
+                    carry = if overflow {
+                        1
+                    } else {
+                        0
+                    };
                     if carry == 0 {
                         break;
                     }
@@ -226,15 +264,23 @@ impl ChildNumber {
                     // Overflow occurred
                     return Err(Error::InvalidChildNumber(0)); // Or define a suitable error
                 }
-                Ok(ChildNumber::Normal256 { index })
+                Ok(ChildNumber::Normal256 {
+                    index,
+                })
             }
-            ChildNumber::Hardened256 { mut index } => {
+            ChildNumber::Hardened256 {
+                mut index,
+            } => {
                 // Increment the 256-bit big-endian number represented by index
                 let mut carry = 1u8;
                 for byte in index.iter_mut().rev() {
                     let (new_byte, overflow) = byte.overflowing_add(carry);
                     *byte = new_byte;
-                    carry = if overflow { 1 } else { 0 };
+                    carry = if overflow {
+                        1
+                    } else {
+                        0
+                    };
                     if carry == 0 {
                         break;
                     }
@@ -243,7 +289,9 @@ impl ChildNumber {
                     // Overflow occurred
                     return Err(Error::InvalidChildNumber(0)); // Or define a suitable error
                 }
-                Ok(ChildNumber::Hardened256 { index })
+                Ok(ChildNumber::Hardened256 {
+                    index,
+                })
             }
         }
     }
@@ -252,9 +300,13 @@ impl ChildNumber {
 impl From<u32> for ChildNumber {
     fn from(number: u32) -> Self {
         if number & (1 << 31) != 0 {
-            ChildNumber::Hardened { index: number ^ (1 << 31) }
+            ChildNumber::Hardened {
+                index: number ^ (1 << 31),
+            }
         } else {
-            ChildNumber::Normal { index: number }
+            ChildNumber::Normal {
+                index: number,
+            }
         }
     }
 }
@@ -262,10 +314,18 @@ impl From<u32> for ChildNumber {
 impl From<ChildNumber> for u32 {
     fn from(cnum: ChildNumber) -> Self {
         match cnum {
-            ChildNumber::Normal { index } => index,
-            ChildNumber::Hardened { index } => index | (1 << 31),
-            ChildNumber::Normal256 { .. } => u32::MAX,
-            ChildNumber::Hardened256 { .. } => u32::MAX,
+            ChildNumber::Normal {
+                index,
+            } => index,
+            ChildNumber::Hardened {
+                index,
+            } => index | (1 << 31),
+            ChildNumber::Normal256 {
+                ..
+            } => u32::MAX,
+            ChildNumber::Hardened256 {
+                ..
+            } => u32::MAX,
         }
     }
 }
@@ -273,16 +333,37 @@ impl From<ChildNumber> for u32 {
 impl fmt::Display for ChildNumber {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            ChildNumber::Hardened { index } => {
+            ChildNumber::Hardened {
+                index,
+            } => {
                 fmt::Display::fmt(&index, f)?;
                 let alt = f.alternate();
-                f.write_str(if alt { "h" } else { "'" })
+                f.write_str(if alt {
+                    "h"
+                } else {
+                    "'"
+                })
             }
-            ChildNumber::Normal { index } => fmt::Display::fmt(&index, f),
-            ChildNumber::Hardened256 { index } => {
-                write!(f, "0x{}{}", hex::encode(index), if f.alternate() { "h" } else { "'" })
+            ChildNumber::Normal {
+                index,
+            } => fmt::Display::fmt(&index, f),
+            ChildNumber::Hardened256 {
+                index,
+            } => {
+                write!(
+                    f,
+                    "0x{}{}",
+                    hex::encode(index),
+                    if f.alternate() {
+                        "h"
+                    } else {
+                        "'"
+                    }
+                )
             }
-            ChildNumber::Normal256 { index } => {
+            ChildNumber::Normal256 {
+                index,
+            } => {
                 write!(f, "0x{}", hex::encode(index))
             }
         }
@@ -294,7 +375,11 @@ impl FromStr for ChildNumber {
 
     fn from_str(inp: &str) -> Result<ChildNumber, Error> {
         let is_hardened = inp.ends_with('\'') || inp.ends_with('h');
-        let index_str = if is_hardened { &inp[..inp.len() - 1] } else { inp };
+        let index_str = if is_hardened {
+            &inp[..inp.len() - 1]
+        } else {
+            inp
+        };
 
         if index_str.starts_with("0x") || index_str.starts_with("0X") {
             // Parse as a 256-bit hex number
@@ -306,9 +391,13 @@ impl FromStr for ChildNumber {
             let mut index_bytes = [0u8; 32];
             index_bytes[32 - hex_bytes.len()..].copy_from_slice(&hex_bytes);
             if is_hardened {
-                Ok(ChildNumber::Hardened256 { index: index_bytes })
+                Ok(ChildNumber::Hardened256 {
+                    index: index_bytes,
+                })
             } else {
-                Ok(ChildNumber::Normal256 { index: index_bytes })
+                Ok(ChildNumber::Normal256 {
+                    index: index_bytes,
+                })
             }
         } else {
             // Parse as a u32 number
@@ -376,7 +465,9 @@ impl DerivationPath {
             _ => DASH_BIP44_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.0.extend(&[ChildNumber::Hardened { index: account }]);
+        root_derivation_path.0.extend(&[ChildNumber::Hardened {
+            index: account,
+        }]);
         root_derivation_path
     }
     pub fn bip_44_payment_path(
@@ -391,9 +482,15 @@ impl DerivationPath {
         }
         .into();
         root_derivation_path.0.extend(&[
-            ChildNumber::Hardened { index: account },
-            ChildNumber::Normal { index: change.into() },
-            ChildNumber::Normal { index: address_index },
+            ChildNumber::Hardened {
+                index: account,
+            },
+            ChildNumber::Normal {
+                index: change.into(),
+            },
+            ChildNumber::Normal {
+                index: address_index,
+            },
         ]);
         root_derivation_path
     }
@@ -405,7 +502,9 @@ impl DerivationPath {
             _ => IDENTITY_REGISTRATION_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.0.extend(&[ChildNumber::Normal { index }]);
+        root_derivation_path.0.extend(&[ChildNumber::Normal {
+            index,
+        }]);
         root_derivation_path
     }
 
@@ -415,7 +514,9 @@ impl DerivationPath {
             _ => IDENTITY_REGISTRATION_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.0.extend(&[ChildNumber::Hardened { index }]);
+        root_derivation_path.0.extend(&[ChildNumber::Hardened {
+            index,
+        }]);
         root_derivation_path
     }
 
@@ -426,8 +527,12 @@ impl DerivationPath {
         }
         .into();
         root_derivation_path.0.extend(&[
-            ChildNumber::Hardened { index: identity_index },
-            ChildNumber::Normal { index: top_up_index },
+            ChildNumber::Hardened {
+                index: identity_index,
+            },
+            ChildNumber::Normal {
+                index: top_up_index,
+            },
         ]);
         root_derivation_path
     }
@@ -438,7 +543,9 @@ impl DerivationPath {
             _ => IDENTITY_INVITATION_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.0.extend(&[ChildNumber::Hardened { index }]);
+        root_derivation_path.0.extend(&[ChildNumber::Hardened {
+            index,
+        }]);
         root_derivation_path
     }
 
@@ -454,9 +561,15 @@ impl DerivationPath {
         }
         .into();
         root_derivation_path.0.extend(&[
-            ChildNumber::Hardened { index: key_type.into() },
-            ChildNumber::Hardened { index: identity_index },
-            ChildNumber::Hardened { index: key_index },
+            ChildNumber::Hardened {
+                index: key_type.into(),
+            },
+            ChildNumber::Hardened {
+                index: identity_index,
+            },
+            ChildNumber::Hardened {
+                index: key_index,
+            },
         ]);
         root_derivation_path
     }
@@ -492,38 +605,54 @@ where
     type Output = <Vec<ChildNumber> as Index<I>>::Output;
 
     #[inline]
-    fn index(&self, index: I) -> &Self::Output { &self.0[index] }
+    fn index(&self, index: I) -> &Self::Output {
+        &self.0[index]
+    }
 }
 
 impl Default for DerivationPath {
-    fn default() -> DerivationPath { DerivationPath::master() }
+    fn default() -> DerivationPath {
+        DerivationPath::master()
+    }
 }
 
 impl<T> IntoDerivationPath for T
 where
     T: Into<DerivationPath>,
 {
-    fn into_derivation_path(self) -> Result<DerivationPath, Error> { Ok(self.into()) }
+    fn into_derivation_path(self) -> Result<DerivationPath, Error> {
+        Ok(self.into())
+    }
 }
 
 impl IntoDerivationPath for String {
-    fn into_derivation_path(self) -> Result<DerivationPath, Error> { self.parse() }
+    fn into_derivation_path(self) -> Result<DerivationPath, Error> {
+        self.parse()
+    }
 }
 
 impl<'a> IntoDerivationPath for &'a str {
-    fn into_derivation_path(self) -> Result<DerivationPath, Error> { self.parse() }
+    fn into_derivation_path(self) -> Result<DerivationPath, Error> {
+        self.parse()
+    }
 }
 
 impl From<Vec<ChildNumber>> for DerivationPath {
-    fn from(numbers: Vec<ChildNumber>) -> Self { DerivationPath(numbers) }
+    fn from(numbers: Vec<ChildNumber>) -> Self {
+        DerivationPath(numbers)
+    }
 }
 
 impl From<DerivationPath> for Vec<ChildNumber> {
-    fn from(val: DerivationPath) -> Self { val.0 }
+    fn from(val: DerivationPath) -> Self {
+        val.0
+    }
 }
 
 impl<'a> From<&'a [ChildNumber]> for DerivationPath {
-    fn from(numbers: &'a [ChildNumber]) -> Self { DerivationPath(numbers.to_vec()) }
+    fn from(numbers: &'a [ChildNumber]) -> Self {
+        DerivationPath(numbers.to_vec())
+    }
 }
 
 impl ::core::iter::FromIterator<ChildNumber> for DerivationPath {
@@ -538,11 +667,15 @@ impl ::core::iter::FromIterator<ChildNumber> for DerivationPath {
 impl<'a> ::core::iter::IntoIterator for &'a DerivationPath {
     type Item = &'a ChildNumber;
     type IntoIter = slice::Iter<'a, ChildNumber>;
-    fn into_iter(self) -> Self::IntoIter { self.0.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
 }
 
 impl AsRef<[ChildNumber]> for DerivationPath {
-    fn as_ref(&self) -> &[ChildNumber] { &self.0 }
+    fn as_ref(&self) -> &[ChildNumber] {
+        &self.0
+    }
 }
 
 impl FromStr for DerivationPath {
@@ -572,7 +705,10 @@ pub struct DerivationPathIterator<'a> {
 impl<'a> DerivationPathIterator<'a> {
     /// Start a new [DerivationPathIterator] at the given child.
     pub fn start_from(path: &'a DerivationPath, start: ChildNumber) -> DerivationPathIterator<'a> {
-        DerivationPathIterator { base: path, next_child: Some(start) }
+        DerivationPathIterator {
+            base: path,
+            next_child: Some(start),
+        }
     }
 }
 
@@ -588,17 +724,25 @@ impl<'a> Iterator for DerivationPathIterator<'a> {
 
 impl DerivationPath {
     /// Returns length of the derivation path
-    pub fn len(&self) -> usize { self.0.len() }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 
     /// Returns `true` if the derivation path is empty
-    pub fn is_empty(&self) -> bool { self.0.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 
     /// Returns derivation path for a master key (i.e. empty derivation path)
-    pub fn master() -> DerivationPath { DerivationPath(vec![]) }
+    pub fn master() -> DerivationPath {
+        DerivationPath(vec![])
+    }
 
     /// Returns whether derivation path represents master key (i.e. it's length
     /// is empty). True for `m` path.
-    pub fn is_master(&self) -> bool { self.0.is_empty() }
+    pub fn is_master(&self) -> bool {
+        self.0.is_empty()
+    }
 
     /// Create a new [DerivationPath] that is a child of this one.
     pub fn child(&self, cn: ChildNumber) -> DerivationPath {
@@ -622,12 +766,22 @@ impl DerivationPath {
 
     /// Get an [Iterator] over the unhardened children of this [DerivationPath].
     pub fn normal_children(&self) -> DerivationPathIterator {
-        DerivationPathIterator::start_from(self, ChildNumber::Normal { index: 0 })
+        DerivationPathIterator::start_from(
+            self,
+            ChildNumber::Normal {
+                index: 0,
+            },
+        )
     }
 
     /// Get an [Iterator] over the hardened children of this [DerivationPath].
     pub fn hardened_children(&self) -> DerivationPathIterator {
-        DerivationPathIterator::start_from(self, ChildNumber::Hardened { index: 0 })
+        DerivationPathIterator::start_from(
+            self,
+            ChildNumber::Hardened {
+                index: 0,
+            },
+        )
     }
 
     /// Concatenate `self` with `path` and return the resulting new path.
@@ -665,7 +819,9 @@ impl fmt::Display for DerivationPath {
 }
 
 impl fmt::Debug for DerivationPath {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&self, f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self, f)
+    }
 }
 
 /// Full information on the used extended public key: fingerprint of the
@@ -708,8 +864,9 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::CannotDeriveFromHardenedKey =>
-                f.write_str("cannot derive hardened key from public key"),
+            Error::CannotDeriveFromHardenedKey => {
+                f.write_str("cannot derive hardened key from public key")
+            }
             Error::Secp256k1(ref e) => fmt::Display::fmt(e, f),
             Error::InvalidChildNumber(ref n) => {
                 write!(f, "child number {} is invalid (not within [0, 2^31 - 1])", n)
@@ -739,7 +896,11 @@ impl fmt::Display for Error {
 #[cfg(feature = "std")]
 impl error::Error for Error {
     fn cause(&self) -> Option<&dyn error::Error> {
-        if let Error::Secp256k1(ref e) = *self { Some(e) } else { None }
+        if let Error::Secp256k1(ref e) = *self {
+            Some(e)
+        } else {
+            None
+        }
     }
 }
 
@@ -761,11 +922,15 @@ impl From<key::Error> for Error {
 }
 
 impl From<secp256k1::Error> for Error {
-    fn from(e: secp256k1::Error) -> Error { Error::Secp256k1(e) }
+    fn from(e: secp256k1::Error) -> Error {
+        Error::Secp256k1(e)
+    }
 }
 
 impl From<base58::Error> for Error {
-    fn from(err: base58::Error) -> Self { Error::Base58(err) }
+    fn from(err: base58::Error) -> Self {
+        Error::Base58(err)
+    }
 }
 
 impl ExtendedPrivKey {
@@ -787,7 +952,11 @@ impl ExtendedPrivKey {
 
     /// Constructs ECDSA compressed private key matching internal secret key representation.
     pub fn to_priv(&self) -> PrivateKey {
-        PrivateKey { compressed: true, network: self.network, inner: self.private_key }
+        PrivateKey {
+            compressed: true,
+            network: self.network,
+            inner: self.private_key,
+        }
     }
 
     /// Constructs BIP340 keypair for Schnorr signatures and Taproot use matching the internal
@@ -820,27 +989,35 @@ impl ExtendedPrivKey {
     ) -> Result<ExtendedPrivKey, Error> {
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&self.chain_code[..]);
         match i {
-            ChildNumber::Normal { index } => {
+            ChildNumber::Normal {
+                index,
+            } => {
                 // Non-hardened key: compute public data and use that
                 hmac_engine.input(
                     &secp256k1::PublicKey::from_secret_key(secp, &self.private_key).serialize()[..],
                 );
                 hmac_engine.input(&index.to_be_bytes());
             }
-            ChildNumber::Hardened { index } => {
+            ChildNumber::Hardened {
+                index,
+            } => {
                 // Hardened key: use only secret data to prevent public derivation
                 hmac_engine.input(&[0u8]);
                 hmac_engine.input(&self.private_key[..]);
                 hmac_engine.input(&(index | (1 << 31)).to_be_bytes());
             }
-            ChildNumber::Normal256 { index } => {
+            ChildNumber::Normal256 {
+                index,
+            } => {
                 // Non-hardened key with 256-bit index
                 hmac_engine.input(
                     &secp256k1::PublicKey::from_secret_key(secp, &self.private_key).serialize()[..],
                 );
                 hmac_engine.input(&index);
             }
-            ChildNumber::Hardened256 { index } => {
+            ChildNumber::Hardened256 {
+                index,
+            } => {
                 // Hardened key with 256-bit index
                 hmac_engine.input(&[0u8]);
                 hmac_engine.input(&self.private_key[..]);
@@ -951,9 +1128,13 @@ impl ExtendedPrivKey {
 
         let child_number_bytes = data[10..42].try_into().expect("32 bytes for child number");
         let child_number = if is_hardened {
-            ChildNumber::Hardened256 { index: child_number_bytes }
+            ChildNumber::Hardened256 {
+                index: child_number_bytes,
+            }
         } else {
-            ChildNumber::Normal256 { index: child_number_bytes }
+            ChildNumber::Normal256 {
+                index: child_number_bytes,
+            }
         };
 
         let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
@@ -988,15 +1169,24 @@ impl ExtendedPrivKey {
 
         // Hardening byte
         let hardening_byte = match self.child_number {
-            ChildNumber::Normal256 { .. } => 0x00,
-            ChildNumber::Hardened256 { .. } => 0x01,
+            ChildNumber::Normal256 {
+                ..
+            } => 0x00,
+            ChildNumber::Hardened256 {
+                ..
+            } => 0x01,
             _ => panic!("Invalid child number for 256-bit format"),
         };
         ret[9] = hardening_byte;
 
         // Child number (32 bytes)
         let child_number_bytes = match self.child_number {
-            ChildNumber::Normal256 { index } | ChildNumber::Hardened256 { index } => index,
+            ChildNumber::Normal256 {
+                index,
+            }
+            | ChildNumber::Hardened256 {
+                index,
+            } => index,
             _ => panic!("Invalid child number for 256-bit format"),
         };
         ret[10..42].copy_from_slice(&child_number_bytes);
@@ -1048,11 +1238,18 @@ impl ExtendedPubKey {
     }
 
     /// Constructs ECDSA compressed public key matching internal public key representation.
-    pub fn to_pub(&self) -> PublicKey { PublicKey { compressed: true, inner: self.public_key } }
+    pub fn to_pub(&self) -> PublicKey {
+        PublicKey {
+            compressed: true,
+            inner: self.public_key,
+        }
+    }
 
     /// Constructs BIP340 x-only public key for BIP-340 signatures and Taproot use matching
     /// the internal public key representation.
-    pub fn to_x_only_pub(&self) -> XOnlyPublicKey { XOnlyPublicKey::from(self.public_key) }
+    pub fn to_x_only_pub(&self) -> XOnlyPublicKey {
+        XOnlyPublicKey::from(self.public_key)
+    }
 
     /// Attempts to derive an extended public key from a path.
     ///
@@ -1076,9 +1273,15 @@ impl ExtendedPubKey {
         i: ChildNumber,
     ) -> Result<(secp256k1::SecretKey, ChainCode), Error> {
         match i {
-            ChildNumber::Hardened { .. } | ChildNumber::Hardened256 { .. } =>
-                Err(Error::CannotDeriveFromHardenedKey),
-            ChildNumber::Normal { index: n } => {
+            ChildNumber::Hardened {
+                ..
+            }
+            | ChildNumber::Hardened256 {
+                ..
+            } => Err(Error::CannotDeriveFromHardenedKey),
+            ChildNumber::Normal {
+                index: n,
+            } => {
                 let mut hmac_engine: HmacEngine<sha512::Hash> =
                     HmacEngine::new(&self.chain_code[..]);
                 hmac_engine.input(&self.public_key.serialize()[..]);
@@ -1090,7 +1293,9 @@ impl ExtendedPubKey {
                 let chain_code = ChainCode::from_hmac(hmac_result);
                 Ok((private_key, chain_code))
             }
-            ChildNumber::Normal256 { index: idx } => {
+            ChildNumber::Normal256 {
+                index: idx,
+            } => {
                 // UInt256 mode (index >= 2^32)
                 let mut hmac_engine: HmacEngine<sha512::Hash> =
                     HmacEngine::new(&self.chain_code[..]);
@@ -1210,15 +1415,24 @@ impl ExtendedPubKey {
 
         // Hardening byte
         let hardening_byte = match self.child_number {
-            ChildNumber::Normal256 { .. } => 0x00,
-            ChildNumber::Hardened256 { .. } => 0x01,
+            ChildNumber::Normal256 {
+                ..
+            } => 0x00,
+            ChildNumber::Hardened256 {
+                ..
+            } => 0x01,
             _ => panic!("Invalid child number for 256-bit format"),
         };
         ret[9] = hardening_byte;
 
         // Child number (32 bytes)
         let child_number_bytes = match self.child_number {
-            ChildNumber::Normal256 { index } | ChildNumber::Hardened256 { index } => index,
+            ChildNumber::Normal256 {
+                index,
+            }
+            | ChildNumber::Hardened256 {
+                index,
+            } => index,
             _ => panic!("Invalid child number for 256-bit format"),
         };
         ret[10..42].copy_from_slice(&child_number_bytes);
@@ -1257,9 +1471,13 @@ impl ExtendedPubKey {
 
         let child_number_bytes = data[10..42].try_into().expect("32 bytes for child number");
         let child_number = if is_hardened {
-            ChildNumber::Hardened256 { index: child_number_bytes }
+            ChildNumber::Hardened256 {
+                index: child_number_bytes,
+            }
         } else {
-            ChildNumber::Normal256 { index: child_number_bytes }
+            ChildNumber::Normal256 {
+                index: child_number_bytes,
+            }
         };
 
         let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
@@ -1434,12 +1652,22 @@ mod tests {
         for &num in path.0.iter() {
             sk = sk.ckd_priv(secp, num).unwrap();
             match num {
-                Normal { .. } | ChildNumber::Normal256 { .. } => {
+                Normal {
+                    ..
+                }
+                | ChildNumber::Normal256 {
+                    ..
+                } => {
                     let pk2 = pk.ckd_pub(secp, num).unwrap();
                     pk = ExtendedPubKey::from_priv(secp, &sk);
                     assert_eq!(pk, pk2);
                 }
-                Hardened { .. } | ChildNumber::Hardened256 { .. } => {
+                Hardened {
+                    ..
+                }
+                | ChildNumber::Hardened256 {
+                    ..
+                } => {
                     assert_eq!(pk.ckd_pub(secp, num), Err(Error::CannotDeriveFromHardenedKey));
                     pk = ExtendedPubKey::from_priv(secp, &sk);
                 }

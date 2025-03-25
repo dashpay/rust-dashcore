@@ -67,7 +67,9 @@ pub trait FromHex: Sized {
         I: Iterator<Item = Result<u8, Error>> + ExactSizeIterator + DoubleEndedIterator;
 
     /// Produces an object from a hex string.
-    fn from_hex(s: &str) -> Result<Self, Error> { Self::from_byte_iter(HexIterator::new(s)?) }
+    fn from_hex(s: &str) -> Result<Self, Error> {
+        Self::from_byte_iter(HexIterator::new(s)?)
+    }
 }
 
 /// Iterator over a hex-encoded string slice which decodes hex and yields bytes.
@@ -87,7 +89,9 @@ impl<'a> HexIterator<'a> {
         if s.len() % 2 != 0 {
             Err(Error::OddLengthString(s.len()))
         } else {
-            Ok(HexIterator { iter: s.bytes() })
+            Ok(HexIterator {
+                iter: s.bytes(),
+            })
         }
     }
 }

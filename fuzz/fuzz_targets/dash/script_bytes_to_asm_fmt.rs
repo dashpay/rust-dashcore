@@ -6,9 +6,13 @@ use honggfuzz::fuzz;
 struct NullWriter;
 
 impl fmt::Write for NullWriter {
-    fn write_str(&mut self, _s: &str) -> fmt::Result { Ok(()) }
+    fn write_str(&mut self, _s: &str) -> fmt::Result {
+        Ok(())
+    }
 
-    fn write_char(&mut self, _c: char) -> fmt::Result { Ok(()) }
+    fn write_char(&mut self, _c: char) -> fmt::Result {
+        Ok(())
+    }
 }
 
 fn do_test(data: &[u8]) {

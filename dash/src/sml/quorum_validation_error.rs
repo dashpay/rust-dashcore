@@ -40,15 +40,24 @@ pub enum QuorumValidationError {
     RequiredChainLockNotPresent(CoreBlockHeight, BlockHash),
 
     #[error("Insufficient signers: required {required}, found {found}")]
-    InsufficientSigners { required: u64, found: u64 },
+    InsufficientSigners {
+        required: u64,
+        found: u64,
+    },
 
     #[error("Insufficient valid members: required {required}, found {found}")]
-    InsufficientValidMembers { required: u64, found: u64 },
+    InsufficientValidMembers {
+        required: u64,
+        found: u64,
+    },
 
     #[error(
         "Mismatched bitset lengths: signers length {signers_len}, valid members length {valid_members_len}"
     )]
-    MismatchedBitsetLengths { signers_len: usize, valid_members_len: usize },
+    MismatchedBitsetLengths {
+        signers_len: usize,
+        valid_members_len: usize,
+    },
 
     #[error("Invalid quorum public key")]
     InvalidQuorumPublicKey,
@@ -97,7 +106,9 @@ pub enum QuorumValidationError {
 }
 
 impl From<SmlError> for QuorumValidationError {
-    fn from(value: SmlError) -> Self { QuorumValidationError::SMLError(value) }
+    fn from(value: SmlError) -> Self {
+        QuorumValidationError::SMLError(value)
+    }
 }
 
 impl From<ClientDataRetrievalError> for QuorumValidationError {

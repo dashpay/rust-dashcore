@@ -26,15 +26,15 @@
 use bincode::{Decode, Encode};
 use hashes::Hash;
 
-use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::blockdata::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
 use crate::blockdata::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
+use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::SpecialTransactionPayloadHash;
-use crate::transaction::special_transaction::TransactionPayload;
 use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBaseTransactionInfo;
-use crate::{Transaction, TxIn, consensus, io};
+use crate::transaction::special_transaction::TransactionPayload;
+use crate::{consensus, io, Transaction, TxIn};
 
 // Asset unlock tx size is constant since it has zero inputs and single output only
 pub const ASSET_UNLOCK_TX_SIZE: usize = 190;
@@ -64,7 +64,9 @@ pub struct AssetUnlockPayload {
 
 impl AssetUnlockPayload {
     /// The size of the payload in bytes.
-    pub fn size(&self) -> usize { self.base.size() + self.request_info.size() + 96 }
+    pub fn size(&self) -> usize {
+        self.base.size() + self.request_info.size() + 96
+    }
 }
 
 impl SpecialTransactionBasePayloadEncodable for AssetUnlockPayload {
@@ -129,7 +131,11 @@ impl Decodable for AssetUnlockPayload {
         let base = AssetUnlockBasePayload::consensus_decode(r)?;
         let request_info = AssetUnlockRequestInfo::consensus_decode(r)?;
         let quorum_sig = BLSSignature::consensus_decode(r)?;
-        Ok(AssetUnlockPayload { base, request_info, quorum_sig })
+        Ok(AssetUnlockPayload {
+            base,
+            request_info,
+            quorum_sig,
+        })
     }
 }
 
@@ -139,25 +145,29 @@ mod tests {
 
     use hashes::Hash;
     use hex::FromHex;
-    use internals::hex::Case;
     use internals::hex::display::DisplayHex;
+    use internals::hex::Case;
 
     use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::Encodable;
     use crate::hash_types::QuorumHash;
-    use crate::transaction::special_transaction::TransactionPayload;
     use crate::transaction::special_transaction::asset_unlock::qualified_asset_unlock::{
-        ASSET_UNLOCK_TX_SIZE, AssetUnlockPayload, build_asset_unlock_tx,
+        build_asset_unlock_tx, AssetUnlockPayload, ASSET_UNLOCK_TX_SIZE,
     };
     use crate::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
     use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
-    use crate::{ScriptBuf, Transaction, TxOut, consensus};
+    use crate::transaction::special_transaction::TransactionPayload;
+    use crate::{consensus, ScriptBuf, Transaction, TxOut};
 
     #[test]
     fn size() {
         let want = 145;
         let payload = AssetUnlockPayload {
-            base: AssetUnlockBasePayload { version: 0, index: 0, fee: 0 },
+            base: AssetUnlockBasePayload {
+                version: 0,
+                index: 0,
+                fee: 0,
+            },
             request_info: AssetUnlockRequestInfo {
                 request_height: 0,
                 quorum_hash: QuorumHash::all_zeros(),

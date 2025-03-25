@@ -30,14 +30,14 @@ use bincode_test::serialize;
 use dashcore::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
 use dashcore::consensus::deserialize;
 use dashcore::psbt::raw::{Key, Pair, ProprietaryKey};
-use dashcore::psbt::{Input, Output, Psbt, PsbtSighashType, raw};
+use dashcore::psbt::{raw, Input, Output, Psbt, PsbtSighashType};
 use dashcore::sighash::{EcdsaSighashType, TapSighashType};
 use dashcore::taproot::{ControlBlock, LeafVersion, TapTree, TaprootBuilder};
 use dashcore::{
-    Address, Block, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Target, Transaction, TxIn,
-    TxOut, Txid, Witness, Work, absolute, ecdsa, relative, taproot,
+    absolute, ecdsa, relative, taproot, Address, Block, Network, OutPoint, PrivateKey, PublicKey,
+    ScriptBuf, Target, Transaction, TxIn, TxOut, Txid, Witness, Work,
 };
-use dashcore_hashes::{Hash, hash160, ripemd160, sha256, sha256d};
+use dashcore_hashes::{hash160, ripemd160, sha256, sha256d, Hash};
 use hex_lit::hex;
 
 /// Implicitly does regression test for `BlockHeader` also.
@@ -109,8 +109,10 @@ fn serde_regression_txin() {
 
 #[test]
 fn serde_regression_txout() {
-    let txout =
-        TxOut { value: 0xDEADBEEFCAFEBABE, script_pubkey: ScriptBuf::from(vec![0u8, 1u8, 2u8]) };
+    let txout = TxOut {
+        value: 0xDEADBEEFCAFEBABE,
+        script_pubkey: ScriptBuf::from(vec![0u8, 1u8, 2u8]),
+    };
     let got = serialize(&txout).unwrap();
     let want = include_bytes!("data/serde/txout_bincode") as &[_];
     assert_eq!(got, want)
@@ -192,7 +194,9 @@ fn serde_regression_control_block() {
 
 #[test]
 fn serde_regression_child_number() {
-    let num = ChildNumber::Normal { index: 0xDEADBEEF };
+    let num = ChildNumber::Normal {
+        index: 0xDEADBEEF,
+    };
     let got = serialize(&num).unwrap();
     let want = include_bytes!("data/serde/child_number_bincode") as &[_];
     assert_eq!(got, want)
@@ -242,8 +246,15 @@ fn serde_regression_psbt() {
         }],
         special_transaction_payload: None,
     };
-    let unknown: BTreeMap<raw::Key, Vec<u8>> =
-        vec![(raw::Key { type_value: 1, key: vec![0, 1] }, vec![3, 4, 5])].into_iter().collect();
+    let unknown: BTreeMap<raw::Key, Vec<u8>> = vec![(
+        raw::Key {
+            type_value: 1,
+            key: vec![0, 1],
+        },
+        vec![3, 4, 5],
+    )]
+    .into_iter()
+    .collect();
     let key_source = ("deadbeef".parse().unwrap(), "m/0'/1".parse().unwrap());
     let keypaths: BTreeMap<secp256k1::PublicKey, KeySource> = vec![(
         "0339880dc92394b7355e3d0439fa283c31de7590812ea011c4245c0674a685e883".parse().unwrap(),
@@ -318,7 +329,10 @@ fn serde_regression_psbt() {
 #[test]
 fn serde_regression_raw_pair() {
     let pair = Pair {
-        key: Key { type_value: 1u8, key: vec![0u8, 1u8, 2u8, 3u8] },
+        key: Key {
+            type_value: 1u8,
+            key: vec![0u8, 1u8, 2u8, 3u8],
+        },
         value: vec![0u8, 1u8, 2u8, 3u8],
     };
     let got = serialize(&pair).unwrap();

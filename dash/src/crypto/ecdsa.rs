@@ -33,7 +33,10 @@ pub struct Signature {
 impl Signature {
     /// Constructs an ECDSA dash signature for [`EcdsaSighashType::All`].
     pub fn sighash_all(sig: secp256k1::ecdsa::Signature) -> Signature {
-        Signature { sig, hash_ty: EcdsaSighashType::All }
+        Signature {
+            sig,
+            hash_ty: EcdsaSighashType::All,
+        }
     }
 
     /// Deserializes from slice following the standardness rules for [`EcdsaSighashType`].
@@ -42,7 +45,10 @@ impl Signature {
         let hash_ty = EcdsaSighashType::from_standard(*hash_ty as u32)
             .map_err(|_| Error::NonStandardSighashType(*hash_ty as u32))?;
         let sig = secp256k1::ecdsa::Signature::from_der(sig).map_err(Error::Secp256k1)?;
-        Ok(Signature { sig, hash_ty })
+        Ok(Signature {
+            sig,
+            hash_ty,
+        })
     }
 
     /// Serializes an ECDSA signature (inner secp256k1 signature in DER format).
@@ -53,7 +59,10 @@ impl Signature {
         let signature = self.sig.serialize_der();
         buf[..signature.len()].copy_from_slice(&signature);
         buf[signature.len()] = self.hash_ty as u8;
-        SerializedSignature { data: buf, len: signature.len() + 1 }
+        SerializedSignature {
+            data: buf,
+            len: signature.len() + 1,
+        }
     }
 
     /// Serializes an ECDSA signature (inner secp256k1 signature in DER format) into `Vec`.
@@ -102,54 +111,74 @@ pub struct SerializedSignature {
 impl SerializedSignature {
     /// Returns an iterator over bytes of the signature.
     #[inline]
-    pub fn iter(&self) -> core::slice::Iter<'_, u8> { self.into_iter() }
+    pub fn iter(&self) -> core::slice::Iter<'_, u8> {
+        self.into_iter()
+    }
 }
 
 impl core::ops::Deref for SerializedSignature {
     type Target = [u8];
 
     #[inline]
-    fn deref(&self) -> &Self::Target { &self.data[..self.len] }
+    fn deref(&self) -> &Self::Target {
+        &self.data[..self.len]
+    }
 }
 
 impl core::ops::DerefMut for SerializedSignature {
     #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.data[..self.len] }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data[..self.len]
+    }
 }
 
 impl AsRef<[u8]> for SerializedSignature {
     #[inline]
-    fn as_ref(&self) -> &[u8] { self }
+    fn as_ref(&self) -> &[u8] {
+        self
+    }
 }
 
 impl AsMut<[u8]> for SerializedSignature {
     #[inline]
-    fn as_mut(&mut self) -> &mut [u8] { self }
+    fn as_mut(&mut self) -> &mut [u8] {
+        self
+    }
 }
 
 impl AsRef<PushBytes> for SerializedSignature {
     #[inline]
-    fn as_ref(&self) -> &PushBytes { &<&PushBytes>::from(&self.data)[..self.len()] }
+    fn as_ref(&self) -> &PushBytes {
+        &<&PushBytes>::from(&self.data)[..self.len()]
+    }
 }
 
 impl core::borrow::Borrow<[u8]> for SerializedSignature {
     #[inline]
-    fn borrow(&self) -> &[u8] { self }
+    fn borrow(&self) -> &[u8] {
+        self
+    }
 }
 
 impl core::borrow::BorrowMut<[u8]> for SerializedSignature {
     #[inline]
-    fn borrow_mut(&mut self) -> &mut [u8] { self }
+    fn borrow_mut(&mut self) -> &mut [u8] {
+        self
+    }
 }
 
 impl fmt::Debug for SerializedSignature {
     #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(self, f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 impl fmt::Display for SerializedSignature {
     #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::LowerHex::fmt(self, f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::LowerHex::fmt(self, f)
+    }
 }
 
 impl fmt::LowerHex for SerializedSignature {
@@ -168,13 +197,17 @@ impl fmt::UpperHex for SerializedSignature {
 
 impl PartialEq for SerializedSignature {
     #[inline]
-    fn eq(&self, other: &SerializedSignature) -> bool { **self == **other }
+    fn eq(&self, other: &SerializedSignature) -> bool {
+        **self == **other
+    }
 }
 
 impl Eq for SerializedSignature {}
 
 impl core::hash::Hash for SerializedSignature {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) { core::hash::Hash::hash(&**self, state) }
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        core::hash::Hash::hash(&**self, state)
+    }
 }
 
 impl<'a> IntoIterator for &'a SerializedSignature {
@@ -182,7 +215,9 @@ impl<'a> IntoIterator for &'a SerializedSignature {
     type Item = &'a u8;
 
     #[inline]
-    fn into_iter(self) -> Self::IntoIter { (*self).iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        (*self).iter()
+    }
 }
 
 /// A key-related error.
@@ -226,13 +261,19 @@ impl std::error::Error for Error {
 }
 
 impl From<secp256k1::Error> for Error {
-    fn from(e: secp256k1::Error) -> Error { Error::Secp256k1(e) }
+    fn from(e: secp256k1::Error) -> Error {
+        Error::Secp256k1(e)
+    }
 }
 
 impl From<NonStandardSighashType> for Error {
-    fn from(err: NonStandardSighashType) -> Self { Error::NonStandardSighashType(err.0) }
+    fn from(err: NonStandardSighashType) -> Self {
+        Error::NonStandardSighashType(err.0)
+    }
 }
 
 impl From<hex::Error> for Error {
-    fn from(err: hex::Error) -> Self { Error::HexEncoding(err) }
+    fn from(err: hex::Error) -> Self {
+        Error::HexEncoding(err)
+    }
 }

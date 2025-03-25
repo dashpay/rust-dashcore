@@ -43,7 +43,7 @@ use core::cmp::{self, Ordering};
 use core::convert::TryInto;
 use core::fmt::{self, Display, Formatter};
 
-use hashes::{Hash, siphash24};
+use hashes::{siphash24, Hash};
 use internals::write_err;
 
 use crate::blockdata::block::Block;
@@ -91,7 +91,9 @@ impl std::error::Error for Error {
 }
 
 impl From<io::Error> for Error {
-    fn from(io: io::Error) -> Self { Error::Io(io) }
+    fn from(io: io::Error) -> Self {
+        Error::Io(io)
+    }
 }
 
 /// A block filter, as described by BIP 158.
@@ -113,7 +115,11 @@ impl FilterHash {
 
 impl BlockFilter {
     /// Creates a new filter from pre-computed data.
-    pub fn new(content: &[u8]) -> BlockFilter { BlockFilter { content: content.to_vec() } }
+    pub fn new(content: &[u8]) -> BlockFilter {
+        BlockFilter {
+            content: content.to_vec(),
+        }
+    }
 
     /// Computes a SCRIPT_FILTER that contains spent and output scripts.
     pub fn new_script_filter<M, S>(block: &Block, script_for_coin: M) -> Result<BlockFilter, Error>
@@ -128,7 +134,9 @@ impl BlockFilter {
         writer.add_input_scripts(script_for_coin)?;
         writer.finish()?;
 
-        Ok(BlockFilter { content: out })
+        Ok(BlockFilter {
+            content: out,
+        })
     }
 
     /// Computes this filter's ID in a chain of filters (see [BIP 157]).
@@ -173,7 +181,10 @@ impl<'a, W: io::Write> BlockFilterWriter<'a, W> {
         let k0 = u64::from_le_bytes(block_hash_as_int[0..8].try_into().expect("8 byte slice"));
         let k1 = u64::from_le_bytes(block_hash_as_int[8..16].try_into().expect("8 byte slice"));
         let writer = GcsFilterWriter::new(writer, k0, k1, M, P);
-        BlockFilterWriter { block, writer }
+        BlockFilterWriter {
+            block,
+            writer,
+        }
     }
 
     /// Adds output scripts of the block to filter (excluding OP_RETURN scripts).
@@ -210,10 +221,14 @@ impl<'a, W: io::Write> BlockFilterWriter<'a, W> {
     }
 
     /// Adds an arbitrary element to filter.
-    pub fn add_element(&mut self, data: &[u8]) { self.writer.add_element(data); }
+    pub fn add_element(&mut self, data: &[u8]) {
+        self.writer.add_element(data);
+    }
 
     /// Writes the block filter.
-    pub fn finish(&mut self) -> Result<usize, io::Error> { self.writer.finish() }
+    pub fn finish(&mut self) -> Result<usize, io::Error> {
+        self.writer.finish()
+    }
 }
 
 /// Reads and interprets a block filter.
@@ -227,7 +242,9 @@ impl BlockFilterReader {
         let block_hash_as_int = block_hash.to_byte_array();
         let k0 = u64::from_le_bytes(block_hash_as_int[0..8].try_into().expect("8 byte slice"));
         let k1 = u64::from_le_bytes(block_hash_as_int[8..16].try_into().expect("8 byte slice"));
-        BlockFilterReader { reader: GcsFilterReader::new(k0, k1, M, P) }
+        BlockFilterReader {
+            reader: GcsFilterReader::new(k0, k1, M, P),
+        }
     }
 
     /// Returns true if any query matches against this [`BlockFilterReader`].
@@ -260,7 +277,10 @@ pub struct GcsFilterReader {
 impl GcsFilterReader {
     /// Creates a new [`GcsFilterReader`] with specific seed to siphash.
     pub fn new(k0: u64, k1: u64, m: u64, p: u8) -> GcsFilterReader {
-        GcsFilterReader { filter: GcsFilter::new(k0, k1, p), m }
+        GcsFilterReader {
+            filter: GcsFilter::new(k0, k1, p),
+            m,
+        }
     }
 
     /// Returns true if any query matches against this [`GcsFilterReader`].
@@ -294,13 +314,14 @@ impl GcsFilterReader {
             loop {
                 match data.cmp(&p) {
                     Ordering::Equal => return Ok(true),
-                    Ordering::Less =>
+                    Ordering::Less => {
                         if remaining > 0 {
                             data += self.filter.golomb_rice_decode(&mut reader)?;
                             remaining -= 1;
                         } else {
                             return Ok(false);
-                        },
+                        }
+                    }
                     Ordering::Greater => break,
                 }
             }
@@ -340,13 +361,14 @@ impl GcsFilterReader {
             loop {
                 match data.cmp(&p) {
                     Ordering::Equal => break,
-                    Ordering::Less =>
+                    Ordering::Less => {
                         if remaining > 0 {
                             data += self.filter.golomb_rice_decode(&mut reader)?;
                             remaining -= 1;
                         } else {
                             return Ok(false);
-                        },
+                        }
+                    }
                     Ordering::Greater => return Ok(false),
                 }
             }
@@ -356,7 +378,9 @@ impl GcsFilterReader {
 }
 
 /// Fast reduction of hash to [0, nm) range.
-fn map_to_range(hash: u64, nm: u64) -> u64 { ((hash as u128 * nm as u128) >> 64) as u64 }
+fn map_to_range(hash: u64, nm: u64) -> u64 {
+    ((hash as u128 * nm as u128) >> 64) as u64
+}
 
 /// Golomb-Rice encoded filter writer.
 pub struct GcsFilterWriter<'a, W> {
@@ -369,7 +393,12 @@ pub struct GcsFilterWriter<'a, W> {
 impl<'a, W: io::Write> GcsFilterWriter<'a, W> {
     /// Creates a new [`GcsFilterWriter`] wrapping a generic writer, with specific seed to siphash.
     pub fn new(writer: &'a mut W, k0: u64, k1: u64, m: u64, p: u8) -> GcsFilterWriter<'a, W> {
-        GcsFilterWriter { filter: GcsFilter::new(k0, k1, p), writer, elements: BTreeSet::new(), m }
+        GcsFilterWriter {
+            filter: GcsFilter::new(k0, k1, p),
+            writer,
+            elements: BTreeSet::new(),
+            m,
+        }
     }
 
     /// Adds data to the filter.
@@ -415,7 +444,13 @@ struct GcsFilter {
 
 impl GcsFilter {
     /// Creates a new [`GcsFilter`].
-    fn new(k0: u64, k1: u64, p: u8) -> GcsFilter { GcsFilter { k0, k1, p } }
+    fn new(k0: u64, k1: u64, p: u8) -> GcsFilter {
+        GcsFilter {
+            k0,
+            k1,
+            p,
+        }
+    }
 
     /// Golomb-Rice encodes a number `n` to a bit stream (parameter 2^k).
     fn golomb_rice_encode<W>(
@@ -467,7 +502,11 @@ pub struct BitStreamReader<'a, R> {
 impl<'a, R: io::Read> BitStreamReader<'a, R> {
     /// Creates a new [`BitStreamReader`] that reads bitwise from a given `reader`.
     pub fn new(reader: &'a mut R) -> BitStreamReader<'a, R> {
-        BitStreamReader { buffer: [0u8], reader, offset: 8 }
+        BitStreamReader {
+            buffer: [0u8],
+            reader,
+            offset: 8,
+        }
     }
 
     /// Reads nbit bits, returning the bits in a `u64` starting with the rightmost bit.
@@ -514,7 +553,11 @@ pub struct BitStreamWriter<'a, W> {
 impl<'a, W: io::Write> BitStreamWriter<'a, W> {
     /// Creates a new [`BitStreamWriter`] that writes bitwise to a given `writer`.
     pub fn new(writer: &'a mut W) -> BitStreamWriter<'a, W> {
-        BitStreamWriter { buffer: [0u8], writer, offset: 0 }
+        BitStreamWriter {
+            buffer: [0u8],
+            writer,
+            offset: 0,
+        }
     }
 
     /// Writes nbits bits from data.
@@ -558,10 +601,10 @@ mod test {
     use serde_json::Value;
 
     use super::*;
-    use crate::ScriptBuf;
     use crate::consensus::encode::deserialize;
     use crate::hash_types::BlockHash;
     use crate::internal_macros::hex;
+    use crate::ScriptBuf;
 
     #[ignore]
     #[test]
@@ -593,7 +636,11 @@ mod test {
             }
 
             let filter = BlockFilter::new_script_filter(&block, |o| {
-                if let Some(s) = txmap.get(o) { Ok(s.clone()) } else { Err(Error::UtxoMissing(*o)) }
+                if let Some(s) = txmap.get(o) {
+                    Ok(s.clone())
+                } else {
+                    Err(Error::UtxoMissing(*o))
+                }
             })
             .unwrap();
 
@@ -602,27 +649,23 @@ mod test {
             assert_eq!(test_filter.content, filter.content);
 
             let block_hash = &block.block_hash();
-            assert!(
-                filter
-                    .match_all(
-                        block_hash,
-                        &mut txmap.iter().filter_map(|(_, s)| if !s.is_empty() {
-                            Some(s.as_bytes())
-                        } else {
-                            None
-                        })
-                    )
-                    .unwrap()
-            );
+            assert!(filter
+                .match_all(
+                    block_hash,
+                    &mut txmap.iter().filter_map(|(_, s)| if !s.is_empty() {
+                        Some(s.as_bytes())
+                    } else {
+                        None
+                    })
+                )
+                .unwrap());
 
             for script in txmap.values() {
                 let query = [script];
                 if !script.is_empty() {
-                    assert!(
-                        filter
-                            .match_any(block_hash, &mut query.iter().map(|s| s.as_bytes()))
-                            .unwrap()
-                    );
+                    assert!(filter
+                        .match_any(block_hash, &mut query.iter().map(|s| s.as_bytes()))
+                        .unwrap());
                 }
             }
 
@@ -665,20 +708,16 @@ mod test {
         {
             let query = [hex!("abcdef"), hex!("eeeeee")];
             let reader = GcsFilterReader::new(0, 0, M, P);
-            assert!(
-                reader
-                    .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                    .unwrap()
-            );
+            assert!(reader
+                .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
+                .unwrap());
         }
         {
             let query = [hex!("abcdef"), hex!("123456")];
             let reader = GcsFilterReader::new(0, 0, M, P);
-            assert!(
-                !reader
-                    .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                    .unwrap()
-            );
+            assert!(!reader
+                .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
+                .unwrap());
         }
         {
             let reader = GcsFilterReader::new(0, 0, M, P);
@@ -686,11 +725,9 @@ mod test {
             for p in &patterns {
                 query.push(p.clone());
             }
-            assert!(
-                reader
-                    .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                    .unwrap()
-            );
+            assert!(reader
+                .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
+                .unwrap());
         }
         {
             let reader = GcsFilterReader::new(0, 0, M, P);
@@ -699,11 +736,9 @@ mod test {
                 query.push(p.clone());
             }
             query.push(hex!("abcdef"));
-            assert!(
-                !reader
-                    .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                    .unwrap()
-            );
+            assert!(!reader
+                .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
+                .unwrap());
         }
     }
 
