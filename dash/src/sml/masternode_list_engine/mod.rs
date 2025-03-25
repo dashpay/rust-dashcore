@@ -43,6 +43,11 @@ impl MasternodeListEngineBTreeMapBlockContainer {
         self.block_heights.insert(block_hash, height);
         self.block_hashes.insert(height, block_hash);
     }
+
+    pub fn clear(&mut self) {
+        self.block_hashes.clear();
+        self.block_heights.clear();
+    }
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -111,6 +116,12 @@ impl MasternodeListEngineBlockContainer {
             MasternodeListEngineBlockContainer::BTreeMapContainer(map) => map.block_hashes.len(),
         }
     }
+
+    pub fn clear(&mut self) {
+        match self {
+            MasternodeListEngineBlockContainer::BTreeMapContainer(map) => map.clear(),
+        }
+    }
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -176,10 +187,8 @@ impl MasternodeListEngine {
     }
 
     pub fn clear(&mut self) {
-        self.block_hashes.clear();
-        self.block_heights.clear();
+        self.block_container.clear();
         self.masternode_lists.clear();
-        self.known_chain_locks.clear();
         self.known_snapshots.clear();
         self.rotated_quorums_per_cycle.clear();
         self.quorum_statuses.clear();
@@ -661,7 +670,7 @@ impl MasternodeListEngine {
         diff_end_height: Option<CoreBlockHeight>,
         verify_quorums: bool,
         previous_chain_lock_sigs: Option<[BLSSignature; 3]>,
-    ) -> Result<(BlockHash, BlockHash, Option<BLSSignature>, SmlError> {
+    ) -> Result<Option<BLSSignature>, SmlError> {
         let base_block_hash = masternode_list_diff.base_block_hash;
         let block_hash = masternode_list_diff.block_hash;
         if let Some(known_genesis_block_hash) = self
@@ -690,7 +699,7 @@ impl MasternodeListEngine {
                     }
                 };
                 self.masternode_lists.insert(diff_end_height, masternode_list);
-                return Ok((base_block_hash, block_hash, None));
+                return Ok(None);
             }
         }
 
@@ -814,7 +823,7 @@ impl MasternodeListEngine {
 
         self.block_container.feed_block_height(diff_end_height, block_hash);
 
-        Ok((base_block_hash, block_hash, rotation_sig))
+        Ok(rotation_sig)
     }
 
     #[cfg(feature = "quorum_validation")]

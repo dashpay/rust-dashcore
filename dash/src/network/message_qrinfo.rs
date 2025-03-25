@@ -4,11 +4,11 @@ use std::{fmt, io};
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
+use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::consensus::encode::{read_compact_size, read_fixed_bitset, write_fixed_bitset};
 use crate::consensus::{encode, Decodable, Encodable};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::network::message_sml::MnListDiff;
-use crate::block_data::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::hash_types::BlockHash;
 
 /// The `getqrinfo` message requests a `qrinfo` message that provides the information
