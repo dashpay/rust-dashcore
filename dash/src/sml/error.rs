@@ -43,4 +43,12 @@ pub enum SmlError {
     /// Error indicating that a required feature is not turned on.
     #[error("Feature not turned on: {0}")]
     FeatureNotTurnedOn(String),
+
+    /// Error indicating that an invalid index was provided in the signature set.
+    #[error("Invalid index in quorum signature set: {0}")]
+    InvalidIndexInSignatureSet(u16),
+
+    /// Error indicating the quorum signature set is incomplete (some slots were not filled).
+    #[error("Incomplete quorum signature set; not all slots were filled")]
+    IncompleteSignatureSet,
 }

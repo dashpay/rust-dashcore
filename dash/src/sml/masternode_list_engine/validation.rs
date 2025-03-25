@@ -35,7 +35,6 @@ impl MasternodeListEngine {
                 if *quorum.quorum_entry.signers.get(i)? {
                     Some(&qualified_masternode_list_entry.masternode_list_entry)
                 } else {
-                    // println!("{} ({}) didn't sign", qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash, qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash.reverse());
                     None
                 }
             },
@@ -70,7 +69,6 @@ impl MasternodeListEngine {
                     if *quorum.quorum_entry.signers.get(i)? {
                         Some(&qualified_masternode_list_entry.masternode_list_entry)
                     } else {
-                        // println!("{} ({}) didn't sign", qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash, qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash.reverse());
                         None
                     }
                 },
@@ -147,7 +145,6 @@ impl MasternodeListEngine {
                     if *quorum.quorum_entry.signers.get(i)? {
                         Some(&qualified_masternode_list_entry.masternode_list_entry)
                     } else {
-                        // println!("{} ({}) didn't sign", qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash, qualified_masternode_list_entry.masternode_list_entry.pro_reg_tx_hash.reverse());
                         None
                     }
                 },

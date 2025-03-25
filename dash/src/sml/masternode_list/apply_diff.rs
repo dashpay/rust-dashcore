@@ -1,7 +1,14 @@
+use crate::bls_sig_utils::BLSSignature;
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
+use crate::sml::llmq_entry_verification::{
+    LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
+};
 use crate::sml::masternode_list::MasternodeList;
+use crate::sml::quorum_entry::qualified_quorum_entry::{
+    QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
+};
 
 impl MasternodeList {
     /// Applies an `MnListDiff` to update the current masternode list.
@@ -32,7 +39,8 @@ impl MasternodeList {
         &self,
         diff: MnListDiff,
         diff_end_height: CoreBlockHeight,
-    ) -> Result<MasternodeList, SmlError> {
+        previous_chain_lock_sigs: Option<[BLSSignature; 3]>,
+    ) -> Result<(MasternodeList, Option<BLSSignature>), SmlError> {
         // Ensure the base block hash matches
         if self.block_hash != diff.base_block_hash {
             return Err(SmlError::BaseBlockHashMismatch {
@@ -67,12 +75,73 @@ impl MasternodeList {
             }
         }
 
+        // Build a vector of optional signatures with slots matching new_quorums length
+        let mut quorum_sig_lookup: Vec<Option<&BLSSignature>> = vec![None; diff.new_quorums.len()];
+
+        // Fill each slot with the corresponding signature
+        for quorum_sig_obj in &diff.quorums_chainlock_signatures {
+            for &index in &quorum_sig_obj.index_set {
+                if let Some(slot) = quorum_sig_lookup.get_mut(index as usize) {
+                    *slot = Some(&quorum_sig_obj.signature);
+                } else {
+                    return Err(SmlError::InvalidIndexInSignatureSet(index));
+                }
+            }
+        }
+
+        // Verify all slots have been filled
+        if quorum_sig_lookup.iter().any(Option::is_none) {
+            return Err(SmlError::IncompleteSignatureSet);
+        }
+
+        let mut rotating_sig = None;
+
         // Add or update new quorums
-        for new_quorum in diff.new_quorums {
-            updated_quorums
-                .entry(new_quorum.llmq_type)
-                .or_default()
-                .insert(new_quorum.quorum_hash, new_quorum.into());
+        for (idx, new_quorum) in diff.new_quorums.into_iter().enumerate() {
+            updated_quorums.entry(new_quorum.llmq_type).or_default().insert(
+                new_quorum.quorum_hash,
+                {
+                    let commitment_hash = new_quorum.calculate_commitment_hash();
+                    let entry_hash = new_quorum.calculate_entry_hash();
+                    let verifying_chain_lock_signature =
+                        if new_quorum.llmq_type.is_rotating_quorum_type() {
+                            if rotating_sig.is_none() {
+                                if let Some(sig) = quorum_sig_lookup[idx] {
+                                    rotating_sig = Some(*sig)
+                                } else {
+                                    return Err(SmlError::IncompleteSignatureSet);
+                                }
+                            }
+                            if let Some(previous_chain_lock_sigs) = previous_chain_lock_sigs {
+                                if let Some(sig) = quorum_sig_lookup[idx] {
+                                    Some(VerifyingChainLockSignaturesType::Rotating([
+                                        previous_chain_lock_sigs[0],
+                                        previous_chain_lock_sigs[1],
+                                        previous_chain_lock_sigs[2],
+                                        *sig,
+                                    ]))
+                                } else {
+                                    return Err(SmlError::IncompleteSignatureSet);
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            quorum_sig_lookup[idx]
+                                .copied()
+                                .map(VerifyingChainLockSignaturesType::NonRotating)
+                        };
+                    QualifiedQuorumEntry {
+                        quorum_entry: new_quorum,
+                        verified: LLMQEntryVerificationStatus::Skipped(
+                            LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
+                        ), // Default to unverified
+                        commitment_hash,
+                        entry_hash,
+                        verifying_chain_lock_signature,
+                    }
+                },
+            );
         }
 
         // Create and return the new MasternodeList
@@ -83,6 +152,6 @@ impl MasternodeList {
             diff_end_height,
         );
 
-        Ok(builder.build())
+        Ok((builder.build(), rotating_sig))
     }
 }

@@ -33,6 +33,9 @@ impl_consensus_encoding!(GetQRInfo, base_block_hashes, block_request_hash, extra
 ///
 /// Note: The “compact size” integers that prefix some arrays are handled by your consensus encoding routines.
 #[derive(PartialEq, Eq, Clone, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct QRInfo {
     // Quorum snapshots for heights h-c, h-2c, h-3c.
     pub quorum_snapshot_at_h_minus_c: QuorumSnapshot,
@@ -322,8 +325,15 @@ mod tests {
     fn deserialize_qr_info() {
         let block_hex = include_str!("../../tests/data/test_DML_diffs/QR_INFO_0_2224359.hex");
         let data = hex::decode(block_hex).expect("decode hex");
-        let qr_info: RawNetworkMessage = deserialize(&data).expect("deserialize QR_INFO");
+        let network_qr_info: RawNetworkMessage = deserialize(&data).expect("deserialize QR_INFO");
 
-        assert_matches!(qr_info, RawNetworkMessage { magic, payload: NetworkMessage::QRInfo(_) } if magic == 3177909439);
+        let RawNetworkMessage {
+            magic,
+            payload: NetworkMessage::QRInfo(qr_info),
+        } = network_qr_info
+        else {
+            panic!("expected qr_info message");
+        };
+        assert_eq!(magic, 3177909439);
     }
 }

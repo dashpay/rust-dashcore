@@ -39,6 +39,12 @@ pub enum QuorumValidationError {
     #[error("Required chain lock not present at block height {0}, block hash: {1}")]
     RequiredChainLockNotPresent(CoreBlockHeight, BlockHash),
 
+    #[error("Required rotated chain lock sig at h - {0} not present for masternode diff block hash: {1}")]
+    RequiredRotatedChainLockSigNotPresent(u8, BlockHash),
+
+    #[error("Required rotated chain lock sigs not present for masternode diff block hash: {0}")]
+    RequiredRotatedChainLockSigsNotPresent(BlockHash),
+
     #[error("Insufficient signers: required {required}, found {found}")]
     InsufficientSigners {
         required: u64,

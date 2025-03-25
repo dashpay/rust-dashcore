@@ -103,17 +103,11 @@ impl LLMQModifierType {
         llmq_type: LLMQType,
         work_block_hash: BlockHash,
         work_block_height: CoreBlockHeight,
-        known_chain_locks: &BTreeMap<BlockHash, BLSSignature>,
+        best_cl_signature: BLSSignature,
         network: Network,
     ) -> Result<LLMQModifierType, QuorumValidationError> {
         if network.core_v20_is_active_at(work_block_height) {
-            let best_cl_signature = known_chain_locks.get(&work_block_hash).ok_or(
-                QuorumValidationError::RequiredChainLockNotPresent(
-                    work_block_height,
-                    work_block_hash,
-                ),
-            )?;
-            Ok(LLMQModifierType::CoreV20(llmq_type, work_block_height, *best_cl_signature))
+            Ok(LLMQModifierType::CoreV20(llmq_type, work_block_height, best_cl_signature))
         } else {
             Ok(LLMQModifierType::PreCoreV20(llmq_type, work_block_hash))
         }

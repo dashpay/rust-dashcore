@@ -365,15 +365,15 @@ mod tests {
                 .expect("expected to decode")
                 .0;
 
-        let lock_data = hex::decode("010133c404bebbf34c153816d26553bcec8c9b876354a68b952ab2c1c514c04baf9800000000578de219b47300c1d43985e1ee7af2faa773b87729df3cb48f2c522937c7b070d674ea572a713d6b07deef085b9ce97e1e354055b91b0bbd0b00000000000000a846486b3f75da24e3d04b62eadd7dffe589736f13ab222c208d0f3880dce5d287b8542dc1e1f0e271749e70e939262704f8611aafcdeb20ed70c5bc78fdf737a1bd6409d061fcf6a591b117ada7ba92567959544c090a05cdd955268d22be6b").expect("expected valid hex");
+        let lock_data = hex::decode("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").expect("expected valid hex");
         let lock: InstantLock = deserialize(lock_data.as_slice()).expect("expected to deserialize");
         let request_id = lock.request_id().expect("expected to make request id");
         assert_eq!(
             hex::encode(request_id),
-            "94dd5c8d946cb34dda43ebf424b385ae898159827385a48d8b1fae15dbf21a12"
+            "481ca36cf80fde8fda333915e33c27014dad65fa9f3b54bc4d8bc45be7c81ddf"
         );
         let quorum_hash: QuorumHash = QuorumHash::from_slice(
-            hex::decode("0000000000000019756ecc9c9c5f476d3f66876b1dcfa5dde1ea82f0d99334a2")
+            hex::decode("00000000000000197368b224f2f01031991dd07aad0b43b2293a51fce8853ba0")
                 .expect("expected bytes")
                 .as_slice(),
         )
@@ -382,14 +382,14 @@ mod tests {
 
         let (quorum, _, index) =
             mn_list_engine.is_lock_quorum(&lock).expect("expected to get quorum");
-        assert_eq!(index, 4);
+        assert_eq!(index, 23);
         assert_eq!(quorum.quorum_entry.quorum_hash, quorum_hash);
 
         let sign_id =
             lock.sign_id(LLMQType::Llmqtype60_75, quorum_hash, None).expect("expected sign id");
         assert_eq!(
             hex::encode(sign_id),
-            "0eaeba3a982f59144913b8d8150b2dfbb2dd2ba43bbcb54a3964a0d8d7ead62b"
+            "6fcbf58004b118d865a448bf89d9299c64d4ecedd754dabec655090224de91cd"
         );
         mn_list_engine.verify_is_lock(&lock).expect("expected to verify is lock");
     }
@@ -406,18 +406,18 @@ mod tests {
 
         let height = mn_list_engine.latest_masternode_list().expect("height").known_height;
 
-        assert_eq!(height, 2229204);
+        assert_eq!(height, 2243493);
 
         let chain_lock = ChainLock {
-            block_height: 2229204,
-            block_hash: BlockHash::from_slice(hex::decode("000000000000000c0568e1ffe5d14ed34cd19fccda425bc5923fc119c131ee0c").unwrap().as_slice()).unwrap().reverse(),
-            signature: BLSSignature::from_hex("b6366341f97e1fd5a8dbc81e7f6c5c67acbed02bac2b7e10316f5c97fd07767e3544214386312687b7646d1b92539acc1069ecb3640e37d97fd2e5fdb2d37a3b6bf16b511bf22a41aa87038145caaeb38485d58d72b31add18deaf7e8c07684e").unwrap(),
+            block_height: 2243495,
+            block_hash: BlockHash::from_slice(hex::decode("000000000000000d88580463cafe168b2f465f40f01916ad95fe9be459c26491").unwrap().as_slice()).unwrap().reverse(),
+            signature: BLSSignature::from_hex("a6bc4dcf7afb042e0b0258a994f5a77856971a32a3ad3ee89d21e1011a77211070bec7c2ef50c293722cbae135b904640b482479f836120e0be7d42ce332a7c58096d8d8006920ef3dbcc47b5f7ed00aeb68d58bc514f4401bd72b247bf23699").unwrap(),
         };
 
         let request_id = chain_lock.request_id().expect("expected to make request id");
         assert_eq!(
             hex::encode(request_id),
-            "88346d49ddf5c06528f3ede253e01a8ab54048935ff944d88bb149aaeef956f2"
+            "969ab4a945632f5fba1331f3d2556d317682142cf8aaa6544e407e683c61a177"
         );
 
         let quorum = mn_list_engine
@@ -426,7 +426,7 @@ mod tests {
             .expect("expected");
 
         let expected_quorum_hash: QuorumHash = QuorumHash::from_slice(
-            hex::decode("000000000000001de4e594585627fb5e2612ef983c913ee13add9a454e5faa6d")
+            hex::decode("0000000000000012b00cefc19c02e991e84b67c0dc2bb57ade9dad8f97845f4b")
                 .expect("expected bytes")
                 .as_slice(),
         )
@@ -440,15 +440,15 @@ mod tests {
         // let's do another to make sure it wasn't a 1/4 fluke
 
         let chain_lock = ChainLock {
-            block_height: 2229203,
-            block_hash: BlockHash::from_slice(hex::decode("0000000000000009ea873df6f4ab3bb1ea744e5630928cb8a4b4bd68aa16b18a").unwrap().as_slice()).unwrap().reverse(),
-            signature: BLSSignature::from_hex("8723bf0a12abf41830936d8702ae57bb4f5ef7f816522f72e6da414081402d50a747a6307c91b15c0ee97fcfda60a7c50cdafa394c06b77299d9b9e4826fa1625c5436a2e3dc2e98df071dce92bbfc4445c87f7015b1914b17954b139dd8eafe").unwrap(),
+            block_height: 2243496,
+            block_hash: BlockHash::from_slice(hex::decode("000000000000001f9ff71c513c0ccef0c7c392f0df8bcb3c7c5764dcc1f4c89b").unwrap().as_slice()).unwrap().reverse(),
+            signature: BLSSignature::from_hex("88270e60bee7dd9cea3c0a1b85e51d52f01e55a35033ef0434979b9121bc07ed8e45adae1f99e4d8fa2ea760920d844e1383030103b1c503cee45a2fcddc5cd7e73d1823d199e8231fadee2b3cadb1c6fc2ea255b988334b47d35ce865275699").unwrap(),
         };
 
         let request_id = chain_lock.request_id().expect("expected to make request id");
         assert_eq!(
             hex::encode(request_id),
-            "10a808c18307e3993dd4aa996d032b6b5d9d30a5d75ddf64fa10ea35ee63b2bb"
+            "675aed91d6098cdf575cc09bfd1ff4f750acde1e793f385c3c72bbb400068d28"
         );
 
         let quorum = mn_list_engine
@@ -457,7 +457,7 @@ mod tests {
             .expect("expected");
 
         let expected_quorum_hash: QuorumHash = QuorumHash::from_slice(
-            hex::decode("000000000000000bbd0b1bb95540351e7ee99c5b08efde076b3d712a57ea74d6")
+            hex::decode("000000000000000c0e633b441b9e9c130732746c56ca3884220bab23b6c7ec6a")
                 .expect("expected bytes")
                 .as_slice(),
         )
