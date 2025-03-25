@@ -20,7 +20,10 @@ use crate::{ProTxHash, PubkeyHash};
 #[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum EntryMasternodeType {
     Regular,
-    HighPerformance { platform_http_port: u16, platform_node_id: PubkeyHash },
+    HighPerformance {
+        platform_http_port: u16,
+        platform_node_id: PubkeyHash,
+    },
 }
 
 impl Encodable for EntryMasternodeType {
@@ -31,7 +34,10 @@ impl Encodable for EntryMasternodeType {
                 // Write variant tag 0 for Regular
                 len += 0u16.consensus_encode(writer)?;
             }
-            EntryMasternodeType::HighPerformance { platform_http_port, platform_node_id } => {
+            EntryMasternodeType::HighPerformance {
+                platform_http_port,
+                platform_node_id,
+            } => {
                 // Write variant tag 1 for HighPerformance,
                 // then the u16 port and the PubkeyHash
                 len += 1u16.consensus_encode(writer)?;
@@ -52,7 +58,10 @@ impl Decodable for EntryMasternodeType {
             1 => {
                 let platform_http_port = Decodable::consensus_decode(reader)?;
                 let platform_node_id = Decodable::consensus_decode(reader)?;
-                Ok(EntryMasternodeType::HighPerformance { platform_http_port, platform_node_id })
+                Ok(EntryMasternodeType::HighPerformance {
+                    platform_http_port,
+                    platform_node_id,
+                })
             }
             received => Err(Error::InvalidEnumValue {
                 max: 1,
@@ -105,11 +114,15 @@ use bincode::{Decode, Encode};
 use hashes::Hash;
 
 impl Ord for MasternodeListEntry {
-    fn cmp(&self, other: &Self) -> Ordering { self.pro_reg_tx_hash.cmp(&other.pro_reg_tx_hash) }
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.pro_reg_tx_hash.cmp(&other.pro_reg_tx_hash)
+    }
 }
 
 impl PartialOrd for MasternodeListEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl Encodable for MasternodeListEntry {
@@ -138,8 +151,11 @@ impl Decodable for MasternodeListEntry {
         let version: u16 = Decodable::consensus_decode(reader)?;
         let pro_reg_tx_hash: ProTxHash = Decodable::consensus_decode(reader)?;
         let confirmed_hash: ConfirmedHash = Decodable::consensus_decode(reader)?;
-        let confirmed_hash =
-            if confirmed_hash.to_byte_array() == [0; 32] { None } else { Some(confirmed_hash) };
+        let confirmed_hash = if confirmed_hash.to_byte_array() == [0; 32] {
+            None
+        } else {
+            Some(confirmed_hash)
+        };
         let service_address: SocketAddr = Decodable::consensus_decode(reader)?;
         let operator_public_key: BLSPublicKey = Decodable::consensus_decode(reader)?;
         let key_id_voting: PubkeyHash = Decodable::consensus_decode(reader)?;

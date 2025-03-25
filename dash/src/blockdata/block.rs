@@ -16,14 +16,14 @@ use hashes::{Hash, HashEngine};
 use super::Weight;
 use crate::blockdata::script;
 use crate::blockdata::transaction::Transaction;
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::error::Error::{self, BlockBadProofOfWork, BlockBadTarget};
 pub use crate::hash_types::BlockHash;
 use crate::hash_types::{TxMerkleNode, WitnessCommitment, WitnessMerkleNode, Wtxid};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::pow::{CompactTarget, Target, Work};
 use crate::prelude::*;
-use crate::{VarInt, io, merkle_tree};
+use crate::{io, merkle_tree, VarInt};
 
 /// Bitcoin block header.
 ///
@@ -64,13 +64,19 @@ impl Header {
     }
 
     /// Computes the target (range [0, T] inclusive) that a blockhash must land in to be valid.
-    pub fn target(&self) -> Target { self.bits.into() }
+    pub fn target(&self) -> Target {
+        self.bits.into()
+    }
 
     /// Computes the popular "difficulty" measure for mining.
-    pub fn difficulty(&self) -> u128 { self.target().difficulty() }
+    pub fn difficulty(&self) -> u128 {
+        self.target().difficulty()
+    }
 
     /// Computes the popular "difficulty" measure for mining and returns a float value of f64.
-    pub fn difficulty_float(&self) -> f64 { self.target().difficulty_float() }
+    pub fn difficulty_float(&self) -> f64 {
+        self.target().difficulty_float()
+    }
 
     /// Checks that the proof-of-work for the block is valid, returning the block hash.
     pub fn validate_pow(&self, required_target: Target) -> Result<BlockHash, Error> {
@@ -79,11 +85,17 @@ impl Header {
             return Err(BlockBadTarget);
         }
         let block_hash = self.block_hash();
-        if target.is_met_by(block_hash) { Ok(block_hash) } else { Err(BlockBadProofOfWork) }
+        if target.is_met_by(block_hash) {
+            Ok(block_hash)
+        } else {
+            Err(BlockBadProofOfWork)
+        }
     }
 
     /// Returns the total work of the block.
-    pub fn work(&self) -> Work { self.target().to_work() }
+    pub fn work(&self) -> Work {
+        self.target().to_work()
+    }
 }
 
 /// Bitcoin block version number.
@@ -125,12 +137,16 @@ impl Version {
     /// Creates a [`Version`] from a signed 32 bit integer value.
     ///
     /// This is the data type used in consensus code in Bitcoin Core.
-    pub fn from_consensus(v: i32) -> Self { Version(v) }
+    pub fn from_consensus(v: i32) -> Self {
+        Version(v)
+    }
 
     /// Returns the inner `i32` value.
     ///
     /// This is the data type used in consensus code in Bitcoin Core.
-    pub fn to_consensus(self) -> i32 { self.0 }
+    pub fn to_consensus(self) -> i32 {
+        self.0
+    }
 
     /// Checks whether the version number is signalling a soft fork at the given bit.
     ///
@@ -153,7 +169,9 @@ impl Version {
 }
 
 impl Default for Version {
-    fn default() -> Version { Self::NO_SOFT_FORK_SIGNALLING }
+    fn default() -> Version {
+        Self::NO_SOFT_FORK_SIGNALLING
+    }
 }
 
 impl Encodable for Version {
@@ -193,7 +211,9 @@ impl_consensus_encoding!(Block, header, txdata);
 
 impl Block {
     /// Returns the block hash.
-    pub fn block_hash(&self) -> BlockHash { self.header.block_hash() }
+    pub fn block_hash(&self) -> BlockHash {
+        self.header.block_hash()
+    }
 
     /// Checks if merkle root of header matches merkle root of the transaction list.
     pub fn check_merkle_root(&self) -> bool {
@@ -274,7 +294,9 @@ impl Block {
     }
 
     /// base_size == size of header + size of encoded transaction count.
-    fn base_size(&self) -> usize { 80 + VarInt(self.txdata.len() as u64).len() }
+    fn base_size(&self) -> usize {
+        80 + VarInt(self.txdata.len() as u64).len()
+    }
 
     /// Returns the size of the block.
     ///
@@ -298,7 +320,9 @@ impl Block {
     }
 
     /// Returns the coinbase transaction, if one is present.
-    pub fn coinbase(&self) -> Option<&Transaction> { self.txdata.first() }
+    pub fn coinbase(&self) -> Option<&Transaction> {
+        self.txdata.first()
+    }
 
     /// Returns the block height, as encoded in the coinbase transaction according to BIP34.
     pub fn bip34_block_height(&self) -> Result<u64, Bip34Error> {
@@ -323,7 +347,11 @@ impl Block {
                 // Check that the number is encoded in the minimal way.
                 let h = script::read_scriptint(b.as_bytes())
                     .map_err(|_e| Bip34Error::UnexpectedPush(b.as_bytes().to_vec()))?;
-                if h < 0 { Err(Bip34Error::NegativeHeight) } else { Ok(h as u64) }
+                if h < 0 {
+                    Err(Bip34Error::NegativeHeight)
+                } else {
+                    Ok(h as u64)
+                }
             }
             _ => Err(Bip34Error::NotPresent),
         }
@@ -369,19 +397,27 @@ impl std::error::Error for Bip34Error {
 }
 
 impl From<Header> for BlockHash {
-    fn from(header: Header) -> BlockHash { header.block_hash() }
+    fn from(header: Header) -> BlockHash {
+        header.block_hash()
+    }
 }
 
 impl From<&Header> for BlockHash {
-    fn from(header: &Header) -> BlockHash { header.block_hash() }
+    fn from(header: &Header) -> BlockHash {
+        header.block_hash()
+    }
 }
 
 impl From<Block> for BlockHash {
-    fn from(block: Block) -> BlockHash { block.block_hash() }
+    fn from(block: Block) -> BlockHash {
+        block.block_hash()
+    }
 }
 
 impl From<&Block> for BlockHash {
-    fn from(block: &Block) -> BlockHash { block.block_hash() }
+    fn from(block: &Block) -> BlockHash {
+        block.block_hash()
+    }
 }
 
 #[cfg(test)]
@@ -635,11 +671,11 @@ mod tests {
 
 #[cfg(bench)]
 mod benches {
-    use test::{Bencher, black_box};
+    use test::{black_box, Bencher};
 
     use super::Block;
+    use crate::consensus::{deserialize, Decodable, Encodable};
     use crate::EmptyWrite;
-    use crate::consensus::{Decodable, Encodable, deserialize};
 
     #[bench]
     pub fn bench_stream_reader(bh: &mut Bencher) {

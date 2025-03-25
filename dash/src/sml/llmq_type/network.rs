@@ -1,5 +1,5 @@
-use crate::Network;
 use crate::sml::llmq_type::LLMQType;
+use crate::Network;
 
 impl Network {
     pub fn is_llmq_type(&self) -> LLMQType {

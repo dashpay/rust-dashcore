@@ -35,7 +35,7 @@ use hashes::Hash;
 use crate::blockdata::script::ScriptBuf;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSPublicKey;
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::{InputsHash, PubkeyHash, SpecialTransactionPayloadHash, Txid};
 use crate::prelude::*;
 use crate::{VarInt, io};
@@ -130,11 +130,11 @@ mod tests {
 
     use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use crate::bls_sig_utils::BLSPublicKey;
-    use crate::consensus::{Encodable, deserialize};
+    use crate::consensus::{deserialize, Encodable};
     use crate::hash_types::InputsHash;
     use crate::internal_macros::hex;
-    use crate::transaction::special_transaction::TransactionPayload::ProviderUpdateRegistrarPayloadType;
     use crate::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
+    use crate::transaction::special_transaction::TransactionPayload::ProviderUpdateRegistrarPayloadType;
     use crate::{Network, PubkeyHash, ScriptBuf, Transaction, Txid};
 
     #[test]

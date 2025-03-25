@@ -47,7 +47,7 @@ use core::marker::PhantomData;
 use core::str::FromStr;
 
 use bech32;
-use hashes::{Hash, HashEngine, sha256};
+use hashes::{sha256, Hash, HashEngine};
 use internals::write_err;
 use secp256k1::{Secp256k1, Verification, XOnlyPublicKey};
 
@@ -149,7 +149,9 @@ impl std::error::Error for Error {
             Bech32(e) => Some(e),
             UnparsableWitnessVersion(e) => Some(e),
             EmptyBech32Payload
-            | InvalidBech32Variant { .. }
+            | InvalidBech32Variant {
+                ..
+            }
             | InvalidWitnessVersion(_)
             | MalformedWitnessVersion
             | InvalidWitnessProgramLength(_)
@@ -158,19 +160,25 @@ impl std::error::Error for Error {
             | ExcessiveScriptSize
             | UnrecognizedScript
             | UnknownAddressType(_)
-            | NetworkValidation { .. } => None,
+            | NetworkValidation {
+                ..
+            } => None,
         }
     }
 }
 
 #[doc(hidden)]
 impl From<base58::Error> for Error {
-    fn from(e: base58::Error) -> Error { Error::Base58(e) }
+    fn from(e: base58::Error) -> Error {
+        Error::Base58(e)
+    }
 }
 
 #[doc(hidden)]
 impl From<bech32::Error> for Error {
-    fn from(e: bech32::Error) -> Error { Error::Bech32(e) }
+    fn from(e: bech32::Error) -> Error {
+        Error::Bech32(e)
+    }
 }
 
 /// The different types of addresses.
@@ -282,7 +290,9 @@ impl WitnessVersion {
     /// NB: this is not the same as an integer representation of the opcode signifying witness
     /// version in dashcore script. Thus, there is no function to directly convert witness version
     /// into a byte since the conversion requires context (dashcore script or just a version number).
-    pub fn to_num(self) -> u8 { self as u8 }
+    pub fn to_num(self) -> u8 {
+        self as u8
+    }
 
     /// Determines the checksum variant. See BIP-0350 for specification.
     pub fn bech32_variant(&self) -> bech32::Variant {
@@ -305,7 +315,9 @@ impl TryFrom<bech32::u5> for WitnessVersion {
     /// # Errors
     /// If the integer does not correspond to any witness version, errors with
     /// [`Error::InvalidWitnessVersion`].
-    fn try_from(value: bech32::u5) -> Result<Self, Self::Error> { Self::try_from(value.to_u8()) }
+    fn try_from(value: bech32::u5) -> Result<Self, Self::Error> {
+        Self::try_from(value.to_u8())
+    }
 }
 
 impl TryFrom<u8> for WitnessVersion {
@@ -359,8 +371,9 @@ impl TryFrom<opcodes::All> for WitnessVersion {
     fn try_from(opcode: opcodes::All) -> Result<Self, Self::Error> {
         match opcode.to_u8() {
             0 => Ok(WitnessVersion::V0),
-            version if version >= OP_PUSHNUM_1.to_u8() && version <= OP_PUSHNUM_16.to_u8() =>
-                WitnessVersion::try_from(version - OP_PUSHNUM_1.to_u8() + 1),
+            version if version >= OP_PUSHNUM_1.to_u8() && version <= OP_PUSHNUM_16.to_u8() => {
+                WitnessVersion::try_from(version - OP_PUSHNUM_1.to_u8() + 1)
+            }
             _ => Err(Error::MalformedWitnessVersion),
         }
     }
@@ -407,7 +420,9 @@ impl From<WitnessVersion> for opcodes::All {
 /// Prints [`WitnessVersion`] number (from 0 to 16) as integer, without
 /// any prefix or suffix.
 impl fmt::Display for WitnessVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", *self as u8) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", *self as u8)
+    }
 }
 
 /// The method used to produce an address.
@@ -449,14 +464,21 @@ impl WitnessProgram {
         if version == WitnessVersion::V0 && (program.len() != 20 && program.len() != 32) {
             return Err(Error::InvalidSegwitV0ProgramLength(program.len()));
         }
-        Ok(WitnessProgram { version, program })
+        Ok(WitnessProgram {
+            version,
+            program,
+        })
     }
 
     /// Returns the witness program version.
-    pub fn version(&self) -> WitnessVersion { self.version }
+    pub fn version(&self) -> WitnessVersion {
+        self.version
+    }
 
     /// Returns the witness program.
-    pub fn program(&self) -> &PushBytes { &self.program }
+    pub fn program(&self) -> &PushBytes {
+        &self.program
+    }
 }
 
 impl Payload {
@@ -494,19 +516,24 @@ impl Payload {
     /// This function doesn't make any allocations.
     pub fn matches_script_pubkey(&self, script: &Script) -> bool {
         match *self {
-            Payload::PubkeyHash(ref hash) if script.is_p2pkh() =>
-                &script.as_bytes()[3..23] == <PubkeyHash as AsRef<[u8; 20]>>::as_ref(hash),
-            Payload::ScriptHash(ref hash) if script.is_p2sh() =>
-                &script.as_bytes()[2..22] == <ScriptHash as AsRef<[u8; 20]>>::as_ref(hash),
-            Payload::WitnessProgram(ref prog) if script.is_witness_program() =>
-                &script.as_bytes()[2..] == prog.program.as_bytes(),
+            Payload::PubkeyHash(ref hash) if script.is_p2pkh() => {
+                &script.as_bytes()[3..23] == <PubkeyHash as AsRef<[u8; 20]>>::as_ref(hash)
+            }
+            Payload::ScriptHash(ref hash) if script.is_p2sh() => {
+                &script.as_bytes()[2..22] == <ScriptHash as AsRef<[u8; 20]>>::as_ref(hash)
+            }
+            Payload::WitnessProgram(ref prog) if script.is_witness_program() => {
+                &script.as_bytes()[2..] == prog.program.as_bytes()
+            }
             Payload::PubkeyHash(_) | Payload::ScriptHash(_) | Payload::WitnessProgram(_) => false,
         }
     }
 
     /// Creates a pay to (compressed) public key hash payload from a public key
     #[inline]
-    pub fn p2pkh(pk: &PublicKey) -> Payload { Payload::PubkeyHash(pk.pubkey_hash()) }
+    pub fn p2pkh(pk: &PublicKey) -> Payload {
+        Payload::PubkeyHash(pk.pubkey_hash())
+    }
 
     /// Creates a pay to script hash P2SH payload from a script
     #[inline]
@@ -774,7 +801,9 @@ struct DisplayUnchecked<'a>(&'a Address<NetworkUnchecked>);
 
 #[cfg(feature = "serde")]
 impl fmt::Display for DisplayUnchecked<'_> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result { self.0.fmt_internal(fmt) }
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt_internal(fmt)
+    }
 }
 
 #[cfg(feature = "serde")]
@@ -797,10 +826,14 @@ impl serde::Serialize for Address<NetworkUnchecked> {
 /// `Address<NetworkUnchecked>`.
 impl<V: NetworkValidation> Address<V> {
     /// Returns a reference to the payload of this address.
-    pub fn payload(&self) -> &Payload { &self.0.payload }
+    pub fn payload(&self) -> &Payload {
+        &self.0.payload
+    }
 
     /// Returns a reference to the network of this address.
-    pub fn network(&self) -> &Network { &self.0.network }
+    pub fn network(&self) -> &Network {
+        &self.0.network
+    }
 
     /// Returns a reference to the unchecked address, which is dangerous to use if the address
     /// is invalid in the context of `NetworkUnchecked`.
@@ -810,7 +843,10 @@ impl<V: NetworkValidation> Address<V> {
 
     /// Extracts and returns the network and payload components of the `Address`.
     pub fn into_parts(self) -> (Network, Payload) {
-        let AddressInner { payload, network } = self.0;
+        let AddressInner {
+            payload,
+            network,
+        } = self.0;
         (network, payload)
     }
 
@@ -858,8 +894,12 @@ impl<V: NetworkValidation> Address<V> {
             Network::Testnet | Network::Devnet => "tb",
             Network::Regtest => "dsrt",
         };
-        let encoding =
-            AddressEncoding { payload: self.payload(), p2pkh_prefix, p2sh_prefix, bech32_hrp };
+        let encoding = AddressEncoding {
+            payload: self.payload(),
+            p2pkh_prefix,
+            p2sh_prefix,
+            bech32_hrp,
+        };
 
         use fmt::Display;
 
@@ -870,7 +910,13 @@ impl<V: NetworkValidation> Address<V> {
     /// marker type of the address.
     #[inline]
     pub fn new(network: Network, payload: Payload) -> Self {
-        Self(AddressInner { network, payload }, PhantomData)
+        Self(
+            AddressInner {
+                network,
+                payload,
+            },
+            PhantomData,
+        )
     }
 }
 
@@ -947,7 +993,9 @@ impl Address {
     /// # Returns
     /// None if unknown, non-standard or related to the future witness version.
     #[inline]
-    pub fn address_type(&self) -> Option<AddressType> { self.address_type_internal() }
+    pub fn address_type(&self) -> Option<AddressType> {
+        self.address_type_internal()
+    }
 
     /// Checks whether or not the address is following Dash standardness rules when
     /// *spending* from this address. *NOT* to be called by senders.
@@ -962,14 +1010,18 @@ impl Address {
     /// considered non-standard.
     /// </details>
     ///
-    pub fn is_spend_standard(&self) -> bool { self.address_type().is_some() }
+    pub fn is_spend_standard(&self) -> bool {
+        self.address_type().is_some()
+    }
 
     /// Checks whether or not the address is following Dash standardness rules.
     ///
     /// SegWit addresses with unassigned witness versions or non-standard program sizes are
     /// considered non-standard.
     #[deprecated(since = "0.30.0", note = "Use Address::is_spend_standard instead")]
-    pub fn is_standard(&self) -> bool { self.address_type().is_some() }
+    pub fn is_standard(&self) -> bool {
+        self.address_type().is_some()
+    }
 
     /// Constructs an [`Address`] from an output script (`scriptPubkey`).
     pub fn from_script(script: &ScriptBuf, network: Network) -> Result<Address, Error> {
@@ -977,7 +1029,9 @@ impl Address {
     }
 
     /// Generates a script pubkey spending to this address.
-    pub fn script_pubkey(&self) -> ScriptBuf { self.payload().script_pubkey() }
+    pub fn script_pubkey(&self) -> ScriptBuf {
+        self.payload().script_pubkey()
+    }
 
     /// Creates a URI string *dashcore:address* optimized to be encoded in QR codes.
     ///
@@ -1008,7 +1062,9 @@ impl Address {
     /// ```
     pub fn to_qr_uri(&self) -> String {
         let schema = match self.payload() {
-            Payload::WitnessProgram { .. } => "DASH",
+            Payload::WitnessProgram {
+                ..
+            } => "DASH",
             _ => "dash",
         };
         format!("{}:{:#}", schema, self)
@@ -1096,7 +1152,11 @@ impl Address<NetworkUnchecked> {
         if self.is_valid_for_network(required) {
             Ok(self.assume_checked())
         } else {
-            Err(Error::NetworkValidation { found: *self.network(), required, address: self })
+            Err(Error::NetworkValidation {
+                found: *self.network(),
+                required,
+                address: self,
+            })
         }
     }
 
@@ -1113,7 +1173,9 @@ impl Address<NetworkUnchecked> {
     }
 
     /// Returns the payload as a vector.
-    pub fn payload_to_vec(&self) -> Vec<u8> { self.0.payload.inner_prog_as_bytes().to_vec() }
+    pub fn payload_to_vec(&self) -> Vec<u8> {
+        self.0.payload.inner_prog_as_bytes().to_vec()
+    }
 }
 
 // For NetworkUnchecked , it compare Addresses and if network and payload matches then return true.
@@ -1124,17 +1186,23 @@ impl PartialEq<Address<NetworkUnchecked>> for Address {
 }
 
 impl PartialEq<Address> for Address<NetworkUnchecked> {
-    fn eq(&self, other: &Address) -> bool { other == self }
+    fn eq(&self, other: &Address) -> bool {
+        other == self
+    }
 }
 
 impl From<Address> for script::ScriptBuf {
-    fn from(a: Address) -> Self { a.script_pubkey() }
+    fn from(a: Address) -> Self {
+        a.script_pubkey()
+    }
 }
 
 // Alternate formatting `{:#}` is used to return uppercase version of bech32 addresses which should
 // be used in QR codes, see [`Address::to_qr_uri`].
 impl fmt::Display for Address {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result { self.fmt_internal(fmt) }
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        self.fmt_internal(fmt)
+    }
 }
 
 impl<V: NetworkValidation> fmt::Debug for Address<V> {
@@ -1180,7 +1248,10 @@ impl FromStr for Address<NetworkUnchecked> {
             // Encoding check
             let expected = version.bech32_variant();
             if expected != variant {
-                return Err(Error::InvalidBech32Variant { expected, found: variant });
+                return Err(Error::InvalidBech32Variant {
+                    expected,
+                    found: variant,
+                });
             }
 
             return Ok(Address::new(network, Payload::WitnessProgram(witness_program)));
@@ -1196,14 +1267,18 @@ impl FromStr for Address<NetworkUnchecked> {
         }
 
         let (network, payload) = match data[0] {
-            PUBKEY_ADDRESS_PREFIX_MAIN =>
-                (Network::Dash, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap())),
-            SCRIPT_ADDRESS_PREFIX_MAIN =>
-                (Network::Dash, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap())),
-            PUBKEY_ADDRESS_PREFIX_TEST =>
-                (Network::Testnet, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap())),
-            SCRIPT_ADDRESS_PREFIX_TEST =>
-                (Network::Testnet, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap())),
+            PUBKEY_ADDRESS_PREFIX_MAIN => {
+                (Network::Dash, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()))
+            }
+            SCRIPT_ADDRESS_PREFIX_MAIN => {
+                (Network::Dash, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()))
+            }
+            PUBKEY_ADDRESS_PREFIX_TEST => {
+                (Network::Testnet, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()))
+            }
+            SCRIPT_ADDRESS_PREFIX_TEST => {
+                (Network::Testnet, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()))
+            }
             x => return Err(Error::Base58(base58::Error::InvalidAddressVersion(x))),
         };
 
@@ -1448,12 +1523,22 @@ mod tests {
         let unchecked = Address::from_str(addr_str).unwrap();
 
         assert_eq!(
-            format!("{:?}", Test { address: unchecked.clone() }),
+            format!(
+                "{:?}",
+                Test {
+                    address: unchecked.clone()
+                }
+            ),
             format!("Test {{ address: Address<NetworkUnchecked>({}) }}", addr_str)
         );
 
         assert_eq!(
-            format!("{:?}", Test { address: unchecked.assume_checked() }),
+            format!(
+                "{:?}",
+                Test {
+                    address: unchecked.assume_checked()
+                }
+            ),
             format!("Test {{ address: {} }}", addr_str)
         );
     }

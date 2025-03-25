@@ -30,7 +30,9 @@ impl Ord for QualifiedMasternodeListEntry {
 }
 
 impl PartialOrd for QualifiedMasternodeListEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl From<MasternodeListEntry> for QualifiedMasternodeListEntry {

@@ -1,4 +1,4 @@
-use hashes::{Hash, sha256d};
+use hashes::{sha256d, Hash};
 
 use crate::consensus::Encodable;
 use crate::hash_types::Sha256dHash;

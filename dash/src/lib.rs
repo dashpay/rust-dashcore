@@ -173,14 +173,22 @@ mod io_extras {
     }
 
     /// Creates an instance of a writer which will successfully consume all data.
-    pub const fn sink() -> Sink { Sink { _priv: () } }
+    pub const fn sink() -> Sink {
+        Sink {
+            _priv: (),
+        }
+    }
 
     impl core2::io::Write for Sink {
         #[inline]
-        fn write(&mut self, buf: &[u8]) -> core2::io::Result<usize> { Ok(buf.len()) }
+        fn write(&mut self, buf: &[u8]) -> core2::io::Result<usize> {
+            Ok(buf.len())
+        }
 
         #[inline]
-        fn flush(&mut self) -> core2::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> core2::io::Result<()> {
+            Ok(())
+        }
     }
 }
 
@@ -226,13 +234,21 @@ mod bench {
     pub struct EmptyWrite;
 
     impl Write for EmptyWrite {
-        fn write(&mut self, buf: &[u8]) -> Result<usize> { Ok(buf.len()) }
+        fn write(&mut self, buf: &[u8]) -> Result<usize> {
+            Ok(buf.len())
+        }
         fn write_vectored(&mut self, bufs: &[IoSlice]) -> Result<usize> {
             Ok(bufs.iter().map(|s| s.len()).sum())
         }
-        fn flush(&mut self) -> Result<()> { Ok(()) }
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
 
-        fn write_all(&mut self, _: &[u8]) -> Result<()> { Ok(()) }
-        fn write_fmt(&mut self, _: Arguments) -> Result<()> { Ok(()) }
+        fn write_all(&mut self, _: &[u8]) -> Result<()> {
+            Ok(())
+        }
+        fn write_fmt(&mut self, _: Arguments) -> Result<()> {
+            Ok(())
+        }
     }
 }

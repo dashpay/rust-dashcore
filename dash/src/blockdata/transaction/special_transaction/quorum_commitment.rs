@@ -25,7 +25,7 @@ use crate::consensus::encode::{
     compact_size_len, fixed_bitset_len, read_compact_size, read_fixed_bitset, write_compact_size,
     write_fixed_bitset,
 };
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::{QuorumHash, QuorumVVecHash};
 use crate::io;
 use crate::prelude::*;
@@ -147,8 +147,11 @@ impl Decodable for QuorumEntry {
         let version = u16::consensus_decode(r)?;
         let llmq_type = LLMQType::consensus_decode(r)?;
         let quorum_hash = QuorumHash::consensus_decode(r)?;
-        let quorum_index =
-            if version == 2 || version == 4 { Some(i16::consensus_decode(r)?) } else { None };
+        let quorum_index = if version == 2 || version == 4 {
+            Some(i16::consensus_decode(r)?)
+        } else {
+            None
+        };
         let signers_count = read_compact_size(r)?;
         let signers = read_fixed_bitset(r, signers_count as usize)?;
         let valid_members_count = read_compact_size(r)?;
@@ -190,7 +193,9 @@ pub struct QuorumCommitmentPayload {
 
 impl QuorumCommitmentPayload {
     /// The size of the payload in bytes.
-    pub fn size(&self) -> usize { 2 + 4 + self.finalization_commitment.size() }
+    pub fn size(&self) -> usize {
+        2 + 4 + self.finalization_commitment.size()
+    }
 }
 
 impl Encodable for QuorumCommitmentPayload {
@@ -208,7 +213,11 @@ impl Decodable for QuorumCommitmentPayload {
         let version = u16::consensus_decode(r)?;
         let height = u32::consensus_decode(r)?;
         let finalization_commitment = QuorumEntry::consensus_decode(r)?;
-        Ok(QuorumCommitmentPayload { version, height, finalization_commitment })
+        Ok(QuorumCommitmentPayload {
+            version,
+            height,
+            finalization_commitment,
+        })
     }
 }
 
@@ -217,7 +226,7 @@ mod tests {
     use hashes::Hash;
 
     use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
-    use crate::consensus::{Encodable, deserialize, serialize};
+    use crate::consensus::{deserialize, serialize, Encodable};
     use crate::hash_types::{QuorumHash, QuorumVVecHash};
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
     use crate::sml::llmq_type::LLMQType;

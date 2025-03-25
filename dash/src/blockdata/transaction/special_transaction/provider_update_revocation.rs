@@ -42,7 +42,7 @@ use hashes::Hash;
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::{InputsHash, SpecialTransactionPayloadHash, Txid};
 use crate::io;
 
@@ -64,7 +64,9 @@ pub struct ProviderUpdateRevocationPayload {
 
 impl ProviderUpdateRevocationPayload {
     /// The size of the payload in bytes.
-    pub fn size(&self) -> usize { 2 + 32 + 2 + 32 + 96 }
+    pub fn size(&self) -> usize {
+        2 + 32 + 2 + 32 + 96
+    }
 }
 
 impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRevocationPayload {
@@ -115,11 +117,11 @@ impl Decodable for ProviderUpdateRevocationPayload {
 mod tests {
     use hashes::Hash;
 
-    use crate::Txid;
     use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::Encodable;
     use crate::hash_types::InputsHash;
     use crate::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
+    use crate::Txid;
 
     #[test]
     fn size() {

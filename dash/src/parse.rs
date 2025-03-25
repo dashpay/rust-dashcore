@@ -30,21 +30,35 @@ pub struct ParseIntError {
 
 impl ParseIntError {
     /// Returns the input that was attempted to be parsed.
-    pub fn input(&self) -> &str { &self.input }
+    pub fn input(&self) -> &str {
+        &self.input
+    }
 }
 
 impl From<ParseIntError> for core::num::ParseIntError {
-    fn from(value: ParseIntError) -> Self { value.source }
+    fn from(value: ParseIntError) -> Self {
+        value.source
+    }
 }
 
 impl AsRef<core::num::ParseIntError> for ParseIntError {
-    fn as_ref(&self) -> &core::num::ParseIntError { &self.source }
+    fn as_ref(&self) -> &core::num::ParseIntError {
+        &self.source
+    }
 }
 
 impl fmt::Display for ParseIntError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let signed = if self.is_signed { "signed" } else { "unsigned" };
-        let n = if self.bits == 8 { "n" } else { "" };
+        let signed = if self.is_signed {
+            "signed"
+        } else {
+            "unsigned"
+        };
+        let n = if self.bits == 8 {
+            "n"
+        } else {
+            ""
+        };
         write_err!(f, "failed to parse '{}' as a{} {}-bit {} integer", self.input, n, self.bits, signed; self.source)
     }
 }

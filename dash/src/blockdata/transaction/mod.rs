@@ -36,7 +36,7 @@ use core::default::Default;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::{Hash, sha256d};
+use hashes::{sha256d, Hash};
 
 use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature = "bitcoinconsensus")]
@@ -48,7 +48,7 @@ use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
 use crate::consensus::encode::VarInt;
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::{InputsHash, Txid, Wtxid};
 use crate::prelude::*;
 use crate::sighash::LegacySighash;
@@ -121,10 +121,12 @@ impl<E> EncodeSigningDataResult<E> {
     {
         match self {
             EncodeSigningDataResult::SighashSingleBug => EncodeSigningDataResult::SighashSingleBug,
-            EncodeSigningDataResult::WriteResult(Err(e)) =>
-                EncodeSigningDataResult::WriteResult(Err(f(e))),
-            EncodeSigningDataResult::WriteResult(Ok(o)) =>
-                EncodeSigningDataResult::WriteResult(Ok(o)),
+            EncodeSigningDataResult::WriteResult(Err(e)) => {
+                EncodeSigningDataResult::WriteResult(Err(f(e)))
+            }
+            EncodeSigningDataResult::WriteResult(Ok(o)) => {
+                EncodeSigningDataResult::WriteResult(Ok(o))
+            }
         }
     }
 }
@@ -408,16 +410,22 @@ impl Transaction {
     /// Returns the regular byte-wise consensus-serialized size of this transaction.
     #[inline]
     #[deprecated(since = "0.28.0", note = "Please use `transaction::size` instead.")]
-    pub fn get_size(&self) -> usize { self.size() }
+    pub fn get_size(&self) -> usize {
+        self.size()
+    }
 
     /// Returns the regular byte-wise consensus-serialized size of this transaction.
     #[inline]
-    pub fn size(&self) -> usize { self.scaled_size(1) }
+    pub fn size(&self) -> usize {
+        self.scaled_size(1)
+    }
 
     /// Returns the "virtual size" (vsize) of this transaction.
     #[inline]
     #[deprecated(since = "0.28.0", note = "Please use `transaction::vsize` instead.")]
-    pub fn get_vsize(&self) -> usize { self.vsize() }
+    pub fn get_vsize(&self) -> usize {
+        self.vsize()
+    }
 
     /// Returns the "virtual size" (vsize) of this transaction.
     ///
@@ -436,7 +444,9 @@ impl Transaction {
 
     /// Returns the size of this transaction excluding the witness data.
     #[deprecated(since = "0.28.0", note = "Please use `transaction::strippedsize` instead.")]
-    pub fn get_strippedsize(&self) -> usize { self.strippedsize() }
+    pub fn get_strippedsize(&self) -> usize {
+        self.strippedsize()
+    }
 
     /// Returns the size of this transaction excluding the witness data.
     pub fn strippedsize(&self) -> usize {
@@ -564,7 +574,10 @@ impl Transaction {
     /// dash on Dash Platform.
     pub fn add_burn_output(&mut self, satoshis_to_burn: u64, data: &[u8; 20]) {
         let burn_script = ScriptBuf::new_op_return(data);
-        let output = TxOut { value: satoshis_to_burn, script_pubkey: burn_script };
+        let output = TxOut {
+            value: satoshis_to_burn,
+            script_pubkey: burn_script,
+        };
         self.output.push(output)
     }
 
@@ -720,24 +733,30 @@ impl InputWeightPrediction {
     /// under-paying. See [`ground_p2wpkh`](Self::ground_p2wpkh) if you do use signature grinding.
     ///
     /// [signature grinding]: https://bitcoin.stackexchange.com/questions/111660/what-is-signature-grinding
-    pub const P2WPKH_MAX: Self =
-        InputWeightPrediction { script_size: 0, witness_size: 1 + 1 + 73 + 1 + 33 };
+    pub const P2WPKH_MAX: Self = InputWeightPrediction {
+        script_size: 0,
+        witness_size: 1 + 1 + 73 + 1 + 33,
+    };
 
     /// Input weight prediction corresponding to spending of taproot output using the key and
     /// default sighash.
     ///
     /// If the input in your transaction uses Taproot key spend you can use this instead of
     /// [`InputWeightPrediction::new`].
-    pub const P2TR_KEY_DEFAULT_SIGHASH: Self =
-        InputWeightPrediction { script_size: 0, witness_size: 1 + 1 + 64 };
+    pub const P2TR_KEY_DEFAULT_SIGHASH: Self = InputWeightPrediction {
+        script_size: 0,
+        witness_size: 1 + 1 + 64,
+    };
 
     /// Input weight prediction corresponding to spending of taproot output using the key and
     /// **non**-default sighash.
     ///
     /// If the input in your transaction uses Taproot key spend you can use this instead of
     /// [`InputWeightPrediction::new`].
-    pub const P2TR_KEY_NON_DEFAULT_SIGHASH: Self =
-        InputWeightPrediction { script_size: 0, witness_size: 1 + 1 + 65 };
+    pub const P2TR_KEY_NON_DEFAULT_SIGHASH: Self = InputWeightPrediction {
+        script_size: 0,
+        witness_size: 1 + 1 + 65,
+    };
 
     /// Input weight prediction corresponding to spending of P2WPKH output using [signature
     /// grinding].
@@ -762,7 +781,10 @@ impl InputWeightPrediction {
             + 1 // sighash flag
             + 1 // length of element size varint
             + 33; // length of (always-compressed) public key
-        InputWeightPrediction { script_size: 0, witness_size }
+        InputWeightPrediction {
+            script_size: 0,
+            witness_size,
+        }
     }
 
     /// Computes the prediction for a single input.
@@ -777,10 +799,17 @@ impl InputWeightPrediction {
                 let elem_size = elem_len + VarInt(elem_len as u64).len();
                 (count + 1, total_size + elem_size)
             });
-        let witness_size = if count > 0 { total_size + VarInt(count as u64).len() } else { 0 };
+        let witness_size = if count > 0 {
+            total_size + VarInt(count as u64).len()
+        } else {
+            0
+        };
         let script_size = input_script_len + VarInt(input_script_len as u64).len();
 
-        InputWeightPrediction { script_size, witness_size }
+        InputWeightPrediction {
+            script_size,
+            witness_size,
+        }
     }
 
     /// Computes the prediction for a single input in `const` context.
@@ -807,7 +836,10 @@ impl InputWeightPrediction {
         };
         let script_size = input_script_len + VarInt(input_script_len as u64).len();
 
-        InputWeightPrediction { script_size, witness_size }
+        InputWeightPrediction {
+            script_size,
+            witness_size,
+        }
     }
 }
 
@@ -1199,16 +1231,14 @@ mod tests {
         let re_use = double_spending.input[0].clone();
         double_spending.input.push(re_use);
 
-        assert!(
-            double_spending
-                .verify(|point: &OutPoint| {
-                    if let Some(tx) = spent2.remove(&point.txid) {
-                        return tx.output.get(point.vout as usize).cloned();
-                    }
-                    None
-                })
-                .is_err()
-        );
+        assert!(double_spending
+            .verify(|point: &OutPoint| {
+                if let Some(tx) = spent2.remove(&point.txid) {
+                    return tx.output.get(point.vout as usize).cloned();
+                }
+                None
+            })
+            .is_err());
 
         // test that we get a failure if we corrupt a signature
         let mut witness: Vec<_> = spending.input[1].witness.to_vec();
@@ -1274,10 +1304,10 @@ mod tests {
 
 #[cfg(all(test, feature = "unstable"))]
 mod benches {
-    use EmptyWrite;
-    use consensus::{Encodable, deserialize};
+    use consensus::{deserialize, Encodable};
     use hashes::hex::FromHex;
-    use test::{Bencher, black_box};
+    use test::{black_box, Bencher};
+    use EmptyWrite;
 
     use super::Transaction;
 

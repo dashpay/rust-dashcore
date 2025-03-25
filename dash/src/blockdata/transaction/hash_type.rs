@@ -92,7 +92,9 @@ impl FromStr for EcdsaSighashType {
             "SIGHASH_ALL|SIGHASH_ANYONECANPAY" => Ok(EcdsaSighashType::AllPlusAnyoneCanPay),
             "SIGHASH_NONE|SIGHASH_ANYONECANPAY" => Ok(EcdsaSighashType::NonePlusAnyoneCanPay),
             "SIGHASH_SINGLE|SIGHASH_ANYONECANPAY" => Ok(EcdsaSighashType::SinglePlusAnyoneCanPay),
-            _ => Err(SighashTypeParseError { unrecognized: s.to_owned() }),
+            _ => Err(SighashTypeParseError {
+                unrecognized: s.to_owned(),
+            }),
         }
     }
 }
@@ -160,7 +162,9 @@ impl EcdsaSighashType {
     /// Converts [`EcdsaSighashType`] to a `u32` sighash flag.
     ///
     /// The returned value is guaranteed to be a valid according to standardness rules.
-    pub fn to_u32(self) -> u32 { self as u32 }
+    pub fn to_u32(self) -> u32 {
+        self as u32
+    }
 }
 
 /// Error returned for failure during parsing one of the sighash types.
@@ -185,10 +189,10 @@ impl ::std::error::Error for SighashTypeParseError {}
 mod tests {
     use core::str::FromStr;
 
-    use hashes::Hash;
     use hashes::hex::FromHex;
+    use hashes::Hash;
 
-    use crate::blockdata::transaction::{UINT256_ONE, hash_type};
+    use crate::blockdata::transaction::{hash_type, UINT256_ONE};
     use crate::consensus::encode::deserialize;
     use crate::sighash::{LegacySighash, SighashCache};
     use crate::transaction::hash_type::EcdsaSighashType;

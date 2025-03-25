@@ -20,7 +20,7 @@ use core::ops::Index;
 use core::slice::SliceIndex;
 use core::{cmp, str};
 
-use crate::{Error, sha256};
+use crate::{sha256, Error};
 
 type HashEngine = sha256::HashEngine;
 
@@ -43,21 +43,31 @@ pub struct Hash<T: Tag>(
 );
 
 impl<T: Tag> Hash<T> {
-    fn internal_new(arr: [u8; 32]) -> Self { Hash(arr, Default::default()) }
+    fn internal_new(arr: [u8; 32]) -> Self {
+        Hash(arr, Default::default())
+    }
 
-    fn internal_engine() -> HashEngine { T::engine() }
+    fn internal_engine() -> HashEngine {
+        T::engine()
+    }
 }
 
 impl<T: Tag> Copy for Hash<T> {}
 impl<T: Tag> Clone for Hash<T> {
-    fn clone(&self) -> Self { Hash(self.0, self.1) }
+    fn clone(&self) -> Self {
+        Hash(self.0, self.1)
+    }
 }
 impl<T: Tag> PartialEq for Hash<T> {
-    fn eq(&self, other: &Hash<T>) -> bool { self.0 == other.0 }
+    fn eq(&self, other: &Hash<T>) -> bool {
+        self.0 == other.0
+    }
 }
 impl<T: Tag> Eq for Hash<T> {}
 impl<T: Tag> Default for Hash<T> {
-    fn default() -> Self { Hash([0; 32], PhantomData) }
+    fn default() -> Self {
+        Hash([0; 32], PhantomData)
+    }
 }
 impl<T: Tag> PartialOrd for Hash<T> {
     fn partial_cmp(&self, other: &Hash<T>) -> Option<cmp::Ordering> {
@@ -65,10 +75,14 @@ impl<T: Tag> PartialOrd for Hash<T> {
     }
 }
 impl<T: Tag> Ord for Hash<T> {
-    fn cmp(&self, other: &Hash<T>) -> cmp::Ordering { cmp::Ord::cmp(&self.0, &other.0) }
+    fn cmp(&self, other: &Hash<T>) -> cmp::Ordering {
+        cmp::Ord::cmp(&self.0, &other.0)
+    }
 }
 impl<T: Tag> core::hash::Hash for Hash<T> {
-    fn hash<H: core::hash::Hasher>(&self, h: &mut H) { self.0.hash(h) }
+    fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
+        self.0.hash(h)
+    }
 }
 
 crate::internal_macros::hash_trait_impls!(256, true, T: Tag);

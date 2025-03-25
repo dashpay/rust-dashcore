@@ -4,7 +4,7 @@
 use core::convert::TryInto;
 
 use crate::blockdata::opcodes;
-use crate::blockdata::script::{Error, PushBytes, Script, ScriptBuf, UintError, read_uint_iter};
+use crate::blockdata::script::{read_uint_iter, Error, PushBytes, Script, ScriptBuf, UintError};
 
 /// A "parsed opcode" which allows iterating over a [`Script`] in a more sensible way.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -54,7 +54,9 @@ impl<'a> Instructions<'a> {
     /// Views the remaining script as a slice.
     ///
     /// This is analogous to what [`core::str::Chars::as_str`] does.
-    pub fn as_script(&self) -> &'a Script { Script::from_bytes(self.data.as_slice()) }
+    pub fn as_script(&self) -> &'a Script {
+        Script::from_bytes(self.data.as_slice())
+    }
 
     /// Sets the iterator to end so that it won't iterate any longer.
     pub fn kill(&mut self) {
@@ -152,12 +154,15 @@ impl<'a> Iterator for Instructions<'a> {
                     _ => Some(self.take_slice_or_kill(n).map(Instruction::PushBytes)),
                 }
             }
-            opcodes::Class::Ordinary(opcodes::Ordinary::OP_PUSHDATA1) =>
-                self.next_push_data_len(PushDataLenLen::One, 76),
-            opcodes::Class::Ordinary(opcodes::Ordinary::OP_PUSHDATA2) =>
-                self.next_push_data_len(PushDataLenLen::Two, 0x100),
-            opcodes::Class::Ordinary(opcodes::Ordinary::OP_PUSHDATA4) =>
-                self.next_push_data_len(PushDataLenLen::Four, 0x10000),
+            opcodes::Class::Ordinary(opcodes::Ordinary::OP_PUSHDATA1) => {
+                self.next_push_data_len(PushDataLenLen::One, 76)
+            }
+            opcodes::Class::Ordinary(opcodes::Ordinary::OP_PUSHDATA2) => {
+                self.next_push_data_len(PushDataLenLen::Two, 0x100)
+            }
+            opcodes::Class::Ordinary(opcodes::Ordinary::OP_PUSHDATA4) => {
+                self.next_push_data_len(PushDataLenLen::Four, 0x10000)
+            }
             // Everything else we can push right through
             _ => Some(Ok(Instruction::Op(opcodes::All::from(byte)))),
         }
@@ -192,15 +197,22 @@ impl<'a> InstructionIndices<'a> {
     ///
     /// This is analogous to what [`core::str::Chars::as_str`] does.
     #[inline]
-    pub fn as_script(&self) -> &'a Script { self.instructions.as_script() }
+    pub fn as_script(&self) -> &'a Script {
+        self.instructions.as_script()
+    }
 
     /// Creates `Self` setting `pos` to 0.
     pub fn from_instructions(instructions: Instructions<'a>) -> Self {
-        InstructionIndices { instructions, pos: 0 }
+        InstructionIndices {
+            instructions,
+            pos: 0,
+        }
     }
 
     /// Returns the number of remaining bytes.
-    pub fn remaining_bytes(&self) -> usize { self.instructions.as_script().len() }
+    pub fn remaining_bytes(&self) -> usize {
+        self.instructions.as_script().len()
+    }
 
     /// Modifies the iterator using `next_fn` returning the next item.
     ///
@@ -225,10 +237,14 @@ impl<'a> Iterator for InstructionIndices<'a> {
     /// The `usize` in the tuple represents index at which the returned `Instruction` is located.
     type Item = Result<(usize, Instruction<'a>), Error>;
 
-    fn next(&mut self) -> Option<Self::Item> { self.next_with(|this| this.instructions.next()) }
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_with(|this| this.instructions.next())
+    }
 
     #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) { self.instructions.size_hint() }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.instructions.size_hint()
+    }
 
     // the override avoids computing pos multiple times
     fn nth(&mut self, n: usize) -> Option<Self::Item> {

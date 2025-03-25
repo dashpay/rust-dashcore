@@ -350,30 +350,22 @@ fn provably_unspendable_test() {
     assert!(!ScriptBuf::from_hex("410446ef0102d1ec5240f0d061a4246c1bdef63fc3dbab7733052fbbf0ecd8f41fc26bf049ebb4f9527f374280259e7cfa99c48b0e3f39c51347a19a5819651503a5ac").unwrap().is_provably_unspendable());
     assert!(!ScriptBuf::from_hex("4104ea1feff861b51fe3f5f8a3b12d0f4712db80e919548a80839fc47c6a21e66d957e9c5d8cd108c7a2d2324bad71f9904ac0ae7336507d785b17a2c115e427a32fac").unwrap().is_provably_unspendable());
     // p2pkhash
-    assert!(
-        !ScriptBuf::from_hex("76a914ee61d57ab51b9d212335b1dba62794ac20d2bcf988ac")
-            .unwrap()
-            .is_provably_unspendable()
-    );
-    assert!(
-        ScriptBuf::from_hex("6aa9149eb21980dc9d413d8eac27314938b9da920ee53e87")
-            .unwrap()
-            .is_provably_unspendable()
-    );
+    assert!(!ScriptBuf::from_hex("76a914ee61d57ab51b9d212335b1dba62794ac20d2bcf988ac")
+        .unwrap()
+        .is_provably_unspendable());
+    assert!(ScriptBuf::from_hex("6aa9149eb21980dc9d413d8eac27314938b9da920ee53e87")
+        .unwrap()
+        .is_provably_unspendable());
 }
 
 #[test]
 fn op_return_test() {
-    assert!(
-        ScriptBuf::from_hex("6aa9149eb21980dc9d413d8eac27314938b9da920ee53e87")
-            .unwrap()
-            .is_op_return()
-    );
-    assert!(
-        !ScriptBuf::from_hex("76a914ee61d57ab51b9d212335b1dba62794ac20d2bcf988ac")
-            .unwrap()
-            .is_op_return()
-    );
+    assert!(ScriptBuf::from_hex("6aa9149eb21980dc9d413d8eac27314938b9da920ee53e87")
+        .unwrap()
+        .is_op_return());
+    assert!(!ScriptBuf::from_hex("76a914ee61d57ab51b9d212335b1dba62794ac20d2bcf988ac")
+        .unwrap()
+        .is_op_return());
     assert!(!ScriptBuf::from_hex("").unwrap().is_op_return());
 }
 
@@ -446,42 +438,34 @@ fn script_buf_collect() {
 #[test]
 fn script_p2sh_p2p2k_template() {
     // random outputs I picked out of the mempool
-    assert!(
-        ScriptBuf::from_hex("76a91402306a7c23f3e8010de41e9e591348bb83f11daa88ac")
-            .unwrap()
-            .is_p2pkh()
-    );
-    assert!(
-        !ScriptBuf::from_hex("76a91402306a7c23f3e8010de41e9e591348bb83f11daa88ac")
-            .unwrap()
-            .is_p2sh()
-    );
-    assert!(
-        !ScriptBuf::from_hex("76a91402306a7c23f3e8010de41e9e591348bb83f11daa88ad")
-            .unwrap()
-            .is_p2pkh()
-    );
+    assert!(ScriptBuf::from_hex("76a91402306a7c23f3e8010de41e9e591348bb83f11daa88ac")
+        .unwrap()
+        .is_p2pkh());
+    assert!(!ScriptBuf::from_hex("76a91402306a7c23f3e8010de41e9e591348bb83f11daa88ac")
+        .unwrap()
+        .is_p2sh());
+    assert!(!ScriptBuf::from_hex("76a91402306a7c23f3e8010de41e9e591348bb83f11daa88ad")
+        .unwrap()
+        .is_p2pkh());
     assert!(!ScriptBuf::from_hex("").unwrap().is_p2pkh());
-    assert!(
-        ScriptBuf::from_hex("a914acc91e6fef5c7f24e5c8b3f11a664aa8f1352ffd87").unwrap().is_p2sh()
-    );
-    assert!(
-        !ScriptBuf::from_hex("a914acc91e6fef5c7f24e5c8b3f11a664aa8f1352ffd87").unwrap().is_p2pkh()
-    );
-    assert!(
-        !ScriptBuf::from_hex("a314acc91e6fef5c7f24e5c8b3f11a664aa8f1352ffd87").unwrap().is_p2sh()
-    );
+    assert!(ScriptBuf::from_hex("a914acc91e6fef5c7f24e5c8b3f11a664aa8f1352ffd87")
+        .unwrap()
+        .is_p2sh());
+    assert!(!ScriptBuf::from_hex("a914acc91e6fef5c7f24e5c8b3f11a664aa8f1352ffd87")
+        .unwrap()
+        .is_p2pkh());
+    assert!(!ScriptBuf::from_hex("a314acc91e6fef5c7f24e5c8b3f11a664aa8f1352ffd87")
+        .unwrap()
+        .is_p2sh());
 }
 
 #[test]
 fn script_p2pk() {
-    assert!(
-        ScriptBuf::from_hex(
-            "21021aeaf2f8638a129a3156fbe7e5ef635226b0bafd495ff03afe2c843d7e3a4b51ac"
-        )
-        .unwrap()
-        .is_p2pk()
-    );
+    assert!(ScriptBuf::from_hex(
+        "21021aeaf2f8638a129a3156fbe7e5ef635226b0bafd495ff03afe2c843d7e3a4b51ac"
+    )
+    .unwrap()
+    .is_p2pk());
     assert!(ScriptBuf::from_hex("410496b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52da7589379515d4e0a604f8141781e62294721166bf621e73a82cbf2342c858eeac").unwrap().is_p2pk());
 }
 

@@ -1,9 +1,9 @@
-use hashes::{Hash, sha256d};
+use hashes::{sha256d, Hash};
 
-use crate::Transaction;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::masternode_list::MasternodeList;
 use crate::transaction::special_transaction::TransactionPayload;
+use crate::Transaction;
 
 /// Computes the Merkle root from a list of hashes.
 ///
@@ -66,7 +66,6 @@ impl MasternodeList {
         // we need to check that the coinbase is in the transaction hashes we got back
         // and is in the merkle block
         if let Some(mn_merkle_root) = self.masternode_merkle_root {
-            //println!("has_valid_mn_list_root: {} == {}", tx.merkle_root_mn_list, mn_merkle_root);
             coinbase_payload.merkle_root_masternode_list == mn_merkle_root
         } else {
             false

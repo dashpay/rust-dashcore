@@ -12,7 +12,7 @@ use secp256k1::{Secp256k1, Verification};
 use crate::address::{WitnessProgram, WitnessVersion};
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
-use crate::blockdata::script::{Builder, Instruction, PushBytes, Script, opcode_to_verify};
+use crate::blockdata::script::{opcode_to_verify, Builder, Instruction, PushBytes, Script};
 use crate::hash_types::{PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash};
 use crate::key::{PublicKey, TapTweak, TweakedPublicKey, UntweakedPublicKey};
 use crate::prelude::*;
@@ -34,10 +34,14 @@ pub struct ScriptBuf(pub Vec<u8>);
 
 impl ScriptBuf {
     /// Creates a new empty script.
-    pub fn new() -> Self { ScriptBuf(Vec::new()) }
+    pub fn new() -> Self {
+        ScriptBuf(Vec::new())
+    }
 
     /// Creates a new empty script with pre-allocated capacity.
-    pub fn with_capacity(capacity: usize) -> Self { ScriptBuf(Vec::with_capacity(capacity)) }
+    pub fn with_capacity(capacity: usize) -> Self {
+        ScriptBuf(Vec::with_capacity(capacity))
+    }
 
     /// Pre-allocates at least `additional_len` bytes if needed.
     ///
@@ -49,7 +53,9 @@ impl ScriptBuf {
     /// # Panics
     ///
     /// Panics if the new capacity exceeds `isize::MAX bytes`.
-    pub fn reserve(&mut self, additional_len: usize) { self.0.reserve(additional_len); }
+    pub fn reserve(&mut self, additional_len: usize) {
+        self.0.reserve(additional_len);
+    }
 
     /// Pre-allocates exactly `additional_len` bytes if needed.
     ///
@@ -64,16 +70,24 @@ impl ScriptBuf {
     /// # Panics
     ///
     /// Panics if the new capacity exceeds `isize::MAX bytes`.
-    pub fn reserve_exact(&mut self, additional_len: usize) { self.0.reserve_exact(additional_len); }
+    pub fn reserve_exact(&mut self, additional_len: usize) {
+        self.0.reserve_exact(additional_len);
+    }
 
     /// Returns a reference to unsized script.
-    pub fn as_script(&self) -> &Script { Script::from_bytes(&self.0) }
+    pub fn as_script(&self) -> &Script {
+        Script::from_bytes(&self.0)
+    }
 
     /// Returns a mutable reference to unsized script.
-    pub fn as_mut_script(&mut self) -> &mut Script { Script::from_bytes_mut(&mut self.0) }
+    pub fn as_mut_script(&mut self) -> &mut Script {
+        Script::from_bytes_mut(&mut self.0)
+    }
 
     /// Creates a new script builder
-    pub fn builder() -> Builder { Builder::new() }
+    pub fn builder() -> Builder {
+        Builder::new()
+    }
 
     /// Generates P2PK-type of scriptPubkey.
     pub fn new_p2pk(pubkey: &PublicKey) -> Self {
@@ -170,15 +184,21 @@ impl ScriptBuf {
     /// Converts byte vector into script.
     ///
     /// This method doesn't (re)allocate.
-    pub fn from_bytes(bytes: Vec<u8>) -> Self { ScriptBuf(bytes) }
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        ScriptBuf(bytes)
+    }
 
     /// Converts the script into a byte vector.
     ///
     /// This method doesn't (re)allocate.
-    pub fn into_bytes(self) -> Vec<u8> { self.0 }
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
 
     /// Computes the P2SH output corresponding to this redeem script.
-    pub fn to_p2sh(&self) -> ScriptBuf { ScriptBuf::new_p2sh(&self.script_hash()) }
+    pub fn to_p2sh(&self) -> ScriptBuf {
+        ScriptBuf::new_p2sh(&self.script_hash())
+    }
 
     /// Returns the script code used for spending a P2WPKH output if this script is a script pubkey
     /// for a P2WPKH output. The `scriptCode` is described in [BIP143].
@@ -198,7 +218,9 @@ impl ScriptBuf {
     }
 
     /// Adds a single opcode to the script.
-    pub fn push_opcode(&mut self, data: opcodes::All) { self.0.push(data.to_u8()); }
+    pub fn push_opcode(&mut self, data: opcodes::All) {
+        self.0.push(data.to_u8());
+    }
 
     /// Adds instructions to push some arbitrary data onto the stack.
     pub fn push_slice<T: AsRef<PushBytes>>(&mut self, data: T) {
@@ -282,7 +304,9 @@ impl ScriptBuf {
     /// This function needs to iterate over the script to find the last instruction. Prefer
     /// `Builder` if you're creating the script from scratch or if you want to push `OP_VERIFY`
     /// multiple times.
-    pub fn scan_and_push_verify(&mut self) { self.push_verify(self.last_opcode()); }
+    pub fn scan_and_push_verify(&mut self) {
+        self.push_verify(self.last_opcode());
+    }
 
     /// Adds an `OP_VERIFY` to the script or changes the most-recently-added opcode to `VERIFY`
     /// alternative.

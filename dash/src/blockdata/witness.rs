@@ -117,7 +117,11 @@ impl Decodable for Witness {
             content.truncate(cursor);
             // Index space is now at the end of the Vec
             content.rotate_left(witness_index_space);
-            Ok(Witness { content, witness_elements, indices_start: cursor - witness_index_space })
+            Ok(Witness {
+                content,
+                witness_elements,
+                indices_start: cursor - witness_index_space,
+            })
         }
     }
 }
@@ -166,11 +170,15 @@ impl Encodable for Witness {
 
 impl Witness {
     /// Creates a new empty [`Witness`].
-    pub fn new() -> Self { Witness::default() }
+    pub fn new() -> Self {
+        Witness::default()
+    }
 
     /// Creates [`Witness`] object from an array of byte-arrays
     #[deprecated(since = "0.30.0", note = "use `Witness::from_slice()` instead")]
-    pub fn from_vec(vec: Vec<Vec<u8>>) -> Self { Witness::from_slice(&vec) }
+    pub fn from_vec(vec: Vec<Vec<u8>>) -> Self {
+        Witness::from_slice(&vec)
+    }
 
     /// Creates a [`Witness`] object from a slice of bytes slices where each slice is a witness item.
     pub fn from_slice<T: AsRef<[u8]>>(slice: &[T]) -> Self {
@@ -194,22 +202,36 @@ impl Witness {
             cursor += elem.as_ref().len();
         }
 
-        Witness { witness_elements, content, indices_start: content_size }
+        Witness {
+            witness_elements,
+            content,
+            indices_start: content_size,
+        }
     }
 
     /// Convenience method to create an array of byte-arrays from this witness.
-    pub fn to_vec(&self) -> Vec<Vec<u8>> { self.iter().map(|s| s.to_vec()).collect() }
+    pub fn to_vec(&self) -> Vec<Vec<u8>> {
+        self.iter().map(|s| s.to_vec()).collect()
+    }
 
     /// Returns `true` if the witness contains no element.
-    pub fn is_empty(&self) -> bool { self.witness_elements == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.witness_elements == 0
+    }
 
     /// Returns a struct implementing [`Iterator`].
     pub fn iter(&self) -> Iter {
-        Iter { inner: self.content.as_slice(), indices_start: self.indices_start, current_index: 0 }
+        Iter {
+            inner: self.content.as_slice(),
+            indices_start: self.indices_start,
+            current_index: 0,
+        }
     }
 
     /// Returns the number of elements this witness holds.
-    pub fn len(&self) -> usize { self.witness_elements }
+    pub fn len(&self) -> usize {
+        self.witness_elements
+    }
 
     /// Returns the bytes required when this Witness is consensus encoded.
     pub fn serialized_len(&self) -> usize {
@@ -276,12 +298,20 @@ impl Witness {
 
     /// Returns the last element in the witness, if any.
     pub fn last(&self) -> Option<&[u8]> {
-        if self.witness_elements == 0 { None } else { self.nth(self.witness_elements - 1) }
+        if self.witness_elements == 0 {
+            None
+        } else {
+            self.nth(self.witness_elements - 1)
+        }
     }
 
     /// Returns the second-to-last element in the witness, if any.
     pub fn second_to_last(&self) -> Option<&[u8]> {
-        if self.witness_elements <= 1 { None } else { self.nth(self.witness_elements - 2) }
+        if self.witness_elements <= 1 {
+            None
+        } else {
+            self.nth(self.witness_elements - 2)
+        }
     }
 
     /// Return the nth element in the witness, if any
@@ -322,7 +352,9 @@ impl Witness {
 impl Index<usize> for Witness {
     type Output = [u8];
 
-    fn index(&self, index: usize) -> &Self::Output { self.nth(index).expect("Out of Bounds") }
+    fn index(&self, index: usize) -> &Self::Output {
+        self.nth(index).expect("Out of Bounds")
+    }
 }
 
 impl<'a> Iterator for Iter<'a> {
@@ -351,7 +383,9 @@ impl<'a> IntoIterator for &'a Witness {
     type IntoIter = Iter<'a>;
     type Item = &'a [u8];
 
-    fn into_iter(self) -> Self::IntoIter { self.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 // Serde keep backward compatibility with old Vec<Vec<u8>> format
@@ -416,8 +450,9 @@ impl<'de> serde::Deserialize<'de> for Witness {
                                 &"a valid hex character",
                             ),
                         },
-                        OddLengthString(len) =>
-                            de::Error::invalid_length(len, &"an even length string"),
+                        OddLengthString(len) => {
+                            de::Error::invalid_length(len, &"an even length string")
+                        }
                         InvalidLength(expected, got) => {
                             let exp = format!("expected length: {}", expected);
                             de::Error::invalid_length(got, &exp.as_str())
@@ -439,19 +474,27 @@ impl<'de> serde::Deserialize<'de> for Witness {
 }
 
 impl From<Vec<Vec<u8>>> for Witness {
-    fn from(vec: Vec<Vec<u8>>) -> Self { Witness::from_slice(&vec) }
+    fn from(vec: Vec<Vec<u8>>) -> Self {
+        Witness::from_slice(&vec)
+    }
 }
 
 impl From<&[&[u8]]> for Witness {
-    fn from(slice: &[&[u8]]) -> Self { Witness::from_slice(slice) }
+    fn from(slice: &[&[u8]]) -> Self {
+        Witness::from_slice(slice)
+    }
 }
 
 impl From<&[Vec<u8>]> for Witness {
-    fn from(slice: &[Vec<u8>]) -> Self { Witness::from_slice(slice) }
+    fn from(slice: &[Vec<u8>]) -> Self {
+        Witness::from_slice(slice)
+    }
 }
 
 impl From<Vec<&[u8]>> for Witness {
-    fn from(vec: Vec<&[u8]>) -> Self { Witness::from_slice(&vec) }
+    fn from(vec: Vec<&[u8]>) -> Self {
+        Witness::from_slice(&vec)
+    }
 }
 
 #[cfg(test)]
@@ -459,9 +502,9 @@ mod test {
     use secp256k1::ecdsa;
 
     use super::*;
-    use crate::Transaction;
     use crate::consensus::{deserialize, serialize};
     use crate::internal_macros::hex;
+    use crate::Transaction;
 
     fn append_u32_vec(mut v: Vec<u8>, n: &[u32]) -> Vec<u8> {
         for &num in n {
@@ -684,7 +727,7 @@ mod test {
 
 #[cfg(bench)]
 mod benches {
-    use test::{Bencher, black_box};
+    use test::{black_box, Bencher};
 
     use super::Witness;
 

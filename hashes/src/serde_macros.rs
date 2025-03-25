@@ -24,7 +24,7 @@ pub mod serde_details {
 
     use crate::Error;
     struct HexVisitor<ValueT>(PhantomData<ValueT>);
-    use serde::{Deserializer, Serializer, de};
+    use serde::{de, Deserializer, Serializer};
 
     impl<'de, ValueT> de::Visitor<'de> for HexVisitor<ValueT>
     where
@@ -98,7 +98,11 @@ pub mod serde_details {
 
         /// Do serde serialization.
         fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-            if s.is_human_readable() { s.collect_str(self) } else { s.serialize_bytes(&self[..]) }
+            if s.is_human_readable() {
+                s.collect_str(self)
+            } else {
+                s.serialize_bytes(&self[..])
+            }
         }
 
         /// Do serde deserialization.

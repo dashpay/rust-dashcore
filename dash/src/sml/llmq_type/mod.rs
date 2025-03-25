@@ -7,8 +7,8 @@ use std::io;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::Network;
-use crate::consensus::{Decodable, Encodable, encode};
 
 #[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]
@@ -348,11 +348,17 @@ impl LLMQType {
             LLMQType::LlmqtypeUnknown => LLMQ_DEVNET,
         }
     }
-    pub fn size(&self) -> u32 { self.params().size }
+    pub fn size(&self) -> u32 {
+        self.params().size
+    }
 
-    pub fn threshold(&self) -> u32 { self.params().threshold }
+    pub fn threshold(&self) -> u32 {
+        self.params().threshold
+    }
 
-    pub fn active_quorum_count(&self) -> u32 { self.params().signing_active_quorum_count }
+    pub fn active_quorum_count(&self) -> u32 {
+        self.params().signing_active_quorum_count
+    }
 }
 
 impl From<u8> for LLMQType {
@@ -432,14 +438,24 @@ impl Decodable for LLMQType {
 }
 
 pub fn dkg_rotation_params(network: Network) -> DKGParams {
-    if network == Network::Devnet { DKG_DEVNET_DIP_0024 } else { DKG_60_75 }
+    if network == Network::Devnet {
+        DKG_DEVNET_DIP_0024
+    } else {
+        DKG_60_75
+    }
 }
 
 #[cfg_attr(feature = "apple", ferment_macro::export)]
 impl LLMQType {
-    pub fn index(&self) -> u8 { u8::from(self.clone()) }
-    pub fn from_u16(index: u16) -> LLMQType { LLMQType::from(index as u8) }
-    pub fn from_u8(index: u8) -> LLMQType { LLMQType::from(index) }
+    pub fn index(&self) -> u8 {
+        u8::from(self.clone())
+    }
+    pub fn from_u16(index: u16) -> LLMQType {
+        LLMQType::from(index as u8)
+    }
+    pub fn from_u8(index: u8) -> LLMQType {
+        LLMQType::from(index)
+    }
 
     pub fn is_rotating_quorum_type(&self) -> bool {
         match self {

@@ -1,12 +1,21 @@
-#[cfg(feature = "bincode")]
-use bincode::{Decode, Encode};
-
+use crate::bls_sig_utils::BLSSignature;
 use crate::hash_types::{QuorumCommitmentHash, QuorumEntryHash};
 use crate::sml::llmq_entry_verification::{
     LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
 };
 use crate::sml::quorum_validation_error::QuorumValidationError;
 use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub enum VerifyingChainLockSignaturesType {
+    Rotating([BLSSignature; 4]),
+    NonRotating(BLSSignature),
+}
 
 /// A structured representation of a quorum entry with additional validation status and commitment hashes.
 ///
@@ -26,6 +35,8 @@ pub struct QualifiedQuorumEntry {
     pub commitment_hash: QuorumCommitmentHash,
     /// The computed hash of the quorum entry.
     pub entry_hash: QuorumEntryHash,
+    /// The chain lock signature that can be used for the quorum entry
+    pub verifying_chain_lock_signature: Option<VerifyingChainLockSignaturesType>,
 }
 
 impl From<QuorumEntry> for QualifiedQuorumEntry {
@@ -39,6 +50,7 @@ impl From<QuorumEntry> for QualifiedQuorumEntry {
             ), // Default to unverified
             commitment_hash,
             entry_hash,
+            verifying_chain_lock_signature: None,
         }
     }
 }
