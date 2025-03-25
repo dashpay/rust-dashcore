@@ -44,7 +44,9 @@ impl std::error::Error for Error {
 
 #[doc(hidden)]
 impl From<encode::Error> for Error {
-    fn from(e: encode::Error) -> Error { Error::Encode(e) }
+    fn from(e: encode::Error) -> Error {
+        Error::Encode(e)
+    }
 }
 
 /// Impls std::error::Error for the specified type with appropriate attributes, possibly returning
@@ -59,7 +61,9 @@ macro_rules! impl_std_error {
     ($type:ty, $field:ident) => {
         #[cfg(feature = "std")]
         impl std::error::Error for $type {
-            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(&self.$field) }
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.$field)
+            }
         }
     };
 }

@@ -3,12 +3,12 @@ extern crate dashcore;
 use std::str::FromStr;
 use std::{env, process};
 
-use dashcore::PublicKey;
 use dashcore::address::Address;
 use dashcore::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use dashcore::hashes::hex::FromHex;
-use dashcore::secp256k1::Secp256k1;
 use dashcore::secp256k1::ffi::types::AlignedType;
+use dashcore::secp256k1::Secp256k1;
+use dashcore::PublicKey;
 
 fn main() {
     // This example derives root xprv from a 32-byte seed,

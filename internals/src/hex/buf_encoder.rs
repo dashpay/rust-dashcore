@@ -69,7 +69,9 @@ mod out_bytes {
         ///
         /// The method panics if `len` is out of bounds.
         #[track_caller]
-        pub(crate) fn assume_init(&self, len: usize) -> &[u8] { &self.0[..len] }
+        pub(crate) fn assume_init(&self, len: usize) -> &[u8] {
+            &self.0[..len]
+        }
 
         /// Writes given bytes into the buffer.
         ///
@@ -82,7 +84,9 @@ mod out_bytes {
         }
 
         /// Returns the length of the buffer.
-        pub(crate) fn len(&self) -> usize { self.0.len() }
+        pub(crate) fn len(&self) -> usize {
+            self.0.len()
+        }
 
         fn from_bytes(slice: &[u8]) -> &Self {
             // SAFETY: copied from std
@@ -143,17 +147,25 @@ mod out_bytes {
     }
 
     impl<T: AsOutBytes + ?Sized> AsOutBytes for &'_ mut T {
-        fn as_out_bytes(&self) -> &OutBytes { (**self).as_out_bytes() }
+        fn as_out_bytes(&self) -> &OutBytes {
+            (**self).as_out_bytes()
+        }
 
-        fn as_mut_out_bytes(&mut self) -> &mut OutBytes { (**self).as_mut_out_bytes() }
+        fn as_mut_out_bytes(&mut self) -> &mut OutBytes {
+            (**self).as_mut_out_bytes()
+        }
     }
 
     impl<T: AsOutBytes + ?Sized> Sealed for &'_ mut T {}
 
     impl AsOutBytes for OutBytes {
-        fn as_out_bytes(&self) -> &OutBytes { self }
+        fn as_out_bytes(&self) -> &OutBytes {
+            self
+        }
 
-        fn as_mut_out_bytes(&mut self) -> &mut OutBytes { self }
+        fn as_mut_out_bytes(&mut self) -> &mut OutBytes {
+            self
+        }
     }
 
     impl Sealed for OutBytes {}
@@ -185,7 +197,12 @@ impl<T: AsOutBytes> BufEncoder<T> {
     /// This is usually used with uninitialized (zeroed) byte array allocated on stack.
     /// This can only be constructed with an even-length, non-empty array.
     #[inline]
-    pub fn new(buf: T) -> Self { BufEncoder { buf, pos: 0 } }
+    pub fn new(buf: T) -> Self {
+        BufEncoder {
+            buf,
+            pos: 0,
+        }
+    }
 
     /// Encodes `byte` as hex in given `case` and appends it to the buffer.
     ///
@@ -245,7 +262,9 @@ impl<T: AsOutBytes> BufEncoder<T> {
 
     /// Returns true if no more bytes can be written into the buffer.
     #[inline]
-    pub fn is_full(&self) -> bool { self.pos == self.buf.as_out_bytes().len() }
+    pub fn is_full(&self) -> bool {
+        self.pos == self.buf.as_out_bytes().len()
+    }
 
     /// Returns the written bytes as a hex `str`.
     #[inline]
@@ -256,13 +275,17 @@ impl<T: AsOutBytes> BufEncoder<T> {
 
     /// Resets the buffer to become empty.
     #[inline]
-    pub fn clear(&mut self) { self.pos = 0; }
+    pub fn clear(&mut self) {
+        self.pos = 0;
+    }
 
     /// How many bytes can be written to this buffer.
     ///
     /// Note that this returns the number of bytes before encoding, not number of hex digits.
     #[inline]
-    pub fn space_remaining(&self) -> usize { (self.buf.as_out_bytes().len() - self.pos) / 2 }
+    pub fn space_remaining(&self) -> usize {
+        (self.buf.as_out_bytes().len() - self.pos) / 2
+    }
 }
 
 #[cfg(test)]
@@ -356,7 +379,9 @@ mod tests {
         }
 
         impl Writer {
-            fn as_str(&self) -> &str { core::str::from_utf8(&self.buf[..self.pos]).unwrap() }
+            fn as_str(&self) -> &str {
+                core::str::from_utf8(&self.buf[..self.pos]).unwrap()
+            }
         }
 
         impl Write for Writer {
@@ -372,7 +397,10 @@ mod tests {
             }
         }
 
-        let mut writer = Writer { buf: [0u8; 2], pos: 0 };
+        let mut writer = Writer {
+            buf: [0u8; 2],
+            pos: 0,
+        };
         let mut buf = [0u8; 2];
         let mut encoder = BufEncoder::new(&mut buf);
 

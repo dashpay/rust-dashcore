@@ -110,21 +110,28 @@ impl fmt::Display for Error {
             Error::InvalidMagic => f.write_str("invalid magic"),
             Error::MissingUtxo => f.write_str("UTXO information is not present in PSBT"),
             Error::InvalidSeparator => f.write_str("invalid separator"),
-            Error::PsbtUtxoOutOfbounds =>
-                f.write_str("output index is out of bounds of non witness script output array"),
+            Error::PsbtUtxoOutOfbounds => {
+                f.write_str("output index is out of bounds of non witness script output array")
+            }
             Error::InvalidKey(ref rkey) => write!(f, "invalid key: {}", rkey),
             Error::InvalidProprietaryKey => {
                 write!(f, "non-proprietary key type found when proprietary key was expected")
             }
             Error::DuplicateKey(ref rkey) => write!(f, "duplicate key: {}", rkey),
-            Error::UnsignedTxHasScriptSigs =>
-                f.write_str("the unsigned transaction has script sigs"),
-            Error::UnsignedTxHasScriptWitnesses =>
-                f.write_str("the unsigned transaction has script witnesses"),
-            Error::MustHaveUnsignedTx =>
-                f.write_str("partially signed transactions must have an unsigned transaction"),
+            Error::UnsignedTxHasScriptSigs => {
+                f.write_str("the unsigned transaction has script sigs")
+            }
+            Error::UnsignedTxHasScriptWitnesses => {
+                f.write_str("the unsigned transaction has script witnesses")
+            }
+            Error::MustHaveUnsignedTx => {
+                f.write_str("partially signed transactions must have an unsigned transaction")
+            }
             Error::NoMorePairs => f.write_str("no more key-value pairs for this psbt map"),
-            Error::UnexpectedUnsignedTx { expected: ref e, actual: ref a } => write!(
+            Error::UnexpectedUnsignedTx {
+                expected: ref e,
+                actual: ref a,
+            } => write!(
                 f,
                 "different unsigned transaction: expected {}, actual {}",
                 e.txid(),
@@ -134,7 +141,11 @@ impl fmt::Display for Error {
                 write!(f, "non-standard sighash type: {}", sht)
             }
             Error::HashParse(ref e) => write_err!(f, "hash parse error"; e),
-            Error::InvalidPreimageHashPair { ref preimage, ref hash, ref hash_type } => {
+            Error::InvalidPreimageHashPair {
+                ref preimage,
+                ref hash,
+                ref hash_type,
+            } => {
                 // directly using debug forms of psbthash enums
                 write!(f, "Preimage {:?} does not match {:?} hash {:?}", preimage, hash_type, hash)
             }
@@ -157,8 +168,9 @@ impl fmt::Display for Error {
             Error::TapTree(ref e) => write_err!(f, "taproot tree error"; e),
             Error::XPubKey(s) => write!(f, "xpub key error -  {}", s),
             Error::Version(s) => write!(f, "version error {}", s),
-            Error::PartialDataConsumption =>
-                f.write_str("data not consumed entirely when explicitly deserializing"),
+            Error::PartialDataConsumption => {
+                f.write_str("data not consumed entirely when explicitly deserializing")
+            }
             Error::Io(ref e) => write_err!(f, "I/O error"; e),
         }
     }
@@ -184,9 +196,13 @@ impl std::error::Error for Error {
             | UnsignedTxHasScriptWitnesses
             | MustHaveUnsignedTx
             | NoMorePairs
-            | UnexpectedUnsignedTx { .. }
+            | UnexpectedUnsignedTx {
+                ..
+            }
             | NonStandardSighashType(_)
-            | InvalidPreimageHashPair { .. }
+            | InvalidPreimageHashPair {
+                ..
+            }
             | CombineInconsistentKeySources(_)
             | NegativeFee
             | FeeOverflow
@@ -208,13 +224,19 @@ impl std::error::Error for Error {
 
 #[doc(hidden)]
 impl From<hashes::Error> for Error {
-    fn from(e: hashes::Error) -> Error { Error::HashParse(e) }
+    fn from(e: hashes::Error) -> Error {
+        Error::HashParse(e)
+    }
 }
 
 impl From<encode::Error> for Error {
-    fn from(e: encode::Error) -> Self { Error::ConsensusEncoding(e) }
+    fn from(e: encode::Error) -> Self {
+        Error::ConsensusEncoding(e)
+    }
 }
 
 impl From<io::Error> for Error {
-    fn from(e: io::Error) -> Self { Error::Io(e) }
+    fn from(e: io::Error) -> Self {
+        Error::Io(e)
+    }
 }

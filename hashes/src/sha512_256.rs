@@ -29,7 +29,7 @@ use core::slice::SliceIndex;
 use core::str;
 
 use crate::sha512::BLOCK_SIZE;
-use crate::{Error, sha512};
+use crate::{sha512, Error};
 
 /// Engine to compute SHA512/256 hash function.
 ///
@@ -57,13 +57,19 @@ impl Default for HashEngine {
 impl crate::HashEngine for HashEngine {
     type MidState = [u8; 64];
 
-    fn midstate(&self) -> [u8; 64] { self.0.midstate() }
+    fn midstate(&self) -> [u8; 64] {
+        self.0.midstate()
+    }
 
     const BLOCK_SIZE: usize = sha512::BLOCK_SIZE;
 
-    fn n_bytes_hashed(&self) -> usize { self.0.length }
+    fn n_bytes_hashed(&self) -> usize {
+        self.0.length
+    }
 
-    fn input(&mut self, inp: &[u8]) { self.0.input(inp); }
+    fn input(&mut self, inp: &[u8]) {
+        self.0.input(inp);
+    }
 }
 
 crate::internal_macros::hash_type! {
@@ -84,7 +90,7 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn test() {
-        use crate::{Hash, HashEngine, sha512_256};
+        use crate::{sha512_256, Hash, HashEngine};
 
         #[derive(Clone)]
         struct Test {
@@ -171,7 +177,7 @@ mod tests {
 mod benches {
     use test::Bencher;
 
-    use crate::{Hash, HashEngine, sha512_256};
+    use crate::{sha512_256, Hash, HashEngine};
 
     #[bench]
     pub fn sha512_256_10(bh: &mut Bencher) {

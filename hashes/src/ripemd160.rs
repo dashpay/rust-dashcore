@@ -102,7 +102,9 @@ impl crate::HashEngine for HashEngine {
 
     const BLOCK_SIZE: usize = 64;
 
-    fn n_bytes_hashed(&self) -> usize { self.length }
+    fn n_bytes_hashed(&self) -> usize {
+        self.length
+    }
 
     engine_input_impl!();
 }
@@ -407,7 +409,7 @@ mod tests {
     fn test() {
         use std::convert::TryFrom;
 
-        use crate::{Hash, HashEngine, ripemd160};
+        use crate::{ripemd160, Hash, HashEngine};
 
         #[derive(Clone)]
         struct Test {
@@ -500,9 +502,9 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn ripemd_serde() {
-        use serde_test::{Configure, Token, assert_tokens};
+        use serde_test::{assert_tokens, Configure, Token};
 
-        use crate::{Hash, ripemd160};
+        use crate::{ripemd160, Hash};
 
         #[rustfmt::skip]
         static HASH_BYTES: [u8; 20] = [
@@ -523,7 +525,7 @@ mod tests {
 mod benches {
     use test::Bencher;
 
-    use crate::{Hash, HashEngine, ripemd160};
+    use crate::{ripemd160, Hash, HashEngine};
 
     #[bench]
     pub fn ripemd160_10(bh: &mut Bencher) {

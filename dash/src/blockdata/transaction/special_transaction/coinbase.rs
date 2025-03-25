@@ -23,7 +23,7 @@ use bincode::{Decode, Encode};
 
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::encode::{compact_size_len, read_compact_size, write_compact_size};
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::io;
 use crate::io::{Error, ErrorKind};
@@ -99,10 +99,21 @@ impl Decodable for CoinbasePayload {
         let height = u32::consensus_decode(r)?;
         let merkle_root_masternode_list = MerkleRootMasternodeList::consensus_decode(r)?;
         let merkle_root_quorums = MerkleRootQuorums::consensus_decode(r)?;
-        let best_cl_height = if version >= 3 { Some(read_compact_size(r)?) } else { None };
-        let best_cl_signature =
-            if version >= 3 { Some(BLSSignature::consensus_decode(r)?) } else { None };
-        let asset_locked_amount = if version >= 3 { Some(u64::consensus_decode(r)?) } else { None };
+        let best_cl_height = if version >= 3 {
+            Some(read_compact_size(r)?)
+        } else {
+            None
+        };
+        let best_cl_signature = if version >= 3 {
+            Some(BLSSignature::consensus_decode(r)?)
+        } else {
+            None
+        };
+        let asset_locked_amount = if version >= 3 {
+            Some(u64::consensus_decode(r)?)
+        } else {
+            None
+        };
         Ok(CoinbasePayload {
             version,
             height,

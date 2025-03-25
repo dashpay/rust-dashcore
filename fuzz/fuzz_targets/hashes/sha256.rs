@@ -1,4 +1,4 @@
-use dashcore::hashes::{Hash, HashEngine, sha256};
+use dashcore::hashes::{sha256, Hash, HashEngine};
 use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {

@@ -54,7 +54,7 @@ use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::constants::ChainHash;
 use crate::error::impl_std_error;
 use crate::prelude::{String, ToOwned};
-use crate::{BlockHash, io};
+use crate::{io, BlockHash};
 
 /// Version of the protocol as appearing in network message headers
 /// This constant is used to signal to other peers which features you support.
@@ -301,18 +301,26 @@ impl ServiceFlags {
     }
 
     /// Check whether [ServiceFlags] are included in this one.
-    pub fn has(self, flags: ServiceFlags) -> bool { (self.0 | flags.0) == self.0 }
+    pub fn has(self, flags: ServiceFlags) -> bool {
+        (self.0 | flags.0) == self.0
+    }
 
     /// Get the integer representation of this [ServiceFlags].
-    pub fn as_u64(self) -> u64 { self.0 }
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
 }
 
 impl fmt::LowerHex for ServiceFlags {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::LowerHex::fmt(&self.0, f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
+    }
 }
 
 impl fmt::UpperHex for ServiceFlags {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::UpperHex::fmt(&self.0, f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::UpperHex::fmt(&self.0, f)
+    }
 }
 
 impl fmt::Display for ServiceFlags {
@@ -353,31 +361,43 @@ impl fmt::Display for ServiceFlags {
 }
 
 impl From<u64> for ServiceFlags {
-    fn from(f: u64) -> Self { ServiceFlags(f) }
+    fn from(f: u64) -> Self {
+        ServiceFlags(f)
+    }
 }
 
 impl From<ServiceFlags> for u64 {
-    fn from(val: ServiceFlags) -> Self { val.0 }
+    fn from(val: ServiceFlags) -> Self {
+        val.0
+    }
 }
 
 impl ops::BitOr for ServiceFlags {
     type Output = Self;
 
-    fn bitor(mut self, rhs: Self) -> Self { self.add(rhs) }
+    fn bitor(mut self, rhs: Self) -> Self {
+        self.add(rhs)
+    }
 }
 
 impl ops::BitOrAssign for ServiceFlags {
-    fn bitor_assign(&mut self, rhs: Self) { self.add(rhs); }
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.add(rhs);
+    }
 }
 
 impl ops::BitXor for ServiceFlags {
     type Output = Self;
 
-    fn bitxor(mut self, rhs: Self) -> Self { self.remove(rhs) }
+    fn bitxor(mut self, rhs: Self) -> Self {
+        self.remove(rhs)
+    }
 }
 
 impl ops::BitXorAssign for ServiceFlags {
-    fn bitxor_assign(&mut self, rhs: Self) { self.remove(rhs); }
+    fn bitxor_assign(&mut self, rhs: Self) {
+        self.remove(rhs);
+    }
 }
 
 impl Encodable for ServiceFlags {

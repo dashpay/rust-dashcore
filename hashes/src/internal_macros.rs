@@ -243,9 +243,13 @@ macro_rules! hash_type {
         );
 
         impl Hash {
-            fn internal_new(arr: [u8; $bits / 8]) -> Self { Hash(arr) }
+            fn internal_new(arr: [u8; $bits / 8]) -> Self {
+                Hash(arr)
+            }
 
-            fn internal_engine() -> HashEngine { Default::default() }
+            fn internal_engine() -> HashEngine {
+                Default::default()
+            }
         }
 
         crate::internal_macros::hash_trait_impls!($bits, $reverse);

@@ -36,7 +36,7 @@ use std::io::Write;
 
 #[cfg(feature = "core-block-hash-use-x11")]
 use hashes::hash_x11;
-use hashes::{Hash, hash160, sha256, sha256d};
+use hashes::{hash160, sha256, sha256d, Hash};
 use internals::write_err;
 
 use crate::bip152::{PrefilledTransaction, ShortId};
@@ -56,11 +56,11 @@ use crate::network::{
 use crate::prelude::*;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::taproot::TapLeafHash;
-use crate::transaction::special_transaction::TransactionType;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+use crate::transaction::special_transaction::TransactionType;
 use crate::transaction::txin::TxIn;
 use crate::transaction::txout::TxOut;
-use crate::{OutPoint, ProTxHash, ScriptBuf, address};
+use crate::{address, OutPoint, ProTxHash, ScriptBuf};
 
 /// Encoding error.
 #[derive(Debug)]
@@ -112,17 +112,27 @@ pub enum Error {
     /// Address error
     Address(address::Error),
     /// Invalid enum value
-    InvalidEnumValue { max: u16, received: u16, msg: String },
+    InvalidEnumValue {
+        max: u16,
+        received: u16,
+        msg: String,
+    },
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::Io(ref e) => write_err!(f, "IO error"; e),
-            Error::OversizedVectorAllocation { requested: ref r, max: ref m } => {
+            Error::OversizedVectorAllocation {
+                requested: ref r,
+                max: ref m,
+            } => {
                 write!(f, "allocation of oversized vector: requested {}, maximum {}", r, m)
             }
-            Error::InvalidChecksum { expected: ref e, actual: ref a } => {
+            Error::InvalidChecksum {
+                expected: ref e,
+                actual: ref a,
+            } => {
                 write!(f, "invalid checksum: expected {:x}, actual {:x}", e.as_hex(), a.as_hex())
             }
             Error::NonMinimalVarInt => write!(f, "non-minimal varint"),
@@ -133,18 +143,28 @@ impl fmt::Display for Error {
             Error::UnknownSpecialTransactionType(ref stt) => {
                 write!(f, "unknown special transaction type: {}", stt)
             }
-            Error::WrongSpecialTransactionPayloadConversion { expected: ref e, actual: ref a } => {
+            Error::WrongSpecialTransactionPayloadConversion {
+                expected: ref e,
+                actual: ref a,
+            } => {
                 write!(f, "wrong special transaction payload conversion expected: {} got: {}", e, a)
             }
             Error::NonStandardScriptPayout(ref script) => {
                 write!(f, "non standard script payout: {}", script.to_hex_string())
             }
-            Error::InvalidVectorSize { expected, actual } => {
+            Error::InvalidVectorSize {
+                expected,
+                actual,
+            } => {
                 write!(f, "invalid vector size error expected: {} got: {}", expected, actual)
             }
             Error::Hex(ref e) => write!(f, "hex error {}", e),
             Error::Address(ref e) => write!(f, "address error {}", e),
-            Error::InvalidEnumValue { max, received, msg } => {
+            Error::InvalidEnumValue {
+                max,
+                received,
+                msg,
+            } => {
                 write!(f, "invalid enum value, max: {} received: {} ({})", max, received, msg)
             }
         }
@@ -158,30 +178,44 @@ impl std::error::Error for Error {
 
         match self {
             Io(e) => Some(e),
-            OversizedVectorAllocation { .. }
-            | InvalidChecksum { .. }
+            OversizedVectorAllocation {
+                ..
+            }
+            | InvalidChecksum {
+                ..
+            }
             | NonMinimalVarInt
             | ParseFailed(_)
             | UnsupportedSegwitFlag(_)
             | Error::UnknownSpecialTransactionType(..)
-            | Error::WrongSpecialTransactionPayloadConversion { .. }
+            | Error::WrongSpecialTransactionPayloadConversion {
+                ..
+            }
             | Error::NonStandardScriptPayout(..)
-            | Error::InvalidVectorSize { .. }
+            | Error::InvalidVectorSize {
+                ..
+            }
             | Error::Hex(_)
             | Error::Address(_)
-            | InvalidEnumValue { .. } => None,
+            | InvalidEnumValue {
+                ..
+            } => None,
         }
     }
 }
 
 #[doc(hidden)]
 impl From<io::Error> for Error {
-    fn from(error: io::Error) -> Self { Error::Io(error) }
+    fn from(error: io::Error) -> Self {
+        Error::Io(error)
+    }
 }
 
 #[doc(hidden)]
 impl From<address::Error> for Error {
-    fn from(error: address::Error) -> Self { Error::Address(error) }
+    fn from(error: address::Error) -> Self {
+        Error::Address(error)
+    }
 }
 
 /// Encodes an object into a vector.
@@ -308,13 +342,21 @@ impl<W: io::Write + ?Sized> WriteExt for W {
     encoder_fn!(emit_i16, i16);
 
     #[inline]
-    fn emit_i8(&mut self, v: i8) -> Result<(), io::Error> { self.write_all(&[v as u8]) }
+    fn emit_i8(&mut self, v: i8) -> Result<(), io::Error> {
+        self.write_all(&[v as u8])
+    }
     #[inline]
-    fn emit_u8(&mut self, v: u8) -> Result<(), io::Error> { self.write_all(&[v]) }
+    fn emit_u8(&mut self, v: u8) -> Result<(), io::Error> {
+        self.write_all(&[v])
+    }
     #[inline]
-    fn emit_bool(&mut self, v: bool) -> Result<(), io::Error> { self.write_all(&[v as u8]) }
+    fn emit_bool(&mut self, v: bool) -> Result<(), io::Error> {
+        self.write_all(&[v as u8])
+    }
     #[inline]
-    fn emit_slice(&mut self, v: &[u8]) -> Result<(), io::Error> { self.write_all(v) }
+    fn emit_slice(&mut self, v: &[u8]) -> Result<(), io::Error> {
+        self.write_all(v)
+    }
 }
 
 impl<R: Read + ?Sized> ReadExt for R {
@@ -339,7 +381,9 @@ impl<R: Read + ?Sized> ReadExt for R {
         Ok(slice[0] as i8)
     }
     #[inline]
-    fn read_bool(&mut self) -> Result<bool, Error> { ReadExt::read_i8(self).map(|bit| bit != 0) }
+    fn read_bool(&mut self) -> Result<bool, Error> {
+        ReadExt::read_i8(self).map(|bit| bit != 0)
+    }
     #[inline]
     fn read_slice(&mut self, slice: &mut [u8]) -> Result<(), Error> {
         self.read_exact(slice).map_err(Error::Io)
@@ -507,15 +551,27 @@ impl Decodable for VarInt {
         match n {
             0xFF => {
                 let x = ReadExt::read_u64(r)?;
-                if x < 0x100000000 { Err(self::Error::NonMinimalVarInt) } else { Ok(VarInt(x)) }
+                if x < 0x100000000 {
+                    Err(self::Error::NonMinimalVarInt)
+                } else {
+                    Ok(VarInt(x))
+                }
             }
             0xFE => {
                 let x = ReadExt::read_u32(r)?;
-                if x < 0x10000 { Err(self::Error::NonMinimalVarInt) } else { Ok(VarInt(x as u64)) }
+                if x < 0x10000 {
+                    Err(self::Error::NonMinimalVarInt)
+                } else {
+                    Ok(VarInt(x as u64))
+                }
             }
             0xFD => {
                 let x = ReadExt::read_u16(r)?;
-                if x < 0xFD { Err(self::Error::NonMinimalVarInt) } else { Ok(VarInt(x as u64)) }
+                if x < 0xFD {
+                    Err(self::Error::NonMinimalVarInt)
+                } else {
+                    Ok(VarInt(x as u64))
+                }
             }
             n => Ok(VarInt(n as u64)),
         }
@@ -756,7 +812,10 @@ impl Decodable for Vec<u8> {
     fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, Error> {
         let len = VarInt::consensus_decode(r)?.0 as usize;
         // most real-world vec of bytes data, wouldn't be larger than 128KiB
-        let opts = ReadBytesFromFiniteReaderOpts { len, chunk_size: 128 * 1024 };
+        let opts = ReadBytesFromFiniteReaderOpts {
+            len,
+            chunk_size: 128 * 1024,
+        };
         read_bytes_from_finite_reader(r, opts)
     }
 }
@@ -797,11 +856,17 @@ impl Decodable for CheckedData {
         let len = u32::consensus_decode_from_finite_reader(r)? as usize;
 
         let checksum = <[u8; 4]>::consensus_decode_from_finite_reader(r)?;
-        let opts = ReadBytesFromFiniteReaderOpts { len, chunk_size: MAX_VEC_SIZE };
+        let opts = ReadBytesFromFiniteReaderOpts {
+            len,
+            chunk_size: MAX_VEC_SIZE,
+        };
         let ret = read_bytes_from_finite_reader(r, opts)?;
         let expected_checksum = sha2_checksum(&ret);
         if expected_checksum != checksum {
-            Err(self::Error::InvalidChecksum { expected: expected_checksum, actual: checksum })
+            Err(self::Error::InvalidChecksum {
+                expected: expected_checksum,
+                actual: checksum,
+            })
         } else {
             Ok(CheckedData(ret))
         }
@@ -1078,9 +1143,9 @@ mod tests {
     use core::mem::{self, discriminant};
 
     use super::*;
-    use crate::consensus::{Decodable, Encodable, deserialize_partial};
+    use crate::consensus::{deserialize_partial, Decodable, Encodable};
     #[cfg(feature = "std")]
-    use crate::network::{Address, message_blockdata::Inventory};
+    use crate::network::{message_blockdata::Inventory, Address};
     use crate::{TxIn, TxOut};
 
     #[test]
@@ -1348,13 +1413,11 @@ mod tests {
         assert_eq!(deserialize(&[3u8, 2, 3, 4]).ok(), Some(vec![2u8, 3, 4]));
         assert!((deserialize(&[4u8, 2, 3, 4, 5, 6]) as Result<Vec<u8>, _>).is_err());
         // found by cargo fuzz
-        assert!(
-            deserialize::<Vec<u64>>(&[
-                0xff, 0xff, 0xff, 0xff, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b,
-                0x6b, 0x6b, 0xa, 0xa, 0x3a
-            ])
-            .is_err()
-        );
+        assert!(deserialize::<Vec<u64>>(&[
+            0xff, 0xff, 0xff, 0xff, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b,
+            0x6b, 0x6b, 0xa, 0xa, 0x3a
+        ])
+        .is_err());
 
         let rand_io_err = Error::Io(io::Error::new(io::ErrorKind::Other, ""));
 
@@ -1421,7 +1484,7 @@ mod tests {
     #[test]
     #[cfg(feature = "rand-std")]
     fn serialization_round_trips() {
-        use secp256k1::rand::{Rng, thread_rng};
+        use secp256k1::rand::{thread_rng, Rng};
 
         macro_rules! round_trip {
             ($($val_type:ty),*) => {
@@ -1466,7 +1529,10 @@ mod tests {
             assert_eq!(
                 read_bytes_from_finite_reader(
                     io::Cursor::new(&data),
-                    ReadBytesFromFiniteReaderOpts { len: data.len(), chunk_size },
+                    ReadBytesFromFiniteReaderOpts {
+                        len: data.len(),
+                        chunk_size
+                    },
                 )
                 .unwrap(),
                 data

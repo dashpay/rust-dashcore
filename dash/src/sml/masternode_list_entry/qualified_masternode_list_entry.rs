@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::{Hash, sha256d};
+use hashes::{sha256d, Hash};
 
 use crate::hash_types::ConfirmedHashHashedWithProRegTx;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
@@ -30,7 +30,9 @@ impl Ord for QualifiedMasternodeListEntry {
 }
 
 impl PartialOrd for QualifiedMasternodeListEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl From<MasternodeListEntry> for QualifiedMasternodeListEntry {

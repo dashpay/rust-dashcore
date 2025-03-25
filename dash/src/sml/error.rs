@@ -27,7 +27,10 @@ pub enum SmlError {
 
     /// The base block hash in the diff does not match the expected base block hash.
     #[error("Base block hash mismatch: expected {expected}, but found {found}")]
-    BaseBlockHashMismatch { expected: BlockHash, found: BlockHash },
+    BaseBlockHashMismatch {
+        expected: BlockHash,
+        found: BlockHash,
+    },
 
     /// Error indicating an unknown issue.
     #[error("An unknown SML error occurred")]

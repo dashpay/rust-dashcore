@@ -40,9 +40,9 @@ use hashes::Hash;
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::{InputsHash, SpecialTransactionPayloadHash, Txid};
-use crate::{ScriptBuf, VarInt, io};
+use crate::{io, ScriptBuf, VarInt};
 
 /// A Provider Update Service Payload used in a Provider Update Service Special Transaction.
 /// This is used to update the operational aspects a Masternode on the network.
@@ -128,11 +128,11 @@ mod tests {
 
     use hashes::Hash;
 
+    use crate::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
     use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use crate::blockdata::transaction::special_transaction::TransactionPayload::ProviderUpdateServicePayloadType;
-    use crate::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
     use crate::bls_sig_utils::BLSSignature;
-    use crate::consensus::{Encodable, deserialize};
+    use crate::consensus::{deserialize, Encodable};
     use crate::hash_types::InputsHash;
     use crate::internal_macros::hex;
     use crate::{Network, ScriptBuf, Transaction, Txid};

@@ -27,11 +27,11 @@ use bincode::{Decode, Encode};
 
 use crate::blockdata::transaction::special_transaction::TransactionType;
 use crate::blockdata::transaction::special_transaction::TransactionType::AssetUnlock;
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::{PubkeyHash, ScriptHash};
 use crate::prelude::*;
 use crate::transaction::TxOut;
-use crate::{ScriptBuf, TxIn, VarInt, io};
+use crate::{io, ScriptBuf, TxIn, VarInt};
 
 /// An Asset Unlock Base payload. This is the base payload of the Asset Unlock. In order to make
 /// it a full payload the request info should be added.
@@ -50,7 +50,9 @@ pub struct AssetUnlockBasePayload {
 
 impl AssetUnlockBasePayload {
     /// The size of the payload in bytes.
-    pub fn size(&self) -> usize { 1 + 8 + 4 }
+    pub fn size(&self) -> usize {
+        1 + 8 + 4
+    }
 }
 
 impl Encodable for AssetUnlockBasePayload {
@@ -68,7 +70,11 @@ impl Decodable for AssetUnlockBasePayload {
         let version = u8::consensus_decode(r)?;
         let index = u64::consensus_decode(r)?;
         let fee = u32::consensus_decode(r)?;
-        Ok(AssetUnlockBasePayload { version, index, fee })
+        Ok(AssetUnlockBasePayload {
+            version,
+            index,
+            fee,
+        })
     }
 }
 
@@ -94,21 +100,30 @@ impl AssetUnlockBaseTransactionInfo {
     /// dash on Dash Platform.
     pub fn add_burn_output(&mut self, satoshis_to_burn: u64, data: &[u8; 20]) {
         let burn_script = ScriptBuf::new_op_return(data);
-        let output = TxOut { value: satoshis_to_burn, script_pubkey: burn_script };
+        let output = TxOut {
+            value: satoshis_to_burn,
+            script_pubkey: burn_script,
+        };
         self.output.push(output)
     }
 
     /// Convenience method that adds an output that pays to a public key hash.
     pub fn add_p2pkh_output(&mut self, amount: u64, public_key_hash: &PubkeyHash) {
         let public_key_hash_script = ScriptBuf::new_p2pkh(public_key_hash);
-        let output = TxOut { value: amount, script_pubkey: public_key_hash_script };
+        let output = TxOut {
+            value: amount,
+            script_pubkey: public_key_hash_script,
+        };
         self.output.push(output)
     }
 
     /// Convenience method that adds an output that pays to a public key hash.
     pub fn add_p2sh_output(&mut self, amount: u64, script_hash: &ScriptHash) {
         let pay_to_script_hash_script = ScriptBuf::new_p2sh(script_hash);
-        let output = TxOut { value: amount, script_pubkey: pay_to_script_hash_script };
+        let output = TxOut {
+            value: amount,
+            script_pubkey: pay_to_script_hash_script,
+        };
         self.output.push(output)
     }
 
@@ -170,13 +185,23 @@ mod tests {
     #[test]
     fn size() {
         let want = 51;
-        let tx1 = TxOut { value: 0, script_pubkey: ScriptBuf::from(vec![1, 2, 3, 4, 5]) };
-        let tx2 = TxOut { value: 0, script_pubkey: ScriptBuf::from(vec![6, 7, 8, 9, 0]) };
+        let tx1 = TxOut {
+            value: 0,
+            script_pubkey: ScriptBuf::from(vec![1, 2, 3, 4, 5]),
+        };
+        let tx2 = TxOut {
+            value: 0,
+            script_pubkey: ScriptBuf::from(vec![6, 7, 8, 9, 0]),
+        };
         let payload = AssetUnlockBaseTransactionInfo {
             version: 0,
             lock_time: 0,
             output: vec![tx1, tx2],
-            base_payload: AssetUnlockBasePayload { version: 0, index: 0, fee: 0 },
+            base_payload: AssetUnlockBasePayload {
+                version: 0,
+                index: 0,
+                fee: 0,
+            },
         };
         assert_eq!(payload.size(), want);
         let actual = payload.consensus_encode(&mut Vec::new()).unwrap();

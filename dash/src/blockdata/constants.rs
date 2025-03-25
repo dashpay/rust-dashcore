@@ -10,7 +10,7 @@
 
 use core::default::Default;
 
-use hashes::{Hash, sha256d};
+use hashes::{sha256d, Hash};
 use hex_lit::hex;
 use internals::impl_array_newtype;
 
@@ -18,10 +18,10 @@ use crate::blockdata::block::{self, Block};
 use crate::blockdata::locktime::absolute;
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::script;
-use crate::blockdata::transaction::Transaction;
 use crate::blockdata::transaction::outpoint::OutPoint;
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
+use crate::blockdata::transaction::Transaction;
 use crate::blockdata::witness::Witness;
 use crate::internal_macros::impl_bytes_newtype;
 use crate::network::constants::Network;
@@ -100,7 +100,10 @@ fn bitcoin_genesis_tx() -> Transaction {
     );
     let out_script =
         script::Builder::new().push_slice(script_bytes).push_opcode(OP_CHECKSIG).into_script();
-    ret.output.push(TxOut { value: 50 * COIN_VALUE, script_pubkey: out_script });
+    ret.output.push(TxOut {
+        value: 50 * COIN_VALUE,
+        script_pubkey: out_script,
+    });
 
     // end
     ret

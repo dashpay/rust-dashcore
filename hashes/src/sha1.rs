@@ -89,7 +89,9 @@ impl crate::HashEngine for HashEngine {
 
     const BLOCK_SIZE: usize = 64;
 
-    fn n_bytes_hashed(&self) -> usize { self.length }
+    fn n_bytes_hashed(&self) -> usize {
+        self.length
+    }
 
     engine_input_impl!();
 }
@@ -144,7 +146,7 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn test() {
-        use crate::{Hash, HashEngine, sha1};
+        use crate::{sha1, Hash, HashEngine};
 
         #[derive(Clone)]
         struct Test {
@@ -212,9 +214,9 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn sha1_serde() {
-        use serde_test::{Configure, Token, assert_tokens};
+        use serde_test::{assert_tokens, Configure, Token};
 
-        use crate::{Hash, sha1};
+        use crate::{sha1, Hash};
 
         #[rustfmt::skip]
         static HASH_BYTES: [u8; 20] = [
@@ -235,7 +237,7 @@ mod tests {
 mod benches {
     use test::Bencher;
 
-    use crate::{Hash, HashEngine, sha1};
+    use crate::{sha1, Hash, HashEngine};
 
     #[bench]
     pub fn sha1_10(bh: &mut Bencher) {

@@ -6,8 +6,8 @@
 use core::borrow::Borrow;
 use core::fmt;
 
-use super::Case;
 use super::buf_encoder::{BufEncoder, OutBytes};
+use super::Case;
 use crate::hex::buf_encoder::FixedLenBuf;
 #[cfg(feature = "alloc")]
 use crate::prelude::*;
@@ -35,7 +35,9 @@ pub trait DisplayHex: Copy + sealed::IsRef {
     ///
     /// This may be faster than `.display_hex().to_string()` because it uses `reserve_suggestion`.
     #[cfg(feature = "alloc")]
-    fn to_lower_hex_string(self) -> String { self.to_hex_string(Case::Lower) }
+    fn to_lower_hex_string(self) -> String {
+        self.to_hex_string(Case::Lower)
+    }
 
     /// Create an upper-hex-encoded string.
     ///
@@ -43,7 +45,9 @@ pub trait DisplayHex: Copy + sealed::IsRef {
     ///
     /// This may be faster than `.display_hex().to_string()` because it uses `reserve_suggestion`.
     #[cfg(feature = "alloc")]
-    fn to_upper_hex_string(self) -> String { self.to_hex_string(Case::Upper) }
+    fn to_upper_hex_string(self) -> String {
+        self.to_hex_string(Case::Upper)
+    }
 
     /// Create a hex-encoded string.
     ///
@@ -82,7 +86,9 @@ pub trait DisplayHex: Copy + sealed::IsRef {
     /// Defaults to 0.
     ///
     // We prefix the name with `hex_` to avoid potential collision with other methods.
-    fn hex_reserve_suggestion(self) -> usize { 0 }
+    fn hex_reserve_suggestion(self) -> usize {
+        0
+    }
 }
 
 mod sealed {
@@ -96,7 +102,11 @@ impl<'a> DisplayHex for &'a [u8] {
     type Display = DisplayByteSlice<'a>;
 
     #[inline]
-    fn as_hex(self) -> Self::Display { DisplayByteSlice { bytes: self } }
+    fn as_hex(self) -> Self::Display {
+        DisplayByteSlice {
+            bytes: self,
+        }
+    }
 
     #[inline]
     fn hex_reserve_suggestion(self) -> usize {
@@ -112,7 +122,11 @@ impl<'a> DisplayHex for &'a alloc::vec::Vec<u8> {
     type Display = DisplayByteSlice<'a>;
 
     #[inline]
-    fn as_hex(self) -> Self::Display { DisplayByteSlice { bytes: self } }
+    fn as_hex(self) -> Self::Display {
+        DisplayByteSlice {
+            bytes: self,
+        }
+    }
 
     #[inline]
     fn hex_reserve_suggestion(self) -> usize {
@@ -148,11 +162,15 @@ impl<'a> DisplayByteSlice<'a> {
 }
 
 impl<'a> fmt::LowerHex for DisplayByteSlice<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { self.display(f, Case::Lower) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.display(f, Case::Lower)
+    }
 }
 
 impl<'a> fmt::UpperHex for DisplayByteSlice<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { self.display(f, Case::Upper) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.display(f, Case::Upper)
+    }
 }
 
 /// Displays byte array as hex.
@@ -171,7 +189,12 @@ where
     A::Item: Borrow<u8>,
 {
     /// Creates the wrapper.
-    pub fn new(array: A) -> Self { DisplayArray { array, _buffer_marker: Default::default() } }
+    pub fn new(array: A) -> Self {
+        DisplayArray {
+            array,
+            _buffer_marker: Default::default(),
+        }
+    }
 
     fn display(&self, f: &mut fmt::Formatter, case: Case) -> fmt::Result {
         let mut buf = B::uninit();
@@ -185,14 +208,18 @@ impl<A: Clone + IntoIterator, B: FixedLenBuf> fmt::LowerHex for DisplayArray<A, 
 where
     A::Item: Borrow<u8>,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { self.display(f, Case::Lower) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.display(f, Case::Lower)
+    }
 }
 
 impl<A: Clone + IntoIterator, B: FixedLenBuf> fmt::UpperHex for DisplayArray<A, B>
 where
     A::Item: Borrow<u8>,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { self.display(f, Case::Upper) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.display(f, Case::Upper)
+    }
 }
 
 /// Format known-length array as hex.
@@ -266,22 +293,34 @@ mod tests {
         }
 
         #[test]
-        fn empty() { check_encoding(b""); }
+        fn empty() {
+            check_encoding(b"");
+        }
 
         #[test]
-        fn single() { check_encoding(b"*"); }
+        fn single() {
+            check_encoding(b"*");
+        }
 
         #[test]
-        fn two() { check_encoding(b"*x"); }
+        fn two() {
+            check_encoding(b"*x");
+        }
 
         #[test]
-        fn just_below_boundary() { check_encoding(&[42; 512]); }
+        fn just_below_boundary() {
+            check_encoding(&[42; 512]);
+        }
 
         #[test]
-        fn just_above_boundary() { check_encoding(&[42; 513]); }
+        fn just_above_boundary() {
+            check_encoding(&[42; 513]);
+        }
 
         #[test]
-        fn just_above_double_boundary() { check_encoding(&[42; 1025]); }
+        fn just_above_double_boundary() {
+            check_encoding(&[42; 1025]);
+        }
 
         #[test]
         fn fmt_exact_macro() {
