@@ -3,9 +3,9 @@ use core::fmt::{Display, Formatter};
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
-use crate::BlockHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::quorum_validation_error::QuorumValidationError;
+use crate::BlockHash;
 
 #[derive(Clone, Ord, PartialOrd, PartialEq, Eq, Hash, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -22,8 +22,9 @@ impl Display for LLMQEntryVerificationSkipStatus {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(
             match self {
-                LLMQEntryVerificationSkipStatus::NotMarkedForVerification =>
-                    "NotMarkedForVerification".to_string(),
+                LLMQEntryVerificationSkipStatus::NotMarkedForVerification => {
+                    "NotMarkedForVerification".to_string()
+                }
                 LLMQEntryVerificationSkipStatus::MissedList(block_height) => {
                     format!("MissedList({})", block_height)
                 }

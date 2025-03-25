@@ -25,10 +25,10 @@
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::prelude::*;
 use crate::transaction::txout::TxOut;
-use crate::{VarInt, io};
+use crate::{io, VarInt};
 
 /// An Asset Lock payload. This is contained as the payload of an asset lock special transaction.
 /// The Asset Lock Special transaction and this payload is described in the Asset Lock DIP2X
@@ -67,7 +67,10 @@ impl Decodable for AssetLockPayload {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let version = u8::consensus_decode(r)?;
         let credit_outputs = Vec::<TxOut>::consensus_decode(r)?;
-        Ok(AssetLockPayload { version, credit_outputs })
+        Ok(AssetLockPayload {
+            version,
+            credit_outputs,
+        })
     }
 }
 
@@ -80,10 +83,18 @@ mod tests {
     #[test]
     fn size() {
         let want = 41;
-        let tx1 = TxOut { value: 10, script_pubkey: ScriptBuf(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]) };
-        let tx2 =
-            TxOut { value: 11, script_pubkey: ScriptBuf(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1]) };
-        let payload = AssetLockPayload { version: 1, credit_outputs: vec![tx1, tx2] };
+        let tx1 = TxOut {
+            value: 10,
+            script_pubkey: ScriptBuf(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]),
+        };
+        let tx2 = TxOut {
+            value: 11,
+            script_pubkey: ScriptBuf(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1]),
+        };
+        let payload = AssetLockPayload {
+            version: 1,
+            credit_outputs: vec![tx1, tx2],
+        };
         assert_eq!(payload.size(), want);
         let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
         assert_eq!(actual, want);

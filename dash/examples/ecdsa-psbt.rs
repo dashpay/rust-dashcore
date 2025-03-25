@@ -124,14 +124,19 @@ impl ColdStorage {
         let input_xpriv = master_xpriv.derive_priv(secp, &path)?;
         let input_xpub = ExtendedPubKey::from_priv(secp, &input_xpriv);
 
-        let wallet = ColdStorage { master_xpriv, master_xpub };
+        let wallet = ColdStorage {
+            master_xpriv,
+            master_xpub,
+        };
         let fingerprint = wallet.master_fingerprint();
 
         Ok((wallet, fingerprint, account_0_xpub, input_xpub))
     }
 
     /// Returns the fingerprint for the master extended public key.
-    fn master_fingerprint(&self) -> Fingerprint { self.master_xpub.fingerprint() }
+    fn master_fingerprint(&self) -> Fingerprint {
+        self.master_xpub.fingerprint()
+    }
 
     /// Signs `psbt` with this signer.
     fn sign_psbt<C: Signing>(&self, secp: &Secp256k1<C>, mut psbt: Psbt) -> Result<Psbt> {
@@ -169,7 +174,11 @@ impl WatchOnly {
         input_xpub: ExtendedPubKey,
         master_fingerprint: Fingerprint,
     ) -> Self {
-        WatchOnly { account_0_xpub, input_xpub, master_fingerprint }
+        WatchOnly {
+            account_0_xpub,
+            input_xpub,
+            master_fingerprint,
+        }
     }
 
     /// Creates the PSBT, in BIP174 parlance this is the 'Creater'.
@@ -184,13 +193,19 @@ impl WatchOnly {
             version: 2,
             lock_time: 0,
             input: vec![TxIn {
-                previous_output: OutPoint { txid: INPUT_UTXO_TXID.parse()?, vout: INPUT_UTXO_VOUT },
+                previous_output: OutPoint {
+                    txid: INPUT_UTXO_TXID.parse()?,
+                    vout: INPUT_UTXO_VOUT,
+                },
                 script_sig: ScriptBuf::new(),
                 sequence: u32::MAX, // Disable LockTime and RBF.
                 witness: Witness::default(),
             }],
             output: vec![
-                TxOut { value: to_amount.to_sat(), script_pubkey: to_address.script_pubkey() },
+                TxOut {
+                    value: to_amount.to_sat(),
+                    script_pubkey: to_address.script_pubkey(),
+                },
                 TxOut {
                     value: change_amount.to_sat(),
                     script_pubkey: change_address.script_pubkey(),
@@ -206,7 +221,10 @@ impl WatchOnly {
 
     /// Updates the PSBT, in BIP174 parlance this is the 'Updater'.
     fn update_psbt(&self, mut psbt: Psbt) -> Result<Psbt> {
-        let mut input = Input { witness_utxo: Some(previous_output()), ..Default::default() };
+        let mut input = Input {
+            witness_utxo: Some(previous_output()),
+            ..Default::default()
+        };
 
         let pk = self.input_xpub.to_pub();
         let wpkh = pk.wpubkey_hash().expect("a compressed pubkey");
@@ -281,15 +299,22 @@ fn previous_output() -> TxOut {
         .expect("failed to parse input utxo scriptPubkey");
     let amount = Amount::from_str(INPUT_UTXO_VALUE).expect("failed to parse input utxo value");
 
-    TxOut { value: amount.to_sat(), script_pubkey }
+    TxOut {
+        value: amount.to_sat(),
+        script_pubkey,
+    }
 }
 
 struct Error(Box<dyn std::error::Error>);
 
 impl<T: std::error::Error + 'static> From<T> for Error {
-    fn from(e: T) -> Self { Error(Box::new(e)) }
+    fn from(e: T) -> Self {
+        Error(Box::new(e))
+    }
 }
 
 impl fmt::Debug for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Debug::fmt(&self.0, f) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
 }

@@ -11,7 +11,7 @@ use core::fmt;
 
 use super::serialize::{Deserialize, Serialize};
 use crate::consensus::encode::{
-    self, Decodable, Encodable, MAX_VEC_SIZE, ReadExt, VarInt, WriteExt, deserialize, serialize,
+    self, deserialize, serialize, Decodable, Encodable, ReadExt, VarInt, WriteExt, MAX_VEC_SIZE,
 };
 use crate::io;
 use crate::prelude::*;
@@ -97,7 +97,10 @@ impl Key {
             key.push(Decodable::consensus_decode(r)?);
         }
 
-        Ok(Key { type_value, key })
+        Ok(Key {
+            type_value,
+            key,
+        })
     }
 }
 
@@ -137,7 +140,10 @@ impl Deserialize for Pair {
 
 impl Pair {
     pub(crate) fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, Error> {
-        Ok(Pair { key: Key::decode(r)?, value: Decodable::consensus_decode(r)? })
+        Ok(Pair {
+            key: Key::decode(r)?,
+            value: Decodable::consensus_decode(r)?,
+        })
     }
 }
 
@@ -163,7 +169,11 @@ where
         let subtype = Subtype::from(r.read_u8()?);
         let key = read_to_end(r)?;
 
-        Ok(ProprietaryKey { prefix, subtype, key })
+        Ok(ProprietaryKey {
+            prefix,
+            subtype,
+            key,
+        })
     }
 }
 
@@ -172,7 +182,12 @@ where
     Subtype: Copy + From<u8> + Into<u8>,
 {
     /// Constructs full [Key] corresponding to this proprietary key type
-    pub fn to_key(&self) -> Key { Key { type_value: 0xFC, key: serialize(self) } }
+    pub fn to_key(&self) -> Key {
+        Key {
+            type_value: 0xFC,
+            key: serialize(self),
+        }
+    }
 }
 
 impl<Subtype> TryFrom<Key> for ProprietaryKey<Subtype>

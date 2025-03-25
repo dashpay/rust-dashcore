@@ -26,7 +26,7 @@ use hashes::hash_x11 as hashType;
 #[cfg(not(feature = "core-block-hash-use-x11"))]
 use hashes::sha256d as hashType;
 
-use crate::consensus::{Decodable, Encodable, ReadExt, encode};
+use crate::consensus::{encode, Decodable, Encodable, ReadExt};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::io;
 use crate::network::address::Address;
@@ -125,7 +125,11 @@ impl Decodable for VersionMessage {
         let start_height: i32 = Decodable::consensus_decode(reader)?;
 
         // Read optional fields only if there are bytes remaining
-        let relay = if let Ok(val) = reader.read_u8() { val != 0 } else { false };
+        let relay = if let Ok(val) = reader.read_u8() {
+            val != 0
+        } else {
+            false
+        };
 
         let mut mn_auth_challenge = [0u8; 32];
         if let Ok(_) = reader.read_exact(&mut mn_auth_challenge) {
@@ -134,7 +138,11 @@ impl Decodable for VersionMessage {
             mn_auth_challenge = [0; 32]; // Default value
         }
 
-        let masternode_connection = if let Ok(val) = reader.read_u8() { val != 0 } else { false };
+        let masternode_connection = if let Ok(val) = reader.read_u8() {
+            val != 0
+        } else {
+            false
+        };
 
         Ok(VersionMessage {
             version,

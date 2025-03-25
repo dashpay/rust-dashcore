@@ -37,7 +37,9 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 pub struct BLSPublicKey([u8; 48]);
 
 impl BLSPublicKey {
-    pub fn is_zeroed(&self) -> bool { self.0 == [0; 48] }
+    pub fn is_zeroed(&self) -> bool {
+        self.0 == [0; 48]
+    }
 }
 
 impl_array_newtype!(BLSPublicKey, u8, 48);
@@ -79,7 +81,9 @@ crate::serde_utils::serde_string_impl!(BLSPublicKey, "a BLS Public Key");
 impl core::str::FromStr for BLSPublicKey {
     type Err = FromHexError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> { BLSPublicKey::from_hex(s) }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        BLSPublicKey::from_hex(s)
+    }
 }
 
 impl fmt::Display for BLSPublicKey {
@@ -95,7 +99,9 @@ impl fmt::Display for BLSPublicKey {
 pub struct BLSSignature([u8; 96]);
 
 impl BLSSignature {
-    pub fn is_zeroed(&self) -> bool { self.0 == [0; 96] }
+    pub fn is_zeroed(&self) -> bool {
+        self.0 == [0; 96]
+    }
 }
 
 #[cfg(feature = "bls")]
@@ -107,7 +113,8 @@ impl TryFrom<BLSSignature> for blsful::Signature<Bls12381G2Impl> {
             <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
                 .into_option()
         else {
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes()))); // We should not error because the signature could be given by an invalid source
+            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes())));
+            // We should not error because the signature could be given by an invalid source
         };
 
         Ok(blsful::Signature::Basic(g2_element))
@@ -123,7 +130,8 @@ impl TryFrom<&BLSSignature> for blsful::Signature<Bls12381G2Impl> {
             <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
                 .into_option()
         else {
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes()))); // We should not error because the signature could be given by an invalid source
+            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes())));
+            // We should not error because the signature could be given by an invalid source
         };
 
         Ok(blsful::Signature::Basic(g2_element))
@@ -139,7 +147,8 @@ impl TryFrom<BLSSignature> for blsful::MultiSignature<Bls12381G2Impl> {
             <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
                 .into_option()
         else {
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes()))); // We should not error because the signature could be given by an invalid source
+            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes())));
+            // We should not error because the signature could be given by an invalid source
         };
 
         Ok(blsful::MultiSignature::Basic(g2_element))
@@ -155,7 +164,8 @@ impl TryFrom<&BLSSignature> for blsful::MultiSignature<Bls12381G2Impl> {
             <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
                 .into_option()
         else {
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes()))); // We should not error because the signature could be given by an invalid source
+            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes())));
+            // We should not error because the signature could be given by an invalid source
         };
 
         Ok(blsful::MultiSignature::Basic(g2_element))
@@ -171,7 +181,8 @@ impl TryFrom<BLSSignature> for blsful::AggregateSignature<Bls12381G2Impl> {
             <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
                 .into_option()
         else {
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes()))); // We should not error because the signature could be given by an invalid source
+            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes())));
+            // We should not error because the signature could be given by an invalid source
         };
 
         Ok(blsful::AggregateSignature::Basic(g2_element))
@@ -187,7 +198,8 @@ impl TryFrom<&BLSSignature> for blsful::AggregateSignature<Bls12381G2Impl> {
             <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
                 .into_option()
         else {
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes()))); // We should not error because the signature could be given by an invalid source
+            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes())));
+            // We should not error because the signature could be given by an invalid source
         };
 
         Ok(blsful::AggregateSignature::Basic(g2_element))
@@ -225,7 +237,9 @@ macro_rules! impl_eq_ord_hash {
     ($element:ident, $len:expr) => {
         #[rustversion::before(1.48)]
         impl core::hash::Hash for $element {
-            fn hash<H: core::hash::Hasher>(&self, state: &mut H) { self.0.to_vec().hash(state) }
+            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+                self.0.to_vec().hash(state)
+            }
         }
 
         #[rustversion::before(1.48)]

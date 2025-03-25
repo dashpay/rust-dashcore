@@ -22,8 +22,8 @@ pub enum DerivationPathReference {
 use bitflags::bitflags;
 use secp256k1::Secp256k1;
 
-use crate::Network;
 use crate::bip32::{ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey};
+use crate::Network;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -55,11 +55,15 @@ pub struct IndexConstPath<const N: usize> {
 }
 
 impl<const N: usize> AsRef<[ChildNumber]> for IndexConstPath<N> {
-    fn as_ref(&self) -> &[ChildNumber] { self.indexes.as_ref() }
+    fn as_ref(&self) -> &[ChildNumber] {
+        self.indexes.as_ref()
+    }
 }
 
 impl<const N: usize> From<IndexConstPath<N>> for DerivationPath {
-    fn from(value: IndexConstPath<N>) -> Self { DerivationPath::from(value.indexes.as_ref()) }
+    fn from(value: IndexConstPath<N>) -> Self {
+        DerivationPath::from(value.indexes.as_ref())
+    }
 }
 
 impl<const N: usize> IndexConstPath<N> {
@@ -124,8 +128,12 @@ pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_INVITATIONS: u32 = 3;
 pub const FEATURE_PURPOSE_DASHPAY: u32 = 15;
 pub const DASH_BIP44_PATH_MAINNET: IndexConstPath<2> = IndexConstPath {
     indexes: [
-        ChildNumber::Hardened { index: BIP44_PURPOSE },
-        ChildNumber::Hardened { index: DASH_COIN_TYPE },
+        ChildNumber::Hardened {
+            index: BIP44_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
     ],
     reference: DerivationPathReference::BIP44,
     path_type: DerivationPathType::CLEAR_FUNDS,
@@ -133,8 +141,12 @@ pub const DASH_BIP44_PATH_MAINNET: IndexConstPath<2> = IndexConstPath {
 
 pub const DASH_BIP44_PATH_TESTNET: IndexConstPath<2> = IndexConstPath {
     indexes: [
-        ChildNumber::Hardened { index: BIP44_PURPOSE },
-        ChildNumber::Hardened { index: DASH_TESTNET_COIN_TYPE },
+        ChildNumber::Hardened {
+            index: BIP44_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
     ],
     reference: DerivationPathReference::BIP44,
     path_type: DerivationPathType::CLEAR_FUNDS,
@@ -162,10 +174,18 @@ pub const COINJOIN_PATH_TESTNET: IndexConstPath<3> = IndexConstPath {
 
 pub const IDENTITY_REGISTRATION_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
-        ChildNumber::Hardened { index: FEATURE_PURPOSE },
-        ChildNumber::Hardened { index: DASH_COIN_TYPE },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_REGISTRATION },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_REGISTRATION,
+        },
     ],
     reference: DerivationPathReference::BlockchainIdentityCreditRegistrationFunding,
     path_type: DerivationPathType::CREDIT_FUNDING,
@@ -173,10 +193,18 @@ pub const IDENTITY_REGISTRATION_PATH_MAINNET: IndexConstPath<4> = IndexConstPath
 
 pub const IDENTITY_REGISTRATION_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
-        ChildNumber::Hardened { index: FEATURE_PURPOSE },
-        ChildNumber::Hardened { index: DASH_TESTNET_COIN_TYPE },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_REGISTRATION },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_REGISTRATION,
+        },
     ],
     reference: DerivationPathReference::BlockchainIdentityCreditRegistrationFunding,
     path_type: DerivationPathType::CREDIT_FUNDING,
@@ -185,10 +213,18 @@ pub const IDENTITY_REGISTRATION_PATH_TESTNET: IndexConstPath<4> = IndexConstPath
 // Identity Top-Up Paths
 pub const IDENTITY_TOPUP_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
-        ChildNumber::Hardened { index: FEATURE_PURPOSE },
-        ChildNumber::Hardened { index: DASH_COIN_TYPE },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_TOPUP },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_TOPUP,
+        },
     ],
     reference: DerivationPathReference::BlockchainIdentityCreditTopupFunding,
     path_type: DerivationPathType::CREDIT_FUNDING,
@@ -196,10 +232,18 @@ pub const IDENTITY_TOPUP_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
 
 pub const IDENTITY_TOPUP_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
-        ChildNumber::Hardened { index: FEATURE_PURPOSE },
-        ChildNumber::Hardened { index: DASH_TESTNET_COIN_TYPE },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_TOPUP },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_TOPUP,
+        },
     ],
     reference: DerivationPathReference::BlockchainIdentityCreditTopupFunding,
     path_type: DerivationPathType::CREDIT_FUNDING,
@@ -208,10 +252,18 @@ pub const IDENTITY_TOPUP_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
 // Identity Invitation Paths
 pub const IDENTITY_INVITATION_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
-        ChildNumber::Hardened { index: FEATURE_PURPOSE },
-        ChildNumber::Hardened { index: DASH_COIN_TYPE },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_INVITATIONS },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_INVITATIONS,
+        },
     ],
     reference: DerivationPathReference::BlockchainIdentityCreditInvitationFunding,
     path_type: DerivationPathType::CREDIT_FUNDING,
@@ -219,10 +271,18 @@ pub const IDENTITY_INVITATION_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
 
 pub const IDENTITY_INVITATION_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
-        ChildNumber::Hardened { index: FEATURE_PURPOSE },
-        ChildNumber::Hardened { index: DASH_TESTNET_COIN_TYPE },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_INVITATIONS },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_INVITATIONS,
+        },
     ],
     reference: DerivationPathReference::BlockchainIdentityCreditInvitationFunding,
     path_type: DerivationPathType::CREDIT_FUNDING,
@@ -231,10 +291,18 @@ pub const IDENTITY_INVITATION_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
 // Authentication Keys Paths
 pub const IDENTITY_AUTHENTICATION_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
-        ChildNumber::Hardened { index: FEATURE_PURPOSE },
-        ChildNumber::Hardened { index: DASH_COIN_TYPE },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_AUTHENTICATION },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_AUTHENTICATION,
+        },
     ],
     reference: DerivationPathReference::BlockchainIdentities,
     path_type: DerivationPathType::SINGLE_USER_AUTHENTICATION,
@@ -242,10 +310,18 @@ pub const IDENTITY_AUTHENTICATION_PATH_MAINNET: IndexConstPath<4> = IndexConstPa
 
 pub const IDENTITY_AUTHENTICATION_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
     indexes: [
-        ChildNumber::Hardened { index: FEATURE_PURPOSE },
-        ChildNumber::Hardened { index: DASH_TESTNET_COIN_TYPE },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_AUTHENTICATION },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_AUTHENTICATION,
+        },
     ],
     reference: DerivationPathReference::BlockchainIdentities,
     path_type: DerivationPathType::SINGLE_USER_AUTHENTICATION,

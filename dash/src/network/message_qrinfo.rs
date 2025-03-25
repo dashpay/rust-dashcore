@@ -4,12 +4,12 @@ use std::{fmt, io};
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
-use crate::BlockHash;
 use crate::consensus::encode::{read_compact_size, read_fixed_bitset, write_fixed_bitset};
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::network::message_sml::MnListDiff;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+use crate::BlockHash;
 
 /// The `getqrinfo` message requests a `qrinfo` message that provides the information
 /// required to verify quorum details for quorums formed using the quorum rotation process.
@@ -33,6 +33,9 @@ impl_consensus_encoding!(GetQRInfo, base_block_hashes, block_request_hash, extra
 ///
 /// Note: The “compact size” integers that prefix some arrays are handled by your consensus encoding routines.
 #[derive(PartialEq, Eq, Clone, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct QRInfo {
     // Quorum snapshots for heights h-c, h-2c, h-3c.
     pub quorum_snapshot_at_h_minus_c: QuorumSnapshot,
@@ -162,7 +165,13 @@ impl Display for QuorumSnapshot {
         let active_members_display: String = self
             .active_quorum_members
             .iter()
-            .map(|&member| if member { '■' } else { 'x' }) // Use `■` for true, `x` for false
+            .map(|&member| {
+                if member {
+                    '■'
+                } else {
+                    'x'
+                }
+            }) // Use `■` for true, `x` for false
             .collect();
 
         let skip_list = self.skip_list.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
@@ -250,9 +259,13 @@ impl From<MNSkipListMode> for u32 {
     }
 }
 impl MNSkipListMode {
-    pub fn index(&self) -> u32 { u32::from(self.clone()) }
+    pub fn index(&self) -> u32 {
+        u32::from(self.clone())
+    }
 }
-pub fn from_index(index: u32) -> MNSkipListMode { MNSkipListMode::from(index) }
+pub fn from_index(index: u32) -> MNSkipListMode {
+    MNSkipListMode::from(index)
+}
 
 impl Display for MNSkipListMode {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -267,7 +280,9 @@ impl Display for MNSkipListMode {
 }
 
 impl Default for MNSkipListMode {
-    fn default() -> Self { MNSkipListMode::NoSkipping }
+    fn default() -> Self {
+        MNSkipListMode::NoSkipping
+    }
 }
 
 impl Encodable for MNSkipListMode {
@@ -310,8 +325,15 @@ mod tests {
     fn deserialize_qr_info() {
         let block_hex = include_str!("../../tests/data/test_DML_diffs/QR_INFO_0_2224359.hex");
         let data = hex::decode(block_hex).expect("decode hex");
-        let qr_info: RawNetworkMessage = deserialize(&data).expect("deserialize QR_INFO");
+        let network_qr_info: RawNetworkMessage = deserialize(&data).expect("deserialize QR_INFO");
 
-        assert_matches!(qr_info, RawNetworkMessage { magic, payload: NetworkMessage::QRInfo(_) } if magic == 3177909439);
+        let RawNetworkMessage {
+            magic,
+            payload: NetworkMessage::QRInfo(qr_info),
+        } = network_qr_info
+        else {
+            panic!("expected qr_info message");
+        };
+        assert_eq!(magic, 3177909439);
     }
 }

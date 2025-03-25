@@ -3,12 +3,12 @@ use bincode::{Decode, Encode};
 use hashes::sha256d;
 use thiserror::Error;
 
-use crate::QuorumHash;
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::hash_types::CycleHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
+use crate::QuorumHash;
 
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -50,16 +50,20 @@ pub enum MessageVerificationError {
 }
 
 impl From<String> for MessageVerificationError {
-    fn from(value: String) -> Self { MessageVerificationError::Generic(value) }
+    fn from(value: String) -> Self {
+        MessageVerificationError::Generic(value)
+    }
 }
 
 impl From<QuorumValidationError> for MessageVerificationError {
     fn from(value: QuorumValidationError) -> Self {
         match value {
-            QuorumValidationError::InvalidBLSPublicKey(public_key) =>
-                MessageVerificationError::InvalidBLSPublicKey(public_key),
-            QuorumValidationError::InvalidBLSSignature(signature) =>
-                MessageVerificationError::InvalidBLSSignature(signature),
+            QuorumValidationError::InvalidBLSPublicKey(public_key) => {
+                MessageVerificationError::InvalidBLSPublicKey(public_key)
+            }
+            QuorumValidationError::InvalidBLSSignature(signature) => {
+                MessageVerificationError::InvalidBLSSignature(signature)
+            }
             error => MessageVerificationError::Generic(error.to_string()),
         }
     }

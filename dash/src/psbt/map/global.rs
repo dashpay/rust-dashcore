@@ -5,11 +5,11 @@ use core::convert::TryFrom;
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPubKey, Fingerprint};
 use crate::blockdata::transaction::Transaction;
 use crate::consensus::encode::MAX_VEC_SIZE;
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::io::{self, Cursor, Read};
 use crate::prelude::*;
 use crate::psbt::map::Map;
-use crate::psbt::{Error, PartiallySignedTransaction, raw};
+use crate::psbt::{raw, Error, PartiallySignedTransaction};
 use crate::transaction::special_transaction::TransactionType;
 
 /// Type: Unsigned Transaction PSBT_GLOBAL_UNSIGNED_TX = 0x00
@@ -26,7 +26,10 @@ impl Map for PartiallySignedTransaction {
         let mut rv: Vec<raw::Pair> = Default::default();
 
         rv.push(raw::Pair {
-            key: raw::Key { type_value: PSBT_GLOBAL_UNSIGNED_TX, key: vec![] },
+            key: raw::Key {
+                type_value: PSBT_GLOBAL_UNSIGNED_TX,
+                key: vec![],
+            },
             value: {
                 // Manually serialized to ensure 0-input txs are serialized
                 // without witnesses.
@@ -48,7 +51,10 @@ impl Map for PartiallySignedTransaction {
 
         for (xpub, (fingerprint, derivation)) in &self.xpub {
             rv.push(raw::Pair {
-                key: raw::Key { type_value: PSBT_GLOBAL_XPUB, key: xpub.encode().to_vec() },
+                key: raw::Key {
+                    type_value: PSBT_GLOBAL_XPUB,
+                    key: xpub.encode().to_vec(),
+                },
                 value: {
                     let mut ret = Vec::with_capacity(4 + derivation.len() * 4);
                     ret.extend(fingerprint.as_bytes());
@@ -61,17 +67,26 @@ impl Map for PartiallySignedTransaction {
         // Serializing version only for non-default value; otherwise test vectors fail
         if self.version > 0 {
             rv.push(raw::Pair {
-                key: raw::Key { type_value: PSBT_GLOBAL_VERSION, key: vec![] },
+                key: raw::Key {
+                    type_value: PSBT_GLOBAL_VERSION,
+                    key: vec![],
+                },
                 value: self.version.to_le_bytes().to_vec(),
             });
         }
 
         for (key, value) in self.proprietary.iter() {
-            rv.push(raw::Pair { key: key.to_key(), value: value.clone() });
+            rv.push(raw::Pair {
+                key: key.to_key(),
+                value: value.clone(),
+            });
         }
 
         for (key, value) in self.unknown.iter() {
-            rv.push(raw::Pair { key: key.clone(), value: value.clone() });
+            rv.push(raw::Pair {
+                key: key.clone(),
+                value: value.clone(),
+            });
         }
 
         rv

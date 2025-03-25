@@ -191,7 +191,9 @@ pub trait Hash:
     type Bytes: hex::FromHex + Copy;
 
     /// Constructs a new engine.
-    fn engine() -> Self::Engine { Self::Engine::default() }
+    fn engine() -> Self::Engine {
+        Self::Engine::default()
+    }
 
     /// Produces a hash from the current state of a given engine.
     fn from_engine(e: Self::Engine) -> Self;
@@ -233,7 +235,7 @@ pub trait Hash:
 
 #[cfg(test)]
 mod tests {
-    use crate::{Hash, sha256d};
+    use crate::{sha256d, Hash};
 
     hash_newtype! {
         /// A test newtype

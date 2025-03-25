@@ -39,16 +39,31 @@ pub enum QuorumValidationError {
     #[error("Required chain lock not present at block height {0}, block hash: {1}")]
     RequiredChainLockNotPresent(CoreBlockHeight, BlockHash),
 
+    #[error("Required rotated chain lock sig at h - {0} not present for masternode diff block hash: {1}")]
+    RequiredRotatedChainLockSigNotPresent(u8, BlockHash),
+
+    #[error("Required rotated chain lock sigs not present for masternode diff block hash: {0}")]
+    RequiredRotatedChainLockSigsNotPresent(BlockHash),
+
     #[error("Insufficient signers: required {required}, found {found}")]
-    InsufficientSigners { required: u64, found: u64 },
+    InsufficientSigners {
+        required: u64,
+        found: u64,
+    },
 
     #[error("Insufficient valid members: required {required}, found {found}")]
-    InsufficientValidMembers { required: u64, found: u64 },
+    InsufficientValidMembers {
+        required: u64,
+        found: u64,
+    },
 
     #[error(
         "Mismatched bitset lengths: signers length {signers_len}, valid members length {valid_members_len}"
     )]
-    MismatchedBitsetLengths { signers_len: usize, valid_members_len: usize },
+    MismatchedBitsetLengths {
+        signers_len: usize,
+        valid_members_len: usize,
+    },
 
     #[error("Invalid quorum public key")]
     InvalidQuorumPublicKey,
@@ -97,7 +112,9 @@ pub enum QuorumValidationError {
 }
 
 impl From<SmlError> for QuorumValidationError {
-    fn from(value: SmlError) -> Self { QuorumValidationError::SMLError(value) }
+    fn from(value: SmlError) -> Self {
+        QuorumValidationError::SMLError(value)
+    }
 }
 
 impl From<ClientDataRetrievalError> for QuorumValidationError {

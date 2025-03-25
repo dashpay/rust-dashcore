@@ -23,10 +23,12 @@ use std::io;
 #[cfg(not(feature = "std"))]
 use core2::io;
 
-use crate::{HashEngine, hmac, ripemd160, sha1, sha256, sha512, siphash24};
+use crate::{hmac, ripemd160, sha1, sha256, sha512, siphash24, HashEngine};
 
 impl io::Write for sha1::HashEngine {
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.input(buf);
@@ -35,7 +37,9 @@ impl io::Write for sha1::HashEngine {
 }
 
 impl io::Write for sha256::HashEngine {
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.input(buf);
@@ -44,7 +48,9 @@ impl io::Write for sha256::HashEngine {
 }
 
 impl io::Write for sha512::HashEngine {
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.input(buf);
@@ -53,7 +59,9 @@ impl io::Write for sha512::HashEngine {
 }
 
 impl io::Write for ripemd160::HashEngine {
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.input(buf);
@@ -62,7 +70,9 @@ impl io::Write for ripemd160::HashEngine {
 }
 
 impl io::Write for siphash24::HashEngine {
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.input(buf);
@@ -71,7 +81,9 @@ impl io::Write for siphash24::HashEngine {
 }
 
 impl<T: crate::Hash> io::Write for hmac::HmacEngine<T> {
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.input(buf);
@@ -82,7 +94,7 @@ impl<T: crate::Hash> io::Write for hmac::HmacEngine<T> {
 #[cfg(test)]
 mod tests {
     use super::io::Write;
-    use crate::{Hash, hash160, hmac, ripemd160, sha1, sha256, sha256d, sha512, siphash24};
+    use crate::{hash160, hmac, ripemd160, sha1, sha256, sha256d, sha512, siphash24, Hash};
 
     macro_rules! write_test {
         ($mod:ident, $exp_empty:expr, $exp_256:expr, $exp_64k:expr,) => {

@@ -15,7 +15,7 @@ use crate::consensus::Encodable;
 use crate::hash_types::{CycleHash, QuorumSigningRequestId, QuorumSigningSignId};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::llmq_type::LLMQType;
-use crate::{OutPoint, QuorumHash, Txid, VarInt, io};
+use crate::{io, OutPoint, QuorumHash, Txid, VarInt};
 
 const IS_LOCK_REQUEST_ID_PREFIX: &str = "islock";
 

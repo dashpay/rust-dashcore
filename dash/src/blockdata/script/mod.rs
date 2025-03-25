@@ -61,10 +61,10 @@ use serde;
 
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::{ScriptHash, WScriptHash};
 use crate::prelude::*;
-use crate::{OutPoint, io};
+use crate::{io, OutPoint};
 
 mod borrowed;
 mod builder;
@@ -96,7 +96,11 @@ pub fn write_scriptint(out: &mut [u8; 8], n: i64) -> usize {
 
     let neg = n < 0;
 
-    let mut abs = if neg { -n } else { n } as usize;
+    let mut abs = if neg {
+        -n
+    } else {
+        n
+    } as usize;
     while abs > 0xFF {
         out[len] = (abs & 0xFF) as u8;
         len += 1;
@@ -107,12 +111,20 @@ pub fn write_scriptint(out: &mut [u8; 8], n: i64) -> usize {
     if abs & 0x80 != 0 {
         out[len] = abs as u8;
         len += 1;
-        out[len] = if neg { 0x80u8 } else { 0u8 };
+        out[len] = if neg {
+            0x80u8
+        } else {
+            0u8
+        };
         len += 1;
     }
     // Otherwise we just set the sign bit ourselves
     else {
-        abs |= if neg { 0x80 } else { 0 };
+        abs |= if neg {
+            0x80
+        } else {
+            0
+        };
         out[len] = abs as u8;
         len += 1;
     }
@@ -234,11 +246,15 @@ fn opcode_to_verify(opcode: Option<opcodes::All>) -> Option<opcodes::All> {
 // We keep all the `Script` and `ScriptBuf` impls together since its easier to see side-by-side.
 
 impl From<ScriptBuf> for Box<Script> {
-    fn from(v: ScriptBuf) -> Self { v.into_boxed_script() }
+    fn from(v: ScriptBuf) -> Self {
+        v.into_boxed_script()
+    }
 }
 
 impl From<ScriptBuf> for Cow<'_, Script> {
-    fn from(value: ScriptBuf) -> Self { Cow::Owned(value) }
+    fn from(value: ScriptBuf) -> Self {
+        Cow::Owned(value)
+    }
 }
 
 impl<'a> From<Cow<'a, Script>> for ScriptBuf {
@@ -260,15 +276,21 @@ impl<'a> From<Cow<'a, Script>> for Box<Script> {
 }
 
 impl<'a> From<&'a Script> for Box<Script> {
-    fn from(value: &'a Script) -> Self { value.to_owned().into() }
+    fn from(value: &'a Script) -> Self {
+        value.to_owned().into()
+    }
 }
 
 impl<'a> From<&'a Script> for ScriptBuf {
-    fn from(value: &'a Script) -> Self { value.to_owned() }
+    fn from(value: &'a Script) -> Self {
+        value.to_owned()
+    }
 }
 
 impl<'a> From<&'a Script> for Cow<'a, Script> {
-    fn from(value: &'a Script) -> Self { Cow::Borrowed(value) }
+    fn from(value: &'a Script) -> Self {
+        Cow::Borrowed(value)
+    }
 }
 
 /// Note: This will fail to compile on old Rust for targets that don't support atomics
@@ -296,70 +318,102 @@ impl<'a> From<&'a Script> for Rc<Script> {
 }
 
 impl From<Vec<u8>> for ScriptBuf {
-    fn from(v: Vec<u8>) -> Self { ScriptBuf(v) }
+    fn from(v: Vec<u8>) -> Self {
+        ScriptBuf(v)
+    }
 }
 
 impl From<ScriptBuf> for Vec<u8> {
-    fn from(v: ScriptBuf) -> Self { v.0 }
+    fn from(v: ScriptBuf) -> Self {
+        v.0
+    }
 }
 
 impl From<ScriptBuf> for ScriptHash {
-    fn from(script: ScriptBuf) -> ScriptHash { script.script_hash() }
+    fn from(script: ScriptBuf) -> ScriptHash {
+        script.script_hash()
+    }
 }
 
 impl From<&ScriptBuf> for ScriptHash {
-    fn from(script: &ScriptBuf) -> ScriptHash { script.script_hash() }
+    fn from(script: &ScriptBuf) -> ScriptHash {
+        script.script_hash()
+    }
 }
 
 impl From<&Script> for ScriptHash {
-    fn from(script: &Script) -> ScriptHash { script.script_hash() }
+    fn from(script: &Script) -> ScriptHash {
+        script.script_hash()
+    }
 }
 
 impl From<ScriptBuf> for WScriptHash {
-    fn from(script: ScriptBuf) -> WScriptHash { script.wscript_hash() }
+    fn from(script: ScriptBuf) -> WScriptHash {
+        script.wscript_hash()
+    }
 }
 
 impl From<&ScriptBuf> for WScriptHash {
-    fn from(script: &ScriptBuf) -> WScriptHash { script.wscript_hash() }
+    fn from(script: &ScriptBuf) -> WScriptHash {
+        script.wscript_hash()
+    }
 }
 
 impl From<&Script> for WScriptHash {
-    fn from(script: &Script) -> WScriptHash { script.wscript_hash() }
+    fn from(script: &Script) -> WScriptHash {
+        script.wscript_hash()
+    }
 }
 
 impl AsRef<Script> for Script {
     #[inline]
-    fn as_ref(&self) -> &Script { self }
+    fn as_ref(&self) -> &Script {
+        self
+    }
 }
 
 impl AsRef<Script> for ScriptBuf {
-    fn as_ref(&self) -> &Script { self }
+    fn as_ref(&self) -> &Script {
+        self
+    }
 }
 
 impl AsRef<[u8]> for Script {
     #[inline]
-    fn as_ref(&self) -> &[u8] { self.as_bytes() }
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
 }
 
 impl AsRef<[u8]> for ScriptBuf {
-    fn as_ref(&self) -> &[u8] { self.as_bytes() }
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
 }
 
 impl AsMut<Script> for Script {
-    fn as_mut(&mut self) -> &mut Script { self }
+    fn as_mut(&mut self) -> &mut Script {
+        self
+    }
 }
 
 impl AsMut<Script> for ScriptBuf {
-    fn as_mut(&mut self) -> &mut Script { self }
+    fn as_mut(&mut self) -> &mut Script {
+        self
+    }
 }
 
 impl AsMut<[u8]> for Script {
     #[inline]
-    fn as_mut(&mut self) -> &mut [u8] { self.as_mut_bytes() }
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.as_mut_bytes()
+    }
 }
 
 impl AsMut<[u8]> for ScriptBuf {
-    fn as_mut(&mut self) -> &mut [u8] { self.as_mut_bytes() }
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.as_mut_bytes()
+    }
 }
 
 impl fmt::Debug for Script {
@@ -371,17 +425,23 @@ impl fmt::Debug for Script {
 }
 
 impl fmt::Debug for ScriptBuf {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Debug::fmt(self.as_script(), f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self.as_script(), f)
+    }
 }
 
 impl fmt::Display for Script {
     #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { self.fmt_asm(f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.fmt_asm(f)
+    }
 }
 
 impl fmt::Display for ScriptBuf {
     #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(self.as_script(), f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self.as_script(), f)
+    }
 }
 
 impl fmt::LowerHex for Script {
@@ -392,7 +452,9 @@ impl fmt::LowerHex for Script {
 
 impl fmt::LowerHex for ScriptBuf {
     #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::LowerHex::fmt(self.as_script(), f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::LowerHex::fmt(self.as_script(), f)
+    }
 }
 
 impl fmt::UpperHex for Script {
@@ -403,33 +465,47 @@ impl fmt::UpperHex for Script {
 
 impl fmt::UpperHex for ScriptBuf {
     #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::UpperHex::fmt(self.as_script(), f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::UpperHex::fmt(self.as_script(), f)
+    }
 }
 
 impl Deref for ScriptBuf {
     type Target = Script;
 
-    fn deref(&self) -> &Self::Target { Script::from_bytes(&self.0) }
+    fn deref(&self) -> &Self::Target {
+        Script::from_bytes(&self.0)
+    }
 }
 
 impl DerefMut for ScriptBuf {
-    fn deref_mut(&mut self) -> &mut Self::Target { Script::from_bytes_mut(&mut self.0) }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Script::from_bytes_mut(&mut self.0)
+    }
 }
 
 impl Borrow<Script> for ScriptBuf {
-    fn borrow(&self) -> &Script { self }
+    fn borrow(&self) -> &Script {
+        self
+    }
 }
 
 impl BorrowMut<Script> for ScriptBuf {
-    fn borrow_mut(&mut self) -> &mut Script { self }
+    fn borrow_mut(&mut self) -> &mut Script {
+        self
+    }
 }
 
 impl PartialEq<ScriptBuf> for Script {
-    fn eq(&self, other: &ScriptBuf) -> bool { self.eq(other.as_script()) }
+    fn eq(&self, other: &ScriptBuf) -> bool {
+        self.eq(other.as_script())
+    }
 }
 
 impl PartialEq<Script> for ScriptBuf {
-    fn eq(&self, other: &Script) -> bool { self.as_script().eq(other) }
+    fn eq(&self, other: &Script) -> bool {
+        self.as_script().eq(other)
+    }
 }
 
 impl PartialOrd<Script> for ScriptBuf {
@@ -698,11 +774,15 @@ mod bitcoinconsensus_hack {
     pub(crate) struct Error(bitcoinconsensus::Error);
 
     impl fmt::Debug for Error {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Debug::fmt(&self.0, f) }
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fmt::Debug::fmt(&self.0, f)
+        }
     }
 
     impl fmt::Display for Error {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Display::fmt(&self.0, f) }
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fmt::Display::fmt(&self.0, f)
+        }
     }
 
     // bitcoinconsensus::Error has no sources at this time
@@ -734,15 +814,17 @@ impl fmt::Display for Error {
         match *self {
             Error::NonMinimalPush => f.write_str("non-minimal datapush"),
             Error::EarlyEndOfScript => f.write_str("unexpected end of script"),
-            Error::NumericOverflow =>
-                f.write_str("numeric overflow (number on stack larger than 4 bytes)"),
+            Error::NumericOverflow => {
+                f.write_str("numeric overflow (number on stack larger than 4 bytes)")
+            }
             #[cfg(feature = "bitcoinconsensus")]
             Error::BitcoinConsensus(ref e) => {
                 write_err!(f, "bitcoinconsensus verification failed"; bitcoinconsensus_hack::wrap_error(e))
             }
             Error::UnknownSpentOutput(ref point) => write!(f, "unknown spent output: {}", point),
-            Error::Serialization =>
-                f.write_str("can not serialize the spending transaction in Transaction::verify()"),
+            Error::Serialization => {
+                f.write_str("can not serialize the spending transaction in Transaction::verify()")
+            }
         }
     }
 }
@@ -783,5 +865,7 @@ impl From<UintError> for Error {
 #[cfg(feature = "bitcoinconsensus")]
 #[doc(hidden)]
 impl From<bitcoinconsensus::Error> for Error {
-    fn from(err: bitcoinconsensus::Error) -> Error { Error::BitcoinConsensus(err) }
+    fn from(err: bitcoinconsensus::Error) -> Error {
+        Error::BitcoinConsensus(err)
+    }
 }

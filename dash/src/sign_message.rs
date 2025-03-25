@@ -21,11 +21,11 @@
 //! library is used with the `secp-recovery` feature.
 //!
 
-use hashes::{Hash, HashEngine, sha256d};
+use hashes::{sha256d, Hash, HashEngine};
 
 #[cfg(feature = "secp-recovery")]
 pub use self::message_signing::{MessageSignature, MessageSignatureError};
-use crate::consensus::{Encodable, encode};
+use crate::consensus::{encode, Encodable};
 
 /// The prefix for signed messages using Dash's message signing protocol.
 pub const DASH_SIGNED_MSG_PREFIX: &[u8] = b"\x19DarkCoin Signed Message:\n";
@@ -108,7 +108,10 @@ mod message_signing {
     impl MessageSignature {
         /// Create a new [MessageSignature].
         pub fn new(signature: RecoverableSignature, compressed: bool) -> MessageSignature {
-            MessageSignature { signature, compressed }
+            MessageSignature {
+                signature,
+                compressed,
+            }
         }
 
         /// Serialize to bytes.
@@ -152,7 +155,10 @@ mod message_signing {
         ) -> Result<PublicKey, MessageSignatureError> {
             let msg = secp256k1::Message::from(msg_hash);
             let pubkey = secp_ctx.recover_ecdsa(&msg, &self.signature)?;
-            Ok(PublicKey { inner: pubkey, compressed: self.compressed })
+            Ok(PublicKey {
+                inner: pubkey,
+                compressed: self.compressed,
+            })
         }
 
         /// Verify that the signature signs the message and was signed by the given address.
@@ -169,8 +175,9 @@ mod message_signing {
                     let pubkey = self.recover_pubkey(secp_ctx, msg_hash)?;
                     Ok(*address == Address::p2pkh(&pubkey, *address.network()))
                 }
-                Some(address_type) =>
-                    Err(MessageSignatureError::UnsupportedAddressType(address_type)),
+                Some(address_type) => {
+                    Err(MessageSignatureError::UnsupportedAddressType(address_type))
+                }
                 None => Ok(false),
             }
         }
@@ -184,7 +191,9 @@ mod message_signing {
 
         /// Convert to base64 encoding.
         #[cfg(feature = "base64")]
-        pub fn to_base64(self) -> String { base64::encode(&self.serialize()[..]) }
+        pub fn to_base64(self) -> String {
+            base64::encode(&self.serialize()[..])
+        }
     }
 
     #[cfg(feature = "base64")]
@@ -248,7 +257,10 @@ mod tests {
 
         let privkey = secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng());
         let secp_sig = secp.sign_ecdsa_recoverable(&msg, &privkey);
-        let signature = super::MessageSignature { signature: secp_sig, compressed: true };
+        let signature = super::MessageSignature {
+            signature: secp_sig,
+            compressed: true,
+        };
 
         assert_eq!(signature.to_base64(), signature.to_string());
         let signature2 = super::MessageSignature::from_str(&signature.to_string()).unwrap();

@@ -23,7 +23,7 @@ use std::mem::size_of;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
-use crate::consensus::{Decodable, Encodable, encode};
+use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::QuorumHash;
 use crate::io;
 use crate::prelude::*;
@@ -46,7 +46,9 @@ pub struct AssetUnlockRequestInfo {
 impl AssetUnlockRequestInfo {
     /// The size of the payload in bytes.
     pub const SIZE: usize = size_of::<u32>() + size_of::<QuorumHash>();
-    pub fn size(&self) -> usize { AssetUnlockRequestInfo::SIZE }
+    pub fn size(&self) -> usize {
+        AssetUnlockRequestInfo::SIZE
+    }
 
     /// Encodes the asset unlock on top of
     pub fn consensus_append_to_base_encode<S: io::Write>(
@@ -74,7 +76,10 @@ impl Decodable for AssetUnlockRequestInfo {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let request_height = u32::consensus_decode(r)?;
         let quorum_hash = QuorumHash::consensus_decode(r)?;
-        Ok(AssetUnlockRequestInfo { request_height, quorum_hash })
+        Ok(AssetUnlockRequestInfo {
+            request_height,
+            quorum_hash,
+        })
     }
 }
 
@@ -89,8 +94,10 @@ mod tests {
     #[test]
     fn size() {
         let want = 36;
-        let payload =
-            AssetUnlockRequestInfo { request_height: 0, quorum_hash: QuorumHash::all_zeros() };
+        let payload = AssetUnlockRequestInfo {
+            request_height: 0,
+            quorum_hash: QuorumHash::all_zeros(),
+        };
         let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
         assert_eq!(payload.size(), want);
         assert_eq!(actual, want);

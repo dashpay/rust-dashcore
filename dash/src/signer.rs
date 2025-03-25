@@ -3,12 +3,12 @@
 use core::convert::TryInto;
 
 use anyhow::{anyhow, bail};
-use hashes::{Hash, ripemd160, sha256, sha256d};
+use hashes::{ripemd160, sha256, sha256d, Hash};
 
-use crate::PublicKey as ECDSAPublicKey;
 use crate::prelude::Vec;
 use crate::secp256k1::ecdsa::{RecoverableSignature, RecoveryId};
 use crate::secp256k1::{Message, Secp256k1, SecretKey};
+use crate::PublicKey as ECDSAPublicKey;
 
 /// verifies the ECDSA signature
 /// The provided signature must be recoverable. Which means: it must contain the recovery byte as a prefix
@@ -47,7 +47,11 @@ pub fn verify_hash_signature(
     let hash_recovered_key = ripemd160_sha256(&recovered_compressed_public_key);
     let are_equal = public_key_id == hash_recovered_key;
 
-    if are_equal { Ok(()) } else { bail!("the signature isn't valid") }
+    if are_equal {
+        Ok(())
+    } else {
+        bail!("the signature isn't valid")
+    }
 }
 
 /// sign and get the ECDSA signature
@@ -136,7 +140,7 @@ mod test {
     use super::*;
     use crate::internal_macros::hex;
     use crate::psbt::serialize::Serialize;
-    use crate::{PublicKey, assert_error_contains};
+    use crate::{assert_error_contains, PublicKey};
 
     struct Keys {
         private_key: Vec<u8>,
