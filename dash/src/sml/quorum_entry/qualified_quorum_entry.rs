@@ -12,6 +12,7 @@ use bincode::{Decode, Encode};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum VerifyingChainLockSignaturesType {
     Rotating([BLSSignature; 4]),
     NonRotating(BLSSignature),
