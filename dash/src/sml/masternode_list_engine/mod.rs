@@ -357,7 +357,7 @@ impl MasternodeListEngine {
         Ok(())
     }
 
-    pub fn feed_qr_info<FH, FS>(
+    pub fn feed_qr_info<FH>(
         &mut self,
         qr_info: QRInfo,
         verify_tip_non_rotated_quorums: bool,
@@ -366,7 +366,6 @@ impl MasternodeListEngine {
     ) -> Result<(), QuorumValidationError>
     where
         FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
-        FS: Fn(&BlockHash) -> Result<Option<BLSSignature>, ClientDataRetrievalError>,
     {
         // Fetch and process block heights using the provided callback
         if let Some(fetch_height) = fetch_block_height {
