@@ -25,6 +25,7 @@ const CL_REQUEST_ID_PREFIX: &str = "clsig";
 /// reduces mining uncertainty and mitigate 51% attack.
 /// This data structure represents a p2p message containing a data to verify such a lock.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct ChainLock {
     /// Block height
     pub block_height: u32,

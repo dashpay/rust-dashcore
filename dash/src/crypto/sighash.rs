@@ -15,7 +15,6 @@ use core::borrow::{Borrow, BorrowMut};
 use core::{fmt, str};
 
 use hashes::{hash_newtype, sha256, sha256d, sha256t_hash_newtype, Hash};
-
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::transaction::{EncodeSigningDataResult, Transaction};
@@ -24,7 +23,7 @@ use crate::consensus::{encode, Encodable};
 use crate::error::impl_std_error;
 use crate::io;
 use crate::prelude::*;
-use crate::script::{Script, ScriptBuf};
+use crate::blockdata::script::{Script, ScriptBuf};
 use crate::taproot::{LeafVersion, TapLeafHash, TAPROOT_ANNEX_PREFIX};
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.

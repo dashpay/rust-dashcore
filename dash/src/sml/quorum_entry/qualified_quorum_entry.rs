@@ -4,7 +4,7 @@ use crate::sml::llmq_entry_verification::{
     LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
 };
 use crate::sml::quorum_validation_error::QuorumValidationError;
-use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
@@ -12,6 +12,7 @@ use bincode::{Decode, Encode};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum VerifyingChainLockSignaturesType {
     Rotating([BLSSignature; 4]),
     NonRotating(BLSSignature),
@@ -25,6 +26,7 @@ pub enum VerifyingChainLockSignaturesType {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct QualifiedQuorumEntry {
     /// The underlying quorum entry
     pub quorum_entry: QuorumEntry,

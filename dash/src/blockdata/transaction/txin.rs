@@ -24,15 +24,17 @@
 use bincode::{Decode, Encode};
 
 use crate::blockdata::script::ScriptBuf;
+use crate::blockdata::transaction::outpoint::OutPoint;
+use crate::blockdata::witness::Witness;
 use crate::consensus::{encode, Decodable, Encodable};
-use crate::transaction::outpoint::OutPoint;
-use crate::{io, Witness};
+use crate::io;
 
 /// A transaction input, which defines old coins to be consumed
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct TxIn {
     /// The reference to the previous output that is being used an an input.
     pub previous_output: OutPoint,

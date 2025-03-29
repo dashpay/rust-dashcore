@@ -2,9 +2,8 @@ use std::cmp::Ordering;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::{sha256d, Hash};
-
-use crate::hash_types::ConfirmedHashHashedWithProRegTx;
+use hashes::Hash;
+use crate::hash_types::{ConfirmedHashHashedWithProRegTx, Sha256dHash};
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 
 /// A structured representation of a masternode list entry with a cached entry hash and a confirmed
@@ -14,11 +13,12 @@ use crate::sml::masternode_list_entry::MasternodeListEntry;
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct QualifiedMasternodeListEntry {
     /// The underlying masternode list entry
     pub masternode_list_entry: MasternodeListEntry,
     /// The computed entry hash
-    pub entry_hash: sha256d::Hash,
+    pub entry_hash: Sha256dHash,
     /// The confirmed hash hashed with the pro_reg_tx if the confirmed hash is set
     pub confirmed_hash_hashed_with_pro_reg_tx: Option<ConfirmedHashHashedWithProRegTx>,
 }

@@ -11,6 +11,7 @@ use crate::{BlockHash, QuorumHash};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum ClientDataRetrievalError {
     #[error("Required block not present: {0}")]
     RequiredBlockNotPresent(BlockHash),
@@ -23,6 +24,7 @@ pub enum ClientDataRetrievalError {
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum QuorumValidationError {
     #[error("Required block not present: {0}")]
     RequiredBlockNotPresent(BlockHash),

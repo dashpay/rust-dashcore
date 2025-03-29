@@ -42,12 +42,14 @@ use hashes::Hash;
 use internals::hex::Case::Lower;
 
 use crate::address::Payload;
+use crate::blockdata::script::ScriptBuf;
+use crate::blockdata::transaction::OutPoint;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::{InputsHash, PubkeyHash, SpecialTransactionPayloadHash};
 use crate::prelude::*;
-use crate::{io, Address, Network, OutPoint, ScriptBuf, VarInt};
+use crate::{io, Address, Network, VarInt};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Copy)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -97,6 +99,7 @@ impl Decodable for ProviderMasternodeType {
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct ProviderRegistrationPayload {
     pub version: u16,
     pub masternode_type: ProviderMasternodeType,
