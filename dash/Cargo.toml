@@ -72,7 +72,7 @@ lazy_static = "1.5.0"
 ed25519-dalek = { version = "2.1", features = ["rand_core"], optional = true }
 blake3 = "1.5"
 thiserror = "1"
-bls-signatures = { git = "https://github.com/dashpay/bls-signatures", rev = "1fbd8055622365d488611241fe56670da29dd877", optional = true  }
+bls-signatures = { git = "https://github.com/dashpay/bls-signatures", rev = "a52c196bdcdbdce7a5f0f67038c6d237a14607b8", optional = true  }
 ferment = { git = "https://github.com/dashpay/ferment", package = "ferment", optional = true }
 ferment-macro = { git = "https://github.com/dashpay/ferment", package = "ferment-macro", optional = true }
 [dev-dependencies]
