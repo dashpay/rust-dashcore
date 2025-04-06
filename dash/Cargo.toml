@@ -73,8 +73,8 @@ ed25519-dalek = { version = "2.1", features = ["rand_core"], optional = true }
 blake3 = "1.5"
 thiserror = "1"
 bls-signatures = { git = "https://github.com/dashpay/bls-signatures", rev = "a52c196bdcdbdce7a5f0f67038c6d237a14607b8", optional = true  }
-ferment = { git = "https://github.com/dashpay/ferment", package = "ferment", optional = true }
-ferment-macro = { git = "https://github.com/dashpay/ferment", package = "ferment-macro", optional = true }
+ferment = { version = "0.2", package = "ferment", optional = true }
+ferment-macro = { version = "0.2", package = "ferment-macro", optional = true }
 [dev-dependencies]
 serde_json = "1.0.96"
 serde_test = "1.0.19"
