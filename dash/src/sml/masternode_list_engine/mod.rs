@@ -401,14 +401,18 @@ impl MasternodeListEngine {
 
         let can_verify_previous = quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some();
 
-        let h_height = self
-            .block_container
-            .get_height(&mn_list_diff_h.block_hash)
-            .ok_or(QuorumValidationError::RequiredBlockNotPresent(mn_list_diff_h.block_hash))?;
-        let tip_height = self
-            .block_container
-            .get_height(&mn_list_diff_tip.block_hash)
-            .ok_or(QuorumValidationError::RequiredBlockNotPresent(mn_list_diff_tip.block_hash))?;
+        let h_height = self.block_container.get_height(&mn_list_diff_h.block_hash).ok_or(
+            QuorumValidationError::RequiredBlockNotPresent(
+                mn_list_diff_h.block_hash,
+                "getting height at diff h".to_string(),
+            ),
+        )?;
+        let tip_height = self.block_container.get_height(&mn_list_diff_tip.block_hash).ok_or(
+            QuorumValidationError::RequiredBlockNotPresent(
+                mn_list_diff_tip.block_hash,
+                "getting height at diff tip".to_string(),
+            ),
+        )?;
         let rotation_quorum_type = last_commitment_per_index
             .first()
             .map(|quorum_entry| quorum_entry.llmq_type)
