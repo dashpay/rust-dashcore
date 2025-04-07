@@ -664,7 +664,9 @@ impl MasternodeListEngine {
             .known_genesis_block_hash()
             .or_else(|| self.block_container.get_hash(&0).cloned())
         {
-            if masternode_list_diff.base_block_hash == known_genesis_block_hash {
+            if masternode_list_diff.base_block_hash == known_genesis_block_hash
+                || masternode_list_diff.base_block_hash.as_byte_array() == &[0; 32]
+            {
                 // we are going from the start
                 let block_hash = masternode_list_diff.block_hash;
 
