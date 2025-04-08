@@ -70,7 +70,7 @@ impl QualifiedQuorumEntry {
     /// * `result` - A `Result` containing either success (`Ok`) or a `QuorumValidationError`.
     pub fn update_quorum_status(&mut self, result: Result<(), QuorumValidationError>) {
         match result {
-            Err(QuorumValidationError::RequiredBlockNotPresent(block_hash)) => {
+            Err(QuorumValidationError::RequiredBlockNotPresent(block_hash, _)) => {
                 self.verified = LLMQEntryVerificationStatus::Skipped(
                     LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash),
                 );

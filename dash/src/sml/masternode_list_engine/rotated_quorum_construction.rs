@@ -35,6 +35,7 @@ impl MasternodeListEngine {
         else {
             return Err(QuorumValidationError::RequiredBlockNotPresent(
                 quorum.quorum_entry.quorum_hash,
+                "getting height when finding rotated masternodes for quorum".to_string(),
             ));
         };
         let llmq_type = quorum.quorum_entry.llmq_type;
@@ -82,7 +83,7 @@ impl MasternodeListEngine {
                 self.block_container.get_height(&quorum.quorum_entry.quorum_hash)
             else {
                 return Err(QuorumValidationError::RequiredBlockNotPresent(
-                    quorum.quorum_entry.quorum_hash,
+                    quorum.quorum_entry.quorum_hash, "getting height for a quorum hash when trying to find rotated masternodes for quorums".to_string()
                 ));
             };
             let llmq_type = quorum.quorum_entry.llmq_type;
@@ -145,7 +146,10 @@ impl MasternodeListEngine {
         for quorum in &qr_info.last_commitment_per_index {
             let Some(quorum_block_height) = self.block_container.get_height(&quorum.quorum_hash)
             else {
-                return Err(QuorumValidationError::RequiredBlockNotPresent(quorum.quorum_hash));
+                return Err(QuorumValidationError::RequiredBlockNotPresent(
+                    quorum.quorum_hash,
+                    "getting required cl_sig heights".to_string(),
+                ));
             };
             let llmq_params = quorum.llmq_type.params();
             let quorum_index = quorum_block_height % llmq_params.dkg_params.interval;
@@ -164,6 +168,7 @@ impl MasternodeListEngine {
                     else {
                         return Err(QuorumValidationError::RequiredBlockNotPresent(
                             quorum.quorum_hash,
+                            "getting height for quorum hash for diff at h minus 4c".to_string(),
                         ));
                     };
                     let llmq_params = quorum.llmq_type.params();

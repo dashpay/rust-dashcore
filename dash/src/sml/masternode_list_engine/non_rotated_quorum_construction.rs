@@ -23,7 +23,10 @@ impl MasternodeListEngine {
                 ))
             }
         } else {
-            Err(QuorumValidationError::RequiredBlockNotPresent(*block_hash))
+            Err(QuorumValidationError::RequiredBlockNotPresent(
+                *block_hash,
+                "looking for masternode list and height for block hash 8 blocks ago".to_string(),
+            ))
         }
     }
 

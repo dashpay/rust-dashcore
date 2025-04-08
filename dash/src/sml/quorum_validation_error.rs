@@ -26,8 +26,8 @@ pub enum ClientDataRetrievalError {
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum QuorumValidationError {
-    #[error("Required block not present: {0}")]
-    RequiredBlockNotPresent(BlockHash),
+    #[error("Required block not present: {0} ({1})")]
+    RequiredBlockNotPresent(BlockHash, String),
 
     #[error("Required block height not present: {0}")]
     RequiredBlockHeightNotPresent(CoreBlockHeight),
