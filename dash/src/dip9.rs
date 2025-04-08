@@ -155,18 +155,30 @@ pub const DASH_BIP44_PATH_TESTNET: IndexConstPath<2> = IndexConstPath {
 
 pub const COINJOIN_PATH_MAINNET: IndexConstPath<3> = IndexConstPath {
     indexes: [
-        ChildNumber::Hardened { index: FEATURE_PURPOSE },
-        ChildNumber::Hardened { index: DASH_COIN_TYPE },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_COINJOIN },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_COINJOIN,
+        },
     ],
     reference: DerivationPathReference::CoinJoin,
     path_type: DerivationPathType::ANONYMOUS_FUNDS,
 };
 pub const COINJOIN_PATH_TESTNET: IndexConstPath<3> = IndexConstPath {
     indexes: [
-        ChildNumber::Hardened { index: FEATURE_PURPOSE },
-        ChildNumber::Hardened { index: DASH_TESTNET_COIN_TYPE },
-        ChildNumber::Hardened { index: FEATURE_PURPOSE_COINJOIN },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_COINJOIN,
+        },
     ],
     reference: DerivationPathReference::CoinJoin,
     path_type: DerivationPathType::ANONYMOUS_FUNDS,

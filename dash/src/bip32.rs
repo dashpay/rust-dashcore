@@ -36,7 +36,13 @@ use serde;
 
 use crate::base58;
 use crate::crypto::key::{self, Keypair, PrivateKey, PublicKey};
-use crate::dip9::{COINJOIN_PATH_MAINNET, COINJOIN_PATH_TESTNET, DASH_BIP44_PATH_MAINNET, DASH_BIP44_PATH_TESTNET, IDENTITY_AUTHENTICATION_PATH_MAINNET, IDENTITY_AUTHENTICATION_PATH_TESTNET, IDENTITY_INVITATION_PATH_MAINNET, IDENTITY_INVITATION_PATH_TESTNET, IDENTITY_REGISTRATION_PATH_MAINNET, IDENTITY_REGISTRATION_PATH_TESTNET, IDENTITY_TOPUP_PATH_MAINNET, IDENTITY_TOPUP_PATH_TESTNET};
+use crate::dip9::{
+    COINJOIN_PATH_MAINNET, COINJOIN_PATH_TESTNET, DASH_BIP44_PATH_MAINNET, DASH_BIP44_PATH_TESTNET,
+    IDENTITY_AUTHENTICATION_PATH_MAINNET, IDENTITY_AUTHENTICATION_PATH_TESTNET,
+    IDENTITY_INVITATION_PATH_MAINNET, IDENTITY_INVITATION_PATH_TESTNET,
+    IDENTITY_REGISTRATION_PATH_MAINNET, IDENTITY_REGISTRATION_PATH_TESTNET,
+    IDENTITY_TOPUP_PATH_MAINNET, IDENTITY_TOPUP_PATH_TESTNET,
+};
 use crate::hash_types::XpubIdentifier;
 use crate::internal_macros::impl_bytes_newtype;
 use crate::io::Write;
@@ -489,16 +495,15 @@ impl DerivationPath {
         ]);
         root_derivation_path
     }
-    pub fn coinjoin_path(
-        network: Network,
-        account: u32,
-    ) -> Self {
+    pub fn coinjoin_path(network: Network, account: u32) -> Self {
         let mut root_derivation_path: DerivationPath = match network {
             Network::Dash => COINJOIN_PATH_MAINNET,
             _ => COINJOIN_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.0.extend(&[ChildNumber::Hardened { index: account }]);
+        root_derivation_path.0.extend(&[ChildNumber::Hardened {
+            index: account,
+        }]);
         root_derivation_path
     }
 

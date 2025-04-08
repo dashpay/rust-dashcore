@@ -8,11 +8,6 @@ mod validation;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-#[cfg(feature = "bincode")]
-use bincode::{Decode, Encode};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::network::message_qrinfo::{QRInfo, QuorumSnapshot};
 use crate::network::message_sml::MnListDiff;
@@ -28,6 +23,11 @@ use crate::sml::quorum_entry::qualified_quorum_entry::{
 use crate::sml::quorum_validation_error::{ClientDataRetrievalError, QuorumValidationError};
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::{BlockHash, Network, QuorumHash};
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
+use hashes::Hash;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Eq, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -66,10 +66,15 @@ impl From<MasternodeListEngineBTreeMapBlockContainer> for MasternodeListEngineBl
 }
 
 impl MasternodeListEngineBlockContainer {
-    pub fn get_height(&self, block: &BlockHash) -> Option<&CoreBlockHeight> {
-        match self {
-            MasternodeListEngineBlockContainer::BTreeMapContainer(map) => {
-                map.block_heights.get(block)
+    pub fn get_height(&self, block_hash: &BlockHash) -> Option<CoreBlockHeight> {
+        if block_hash.as_byte_array() == &[0; 32] {
+            // rep
+            Some(0)
+        } else {
+            match self {
+                MasternodeListEngineBlockContainer::BTreeMapContainer(map) => {
+                    map.block_heights.get(block_hash).copied()
+                }
             }
         }
     }
@@ -203,7 +208,7 @@ impl MasternodeListEngine {
                             else {
                                 return true;
                             };
-                            !self.masternode_lists.contains_key(block_height)
+                            !self.masternode_lists.contains_key(&block_height)
                         })
                         .collect()
                 } else {
@@ -230,7 +235,7 @@ impl MasternodeListEngine {
                             else {
                                 return true;
                             };
-                            !self.masternode_lists.contains_key(block_height)
+                            !self.masternode_lists.contains_key(&block_height)
                         })
                         .collect()
                 } else {
@@ -255,7 +260,7 @@ impl MasternodeListEngine {
     ) -> Option<&MasternodeList> {
         self.block_container
             .get_height(block_hash)
-            .and_then(|height| self.masternode_lists.get(height))
+            .and_then(|height| self.masternode_lists.get(&height))
     }
 
     pub fn feed_block_height(&mut self, height: CoreBlockHeight, block_hash: BlockHash) {
@@ -357,7 +362,7 @@ impl MasternodeListEngine {
         Ok(())
     }
 
-    pub fn feed_qr_info<FH, FS>(
+    pub fn feed_qr_info<FH>(
         &mut self,
         qr_info: QRInfo,
         verify_tip_non_rotated_quorums: bool,
@@ -366,7 +371,6 @@ impl MasternodeListEngine {
     ) -> Result<(), QuorumValidationError>
     where
         FH: Fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>,
-        FS: Fn(&BlockHash) -> Result<Option<BLSSignature>, ClientDataRetrievalError>,
     {
         // Fetch and process block heights using the provided callback
         if let Some(fetch_height) = fetch_block_height {
@@ -397,15 +401,18 @@ impl MasternodeListEngine {
 
         let can_verify_previous = quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some();
 
-        let h_height = self
-            .block_container
-            .get_height(&mn_list_diff_h.block_hash)
-            .copied()
-            .ok_or(QuorumValidationError::RequiredBlockNotPresent(mn_list_diff_h.block_hash))?;
-        let tip_height =
-            self.block_container.get_height(&mn_list_diff_tip.block_hash).copied().ok_or(
-                QuorumValidationError::RequiredBlockNotPresent(mn_list_diff_tip.block_hash),
-            )?;
+        let h_height = self.block_container.get_height(&mn_list_diff_h.block_hash).ok_or(
+            QuorumValidationError::RequiredBlockNotPresent(
+                mn_list_diff_h.block_hash,
+                "getting height at diff h".to_string(),
+            ),
+        )?;
+        let tip_height = self.block_container.get_height(&mn_list_diff_tip.block_hash).ok_or(
+            QuorumValidationError::RequiredBlockNotPresent(
+                mn_list_diff_tip.block_hash,
+                "getting height at diff tip".to_string(),
+            ),
+        )?;
         let rotation_quorum_type = last_commitment_per_index
             .first()
             .map(|quorum_entry| quorum_entry.llmq_type)
@@ -657,14 +664,14 @@ impl MasternodeListEngine {
             .known_genesis_block_hash()
             .or_else(|| self.block_container.get_hash(&0).cloned())
         {
-            if masternode_list_diff.base_block_hash == known_genesis_block_hash {
+            if masternode_list_diff.base_block_hash == known_genesis_block_hash
+                || masternode_list_diff.base_block_hash.as_byte_array() == &[0; 32]
+            {
                 // we are going from the start
                 let block_hash = masternode_list_diff.block_hash;
 
                 let masternode_list = masternode_list_diff.try_into_with_block_hash_lookup(
-                    |block_hash| {
-                        diff_end_height.or(self.block_container.get_height(block_hash).copied())
-                    },
+                    |block_hash| diff_end_height.or(self.block_container.get_height(block_hash)),
                     self.network,
                 )?;
 
@@ -672,8 +679,7 @@ impl MasternodeListEngine {
                     None => self
                         .block_container
                         .get_height(&block_hash)
-                        .ok_or(SmlError::BlockHashLookupFailed(block_hash))
-                        .cloned()?,
+                        .ok_or(SmlError::BlockHashLookupFailed(block_hash))?,
                     Some(diff_end_height) => {
                         self.block_container.feed_block_height(diff_end_height, block_hash);
                         diff_end_height
@@ -689,7 +695,7 @@ impl MasternodeListEngine {
         else {
             return Err(SmlError::BlockHashLookupFailed(masternode_list_diff.base_block_hash));
         };
-        let Some(base_masternode_list) = self.masternode_lists.get(base_height) else {
+        let Some(base_masternode_list) = self.masternode_lists.get(&base_height) else {
             return Err(SmlError::MissingStartMasternodeList(masternode_list_diff.base_block_hash));
         };
 
@@ -699,8 +705,7 @@ impl MasternodeListEngine {
             None => self
                 .block_container
                 .get_height(&block_hash)
-                .ok_or(SmlError::BlockHashLookupFailed(block_hash))
-                .cloned()?,
+                .ok_or(SmlError::BlockHashLookupFailed(block_hash))?,
             Some(diff_end_height) => diff_end_height,
         };
 
@@ -1107,11 +1112,8 @@ mod tests {
         }
 
         masternode_list_engine
-            .feed_qr_info::<fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>, fn(&BlockHash) -> Result<Option<BLSSignature>, ClientDataRetrievalError>>(
-                qr_info,
-                true,
-                true,
-                None,
+            .feed_qr_info::<fn(&BlockHash) -> Result<u32, ClientDataRetrievalError>>(
+                qr_info, true, true, None,
             )
             .expect("expected to feed_qr_info");
 

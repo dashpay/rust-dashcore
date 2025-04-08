@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use crate::bls_sig_utils::BLSSignature;
 use crate::network::message_sml::MnListDiff;
 use crate::sml::error::SmlError;
@@ -11,6 +9,8 @@ use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
 };
 use crate::{BlockHash, Network};
+use hashes::Hash;
+use std::collections::BTreeMap;
 
 pub trait TryFromWithBlockHashLookup<T>: Sized {
     type Error;
@@ -67,7 +67,9 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
     {
         if let Some(genesis_block_hash) = network.known_genesis_block_hash() {
             // Check if the base block is the genesis block
-            if diff.base_block_hash != genesis_block_hash {
+            if diff.base_block_hash != genesis_block_hash
+                && diff.base_block_hash.as_byte_array() != &[0; 32]
+            {
                 return Err(SmlError::BaseBlockNotGenesis(diff.base_block_hash));
             }
         }
