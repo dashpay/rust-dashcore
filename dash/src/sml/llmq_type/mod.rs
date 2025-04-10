@@ -281,6 +281,7 @@ pub const LLMQ_DEV_PLATFORM: LLMQParams = LLMQParams {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum LLMQType {
     LlmqtypeUnknown = 0, // other kind of
     Llmqtype50_60 = 1,   // 50 members,  30  (60%) threshold, 24 / day
@@ -444,6 +445,7 @@ pub fn dkg_rotation_params(network: Network) -> DKGParams {
     }
 }
 
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 impl LLMQType {
     pub fn index(&self) -> u8 {
         u8::from(self.clone())

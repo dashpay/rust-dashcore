@@ -39,6 +39,7 @@ secp256k1 = { default-features = false, features = ["hashes"], version= "0.30.0"
 
 rs-x11-hash = { version = "0.1.8", optional = true }
 bincode = { version= "=2.0.0-rc.3", optional = true }
+bincode_derive = { version= "=2.0.0-rc.3", optional = true }
 
 [dev-dependencies]
 serde_test = "1.0"

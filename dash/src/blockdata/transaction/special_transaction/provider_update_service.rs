@@ -37,12 +37,12 @@
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use hashes::Hash;
-
+use crate::blockdata::script::ScriptBuf;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::{InputsHash, SpecialTransactionPayloadHash, Txid};
-use crate::{io, ScriptBuf, VarInt};
+use crate::{VarInt, io};
 
 /// A Provider Update Service Payload used in a Provider Update Service Special Transaction.
 /// This is used to update the operational aspects a Masternode on the network.
@@ -52,6 +52,7 @@ use crate::{io, ScriptBuf, VarInt};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct ProviderUpdateServicePayload {
     pub version: u16,
     pub pro_tx_hash: Txid,

@@ -25,13 +25,15 @@
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
+use crate::blockdata::script::ScriptBuf;
 use crate::blockdata::transaction::special_transaction::TransactionType;
 use crate::blockdata::transaction::special_transaction::TransactionType::AssetUnlock;
+use crate::blockdata::transaction::txin::TxIn;
+use crate::blockdata::transaction::txout::TxOut;
 use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::{PubkeyHash, ScriptHash};
 use crate::prelude::*;
-use crate::transaction::TxOut;
-use crate::{io, ScriptBuf, TxIn, VarInt};
+use crate::{io, VarInt};
 
 /// An Asset Unlock Base payload. This is the base payload of the Asset Unlock. In order to make
 /// it a full payload the request info should be added.
@@ -39,6 +41,7 @@ use crate::{io, ScriptBuf, TxIn, VarInt};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct AssetUnlockBasePayload {
     /// The payload protocol version, is currently expected to be 0.
     pub version: u8,

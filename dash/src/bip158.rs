@@ -601,10 +601,10 @@ mod test {
     use serde_json::Value;
 
     use super::*;
+    use crate::blockdata::script::ScriptBuf;
     use crate::consensus::encode::deserialize;
     use crate::hash_types::BlockHash;
     use crate::internal_macros::hex;
-    use crate::ScriptBuf;
 
     #[ignore]
     #[test]
