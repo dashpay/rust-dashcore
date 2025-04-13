@@ -1195,8 +1195,6 @@ mod tests {
     use crate::network::constants::Network;
     use crate::taproot::TapLeafHash;
 
-    extern crate serde_json;
-
     #[test]
     fn sighash_single_bug() {
         const SIGHASH_SINGLE: u32 = 3;

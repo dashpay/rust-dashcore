@@ -309,8 +309,6 @@ mod tests {
     use std::fs::File;
     use std::io::{self, Read};
 
-    use assert_matches::assert_matches;
-
     use crate::consensus::deserialize;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
 

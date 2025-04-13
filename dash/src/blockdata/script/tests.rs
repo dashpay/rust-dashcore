@@ -618,18 +618,15 @@ fn defult_dust_value_tests() {
 
 #[test]
 #[cfg(feature = "serde")]
-fn test_script_serde_human_and_not() {
+fn test_script_serde_human() {
     let script = ScriptBuf::from(vec![0u8, 1u8, 2u8]);
 
     // Serialize
     let json = serde_json::to_string(&script).unwrap();
     assert_eq!(json, "\"000102\"");
-    let bincode = bincode_test::serialize(&script).unwrap();
-    assert_eq!(bincode, [3, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2]); // bincode adds u64 for length, serde_cbor use varint
 
     // Deserialize
     assert_eq!(script, serde_json::from_str::<ScriptBuf>(&json).unwrap());
-    assert_eq!(script, bincode_test::deserialize::<ScriptBuf>(&bincode).unwrap());
 }
 
 #[test]

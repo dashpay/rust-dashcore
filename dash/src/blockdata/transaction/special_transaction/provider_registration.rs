@@ -275,7 +275,6 @@ mod tests {
 
     use std::net::IpAddr;
 
-    use super::*;
     use crate::sign_message::signed_msg_hash;
     use crate::signer::sign_hash;
     use crate::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;

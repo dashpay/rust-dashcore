@@ -969,7 +969,6 @@ mod tests {
         Llmqtype400_60, Llmqtype400_85, Llmqtype50_60, Llmqtype60_75,
     };
     use crate::sml::masternode_list::MasternodeList;
-    use crate::sml::masternode_list_engine::BLSSignature;
     use crate::sml::masternode_list_engine::{
         MasternodeListEngine, MasternodeListEngineBlockContainer,
     };
