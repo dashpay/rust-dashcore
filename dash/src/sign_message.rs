@@ -34,7 +34,7 @@ pub const DASH_SIGNED_MSG_PREFIX: &[u8] = b"\x19DarkCoin Signed Message:\n";
 mod message_signing {
     use core::fmt;
 
-    use hashes::sha256d;
+    use hashes::{sha256d, Hash};
     use internals::write_err;
     use secp256k1;
     use secp256k1::ecdsa::{RecoverableSignature, RecoveryId};
@@ -153,7 +153,7 @@ mod message_signing {
             secp_ctx: &secp256k1::Secp256k1<C>,
             msg_hash: sha256d::Hash,
         ) -> Result<PublicKey, MessageSignatureError> {
-            let msg = secp256k1::Message::from(msg_hash);
+            let msg = secp256k1::Message::from_digest(msg_hash.to_byte_array());
             let pubkey = secp_ctx.recover_ecdsa(&msg, &self.signature)?;
             Ok(PublicKey {
                 inner: pubkey,
@@ -252,18 +252,18 @@ mod tests {
 
         let secp = secp256k1::Secp256k1::new();
         let message = "rust-dash MessageSignature test";
-        let msg_hash = super::signed_msg_hash(message);
-        let msg = secp256k1::Message::from(msg_hash);
+        let msg_hash = signed_msg_hash(message);
+        let msg = secp256k1::Message::from_digest(msg_hash.to_byte_array());
 
         let privkey = secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng());
         let secp_sig = secp.sign_ecdsa_recoverable(&msg, &privkey);
-        let signature = super::MessageSignature {
+        let signature = MessageSignature {
             signature: secp_sig,
             compressed: true,
         };
 
         assert_eq!(signature.to_base64(), signature.to_string());
-        let signature2 = super::MessageSignature::from_str(&signature.to_string()).unwrap();
+        let signature2 = MessageSignature::from_str(&signature.to_string()).unwrap();
         let pubkey = signature2.recover_pubkey(&secp, msg_hash).unwrap();
         assert!(pubkey.compressed);
         assert_eq!(pubkey.inner, secp256k1::PublicKey::from_secret_key(&secp, &privkey));

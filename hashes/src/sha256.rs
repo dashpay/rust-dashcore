@@ -515,12 +515,6 @@ impl HashEngine {
     }
 }
 
-impl secp256k1::ThirtyTwoByteHash for Hash {
-    fn into_32(self) -> [u8; 32] {
-        self.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{Hash, HashEngine, sha256};

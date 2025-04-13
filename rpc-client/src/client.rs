@@ -35,7 +35,6 @@ use dashcore::{
 use dashcore_rpc_json::dashcore::bls_sig_utils::BLSSignature;
 use dashcore_rpc_json::dashcore::{BlockHash, ChainLock};
 use dashcore_rpc_json::{ProTxInfo, ProTxListType, QuorumType};
-use hex::ToHex;
 use log::Level::{Debug, Trace, Warn};
 
 /// Crate-specific Result type, shorthand for `std::result::Result` with our
@@ -1697,15 +1696,9 @@ impl Client {
 impl RpcApi for Client {
     /// Call an `cmd` rpc with given `args` list
     fn call<T: for<'a> serde::de::Deserialize<'a>>(&self, cmd: &str, args: &[Value]) -> Result<T> {
-        let raw_args: Vec<_> = args
-            .iter()
-            .map(|a| {
-                let json_string = serde_json::to_string(a)?;
-                serde_json::value::RawValue::from_string(json_string) // we can't use to_raw_value here due to compat with Rust 1.29
-            })
-            .map(|a| a.map_err(|e| Error::Json(e)))
-            .collect::<Result<Vec<_>>>()?;
-        let req = self.client.build_request(&cmd, &raw_args);
+        let raw_args_json = serde_json::to_string(args)?;
+        let raw_args = Some(serde_json::value::RawValue::from_string(raw_args_json)?);
+        let req = self.client.build_request(&cmd, raw_args.as_deref());
         if log_enabled!(Debug) {
             debug!(target: "dashcore_rpc", "JSON-RPC request: {} {}", cmd, serde_json::Value::from(args));
         }

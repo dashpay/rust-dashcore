@@ -41,12 +41,6 @@ fn from_engine(e: sha256::HashEngine) -> Hash {
     Hash(ret)
 }
 
-impl secp256k1::ThirtyTwoByteHash for Hash {
-    fn into_32(self) -> [u8; 32] {
-        self.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
