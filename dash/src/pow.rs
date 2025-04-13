@@ -7,6 +7,7 @@
 //! functions here are designed to be fast, by that we mean it is safe to use them to check headers.
 //!
 
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use core::fmt::{self, LowerHex, UpperHex};
 use core::ops::{Add, Div, Mul, Not, Rem, Shl, Shr, Sub};
@@ -320,7 +321,8 @@ impl Decodable for CompactTarget {
 
 /// Big-endian 256 bit integer type.
 // (high, low): u.0 contains the high bits, u.1 contains the low bits.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Encode, Decode)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 struct U256(u128, u128);
 
 impl U256 {
