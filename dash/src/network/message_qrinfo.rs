@@ -4,12 +4,12 @@ use std::{fmt, io};
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
+use crate::BlockHash;
 use crate::consensus::encode::{read_compact_size, read_fixed_bitset, write_fixed_bitset};
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::network::message_sml::MnListDiff;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
-use crate::BlockHash;
 
 /// The `getqrinfo` message requests a `qrinfo` message that provides the information
 /// required to verify quorum details for quorums formed using the quorum rotation process.
@@ -308,8 +308,6 @@ impl Decodable for MNSkipListMode {
 mod tests {
     use std::fs::File;
     use std::io::{self, Read};
-
-    use assert_matches::assert_matches;
 
     use crate::consensus::deserialize;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};

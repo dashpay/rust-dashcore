@@ -23,7 +23,7 @@
 
 use core::{fmt, iter, slice, str};
 
-use hashes::{hex, sha256d, Hash};
+use hashes::{Hash, hex, sha256d};
 use secp256k1;
 
 use crate::key;
@@ -455,8 +455,7 @@ mod tests {
         coinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoinBitcoin"
                 .as_bytes(),
         );
-        let exp =
-            "ZqC5ZdfpZRi7fjA8hbhX5pEE96MdH9hEaC1YouxscPtbJF16qVWksHWR4wwvx7MotFcs2ChbJqK8KJ9X\
+        let exp = "ZqC5ZdfpZRi7fjA8hbhX5pEE96MdH9hEaC1YouxscPtbJF16qVWksHWR4wwvx7MotFcs2ChbJqK8KJ9X\
         wZznwWn1JFDhhTmGo9v6GjAVikzCsBWZehu7bm22xL8b5zBR5AsBygYRwbFJsNwNkjpyFuDKwmsUTKvkULCvucPJrN5\
         QUdxpGakhqkZFL7RU4yT";
         assert_eq!(&res, exp);

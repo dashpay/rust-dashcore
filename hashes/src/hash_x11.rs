@@ -31,7 +31,7 @@ use core2::io;
 
 #[cfg(all(feature = "alloc", not(feature = "std")))]
 use crate::alloc::vec::Vec;
-use crate::{hex, Error, HashEngine as _};
+use crate::{Error, HashEngine as _, hex};
 
 crate::internal_macros::hash_type! {
     256,

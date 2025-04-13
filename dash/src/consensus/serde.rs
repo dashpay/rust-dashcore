@@ -504,7 +504,9 @@ impl<E: fmt::Debug, I: Iterator<Item = Result<u8, E>>> IterReader<E, I> {
             }
             (Err(ConsensusError::Io(io_error)), Some(de_error))
                 if io_error.kind() == io::ErrorKind::Other && io_error.source().is_none() =>
-                Err(DecodeError::Other(de_error)),
+            {
+                Err(DecodeError::Other(de_error))
+            }
             (Err(consensus_error), None) => Err(DecodeError::Consensus(consensus_error)),
             (Err(ConsensusError::Io(io_error)), de_error) => panic!(
                 "Unexpected IO error {:?} returned from {}::consensus_decode(), deserialization error: {:?}",

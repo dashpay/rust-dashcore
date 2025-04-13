@@ -12,7 +12,7 @@
 //! Core node.
 extern crate dashcore_rpc;
 
-use dashcore_rpc::{dashcore, Auth, Client, Error, RpcApi};
+use dashcore_rpc::{Auth, Client, Error, RpcApi, dashcore};
 
 fn main_result() -> Result<(), Error> {
     let mut args = std::env::args();

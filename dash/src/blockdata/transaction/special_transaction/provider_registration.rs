@@ -44,10 +44,10 @@ use internals::hex::Case::Lower;
 use crate::address::Payload;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSPublicKey;
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, PubkeyHash, SpecialTransactionPayloadHash};
 use crate::prelude::*;
-use crate::{io, Address, Network, OutPoint, ScriptBuf, VarInt};
+use crate::{Address, Network, OutPoint, ScriptBuf, VarInt, io};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Copy)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -264,7 +264,7 @@ mod tests {
     use hashes::Hash;
 
     use crate::bls_sig_utils::BLSPublicKey;
-    use crate::consensus::{deserialize, Encodable};
+    use crate::consensus::{Encodable, deserialize};
     use crate::hash_types::InputsHash;
     use crate::hashes::hex::FromHex;
     use crate::internal_macros::hex;
@@ -275,17 +275,16 @@ mod tests {
 
     use std::net::IpAddr;
 
-    use super::*;
-    use crate::sign_message::signed_msg_hash;
-    use crate::signer::sign_hash;
-    use crate::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
-    use crate::transaction::TransactionPayload::ProviderRegistrationPayloadType;
     use crate::Network;
     use crate::PrivateKey;
     use crate::Transaction;
     use crate::TxIn;
     use crate::TxOut;
     use crate::Witness;
+    use crate::sign_message::signed_msg_hash;
+    use crate::signer::sign_hash;
+    use crate::transaction::TransactionPayload::ProviderRegistrationPayloadType;
+    use crate::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use std::str::FromStr;
 
     #[test]

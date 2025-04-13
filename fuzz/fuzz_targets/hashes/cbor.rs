@@ -1,4 +1,4 @@
-use dashcore::hashes::{ripemd160, sha1, sha256d, sha512, Hmac};
+use dashcore::hashes::{Hmac, ripemd160, sha1, sha256d, sha512};
 use honggfuzz::fuzz;
 use serde::{Deserialize, Serialize};
 

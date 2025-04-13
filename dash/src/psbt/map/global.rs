@@ -5,11 +5,11 @@ use core::convert::TryFrom;
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPubKey, Fingerprint};
 use crate::blockdata::transaction::Transaction;
 use crate::consensus::encode::MAX_VEC_SIZE;
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::io::{self, Cursor, Read};
 use crate::prelude::*;
 use crate::psbt::map::Map;
-use crate::psbt::{raw, Error, PartiallySignedTransaction};
+use crate::psbt::{Error, PartiallySignedTransaction, raw};
 use crate::transaction::special_transaction::TransactionType;
 
 /// Type: Unsigned Transaction PSBT_GLOBAL_UNSIGNED_TX = 0x00

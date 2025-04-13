@@ -22,8 +22,8 @@ pub enum DerivationPathReference {
 use bitflags::bitflags;
 use secp256k1::Secp256k1;
 
-use crate::bip32::{ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey};
 use crate::Network;
+use crate::bip32::{ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey};
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]

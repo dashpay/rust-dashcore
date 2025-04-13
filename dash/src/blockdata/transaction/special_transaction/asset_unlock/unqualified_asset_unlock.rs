@@ -27,11 +27,11 @@ use bincode::{Decode, Encode};
 
 use crate::blockdata::transaction::special_transaction::TransactionType;
 use crate::blockdata::transaction::special_transaction::TransactionType::AssetUnlock;
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{PubkeyHash, ScriptHash};
 use crate::prelude::*;
 use crate::transaction::TxOut;
-use crate::{io, ScriptBuf, TxIn, VarInt};
+use crate::{ScriptBuf, TxIn, VarInt, io};
 
 /// An Asset Unlock Base payload. This is the base payload of the Asset Unlock. In order to make
 /// it a full payload the request info should be added.

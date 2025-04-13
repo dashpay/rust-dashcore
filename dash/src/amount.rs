@@ -1378,7 +1378,7 @@ pub mod serde {
             use core::fmt;
             use core::marker::PhantomData;
 
-            use serde::{de, Deserializer, Serializer};
+            use serde::{Deserializer, Serializer, de};
 
             use crate::amount::serde::SerdeAmountForOpt;
 
@@ -1445,7 +1445,7 @@ pub mod serde {
             use core::fmt;
             use core::marker::PhantomData;
 
-            use serde::{de, Deserializer, Serializer};
+            use serde::{Deserializer, Serializer, de};
 
             use crate::amount::serde::SerdeAmountForOpt;
 

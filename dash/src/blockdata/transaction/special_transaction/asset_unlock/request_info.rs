@@ -23,7 +23,7 @@ use std::mem::size_of;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::QuorumHash;
 use crate::io;
 use crate::prelude::*;

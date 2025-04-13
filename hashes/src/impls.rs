@@ -23,7 +23,7 @@ use std::io;
 #[cfg(not(feature = "std"))]
 use core2::io;
 
-use crate::{hmac, ripemd160, sha1, sha256, sha512, siphash24, HashEngine};
+use crate::{HashEngine, hmac, ripemd160, sha1, sha256, sha512, siphash24};
 
 impl io::Write for sha1::HashEngine {
     fn flush(&mut self) -> io::Result<()> {
@@ -94,7 +94,7 @@ impl<T: crate::Hash> io::Write for hmac::HmacEngine<T> {
 #[cfg(test)]
 mod tests {
     use super::io::Write;
-    use crate::{hash160, hmac, ripemd160, sha1, sha256, sha256d, sha512, siphash24, Hash};
+    use crate::{Hash, hash160, hmac, ripemd160, sha1, sha256, sha256d, sha512, siphash24};
 
     macro_rules! write_test {
         ($mod:ident, $exp_empty:expr, $exp_256:expr, $exp_64k:expr,) => {

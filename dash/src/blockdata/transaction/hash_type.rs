@@ -189,10 +189,10 @@ impl ::std::error::Error for SighashTypeParseError {}
 mod tests {
     use core::str::FromStr;
 
-    use hashes::hex::FromHex;
     use hashes::Hash;
+    use hashes::hex::FromHex;
 
-    use crate::blockdata::transaction::{hash_type, UINT256_ONE};
+    use crate::blockdata::transaction::{UINT256_ONE, hash_type};
     use crate::consensus::encode::deserialize;
     use crate::sighash::{LegacySighash, SighashCache};
     use crate::transaction::hash_type::EcdsaSighashType;

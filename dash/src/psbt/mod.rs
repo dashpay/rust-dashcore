@@ -14,16 +14,16 @@ use std::collections::{HashMap, HashSet};
 use internals::write_err;
 use secp256k1::{Message, Secp256k1, Signing};
 
+use crate::Amount;
 use crate::bip32::{self, ExtendedPrivKey, ExtendedPubKey, KeySource};
 use crate::blockdata::script::ScriptBuf;
-use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::transaction::Transaction;
+use crate::blockdata::transaction::txout::TxOut;
 use crate::crypto::ecdsa;
 use crate::crypto::key::{PrivateKey, PublicKey};
 use crate::prelude::*;
 pub use crate::sighash::Prevouts;
 use crate::sighash::{self, EcdsaSighashType, SighashCache};
-use crate::Amount;
 
 #[macro_use]
 mod macros;
@@ -823,24 +823,24 @@ pub use self::display_from_str::PsbtParseError;
 mod tests {
     use std::collections::BTreeMap;
 
-    use hashes::{hash160, ripemd160, sha256, Hash};
+    use hashes::{Hash, hash160, ripemd160, sha256};
     use secp256k1::{self, Secp256k1};
     #[cfg(feature = "rand-std")]
     use secp256k1::{All, SecretKey};
 
     use super::*;
+    use crate::Network::Dash;
     use crate::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
     use crate::blockdata::script::ScriptBuf;
+    use crate::blockdata::transaction::Transaction;
     use crate::blockdata::transaction::outpoint::OutPoint;
     use crate::blockdata::transaction::txin::TxIn;
     use crate::blockdata::transaction::txout::TxOut;
-    use crate::blockdata::transaction::Transaction;
     use crate::blockdata::witness::Witness;
     use crate::internal_macros::hex;
     use crate::psbt::map::{Input, Output};
     use crate::psbt::raw;
     use crate::psbt::serialize::{Deserialize, Serialize};
-    use crate::Network::Dash;
 
     #[test]
     fn trivial_psbt() {
@@ -1111,13 +1111,13 @@ mod tests {
 
         use super::*;
         use crate::blockdata::script::ScriptBuf;
+        use crate::blockdata::transaction::Transaction;
         use crate::blockdata::transaction::outpoint::OutPoint;
         use crate::blockdata::transaction::txin::TxIn;
         use crate::blockdata::transaction::txout::TxOut;
-        use crate::blockdata::transaction::Transaction;
         use crate::blockdata::witness::Witness;
         use crate::psbt::map::{Input, Map, Output};
-        use crate::psbt::{raw, Error, PartiallySignedTransaction};
+        use crate::psbt::{Error, PartiallySignedTransaction, raw};
         use crate::sighash::EcdsaSighashType;
 
         #[test]
@@ -1339,9 +1339,11 @@ mod tests {
             let psbt_non_witness_utxo = psbt.inputs[0].non_witness_utxo.as_ref().unwrap();
 
             assert_eq!(tx_input.previous_output.txid, psbt_non_witness_utxo.txid());
-            assert!(psbt_non_witness_utxo.output[tx_input.previous_output.vout as usize]
-                .script_pubkey
-                .is_p2pkh());
+            assert!(
+                psbt_non_witness_utxo.output[tx_input.previous_output.vout as usize]
+                    .script_pubkey
+                    .is_p2pkh()
+            );
             assert_eq!(
                 psbt.inputs[0].sighash_type.as_ref().unwrap().ecdsa_hash_ty().unwrap(),
                 EcdsaSighashType::All
@@ -1818,9 +1820,9 @@ mod tests {
     #[test]
     #[cfg(feature = "rand-std")]
     fn sign_psbt() {
+        use crate::WPubkeyHash;
         use crate::address::WitnessProgram;
         use crate::bip32::{DerivationPath, Fingerprint};
-        use crate::WPubkeyHash;
 
         let unsigned_tx = Transaction {
             version: 2,

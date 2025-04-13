@@ -15,7 +15,7 @@ categories = ["cryptography::cryptocurrencies"]
 keywords = [ "crypto", "dash" ]
 readme = "../README.md"
 exclude = ["tests", "contrib"]
-edition = "2021"
+edition = "2024"
 
 # Please don't forget to add relevant features to docs.rs below
 [features]
@@ -48,13 +48,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 internals = { path = "../internals", package = "dashcore-private" }
-bech32 = { version = "0.9.0", default-features = false }
+bech32 = { version = "0.9.1", default-features = false }
 dashcore_hashes = { path = "../hashes", default-features = false }
 secp256k1 = { default-features = false, features = ["hashes"], version= "0.30.0" }
-core2 = { version = "0.3.0", optional = true, features = ["alloc"], default-features = false }
-rustversion = { version="1.0.9"}
+core2 = { version = "0.4.0", optional = true, features = ["alloc"], default-features = false }
+rustversion = { version="1.0.20"}
 # Do NOT use this as a feature! Use the `serde` feature instead.
-actual-serde = { package = "serde", version = "1.0.103", default-features = false, features = [ "derive", "alloc" ], optional = true }
+actual-serde = { package = "serde", version = "1.0.219", default-features = false, features = [ "derive", "alloc" ], optional = true }
 
 base64-compat = { version = "1.0.0", optional = true }
 bitcoinconsensus = { version = "0.20.2-0.5.0", default-features = false, optional = true }
@@ -62,24 +62,20 @@ hex_lit = "0.1.1"
 anyhow = { version= "1.0" }
 hex = { version= "0.4" }
 bincode = { version= "=2.0.0-rc.3", optional = true }
-bitflags = "2.6.0"
+bitflags = "2.9.0"
 blsful = { version = "3.0.0-pre8", optional = true }
-serde_repr = "0.1.19"
-strum = { version = "0.26", features = ["derive"] }
-lazy_static = "1.5.0"
 ed25519-dalek = { version = "2.1", features = ["rand_core"], optional = true }
-blake3 = "1.5"
-thiserror = "1"
+blake3 = "1.8.1"
+thiserror = "2"
 # version 1.3.5 is 0bb5c5b03249c463debb5cef5f7e52ee66f3aaab
 bls-signatures = { git = "https://github.com/dashpay/bls-signatures", rev = "0bb5c5b03249c463debb5cef5f7e52ee66f3aaab", optional = true }
 
 [dev-dependencies]
-serde_json = "1.0.96"
-serde_test = "1.0.19"
-serde_derive = "1.0.103"
+serde_json = "1.0.140"
+serde_test = "1.0.177"
+serde_derive = "1.0.219"
 secp256k1 = { features = [ "recovery", "rand", "hashes" ], version="0.30.0" }
-bip39 = "2.0.0"
-bincode_test = {package = "bincode", version= "1.3.3" }
+bincode = { version= "=2.0.0-rc.3" }
 assert_matches = "1.5.0"
 dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
 

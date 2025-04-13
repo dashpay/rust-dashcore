@@ -54,7 +54,7 @@ use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::constants::ChainHash;
 use crate::error::impl_std_error;
 use crate::prelude::{String, ToOwned};
-use crate::{io, BlockHash};
+use crate::{BlockHash, io};
 
 /// Version of the protocol as appearing in network message headers
 /// This constant is used to signal to other peers which features you support.

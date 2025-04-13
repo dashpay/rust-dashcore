@@ -28,7 +28,7 @@ use std::error;
 use bincode::{Decode, Encode};
 use hashes::{self, Hash};
 
-use crate::consensus::{deserialize, encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, deserialize, encode};
 use crate::hash_types::Txid;
 use crate::io;
 
@@ -229,8 +229,8 @@ mod tests {
     use core::str::FromStr;
 
     use super::*;
-    use crate::internal_macros::hex;
     use crate::Transaction;
+    use crate::internal_macros::hex;
 
     #[test]
     fn test_outpoint() {

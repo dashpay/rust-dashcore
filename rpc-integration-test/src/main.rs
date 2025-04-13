@@ -12,22 +12,23 @@
 extern crate lazy_static;
 extern crate log;
 
-use log::{trace, Log};
+use log::{Log, trace};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use dashcore_rpc::jsonrpc::error::Error as JsonRpcError;
 use dashcore_rpc::{
-    dashcore::{
-        consensus::encode::{deserialize, serialize},
-        hashes::hex::FromHex,
-        hashes::Hash,
-        secp256k1, Address, AddressType, Amount, EcdsaSighashType, Network, OutPoint, PrivateKey,
-        Script, SignedAmount, Transaction, TxIn, TxOut, Txid, Witness,
-    },
     Auth, Client, Error, RpcApi,
+    dashcore::{
+        Address, AddressType, Amount, EcdsaSighashType, Network, OutPoint, PrivateKey, Script,
+        SignedAmount, Transaction, TxIn, TxOut, Txid, Witness,
+        consensus::encode::{deserialize, serialize},
+        hashes::Hash,
+        hashes::hex::FromHex,
+        secp256k1,
+    },
 };
-use dashcore_rpc::{json, RawTx};
+use dashcore_rpc::{RawTx, json};
 
 use dashcore_rpc::dashcore::address::NetworkUnchecked;
 use dashcore_rpc::dashcore::{BlockHash, ProTxHash, QuorumHash, ScriptBuf};
@@ -1227,9 +1228,11 @@ fn test_create_wallet(cl: &Client) {
     wallet_list.sort();
 
     // Main wallet created for tests
-    assert!(wallet_list
-        .iter()
-        .any(|w| w == &TEST_WALLET_NAME.to_string() || w == &FAUCET_WALLET_NAME.to_string()));
+    assert!(
+        wallet_list
+            .iter()
+            .any(|w| w == &TEST_WALLET_NAME.to_string() || w == &FAUCET_WALLET_NAME.to_string())
+    );
     wallet_list.retain(|w| {
         w != &TEST_WALLET_NAME.to_string() && w != "" && w != &FAUCET_WALLET_NAME.to_string()
     });

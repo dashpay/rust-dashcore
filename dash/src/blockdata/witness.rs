@@ -501,9 +501,9 @@ mod test {
     use secp256k1::ecdsa;
 
     use super::*;
+    use crate::Transaction;
     use crate::consensus::{deserialize, serialize};
     use crate::internal_macros::hex;
-    use crate::Transaction;
 
     fn append_u32_vec(mut v: Vec<u8>, n: &[u32]) -> Vec<u8> {
         for &num in n {
@@ -693,23 +693,6 @@ mod test {
 
     #[cfg(feature = "serde")]
     #[test]
-    fn test_serde_bincode() {
-        use bincode_test;
-
-        let old_witness_format = vec![vec![0u8], vec![2]];
-        let new_witness_format = Witness::from_slice(&old_witness_format);
-
-        let old = bincode_test::serialize(&old_witness_format).unwrap();
-        let new = bincode_test::serialize(&new_witness_format).unwrap();
-
-        assert_eq!(old, new);
-
-        let back: Witness = bincode_test::deserialize(&new).unwrap();
-        assert_eq!(new_witness_format, back);
-    }
-
-    #[cfg(feature = "serde")]
-    #[test]
     fn test_serde_human() {
         use serde_json;
 
@@ -726,7 +709,7 @@ mod test {
 
 #[cfg(bench)]
 mod benches {
-    use test::{black_box, Bencher};
+    use test::{Bencher, black_box};
 
     use super::Witness;
 

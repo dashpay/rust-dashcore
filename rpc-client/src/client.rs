@@ -20,13 +20,13 @@ use jsonrpc;
 use serde;
 use serde_json::{self, Value};
 
+use crate::Error::UnexpectedStructure;
 use crate::dashcore::address::NetworkUnchecked;
 use crate::dashcore::secp256k1::hashes::hex::DisplayHex;
-use crate::dashcore::{block, consensus, ScriptBuf};
+use crate::dashcore::{ScriptBuf, block, consensus};
 use crate::error::*;
 use crate::json;
 use crate::queryable;
-use crate::Error::UnexpectedStructure;
 use dashcore::hashes::hex::FromHex;
 use dashcore::secp256k1::ecdsa::Signature;
 use dashcore::{
@@ -1719,13 +1719,13 @@ impl RpcApi for Client {
 fn log_response(cmd: &str, resp: &Result<jsonrpc::Response>) {
     if log_enabled!(Warn) || log_enabled!(Debug) || log_enabled!(Trace) {
         match resp {
-            Err(ref e) => {
+            Err(e) => {
                 if log_enabled!(Debug) {
                     debug!(target: "dashcore_rpc", "JSON-RPC failed parsing reply of {}: {:?}", cmd, e);
                 }
             }
-            Ok(ref resp) => {
-                if let Some(ref e) = resp.error {
+            Ok(resp) => {
+                if let Some(e) = &resp.error {
                     if log_enabled!(Debug) {
                         debug!(target: "dashcore_rpc", "JSON-RPC error for {}: {:?}", cmd, e);
                     }

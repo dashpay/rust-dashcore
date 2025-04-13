@@ -25,7 +25,7 @@ use crate::consensus::encode::{
     compact_size_len, fixed_bitset_len, read_compact_size, read_fixed_bitset, write_compact_size,
     write_fixed_bitset,
 };
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{QuorumHash, QuorumVVecHash};
 use crate::io;
 use crate::prelude::*;
@@ -224,7 +224,7 @@ mod tests {
     use hashes::Hash;
 
     use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
-    use crate::consensus::{deserialize, serialize, Encodable};
+    use crate::consensus::{Encodable, deserialize, serialize};
     use crate::hash_types::{QuorumHash, QuorumVVecHash};
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
     use crate::sml::llmq_type::LLMQType;

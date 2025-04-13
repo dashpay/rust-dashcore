@@ -12,7 +12,7 @@ repository = "https://github.com/dashevo/rust-dashcore/"
 description = "JSON-enabled type structs for dashcore-rpc crate."
 keywords = [ "crypto", "dash", "dashcore", "rpc" ]
 readme = "README.md"
-edition = "2021"
+edition = "2024"
 
 [lib]
 name = "dashcore_rpc_json"

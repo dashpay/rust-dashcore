@@ -10,7 +10,7 @@
 
 use core::default::Default;
 
-use hashes::{sha256d, Hash};
+use hashes::{Hash, sha256d};
 use hex_lit::hex;
 use internals::impl_array_newtype;
 
@@ -18,10 +18,10 @@ use crate::blockdata::block::{self, Block};
 use crate::blockdata::locktime::absolute;
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::script;
+use crate::blockdata::transaction::Transaction;
 use crate::blockdata::transaction::outpoint::OutPoint;
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
-use crate::blockdata::transaction::Transaction;
 use crate::blockdata::witness::Witness;
 use crate::internal_macros::impl_bytes_newtype;
 use crate::network::constants::Network;
@@ -215,88 +215,88 @@ mod test {
 
     #[test]
     fn bitcoin_genesis_first_transaction() {
-        let gen = bitcoin_genesis_tx();
+        let genesis_tx = bitcoin_genesis_tx();
 
-        assert_eq!(gen.version, 1);
-        assert_eq!(gen.input.len(), 1);
-        assert_eq!(gen.input[0].previous_output.txid, Hash::all_zeros());
-        assert_eq!(gen.input[0].previous_output.vout, 0xFFFFFFFF);
+        assert_eq!(genesis_tx.version, 1);
+        assert_eq!(genesis_tx.input.len(), 1);
+        assert_eq!(genesis_tx.input[0].previous_output.txid, Hash::all_zeros());
+        assert_eq!(genesis_tx.input[0].previous_output.vout, 0xFFFFFFFF);
         assert_eq!(
-            serialize(&gen.input[0].script_sig),
+            serialize(&genesis_tx.input[0].script_sig),
             hex!(
                 "4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73"
             )
         );
 
-        assert_eq!(gen.input[0].sequence, u32::MAX);
-        assert_eq!(gen.output.len(), 1);
+        assert_eq!(genesis_tx.input[0].sequence, u32::MAX);
+        assert_eq!(genesis_tx.output.len(), 1);
         assert_eq!(
-            serialize(&gen.output[0].script_pubkey),
+            serialize(&genesis_tx.output[0].script_pubkey),
             hex!(
                 "434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac"
             )
         );
-        assert_eq!(gen.output[0].value, 50 * COIN_VALUE);
-        assert_eq!(gen.lock_time, 0);
+        assert_eq!(genesis_tx.output[0].value, 50 * COIN_VALUE);
+        assert_eq!(genesis_tx.lock_time, 0);
 
         assert_eq!(
-            gen.wtxid().to_string(),
+            genesis_tx.wtxid().to_string(),
             "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
         );
     }
 
     #[test]
     fn bitcoin_genesis_full_block() {
-        let gen = genesis_block(Network::Dash);
+        let genesis_block = genesis_block(Network::Dash);
 
-        assert_eq!(gen.header.version, block::Version::ONE);
-        assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
+        assert_eq!(genesis_block.header.version, block::Version::ONE);
+        assert_eq!(genesis_block.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
-            gen.header.merkle_root.to_string(),
+            genesis_block.header.merkle_root.to_string(),
             "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
         );
 
-        assert_eq!(gen.header.time, 1231006505);
-        assert_eq!(gen.header.bits, CompactTarget::from_consensus(0x1d00ffff));
-        assert_eq!(gen.header.nonce, 2083236893);
+        assert_eq!(genesis_block.header.time, 1231006505);
+        assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x1d00ffff));
+        assert_eq!(genesis_block.header.nonce, 2083236893);
         assert_eq!(
-            gen.header.block_hash().to_string(),
+            genesis_block.header.block_hash().to_string(),
             "043815c00a2a17f25adba30162593aa70504195bb7dae6e3a755276033bd0dd9"
         );
     }
 
     #[test]
     fn testnet_genesis_full_block() {
-        let gen = genesis_block(Network::Testnet);
-        assert_eq!(gen.header.version, block::Version::ONE);
-        assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
+        let genesis_block = genesis_block(Network::Testnet);
+        assert_eq!(genesis_block.header.version, block::Version::ONE);
+        assert_eq!(genesis_block.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
-            gen.header.merkle_root.to_string(),
+            genesis_block.header.merkle_root.to_string(),
             "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
         );
-        assert_eq!(gen.header.time, 1296688602);
-        assert_eq!(gen.header.bits, CompactTarget::from_consensus(0x1d00ffff));
-        assert_eq!(gen.header.nonce, 414098458);
+        assert_eq!(genesis_block.header.time, 1296688602);
+        assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x1d00ffff));
+        assert_eq!(genesis_block.header.nonce, 414098458);
         assert_eq!(
-            gen.header.block_hash().to_string(),
+            genesis_block.header.block_hash().to_string(),
             "10eeca342c70bb609386864b9c375acd464aca61705728852054ec7bb71cdcf0"
         );
     }
 
     #[test]
     fn devnet_genesis_full_block() {
-        let gen = genesis_block(Network::Devnet);
-        assert_eq!(gen.header.version, block::Version::ONE);
-        assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
+        let genesis_block = genesis_block(Network::Devnet);
+        assert_eq!(genesis_block.header.version, block::Version::ONE);
+        assert_eq!(genesis_block.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
-            gen.header.merkle_root.to_string(),
+            genesis_block.header.merkle_root.to_string(),
             "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
         );
-        assert_eq!(gen.header.time, 1598918400);
-        assert_eq!(gen.header.bits, CompactTarget::from_consensus(0x1e0377ae));
-        assert_eq!(gen.header.nonce, 52613770);
+        assert_eq!(genesis_block.header.time, 1598918400);
+        assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x1e0377ae));
+        assert_eq!(genesis_block.header.nonce, 52613770);
         assert_eq!(
-            gen.header.block_hash().to_string(),
+            genesis_block.header.block_hash().to_string(),
             "a47755be7925966f83b5b1a4ccd1ca691dc5ebf0fab3e0062eee288817d70c58"
         );
     }
