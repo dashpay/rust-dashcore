@@ -811,8 +811,11 @@ impl MasternodeListEngine {
 
         #[cfg(not(feature = "quorum_validation"))]
         let rotation_sig = {
-            let (masternode_list, rotation_sig) =
-                base_masternode_list.apply_diff(masternode_list_diff.clone(), diff_end_height, None)?;
+            let (masternode_list, rotation_sig) = base_masternode_list.apply_diff(
+                masternode_list_diff.clone(),
+                diff_end_height,
+                None,
+            )?;
             if verify_quorums {
                 return Err(SmlError::FeatureNotTurnedOn(
                     "quorum validation feature is not turned on".to_string(),
