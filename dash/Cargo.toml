@@ -15,7 +15,7 @@ categories = ["cryptography::cryptocurrencies"]
 keywords = [ "crypto", "dash" ]
 readme = "../README.md"
 exclude = ["tests", "contrib"]
-edition = "2021"
+edition = "2024"
 
 # Please don't forget to add relevant features to docs.rs below
 [features]

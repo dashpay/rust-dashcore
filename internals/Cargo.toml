@@ -9,7 +9,7 @@ description = "Internal types and macros used by rust-dash ecosystem"
 categories = ["cryptography::cryptocurrencies"]
 keywords = ["internal"]
 readme = "README.md"
-edition = "2018"
+edition = "2024"
 exclude = ["tests", "contrib"]
 
 [features]

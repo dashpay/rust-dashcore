@@ -4,7 +4,7 @@
 use core::convert::TryInto;
 
 use crate::blockdata::opcodes;
-use crate::blockdata::script::{read_uint_iter, Error, PushBytes, Script, ScriptBuf, UintError};
+use crate::blockdata::script::{Error, PushBytes, Script, ScriptBuf, UintError, read_uint_iter};
 
 /// A "parsed opcode" which allows iterating over a [`Script`] in a more sensible way.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]

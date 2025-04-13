@@ -12,7 +12,7 @@ repository = "https://github.com/dashevo/rust-dashcore/"
 description = "RPC client library for the Dash Core JSON-RPC API."
 keywords = ["crypto", "dash", "dash-core", "rpc"]
 readme = "README.md"
-edition = "2021"
+edition = "2024"
 
 [lib]
 name = "dashcore_rpc"

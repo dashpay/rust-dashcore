@@ -4,8 +4,8 @@ use std::io::Write;
 use hashes::Hash;
 
 use crate::bls_sig_utils::BLSSignature;
-use crate::consensus::encode::VarInt;
 use crate::consensus::Encodable;
+use crate::consensus::encode::VarInt;
 use crate::hash_types::QuorumModifierHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_type::LLMQType;

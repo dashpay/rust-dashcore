@@ -16,14 +16,14 @@ use hashes::{Hash, HashEngine};
 use super::Weight;
 use crate::blockdata::script;
 use crate::blockdata::transaction::Transaction;
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::error::Error::{self, BlockBadProofOfWork, BlockBadTarget};
 pub use crate::hash_types::BlockHash;
 use crate::hash_types::{TxMerkleNode, WitnessCommitment, WitnessMerkleNode, Wtxid};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::pow::{CompactTarget, Target, Work};
 use crate::prelude::*;
-use crate::{io, merkle_tree, VarInt};
+use crate::{VarInt, io, merkle_tree};
 
 /// Bitcoin block header.
 ///
@@ -671,11 +671,11 @@ mod tests {
 
 #[cfg(bench)]
 mod benches {
-    use test::{black_box, Bencher};
+    use test::{Bencher, black_box};
 
     use super::Block;
-    use crate::consensus::{deserialize, Decodable, Encodable};
     use crate::EmptyWrite;
+    use crate::consensus::{Decodable, Encodable, deserialize};
 
     #[bench]
     pub fn bench_stream_reader(bh: &mut Bencher) {

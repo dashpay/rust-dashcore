@@ -47,7 +47,7 @@ use core::marker::PhantomData;
 use core::str::FromStr;
 
 use bech32;
-use hashes::{sha256, Hash, HashEngine};
+use hashes::{Hash, HashEngine, sha256};
 use internals::write_err;
 use secp256k1::{Secp256k1, Verification, XOnlyPublicKey};
 
@@ -862,7 +862,7 @@ impl<V: NetworkValidation> Address<V> {
         match self.payload() {
             Payload::PubkeyHash(_) => Some(AddressType::P2pkh),
             Payload::ScriptHash(_) => Some(AddressType::P2sh),
-            Payload::WitnessProgram(ref prog) => {
+            Payload::WitnessProgram(prog) => {
                 // BIP-141 p2wpkh or p2wsh addresses.
                 match prog.version() {
                     WitnessVersion::V0 => match prog.program().len() {

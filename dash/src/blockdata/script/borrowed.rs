@@ -16,7 +16,7 @@ use crate::blockdata::opcodes::{self};
 #[cfg(feature = "bitcoinconsensus")]
 use crate::blockdata::script::Error;
 use crate::blockdata::script::{
-    bytes_to_asm_fmt, Builder, Instruction, InstructionIndices, Instructions, ScriptBuf,
+    Builder, Instruction, InstructionIndices, Instructions, ScriptBuf, bytes_to_asm_fmt,
 };
 use crate::consensus::Encodable;
 use crate::hash_types::{ScriptHash, WScriptHash};

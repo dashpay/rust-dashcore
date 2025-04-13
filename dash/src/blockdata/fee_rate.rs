@@ -4,8 +4,8 @@ use core::fmt;
 use core::ops::{Div, Mul};
 
 use super::Weight;
-use crate::prelude::*;
 use crate::Amount;
+use crate::prelude::*;
 
 /// Represents fee rate.
 ///

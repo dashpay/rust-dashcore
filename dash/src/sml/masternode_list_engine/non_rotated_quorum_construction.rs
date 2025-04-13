@@ -1,3 +1,4 @@
+use crate::BlockHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
@@ -7,7 +8,6 @@ use crate::sml::quorum_entry::qualified_quorum_entry::{
 };
 use crate::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
-use crate::BlockHash;
 
 impl MasternodeListEngine {
     pub(crate) fn masternode_list_and_height_for_block_hash_8_blocks_ago(

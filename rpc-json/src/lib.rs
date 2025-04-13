@@ -38,14 +38,14 @@ use dashcore::consensus::encode;
 use dashcore::hashes::hex::Error::InvalidChar;
 use dashcore::hashes::sha256;
 use dashcore::{
-    bip158, bip32, Address, Amount, BlockHash, PrivateKey, ProTxHash, PublicKey, QuorumHash,
-    Script, ScriptBuf, SignedAmount, Transaction, TxMerkleNode, Txid,
+    Address, Amount, BlockHash, PrivateKey, ProTxHash, PublicKey, QuorumHash, Script, ScriptBuf,
+    SignedAmount, Transaction, TxMerkleNode, Txid, bip32, bip158,
 };
 use hex::FromHexError;
 use serde::de::Error as SerdeError;
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
-use serde_with::{serde_as, Bytes, DisplayFromStr};
+use serde_with::{Bytes, DisplayFromStr, serde_as};
 
 //TODO(stevenroose) consider using a Time type
 
@@ -2436,7 +2436,7 @@ where
             return Err(de::Error::custom(format!(
                 "unknown masternode sync asset name: {}",
                 str_sequence
-            )))
+            )));
         }
     })
 }
@@ -3261,7 +3261,7 @@ mod tests {
     use serde_json::json;
 
     use crate::{
-        deserialize_u32_opt, ExtendedQuorumListResult, MasternodeListDiff, MnSyncStatus, QuorumType,
+        ExtendedQuorumListResult, MasternodeListDiff, MnSyncStatus, QuorumType, deserialize_u32_opt,
     };
 
     #[test]

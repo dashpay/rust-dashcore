@@ -14,18 +14,18 @@
 use core::borrow::{Borrow, BorrowMut};
 use core::{fmt, str};
 
-use hashes::{hash_newtype, sha256, sha256d, sha256t_hash_newtype, Hash};
+use hashes::{Hash, hash_newtype, sha256, sha256d, sha256t_hash_newtype};
 
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::transaction::{EncodeSigningDataResult, Transaction};
 use crate::blockdata::witness::Witness;
-use crate::consensus::{encode, Encodable};
+use crate::consensus::{Encodable, encode};
 use crate::error::impl_std_error;
 use crate::io;
 use crate::prelude::*;
 use crate::script::{Script, ScriptBuf};
-use crate::taproot::{LeafVersion, TapLeafHash, TAPROOT_ANNEX_PREFIX};
+use crate::taproot::{LeafVersion, TAPROOT_ANNEX_PREFIX, TapLeafHash};
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.
 #[rustfmt::skip]
@@ -255,12 +255,18 @@ impl fmt::Display for Error {
 
         match self {
             Io(error_kind) => write!(f, "writer errored: {:?}", error_kind),
-            IndexOutOfInputsBounds { index, inputs_size } => write!(
+            IndexOutOfInputsBounds {
+                index,
+                inputs_size,
+            } => write!(
                 f,
                 "Requested index ({}) is greater or equal than the number of transaction inputs ({})",
                 index, inputs_size
             ),
-            SingleWithoutCorrespondingOutput { index, outputs_size } => write!(
+            SingleWithoutCorrespondingOutput {
+                index,
+                outputs_size,
+            } => write!(
                 f,
                 "SIGHASH_SINGLE for input ({}) haven't a corresponding output (#outputs:{})",
                 index, outputs_size

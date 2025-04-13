@@ -501,9 +501,9 @@ mod test {
     use secp256k1::ecdsa;
 
     use super::*;
+    use crate::Transaction;
     use crate::consensus::{deserialize, serialize};
     use crate::internal_macros::hex;
-    use crate::Transaction;
 
     fn append_u32_vec(mut v: Vec<u8>, n: &[u32]) -> Vec<u8> {
         for &num in n {
@@ -709,7 +709,7 @@ mod test {
 
 #[cfg(bench)]
 mod benches {
-    use test::{black_box, Bencher};
+    use test::{Bencher, black_box};
 
     use super::Witness;
 

@@ -25,10 +25,10 @@
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::prelude::*;
 use crate::transaction::txout::TxOut;
-use crate::{io, VarInt};
+use crate::{VarInt, io};
 
 /// An Asset Lock payload. This is contained as the payload of an asset lock special transaction.
 /// The Asset Lock Special transaction and this payload is described in the Asset Lock DIP2X

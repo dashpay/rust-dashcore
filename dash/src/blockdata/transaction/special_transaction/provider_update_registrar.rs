@@ -35,10 +35,10 @@ use hashes::Hash;
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSPublicKey;
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, PubkeyHash, SpecialTransactionPayloadHash, Txid};
 use crate::prelude::*;
-use crate::{io, ScriptBuf, VarInt};
+use crate::{ScriptBuf, VarInt, io};
 
 /// A Provider Update Registrar Payload used in a Provider Update Registrar Special Transaction.
 /// This is used to update the base aspects a Masternode on the network.
@@ -129,11 +129,11 @@ mod tests {
 
     use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use crate::bls_sig_utils::BLSPublicKey;
-    use crate::consensus::{deserialize, Encodable};
+    use crate::consensus::{Encodable, deserialize};
     use crate::hash_types::InputsHash;
     use crate::internal_macros::hex;
-    use crate::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
     use crate::transaction::special_transaction::TransactionPayload::ProviderUpdateRegistrarPayloadType;
+    use crate::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
     use crate::{Network, PubkeyHash, ScriptBuf, Transaction, Txid};
 
     #[test]

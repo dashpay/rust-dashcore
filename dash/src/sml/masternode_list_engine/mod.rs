@@ -15,8 +15,8 @@ use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
-use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::masternode_list::MasternodeList;
+use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
 };
@@ -959,6 +959,8 @@ impl MasternodeListEngine {
 
 #[cfg(test)]
 mod tests {
+    use crate::BlockHash;
+    use crate::Network;
     use crate::consensus::deserialize;
     use crate::network::message_qrinfo::QRInfo;
     use crate::network::message_sml::MnListDiff;
@@ -966,7 +968,7 @@ mod tests {
     use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
     use crate::sml::llmq_type::LLMQType;
     use crate::sml::llmq_type::LLMQType::{
-        Llmqtype400_60, Llmqtype400_85, Llmqtype50_60, Llmqtype60_75,
+        Llmqtype50_60, Llmqtype60_75, Llmqtype400_60, Llmqtype400_85,
     };
     use crate::sml::masternode_list::MasternodeList;
     use crate::sml::masternode_list_engine::{
@@ -974,8 +976,6 @@ mod tests {
     };
     use crate::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
     use crate::sml::quorum_validation_error::ClientDataRetrievalError;
-    use crate::BlockHash;
-    use crate::Network;
     use std::collections::BTreeMap;
 
     fn verify_masternode_list_quorums(
@@ -1178,7 +1178,7 @@ mod tests {
             )
             .expect("expected to verify quorums");
 
-        let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
+        let _last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
 
         verify_masternode_list_quorums(
             &mn_list_engine,
@@ -1214,7 +1214,7 @@ mod tests {
             )
             .expect("expected to verify quorums");
 
-        let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
+        let _last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
 
         verify_masternode_list_quorums(
             &mn_list_engine,

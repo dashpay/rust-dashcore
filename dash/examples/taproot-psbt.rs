@@ -88,8 +88,8 @@ use dashcore::secp256k1::Secp256k1;
 use dashcore::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use dashcore::taproot::{self, LeafVersion, TapLeafHash, TaprootBuilder, TaprootSpendInfo};
 use dashcore::{
-    absolute, script, Address, Amount, Network, OutPoint, ScriptBuf, Transaction, TxIn, TxOut,
-    Witness,
+    Address, Amount, Network, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Witness, absolute,
+    script,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

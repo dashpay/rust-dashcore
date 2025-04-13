@@ -24,7 +24,7 @@ pub mod serde_details {
 
     use crate::Error;
     struct HexVisitor<ValueT>(PhantomData<ValueT>);
-    use serde::{de, Deserializer, Serializer};
+    use serde::{Deserializer, Serializer, de};
 
     impl<'de, ValueT> de::Visitor<'de> for HexVisitor<ValueT>
     where

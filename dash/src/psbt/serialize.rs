@@ -8,17 +8,17 @@
 
 use core::convert::{TryFrom, TryInto};
 
-use hashes::{hash160, ripemd160, sha256, sha256d, Hash};
+use hashes::{Hash, hash160, ripemd160, sha256, sha256d};
 use secp256k1::{self, XOnlyPublicKey};
 
-use super::map::{Input, Map, Output, PsbtSighashType};
 use super::Psbt;
+use super::map::{Input, Map, Output, PsbtSighashType};
 use crate::bip32::{ChildNumber, Fingerprint, KeySource};
 use crate::blockdata::script::ScriptBuf;
-use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::transaction::Transaction;
+use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
-use crate::consensus::encode::{self, deserialize_partial, serialize, Decodable, Encodable};
+use crate::consensus::encode::{self, Decodable, Encodable, deserialize_partial, serialize};
 use crate::crypto::key::PublicKey;
 use crate::crypto::{ecdsa, taproot};
 use crate::prelude::*;
@@ -26,7 +26,7 @@ use crate::psbt::{Error, PartiallySignedTransaction};
 use crate::taproot::{
     ControlBlock, LeafVersion, TapLeafHash, TapNodeHash, TapTree, TaprootBuilder,
 };
-use crate::{io, VarInt};
+use crate::{VarInt, io};
 /// A trait for serializing a value as raw data for insertion into PSBT
 /// key-value maps.
 pub trait Serialize {

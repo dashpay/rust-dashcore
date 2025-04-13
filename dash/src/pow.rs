@@ -13,9 +13,9 @@ use core::ops::{Add, Div, Mul, Not, Rem, Shl, Shr, Sub};
 #[cfg(all(test, mutate))]
 use mutagen::mutate;
 
-use crate::consensus::encode::{self, Decodable, Encodable};
 #[cfg(doc)]
 use crate::consensus::Params;
+use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::BlockHash;
 use crate::io::{self, Read, Write};
 use crate::prelude::String;
@@ -1534,18 +1534,24 @@ mod tests {
             "deadbeeaa69b455cd41bb662a69b4550a69b455cd41bb662a69b4555deadbeef",
         );
 
-        assert!(::serde_json::from_str::<U256>(
-            "\"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffg\""
-        )
-        .is_err()); // invalid char
-        assert!(::serde_json::from_str::<U256>(
-            "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
-        )
-        .is_err()); // invalid length
-        assert!(::serde_json::from_str::<U256>(
-            "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
-        )
-        .is_err()); // invalid length
+        assert!(
+            ::serde_json::from_str::<U256>(
+                "\"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffg\""
+            )
+            .is_err()
+        ); // invalid char
+        assert!(
+            ::serde_json::from_str::<U256>(
+                "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
+            )
+            .is_err()
+        ); // invalid length
+        assert!(
+            ::serde_json::from_str::<U256>(
+                "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
+            )
+            .is_err()
+        ); // invalid length
     }
 
     #[test]

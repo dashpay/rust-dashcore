@@ -36,7 +36,7 @@ use std::io::Write;
 
 #[cfg(feature = "core-block-hash-use-x11")]
 use hashes::hash_x11;
-use hashes::{hash160, sha256, sha256d, Hash};
+use hashes::{Hash, hash160, sha256, sha256d};
 use internals::write_err;
 
 use crate::bip152::{PrefilledTransaction, ShortId};
@@ -56,11 +56,11 @@ use crate::network::{
 use crate::prelude::*;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::taproot::TapLeafHash;
-use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::transaction::special_transaction::TransactionType;
+use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::transaction::txin::TxIn;
 use crate::transaction::txout::TxOut;
-use crate::{address, OutPoint, ProTxHash, ScriptBuf};
+use crate::{OutPoint, ProTxHash, ScriptBuf, address};
 
 /// Encoding error.
 #[derive(Debug)]
@@ -122,34 +122,34 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::Io(ref e) => write_err!(f, "IO error"; e),
+            Error::Io(e) => write_err!(f, "IO error"; e),
             Error::OversizedVectorAllocation {
-                requested: ref r,
-                max: ref m,
+                requested: r,
+                max: m,
             } => {
                 write!(f, "allocation of oversized vector: requested {}, maximum {}", r, m)
             }
             Error::InvalidChecksum {
-                expected: ref e,
-                actual: ref a,
+                expected: e,
+                actual: a,
             } => {
                 write!(f, "invalid checksum: expected {:x}, actual {:x}", e.as_hex(), a.as_hex())
             }
             Error::NonMinimalVarInt => write!(f, "non-minimal varint"),
-            Error::ParseFailed(ref s) => write!(f, "parse failed: {}", s),
-            Error::UnsupportedSegwitFlag(ref swflag) => {
+            Error::ParseFailed(s) => write!(f, "parse failed: {}", s),
+            Error::UnsupportedSegwitFlag(swflag) => {
                 write!(f, "unsupported segwit version: {}", swflag)
             }
-            Error::UnknownSpecialTransactionType(ref stt) => {
+            Error::UnknownSpecialTransactionType(stt) => {
                 write!(f, "unknown special transaction type: {}", stt)
             }
             Error::WrongSpecialTransactionPayloadConversion {
-                expected: ref e,
-                actual: ref a,
+                expected: e,
+                actual: a,
             } => {
                 write!(f, "wrong special transaction payload conversion expected: {} got: {}", e, a)
             }
-            Error::NonStandardScriptPayout(ref script) => {
+            Error::NonStandardScriptPayout(script) => {
                 write!(f, "non standard script payout: {}", script.to_hex_string())
             }
             Error::InvalidVectorSize {
@@ -158,8 +158,8 @@ impl fmt::Display for Error {
             } => {
                 write!(f, "invalid vector size error expected: {} got: {}", expected, actual)
             }
-            Error::Hex(ref e) => write!(f, "hex error {}", e),
-            Error::Address(ref e) => write!(f, "address error {}", e),
+            Error::Hex(e) => write!(f, "hex error {}", e),
+            Error::Address(e) => write!(f, "address error {}", e),
             Error::InvalidEnumValue {
                 max,
                 received,
@@ -1143,9 +1143,9 @@ mod tests {
     use core::mem::{self, discriminant};
 
     use super::*;
-    use crate::consensus::{deserialize_partial, Decodable, Encodable};
+    use crate::consensus::{Decodable, Encodable, deserialize_partial};
     #[cfg(feature = "std")]
-    use crate::network::{message_blockdata::Inventory, Address};
+    use crate::network::{Address, message_blockdata::Inventory};
     use crate::{TxIn, TxOut};
 
     #[test]
@@ -1413,11 +1413,13 @@ mod tests {
         assert_eq!(deserialize(&[3u8, 2, 3, 4]).ok(), Some(vec![2u8, 3, 4]));
         assert!((deserialize(&[4u8, 2, 3, 4, 5, 6]) as Result<Vec<u8>, _>).is_err());
         // found by cargo fuzz
-        assert!(deserialize::<Vec<u64>>(&[
-            0xff, 0xff, 0xff, 0xff, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b,
-            0x6b, 0x6b, 0xa, 0xa, 0x3a
-        ])
-        .is_err());
+        assert!(
+            deserialize::<Vec<u64>>(&[
+                0xff, 0xff, 0xff, 0xff, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b, 0x6b,
+                0x6b, 0x6b, 0xa, 0xa, 0x3a
+            ])
+            .is_err()
+        );
 
         let rand_io_err = Error::Io(io::Error::new(io::ErrorKind::Other, ""));
 
@@ -1484,12 +1486,12 @@ mod tests {
     #[test]
     #[cfg(feature = "rand-std")]
     fn serialization_round_trips() {
-        use secp256k1::rand::{thread_rng, Rng};
+        use secp256k1::rand::{Rng, thread_rng};
 
         macro_rules! round_trip {
             ($($val_type:ty),*) => {
                 $(
-                    let r: $val_type = thread_rng().gen();
+                    let r: $val_type = thread_rng().r#gen();
                     assert_eq!(deserialize::<$val_type>(&serialize(&r)).unwrap(), r);
                 )*
             };

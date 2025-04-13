@@ -1,3 +1,28 @@
+/// Implements `bincode::Encode`, `bincode::Decode`, and `bincode::BorrowDecode`
+/// for types that represent fixed-length byte arrays.
+///
+/// This macro is intended to be used with types that:
+/// - Are wrappers around a fixed-size `[u8; N]` array
+/// - Implement `as_byte_array() -> &[u8; N]`
+/// - Implement `from_byte_array([u8; N]) -> Self`
+///
+/// It generates the necessary trait implementations to support binary encoding
+/// and decoding with the [`bincode`](https://docs.rs/bincode) crate.
+///
+/// # Features
+/// This macro is only available when the `bincode` feature is enabled.
+///
+/// # Parameters
+/// - `$t`: The target type to implement the traits for
+/// - `$len`: The fixed length of the internal byte array
+/// - `$gen`: Optional generic parameters (e.g., `T: SomeTrait`)
+///
+/// # Trait Implementations
+/// - [`bincode::Encode`]: Encodes the value by serializing its internal byte array.
+/// - [`bincode::Decode`]: Decodes a `[u8; N]` array and reconstructs the type using `from_byte_array`.
+/// - [`bincode::BorrowDecode`]: Borrow-decodes a byte slice, checks its length, and uses `from_byte_array`.
+///
+/// ```
 #[macro_export]
 #[cfg(feature = "bincode")]
 macro_rules! bincode_impl {

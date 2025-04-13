@@ -1,9 +1,10 @@
+use crate::QuorumHash;
 use crate::bls_sig_utils::BLSSignature;
 use crate::hash_types::QuorumModifierHash;
 use crate::network::message_qrinfo::{MNSkipListMode, QRInfo};
 use crate::prelude::CoreBlockHeight;
-use crate::sml::llmq_type::rotation::{LLMQQuarterReconstructionType, LLMQQuarterUsageType};
 use crate::sml::llmq_type::LLMQType;
+use crate::sml::llmq_type::rotation::{LLMQQuarterReconstructionType, LLMQQuarterUsageType};
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
@@ -12,7 +13,6 @@ use crate::sml::quorum_entry::qualified_quorum_entry::{
 };
 use crate::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
-use crate::QuorumHash;
 use std::collections::{BTreeMap, BTreeSet};
 
 impl MasternodeListEngine {

@@ -28,7 +28,7 @@ use core::str::FromStr;
 #[cfg(feature = "std")]
 use std::error;
 
-use hashes::{hex as hashesHex, sha512, Hash, HashEngine, Hmac, HmacEngine};
+use hashes::{Hash, HashEngine, Hmac, HmacEngine, hex as hashesHex, sha512};
 use internals::impl_array_newtype;
 use secp256k1::{self, Secp256k1, XOnlyPublicKey};
 #[cfg(feature = "serde")]

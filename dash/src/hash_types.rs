@@ -73,7 +73,7 @@ mod newtypes {
     #[cfg(feature = "core-block-hash-use-x11")]
     use hashes::hash_x11;
     use hashes::hex::Error;
-    use hashes::{hash160, hash_newtype, hash_newtype_no_ord, sha256, sha256d, Hash};
+    use hashes::{Hash, hash_newtype, hash_newtype_no_ord, hash160, sha256, sha256d};
 
     use crate::alloc::string::ToString;
     use crate::prelude::String;

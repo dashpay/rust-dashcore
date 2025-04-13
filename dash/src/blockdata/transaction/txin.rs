@@ -24,9 +24,9 @@
 use bincode::{Decode, Encode};
 
 use crate::blockdata::script::ScriptBuf;
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::transaction::outpoint::OutPoint;
-use crate::{io, Witness};
+use crate::{Witness, io};
 
 /// A transaction input, which defines old coins to be consumed
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]

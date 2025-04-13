@@ -36,7 +36,7 @@ use core::default::Default;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::{sha256d, Hash};
+use hashes::{Hash, sha256d};
 
 use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature = "bitcoinconsensus")]
@@ -48,12 +48,12 @@ use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
 use crate::consensus::encode::VarInt;
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, Txid, Wtxid};
 use crate::prelude::*;
 use crate::sighash::LegacySighash;
 pub use crate::transaction::outpoint::*;
-use crate::{io, ScriptBuf, Weight};
+use crate::{ScriptBuf, Weight, io};
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.
 const UINT256_ONE: [u8; 32] = [
@@ -1230,14 +1230,16 @@ mod tests {
         let re_use = double_spending.input[0].clone();
         double_spending.input.push(re_use);
 
-        assert!(double_spending
-            .verify(|point: &OutPoint| {
-                if let Some(tx) = spent2.remove(&point.txid) {
-                    return tx.output.get(point.vout as usize).cloned();
-                }
-                None
-            })
-            .is_err());
+        assert!(
+            double_spending
+                .verify(|point: &OutPoint| {
+                    if let Some(tx) = spent2.remove(&point.txid) {
+                        return tx.output.get(point.vout as usize).cloned();
+                    }
+                    None
+                })
+                .is_err()
+        );
 
         // test that we get a failure if we corrupt a signature
         let mut witness: Vec<_> = spending.input[1].witness.to_vec();
@@ -1303,10 +1305,10 @@ mod tests {
 
 #[cfg(all(test, feature = "unstable"))]
 mod benches {
-    use consensus::{deserialize, Encodable};
-    use hashes::hex::FromHex;
-    use test::{black_box, Bencher};
     use EmptyWrite;
+    use consensus::{Encodable, deserialize};
+    use hashes::hex::FromHex;
+    use test::{Bencher, black_box};
 
     use super::Transaction;
 

@@ -612,7 +612,7 @@ mod tests {
                 // Generate `att / 2` random bits
                 let rand_bits = match att / 2 {
                     0 => 0,
-                    bits => rng.gen::<u64>() >> (64 - bits),
+                    bits => rng.r#gen::<u64>() >> (64 - bits),
                 };
                 let include = rand_bits == 0;
                 matches[j] = include;
@@ -760,7 +760,7 @@ mod tests {
         /// Flip one bit in one of the hashes - this should break the authentication
         fn damage(&mut self, rng: &mut ThreadRng) {
             let n = rng.gen_range(0..self.hashes.len());
-            let bit = rng.gen::<u8>();
+            let bit = rng.r#gen::<u8>();
             let hashes = &mut self.hashes;
             let mut hash = hashes[n].to_byte_array();
             hash[(bit >> 3) as usize] ^= 1 << (bit & 7);
