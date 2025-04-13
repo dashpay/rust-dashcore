@@ -34,7 +34,7 @@ pub const DASH_SIGNED_MSG_PREFIX: &[u8] = b"\x19DarkCoin Signed Message:\n";
 mod message_signing {
     use core::fmt;
 
-    use hashes::{sha256d, Hash};
+    use hashes::{Hash, sha256d};
     use internals::write_err;
     use secp256k1;
     use secp256k1::ecdsa::{RecoverableSignature, RecoveryId};

@@ -52,9 +52,7 @@ mod primitive {
         ///
         /// The caller is responsible for checking that the length is less than the [`LIMIT`].
         unsafe fn from_slice_unchecked(bytes: &[u8]) -> &Self {
-            unsafe {
-                &*(bytes as *const [u8] as *const PushBytes)
-            }
+            unsafe { &*(bytes as *const [u8] as *const PushBytes) }
         }
 
         /// Creates `&mut Self` without checking the length.
@@ -63,9 +61,7 @@ mod primitive {
         ///
         /// The caller is responsible for checking that the length is less than the [`LIMIT`].
         unsafe fn from_mut_slice_unchecked(bytes: &mut [u8]) -> &mut Self {
-            unsafe {
-                &mut *(bytes as *mut [u8] as *mut PushBytes)
-            }
+            unsafe { &mut *(bytes as *mut [u8] as *mut PushBytes) }
         }
 
         /// Creates an empty `PushBytes`.

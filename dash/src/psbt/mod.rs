@@ -11,9 +11,6 @@ use core::{cmp, fmt};
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
-use internals::write_err;
-use secp256k1::{Message, Secp256k1, Signing};
-use hashes::Hash;
 use crate::Amount;
 use crate::bip32::{self, ExtendedPrivKey, ExtendedPubKey, KeySource};
 use crate::blockdata::script::ScriptBuf;
@@ -24,6 +21,9 @@ use crate::crypto::key::{PrivateKey, PublicKey};
 use crate::prelude::*;
 pub use crate::sighash::Prevouts;
 use crate::sighash::{self, EcdsaSighashType, SighashCache};
+use hashes::Hash;
+use internals::write_err;
+use secp256k1::{Message, Secp256k1, Signing};
 
 #[macro_use]
 mod macros;
