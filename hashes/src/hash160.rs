@@ -24,7 +24,7 @@ use core::ops::Index;
 use core::slice::SliceIndex;
 use core::str;
 
-use crate::{ripemd160, sha256, Error};
+use crate::{Error, ripemd160, sha256};
 
 crate::internal_macros::hash_type! {
     160,
@@ -51,7 +51,7 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn test() {
-        use crate::{hash160, Hash, HashEngine};
+        use crate::{Hash, HashEngine, hash160};
 
         #[derive(Clone)]
         #[cfg(feature = "alloc")]
@@ -105,9 +105,9 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn ripemd_serde() {
-        use serde_test::{assert_tokens, Configure, Token};
+        use serde_test::{Configure, Token, assert_tokens};
 
-        use crate::{hash160, Hash};
+        use crate::{Hash, hash160};
 
         #[rustfmt::skip]
         static HASH_BYTES: [u8; 20] = [
@@ -128,7 +128,7 @@ mod tests {
 mod benches {
     use test::Bencher;
 
-    use crate::{hash160, Hash, HashEngine};
+    use crate::{Hash, HashEngine, hash160};
 
     #[bench]
     pub fn hash160_10(bh: &mut Bencher) {

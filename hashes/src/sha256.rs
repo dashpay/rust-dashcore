@@ -20,7 +20,7 @@ use core::ops::Index;
 use core::slice::SliceIndex;
 use core::{cmp, str};
 
-use crate::{hex, sha256d, Error, HashEngine as _};
+use crate::{Error, HashEngine as _, hex, sha256d};
 
 crate::internal_macros::hash_type! {
     256,
@@ -515,15 +515,9 @@ impl HashEngine {
     }
 }
 
-impl secp256k1::ThirtyTwoByteHash for Hash {
-    fn into_32(self) -> [u8; 32] {
-        self.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{sha256, Hash, HashEngine};
+    use crate::{Hash, HashEngine, sha256};
 
     #[test]
     #[cfg(feature = "alloc")]
@@ -700,7 +694,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn sha256_serde() {
-        use serde_test::{assert_tokens, Configure, Token};
+        use serde_test::{Configure, Token, assert_tokens};
 
         #[rustfmt::skip]
         static HASH_BYTES: [u8; 32] = [
@@ -736,7 +730,7 @@ mod tests {
 mod benches {
     use test::Bencher;
 
-    use crate::{sha256, Hash, HashEngine};
+    use crate::{Hash, HashEngine, sha256};
 
     #[bench]
     pub fn sha256_10(bh: &mut Bencher) {

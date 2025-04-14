@@ -40,7 +40,7 @@ use hashes::Hash;
 use crate::blockdata::script::ScriptBuf;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, SpecialTransactionPayloadHash, Txid};
 use crate::{VarInt, io};
 
@@ -129,11 +129,11 @@ mod tests {
 
     use hashes::Hash;
 
-    use crate::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
     use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use crate::blockdata::transaction::special_transaction::TransactionPayload::ProviderUpdateServicePayloadType;
+    use crate::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
     use crate::bls_sig_utils::BLSSignature;
-    use crate::consensus::{deserialize, Encodable};
+    use crate::consensus::{Encodable, deserialize};
     use crate::hash_types::InputsHash;
     use crate::internal_macros::hex;
     use crate::{Network, ScriptBuf, Transaction, Txid};

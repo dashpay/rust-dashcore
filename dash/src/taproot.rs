@@ -10,7 +10,7 @@ use core::convert::TryFrom;
 use core::fmt;
 use core::iter::FusedIterator;
 
-use hashes::{sha256t_hash_newtype, Hash, HashEngine};
+use hashes::{Hash, HashEngine, sha256t_hash_newtype};
 use internals::write_err;
 use secp256k1::{self, Scalar, Secp256k1};
 
@@ -1694,7 +1694,7 @@ mod test {
 
     use hashes::hex::FromHex;
     use hashes::sha256t::Tag;
-    use hashes::{sha256, Hash, HashEngine};
+    use hashes::{Hash, HashEngine, sha256};
     use secp256k1::{VerifyOnly, XOnlyPublicKey};
 
     use super::*;
@@ -1706,7 +1706,7 @@ mod test {
     use {
         crate::internal_macros::hex,
         serde_test::Configure,
-        serde_test::{assert_tokens, Token},
+        serde_test::{Token, assert_tokens},
     };
 
     fn tag_engine(tag_name: &str) -> sha256::HashEngine {

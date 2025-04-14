@@ -3,12 +3,12 @@ use bincode::{Decode, Encode};
 use hashes::sha256d;
 use thiserror::Error;
 
+use crate::QuorumHash;
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::hash_types::CycleHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
-use crate::QuorumHash;
 
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]

@@ -7,15 +7,16 @@
 //! functions here are designed to be fast, by that we mean it is safe to use them to check headers.
 //!
 
+#[cfg(feature = "bincode")]
+use bincode::{Decode, Encode};
 use core::fmt::{self, LowerHex, UpperHex};
 use core::ops::{Add, Div, Mul, Not, Rem, Shl, Shr, Sub};
-
 #[cfg(all(test, mutate))]
 use mutagen::mutate;
 
-use crate::consensus::encode::{self, Decodable, Encodable};
 #[cfg(doc)]
 use crate::consensus::Params;
+use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::BlockHash;
 use crate::io::{self, Read, Write};
 use crate::prelude::String;
@@ -321,6 +322,7 @@ impl Decodable for CompactTarget {
 /// Big-endian 256 bit integer type.
 // (high, low): u.0 contains the high bits, u.1 contains the low bits.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 struct U256(u128, u128);
 
 impl U256 {
@@ -1509,8 +1511,10 @@ mod tests {
             assert_eq!(::serde_json::to_string(&uint).unwrap(), json);
             assert_eq!(::serde_json::from_str::<U256>(&json).unwrap(), uint);
 
-            let bin_encoded = bincode_test::serialize(&uint).unwrap();
-            let bin_decoded: U256 = bincode_test::deserialize(&bin_encoded).unwrap();
+            let config = bincode::config::standard();
+
+            let bin_encoded = bincode::encode_to_vec(&uint, config).unwrap();
+            let bin_decoded: U256 = bincode::decode_from_slice(&bin_encoded, config).unwrap().0;
             assert_eq!(bin_decoded, uint);
         };
 
@@ -1532,18 +1536,24 @@ mod tests {
             "deadbeeaa69b455cd41bb662a69b4550a69b455cd41bb662a69b4555deadbeef",
         );
 
-        assert!(::serde_json::from_str::<U256>(
-            "\"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffg\""
-        )
-        .is_err()); // invalid char
-        assert!(::serde_json::from_str::<U256>(
-            "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
-        )
-        .is_err()); // invalid length
-        assert!(::serde_json::from_str::<U256>(
-            "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
-        )
-        .is_err()); // invalid length
+        assert!(
+            ::serde_json::from_str::<U256>(
+                "\"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffg\""
+            )
+            .is_err()
+        ); // invalid char
+        assert!(
+            ::serde_json::from_str::<U256>(
+                "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
+            )
+            .is_err()
+        ); // invalid length
+        assert!(
+            ::serde_json::from_str::<U256>(
+                "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
+            )
+            .is_err()
+        ); // invalid length
     }
 
     #[test]

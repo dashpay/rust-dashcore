@@ -11,7 +11,7 @@ use core::fmt;
 
 use super::serialize::{Deserialize, Serialize};
 use crate::consensus::encode::{
-    self, deserialize, serialize, Decodable, Encodable, ReadExt, VarInt, WriteExt, MAX_VEC_SIZE,
+    self, Decodable, Encodable, MAX_VEC_SIZE, ReadExt, VarInt, WriteExt, deserialize, serialize,
 };
 use crate::io;
 use crate::prelude::*;

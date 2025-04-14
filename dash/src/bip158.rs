@@ -43,7 +43,7 @@ use core::cmp::{self, Ordering};
 use core::convert::TryInto;
 use core::fmt::{self, Display, Formatter};
 
-use hashes::{siphash24, Hash};
+use hashes::{Hash, siphash24};
 use internals::write_err;
 
 use crate::blockdata::block::Block;
@@ -649,23 +649,27 @@ mod test {
             assert_eq!(test_filter.content, filter.content);
 
             let block_hash = &block.block_hash();
-            assert!(filter
-                .match_all(
-                    block_hash,
-                    &mut txmap.iter().filter_map(|(_, s)| if !s.is_empty() {
-                        Some(s.as_bytes())
-                    } else {
-                        None
-                    })
-                )
-                .unwrap());
+            assert!(
+                filter
+                    .match_all(
+                        block_hash,
+                        &mut txmap.iter().filter_map(|(_, s)| if !s.is_empty() {
+                            Some(s.as_bytes())
+                        } else {
+                            None
+                        })
+                    )
+                    .unwrap()
+            );
 
             for script in txmap.values() {
                 let query = [script];
                 if !script.is_empty() {
-                    assert!(filter
-                        .match_any(block_hash, &mut query.iter().map(|s| s.as_bytes()))
-                        .unwrap());
+                    assert!(
+                        filter
+                            .match_any(block_hash, &mut query.iter().map(|s| s.as_bytes()))
+                            .unwrap()
+                    );
                 }
             }
 
@@ -708,16 +712,20 @@ mod test {
         {
             let query = [hex!("abcdef"), hex!("eeeeee")];
             let reader = GcsFilterReader::new(0, 0, M, P);
-            assert!(reader
-                .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                .unwrap());
+            assert!(
+                reader
+                    .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
+                    .unwrap()
+            );
         }
         {
             let query = [hex!("abcdef"), hex!("123456")];
             let reader = GcsFilterReader::new(0, 0, M, P);
-            assert!(!reader
-                .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                .unwrap());
+            assert!(
+                !reader
+                    .match_any(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
+                    .unwrap()
+            );
         }
         {
             let reader = GcsFilterReader::new(0, 0, M, P);
@@ -725,9 +733,11 @@ mod test {
             for p in &patterns {
                 query.push(p.clone());
             }
-            assert!(reader
-                .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                .unwrap());
+            assert!(
+                reader
+                    .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
+                    .unwrap()
+            );
         }
         {
             let reader = GcsFilterReader::new(0, 0, M, P);
@@ -736,9 +746,11 @@ mod test {
                 query.push(p.clone());
             }
             query.push(hex!("abcdef"));
-            assert!(!reader
-                .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
-                .unwrap());
+            assert!(
+                !reader
+                    .match_all(&mut bytes.as_slice(), &mut query.iter().map(|v| v.as_slice()))
+                    .unwrap()
+            );
         }
     }
 

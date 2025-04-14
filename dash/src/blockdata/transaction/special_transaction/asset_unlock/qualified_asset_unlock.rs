@@ -26,15 +26,15 @@
 use bincode::{Decode, Encode};
 use hashes::Hash;
 
+use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::blockdata::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
 use crate::blockdata::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
-use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::SpecialTransactionPayloadHash;
-use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBaseTransactionInfo;
 use crate::transaction::special_transaction::TransactionPayload;
-use crate::{consensus, io, Transaction, TxIn};
+use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBaseTransactionInfo;
+use crate::{Transaction, TxIn, consensus, io};
 
 // Asset unlock tx size is constant since it has zero inputs and single output only
 pub const ASSET_UNLOCK_TX_SIZE: usize = 190;
@@ -146,19 +146,19 @@ mod tests {
 
     use hashes::Hash;
     use hex::FromHex;
-    use internals::hex::display::DisplayHex;
     use internals::hex::Case;
+    use internals::hex::display::DisplayHex;
 
     use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::Encodable;
     use crate::hash_types::QuorumHash;
+    use crate::transaction::special_transaction::TransactionPayload;
     use crate::transaction::special_transaction::asset_unlock::qualified_asset_unlock::{
-        build_asset_unlock_tx, AssetUnlockPayload, ASSET_UNLOCK_TX_SIZE,
+        ASSET_UNLOCK_TX_SIZE, AssetUnlockPayload, build_asset_unlock_tx,
     };
     use crate::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
     use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
-    use crate::transaction::special_transaction::TransactionPayload;
-    use crate::{consensus, ScriptBuf, Transaction, TxOut};
+    use crate::{ScriptBuf, Transaction, TxOut, consensus};
 
     #[test]
     fn size() {

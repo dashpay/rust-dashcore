@@ -15,8 +15,8 @@ use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::LLMQType;
-use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::masternode_list::MasternodeList;
+use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
 };
@@ -463,13 +463,7 @@ impl MasternodeListEngine {
 
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_3c.block_hash, quorum_snapshot_at_h_minus_3c);
-        let mn_list_diff_at_h_minus_3c_block_hash = mn_list_diff_at_h_minus_3c.block_hash;
-        self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?.ok_or(
-            QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                3,
-                mn_list_diff_at_h_minus_3c_block_hash,
-            ),
-        )?;
+        self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_2c.block_hash, quorum_snapshot_at_h_minus_2c);
         let mn_list_diff_at_h_minus_2c_block_hash = mn_list_diff_at_h_minus_2c.block_hash;
@@ -481,19 +475,14 @@ impl MasternodeListEngine {
         let mn_list_diff_at_h_block_hash = mn_list_diff_h.block_hash;
         let maybe_sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?;
 
-        let sigs = if maybe_sigm2.is_some() && maybe_sigm1.is_some() && maybe_sigm0.is_some() {
-            Some([maybe_sigm2.unwrap(), maybe_sigm1.unwrap(), maybe_sigm0.unwrap()])
-        } else {
-            None
+        let sigs = match (maybe_sigm2, maybe_sigm1, maybe_sigm0) {
+            (Some(s2), Some(s1), Some(s0)) => Some([s2, s1, s0]),
+            _ => None,
         };
 
         let mn_list_diff_tip_block_hash = mn_list_diff_tip.block_hash;
-        let sigmtip = self
-            .apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?
-            .ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                0,
-                mn_list_diff_tip_block_hash,
-            ))?;
+        let maybe_sigmtip =
+            self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?;
 
         let qualified_last_commitment_per_index = last_commitment_per_index
             .into_iter()
@@ -505,22 +494,28 @@ impl MasternodeListEngine {
                 } else {
                     let sigm2 = maybe_sigm2.ok_or(
                         QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            2,
+                            3,
                             mn_list_diff_at_h_minus_2c_block_hash,
                         ),
                     )?;
 
                     let sigm1 = maybe_sigm1.ok_or(
                         QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            1,
+                            2,
                             mn_list_diff_at_h_minus_c_block_hash,
                         ),
                     )?;
 
                     let sigm0 = maybe_sigm0.ok_or(
                         QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            0,
+                            1,
                             mn_list_diff_at_h_block_hash,
+                        ),
+                    )?;
+                    let sigmtip = maybe_sigmtip.ok_or(
+                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
+                            0,
+                            mn_list_diff_tip_block_hash,
                         ),
                     )?;
                     let mut qualified_quorum_entry: QualifiedQuorumEntry = quorum_entry.into();
@@ -830,8 +825,11 @@ impl MasternodeListEngine {
 
         #[cfg(not(feature = "quorum_validation"))]
         let rotation_sig = {
-            let (masternode_list, rotation_sig) =
-                base_masternode_list.apply_diff(masternode_list_diff.clone(), diff_end_height)?;
+            let (masternode_list, rotation_sig) = base_masternode_list.apply_diff(
+                masternode_list_diff.clone(),
+                diff_end_height,
+                None,
+            )?;
             if verify_quorums {
                 return Err(SmlError::FeatureNotTurnedOn(
                     "quorum validation feature is not turned on".to_string(),
@@ -983,6 +981,8 @@ impl MasternodeListEngine {
 
 #[cfg(test)]
 mod tests {
+    use crate::BlockHash;
+    use crate::Network;
     use crate::consensus::deserialize;
     use crate::network::message_qrinfo::QRInfo;
     use crate::network::message_sml::MnListDiff;
@@ -990,17 +990,14 @@ mod tests {
     use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
     use crate::sml::llmq_type::LLMQType;
     use crate::sml::llmq_type::LLMQType::{
-        Llmqtype400_60, Llmqtype400_85, Llmqtype50_60, Llmqtype60_75,
+        Llmqtype50_60, Llmqtype60_75, Llmqtype400_60, Llmqtype400_85,
     };
     use crate::sml::masternode_list::MasternodeList;
-    use crate::sml::masternode_list_engine::BLSSignature;
     use crate::sml::masternode_list_engine::{
         MasternodeListEngine, MasternodeListEngineBlockContainer,
     };
     use crate::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
     use crate::sml::quorum_validation_error::ClientDataRetrievalError;
-    use crate::BlockHash;
-    use crate::Network;
     use std::collections::BTreeMap;
 
     fn verify_masternode_list_quorums(
@@ -1203,7 +1200,7 @@ mod tests {
             )
             .expect("expected to verify quorums");
 
-        let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
+        let _last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
 
         verify_masternode_list_quorums(
             &mn_list_engine,
@@ -1239,7 +1236,7 @@ mod tests {
             )
             .expect("expected to verify quorums");
 
-        let last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
+        let _last_masternode_list = mn_list_engine.masternode_lists.last_key_value().unwrap().1;
 
         verify_masternode_list_quorums(
             &mn_list_engine,

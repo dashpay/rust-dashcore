@@ -26,7 +26,7 @@ use hashes::hash_x11 as hashType;
 #[cfg(not(feature = "core-block-hash-use-x11"))]
 use hashes::sha256d as hashType;
 
-use crate::consensus::{encode, Decodable, Encodable, ReadExt};
+use crate::consensus::{Decodable, Encodable, ReadExt, encode};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::io;
 use crate::network::address::Address;

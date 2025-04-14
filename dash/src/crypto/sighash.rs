@@ -14,17 +14,18 @@
 use core::borrow::{Borrow, BorrowMut};
 use core::{fmt, str};
 
-use hashes::{hash_newtype, sha256, sha256d, sha256t_hash_newtype, Hash};
+use hashes::{Hash, hash_newtype, sha256, sha256d, sha256t_hash_newtype};
+
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::transaction::{EncodeSigningDataResult, Transaction};
 use crate::blockdata::witness::Witness;
-use crate::consensus::{encode, Encodable};
+use crate::consensus::{Encodable, encode};
 use crate::error::impl_std_error;
 use crate::io;
 use crate::prelude::*;
 use crate::blockdata::script::{Script, ScriptBuf};
-use crate::taproot::{LeafVersion, TapLeafHash, TAPROOT_ANNEX_PREFIX};
+use crate::taproot::{LeafVersion, TAPROOT_ANNEX_PREFIX, TapLeafHash};
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.
 #[rustfmt::skip]
@@ -34,16 +35,6 @@ pub(crate) const UINT256_ONE: [u8; 32] = [
     0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0
 ];
-
-macro_rules! impl_thirty_two_byte_hash {
-    ($ty:ident) => {
-        impl secp256k1::ThirtyTwoByteHash for $ty {
-            fn into_32(self) -> [u8; 32] {
-                self.to_byte_array()
-            }
-        }
-    };
-}
 
 hash_newtype! {
     /// Hash of a transaction according to the legacy signature algorithm.
@@ -55,9 +46,6 @@ hash_newtype! {
     pub struct SegwitV0Sighash(sha256d::Hash);
 }
 
-impl_thirty_two_byte_hash!(LegacySighash);
-impl_thirty_two_byte_hash!(SegwitV0Sighash);
-
 sha256t_hash_newtype! {
     pub struct TapSighashTag = hash_str("TapSighash");
 
@@ -67,8 +55,6 @@ sha256t_hash_newtype! {
     #[hash_newtype(forward)]
     pub struct TapSighash(_);
 }
-
-impl_thirty_two_byte_hash!(TapSighash);
 
 /// Efficiently calculates signature hash message for legacy, segwit and taproot inputs.
 #[derive(Debug)]
@@ -254,12 +240,18 @@ impl fmt::Display for Error {
 
         match self {
             Io(error_kind) => write!(f, "writer errored: {:?}", error_kind),
-            IndexOutOfInputsBounds { index, inputs_size } => write!(
+            IndexOutOfInputsBounds {
+                index,
+                inputs_size,
+            } => write!(
                 f,
                 "Requested index ({}) is greater or equal than the number of transaction inputs ({})",
                 index, inputs_size
             ),
-            SingleWithoutCorrespondingOutput { index, outputs_size } => write!(
+            SingleWithoutCorrespondingOutput {
+                index,
+                outputs_size,
+            } => write!(
                 f,
                 "SIGHASH_SINGLE for input ({}) haven't a corresponding output (#outputs:{})",
                 index, outputs_size
@@ -1194,8 +1186,6 @@ mod tests {
     use crate::network::constants::Network;
     use crate::taproot::TapLeafHash;
 
-    extern crate serde_json;
-
     #[test]
     fn sighash_single_bug() {
         const SIGHASH_SINGLE: u32 = 3;
@@ -1718,7 +1708,7 @@ mod tests {
                 .taproot_signature_hash(tx_ind, &Prevouts::All(&utxos), None, None, hash_ty)
                 .unwrap();
 
-            let msg = secp256k1::Message::from(sighash);
+            let msg = secp256k1::Message::from_digest(sighash.to_byte_array());
             let key_spend_sig =
                 secp.sign_schnorr_with_aux_rand(msg.as_ref(), &tweaked_keypair, &[0u8; 32]);
 

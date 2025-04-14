@@ -29,7 +29,7 @@ impl fmt::Display for Error {
         use self::Error::*;
 
         match self {
-            InvalidLength(ref ell, ref ell2) => {
+            InvalidLength(ell, ell2) => {
                 write!(f, "invalid slice length {} (expected {})", ell2, ell)
             }
         }

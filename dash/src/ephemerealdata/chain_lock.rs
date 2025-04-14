@@ -16,7 +16,7 @@ use crate::consensus::Encodable;
 use crate::hash_types::QuorumSigningSignId;
 use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::llmq_type::LLMQType;
-use crate::{io, BlockHash, QuorumHash, QuorumSigningRequestId, VarInt};
+use crate::{BlockHash, QuorumHash, QuorumSigningRequestId, VarInt, io};
 
 const CL_REQUEST_ID_PREFIX: &str = "clsig";
 

@@ -6,7 +6,7 @@ use bincode::{Decode, Encode};
 
 use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::consensus::encode::{read_compact_size, read_fixed_bitset, write_fixed_bitset};
-use crate::consensus::{encode, Decodable, Encodable};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::network::message_sml::MnListDiff;
 use crate::hash_types::BlockHash;
@@ -310,8 +310,6 @@ impl Decodable for MNSkipListMode {
 mod tests {
     use std::fs::File;
     use std::io::{self, Read};
-
-    use assert_matches::assert_matches;
 
     use crate::consensus::deserialize;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};

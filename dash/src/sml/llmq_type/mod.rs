@@ -7,8 +7,8 @@ use std::io;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
-use crate::consensus::{encode, Decodable, Encodable};
 use crate::Network;
+use crate::consensus::{Decodable, Encodable, encode};
 
 #[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]

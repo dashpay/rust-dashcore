@@ -19,7 +19,7 @@ use core::ops::Index;
 use core::slice::SliceIndex;
 use core::str;
 
-use crate::{sha256, Error};
+use crate::{Error, sha256};
 
 crate::internal_macros::hash_type! {
     256,
@@ -41,18 +41,12 @@ fn from_engine(e: sha256::HashEngine) -> Hash {
     Hash(ret)
 }
 
-impl secp256k1::ThirtyTwoByteHash for Hash {
-    fn into_32(self) -> [u8; 32] {
-        self.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn test() {
-        use crate::{sha256, sha256d, Hash, HashEngine};
+        use crate::{Hash, HashEngine, sha256, sha256d};
 
         #[derive(Clone)]
         struct Test {
@@ -103,9 +97,9 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn sha256_serde() {
-        use serde_test::{assert_tokens, Configure, Token};
+        use serde_test::{Configure, Token, assert_tokens};
 
-        use crate::{sha256d, Hash};
+        use crate::{Hash, sha256d};
 
         #[rustfmt::skip]
         static HASH_BYTES: [u8; 32] = [
@@ -128,7 +122,7 @@ mod tests {
 mod benches {
     use test::Bencher;
 
-    use crate::{sha256d, Hash, HashEngine};
+    use crate::{Hash, HashEngine, sha256d};
 
     #[bench]
     pub fn sha256d_10(bh: &mut Bencher) {

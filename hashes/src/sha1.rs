@@ -117,10 +117,10 @@ impl HashEngine {
 
         for (i, &wi) in w.iter().enumerate() {
             let (f, k) = match i {
-                0...19 => ((b & c) | (!b & d), 0x5a827999),
-                20...39 => (b ^ c ^ d, 0x6ed9eba1),
-                40...59 => ((b & c) | (b & d) | (c & d), 0x8f1bbcdc),
-                60...79 => (b ^ c ^ d, 0xca62c1d6),
+                0..=19 => ((b & c) | (!b & d), 0x5a827999),
+                20..=39 => (b ^ c ^ d, 0x6ed9eba1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8f1bbcdc),
+                60..=79 => (b ^ c ^ d, 0xca62c1d6),
                 _ => unreachable!(),
             };
 
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn test() {
-        use crate::{sha1, Hash, HashEngine};
+        use crate::{Hash, HashEngine, sha1};
 
         #[derive(Clone)]
         struct Test {
@@ -214,9 +214,9 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn sha1_serde() {
-        use serde_test::{assert_tokens, Configure, Token};
+        use serde_test::{Configure, Token, assert_tokens};
 
-        use crate::{sha1, Hash};
+        use crate::{Hash, sha1};
 
         #[rustfmt::skip]
         static HASH_BYTES: [u8; 20] = [
@@ -237,7 +237,7 @@ mod tests {
 mod benches {
     use test::Bencher;
 
-    use crate::{sha1, Hash, HashEngine};
+    use crate::{Hash, HashEngine, sha1};
 
     #[bench]
     pub fn sha1_10(bh: &mut Bencher) {

@@ -25,9 +25,9 @@ use core::ops;
 use core::str::FromStr;
 
 use hashes::hex::FromHex;
-use hashes::{hash160, hex, Hash};
+use hashes::{Hash, hash160, hex};
 use internals::write_err;
-pub use secp256k1::{self, constants, Keypair, Parity, Secp256k1, Verification, XOnlyPublicKey};
+pub use secp256k1::{self, Keypair, Parity, Secp256k1, Verification, XOnlyPublicKey, constants};
 
 use crate::hash_types::{PubkeyHash, WPubkeyHash};
 use crate::network::constants::Network;
@@ -62,20 +62,20 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::Base58(ref e) => write_err!(f, "key base58 error"; e),
-            Error::Secp256k1(ref e) => write_err!(f, "key secp256k1 error"; e),
-            Error::InvalidKeyPrefix(ref b) => write!(f, "key prefix invalid: {}", b),
-            Error::Hex(ref e) => write_err!(f, "key hex decoding error"; e),
+            Error::Base58(e) => write_err!(f, "key base58 error"; e),
+            Error::Secp256k1(e) => write_err!(f, "key secp256k1 error"; e),
+            Error::InvalidKeyPrefix(b) => write!(f, "key prefix invalid: {}", b),
+            Error::Hex(e) => write_err!(f, "key hex decoding error"; e),
             Error::InvalidHexLength(got) => {
                 write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got)
             }
-            Error::NotSupported(ref string) => {
+            Error::NotSupported(string) => {
                 write!(f, "{}", string.as_str())
             }
             #[cfg(feature = "bls-signatures")]
-            Error::BLSError(ref string) => write!(f, "{}", string.as_str()),
+            Error::BLSError(string) => write!(f, "{}", string.as_str()),
             #[cfg(feature = "ed25519-dalek")]
-            Error::Ed25519Dalek(ref string) => write!(f, "{}", string.as_str()),
+            Error::Ed25519Dalek(string) => write!(f, "{}", string.as_str()),
         }
     }
 }
@@ -895,7 +895,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn test_key_serde() {
-        use serde_test::{assert_tokens, Configure, Token};
+        use serde_test::{Configure, Token, assert_tokens};
 
         static KEY_WIF: &str = "cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy";
         static PK_STR: &str = "039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef";

@@ -9,11 +9,9 @@ pub use primitive::*;
 use crate::prelude::*;
 
 /// This module only contains required operations so that outside functions wouldn't accidentally
-/// break invariants. Therefore auditing this module should be sufficient.
+/// break invariants. Therefore, auditing this module should be sufficient.
 mod primitive {
     use core::convert::{TryFrom, TryInto};
-    #[cfg(feature = "rust_v_1_53")]
-    use core::ops::Bound;
     use core::ops::{
         Index, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
     };
@@ -54,7 +52,7 @@ mod primitive {
         ///
         /// The caller is responsible for checking that the length is less than the [`LIMIT`].
         unsafe fn from_slice_unchecked(bytes: &[u8]) -> &Self {
-            &*(bytes as *const [u8] as *const PushBytes)
+            unsafe { &*(bytes as *const [u8] as *const PushBytes) }
         }
 
         /// Creates `&mut Self` without checking the length.
@@ -63,7 +61,7 @@ mod primitive {
         ///
         /// The caller is responsible for checking that the length is less than the [`LIMIT`].
         unsafe fn from_mut_slice_unchecked(bytes: &mut [u8]) -> &mut Self {
-            &mut *(bytes as *mut [u8] as *mut PushBytes)
+            unsafe { &mut *(bytes as *mut [u8] as *mut PushBytes) }
         }
 
         /// Creates an empty `PushBytes`.
@@ -111,9 +109,6 @@ mod primitive {
         RangeInclusive<usize>,
         RangeToInclusive<usize>
     );
-    #[cfg(feature = "rust_v_1_53")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "rust_v_1_53")))]
-    delegate_index!((Bound<usize>, Bound<usize>));
 
     impl Index<usize> for PushBytes {
         type Output = u8;

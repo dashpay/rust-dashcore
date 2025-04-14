@@ -1,5 +1,5 @@
 use blsful::Bls12381G2Impl;
-use hashes::{sha256d, Hash};
+use hashes::{Hash, sha256d};
 
 use crate::bls_sig_utils::BLSSignature;
 use crate::sml::message_verification_error::MessageVerificationError;
