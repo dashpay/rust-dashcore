@@ -3,7 +3,7 @@ members = ["dash", "hashes", "internals", "fuzz", "rpc-client", "rpc-json", "rpc
 resolver = "2"
 
 [workspace.package]
-version = "0.39.3"
+version = "0.39.4"
 
 [patch.crates-io.dashcore_hashes]
 path = "hashes"

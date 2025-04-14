@@ -444,13 +444,7 @@ impl MasternodeListEngine {
 
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_3c.block_hash, quorum_snapshot_at_h_minus_3c);
-        let mn_list_diff_at_h_minus_3c_block_hash = mn_list_diff_at_h_minus_3c.block_hash;
-        self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?.ok_or(
-            QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                3,
-                mn_list_diff_at_h_minus_3c_block_hash,
-            ),
-        )?;
+        self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_2c.block_hash, quorum_snapshot_at_h_minus_2c);
         let mn_list_diff_at_h_minus_2c_block_hash = mn_list_diff_at_h_minus_2c.block_hash;
@@ -462,19 +456,14 @@ impl MasternodeListEngine {
         let mn_list_diff_at_h_block_hash = mn_list_diff_h.block_hash;
         let maybe_sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?;
 
-        let sigs = if maybe_sigm2.is_some() && maybe_sigm1.is_some() && maybe_sigm0.is_some() {
-            Some([maybe_sigm2.unwrap(), maybe_sigm1.unwrap(), maybe_sigm0.unwrap()])
-        } else {
-            None
+        let sigs = match (maybe_sigm2, maybe_sigm1, maybe_sigm0) {
+            (Some(s2), Some(s1), Some(s0)) => Some([s2, s1, s0]),
+            _ => None,
         };
 
         let mn_list_diff_tip_block_hash = mn_list_diff_tip.block_hash;
-        let sigmtip = self
-            .apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?
-            .ok_or(QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                0,
-                mn_list_diff_tip_block_hash,
-            ))?;
+        let maybe_sigmtip =
+            self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?;
 
         let qualified_last_commitment_per_index = last_commitment_per_index
             .into_iter()
@@ -486,22 +475,28 @@ impl MasternodeListEngine {
                 } else {
                     let sigm2 = maybe_sigm2.ok_or(
                         QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            2,
+                            3,
                             mn_list_diff_at_h_minus_2c_block_hash,
                         ),
                     )?;
 
                     let sigm1 = maybe_sigm1.ok_or(
                         QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            1,
+                            2,
                             mn_list_diff_at_h_minus_c_block_hash,
                         ),
                     )?;
 
                     let sigm0 = maybe_sigm0.ok_or(
                         QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
-                            0,
+                            1,
                             mn_list_diff_at_h_block_hash,
+                        ),
+                    )?;
+                    let sigmtip = maybe_sigmtip.ok_or(
+                        QuorumValidationError::RequiredRotatedChainLockSigNotPresent(
+                            0,
+                            mn_list_diff_tip_block_hash,
                         ),
                     )?;
                     let mut qualified_quorum_entry: QualifiedQuorumEntry = quorum_entry.into();

@@ -23,7 +23,7 @@ cargo-fuzz = true
 honggfuzz = { version = "0.5", default-features = false }
 dash = { path = "../dash", features = [ "serde" ] }
 
-serde = { version = "1.0.103", features = [ "derive" ] }
+serde = { version = "1.0.219", features = [ "derive" ] }
 serde_json = "1.0"
 serde_cbor = "0.9"
 EOF

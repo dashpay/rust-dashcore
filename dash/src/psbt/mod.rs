@@ -11,9 +11,6 @@ use core::{cmp, fmt};
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
-use internals::write_err;
-use secp256k1::{Message, Secp256k1, Signing};
-
 use crate::Amount;
 use crate::bip32::{self, ExtendedPrivKey, ExtendedPubKey, KeySource};
 use crate::blockdata::script::ScriptBuf;
@@ -24,6 +21,9 @@ use crate::crypto::key::{PrivateKey, PublicKey};
 use crate::prelude::*;
 pub use crate::sighash::Prevouts;
 use crate::sighash::{self, EcdsaSighashType, SighashCache};
+use hashes::Hash;
+use internals::write_err;
+use secp256k1::{Message, Secp256k1, Signing};
 
 #[macro_use]
 mod macros;
@@ -333,20 +333,20 @@ impl PartiallySignedTransaction {
         match self.output_type(input_index)? {
             Bare => {
                 let sighash = cache.legacy_signature_hash(input_index, spk, hash_ty.to_u32())?;
-                Ok((Message::from(sighash), hash_ty))
+                Ok((Message::from_digest(sighash.to_byte_array()), hash_ty))
             }
             Sh => {
                 let script_code =
                     input.redeem_script.as_ref().ok_or(SignError::MissingRedeemScript)?;
                 let sighash =
                     cache.legacy_signature_hash(input_index, script_code, hash_ty.to_u32())?;
-                Ok((Message::from(sighash), hash_ty))
+                Ok((Message::from_digest(sighash.to_byte_array()), hash_ty))
             }
             Wpkh => {
                 let script_code = ScriptBuf::p2wpkh_script_code(spk).ok_or(SignError::NotWpkh)?;
                 let sighash =
                     cache.segwit_signature_hash(input_index, &script_code, utxo.value, hash_ty)?;
-                Ok((Message::from(sighash), hash_ty))
+                Ok((Message::from_digest(sighash.to_byte_array()), hash_ty))
             }
             ShWpkh => {
                 let script_code = ScriptBuf::p2wpkh_script_code(
@@ -355,14 +355,14 @@ impl PartiallySignedTransaction {
                 .ok_or(SignError::NotWpkh)?;
                 let sighash =
                     cache.segwit_signature_hash(input_index, &script_code, utxo.value, hash_ty)?;
-                Ok((Message::from(sighash), hash_ty))
+                Ok((Message::from_digest(sighash.to_byte_array()), hash_ty))
             }
             Wsh | ShWsh => {
                 let script_code =
                     input.witness_script.as_ref().ok_or(SignError::MissingWitnessScript)?;
                 let sighash =
                     cache.segwit_signature_hash(input_index, script_code, utxo.value, hash_ty)?;
-                Ok((Message::from(sighash), hash_ty))
+                Ok((Message::from_digest(sighash.to_byte_array()), hash_ty))
             }
             Tr => {
                 // This PSBT signing API is WIP, taproot to come shortly.
