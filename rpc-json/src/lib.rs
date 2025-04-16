@@ -540,7 +540,7 @@ pub struct GetRawTransactionResultVin {
     #[serde(default, with = "dashcore::amount::serde::as_btc::opt")]
     pub value: Option<Amount>,
     #[serde(default)]
-    pub value_sat: Option<u32>,
+    pub value_sat: Option<u64>,
     pub addresses: Option<Vec<String>>,
     pub sequence: u32,
 }
@@ -579,7 +579,7 @@ pub struct GetRawTransactionResultVout {
     #[serde(with = "dashcore::amount::serde::as_btc")]
     pub value: Amount,
     #[serde(rename = "valueSat")]
-    pub value_sat: u32,
+    pub value_sat: u64,
     pub n: u32,
     #[serde(rename = "scriptPubKey")]
     pub script_pub_key: GetRawTransactionResultVoutScriptPubKey,
