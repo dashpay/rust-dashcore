@@ -163,12 +163,7 @@ impl Network {
                     hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c")
                         .expect("expected valid hex");
                 block_hash.reverse();
-                Some(BlockHash::from_byte_array(
-                    hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c")
-                        .expect("expected valid hex")
-                        .try_into()
-                        .expect("expected 32 bytes"),
-                ))
+                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
             }
             Network::Devnet => None,
             Network::Regtest => None,
