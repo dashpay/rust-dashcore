@@ -738,6 +738,7 @@ impl_vec!(TxIn);
 impl_vec!(Vec<u8>);
 impl_vec!(u16);
 impl_vec!(u32);
+impl_vec!(i32);
 impl_vec!(u64);
 impl_vec!(TapLeafHash);
 impl_vec!(VarInt);
