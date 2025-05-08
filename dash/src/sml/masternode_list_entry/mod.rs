@@ -9,14 +9,14 @@ use std::net::SocketAddr;
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::encode::Error;
 use crate::consensus::{Decodable, Encodable};
-use crate::hash_types::ConfirmedHash;
+use crate::hash_types::{ConfirmedHash, ProTxHash, PubkeyHash};
 use crate::internal_macros::impl_consensus_encoding;
-use crate::{ProTxHash, PubkeyHash};
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum EntryMasternodeType {
     Regular,
     HighPerformance {
@@ -72,10 +72,20 @@ impl Decodable for EntryMasternodeType {
 }
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct OperatorPublicKey {
     // TODO: We are using two different public keys here
     pub data: BLSPublicKey,
     pub version: u16,
+}
+
+impl OperatorPublicKey {
+    pub fn is_basic(&self) -> bool {
+        self.version >= 2
+    }
+    pub fn is_legacy(&self) -> bool {
+        self.version < 2
+    }
 }
 
 impl_consensus_encoding!(OperatorPublicKey, data, version);
@@ -84,6 +94,7 @@ impl_consensus_encoding!(OperatorPublicKey, data, version);
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct MasternodeListEntry {
     pub version: u16,
     pub pro_reg_tx_hash: ProTxHash,

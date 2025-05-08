@@ -24,7 +24,7 @@ use crate::consensus::{Encodable, encode};
 use crate::error::impl_std_error;
 use crate::io;
 use crate::prelude::*;
-use crate::script::{Script, ScriptBuf};
+use crate::blockdata::script::{Script, ScriptBuf};
 use crate::taproot::{LeafVersion, TAPROOT_ANNEX_PREFIX, TapLeafHash};
 
 /// Used for signature hash for invalid use of SIGHASH_SINGLE.

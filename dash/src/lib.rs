@@ -109,7 +109,7 @@ pub mod consensus;
 // Private until we either make this a crate or flatten it - still to be decided.
 pub mod bls_sig_utils;
 pub(crate) mod crypto;
-mod dip9;
+pub mod dip9;
 pub mod ephemerealdata;
 pub mod error;
 pub mod hash_types;
@@ -193,7 +193,7 @@ mod io_extras {
 }
 
 #[rustfmt::skip]
-mod prelude {
+pub mod prelude {
     #[cfg(all(not(feature = "std"), not(test)))]
     pub use alloc::{string::{String, ToString}, vec::Vec, boxed::Box, borrow::{Borrow, Cow, ToOwned}, slice, rc};
 
@@ -217,6 +217,7 @@ mod prelude {
 
     pub use internals::hex::display::DisplayHex;
 
+    #[cfg_attr(feature = "apple", ferment_macro::export)]
     pub type CoreBlockHeight = u32;
 }
 
