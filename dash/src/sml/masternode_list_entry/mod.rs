@@ -9,9 +9,8 @@ use std::net::SocketAddr;
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::encode::Error;
 use crate::consensus::{Decodable, Encodable};
-use crate::hash_types::ConfirmedHash;
+use crate::hash_types::{ConfirmedHash, ProTxHash, PubkeyHash};
 use crate::internal_macros::impl_consensus_encoding;
-use crate::{ProTxHash, PubkeyHash};
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
