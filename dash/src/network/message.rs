@@ -259,6 +259,8 @@ pub enum NetworkMessage {
     GetQRInfo(message_qrinfo::GetQRInfo),
     /// `qrinfo`
     QRInfo(message_qrinfo::QRInfo),
+    /// `clsig`
+    CLSig(message_sml::CLSig),
     /// Any other message.
     Unknown {
         /// The command of this message.
@@ -316,6 +318,7 @@ impl NetworkMessage {
             NetworkMessage::MnListDiff(_) => "mnlistdiff",
             NetworkMessage::GetQRInfo(_) => "getqrinfo",
             NetworkMessage::QRInfo(_) => "qrinfo",
+            NetworkMessage::CLSig(_) => "clsig",
             NetworkMessage::Unknown {
                 ..
             } => "unknown",
@@ -415,6 +418,7 @@ impl Encodable for RawNetworkMessage {
             NetworkMessage::MnListDiff(ref dat) => serialize(dat),
             NetworkMessage::GetQRInfo(ref dat) => serialize(dat),
             NetworkMessage::QRInfo(ref dat) => serialize(dat),
+            NetworkMessage::CLSig(ref dat) => serialize(dat),
         })
         .consensus_encode(w)?;
         Ok(len)
@@ -562,6 +566,9 @@ impl Decodable for RawNetworkMessage {
             ),
             "qrinfo" => {
                 NetworkMessage::QRInfo(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
+            }
+            "clsig" => {
+                NetworkMessage::CLSig(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
             }
             _ => NetworkMessage::Unknown {
                 command: cmd,

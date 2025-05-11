@@ -76,6 +76,7 @@ impl VersionMessage {
         nonce: u64,
         user_agent: String,
         start_height: i32,
+        relay: bool,
         mn_auth_challenge: [u8; 32],
     ) -> VersionMessage {
         VersionMessage {
@@ -87,7 +88,7 @@ impl VersionMessage {
             nonce,
             user_agent,
             start_height,
-            relay: false,
+            relay,
             mn_auth_challenge,
             masternode_connection: false,
         }

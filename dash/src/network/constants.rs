@@ -66,7 +66,7 @@ use dash_network::Network;
 /// 70001 - Support bloom filter messages `filterload`, `filterclear` `filteradd`, `merkleblock` and FILTERED_BLOCK inventory type
 /// 60002 - Support `mempool` message
 /// 60001 - Support `pong` message and nonce in `ping` message
-pub const PROTOCOL_VERSION: u32 = 70220;
+pub const PROTOCOL_VERSION: u32 = 70236;
 
 /// Extension trait for Network to add dash-specific methods
 pub trait NetworkExt {

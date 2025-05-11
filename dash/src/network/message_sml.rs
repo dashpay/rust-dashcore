@@ -7,7 +7,7 @@ use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
-use crate::{BlockHash, ProTxHash, QuorumHash, Transaction};
+use crate::{BlockHash, ChainLock, ProTxHash, QuorumHash, Transaction};
 
 /// The `getmnlistd` message requests a `mnlistdiff` message that provides either:
 /// - A full masternode list (if `base_block_hash` is all-zero)
@@ -98,6 +98,16 @@ pub struct DeletedQuorum {
 }
 
 impl_consensus_encoding!(DeletedQuorum, llmq_type, quorum_hash);
+
+#[derive(PartialEq, Eq, Clone, Debug)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+pub struct CLSig {
+    pub chain_lock: ChainLock,
+}
+
+impl_consensus_encoding!(CLSig, chain_lock);
 
 #[cfg(test)]
 mod tests {

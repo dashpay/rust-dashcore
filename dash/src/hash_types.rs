@@ -124,6 +124,7 @@ mod newtypes {
         ///
         ///
         pub struct ChainLockHash(sha256d::Hash);
+        pub struct InstantSendLockHash(sha256d::Hash);
         /// The merkle root of the masternode list
         #[hash_newtype(forward)]
         pub struct MerkleRootMasternodeList(sha256d::Hash);
@@ -192,6 +193,7 @@ mod newtypes {
     impl_hashencode!(FilterHeader);
 
     impl_hashencode!(ChainLockHash);
+    impl_hashencode!(InstantSendLockHash);
 
     impl_hashencode!(MerkleRootMasternodeList);
     impl_hashencode!(MerkleRootQuorums);
