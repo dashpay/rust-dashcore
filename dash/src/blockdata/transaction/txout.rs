@@ -24,13 +24,16 @@
 use bincode::{Decode, Encode};
 
 use crate::internal_macros::impl_consensus_encoding;
-use crate::{Address, PubkeyHash, ScriptBuf, ScriptHash, VarInt};
+use crate::{Address, VarInt};
+use crate::blockdata::script::ScriptBuf;
+use crate::hash_types::{PubkeyHash, ScriptHash};
 
 /// A transaction output, which defines new coins to be created from old ones.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub struct TxOut {
     /// The value of the output, in satoshis.
     pub value: u64,
