@@ -41,6 +41,8 @@ pub enum Inventory {
     Transaction(Txid),
     /// Block
     Block(BlockHash),
+    /// Filtered Block (merkle block)
+    FilteredBlock(BlockHash),
     /// Compact Block
     CompactBlock(BlockHash),
     /// Witness Transaction by Wtxid
@@ -74,6 +76,7 @@ impl Encodable for Inventory {
             Inventory::Error => encode_inv!(0, sha256d::Hash::all_zeros()),
             Inventory::Transaction(ref t) => encode_inv!(1, t),
             Inventory::Block(ref b) => encode_inv!(2, b),
+            Inventory::FilteredBlock(ref b) => encode_inv!(3, b),
             Inventory::CompactBlock(ref b) => encode_inv!(4, b),
             Inventory::WTx(w) => encode_inv!(5, w),
             Inventory::WitnessTransaction(ref t) => encode_inv!(0x40000001, t),
@@ -98,6 +101,7 @@ impl Decodable for Inventory {
             0 => Inventory::Error,
             1 => Inventory::Transaction(Decodable::consensus_decode(r)?),
             2 => Inventory::Block(Decodable::consensus_decode(r)?),
+            3 => Inventory::FilteredBlock(Decodable::consensus_decode(r)?),
             4 => Inventory::CompactBlock(Decodable::consensus_decode(r)?),
             5 => Inventory::WTx(Decodable::consensus_decode(r)?),
             29 => Inventory::ChainLock(Decodable::consensus_decode(r)?),
