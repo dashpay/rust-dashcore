@@ -55,6 +55,7 @@ use crate::{Address, Network, VarInt, io};
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum ProviderMasternodeType {
     Regular = 0,
     HighPerformance = 1,
