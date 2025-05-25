@@ -261,6 +261,7 @@ pub enum NetworkMessage {
     QRInfo(message_qrinfo::QRInfo),
     /// `clsig`
     CLSig(message_sml::CLSig),
+    ISLock(message_sml::ISLock),
     /// Any other message.
     Unknown {
         /// The command of this message.
@@ -319,6 +320,7 @@ impl NetworkMessage {
             NetworkMessage::GetQRInfo(_) => "getqrinfo",
             NetworkMessage::QRInfo(_) => "qrinfo",
             NetworkMessage::CLSig(_) => "clsig",
+            NetworkMessage::ISLock(_) => "isdlock",
             NetworkMessage::Unknown {
                 ..
             } => "unknown",
@@ -419,6 +421,7 @@ impl Encodable for RawNetworkMessage {
             NetworkMessage::GetQRInfo(ref dat) => serialize(dat),
             NetworkMessage::QRInfo(ref dat) => serialize(dat),
             NetworkMessage::CLSig(ref dat) => serialize(dat),
+            NetworkMessage::ISLock(ref dat) => serialize(dat),
         })
         .consensus_encode(w)?;
         Ok(len)
