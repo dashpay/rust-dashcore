@@ -69,7 +69,7 @@ blsful = { version = "3.0.0-pre8", optional = true }
 ed25519-dalek = { version = "2.1", features = ["rand_core"], optional = true }
 blake3 = "1.8.1"
 thiserror = "2"
-bls-signatures = { git = "https://github.com/dashpay/bls-signatures", rev = "2ea10a994ae444d4ca229ec9bcd21ced7ad78164", optional = true  }
+bls-signatures = { git = "https://github.com/dashpay/bls-signatures", rev = "91d09cb9d87539ae24c7ddd6638b203555531ec9", optional = true  }
 ferment = { version = "0.2", package = "ferment", optional = true }
 ferment-macro = { version = "0.2", package = "ferment-macro", optional = true }
 [dev-dependencies]
