@@ -9,7 +9,7 @@ use dashcore::{
     ChainLock, InstantLock,
 };
 
-use crate::error::{ValidationError, ValidationResult};
+use crate::error::ValidationResult;
 use crate::types::ValidationMode;
 
 pub use headers::HeaderValidator;

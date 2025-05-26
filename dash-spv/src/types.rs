@@ -1,6 +1,5 @@
 //! Common type definitions for the Dash SPV client.
 
-use std::collections::HashMap;
 use std::time::SystemTime;
 
 use dashcore::{

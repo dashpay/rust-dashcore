@@ -3,11 +3,10 @@
 use dashcore::{
     hash_types::FilterHeader,
     network::message::NetworkMessage,
-    network::message_filter::{CFHeaders, GetCFHeaders, CFilter, GetCFilters},
-    ScriptBuf, OutPoint, BlockHash,
+    network::message_filter::{CFHeaders, GetCFHeaders, GetCFilters},
+    ScriptBuf, BlockHash,
     bip158::{BlockFilterReader, Error as Bip158Error},
 };
-use std::collections::HashSet;
 use dashcore_hashes::{sha256d, Hash};
 
 use crate::client::ClientConfig;
@@ -343,7 +342,8 @@ impl FilterSyncManager {
         });
         
         let end = count.map(|c| start + c - 1)
-            .unwrap_or(filter_tip_height);
+            .unwrap_or(filter_tip_height)
+            .min(filter_tip_height); // Ensure we don't go beyond available filter headers
             
         if start > end {
             self.syncing_filters = false;
@@ -515,6 +515,106 @@ impl FilterSyncManager {
             }
         }
         Ok(None)
+    }
+    
+    /// Download filter header for a specific block.
+    pub async fn download_filter_header_for_block(
+        &mut self,
+        block_hash: BlockHash,
+        network: &mut dyn NetworkManager,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<()> {
+        // Get the block height for this hash by scanning headers
+        let height = self.find_height_for_block_hash(&block_hash, storage, 0, 10000).await?
+            .ok_or_else(|| SyncError::SyncFailed(format!(
+                "Cannot find height for block {} - header not found", block_hash
+            )))?;
+        
+        // Check if we already have this filter header
+        if storage.get_filter_header(height).await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to check filter header: {}", e)))?
+            .is_some() {
+            tracing::debug!("Filter header for block {} at height {} already exists", block_hash, height);
+            return Ok(());
+        }
+        
+        tracing::info!("📥 Requesting filter header for block {} at height {}", block_hash, height);
+        
+        // Request filter header using getcfheaders
+        self.request_filter_headers(network, height, block_hash).await?;
+        
+        Ok(())
+    }
+    
+    /// Download and check a compact filter for matches against watch items.
+    pub async fn download_and_check_filter(
+        &mut self,
+        block_hash: BlockHash,
+        watch_items: &[crate::types::WatchItem],
+        network: &mut dyn NetworkManager,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<bool> {
+        if watch_items.is_empty() {
+            tracing::debug!("No watch items configured, skipping filter check for block {}", block_hash);
+            return Ok(false);
+        }
+        
+        // Get the block height for this hash by scanning headers  
+        let height = self.find_height_for_block_hash(&block_hash, storage, 0, 10000).await?
+            .ok_or_else(|| SyncError::SyncFailed(format!(
+                "Cannot find height for block {} - header not found", block_hash
+            )))?;
+        
+        tracing::info!("📥 Requesting compact filter for block {} at height {} (checking {} watch items)", 
+                      block_hash, height, watch_items.len());
+        
+        // Request the compact filter using getcfilters
+        self.request_filters(network, height, block_hash).await?;
+        
+        // Note: The actual filter checking will happen when we receive the CFilter message
+        // This method just initiates the download. The client will need to handle the response.
+        
+        Ok(false) // Return false for now, will be updated when we process the response
+    }
+    
+    /// Check a filter for matches against watch items (helper method for processing CFilter messages).
+    pub async fn check_filter_for_matches(
+        &self,
+        filter_data: &[u8],
+        block_hash: &BlockHash,
+        watch_items: &[crate::types::WatchItem],
+        storage: &dyn StorageManager,
+    ) -> SyncResult<bool> {
+        if watch_items.is_empty() {
+            return Ok(false);
+        }
+        
+        // Convert watch items to scripts for filter checking
+        let scripts: Vec<dashcore::ScriptBuf> = watch_items.iter()
+            .filter_map(|item| {
+                match item {
+                    crate::types::WatchItem::Address(addr) => {
+                        Some(addr.script_pubkey())
+                    }
+                    crate::types::WatchItem::Script(script) => {
+                        Some(script.clone())
+                    }
+                    crate::types::WatchItem::Outpoint(_) => {
+                        // For outpoints, we'd need the transaction data to get the script
+                        // Skip for now - this would require more complex logic
+                        None
+                    }
+                }
+            })
+            .collect();
+        
+        if scripts.is_empty() {
+            tracing::debug!("No scripts to check for block {}", block_hash);
+            return Ok(false);
+        }
+        
+        // Use the existing filter matching logic (synchronous method)
+        self.filter_matches_scripts(filter_data, block_hash, &scripts)
     }
     
     /// Extract scripts from watch items for filter matching.

@@ -4,8 +4,9 @@ use dashcore::{
     network::message::NetworkMessage,
     network::message_sml::{GetMnListDiff, MnListDiff},
     sml::masternode_list_engine::MasternodeListEngine,
-    BlockHash, Network,
+    BlockHash,
 };
+use dashcore_hashes::Hash;
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
@@ -224,13 +225,22 @@ impl MasternodeSyncManager {
         let target_block_hash = diff.block_hash;
         let mut found_target = false;
         
+        // Special case: Zero hash indicates empty masternode list (common in regtest)
+        let zero_hash = BlockHash::all_zeros();
+        let is_zero_hash = target_block_hash == zero_hash;
+        
+        if is_zero_hash {
+            tracing::debug!("Target block hash is zero - likely empty masternode list in regtest");
+            found_target = true;
+        }
+        
         for height in 0..=tip_height {
             if let Some(header) = storage.get_header(height).await
                 .map_err(|e| SyncError::SyncFailed(format!("Failed to get header at height {}: {}", height, e)))? {
                 let block_hash = header.block_hash();
                 engine.feed_block_height(height, block_hash);
                 
-                if block_hash == target_block_hash {
+                if !is_zero_hash && block_hash == target_block_hash {
                     found_target = true;
                     tracing::debug!("Found target block hash {} at height {}", block_hash, height);
                 }
@@ -242,9 +252,42 @@ impl MasternodeSyncManager {
             return Err(SyncError::SyncFailed(format!("Target block hash {} not found in storage", target_block_hash)));
         }
         
+        // Special handling for regtest: skip empty diffs
+        if self.config.network == dashcore::Network::Regtest {
+            // In regtest, masternode diffs might be empty, which is normal
+            if is_zero_hash || (diff.merkle_hashes.is_empty() && diff.new_masternodes.is_empty()) {
+                tracing::info!("Skipping empty masternode diff in regtest - no masternodes configured");
+                
+                // Store empty masternode state to mark sync as complete
+                let masternode_state = MasternodeState {
+                    last_height: tip_height,
+                    engine_state: Vec::new(), // Empty state for regtest
+                    last_update: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                };
+                
+                storage.store_masternode_state(&masternode_state).await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to store masternode state: {}", e)))?;
+                
+                tracing::info!("Masternode synchronization completed (empty in regtest)");
+                return Ok(());
+            }
+        }
+        
         // Apply the diff to our engine
         engine.apply_diff(diff, None, true, None)
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to apply masternode diff: {:?}", e)))?;
+            .map_err(|e| {
+                // Provide more context for IncompleteMnListDiff in regtest
+                if self.config.network == dashcore::Network::Regtest && e.to_string().contains("IncompleteMnListDiff") {
+                    SyncError::SyncFailed(format!(
+                        "Failed to apply masternode diff in regtest (this is normal if no masternodes are configured): {:?}", e
+                    ))
+                } else {
+                    SyncError::SyncFailed(format!("Failed to apply masternode diff: {:?}", e))
+                }
+            })?;
         
         tracing::info!("Successfully applied masternode list diff");
         

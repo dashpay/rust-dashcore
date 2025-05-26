@@ -3,6 +3,7 @@
 use std::io::{BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, SystemTime};
+use std::collections::HashMap;
 
 use dashcore::consensus::{encode, Decodable};
 use dashcore::network::message::{NetworkMessage, RawNetworkMessage};
@@ -19,11 +20,16 @@ pub struct TcpConnection {
     timeout: Duration,
     connected_at: Option<SystemTime>,
     bytes_sent: u64,
+    network: Network,
+    // Ping/pong state
+    last_ping_sent: Option<SystemTime>,
+    last_pong_received: Option<SystemTime>,
+    pending_pings: HashMap<u64, SystemTime>, // nonce -> sent_time
 }
 
 impl TcpConnection {
     /// Create a new TCP connection to the given address.
-    pub fn new(address: SocketAddr, timeout: Duration) -> Self {
+    pub fn new(address: SocketAddr, timeout: Duration, network: Network) -> Self {
         Self {
             address,
             write_stream: None,
@@ -31,6 +37,10 @@ impl TcpConnection {
             timeout,
             connected_at: None,
             bytes_sent: 0,
+            network,
+            last_ping_sent: None,
+            last_pong_received: None,
+            pending_pings: HashMap::new(),
         }
     }
     
@@ -74,7 +84,7 @@ impl TcpConnection {
             .ok_or_else(|| NetworkError::ConnectionFailed("Not connected".to_string()))?;
         
         let raw_message = RawNetworkMessage {
-            magic: Network::Dash.magic(),
+            magic: self.network.magic(),
             payload: message,
         };
         
@@ -96,6 +106,16 @@ impl TcpConnection {
         // Read message from the BufReader
         match RawNetworkMessage::consensus_decode(reader) {
             Ok(raw_message) => {
+                // Validate magic bytes match our network
+                if raw_message.magic != self.network.magic() {
+                    tracing::warn!("Received message with wrong magic bytes: expected {:#x}, got {:#x}",
+                                  self.network.magic(), raw_message.magic);
+                    return Err(NetworkError::ProtocolError(format!(
+                        "Wrong magic bytes: expected {:#x}, got {:#x}", 
+                        self.network.magic(), raw_message.magic
+                    )));
+                }
+                
                 // Message received successfully
                 Ok(Some(raw_message.payload))
             }
@@ -137,5 +157,100 @@ impl TcpConnection {
     /// Get connection statistics.
     pub fn stats(&self) -> (u64, u64) {
         (self.bytes_sent, 0) // TODO: Track bytes received
+    }
+    
+    /// Send a ping message with a random nonce.
+    pub async fn send_ping(&mut self) -> NetworkResult<u64> {
+        let nonce = rand::random::<u64>();
+        let ping_message = NetworkMessage::Ping(nonce);
+        
+        self.send_message(ping_message).await?;
+        
+        let now = SystemTime::now();
+        self.last_ping_sent = Some(now);
+        self.pending_pings.insert(nonce, now);
+        
+        tracing::trace!("Sent ping to {} with nonce {}", self.address, nonce);
+        
+        Ok(nonce)
+    }
+    
+    /// Handle a received ping message by sending a pong response.
+    pub async fn handle_ping(&mut self, nonce: u64) -> NetworkResult<()> {
+        let pong_message = NetworkMessage::Pong(nonce);
+        self.send_message(pong_message).await?;
+        
+        tracing::debug!("Responded to ping from {} with pong nonce {}", self.address, nonce);
+        
+        Ok(())
+    }
+    
+    /// Handle a received pong message by validating the nonce.
+    pub fn handle_pong(&mut self, nonce: u64) -> NetworkResult<()> {
+        if let Some(sent_time) = self.pending_pings.remove(&nonce) {
+            let now = SystemTime::now();
+            let rtt = now.duration_since(sent_time)
+                .unwrap_or(Duration::from_secs(0));
+            
+            self.last_pong_received = Some(now);
+            
+            tracing::debug!("Received valid pong from {} with nonce {} (RTT: {:?})", 
+                          self.address, nonce, rtt);
+            
+            Ok(())
+        } else {
+            tracing::warn!("Received unexpected pong from {} with nonce {}", self.address, nonce);
+            Err(NetworkError::ProtocolError(format!(
+                "Unexpected pong nonce {} from {}", nonce, self.address
+            )))
+        }
+    }
+    
+    /// Check if we need to send a ping (no ping/pong activity for 2 minutes).
+    pub fn should_ping(&self) -> bool {
+        const PING_INTERVAL: Duration = Duration::from_secs(120); // 2 minutes
+        
+        let now = SystemTime::now();
+        
+        // Check if we've sent a ping recently
+        if let Some(last_ping) = self.last_ping_sent {
+            if now.duration_since(last_ping).unwrap_or(Duration::MAX) < PING_INTERVAL {
+                return false;
+            }
+        }
+        
+        // Check if we've received a pong recently
+        if let Some(last_pong) = self.last_pong_received {
+            if now.duration_since(last_pong).unwrap_or(Duration::MAX) < PING_INTERVAL {
+                return false;
+            }
+        }
+        
+        // If we haven't sent a ping or received a pong in 2 minutes, we should ping
+        true
+    }
+    
+    /// Clean up old pending pings that haven't received responses.
+    pub fn cleanup_old_pings(&mut self) {
+        const PING_TIMEOUT: Duration = Duration::from_secs(60); // 1 minute timeout for pings
+        
+        let now = SystemTime::now();
+        let mut expired_nonces = Vec::new();
+        
+        for (&nonce, &sent_time) in &self.pending_pings {
+            if now.duration_since(sent_time).unwrap_or(Duration::ZERO) > PING_TIMEOUT {
+                expired_nonces.push(nonce);
+            }
+        }
+        
+        for nonce in expired_nonces {
+            self.pending_pings.remove(&nonce);
+            tracing::warn!("Ping timeout for {} with nonce {}", self.address, nonce);
+        }
+    }
+    
+    /// Get ping/pong statistics.
+    pub fn ping_stats(&self) -> (Option<SystemTime>, Option<SystemTime>, usize) {
+        (self.last_ping_sent, self.last_pong_received, self.pending_pings.len())
     }
 }

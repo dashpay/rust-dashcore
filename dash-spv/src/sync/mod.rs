@@ -176,6 +176,21 @@ impl SyncManager {
     pub fn masternode_engine(&self) -> Option<&dashcore::sml::masternode_list_engine::MasternodeListEngine> {
         self.masternode_sync.engine()
     }
+    
+    /// Get a mutable reference to the header sync manager.
+    pub fn header_sync_mut(&mut self) -> &mut HeaderSyncManager {
+        &mut self.header_sync
+    }
+    
+    /// Get a mutable reference to the filter sync manager.
+    pub fn filter_sync_mut(&mut self) -> &mut FilterSyncManager {
+        &mut self.filter_sync
+    }
+    
+    /// Get a reference to the filter sync manager.
+    pub fn filter_sync(&self) -> &FilterSyncManager {
+        &self.filter_sync
+    }
 }
 
 /// Sync component types.

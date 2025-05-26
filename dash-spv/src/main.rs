@@ -193,8 +193,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let example_addresses = match network {
             dashcore::Network::Dash => vec![
                 // Some example mainnet addresses (these are from block explorers/faucets)
-                "XdNbT2gSoHvUgH3PqZCKaKzq5zJF7R5XY1", // Example mainnet address
-                "XjHyUuV4g5X7y9oPsCJ3cgRLVV45nP29hn", // Another example
                 "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2", // Crowdnode
             ],
             dashcore::Network::Testnet => vec![
@@ -205,6 +203,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             dashcore::Network::Regtest => vec![
                 // Regtest addresses (these would be from local testing)
                 "yQ9J8qK3nNW8JL8h5T6tB3VZwwH9h5T6tB", // Example regtest address
+                "yeRZBWYfeNE4yVUHV4ZLs83Ppn9aMRH57A", // Another regtest example
             ],
             _ => vec![],
         };

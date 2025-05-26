@@ -146,6 +146,21 @@ impl DashSpvClient {
             }
             drop(running);
             
+            // Check if we need to send a ping
+            if self.network.should_ping() {
+                match self.network.send_ping().await {
+                    Ok(nonce) => {
+                        tracing::debug!("Sent periodic ping with nonce {}", nonce);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to send periodic ping: {}", e);
+                    }
+                }
+            }
+            
+            // Clean up old pending pings
+            self.network.cleanup_old_pings();
+            
             // Listen for network messages
             match self.network.receive_message().await {
                 Ok(Some(message)) => {
@@ -207,6 +222,34 @@ impl DashSpvClient {
                 // Extract InstantLock from ISLock message and process
                 self.process_instantsendlock(islock_msg.instant_lock).await?;
             }
+            NetworkMessage::Ping(nonce) => {
+                tracing::debug!("Received ping with nonce {}", nonce);
+                // Automatically respond with pong
+                if let Err(e) = self.network.handle_ping(nonce).await {
+                    tracing::error!("Failed to send pong response: {}", e);
+                }
+            }
+            NetworkMessage::Pong(nonce) => {
+                tracing::debug!("Received pong with nonce {}", nonce);
+                // Validate the pong nonce
+                if let Err(e) = self.network.handle_pong(nonce) {
+                    tracing::warn!("Invalid pong received: {}", e);
+                }
+            }
+            NetworkMessage::CFHeaders(cfheaders) => {
+                tracing::info!("Received {} filter hashes", cfheaders.filter_hashes.len());
+                // Process filter headers - store them for later filter validation
+                if let Err(e) = self.process_filter_headers(cfheaders).await {
+                    tracing::error!("Failed to process filter headers: {}", e);
+                }
+            }
+            NetworkMessage::CFilter(cfilter) => {
+                tracing::info!("Received compact filter for block {}", cfilter.block_hash);
+                // Check the filter for matches against our watch items
+                if let Err(e) = self.process_and_check_filter(cfilter).await {
+                    tracing::error!("Failed to process compact filter: {}", e);
+                }
+            }
             _ => {
                 // Ignore other message types for now
                 tracing::debug!("Received network message: {:?}", std::mem::discriminant(&message));
@@ -266,23 +309,146 @@ impl DashSpvClient {
                 .map_err(|e| SpvError::Network(e))?;
         }
         
-        // Request new block headers (but not full blocks for SPV)
+        // Process new blocks immediately when detected
         if !blocks_to_request.is_empty() {
-            tracing::info!("New blocks available, will request headers in next sync");
-            // For SPV, we usually request headers rather than full blocks
-            // The next sync cycle will pick up new headers
+            tracing::info!("Processing {} new blocks", blocks_to_request.len());
+            
+            // Extract block hashes
+            let block_hashes: Vec<dashcore::BlockHash> = blocks_to_request.iter()
+                .filter_map(|inv| {
+                    if let Inventory::Block(hash) = inv {
+                        Some(*hash)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            
+            // Process each new block
+            for block_hash in block_hashes {
+                if let Err(e) = self.process_new_block_hash(block_hash).await {
+                    tracing::error!("Failed to process new block {}: {}", block_hash, e);
+                }
+            }
         }
         
         Ok(())
     }
 
+    /// Process a new block hash detected from inventory.
+    async fn process_new_block_hash(&mut self, block_hash: dashcore::BlockHash) -> Result<()> {
+        tracing::info!("🔗 Processing new block hash: {}", block_hash);
+        
+        // Step 1: Download and validate the block header -> HeaderSyncManager
+        self.sync_manager.header_sync_mut().download_single_header(
+            block_hash, &mut *self.network, &mut *self.storage
+        ).await.map_err(|e| SpvError::Sync(e))?;
+        
+        // Step 2: Filter operations if enabled
+        if self.config.enable_filters {
+            // Download filter header -> FilterSyncManager  
+            self.sync_manager.filter_sync_mut().download_filter_header_for_block(
+                block_hash, &mut *self.network, &mut *self.storage
+            ).await.map_err(|e| SpvError::Sync(e))?;
+            
+            // Download and check filter -> FilterSyncManager
+            let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
+            let _filter_requested = self.sync_manager.filter_sync_mut().download_and_check_filter(
+                block_hash, &watch_items, &mut *self.network, &mut *self.storage
+            ).await.map_err(|e| SpvError::Sync(e))?;
+            
+            // Note: Filter match results will be processed when we receive the CFilter message
+            // in the handle_network_message method
+        }
+        
+        Ok(())
+    }
+    
+    /// Process received filter headers.
+    async fn process_filter_headers(&mut self, cfheaders: dashcore::network::message_filter::CFHeaders) -> Result<()> {
+        tracing::debug!("Processing filter headers for block {}", cfheaders.stop_hash);
+        
+        // For now, just log that we received them
+        // The actual storage logic should be in FilterSyncManager or storage layer
+        tracing::info!("✅ Received filter headers for block {} (type: {}, count: {})", 
+                      cfheaders.stop_hash, cfheaders.filter_type, cfheaders.filter_hashes.len());
+        
+        // TODO: Store filter headers in storage via FilterSyncManager
+        // This would be called like:
+        // self.sync_manager.filter_sync_mut().store_filter_headers(cfheaders, &mut *self.storage).await?;
+        
+        Ok(())
+    }
+    
+    /// Process and check a compact filter for matches.
+    async fn process_and_check_filter(&mut self, cfilter: dashcore::network::message_filter::CFilter) -> Result<()> {
+        tracing::debug!("Processing compact filter for block {}", cfilter.block_hash);
+        
+        // Get watch items to check against
+        let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
+        
+        if watch_items.is_empty() {
+            tracing::debug!("No watch items configured, skipping filter check");
+            return Ok(());
+        }
+        
+        // Use FilterSyncManager to check for matches
+        let has_matches = self.sync_manager.filter_sync().check_filter_for_matches(
+            &cfilter.filter,
+            &cfilter.block_hash,
+            &watch_items,
+            &*self.storage
+        ).await.map_err(|e| SpvError::Sync(e))?;
+        
+        if has_matches {
+            tracing::info!("🎯 Filter match found for block {}!", cfilter.block_hash);
+            self.report_filter_match(cfilter.block_hash).await?;
+        } else {
+            tracing::debug!("No filter matches for block {}", cfilter.block_hash);
+        }
+        
+        Ok(())
+    }
+    
+    /// Report a filter match to the user.
+    async fn report_filter_match(&self, block_hash: dashcore::BlockHash) -> Result<()> {
+        // Get block height for better reporting by scanning headers
+        let height = self.find_height_for_block_hash(block_hash).await
+            .unwrap_or(0);
+        
+        tracing::info!("🚨 FILTER MATCH DETECTED! Block {} at height {} contains transactions affecting watched addresses/scripts", 
+                      block_hash, height);
+        
+        // TODO: Additional actions could be taken here:
+        // - Store the match in a database
+        // - Send notifications
+        // - Request the full block for detailed analysis
+        // - Update wallet balance
+        
+        Ok(())
+    }
+    
+    /// Helper method to find height for a block hash.
+    async fn find_height_for_block_hash(&self, block_hash: dashcore::BlockHash) -> Option<u32> {
+        if let Some(tip_height) = self.storage.get_tip_height().await.ok().flatten() {
+            // Search recent blocks first (most likely)
+            for height in (0..=tip_height).rev() {
+                if let Some(header) = self.storage.get_header(height).await.ok().flatten() {
+                    if header.block_hash() == block_hash {
+                        return Some(height);
+                    }
+                }
+            }
+        }
+        None
+    }
+    
     /// Process a new block.
     async fn process_new_block(&mut self, _block: dashcore::Block) -> Result<()> {
-        // TODO: Implement block processing
+        // TODO: Implement full block processing if we ever receive full blocks
         // - Update chain state
         // - Check for watched transactions
-        // - Update filter headers if needed
-        tracing::info!("Block processing not yet implemented");
+        tracing::info!("Full block processing not yet implemented");
         Ok(())
     }
     
@@ -443,12 +609,13 @@ impl DashSpvClient {
         
         let num_blocks = num_blocks.unwrap_or(100);
         let start_height = tip_height.saturating_sub(num_blocks - 1);
+        let actual_count = tip_height - start_height + 1; // Actual number of blocks available
         
         tracing::info!("Syncing and checking filters from height {} to {} ({} blocks)", 
-                      start_height, tip_height, num_blocks);
+                      start_height, tip_height, actual_count);
         
-        // Sync filters for the range
-        self.sync_manager.sync_filters(&mut *self.network, &mut *self.storage, Some(start_height), Some(num_blocks)).await
+        // Sync filters for the range - use actual count to avoid going beyond available headers
+        self.sync_manager.sync_filters(&mut *self.network, &mut *self.storage, Some(start_height), Some(actual_count)).await
             .map_err(|e| SpvError::Sync(e))?;
         
         // Get current watch items

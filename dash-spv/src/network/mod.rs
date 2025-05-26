@@ -5,7 +5,6 @@ pub mod handshake;
 pub mod message_handler;
 pub mod peer;
 
-use std::net::SocketAddr;
 use async_trait::async_trait;
 
 use dashcore::network::message::NetworkMessage;
@@ -39,6 +38,21 @@ pub trait NetworkManager: Send + Sync {
     
     /// Get peer information.
     fn peer_info(&self) -> Vec<crate::types::PeerInfo>;
+    
+    /// Send a ping message.
+    async fn send_ping(&mut self) -> NetworkResult<u64>;
+    
+    /// Handle a received ping message by sending a pong.
+    async fn handle_ping(&mut self, nonce: u64) -> NetworkResult<()>;
+    
+    /// Handle a received pong message.
+    fn handle_pong(&mut self, nonce: u64) -> NetworkResult<()>;
+    
+    /// Check if we should send a ping (2 minute timeout).
+    fn should_ping(&self) -> bool;
+    
+    /// Clean up old pending pings.
+    fn cleanup_old_pings(&mut self);
 }
 
 /// TCP-based network manager implementation.
@@ -71,7 +85,7 @@ impl NetworkManager for TcpNetworkManager {
         // Try to connect to the first peer for now
         let peer_addr = self.config.peers[0];
         
-        let mut connection = TcpConnection::new(peer_addr, self.config.connection_timeout);
+        let mut connection = TcpConnection::new(peer_addr, self.config.connection_timeout, self.config.network);
         connection.connect().await?;
         
         // Perform handshake
@@ -117,6 +131,37 @@ impl NetworkManager for TcpNetworkManager {
             vec![connection.peer_info()]
         } else {
             vec![]
+        }
+    }
+    
+    async fn send_ping(&mut self) -> NetworkResult<u64> {
+        let connection = self.connection.as_mut()
+            .ok_or_else(|| NetworkError::ConnectionFailed("Not connected".to_string()))?;
+        
+        connection.send_ping().await
+    }
+    
+    async fn handle_ping(&mut self, nonce: u64) -> NetworkResult<()> {
+        let connection = self.connection.as_mut()
+            .ok_or_else(|| NetworkError::ConnectionFailed("Not connected".to_string()))?;
+        
+        connection.handle_ping(nonce).await
+    }
+    
+    fn handle_pong(&mut self, nonce: u64) -> NetworkResult<()> {
+        let connection = self.connection.as_mut()
+            .ok_or_else(|| NetworkError::ConnectionFailed("Not connected".to_string()))?;
+        
+        connection.handle_pong(nonce)
+    }
+    
+    fn should_ping(&self) -> bool {
+        self.connection.as_ref().map_or(false, |c| c.should_ping())
+    }
+    
+    fn cleanup_old_pings(&mut self) {
+        if let Some(connection) = self.connection.as_mut() {
+            connection.cleanup_old_pings();
         }
     }
 }

@@ -10,10 +10,9 @@ use async_trait::async_trait;
 use dashcore::{
     block::Header as BlockHeader,
     hash_types::FilterHeader,
-    BlockHash,
 };
 
-use crate::error::{StorageError, StorageResult};
+use crate::error::StorageResult;
 use crate::types::ChainState;
 
 pub use memory::MemoryStorageManager;

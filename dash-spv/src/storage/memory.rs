@@ -9,7 +9,7 @@ use dashcore::{
     hash_types::FilterHeader,
 };
 
-use crate::error::{StorageError, StorageResult};
+use crate::error::StorageResult;
 use crate::storage::{StorageManager, MasternodeState, StorageStats};
 use crate::types::ChainState;
 

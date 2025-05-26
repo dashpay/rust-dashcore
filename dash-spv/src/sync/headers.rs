@@ -2,7 +2,6 @@
 
 use dashcore::{
     block::Header as BlockHeader,
-    blockdata::constants::genesis_block,
     network::message::NetworkMessage,
     network::message_blockdata::GetHeadersMessage,
     BlockHash,
@@ -209,6 +208,63 @@ impl HeaderSyncManager {
         }
         
         Ok(validated)
+    }
+    
+    /// Download and validate a single header for a specific block hash.
+    pub async fn download_single_header(
+        &mut self,
+        block_hash: BlockHash,
+        network: &mut dyn NetworkManager,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<()> {
+        // Check if we already have this header by scanning existing headers
+        // This is inefficient but we don't have a reverse index
+        if let Some(tip_height) = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))? {
+            
+            // Check recent headers to see if we already have this block
+            for height in 0..=tip_height {
+                if let Some(header) = storage.get_header(height).await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get header: {}", e)))? {
+                    if header.block_hash() == block_hash {
+                        tracing::debug!("Header for block {} already exists at height {}", block_hash, height);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        
+        tracing::info!("📥 Requesting header for block {}", block_hash);
+        
+        // Get current tip hash to use as locator
+        let current_tip = if let Some(tip_height) = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))? {
+            
+            storage.get_header(tip_height).await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
+                .map(|h| h.block_hash())
+                .unwrap_or_else(|| self.config.network.known_genesis_block_hash().expect("unable to get genesis block hash"))
+        } else {
+            self.config.network.known_genesis_block_hash().expect("unable to get genesis block hash")
+        };
+        
+        // Create GetHeaders message with specific stop hash
+        let getheaders_msg = GetHeadersMessage {
+            version: 70214, // Dash protocol version
+            locator_hashes: vec![current_tip],
+            stop_hash: block_hash,
+        };
+        
+        // Send the message
+        network.send_message(NetworkMessage::GetHeaders(getheaders_msg)).await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+        
+        tracing::debug!("Sent getheaders request for block {}", block_hash);
+        
+        // Note: The header will be processed when we receive the headers response
+        // in the normal message handling flow in sync/mod.rs
+        
+        Ok(())
     }
     
     /// Reset sync state.
