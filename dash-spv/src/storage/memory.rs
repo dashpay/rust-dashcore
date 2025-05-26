@@ -89,6 +89,7 @@ impl StorageManager for MemoryStorageManager {
     }
     
     async fn get_filter_header(&self, height: u32) -> StorageResult<Option<FilterHeader>> {
+        // Filter headers are stored starting from height 0 in the vector
         Ok(self.filter_headers.get(height as usize).copied())
     }
     
@@ -96,6 +97,7 @@ impl StorageManager for MemoryStorageManager {
         if self.filter_headers.is_empty() {
             Ok(None)
         } else {
+            // Filter headers are stored starting from height 0, so length-1 gives us the highest height
             Ok(Some(self.filter_headers.len() as u32 - 1))
         }
     }

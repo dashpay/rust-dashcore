@@ -2,6 +2,7 @@
 
 use std::str::FromStr;
 use dash_spv::{ClientConfig, DashSpvClient, Address, WatchItem, init_logging};
+use dashcore::Network;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -13,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create configuration with filter support
     let config = ClientConfig::mainnet()
-        .watch_address(watch_address)
+        .watch_address(watch_address.clone().require_network(Network::Dash).unwrap())
         .without_masternodes(); // Skip masternode sync for this example
 
     // Create the client
@@ -23,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     client.start().await?;
 
     println!("Starting synchronization with filter support...");
-    println!("Watching address: {}", watch_address);
+    println!("Watching address: {:?}", watch_address);
 
     // Full sync including filters
     let progress = client.sync_to_tip().await?;

@@ -10,7 +10,7 @@ rust-version = "1.80"
 
 [dependencies]
 # Core Dash libraries
-dashcore = { path = "../dash", features = ["std", "serde"] }
+dashcore = { path = "../dash", features = ["std", "serde", "core-block-hash-use-x11", "message_verification"] }
 dashcore_hashes = { path = "../hashes" }
 
 # CLI
@@ -38,6 +38,8 @@ rand = "0.8"
 [dev-dependencies]
 tempfile = "3.0"
 tokio-test = "0.4"
+env_logger = "0.10"
+log = "0.4"
 
 [[bin]]
 name = "dash-spv"

@@ -68,6 +68,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .value_parser(["none", "basic", "full"])
                 .default_value("full")
         )
+        .arg(
+            Arg::new("watch-address")
+                .short('w')
+                .long("watch-address")
+                .value_name("ADDRESS")
+                .help("Dash address to watch for transactions (can be used multiple times)")
+                .action(clap::ArgAction::Append)
+        )
+        .arg(
+            Arg::new("add-example-addresses")
+                .long("add-example-addresses")
+                .help("Add some example Dash addresses to watch for testing")
+                .action(clap::ArgAction::SetTrue)
+        )
         .get_matches();
 
     // Initialize logging
@@ -146,6 +160,88 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("SPV client started successfully");
 
+    // Add watch addresses if specified
+    if let Some(addresses) = matches.get_many::<String>("watch-address") {
+        for addr_str in addresses {
+            match addr_str.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>() {
+                Ok(addr) => {
+                    let checked_addr = addr.require_network(network).map_err(|_| {
+                        format!("Address '{}' is not valid for network {:?}", addr_str, network)
+                    });
+                    match checked_addr {
+                        Ok(valid_addr) => {
+                            if let Err(e) = client.add_watch_item(dash_spv::WatchItem::Address(valid_addr)).await {
+                                tracing::error!("Failed to add watch address '{}': {}", addr_str, e);
+                            } else {
+                                tracing::info!("Added watch address: {}", addr_str);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Invalid address for network: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Invalid address format '{}': {}", addr_str, e);
+                }
+            }
+        }
+    }
+
+    // Add example addresses for testing if requested
+    if matches.get_flag("add-example-addresses") {
+        let example_addresses = match network {
+            dashcore::Network::Dash => vec![
+                // Some example mainnet addresses (these are from block explorers/faucets)
+                "XdNbT2gSoHvUgH3PqZCKaKzq5zJF7R5XY1", // Example mainnet address
+                "XjHyUuV4g5X7y9oPsCJ3cgRLVV45nP29hn", // Another example
+                "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2", // Crowdnode
+            ],
+            dashcore::Network::Testnet => vec![
+                // Testnet addresses
+                "yNEr8u4Kx8PTH9A9G3P7NwkJRmqFD7tKSj", // Example testnet address
+                "yMGqjKTqr2HKKV6zqSg5vTPQUzJNt72h8h", // Another testnet example
+            ],
+            dashcore::Network::Regtest => vec![
+                // Regtest addresses (these would be from local testing)
+                "yQ9J8qK3nNW8JL8h5T6tB3VZwwH9h5T6tB", // Example regtest address
+            ],
+            _ => vec![],
+        };
+
+        for addr_str in example_addresses {
+            match addr_str.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>() {
+                Ok(addr) => {
+                    if let Ok(valid_addr) = addr.require_network(network) {
+                        if let Err(e) = client.add_watch_item(dash_spv::WatchItem::Address(valid_addr)).await {
+                            tracing::error!("Failed to add example address '{}': {}", addr_str, e);
+                        } else {
+                            tracing::info!("Added example watch address: {}", addr_str);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Example address '{}' failed to parse: {}", addr_str, e);
+                }
+            }
+        }
+    }
+
+    // Display current watch list
+    let watch_items = client.get_watch_items().await;
+    if !watch_items.is_empty() {
+        tracing::info!("Watching {} items:", watch_items.len());
+        for (i, item) in watch_items.iter().enumerate() {
+            match item {
+                dash_spv::WatchItem::Address(addr) => tracing::info!("  {}: Address {}", i + 1, addr),
+                dash_spv::WatchItem::Script(script) => tracing::info!("  {}: Script {}", i + 1, script.to_hex_string()),
+                dash_spv::WatchItem::Outpoint(outpoint) => tracing::info!("  {}: Outpoint {}:{}", i + 1, outpoint.txid, outpoint.vout),
+            }
+        }
+    } else {
+        tracing::info!("No watch items configured. Use --watch-address or --add-example-addresses to watch for transactions.");
+    }
+
     // Start synchronization
     tracing::info!("Starting synchronization to tip...");
     match client.sync_to_tip().await {
@@ -157,13 +253,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             tracing::error!("Synchronization failed: {}", e);
+            panic!("SPV client synchronization failed: {}", e);
         }
     }
 
-    // Wait for shutdown signal
-    tracing::info!("SPV client running. Press Ctrl+C to shutdown.");
+    // Check filters for matches if we have watch items
+    let watch_items = client.get_watch_items().await;
+    if !watch_items.is_empty() && matches.get_flag("no-filters") == false {
+        tracing::info!("Checking recent filters for matches...");
+        match client.sync_and_check_filters(Some(1000)).await {
+            Ok(matches) => {
+                if matches.is_empty() {
+                    tracing::info!("No filter matches found in recent blocks");
+                } else {
+                    tracing::info!("🎯 Found {} filter matches:", matches.len());
+                    for (i, filter_match) in matches.iter().enumerate() {
+                        tracing::info!("  {}: Block {} at height {}", 
+                                      i + 1, filter_match.block_hash, filter_match.height);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to check filters: {}", e);
+            }
+        }
+    }
+
+    // Start continuous monitoring
+    tracing::info!("SPV client running. Starting network monitoring...");
     
     tokio::select! {
+        result = client.monitor_network() => {
+            if let Err(e) = result {
+                tracing::error!("Network monitoring failed: {}", e);
+            }
+        }
         _ = signal::ctrl_c() => {
             tracing::info!("Received shutdown signal");
         }

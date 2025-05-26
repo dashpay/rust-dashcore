@@ -2,6 +2,7 @@
 
 use dashcore::{
     block::Header as BlockHeader,
+    blockdata::constants::genesis_block,
     network::message::NetworkMessage,
     network::message_blockdata::GetHeadersMessage,
     BlockHash,
@@ -18,7 +19,6 @@ use crate::validation::ValidationManager;
 /// Manages header synchronization.
 pub struct HeaderSyncManager {
     config: ClientConfig,
-    headers_in_flight_to: i32,
     validation: ValidationManager,
 }
 
@@ -27,7 +27,6 @@ impl HeaderSyncManager {
     pub fn new(config: &ClientConfig) -> Self {
         Self {
             config: config.clone(),
-            headers_in_flight_to: 0,
             validation: ValidationManager::new(config.validation_mode),
         }
     }
@@ -42,19 +41,22 @@ impl HeaderSyncManager {
         
         // Get current tip from storage
         let current_tip_height = storage.get_tip_height().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
-            .unwrap_or(0);
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
         
-        let base_hash = if current_tip_height == 0 {
-            // Start from genesis
-            self.config.network.known_genesis_block_hash()
-                .ok_or_else(|| SyncError::SyncFailed("No genesis hash for network".to_string()))?
-        } else {
-            // Get the tip hash
-            storage.get_header(current_tip_height).await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
-                .ok_or_else(|| SyncError::SyncFailed("Tip header not found".to_string()))?
-                .block_hash()
+        let base_hash = match current_tip_height {
+            None => {
+                // No headers in storage yet - start from genesis
+                // Use genesis block hash to request headers starting from block 1
+                let genesis_hash = self.config.network.known_genesis_block_hash().expect("unable to get genesis block hash");
+                Some(genesis_hash)
+            }
+            Some(height) => {
+                // Get the tip hash - request headers after this one
+                let tip_header = storage.get_header(height).await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
+                    .ok_or_else(|| SyncError::SyncFailed("Tip header not found".to_string()))?;
+                Some(tip_header.block_hash())
+            }
         };
         
         // Request headers starting from our tip
@@ -75,6 +77,12 @@ impl HeaderSyncManager {
                         break;
                     }
                     
+                    tracing::debug!("Received {} headers", headers.len());
+                    if !headers.is_empty() {
+                        tracing::debug!("First header: {:?}", headers[0].block_hash());
+                        tracing::debug!("Last header: {:?}", headers.last().unwrap().block_hash());
+                    }
+                    
                     // Validate headers
                     let validated_headers = self.validate_headers(&headers, storage).await?;
                     
@@ -87,7 +95,7 @@ impl HeaderSyncManager {
                     // If we got a full batch, request more
                     if headers.len() == self.config.max_headers_per_message as usize {
                         let last_hash = headers.last().unwrap().block_hash();
-                        self.request_headers(network, last_hash).await?;
+                        self.request_headers(network, Some(last_hash)).await?;
                     } else {
                         // Partial batch means we're at the tip
                         break;
@@ -131,16 +139,16 @@ impl HeaderSyncManager {
     async fn request_headers(
         &mut self,
         network: &mut dyn NetworkManager,
-        base_hash: BlockHash,
+        base_hash: Option<BlockHash>,
     ) -> SyncResult<()> {
-        // Don't request if we already have headers in flight
-        let current_height = 0; // TODO: Get from storage
-        if current_height < self.headers_in_flight_to as u32 {
-            return Ok(());
-        }
+        // Note: Removed broken in-flight check that was preventing subsequent requests
+        // The loop in sync() already handles request pacing properly
         
-        // Build block locator (simplified - just use the base hash)
-        let block_locator = vec![base_hash];
+        // Build block locator 
+        let block_locator = match base_hash {
+            Some(hash) => vec![hash],  // Include our tip hash to request headers after it
+            None => vec![],            // Empty locator to request headers from genesis
+        };
         
         // No specific stop hash (all zeros means sync to tip)
         let stop_hash = BlockHash::from_byte_array([0; 32]);
@@ -152,10 +160,9 @@ impl HeaderSyncManager {
         network.send_message(NetworkMessage::GetHeaders(getheaders_msg)).await
             .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
         
-        // Track headers in flight
-        self.headers_in_flight_to += self.config.max_headers_per_message as i32;
+        // Headers request sent successfully
         
-        tracing::debug!("Requested headers starting from {}", base_hash);
+        tracing::debug!("Requested headers starting from {:?}", base_hash);
         
         Ok(())
     }
@@ -190,8 +197,13 @@ impl HeaderSyncManager {
             };
             
             // Validate the header
+            // tracing::trace!("Validating header {} at index {}", header.block_hash(), i);
+            // if let Some(prev) = prev_header.as_ref() {
+            //     tracing::trace!("Previous header: {}", prev.block_hash());
+            // }
+            
             self.validation.validate_header(header, prev_header.as_ref())
-                .map_err(|e| SyncError::SyncFailed(format!("Header validation failed: {}", e)))?;
+                .map_err(|e| SyncError::SyncFailed(format!("Header validation failed for block {}: {}", header.block_hash(), e)))?;
             
             validated.push(*header);
         }
@@ -201,6 +213,6 @@ impl HeaderSyncManager {
     
     /// Reset sync state.
     pub fn reset(&mut self) {
-        self.headers_in_flight_to = 0;
+        // No state to reset currently
     }
 }

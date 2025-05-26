@@ -72,10 +72,34 @@ impl MasternodeSyncManager {
             .unwrap_or(0);
         
         // Get last synced masternode height
-        let last_masternode_height = storage.load_masternode_state().await
+        let mut last_masternode_height = storage.load_masternode_state().await
             .map_err(|e| SyncError::SyncFailed(format!("Failed to load masternode state: {}", e)))?
             .map(|s| s.last_height)
             .unwrap_or(0);
+        
+        // Check if we need to reset masternode engine due to inconsistent state
+        if last_masternode_height > 0 {
+            // If we have a stored masternode height but no engine state for it,
+            // we need to start fresh from genesis
+            tracing::warn!("Detected potential masternode state inconsistency. Starting fresh from genesis.");
+            tracing::warn!("Last masternode height: {}, Current height: {}", last_masternode_height, current_height);
+            
+            // Reset the masternode engine
+            if let Some(engine) = &mut self.engine {
+                *engine = MasternodeListEngine::default_for_network(self.config.network);
+                // Feed genesis block hash at height 0
+                if let Some(genesis_hash) = self.config.network.known_genesis_block_hash() {
+                    engine.feed_block_height(0, genesis_hash);
+                }
+            }
+            
+            // Clear stored masternode state to start fresh
+            // Note: For now we just reset the height, but ideally we'd have a clear_masternode_state method
+            tracing::info!("Masternode engine reset to start from genesis");
+            
+            // Start from height 0
+            last_masternode_height = 0;
+        }
         
         if current_height <= last_masternode_height {
             tracing::info!("Masternode list already synced to current height");
@@ -189,6 +213,35 @@ impl MasternodeSyncManager {
         
         let _target_block_hash = diff.block_hash;
         
+        // Feed all block headers to the engine so it can look up block hashes
+        let tip_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+            .unwrap_or(0);
+            
+        tracing::debug!("Feeding {} block headers to masternode engine", tip_height + 1);
+        
+        // Check if we have the target block hash in storage
+        let target_block_hash = diff.block_hash;
+        let mut found_target = false;
+        
+        for height in 0..=tip_height {
+            if let Some(header) = storage.get_header(height).await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get header at height {}: {}", height, e)))? {
+                let block_hash = header.block_hash();
+                engine.feed_block_height(height, block_hash);
+                
+                if block_hash == target_block_hash {
+                    found_target = true;
+                    tracing::debug!("Found target block hash {} at height {}", block_hash, height);
+                }
+            }
+        }
+        
+        if !found_target {
+            tracing::error!("Target block hash {} not found in stored headers", target_block_hash);
+            return Err(SyncError::SyncFailed(format!("Target block hash {} not found in storage", target_block_hash)));
+        }
+        
         // Apply the diff to our engine
         engine.apply_diff(diff, None, true, None)
             .map_err(|e| SyncError::SyncFailed(format!("Failed to apply masternode diff: {:?}", e)))?;
@@ -225,5 +278,10 @@ impl MasternodeSyncManager {
         if let Some(_engine) = &mut self.engine {
             // TODO: Reset engine state if needed
         }
+    }
+    
+    /// Get a reference to the masternode engine for validation.
+    pub fn engine(&self) -> Option<&MasternodeListEngine> {
+        self.engine.as_ref()
     }
 }

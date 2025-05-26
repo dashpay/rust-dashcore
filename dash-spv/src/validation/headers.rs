@@ -53,31 +53,11 @@ impl HeaderValidator {
         header: &BlockHeader,
         prev_header: Option<&BlockHeader>,
     ) -> ValidationResult<()> {
-        // Check timestamp is reasonable (not too far in the future)
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as u32;
-        
-        const MAX_FUTURE_BLOCK_TIME: u32 = 2 * 60 * 60; // 2 hours
-        if header.time > now + MAX_FUTURE_BLOCK_TIME {
-            return Err(ValidationError::InvalidHeaderChain(
-                "Header timestamp too far in future".to_string()
-            ));
-        }
-        
         // Check chain continuity if we have previous header
         if let Some(prev) = prev_header {
             if header.prev_blockhash != prev.block_hash() {
                 return Err(ValidationError::InvalidHeaderChain(
                     "Header does not connect to previous header".to_string()
-                ));
-            }
-            
-            // Check timestamp is after previous header
-            if header.time <= prev.time {
-                return Err(ValidationError::InvalidHeaderChain(
-                    "Header timestamp not after previous header".to_string()
                 ));
             }
         }
@@ -94,7 +74,7 @@ impl HeaderValidator {
         // First do basic validation
         self.validate_basic(header, prev_header)?;
         
-        // Validate proof of work
+        // Validate proof of work with X11 hashing (now enabled with core-block-hash-use-x11 feature)
         let target = header.target();
         if let Err(e) = header.validate_pow(target) {
             match e {

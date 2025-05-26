@@ -35,6 +35,9 @@ pub struct SyncProgress {
     /// Whether masternode list is synced.
     pub masternodes_synced: bool,
     
+    /// Number of compact filters downloaded.
+    pub filters_downloaded: u64,
+    
     /// Sync start time.
     pub sync_start: SystemTime,
     
@@ -53,6 +56,7 @@ impl Default for SyncProgress {
             headers_synced: false,
             filter_headers_synced: false,
             masternodes_synced: false,
+            filters_downloaded: 0,
             sync_start: now,
             last_update: now,
         }
@@ -71,6 +75,12 @@ pub struct ChainState {
     /// Current ChainLock tip.
     pub chainlock_tip: Option<BlockHash>,
     
+    /// Last ChainLock height.
+    pub last_chainlock_height: Option<u32>,
+    
+    /// Last ChainLock hash.
+    pub last_chainlock_hash: Option<BlockHash>,
+    
     /// Current filter tip.
     pub current_filter_tip: Option<FilterHeader>,
     
@@ -87,6 +97,8 @@ impl Default for ChainState {
             headers: Vec::new(),
             filter_headers: Vec::new(),
             chainlock_tip: None,
+            last_chainlock_height: None,
+            last_chainlock_hash: None,
             current_filter_tip: None,
             masternode_engine: None,
             last_masternode_diff_height: None,
@@ -223,6 +235,116 @@ pub enum WatchItem {
     
     /// Watch an outpoint.
     Outpoint(dashcore::OutPoint),
+}
+
+// Custom serialization for WatchItem to handle Address serialization issues
+impl Serialize for WatchItem {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        
+        match self {
+            WatchItem::Address(addr) => {
+                let mut state = serializer.serialize_struct("WatchItem", 2)?;
+                state.serialize_field("type", "Address")?;
+                state.serialize_field("value", &addr.to_string())?;
+                state.end()
+            }
+            WatchItem::Script(script) => {
+                let mut state = serializer.serialize_struct("WatchItem", 2)?;
+                state.serialize_field("type", "Script")?;
+                state.serialize_field("value", &script.to_hex_string())?;
+                state.end()
+            }
+            WatchItem::Outpoint(outpoint) => {
+                let mut state = serializer.serialize_struct("WatchItem", 2)?;
+                state.serialize_field("type", "Outpoint")?;
+                state.serialize_field("value", &format!("{}:{}", outpoint.txid, outpoint.vout))?;
+                state.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for WatchItem {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{MapAccess, Visitor};
+        use std::fmt;
+        
+        struct WatchItemVisitor;
+        
+        impl<'de> Visitor<'de> for WatchItemVisitor {
+            type Value = WatchItem;
+            
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a WatchItem struct")
+            }
+            
+            fn visit_map<M>(self, mut map: M) -> Result<WatchItem, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut item_type: Option<String> = None;
+                let mut value: Option<String> = None;
+                
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "type" => {
+                            if item_type.is_some() {
+                                return Err(serde::de::Error::duplicate_field("type"));
+                            }
+                            item_type = Some(map.next_value()?);
+                        }
+                        "value" => {
+                            if value.is_some() {
+                                return Err(serde::de::Error::duplicate_field("value"));
+                            }
+                            value = Some(map.next_value()?);
+                        }
+                        _ => {
+                            let _: serde::de::IgnoredAny = map.next_value()?;
+                        }
+                    }
+                }
+                
+                let item_type = item_type.ok_or_else(|| serde::de::Error::missing_field("type"))?;
+                let value = value.ok_or_else(|| serde::de::Error::missing_field("value"))?;
+                
+                match item_type.as_str() {
+                    "Address" => {
+                        let addr = value.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>()
+                            .map_err(|e| serde::de::Error::custom(format!("Invalid address: {}", e)))?
+                            .assume_checked();
+                        Ok(WatchItem::Address(addr))
+                    }
+                    "Script" => {
+                        let script = dashcore::ScriptBuf::from_hex(&value)
+                            .map_err(|e| serde::de::Error::custom(format!("Invalid script: {}", e)))?;
+                        Ok(WatchItem::Script(script))
+                    }
+                    "Outpoint" => {
+                        let parts: Vec<&str> = value.split(':').collect();
+                        if parts.len() != 2 {
+                            return Err(serde::de::Error::custom("Invalid outpoint format"));
+                        }
+                        let txid = parts[0].parse()
+                            .map_err(|e| serde::de::Error::custom(format!("Invalid txid: {}", e)))?;
+                        let vout = parts[1].parse()
+                            .map_err(|e| serde::de::Error::custom(format!("Invalid vout: {}", e)))?;
+                        Ok(WatchItem::Outpoint(dashcore::OutPoint { txid, vout }))
+                    }
+                    _ => Err(serde::de::Error::custom(format!("Unknown WatchItem type: {}", item_type)))
+                }
+            }
+        }
+        
+        deserializer.deserialize_struct("WatchItem", &["type", "value"], WatchItemVisitor)
+    }
 }
 
 /// Statistics about the SPV client.
