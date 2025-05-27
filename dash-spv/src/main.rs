@@ -7,7 +7,8 @@ use std::process;
 use clap::{Arg, Command};
 use tokio::signal;
 
-use dash_spv::{ClientConfig, DashSpvClient, Network, init_logging};
+use dash_spv::{ClientConfig, DashSpvClient, Network};
+use dash_spv::terminal::TerminalGuard;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -82,11 +83,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .help("Add some example Dash addresses to watch for testing")
                 .action(clap::ArgAction::SetTrue)
         )
+        .arg(
+            Arg::new("no-terminal-ui")
+                .long("no-terminal-ui")
+                .help("Disable terminal UI status bar")
+                .action(clap::ArgAction::SetTrue)
+        )
         .get_matches();
 
-    // Initialize logging
+    // Get log level (will be used after we know if terminal UI is enabled)
     let log_level = matches.get_one::<String>("log-level").unwrap();
-    init_logging(log_level)?;
 
     // Parse network
     let network = match matches.get_one::<String>("network").unwrap().as_str() {
@@ -144,6 +150,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Data directory: {}", config.storage_path.as_ref().unwrap().display());
     tracing::info!("Validation mode: {:?}", validation_mode);
 
+    // Check if terminal UI should be enabled
+    let enable_terminal_ui = !matches.get_flag("no-terminal-ui");
+
+    // Initialize logging first (without terminal UI)
+    dash_spv::init_logging(log_level)?;
+
     // Create and start the client
     let mut client = match DashSpvClient::new(config).await {
         Ok(client) => client,
@@ -151,6 +163,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Failed to create SPV client: {}", e);
             process::exit(1);
         }
+    };
+
+    // Enable terminal UI in the client if requested
+    let _terminal_guard = if enable_terminal_ui {
+        client.enable_terminal_ui();
+        
+        // Get the terminal UI from the client and initialize it
+        if let Some(ui) = client.get_terminal_ui() {
+            match TerminalGuard::new(ui.clone()) {
+                Ok(guard) => {
+                    // Initial update with network info
+                    let network_name = format!("{:?}", client.network());
+                    let _ = ui.update_status(|status| {
+                        status.network = network_name;
+                        status.peer_count = 0; // Will be updated when connected
+                    }).await;
+                    
+                    Some(guard)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to initialize terminal UI: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
     };
 
     if let Err(e) = client.start().await {
@@ -278,6 +319,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // The client will handle updating the terminal UI internally
+    
     // Start continuous monitoring
     tracing::info!("SPV client running. Starting network monitoring...");
     

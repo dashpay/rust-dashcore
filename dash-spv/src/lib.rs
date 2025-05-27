@@ -54,6 +54,7 @@ pub mod storage;
 pub mod sync;
 pub mod types;
 pub mod validation;
+pub mod terminal;
 
 // Re-export main types for convenience
 pub use client::{ClientConfig, DashSpvClient};
@@ -73,14 +74,24 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// This is a convenience function that sets up tracing-subscriber
 /// with a simple format suitable for most applications.
-pub fn init_logging(_level: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn init_logging(level: &str) -> Result<(), Box<dyn std::error::Error>> {
     use tracing_subscriber::fmt;
+    
+    let level = match level {
+        "error" => tracing::Level::ERROR,
+        "warn" => tracing::Level::WARN,
+        "info" => tracing::Level::INFO,
+        "debug" => tracing::Level::DEBUG,
+        "trace" => tracing::Level::TRACE,
+        _ => tracing::Level::INFO,
+    };
     
     fmt()
         .with_target(false)
-        .with_thread_ids(true)
-        .with_max_level(tracing::Level::TRACE)
+        .with_thread_ids(false)
+        .with_max_level(level)
         .init();
     
     Ok(())
 }
+
