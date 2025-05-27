@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use dashcore::{
     block::Header as BlockHeader,
     hash_types::FilterHeader,
+    BlockHash,
 };
 
 use crate::error::StorageResult;
@@ -21,6 +22,8 @@ pub struct MemoryStorageManager {
     masternode_state: Option<MasternodeState>,
     chain_state: Option<ChainState>,
     metadata: HashMap<String, Vec<u8>>,
+    // Reverse indexes for O(1) lookups
+    header_hash_index: HashMap<BlockHash, u32>,
 }
 
 impl MemoryStorageManager {
@@ -33,16 +36,27 @@ impl MemoryStorageManager {
             masternode_state: None,
             chain_state: None,
             metadata: HashMap::new(),
+            header_hash_index: HashMap::new(),
         })
     }
 }
 
 #[async_trait]
 impl StorageManager for MemoryStorageManager {
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+    
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
         for header in headers {
-            // Simple append - in a real implementation, we'd want to validate continuity
+            let height = self.headers.len() as u32;
+            let block_hash = header.block_hash();
+            
+            // Store the header
             self.headers.push(*header);
+            
+            // Update the reverse index
+            self.header_hash_index.insert(block_hash, height);
         }
         Ok(())
     }
@@ -145,6 +159,7 @@ impl StorageManager for MemoryStorageManager {
         self.masternode_state = None;
         self.chain_state = None;
         self.metadata.clear();
+        self.header_hash_index.clear();
         Ok(())
     }
     
@@ -168,5 +183,25 @@ impl StorageManager for MemoryStorageManager {
             total_size: header_size as u64 + filter_header_size as u64 + filter_size as u64 + metadata_size as u64,
             component_sizes,
         })
+    }
+    
+    async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
+        Ok(self.header_hash_index.get(hash).copied())
+    }
+    
+    async fn get_headers_batch(&self, start_height: u32, end_height: u32) -> StorageResult<Vec<(u32, BlockHeader)>> {
+        if start_height > end_height {
+            return Ok(Vec::new());
+        }
+        
+        let mut results = Vec::with_capacity((end_height - start_height + 1) as usize);
+        
+        for height in start_height..=end_height {
+            if let Some(header) = self.headers.get(height as usize) {
+                results.push((height, *header));
+            }
+        }
+        
+        Ok(results)
     }
 }

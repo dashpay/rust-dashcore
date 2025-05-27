@@ -5,6 +5,7 @@ pub mod disk;
 pub mod types;
 
 use std::ops::Range;
+use std::any::Any;
 use async_trait::async_trait;
 
 use dashcore::{
@@ -22,6 +23,8 @@ pub use types::*;
 /// Storage manager trait for abstracting data persistence.
 #[async_trait]
 pub trait StorageManager: Send + Sync {
+    /// Convert to Any for downcasting
+    fn as_any_mut(&mut self) -> &mut dyn Any;
     /// Store block headers.
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()>;
     
@@ -75,4 +78,22 @@ pub trait StorageManager: Send + Sync {
     
     /// Get storage statistics.
     async fn stats(&self) -> StorageResult<StorageStats>;
+    
+    /// Get header height by block hash (reverse lookup).
+    async fn get_header_height_by_hash(&self, hash: &dashcore::BlockHash) -> StorageResult<Option<u32>>;
+    
+    /// Get multiple headers in a single batch operation.
+    /// Returns headers with their heights. More efficient than calling get_header multiple times.
+    async fn get_headers_batch(&self, start_height: u32, end_height: u32) -> StorageResult<Vec<(u32, BlockHeader)>>;
+}
+
+/// Helper trait to provide as_any_mut for all StorageManager implementations
+pub trait AsAnyMut {
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+impl<T: 'static> AsAnyMut for T {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
