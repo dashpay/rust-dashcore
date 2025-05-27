@@ -217,21 +217,11 @@ impl HeaderSyncManager {
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
-        // Check if we already have this header by scanning existing headers
-        // This is inefficient but we don't have a reverse index
-        if let Some(tip_height) = storage.get_tip_height().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))? {
-            
-            // Check recent headers to see if we already have this block
-            for height in 0..=tip_height {
-                if let Some(header) = storage.get_header(height).await
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get header: {}", e)))? {
-                    if header.block_hash() == block_hash {
-                        tracing::debug!("Header for block {} already exists at height {}", block_hash, height);
-                        return Ok(());
-                    }
-                }
-            }
+        // Check if we already have this header using the efficient reverse index
+        if let Some(height) = storage.get_header_height_by_hash(&block_hash).await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to check header existence: {}", e)))? {
+            tracing::debug!("Header for block {} already exists at height {}", block_hash, height);
+            return Ok(());
         }
         
         tracing::info!("📥 Requesting header for block {}", block_hash);

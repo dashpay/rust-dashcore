@@ -506,12 +506,12 @@ impl FilterSyncManager {
         start_height: u32,
         end_height: u32,
     ) -> SyncResult<Option<u32>> {
-        for height in start_height..=end_height {
-            if let Some(header) = storage.get_header(height).await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get header: {}", e)))? {
-                if header.block_hash() == *block_hash {
-                    return Ok(Some(height));
-                }
+        // Use the efficient reverse index first
+        if let Some(height) = storage.get_header_height_by_hash(block_hash).await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get header height by hash: {}", e)))? {
+            // Check if the height is within the requested range
+            if height >= start_height && height <= end_height {
+                return Ok(Some(height));
             }
         }
         Ok(None)
@@ -682,6 +682,53 @@ impl FilterSyncManager {
                 Err(SyncError::SyncFailed("BIP158 filter error".to_string()))
             }
         }
+    }
+    
+    /// Store filter headers from a CFHeaders message.
+    /// This method is used when filter headers are received outside of the normal sync process,
+    /// such as when monitoring the network for new blocks.
+    pub async fn store_filter_headers(
+        &mut self,
+        cfheaders: dashcore::network::message_filter::CFHeaders,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<()> {
+        if cfheaders.filter_hashes.is_empty() {
+            tracing::debug!("No filter headers to store");
+            return Ok(());
+        }
+        
+        // Get the block height for the stop hash
+        let stop_height = self.find_height_for_block_hash(&cfheaders.stop_hash, storage, 0, 10000).await?
+            .ok_or_else(|| SyncError::SyncFailed(format!(
+                "Cannot find height for stop hash {} - header not found", cfheaders.stop_hash
+            )))?;
+        
+        // Calculate the start height based on the number of filter hashes
+        let start_height = stop_height.saturating_sub(cfheaders.filter_hashes.len() as u32 - 1);
+        
+        tracing::info!("Storing {} filter headers from height {} to {}", 
+                      cfheaders.filter_hashes.len(), start_height, stop_height);
+        
+        // Process the filter headers to convert them to the proper format
+        let new_filter_headers = self.process_filter_headers(&cfheaders, start_height, storage).await?;
+        
+        if !new_filter_headers.is_empty() {
+            // If this is the first batch (starting at height 1), store the genesis filter header first
+            if start_height == 1 {
+                let genesis_header = vec![cfheaders.previous_filter_header];
+                storage.store_filter_headers(&genesis_header).await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to store genesis filter header: {}", e)))?;
+                tracing::debug!("Stored genesis filter header at height 0: {:?}", cfheaders.previous_filter_header);
+            }
+            
+            // Store the new filter headers
+            storage.store_filter_headers(&new_filter_headers).await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to store filter headers: {}", e)))?;
+            
+            tracing::info!("✅ Successfully stored {} filter headers", new_filter_headers.len());
+        }
+        
+        Ok(())
     }
     
     /// Reset sync state.
