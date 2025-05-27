@@ -214,16 +214,14 @@ impl MasternodeSyncManager {
         
         let _target_block_hash = diff.block_hash;
         
-        // Feed all block headers to the engine so it can look up block hashes
+        // Get tip height first as it's needed later
         let tip_height = storage.get_tip_height().await
             .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
             .unwrap_or(0);
-            
-        tracing::debug!("Feeding {} block headers to masternode engine", tip_height + 1);
         
-        // Check if we have the target block hash in storage
+        // Only feed the block headers that are actually needed by the masternode engine
         let target_block_hash = diff.block_hash;
-        let mut found_target = false;
+        let base_block_hash = diff.base_block_hash;
         
         // Special case: Zero hash indicates empty masternode list (common in regtest)
         let zero_hash = BlockHash::all_zeros();
@@ -231,25 +229,53 @@ impl MasternodeSyncManager {
         
         if is_zero_hash {
             tracing::debug!("Target block hash is zero - likely empty masternode list in regtest");
-            found_target = true;
-        }
-        
-        for height in 0..=tip_height {
-            if let Some(header) = storage.get_header(height).await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get header at height {}: {}", height, e)))? {
-                let block_hash = header.block_hash();
-                engine.feed_block_height(height, block_hash);
-                
-                if !is_zero_hash && block_hash == target_block_hash {
-                    found_target = true;
-                    tracing::debug!("Found target block hash {} at height {}", block_hash, height);
+        } else {
+            // Feed target block hash
+            if let Some(target_height) = storage.get_header_height_by_hash(&target_block_hash).await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to lookup target hash: {}", e)))? {
+                engine.feed_block_height(target_height, target_block_hash);
+                tracing::debug!("Fed target block hash {} at height {}", target_block_hash, target_height);
+            } else {
+                return Err(SyncError::SyncFailed(format!("Target block hash {} not found in storage", target_block_hash)));
+            }
+            
+            // Feed base block hash
+            if let Some(base_height) = storage.get_header_height_by_hash(&base_block_hash).await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to lookup base hash: {}", e)))? {
+                engine.feed_block_height(base_height, base_block_hash);
+                tracing::debug!("Fed base block hash {} at height {}", base_block_hash, base_height);
+            }
+            
+            // Feed any quorum hashes from new_quorums that are block hashes
+            for quorum in &diff.new_quorums {
+                // Note: quorum_hash is not necessarily a block hash, so we check if it exists
+                if let Some(quorum_height) = storage.get_header_height_by_hash(&quorum.quorum_hash).await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to lookup quorum hash: {}", e)))? {
+                    engine.feed_block_height(quorum_height, quorum.quorum_hash);
+                    tracing::debug!("Fed quorum hash {} at height {}", quorum.quorum_hash, quorum_height);
                 }
             }
-        }
-        
-        if !found_target {
-            tracing::error!("Target block hash {} not found in stored headers", target_block_hash);
-            return Err(SyncError::SyncFailed(format!("Target block hash {} not found in storage", target_block_hash)));
+            
+            // Feed a reasonable range of recent headers for validation purposes
+            // The engine may need recent headers for various validations
+            
+            // Feed last 1000 headers or from base height, whichever is more recent
+            let start_height = if let Some(base_height) = storage.get_header_height_by_hash(&base_block_hash).await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to lookup base hash: {}", e)))? {
+                base_height.saturating_sub(100) // Include some headers before base
+            } else {
+                tip_height.saturating_sub(1000)
+            };
+            
+            if start_height < tip_height {
+                tracing::debug!("Feeding headers from {} to {} to masternode engine", start_height, tip_height);
+                let headers = storage.get_headers_batch(start_height, tip_height).await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to batch load headers: {}", e)))?;
+                
+                for (height, header) in headers {
+                    engine.feed_block_height(height, header.block_hash());
+                }
+            }
         }
         
         // Special handling for regtest: skip empty diffs
