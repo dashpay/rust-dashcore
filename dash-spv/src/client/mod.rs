@@ -4,8 +4,11 @@ pub mod config;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use std::time::Instant;
 
 use std::collections::HashSet;
+
+use crate::terminal::TerminalUI;
 
 use crate::error::{Result, SpvError};
 use crate::types::{ChainState, SpvStats, SyncProgress, WatchItem};
@@ -27,6 +30,7 @@ pub struct DashSpvClient {
     validation: ValidationManager,
     running: Arc<RwLock<bool>>,
     watch_items: Arc<RwLock<HashSet<WatchItem>>>,
+    terminal_ui: Option<Arc<TerminalUI>>,
 }
 
 impl DashSpvClient {
@@ -73,6 +77,7 @@ impl DashSpvClient {
             validation,
             running: Arc::new(RwLock::new(false)),
             watch_items: Arc::new(RwLock::new(HashSet::new())),
+            terminal_ui: None,
         })
     }
     
@@ -96,7 +101,41 @@ impl DashSpvClient {
             *running = true;
         }
         
+        // Update terminal UI after connection with initial data
+        if let Some(ui) = &self.terminal_ui {
+            // Get initial header count from storage
+            let header_height = self.storage.get_tip_height().await
+                .map_err(|e| SpvError::Storage(e))?
+                .unwrap_or(0);
+            
+            let filter_height = self.storage.get_filter_tip_height().await
+                .map_err(|e| SpvError::Storage(e))?
+                .unwrap_or(0);
+            
+            let _ = ui.update_status(|status| {
+                status.peer_count = 1; // Connected to one peer
+                status.headers = header_height;
+                status.filter_headers = filter_height;
+            }).await;
+        }
+        
         Ok(())
+    }
+    
+    /// Enable terminal UI for status display.
+    pub fn enable_terminal_ui(&mut self) {
+        let ui = Arc::new(TerminalUI::new(true));
+        self.terminal_ui = Some(ui);
+    }
+    
+    /// Get the terminal UI handle.
+    pub fn get_terminal_ui(&self) -> Option<Arc<TerminalUI>> {
+        self.terminal_ui.clone()
+    }
+    
+    /// Get the network configuration.
+    pub fn network(&self) -> dashcore::Network {
+        self.config.network
     }
     
     /// Stop the SPV client.
@@ -108,6 +147,13 @@ impl DashSpvClient {
         
         // Disconnect from network
         self.network.disconnect().await?;
+        
+        // Shutdown storage to ensure all data is persisted
+        if let Some(disk_storage) = self.storage.as_any_mut().downcast_mut::<crate::storage::DiskStorageManager>() {
+            disk_storage.shutdown().await
+                .map_err(|e| SpvError::Storage(e))?;
+            tracing::info!("Storage shutdown completed - all data persisted");
+        }
         
         *running = false;
         
@@ -123,8 +169,13 @@ impl DashSpvClient {
         drop(running);
         
         // Run synchronization
-        self.sync_manager.sync_all(&mut *self.network, &mut *self.storage).await
-            .map_err(|e| SpvError::Sync(e))
+        let result = self.sync_manager.sync_all(&mut *self.network, &mut *self.storage).await
+            .map_err(|e| SpvError::Sync(e))?;
+        
+        // Update status display after initial sync
+        self.update_status_display().await;
+        
+        Ok(result)
     }
     
     /// Run continuous monitoring for new blocks, ChainLocks, InstantLocks, etc.
@@ -136,6 +187,13 @@ impl DashSpvClient {
         drop(running);
         
         tracing::info!("Starting continuous network monitoring...");
+        
+        // Print initial status
+        self.update_status_display().await;
+        
+        // Timer for periodic status updates
+        let mut last_status_update = Instant::now();
+        let status_update_interval = std::time::Duration::from_secs(5);
         
         loop {
             // Check if we should stop
@@ -160,6 +218,12 @@ impl DashSpvClient {
             
             // Clean up old pending pings
             self.network.cleanup_old_pings();
+            
+            // Check if it's time to update the status display
+            if last_status_update.elapsed() >= status_update_interval {
+                self.update_status_display().await;
+                last_status_update = Instant::now();
+            }
             
             // Listen for network messages
             match self.network.receive_message().await {
@@ -192,10 +256,9 @@ impl DashSpvClient {
         match message {
             NetworkMessage::Headers(headers) => {
                 tracing::info!("Received {} new headers", headers.len());
-                // Update our chain tip with new headers
-                // TODO: Implement process_new_headers in sync manager
-                self.sync_manager.sync_all(&mut *self.network, &mut *self.storage).await
-                    .map_err(|e| SpvError::Sync(e))?;
+                
+                // Process the new headers
+                self.process_new_headers(headers).await?;
             }
             NetworkMessage::Block(block) => {
                 tracing::info!("Received new block: {}", block.header.block_hash());
@@ -335,31 +398,76 @@ impl DashSpvClient {
         Ok(())
     }
 
+    /// Process new headers received from the network.
+    async fn process_new_headers(&mut self, headers: Vec<dashcore::block::Header>) -> Result<()> {
+        if headers.is_empty() {
+            return Ok(());
+        }
+        
+        // Get the height before storing new headers
+        let initial_height = self.storage.get_tip_height().await
+            .map_err(|e| SpvError::Storage(e))?
+            .unwrap_or(0);
+        
+        // Store the headers using the sync manager
+        // This will validate and store them properly
+        self.sync_manager.sync_all(&mut *self.network, &mut *self.storage).await
+            .map_err(|e| SpvError::Sync(e))?;
+        
+        // Check if filters are enabled and request filter headers for new blocks
+        if self.config.enable_filters {
+            // Get the new tip height after storing headers
+            let new_height = self.storage.get_tip_height().await
+                .map_err(|e| SpvError::Storage(e))?
+                .unwrap_or(0);
+            
+            // If we stored new headers, request filter headers for them
+            if new_height > initial_height {
+                tracing::info!("New headers stored from height {} to {}, requesting filter headers", 
+                              initial_height + 1, new_height);
+                
+                // Request filter headers for each new header
+                for height in (initial_height + 1)..=new_height {
+                    if let Some(header) = self.storage.get_header(height).await
+                        .map_err(|e| SpvError::Storage(e))? {
+                        
+                        let block_hash = header.block_hash();
+                        tracing::debug!("Requesting filter header for block {} at height {}", block_hash, height);
+                        
+                        // Request filter header for this block
+                        self.sync_manager.filter_sync_mut().download_filter_header_for_block(
+                            block_hash, &mut *self.network, &mut *self.storage
+                        ).await.map_err(|e| SpvError::Sync(e))?;
+                        
+                        // Also check if we have watch items and request the filter
+                        let watch_items = self.watch_items.read().await;
+                        if !watch_items.is_empty() {
+                            drop(watch_items); // Release the lock before async call
+                            
+                            let watch_items_vec: Vec<_> = self.get_watch_items().await;
+                            self.sync_manager.filter_sync_mut().download_and_check_filter(
+                                block_hash, &watch_items_vec, &mut *self.network, &mut *self.storage
+                            ).await.map_err(|e| SpvError::Sync(e))?;
+                        }
+                    }
+                }
+                
+                // Update status display after processing new headers
+                self.update_status_display().await;
+            }
+        }
+        
+        Ok(())
+    }
+    
     /// Process a new block hash detected from inventory.
     async fn process_new_block_hash(&mut self, block_hash: dashcore::BlockHash) -> Result<()> {
         tracing::info!("🔗 Processing new block hash: {}", block_hash);
         
-        // Step 1: Download and validate the block header -> HeaderSyncManager
+        // Just request the header - filter operations will be triggered when we receive it
         self.sync_manager.header_sync_mut().download_single_header(
             block_hash, &mut *self.network, &mut *self.storage
         ).await.map_err(|e| SpvError::Sync(e))?;
-        
-        // Step 2: Filter operations if enabled
-        if self.config.enable_filters {
-            // Download filter header -> FilterSyncManager  
-            self.sync_manager.filter_sync_mut().download_filter_header_for_block(
-                block_hash, &mut *self.network, &mut *self.storage
-            ).await.map_err(|e| SpvError::Sync(e))?;
-            
-            // Download and check filter -> FilterSyncManager
-            let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
-            let _filter_requested = self.sync_manager.filter_sync_mut().download_and_check_filter(
-                block_hash, &watch_items, &mut *self.network, &mut *self.storage
-            ).await.map_err(|e| SpvError::Sync(e))?;
-            
-            // Note: Filter match results will be processed when we receive the CFilter message
-            // in the handle_network_message method
-        }
         
         Ok(())
     }
@@ -368,14 +476,12 @@ impl DashSpvClient {
     async fn process_filter_headers(&mut self, cfheaders: dashcore::network::message_filter::CFHeaders) -> Result<()> {
         tracing::debug!("Processing filter headers for block {}", cfheaders.stop_hash);
         
-        // For now, just log that we received them
-        // The actual storage logic should be in FilterSyncManager or storage layer
         tracing::info!("✅ Received filter headers for block {} (type: {}, count: {})", 
                       cfheaders.stop_hash, cfheaders.filter_type, cfheaders.filter_hashes.len());
         
-        // TODO: Store filter headers in storage via FilterSyncManager
-        // This would be called like:
-        // self.sync_manager.filter_sync_mut().store_filter_headers(cfheaders, &mut *self.storage).await?;
+        // Store filter headers in storage via FilterSyncManager
+        self.sync_manager.filter_sync_mut().store_filter_headers(cfheaders, &mut *self.storage).await
+            .map_err(|e| SpvError::Sync(e))?;
         
         Ok(())
     }
@@ -430,17 +536,8 @@ impl DashSpvClient {
     
     /// Helper method to find height for a block hash.
     async fn find_height_for_block_hash(&self, block_hash: dashcore::BlockHash) -> Option<u32> {
-        if let Some(tip_height) = self.storage.get_tip_height().await.ok().flatten() {
-            // Search recent blocks first (most likely)
-            for height in (0..=tip_height).rev() {
-                if let Some(header) = self.storage.get_header(height).await.ok().flatten() {
-                    if header.block_hash() == block_hash {
-                        return Some(height);
-                    }
-                }
-            }
-        }
-        None
+        // Use the efficient reverse index
+        self.storage.get_header_height_by_hash(&block_hash).await.ok().flatten()
     }
     
     /// Process a new block.
@@ -492,7 +589,32 @@ impl DashSpvClient {
                     tracing::info!("🔒 Updated confirmed chain tip to ChainLock at height {} ({})", 
                                   chainlock.block_height, chainlock.block_hash);
                     
-                    // TODO: Store ChainLock for future reference in storage
+                    // Store ChainLock for future reference in storage
+                    drop(state); // Release the lock before storage operation
+                    
+                    // Create a metadata key for this ChainLock
+                    let chainlock_key = format!("chainlock_{}", chainlock.block_height);
+                    
+                    // Serialize the ChainLock
+                    let chainlock_bytes = serde_json::to_vec(&chainlock)
+                        .map_err(|e| SpvError::Storage(crate::error::StorageError::Serialization(
+                            format!("Failed to serialize ChainLock: {}", e)
+                        )))?;
+                    
+                    // Store the ChainLock
+                    self.storage.store_metadata(&chainlock_key, &chainlock_bytes).await
+                        .map_err(|e| SpvError::Storage(e))?;
+                    
+                    tracing::debug!("Stored ChainLock for height {} in persistent storage", chainlock.block_height);
+                    
+                    // Also store the latest ChainLock height for quick lookup
+                    let latest_key = "latest_chainlock_height";
+                    let height_bytes = chainlock.block_height.to_le_bytes();
+                    self.storage.store_metadata(latest_key, &height_bytes).await
+                        .map_err(|e| SpvError::Storage(e))?;
+                    
+                    // Update status display after chainlock update
+                    self.update_status_display().await;
                 },
                 Err(e) => {
                     tracing::error!("❌ ChainLock signature verification failed for block {} at height {}: {:?}", 
@@ -669,5 +791,83 @@ impl DashSpvClient {
     /// Check if the client is running.
     pub async fn is_running(&self) -> bool {
         *self.running.read().await
+    }
+    
+    /// Update the status display.
+    async fn update_status_display(&self) {
+        if let Some(ui) = &self.terminal_ui {
+            // Get header height
+            let header_height = match self.storage.get_tip_height().await {
+                Ok(Some(height)) => height,
+                _ => 0,
+            };
+            
+            // Get filter header height
+            let filter_height = match self.storage.get_filter_tip_height().await {
+                Ok(Some(height)) => height,
+                _ => 0,
+            };
+            
+            // Get latest chainlock height from state
+            let chainlock_height = {
+                let state = self.state.read().await;
+                state.last_chainlock_height
+            };
+            
+            // Get latest chainlock height from storage metadata (in case state wasn't updated)
+            let stored_chainlock_height = if let Ok(Some(data)) = self.storage.load_metadata("latest_chainlock_height").await {
+                if data.len() >= 4 {
+                    Some(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            
+            // Use the higher of the two chainlock heights
+            let latest_chainlock = match (chainlock_height, stored_chainlock_height) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(b),
+                (None, None) => None,
+            };
+            
+            // Update terminal UI
+            let _ = ui.update_status(|status| {
+                status.headers = header_height;
+                status.filter_headers = filter_height;
+                status.chainlock_height = latest_chainlock;
+                status.peer_count = 1; // TODO: Get actual peer count
+                status.network = format!("{:?}", self.config.network);
+            }).await;
+        } else {
+            // Fall back to simple logging if terminal UI is not enabled
+            let header_height = match self.storage.get_tip_height().await {
+                Ok(Some(height)) => height,
+                _ => 0,
+            };
+            
+            let filter_height = match self.storage.get_filter_tip_height().await {
+                Ok(Some(height)) => height,
+                _ => 0,
+            };
+            
+            let chainlock_height = {
+                let state = self.state.read().await;
+                state.last_chainlock_height.unwrap_or(0)
+            };
+            
+            tracing::info!(
+                "📊 [SYNC STATUS] Headers: {} | Filter Headers: {} | Latest ChainLock: {}",
+                header_height,
+                filter_height,
+                if chainlock_height > 0 {
+                    format!("#{}", chainlock_height)
+                } else {
+                    "None".to_string()
+                }
+            );
+        }
     }
 }
