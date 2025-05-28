@@ -613,6 +613,11 @@ impl DashSpvClient {
                     self.storage.store_metadata(latest_key, &height_bytes).await
                         .map_err(|e| SpvError::Storage(e))?;
                     
+                    // Save the updated chain state to persist ChainLock fields
+                    let updated_state = self.state.read().await;
+                    self.storage.store_chain_state(&*updated_state).await
+                        .map_err(|e| SpvError::Storage(e))?;
+                    
                     // Update status display after chainlock update
                     self.update_status_display().await;
                 },

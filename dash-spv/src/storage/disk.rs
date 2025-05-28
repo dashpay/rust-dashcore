@@ -771,7 +771,8 @@ impl StorageManager for DiskStorageManager {
         
         // Store other state as JSON
         let state_data = serde_json::json!({
-            "chainlock_tip": state.chainlock_tip,
+            "last_chainlock_height": state.last_chainlock_height,
+            "last_chainlock_hash": state.last_chainlock_hash,
             "current_filter_tip": state.current_filter_tip,
             "last_masternode_diff_height": state.last_masternode_diff_height,
         });
@@ -804,7 +805,8 @@ impl StorageManager for DiskStorageManager {
             state.filter_headers = self.load_filter_headers(0..filter_tip_height + 1).await?;
         }
         
-        state.chainlock_tip = value.get("chainlock_tip").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
+        state.last_chainlock_height = value.get("last_chainlock_height").and_then(|v| v.as_u64()).map(|h| h as u32);
+        state.last_chainlock_hash = value.get("last_chainlock_hash").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
         state.current_filter_tip = value.get("current_filter_tip").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
         state.last_masternode_diff_height = value.get("last_masternode_diff_height").and_then(|v| v.as_u64()).map(|h| h as u32);
         

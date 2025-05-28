@@ -71,9 +71,6 @@ pub struct ChainState {
     /// Filter headers indexed by height.
     pub filter_headers: Vec<FilterHeader>,
     
-    /// Current ChainLock tip.
-    pub chainlock_tip: Option<BlockHash>,
-    
     /// Last ChainLock height.
     pub last_chainlock_height: Option<u32>,
     
@@ -95,7 +92,6 @@ impl Default for ChainState {
         Self {
             headers: Vec::new(),
             filter_headers: Vec::new(),
-            chainlock_tip: None,
             last_chainlock_height: None,
             last_chainlock_hash: None,
             current_filter_tip: None,
@@ -159,7 +155,8 @@ impl std::fmt::Debug for ChainState {
         f.debug_struct("ChainState")
             .field("headers", &format!("{} headers", self.headers.len()))
             .field("filter_headers", &format!("{} filter headers", self.filter_headers.len()))
-            .field("chainlock_tip", &self.chainlock_tip)
+            .field("last_chainlock_height", &self.last_chainlock_height)
+            .field("last_chainlock_hash", &self.last_chainlock_hash)
             .field("current_filter_tip", &self.current_filter_tip)
             .field("last_masternode_diff_height", &self.last_masternode_diff_height)
             .finish()
