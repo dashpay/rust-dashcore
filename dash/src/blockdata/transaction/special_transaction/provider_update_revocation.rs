@@ -62,6 +62,7 @@ pub struct ProviderUpdateRevocationPayload {
     pub payload_sig: BLSSignature,
 }
 
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 impl ProviderUpdateRevocationPayload {
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {

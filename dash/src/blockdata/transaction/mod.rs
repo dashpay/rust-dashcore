@@ -179,29 +179,8 @@ pub struct Transaction {
     pub special_transaction_payload: Option<TransactionPayload>,
 }
 
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 impl Transaction {
-    /// Computes a "normalized TXID" which does not include any signatures.
-    /// This gives a way to identify a transaction that is "the same" as
-    /// another in the sense of having same inputs and outputs.
-    pub fn ntxid(&self) -> sha256d::Hash {
-        let cloned_tx = Transaction {
-            version: self.version,
-            lock_time: self.lock_time,
-            input: self
-                .input
-                .iter()
-                .map(|txin| TxIn {
-                    script_sig: ScriptBuf::new(),
-                    witness: Witness::default(),
-                    ..*txin
-                })
-                .collect(),
-            output: self.output.clone(),
-            special_transaction_payload: self.special_transaction_payload.clone(),
-        };
-        cloned_tx.txid().into()
-    }
-
     /// Computes the txid. For non-segwit transactions this will be identical
     /// to the output of `wtxid()`, but for segwit transactions,
     /// this will give the correct txid (not including witnesses) while `wtxid`
@@ -227,6 +206,36 @@ impl Transaction {
     /// Otherwise it is gotten by association from the payload type.
     pub fn tx_type(&self) -> TransactionType {
         TransactionType::from_optional_payload(&self.special_transaction_payload)
+    }
+
+    /// Is this a coin base transaction?
+    pub fn is_coin_base(&self) -> bool {
+        self.input.len() == 1 && self.input[0].previous_output.is_null()
+    }
+
+}
+
+impl Transaction {
+    /// Computes a "normalized TXID" which does not include any signatures.
+    /// This gives a way to identify a transaction that is "the same" as
+    /// another in the sense of having same inputs and outputs.
+    pub fn ntxid(&self) -> sha256d::Hash {
+        let cloned_tx = Transaction {
+            version: self.version,
+            lock_time: self.lock_time,
+            input: self
+                .input
+                .iter()
+                .map(|txin| TxIn {
+                    script_sig: ScriptBuf::new(),
+                    witness: Witness::default(),
+                    ..*txin
+                })
+                .collect(),
+            output: self.output.clone(),
+            special_transaction_payload: self.special_transaction_payload.clone(),
+        };
+        cloned_tx.txid().into()
     }
 
     /// Computes SegWit-version of the transaction id (wtxid). For transaction with the witness
@@ -555,11 +564,6 @@ impl Transaction {
             }
         }
         Ok(())
-    }
-
-    /// Is this a coin base transaction?
-    pub fn is_coin_base(&self) -> bool {
-        self.input.len() == 1 && self.input[0].previous_output.is_null()
     }
 
     /// Returns `true` if the transaction itself opted in to be BIP-125-replaceable (RBF). This

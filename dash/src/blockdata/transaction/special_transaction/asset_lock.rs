@@ -47,6 +47,7 @@ pub struct AssetLockPayload {
     pub credit_outputs: Vec<TxOut>,
 }
 
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 impl AssetLockPayload {
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {

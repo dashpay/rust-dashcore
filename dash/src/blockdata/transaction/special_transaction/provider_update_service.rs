@@ -63,6 +63,7 @@ pub struct ProviderUpdateServicePayload {
     pub payload_sig: BLSSignature,
 }
 
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 impl ProviderUpdateServicePayload {
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {

@@ -46,6 +46,7 @@ pub struct CoinbasePayload {
     pub asset_locked_amount: Option<u64>,
 }
 
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 impl CoinbasePayload {
     /// The size of the payload in bytes.
     /// version(2) + height(4) + merkle_root_masternode_list(32) + merkle_root_quorums(32)

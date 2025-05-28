@@ -59,6 +59,7 @@ pub struct ProviderUpdateRegistrarPayload {
     pub payload_sig: Vec<u8>, // TODO: Need to figure out, is this signature BLS Signature (length 96)
 }
 
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 impl ProviderUpdateRegistrarPayload {
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {

@@ -99,6 +99,7 @@ impl Encodable for TransactionPayload {
     }
 }
 
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 impl TransactionPayload {
     /// Gets the Transaction Type for a Special Transaction Payload
     pub fn get_type(&self) -> TransactionType {
@@ -128,6 +129,9 @@ impl TransactionPayload {
             AssetUnlockPayloadType(p) => p.size(),
         }
     }
+
+}
+impl TransactionPayload {
 
     /// Convenience method that assumes the payload to be a provider registration payload to get it
     /// easier.
@@ -255,6 +259,7 @@ impl TransactionPayload {
 ///
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 pub enum TransactionType {
     /// A Classic transaction
     Classic = 0,

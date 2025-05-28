@@ -52,7 +52,7 @@ pub struct QuorumEntry {
     pub threshold_sig: BLSSignature,
     pub all_commitment_aggregated_signature: BLSSignature,
 }
-
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 impl QuorumEntry {
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
@@ -66,6 +66,9 @@ impl QuorumEntry {
         }
         size
     }
+
+}
+impl QuorumEntry {
 
     pub fn validate_structure(&self) -> Result<(), QuorumValidationError> {
         let quorum_threshold = self.llmq_type.threshold() as u64;
@@ -191,6 +194,7 @@ pub struct QuorumCommitmentPayload {
     pub finalization_commitment: QuorumEntry,
 }
 
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 impl QuorumCommitmentPayload {
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {

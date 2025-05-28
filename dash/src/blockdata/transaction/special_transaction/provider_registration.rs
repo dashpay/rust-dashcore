@@ -118,7 +118,23 @@ pub struct ProviderRegistrationPayload {
     pub platform_p2p_port: Option<u16>,
     pub platform_http_port: Option<u16>,
 }
-
+#[cfg_attr(feature = "apple", ferment_macro::export)]
+impl ProviderRegistrationPayload {
+    /// The size of the payload in bytes.
+    /// version(2) + provider_type(2) + provider_mode(2) + collateral_outpoint(32 + 4) + ip_address(16) +
+    /// port(2) + owner_key_hash(20) + operator_public_key(48) + voting_key_hash(20) + operator_reward(2) +
+    /// script_payout(VarInt(script_payout_len).len() + script_payout_len) +
+    /// inputs_hash(32) +
+    /// payload_sig(VarInt(payload_sig_len).len() + payload_sig_len)
+    pub fn size(&self) -> usize {
+        let mut size = 2 + 2 + 2 + 32 + 4 + 16 + 2 + 20 + 48 + 20 + 2 + 32; // 182 bytes
+        let script_payout_len = self.script_payout.0.len();
+        let signature_len = self.signature.len();
+        size += VarInt(script_payout_len as u64).len() + script_payout_len;
+        size += VarInt(signature_len as u64).len() + signature_len;
+        size
+    }
+}
 impl ProviderRegistrationPayload {
     /// A convenience method to get the address from payout script
     pub fn payout_address(&self, network: Network) -> Result<Address, encode::Error> {
@@ -152,21 +168,6 @@ impl ProviderRegistrationPayload {
             self.voting_address(network),
             base_payload_hash.as_byte_array().to_hex_string(Lower)
         ))
-    }
-
-    /// The size of the payload in bytes.
-    /// version(2) + provider_type(2) + provider_mode(2) + collateral_outpoint(32 + 4) + ip_address(16) +
-    /// port(2) + owner_key_hash(20) + operator_public_key(48) + voting_key_hash(20) + operator_reward(2) +
-    /// script_payout(VarInt(script_payout_len).len() + script_payout_len) +
-    /// inputs_hash(32) +
-    /// payload_sig(VarInt(payload_sig_len).len() + payload_sig_len)
-    pub fn size(&self) -> usize {
-        let mut size = 2 + 2 + 2 + 32 + 4 + 16 + 2 + 20 + 48 + 20 + 2 + 32; // 182 bytes
-        let script_payout_len = self.script_payout.0.len();
-        let signature_len = self.signature.len();
-        size += VarInt(script_payout_len as u64).len() + script_payout_len;
-        size += VarInt(signature_len as u64).len() + signature_len;
-        size
     }
 }
 
