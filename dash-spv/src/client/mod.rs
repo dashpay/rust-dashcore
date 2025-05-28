@@ -208,7 +208,7 @@ impl DashSpvClient {
             if self.network.should_ping() {
                 match self.network.send_ping().await {
                     Ok(nonce) => {
-                        tracing::debug!("Sent periodic ping with nonce {}", nonce);
+                        tracing::trace!("Sent periodic ping with nonce {}", nonce);
                     }
                     Err(e) => {
                         tracing::error!("Failed to send periodic ping: {}", e);
