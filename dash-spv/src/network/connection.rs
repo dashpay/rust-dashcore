@@ -10,6 +10,7 @@ use dashcore::network::message::{NetworkMessage, RawNetworkMessage};
 use dashcore::Network;
 
 use crate::error::{NetworkError, NetworkResult};
+use crate::network::constants::PING_INTERVAL;
 use crate::types::PeerInfo;
 
 /// TCP connection to a Dash peer
@@ -44,17 +45,56 @@ impl TcpConnection {
         }
     }
     
-    /// Connect to the peer.
-    pub async fn connect(&mut self) -> NetworkResult<()> {
+    /// Connect to a peer and return a connected instance.
+    pub async fn connect(address: SocketAddr, timeout_secs: u64) -> NetworkResult<Self> {
+        let timeout = Duration::from_secs(timeout_secs);
+        let network = Network::Dash; // Will be properly set during handshake
+        
+        let stream = TcpStream::connect_timeout(&address, timeout)
+            .map_err(|e| NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", address, e)))?;
+        
+        stream.set_nodelay(true)
+            .map_err(|e| NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e)))?;
+        stream.set_nonblocking(true)
+            .map_err(|e| NetworkError::ConnectionFailed(format!("Failed to set non-blocking: {}", e)))?;
+        
+        let write_stream = stream.try_clone()
+            .map_err(|e| NetworkError::ConnectionFailed(format!("Failed to clone stream: {}", e)))?;
+        write_stream.set_nonblocking(true)
+            .map_err(|e| NetworkError::ConnectionFailed(format!("Failed to set write stream non-blocking: {}", e)))?;
+        let read_stream = BufReader::new(stream);
+        
+        Ok(Self {
+            address,
+            write_stream: Some(write_stream),
+            read_stream: Some(read_stream),
+            timeout,
+            connected_at: Some(SystemTime::now()),
+            bytes_sent: 0,
+            network,
+            last_ping_sent: None,
+            last_pong_received: None,
+            pending_pings: HashMap::new(),
+        })
+    }
+    
+    /// Connect to the peer (instance method for compatibility).
+    pub async fn connect_instance(&mut self) -> NetworkResult<()> {
         let stream = TcpStream::connect_timeout(&self.address, self.timeout)
             .map_err(|e| NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", self.address, e)))?;
         
-        stream.set_read_timeout(Some(self.timeout))?;
-        stream.set_write_timeout(Some(self.timeout))?;
+        // Don't set socket timeouts - we handle timeouts at the application level
+        // and socket timeouts can interfere with async operations
+        
+        // Set non-blocking mode to prevent blocking reads/writes
+        stream.set_nonblocking(true)
+            .map_err(|e| NetworkError::ConnectionFailed(format!("Failed to set non-blocking: {}", e)))?;
         
         // Clone stream for reading
         let read_stream = stream.try_clone()
             .map_err(|e| NetworkError::ConnectionFailed(format!("Failed to clone stream: {}", e)))?;
+        read_stream.set_nonblocking(true)
+            .map_err(|e| NetworkError::ConnectionFailed(format!("Failed to set read stream non-blocking: {}", e)))?;
         
         self.write_stream = Some(stream);
         self.read_stream = Some(BufReader::new(read_stream));
@@ -89,13 +129,35 @@ impl TcpConnection {
         };
         
         let serialized = encode::serialize(&raw_message);
-        stream.write_all(&serialized)?;
         
-        self.bytes_sent += serialized.len() as u64;
-        
-        tracing::debug!("Sent message to {}: {:?}", self.address, raw_message.payload);
-        
-        Ok(())
+        // Write with error handling for non-blocking socket
+        match stream.write_all(&serialized) {
+            Ok(_) => {
+                // Flush to ensure data is sent immediately
+                if let Err(e) = stream.flush() {
+                    if e.kind() != std::io::ErrorKind::WouldBlock {
+                        tracing::warn!("Failed to flush socket {}: {}", self.address, e);
+                    }
+                }
+                self.bytes_sent += serialized.len() as u64;
+                tracing::debug!("Sent message to {}: {:?}", self.address, raw_message.payload);
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // For non-blocking writes that would block, we could retry later
+                // For now, treat as a temporary failure
+                tracing::debug!("Write would block to {}, socket buffer may be full", self.address);
+                Err(NetworkError::Timeout)
+            }
+            Err(e) => {
+                tracing::error!("Failed to write to socket {}: {}", self.address, e);
+                // Clear connection state on write error
+                self.write_stream = None;
+                self.read_stream = None;
+                self.connected_at = None;
+                Err(NetworkError::ConnectionFailed(format!("Write failed: {}", e)))
+            }
+        }
     }
     
     /// Receive a message from the peer.
@@ -123,7 +185,14 @@ impl TcpConnection {
                 Ok(None)
             }
             Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                tracing::info!("Peer {} disconnected", self.address);
+                // EOF can be temporary - don't immediately close connection
+                // Just return None to indicate no message available
+                tracing::debug!("EOF from peer {} - no data available", self.address);
+                Ok(None)
+            }
+            Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::ConnectionAborted
+                || e.kind() == std::io::ErrorKind::ConnectionReset => {
+                tracing::info!("Peer {} connection reset/aborted", self.address);
                 self.write_stream = None;
                 self.read_stream = None;
                 self.connected_at = None;
@@ -139,6 +208,37 @@ impl TcpConnection {
     /// Check if the connection is active.
     pub fn is_connected(&self) -> bool {
         self.write_stream.is_some() && self.read_stream.is_some()
+    }
+    
+    /// Check if connection appears healthy (not just connected).
+    pub fn is_healthy(&self) -> bool {
+        if !self.is_connected() {
+            return false;
+        }
+        
+        let now = SystemTime::now();
+        
+        // If we have exchanged pings/pongs, check the last activity
+        if let Some(last_pong) = self.last_pong_received {
+            if let Ok(duration) = now.duration_since(last_pong) {
+                // If no pong in 10 minutes, consider unhealthy
+                if duration > Duration::from_secs(600) {
+                    return false;
+                }
+            }
+        } else if let Some(connected_at) = self.connected_at {
+            // If we haven't received any pongs yet, check how long we've been connected
+            if let Ok(duration) = now.duration_since(connected_at) {
+                // Give new connections 5 minutes before considering them unhealthy
+                if duration > Duration::from_secs(300) {
+                    tracing::debug!("Connection to {} has no pong activity after 5 minutes", self.address);
+                    return false;
+                }
+            }
+        }
+        
+        // Connection is healthy
+        true
     }
     
     /// Get peer information.
@@ -208,8 +308,6 @@ impl TcpConnection {
     
     /// Check if we need to send a ping (no ping/pong activity for 2 minutes).
     pub fn should_ping(&self) -> bool {
-        const PING_INTERVAL: Duration = Duration::from_secs(120); // 2 minutes
-        
         let now = SystemTime::now();
         
         // Check if we've sent a ping recently

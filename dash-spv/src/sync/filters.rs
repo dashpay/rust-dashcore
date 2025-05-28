@@ -259,12 +259,12 @@ impl FilterSyncManager {
             data.extend_from_slice(prev_header.as_byte_array());
             
             let filter_header = FilterHeader::from_byte_array(sha256d::Hash::hash(&data).to_byte_array());
-            
+
             if i < 3 || i >= cf_headers.filter_hashes.len() - 3 {
-                tracing::debug!("Filter header {}: filter_hash={:?}, prev_header={:?}, result={:?}", 
+                tracing::debug!("Filter header {}: filter_hash={:?}, prev_header={:?}, result={:?}",
                                start_height + i as u32, filter_hash, prev_header, filter_header);
             }
-            
+
             new_filter_headers.push(filter_header);
             prev_header = filter_header;
         }

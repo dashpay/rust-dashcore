@@ -83,7 +83,11 @@ impl HandshakeManager {
                 tracing::debug!("Received version message: {:?}", version_msg);
                 self.peer_version = Some(version_msg.version);
                 
-                // Send verack
+                // Send SendAddrV2 first to signal support (must be before verack!)
+                tracing::debug!("Sending sendaddrv2 to signal AddrV2 support");
+                connection.send_message(NetworkMessage::SendAddrV2).await?;
+                
+                // Then send verack
                 tracing::debug!("Sending verack in response to version");
                 connection.send_message(NetworkMessage::Verack).await?;
                 tracing::debug!("Sent verack, handshake state: {:?}", self.state);

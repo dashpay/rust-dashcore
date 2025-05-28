@@ -282,6 +282,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("No watch items configured. Use --watch-address or --add-example-addresses to watch for transactions.");
     }
 
+    // Wait for at least one peer to connect before attempting sync
+    tracing::info!("Waiting for peers to connect...");
+    let mut wait_time = 0;
+    const MAX_WAIT_TIME: u64 = 60; // Wait up to 60 seconds for peers
+    
+    loop {
+        let peer_count = client.get_peer_count().await;
+        if peer_count > 0 {
+            tracing::info!("Connected to {} peer(s), starting synchronization", peer_count);
+            break;
+        }
+        
+        if wait_time >= MAX_WAIT_TIME {
+            tracing::error!("No peers connected after {} seconds", MAX_WAIT_TIME);
+            panic!("SPV client failed to connect to any peers");
+        }
+        
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        wait_time += 1;
+        
+        if wait_time % 5 == 0 {
+            tracing::info!("Still waiting for peers... ({}s elapsed)", wait_time);
+        }
+    }
+    
     // Start synchronization
     tracing::info!("Starting synchronization to tip...");
     match client.sync_to_tip().await {

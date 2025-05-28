@@ -1,9 +1,18 @@
 //! Network layer for the Dash SPV client.
 
+pub mod addrv2;
 pub mod connection;
+pub mod constants;
+pub mod discovery;
 pub mod handshake;
 pub mod message_handler;
+pub mod multi_peer;
 pub mod peer;
+pub mod persist;
+pub mod pool;
+
+#[cfg(test)]
+mod tests;
 
 use async_trait::async_trait;
 
@@ -18,6 +27,9 @@ pub use peer::PeerManager;
 /// Network manager trait for abstracting network operations.
 #[async_trait]
 pub trait NetworkManager: Send + Sync {
+    /// Convert to Any for downcasting.
+    fn as_any(&self) -> &dyn std::any::Any;
+    
     /// Connect to the network.
     async fn connect(&mut self) -> NetworkResult<()>;
     
@@ -77,6 +89,10 @@ impl TcpNetworkManager {
 
 #[async_trait]
 impl NetworkManager for TcpNetworkManager {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
     async fn connect(&mut self) -> NetworkResult<()> {
         if self.config.peers.is_empty() {
             return Err(NetworkError::ConnectionFailed("No peers configured".to_string()));
@@ -86,7 +102,7 @@ impl NetworkManager for TcpNetworkManager {
         let peer_addr = self.config.peers[0];
         
         let mut connection = TcpConnection::new(peer_addr, self.config.connection_timeout, self.config.network);
-        connection.connect().await?;
+        connection.connect_instance().await?;
         
         // Perform handshake
         self.handshake.perform_handshake(&mut connection).await?;

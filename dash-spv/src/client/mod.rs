@@ -43,9 +43,8 @@ impl DashSpvClient {
         let state = Arc::new(RwLock::new(ChainState::new_for_network(config.network)));
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         
-        // Create network manager
-        let network = crate::network::TcpNetworkManager::new(&config).await
-            .map_err(|e| SpvError::Network(e))?;
+        // Create network manager (use multi-peer by default)
+        let network = crate::network::multi_peer::MultiPeerNetworkManager::new(&config).await?;
         
         // Create storage manager
         let storage: Box<dyn StorageManager> = if config.enable_persistence {
@@ -549,6 +548,26 @@ impl DashSpvClient {
         Ok(())
     }
     
+    /// Get the number of connected peers.
+    pub fn peer_count(&self) -> usize {
+        self.network.peer_count()
+    }
+    
+    /// Get information about connected peers.
+    pub fn peer_info(&self) -> Vec<crate::types::PeerInfo> {
+        self.network.peer_info()
+    }
+    
+    /// Disconnect a specific peer.
+    pub async fn disconnect_peer(&self, addr: &std::net::SocketAddr, reason: &str) -> Result<()> {
+        // Cast network manager to MultiPeerNetworkManager to access disconnect_peer
+        let network = self.network.as_any()
+            .downcast_ref::<crate::network::multi_peer::MultiPeerNetworkManager>()
+            .ok_or_else(|| SpvError::Config("Network manager does not support peer disconnection".to_string()))?;
+        
+        network.disconnect_peer(addr, reason).await
+    }
+    
     
     /// Process a transaction.
     async fn process_transaction(&mut self, _tx: dashcore::Transaction) -> Result<()> {
@@ -719,6 +738,11 @@ impl DashSpvClient {
     pub async fn get_watch_items(&self) -> Vec<WatchItem> {
         let watch_items = self.watch_items.read().await;
         watch_items.iter().cloned().collect()
+    }
+    
+    /// Get the number of connected peers.
+    pub async fn get_peer_count(&self) -> usize {
+        self.network.peer_count()
     }
     
     /// Sync compact filters for recent blocks and check for matches.
