@@ -246,19 +246,7 @@ impl MasternodeSyncManager {
                 tracing::debug!("Fed base block hash {} at height {}", base_block_hash, base_height);
             }
             
-            // Feed any quorum hashes from new_quorums that are block hashes
-            for quorum in &diff.new_quorums {
-                // Note: quorum_hash is not necessarily a block hash, so we check if it exists
-                if let Some(quorum_height) = storage.get_header_height_by_hash(&quorum.quorum_hash).await
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to lookup quorum hash: {}", e)))? {
-                    engine.feed_block_height(quorum_height, quorum.quorum_hash);
-                    tracing::debug!("Fed quorum hash {} at height {}", quorum.quorum_hash, quorum_height);
-                }
-            }
-            
-            // Feed a reasonable range of recent headers for validation purposes
-            // The engine may need recent headers for various validations
-            
+            // Calculate start_height for filtering redundant submissions
             // Feed last 1000 headers or from base height, whichever is more recent
             let start_height = if let Some(base_height) = storage.get_header_height_by_hash(&base_block_hash).await
                 .map_err(|e| SyncError::SyncFailed(format!("Failed to lookup base hash: {}", e)))? {
@@ -266,6 +254,25 @@ impl MasternodeSyncManager {
             } else {
                 tip_height.saturating_sub(1000)
             };
+            
+            // Feed any quorum hashes from new_quorums that are block hashes
+            for quorum in &diff.new_quorums {
+                // Note: quorum_hash is not necessarily a block hash, so we check if it exists
+                if let Some(quorum_height) = storage.get_header_height_by_hash(&quorum.quorum_hash).await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to lookup quorum hash: {}", e)))? {
+                    // Only feed blocks at or after start_height to avoid redundant submissions
+                    if quorum_height >= start_height {
+                        engine.feed_block_height(quorum_height, quorum.quorum_hash);
+                        tracing::debug!("Fed quorum hash {} at height {}", quorum.quorum_hash, quorum_height);
+                    } else {
+                        tracing::trace!("Skipping quorum hash {} at height {} (before start_height {})",
+                                      quorum.quorum_hash, quorum_height, start_height);
+                    }
+                }
+            }
+            
+            // Feed a reasonable range of recent headers for validation purposes
+            // The engine may need recent headers for various validations
             
             if start_height < tip_height {
                 tracing::debug!("Feeding headers from {} to {} to masternode engine", start_height, tip_height);
