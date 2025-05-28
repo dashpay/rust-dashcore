@@ -69,6 +69,7 @@ impl From<OutPoint> for [u8; 36] {
     }
 }
 
+#[cfg_attr(feature = "apple", ferment_macro::export)]
 impl OutPoint {
     /// Creates a new [`OutPoint`].
     #[inline]
