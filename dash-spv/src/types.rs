@@ -223,14 +223,43 @@ pub struct FilterMatch {
 /// Watch item for monitoring the blockchain.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WatchItem {
-    /// Watch an address.
-    Address(dashcore::Address),
+    /// Watch an address with optional earliest height.
+    Address {
+        address: dashcore::Address,
+        earliest_height: Option<u32>,
+    },
     
     /// Watch a script.
     Script(dashcore::ScriptBuf),
     
     /// Watch an outpoint.
     Outpoint(dashcore::OutPoint),
+}
+
+impl WatchItem {
+    /// Create a new address watch item without earliest height restriction.
+    pub fn address(address: dashcore::Address) -> Self {
+        Self::Address {
+            address,
+            earliest_height: None,
+        }
+    }
+    
+    /// Create a new address watch item with earliest height restriction.
+    pub fn address_from_height(address: dashcore::Address, earliest_height: u32) -> Self {
+        Self::Address {
+            address,
+            earliest_height: Some(earliest_height),
+        }
+    }
+    
+    /// Get the earliest height for this watch item.
+    pub fn earliest_height(&self) -> Option<u32> {
+        match self {
+            WatchItem::Address { earliest_height, .. } => *earliest_height,
+            _ => None,
+        }
+    }
 }
 
 // Custom serialization for WatchItem to handle Address serialization issues
@@ -242,10 +271,11 @@ impl Serialize for WatchItem {
         use serde::ser::SerializeStruct;
         
         match self {
-            WatchItem::Address(addr) => {
-                let mut state = serializer.serialize_struct("WatchItem", 2)?;
+            WatchItem::Address { address, earliest_height } => {
+                let mut state = serializer.serialize_struct("WatchItem", 3)?;
                 state.serialize_field("type", "Address")?;
-                state.serialize_field("value", &addr.to_string())?;
+                state.serialize_field("value", &address.to_string())?;
+                state.serialize_field("earliest_height", earliest_height)?;
                 state.end()
             }
             WatchItem::Script(script) => {
@@ -287,6 +317,7 @@ impl<'de> Deserialize<'de> for WatchItem {
             {
                 let mut item_type: Option<String> = None;
                 let mut value: Option<String> = None;
+                let mut earliest_height: Option<u32> = None;
                 
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
@@ -302,6 +333,12 @@ impl<'de> Deserialize<'de> for WatchItem {
                             }
                             value = Some(map.next_value()?);
                         }
+                        "earliest_height" => {
+                            if earliest_height.is_some() {
+                                return Err(serde::de::Error::duplicate_field("earliest_height"));
+                            }
+                            earliest_height = Some(map.next_value()?);
+                        }
                         _ => {
                             let _: serde::de::IgnoredAny = map.next_value()?;
                         }
@@ -316,7 +353,10 @@ impl<'de> Deserialize<'de> for WatchItem {
                         let addr = value.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>()
                             .map_err(|e| serde::de::Error::custom(format!("Invalid address: {}", e)))?
                             .assume_checked();
-                        Ok(WatchItem::Address(addr))
+                        Ok(WatchItem::Address {
+                            address: addr,
+                            earliest_height,
+                        })
                     }
                     "Script" => {
                         let script = dashcore::ScriptBuf::from_hex(&value)
@@ -339,7 +379,7 @@ impl<'de> Deserialize<'de> for WatchItem {
             }
         }
         
-        deserializer.deserialize_struct("WatchItem", &["type", "value"], WatchItemVisitor)
+        deserializer.deserialize_struct("WatchItem", &["type", "value", "earliest_height"], WatchItemVisitor)
     }
 }
 

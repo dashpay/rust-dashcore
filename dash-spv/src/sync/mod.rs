@@ -142,6 +142,33 @@ impl SyncManager {
         self.filter_sync.check_filters_for_matches(storage, watch_items, start_height, end_height).await
     }
     
+    /// Request block downloads for filter matches.
+    pub async fn request_block_downloads(
+        &mut self,
+        filter_matches: Vec<crate::types::FilterMatch>,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<Vec<crate::types::FilterMatch>> {
+        self.filter_sync.process_filter_matches_and_download(filter_matches, network).await
+    }
+    
+    /// Handle a downloaded block.
+    pub async fn handle_downloaded_block(
+        &mut self,
+        block: &dashcore::block::Block,
+    ) -> SyncResult<Option<crate::types::FilterMatch>> {
+        self.filter_sync.handle_downloaded_block(block).await
+    }
+    
+    /// Check if there are pending block downloads.
+    pub fn has_pending_downloads(&self) -> bool {
+        self.filter_sync.has_pending_downloads()
+    }
+    
+    /// Get the number of pending block downloads.
+    pub fn pending_download_count(&self) -> usize {
+        self.filter_sync.pending_download_count()
+    }
+    
     /// Synchronize masternode list.
     pub async fn sync_masternodes(
         &mut self,

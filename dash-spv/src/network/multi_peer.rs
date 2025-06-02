@@ -371,7 +371,7 @@ impl MultiPeerNetworkManager {
                     // We have enough peers, reset the search timer
                     let mut search_started = peer_search_started.lock().await;
                     if search_started.is_some() {
-                        log::debug!("Peer count restored, resetting DNS delay timer");
+                        log::trace!("Peer count restored, resetting DNS delay timer");
                         *search_started = None;
                     }
                 }

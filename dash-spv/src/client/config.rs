@@ -125,7 +125,7 @@ impl ClientConfig {
     
     /// Add a watch address.
     pub fn watch_address(mut self, address: Address) -> Self {
-        self.watch_items.push(WatchItem::Address(address));
+        self.watch_items.push(WatchItem::address(address));
         self
     }
     

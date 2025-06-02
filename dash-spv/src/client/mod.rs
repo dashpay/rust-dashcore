@@ -31,6 +31,46 @@ pub struct DashSpvClient {
     running: Arc<RwLock<bool>>,
     watch_items: Arc<RwLock<HashSet<WatchItem>>>,
     terminal_ui: Option<Arc<TerminalUI>>,
+    filter_sync_state: Arc<RwLock<FilterSyncState>>,
+}
+
+/// Coordination state for filter synchronization between the monitoring loop and sync operations.
+/// 
+/// This struct prevents race conditions by allowing the monitoring loop (which is the sole 
+/// message receiver) to coordinate with active filter sync operations. When a sync operation 
+/// is active, the monitoring loop will route relevant CFilter messages to storage instead 
+/// of processing them as regular filter checks.
+#[derive(Debug, Default)]
+struct FilterSyncState {
+    /// Whether a filter sync operation is currently running.
+    /// 
+    /// When `true`, the monitoring loop will check incoming CFilter messages against the 
+    /// `expected_range` and route matching filters to storage. When `false`, all CFilter 
+    /// messages are processed as regular filter checks for watch items.
+    active: bool,
+    
+    /// The height range of filters that the active sync operation is expecting.
+    /// 
+    /// Format: Some((start_height, end_height)) where both heights are inclusive.
+    /// For example, Some((1000, 1099)) means we're expecting filters for blocks 
+    /// 1000 through 1099. The monitoring loop uses this to determine if an incoming 
+    /// CFilter message belongs to the active sync operation.
+    expected_range: Option<(u32, u32)>,
+    
+    /// Number of CFilter messages received and processed by the monitoring loop 
+    /// for the current sync operation.
+    /// 
+    /// This counter increments each time the monitoring loop successfully stores 
+    /// a filter that falls within the `expected_range`. Used to track progress 
+    /// and determine when the sync operation is complete.
+    received_count: u32,
+    
+    /// Total number of CFilter messages expected for the current sync operation.
+    /// 
+    /// Set when the sync operation starts based on the requested range size.
+    /// When `received_count` reaches this value, the sync is considered complete 
+    /// and `active` is set back to `false`.
+    expected_count: u32,
 }
 
 impl DashSpvClient {
@@ -77,6 +117,7 @@ impl DashSpvClient {
             running: Arc::new(RwLock::new(false)),
             watch_items: Arc::new(RwLock::new(HashSet::new())),
             terminal_ui: None,
+            filter_sync_state: Arc::new(RwLock::new(FilterSyncState::default())),
         })
     }
     
@@ -91,6 +132,9 @@ impl DashSpvClient {
         
         // Load watch items from storage
         self.load_watch_items().await?;
+        
+        // Initialize genesis block if not already present
+        self.initialize_genesis_block().await?;
         
         // Connect to network
         self.network.connect().await?;
@@ -306,10 +350,58 @@ impl DashSpvClient {
                 }
             }
             NetworkMessage::CFilter(cfilter) => {
-                tracing::info!("Received compact filter for block {}", cfilter.block_hash);
-                // Check the filter for matches against our watch items
-                if let Err(e) = self.process_and_check_filter(cfilter).await {
-                    tracing::error!("Failed to process compact filter: {}", e);
+                tracing::trace!("Received compact filter for block {}", cfilter.block_hash);
+                
+                // Check if this filter is expected by an active sync operation
+                let handled_by_sync = {
+                    let mut sync_state = self.filter_sync_state.write().await;
+                    if sync_state.active {
+                        // Check if this filter falls within the expected range
+                        if let Some((start_height, end_height)) = sync_state.expected_range {
+                            // Find the height for this filter by matching block hash
+                            if let Some(height) = self.find_height_for_block_hash(cfilter.block_hash).await {
+                                if height >= start_height && height <= end_height {
+                                    sync_state.received_count += 1;
+                                    tracing::debug!("Filter sync: received filter {}/{} for height {} (hash: {})", 
+                                                   sync_state.received_count, sync_state.expected_count, height, cfilter.block_hash);
+                                    
+                                    // Store the filter
+                                    if let Err(e) = self.storage.store_filter(height, &cfilter.filter).await {
+                                        tracing::error!("Failed to store filter for height {}: {}", height, e);
+                                    } else {
+                                        tracing::debug!("Stored filter for height {} (hash: {})", height, cfilter.block_hash);
+                                    }
+                                    
+                                    // Check if sync is complete
+                                    if sync_state.received_count >= sync_state.expected_count {
+                                        tracing::info!("Filter sync completed: received all {} expected filters", sync_state.expected_count);
+                                        sync_state.active = false;
+                                        sync_state.expected_range = None;
+                                        sync_state.received_count = 0;
+                                        sync_state.expected_count = 0;
+                                    }
+                                    
+                                    true // Handled by sync
+                                } else {
+                                    false // Not in expected range
+                                }
+                            } else {
+                                false // Couldn't find height
+                            }
+                        } else {
+                            false // No expected range
+                        }
+                    } else {
+                        false // No active sync
+                    }
+                };
+                
+                // If not handled by sync, process as a regular filter for watch items
+                if !handled_by_sync {
+                    tracing::info!("Received compact filter for block {} (not from sync)", cfilter.block_hash);
+                    if let Err(e) = self.process_and_check_filter(cfilter).await {
+                        tracing::error!("Failed to process compact filter: {}", e);
+                    }
                 }
             }
             _ => {
@@ -507,6 +599,24 @@ impl DashSpvClient {
         
         if has_matches {
             tracing::info!("🎯 Filter match found for block {}!", cfilter.block_hash);
+            
+            // Get block height for the FilterMatch
+            let height = self.find_height_for_block_hash(cfilter.block_hash).await
+                .unwrap_or(0);
+            
+            // Create FilterMatch object
+            let filter_match = crate::types::FilterMatch {
+                block_hash: cfilter.block_hash,
+                height,
+                block_requested: false,
+            };
+            
+            // Request the full block download
+            self.sync_manager.filter_sync_mut()
+                .request_block_download(filter_match, &mut *self.network)
+                .await
+                .map_err(|e| SpvError::Sync(e))?;
+            
             self.report_filter_match(cfilter.block_hash).await?;
         } else {
             tracing::debug!("No filter matches for block {}", cfilter.block_hash);
@@ -524,11 +634,16 @@ impl DashSpvClient {
         tracing::info!("🚨 FILTER MATCH DETECTED! Block {} at height {} contains transactions affecting watched addresses/scripts", 
                       block_hash, height);
         
+        // Update statistics
+        {
+            let mut stats = self.stats.write().await;
+            stats.filter_matches += 1;
+        }
+        
         // TODO: Additional actions could be taken here:
         // - Store the match in a database
-        // - Send notifications
-        // - Request the full block for detailed analysis
-        // - Update wallet balance
+        // - Send notifications  
+        // - Update wallet balance (now happens in process_new_block when the full block arrives)
         
         Ok(())
     }
@@ -540,11 +655,147 @@ impl DashSpvClient {
     }
     
     /// Process a new block.
-    async fn process_new_block(&mut self, _block: dashcore::Block) -> Result<()> {
-        // TODO: Implement full block processing if we ever receive full blocks
-        // - Update chain state
-        // - Check for watched transactions
-        tracing::info!("Full block processing not yet implemented");
+    async fn process_new_block(&mut self, block: dashcore::Block) -> Result<()> {
+        let block_hash = block.block_hash();
+        
+        tracing::info!("📦 Processing downloaded block: {}", block_hash);
+        
+        // First, let the FilterSyncManager handle the downloaded block
+        // This will check if it was expected and update tracking state
+        let filter_match = self.sync_manager.filter_sync_mut()
+            .handle_downloaded_block(&block)
+            .await
+            .map_err(|e| SpvError::Sync(e))?;
+        
+        if let Some(filter_match) = filter_match {
+            tracing::info!("✅ Block {} at height {} successfully processed after filter match", 
+                          filter_match.block_hash, filter_match.height);
+            
+            // Extract transactions that might affect watched items
+            let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
+            if !watch_items.is_empty() {
+                self.process_block_transactions(&block, &watch_items).await?;
+            }
+        } else {
+            tracing::debug!("Block {} was not expected from filter matching", block_hash);
+        }
+        
+        // Update chain state if needed
+        self.update_chain_state_with_block(&block).await?;
+        
+        Ok(())
+    }
+    
+    /// Process transactions in a block to check for matches with watch items.
+    async fn process_block_transactions(
+        &mut self, 
+        block: &dashcore::Block, 
+        watch_items: &[WatchItem]
+    ) -> Result<()> {
+        let block_hash = block.block_hash();
+        let mut relevant_transactions = 0;
+        let mut new_outpoints_to_watch = Vec::new();
+        
+        for (tx_index, transaction) in block.txdata.iter().enumerate() {
+            let txid = transaction.txid();
+            let mut transaction_relevant = false;
+            
+            // Check outputs for matches with watched items
+            for (vout, output) in transaction.output.iter().enumerate() {
+                for watch_item in watch_items {
+                    let matches = match watch_item {
+                        WatchItem::Address { address, .. } => {
+                            address.script_pubkey() == output.script_pubkey
+                        }
+                        WatchItem::Script(script) => {
+                            script == &output.script_pubkey
+                        }
+                        WatchItem::Outpoint(_) => false, // Outpoints don't match outputs
+                    };
+                    
+                    if matches {
+                        transaction_relevant = true;
+                        let outpoint = dashcore::OutPoint { txid, vout: vout as u32 };
+                        tracing::info!("💰 Found relevant output: {}:{} to {:?} (value: {})", 
+                                      txid, vout, watch_item, 
+                                      dashcore::Amount::from_sat(output.value));
+                        
+                        // Track this outpoint so we can detect when it's spent
+                        new_outpoints_to_watch.push(outpoint);
+                        tracing::debug!("📍 Now watching outpoint {}:{} for future spending", txid, vout);
+                    }
+                }
+            }
+            
+            // Check inputs for matches with watched outpoints
+            if !transaction.input.is_empty() && transaction.input[0].previous_output != dashcore::OutPoint::null() {
+                // Not a coinbase transaction
+                for (vin, input) in transaction.input.iter().enumerate() {
+                    // Check against explicitly watched outpoints
+                    for watch_item in watch_items {
+                        if let WatchItem::Outpoint(watched_outpoint) = watch_item {
+                            if &input.previous_output == watched_outpoint {
+                                transaction_relevant = true;
+                                tracing::info!("💸 Found relevant input: {}:{} spending explicitly watched outpoint {:?}", 
+                                              txid, vin, watched_outpoint);
+                            }
+                        }
+                    }
+                    
+                    // Also check against outpoints from our watched addresses
+                    // For this to work properly, we'd need to maintain a persistent set of outpoints
+                    // from our addresses. For now, let's log when we see inputs to help debug
+                    tracing::debug!("🔍 Checking input {}:{} -> previous_output {}:{}", 
+                                   txid, vin, input.previous_output.txid, input.previous_output.vout);
+                }
+            }
+            
+            if transaction_relevant {
+                relevant_transactions += 1;
+                tracing::debug!("📝 Transaction {}: {} (index {}) is relevant", 
+                               txid, if tx_index == 0 { "coinbase" } else { "regular" }, tx_index);
+            }
+        }
+        
+        if relevant_transactions > 0 {
+            tracing::info!("🎯 Block {} contains {} relevant transactions affecting watched items", 
+                          block_hash, relevant_transactions);
+            
+            // Add new outpoints to watch list for future spending detection
+            for outpoint in new_outpoints_to_watch {
+                let watch_item = WatchItem::Outpoint(outpoint);
+                if let Err(e) = self.add_watch_item(watch_item).await {
+                    tracing::error!("Failed to add outpoint to watch list: {}", e);
+                }
+            }
+            
+            // TODO: Future wallet integration would happen here
+            // - Create/update UTXOs for relevant outputs
+            // - Mark UTXOs as spent for relevant inputs  
+            // - Update balance calculations
+            // - Store transaction history
+        }
+        
+        Ok(())
+    }
+    
+    /// Update chain state with information from the processed block.
+    async fn update_chain_state_with_block(&mut self, block: &dashcore::Block) -> Result<()> {
+        let block_hash = block.block_hash();
+        
+        // Get the block height
+        let height = self.find_height_for_block_hash(block_hash).await;
+        
+        if let Some(height) = height {
+            tracing::debug!("📊 Updating chain state with block {} at height {}", block_hash, height);
+            
+            // Update stats
+            {
+                let mut stats = self.stats.write().await;
+                stats.blocks_requested += 1;
+            }
+        }
+        
         Ok(())
     }
     
@@ -758,19 +1009,25 @@ impl DashSpvClient {
             .map_err(|e| SpvError::Storage(e))?
             .unwrap_or(0);
         
+        // Get current watch items to determine earliest height needed
+        let watch_items = self.get_watch_items().await;
+        
+        // Find the earliest height among all watch items
+        let earliest_height = watch_items.iter()
+            .filter_map(|item| item.earliest_height())
+            .min()
+            .unwrap_or(tip_height.saturating_sub(99)); // Default to last 100 blocks if no earliest_height set
+        
         let num_blocks = num_blocks.unwrap_or(100);
-        let start_height = tip_height.saturating_sub(num_blocks - 1);
+        let default_start = tip_height.saturating_sub(num_blocks - 1);
+        let start_height = earliest_height.min(default_start); // Go back to the earliest required height
         let actual_count = tip_height - start_height + 1; // Actual number of blocks available
         
         tracing::info!("Syncing and checking filters from height {} to {} ({} blocks)", 
                       start_height, tip_height, actual_count);
         
-        // Sync filters for the range - use actual count to avoid going beyond available headers
-        self.sync_manager.sync_filters(&mut *self.network, &mut *self.storage, Some(start_height), Some(actual_count)).await
-            .map_err(|e| SpvError::Sync(e))?;
-        
-        // Get current watch items
-        let watch_items = self.get_watch_items().await;
+        // Use the new coordinated sync method
+        self.sync_filters_coordinated(start_height, actual_count).await?;
         
         if watch_items.is_empty() {
             tracing::info!("No watch items configured, skipping filter matching");
@@ -783,7 +1040,230 @@ impl DashSpvClient {
         
         tracing::info!("Found {} filter matches for {} watch items", matches.len(), watch_items.len());
         
+        // Request block downloads for all matches
+        if !matches.is_empty() {
+            tracing::info!("🎯 Processing {} filter matches and requesting block downloads", matches.len());
+            
+            let processed_matches = self.sync_manager.request_block_downloads(matches.clone(), &mut *self.network).await
+                .map_err(|e| SpvError::Sync(e))?;
+            
+            tracing::info!("✅ Successfully requested {} block downloads", processed_matches.len());
+            
+            // Update statistics
+            {
+                let mut stats = self.stats.write().await;
+                stats.filter_matches += processed_matches.len() as u64;
+            }
+        }
+        
         Ok(matches)
+    }
+    
+    /// Sync filters in coordination with the monitoring loop using pipelined processing
+    async fn sync_filters_coordinated(&mut self, start_height: u32, count: u32) -> Result<()> {
+        // Check if filter sync is already active
+        {
+            let sync_state = self.filter_sync_state.read().await;
+            if sync_state.active {
+                return Err(SpvError::Config("Filter sync already in progress".to_string()));
+            }
+        }
+        
+        let end_height = start_height + count - 1;
+        
+        // Set up sync state for coordination with monitoring loop
+        {
+            let mut sync_state = self.filter_sync_state.write().await;
+            sync_state.active = true;
+            sync_state.expected_range = Some((start_height, end_height));
+            sync_state.received_count = 0;
+            sync_state.expected_count = count;
+        }
+        
+        tracing::info!("Starting coordinated filter sync from height {} to {} ({} filters expected)", 
+                      start_height, end_height, count);
+        
+        // Use pipelined processing: send a few batches, wait for responses, then send more
+        let batch_size = 100;
+        let pipeline_window = 2; // Number of batches to keep "in flight" at once
+        let mut current_height = start_height;
+        let mut batches_sent = 0;
+        let mut last_received_count = 0;
+        
+        // Send initial pipeline window of requests
+        while current_height <= end_height && batches_sent < pipeline_window {
+            let batch_end = (current_height + batch_size - 1).min(end_height);
+            
+            tracing::debug!("Sending initial batch {}: heights {} to {}", batches_sent + 1, current_height, batch_end);
+            
+            // Get stop hash for this batch
+            let stop_hash = self.storage.get_header(batch_end).await
+                .map_err(|e| SpvError::Storage(e))?
+                .ok_or_else(|| SpvError::Config("Stop header not found".to_string()))?
+                .block_hash();
+            
+            // Send the request - monitoring loop will handle the responses
+            self.sync_manager.filter_sync_mut().request_filters(&mut *self.network, current_height, stop_hash).await
+                .map_err(|e| SpvError::Sync(e))?;
+            
+            current_height = batch_end + 1;
+            batches_sent += 1;
+        }
+        
+        // Now use pipelined processing for the remaining batches
+        let timeout = tokio::time::Duration::from_secs(45); // Increased timeout for pipelined approach
+        let start_time = tokio::time::Instant::now();
+        let batch_timeout = tokio::time::Duration::from_secs(10); // Timeout for individual batch responses
+        let mut last_progress_time = tokio::time::Instant::now();
+        
+        loop {
+            // Check current progress
+            let (sync_complete, received_count, progress_made) = {
+                let sync_state = self.filter_sync_state.read().await;
+                let progress_made = sync_state.received_count > last_received_count;
+                if progress_made {
+                    last_received_count = sync_state.received_count;
+                }
+                (
+                    !sync_state.active || sync_state.received_count >= sync_state.expected_count,
+                    sync_state.received_count,
+                    progress_made
+                )
+            };
+            
+            // Reset batch timeout if we made progress
+            if progress_made {
+                last_progress_time = tokio::time::Instant::now();
+                tracing::debug!("Filter sync progress: {}/{} filters received", received_count, count);
+            }
+            
+            // Check if sync is complete
+            if sync_complete {
+                tracing::info!("Filter sync completed successfully: received {}/{} filters", received_count, count);
+                break;
+            }
+            
+            // Send more requests if we have capacity and more batches to send
+            if current_height <= end_height {
+                // Check if we should send more batches (when we've received some responses)
+                let responses_per_batch = batch_size.min(end_height - current_height + batch_size);
+                let expected_responses_so_far = batches_sent * responses_per_batch;
+                let response_lag = expected_responses_so_far.saturating_sub(received_count);
+                
+                // Send another batch if we're not too far ahead
+                if response_lag < (pipeline_window * batch_size) && current_height <= end_height {
+                    let batch_end = (current_height + batch_size - 1).min(end_height);
+                    
+                    tracing::debug!("Sending additional batch: heights {} to {} (lag: {})", 
+                                   current_height, batch_end, response_lag);
+                    
+                    // Get stop hash for this batch
+                    let stop_hash = self.storage.get_header(batch_end).await
+                        .map_err(|e| SpvError::Storage(e))?
+                        .ok_or_else(|| SpvError::Config("Stop header not found".to_string()))?
+                        .block_hash();
+                    
+                    // Send the request
+                    self.sync_manager.filter_sync_mut().request_filters(&mut *self.network, current_height, stop_hash).await
+                        .map_err(|e| SpvError::Sync(e))?;
+                    
+                    current_height = batch_end + 1;
+                    batches_sent += 1;
+                }
+            }
+            
+            // Check for timeouts
+            if start_time.elapsed() > timeout {
+                // Reset sync state on overall timeout
+                {
+                    let mut sync_state = self.filter_sync_state.write().await;
+                    sync_state.active = false;
+                    sync_state.expected_range = None;
+                    sync_state.received_count = 0;
+                    sync_state.expected_count = 0;
+                }
+                return Err(SpvError::Config(format!(
+                    "Filter sync timeout: received {}/{} filters in {:?}", 
+                    received_count, count, start_time.elapsed()
+                )));
+            }
+            
+            // Check for batch timeout (no progress)
+            if last_progress_time.elapsed() > batch_timeout {
+                tracing::warn!("No filter sync progress for {:?}, continuing to wait...", last_progress_time.elapsed());
+                last_progress_time = tokio::time::Instant::now(); // Reset to avoid spamming
+            }
+            
+            // Small delay before checking again
+            tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+        }
+        
+        Ok(())
+    }
+    
+    /// Initialize genesis block if not already present in storage.
+    async fn initialize_genesis_block(&mut self) -> Result<()> {
+        // Check if we already have any headers in storage
+        let current_tip = self.storage.get_tip_height().await
+            .map_err(|e| SpvError::Storage(e))?;
+        
+        if current_tip.is_some() {
+            // We already have headers, genesis block should be at height 0
+            tracing::debug!("Headers already exist in storage, skipping genesis initialization");
+            return Ok(());
+        }
+        
+        // Get the genesis block hash for this network
+        let genesis_hash = self.config.network.known_genesis_block_hash()
+            .ok_or_else(|| SpvError::Config("No known genesis hash for network".to_string()))?;
+        
+        tracing::info!("Initializing genesis block for network {:?}: {}", self.config.network, genesis_hash);
+        
+        // Create the correct genesis header using known Dash genesis block parameters
+        use dashcore::{
+            block::{Header as BlockHeader, Version},
+            pow::CompactTarget,
+        };
+        use dashcore_hashes::Hash;
+        
+        let genesis_header = match self.config.network {
+            dashcore::Network::Dash => {
+                // Use the actual Dash genesis block parameters from the block explorer data
+                BlockHeader {
+                    version: Version::from_consensus(1),
+                    prev_blockhash: dashcore::BlockHash::all_zeros(),
+                    merkle_root: "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7".parse()
+                        .expect("valid merkle root"),
+                    time: 1390095618,
+                    bits: CompactTarget::from_consensus(0x1e0ffff0),
+                    nonce: 28917698,
+                }
+            }
+            _ => {
+                // For other networks, use the existing genesis block function
+                dashcore::blockdata::constants::genesis_block(self.config.network).header
+            }
+        };
+        
+        // Verify the header produces the expected genesis hash
+        let calculated_hash = genesis_header.block_hash();
+        if calculated_hash != genesis_hash {
+            return Err(SpvError::Config(format!(
+                "Genesis header hash mismatch! Expected: {}, Calculated: {}", 
+                genesis_hash, calculated_hash
+            )));
+        }
+        
+        tracing::debug!("Using genesis block header with hash: {}", calculated_hash);
+        
+        // Store the genesis header at height 0
+        let genesis_headers = vec![genesis_header];
+        self.storage.store_headers(&genesis_headers).await
+            .map_err(|e| SpvError::Storage(e))?;
+        
+        tracing::info!("✅ Genesis block initialized at height 0");
+        
+        Ok(())
     }
     
     /// Load watch items from storage.

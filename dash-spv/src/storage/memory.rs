@@ -7,12 +7,13 @@ use async_trait::async_trait;
 use dashcore::{
     block::Header as BlockHeader,
     hash_types::FilterHeader,
-    BlockHash,
+    BlockHash, Address, OutPoint,
 };
 
 use crate::error::StorageResult;
 use crate::storage::{StorageManager, MasternodeState, StorageStats};
 use crate::types::ChainState;
+use crate::wallet::Utxo;
 
 /// In-memory storage manager.
 pub struct MemoryStorageManager {
@@ -24,6 +25,10 @@ pub struct MemoryStorageManager {
     metadata: HashMap<String, Vec<u8>>,
     // Reverse indexes for O(1) lookups
     header_hash_index: HashMap<BlockHash, u32>,
+    // UTXO storage
+    utxos: HashMap<OutPoint, Utxo>,
+    // Index for efficient UTXO lookups by address
+    utxo_address_index: HashMap<Address, Vec<OutPoint>>,
 }
 
 impl MemoryStorageManager {
@@ -37,6 +42,8 @@ impl MemoryStorageManager {
             chain_state: None,
             metadata: HashMap::new(),
             header_hash_index: HashMap::new(),
+            utxos: HashMap::new(),
+            utxo_address_index: HashMap::new(),
         })
     }
 }
@@ -160,6 +167,8 @@ impl StorageManager for MemoryStorageManager {
         self.chain_state = None;
         self.metadata.clear();
         self.header_hash_index.clear();
+        self.utxos.clear();
+        self.utxo_address_index.clear();
         Ok(())
     }
     
@@ -203,5 +212,50 @@ impl StorageManager for MemoryStorageManager {
         }
         
         Ok(results)
+    }
+    
+    async fn store_utxo(&mut self, outpoint: &OutPoint, utxo: &Utxo) -> StorageResult<()> {
+        // Store the UTXO
+        self.utxos.insert(*outpoint, utxo.clone());
+        
+        // Update the address index
+        let address_utxos = self.utxo_address_index.entry(utxo.address.clone()).or_insert_with(Vec::new);
+        if !address_utxos.contains(outpoint) {
+            address_utxos.push(*outpoint);
+        }
+        
+        Ok(())
+    }
+    
+    async fn remove_utxo(&mut self, outpoint: &OutPoint) -> StorageResult<()> {
+        if let Some(utxo) = self.utxos.remove(outpoint) {
+            // Update the address index
+            if let Some(address_utxos) = self.utxo_address_index.get_mut(&utxo.address) {
+                address_utxos.retain(|op| op != outpoint);
+                // Remove the address entry if it's empty
+                if address_utxos.is_empty() {
+                    self.utxo_address_index.remove(&utxo.address);
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    async fn get_utxos_for_address(&self, address: &Address) -> StorageResult<Vec<Utxo>> {
+        let mut utxos = Vec::new();
+        
+        if let Some(outpoints) = self.utxo_address_index.get(address) {
+            for outpoint in outpoints {
+                if let Some(utxo) = self.utxos.get(outpoint) {
+                    utxos.push(utxo.clone());
+                }
+            }
+        }
+        
+        Ok(utxos)
+    }
+    
+    async fn get_all_utxos(&self) -> StorageResult<HashMap<OutPoint, Utxo>> {
+        Ok(self.utxos.clone())
     }
 }

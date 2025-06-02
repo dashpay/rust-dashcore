@@ -55,6 +55,7 @@ pub mod sync;
 pub mod types;
 pub mod validation;
 pub mod terminal;
+pub mod wallet;
 
 // Re-export main types for convenience
 pub use client::{ClientConfig, DashSpvClient};
@@ -63,6 +64,7 @@ pub use types::{
     ChainState, SyncProgress, ValidationMode, WatchItem, FilterMatch, 
     PeerInfo, SpvStats
 };
+pub use wallet::{Wallet, Balance, Utxo, TransactionProcessor, TransactionResult, BlockResult, AddressStats};
 
 // Re-export commonly used dashcore types
 pub use dashcore::{Address, Network, BlockHash, ScriptBuf, OutPoint};

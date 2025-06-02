@@ -211,7 +211,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     });
                     match checked_addr {
                         Ok(valid_addr) => {
-                            if let Err(e) = client.add_watch_item(dash_spv::WatchItem::Address(valid_addr)).await {
+                            if let Err(e) = client.add_watch_item(dash_spv::WatchItem::address(valid_addr)).await {
                                 tracing::error!("Failed to add watch address '{}': {}", addr_str, e);
                             } else {
                                 tracing::info!("Added watch address: {}", addr_str);
@@ -253,10 +253,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match addr_str.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>() {
                 Ok(addr) => {
                     if let Ok(valid_addr) = addr.require_network(network) {
-                        if let Err(e) = client.add_watch_item(dash_spv::WatchItem::Address(valid_addr)).await {
+                        // For the example mainnet address (Crowdnode), set earliest height to 1,000,000
+                        let watch_item = if network == dashcore::Network::Dash && addr_str == "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2" {
+                            dash_spv::WatchItem::address_from_height(valid_addr, 1_000_000)
+                        } else {
+                            dash_spv::WatchItem::address(valid_addr)
+                        };
+                        
+                        if let Err(e) = client.add_watch_item(watch_item).await {
                             tracing::error!("Failed to add example address '{}': {}", addr_str, e);
                         } else {
-                            tracing::info!("Added example watch address: {}", addr_str);
+                            let height_info = if network == dashcore::Network::Dash && addr_str == "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2" {
+                                " (from height 1,000,000)"
+                            } else {
+                                ""
+                            };
+                            tracing::info!("Added example watch address: {}{}", addr_str, height_info);
                         }
                     }
                 }
@@ -273,7 +285,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("Watching {} items:", watch_items.len());
         for (i, item) in watch_items.iter().enumerate() {
             match item {
-                dash_spv::WatchItem::Address(addr) => tracing::info!("  {}: Address {}", i + 1, addr),
+                dash_spv::WatchItem::Address { address, earliest_height } => {
+                    let height_info = earliest_height.map(|h| format!(" (from height {})", h)).unwrap_or_default();
+                    tracing::info!("  {}: Address {}{}", i + 1, address, height_info);
+                }
                 dash_spv::WatchItem::Script(script) => tracing::info!("  {}: Script {}", i + 1, script.to_hex_string()),
                 dash_spv::WatchItem::Outpoint(outpoint) => tracing::info!("  {}: Outpoint {}:{}", i + 1, outpoint.txid, outpoint.vout),
             }

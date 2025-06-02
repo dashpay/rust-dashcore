@@ -15,13 +15,14 @@ use dashcore::{
     consensus::{encode, Decodable, Encodable},
     hash_types::FilterHeader,
     pow::CompactTarget,
-    BlockHash,
+    BlockHash, Address, OutPoint,
 };
 use dashcore_hashes::Hash;
 
 use crate::error::{StorageError, StorageResult};
 use crate::storage::{StorageManager, MasternodeState, StorageStats};
 use crate::types::ChainState;
+use crate::wallet::Utxo;
 
 /// Number of headers per segment file
 const HEADERS_PER_SEGMENT: u32 = 50_000;
@@ -914,6 +915,95 @@ impl StorageManager for DiskStorageManager {
         }
         
         Ok(results)
+    }
+    
+    // For Phase 1, implement UTXO storage using metadata storage (simple but functional)
+    // TODO: In future phases, implement proper segmented UTXO storage for better performance
+    
+    async fn store_utxo(&mut self, outpoint: &OutPoint, utxo: &Utxo) -> StorageResult<()> {
+        // Store the UTXO
+        let key = format!("utxo_{}", outpoint);
+        let data = bincode::serialize(utxo)
+            .map_err(|e| StorageError::Serialization(format!("Failed to serialize UTXO: {}", e)))?;
+        self.store_metadata(&key, &data).await?;
+        
+        // Update the UTXO index
+        let mut outpoints = if let Some(index_data) = self.load_metadata("utxo_index").await? {
+            if !index_data.is_empty() {
+                bincode::deserialize::<Vec<OutPoint>>(&index_data)
+                    .map_err(|e| StorageError::Serialization(format!("Failed to deserialize UTXO index: {}", e)))?
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        
+        if !outpoints.contains(outpoint) {
+            outpoints.push(*outpoint);
+            let index_data = bincode::serialize(&outpoints)
+                .map_err(|e| StorageError::Serialization(format!("Failed to serialize UTXO index: {}", e)))?;
+            self.store_metadata("utxo_index", &index_data).await?;
+        }
+        
+        Ok(())
+    }
+    
+    async fn remove_utxo(&mut self, outpoint: &OutPoint) -> StorageResult<()> {
+        let key = format!("utxo_{}", outpoint);
+        // For removal, we just store an empty value to mark it as deleted
+        self.store_metadata(&key, &[]).await?;
+        
+        // Update the UTXO index to remove the outpoint
+        if let Some(index_data) = self.load_metadata("utxo_index").await? {
+            if !index_data.is_empty() {
+                let mut outpoints: Vec<OutPoint> = bincode::deserialize(&index_data)
+                    .map_err(|e| StorageError::Serialization(format!("Failed to deserialize UTXO index: {}", e)))?;
+                
+                outpoints.retain(|op| op != outpoint);
+                let updated_index_data = bincode::serialize(&outpoints)
+                    .map_err(|e| StorageError::Serialization(format!("Failed to serialize UTXO index: {}", e)))?;
+                self.store_metadata("utxo_index", &updated_index_data).await?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    async fn get_utxos_for_address(&self, address: &Address) -> StorageResult<Vec<Utxo>> {
+        // This is inefficient but works for Phase 1
+        // Get all UTXOs and filter by address
+        let all_utxos = self.get_all_utxos().await?;
+        let filtered_utxos: Vec<Utxo> = all_utxos
+            .into_values()
+            .filter(|utxo| &utxo.address == address)
+            .collect();
+        Ok(filtered_utxos)
+    }
+    
+    async fn get_all_utxos(&self) -> StorageResult<HashMap<OutPoint, Utxo>> {
+        let mut utxos = HashMap::new();
+        
+        // Load UTXO index to know which UTXOs exist
+        if let Some(data) = self.load_metadata("utxo_index").await? {
+            if !data.is_empty() {
+                let outpoints: Vec<OutPoint> = bincode::deserialize(&data)
+                    .map_err(|e| StorageError::Serialization(format!("Failed to deserialize UTXO index: {}", e)))?;
+                
+                for outpoint in outpoints {
+                    let key = format!("utxo_{}", outpoint);
+                    if let Some(utxo_data) = self.load_metadata(&key).await? {
+                        if !utxo_data.is_empty() { // Not deleted
+                            let utxo: Utxo = bincode::deserialize(&utxo_data)
+                                .map_err(|e| StorageError::Serialization(format!("Failed to deserialize UTXO: {}", e)))?;
+                            utxos.insert(outpoint, utxo);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(utxos)
     }
 }
 

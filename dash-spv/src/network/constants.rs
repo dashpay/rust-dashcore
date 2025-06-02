@@ -3,9 +3,14 @@
 use std::time::Duration;
 
 // Connection limits
-pub const MAX_PEERS: usize = 8;
-pub const MIN_PEERS: usize = 3;
-pub const TARGET_PEERS: usize = 5;
+pub const MIN_PEERS: usize = 1;
+pub const TARGET_PEERS: usize = 1;
+pub const MAX_PEERS: usize = 1;
+
+// Compile-time check to ensure proper peer count relationships
+const _: () = assert!(MIN_PEERS <= TARGET_PEERS, "MIN_PEERS must be <= TARGET_PEERS");
+const _: () = assert!(TARGET_PEERS <= MAX_PEERS, "TARGET_PEERS must be <= MAX_PEERS");
+
 
 // Timeouts
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);

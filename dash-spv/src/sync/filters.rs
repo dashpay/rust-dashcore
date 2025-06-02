@@ -4,10 +4,12 @@ use dashcore::{
     hash_types::FilterHeader,
     network::message::NetworkMessage,
     network::message_filter::{CFHeaders, GetCFHeaders, GetCFilters},
+    network::message_blockdata::Inventory,
     ScriptBuf, BlockHash,
     bip158::{BlockFilterReader, Error as Bip158Error},
 };
 use dashcore_hashes::{sha256d, Hash};
+use std::collections::{HashMap, VecDeque};
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
@@ -20,6 +22,10 @@ pub struct FilterSyncManager {
     config: ClientConfig,
     syncing_filter_headers: bool,
     syncing_filters: bool,
+    /// Queue of blocks that have been requested and are waiting for response
+    pending_block_downloads: VecDeque<crate::types::FilterMatch>,
+    /// Blocks currently being downloaded (map for quick lookup)
+    downloading_blocks: HashMap<BlockHash, u32>,
 }
 
 impl FilterSyncManager {
@@ -29,6 +35,8 @@ impl FilterSyncManager {
             config: config.clone(),
             syncing_filter_headers: false,
             syncing_filters: false,
+            pending_block_downloads: VecDeque::new(),
+            downloading_blocks: HashMap::new(),
         }
     }
     
@@ -261,7 +269,7 @@ impl FilterSyncManager {
             let filter_header = FilterHeader::from_byte_array(sha256d::Hash::hash(&data).to_byte_array());
 
             if i < 3 || i >= cf_headers.filter_hashes.len() - 3 {
-                tracing::debug!("Filter header {}: filter_hash={:?}, prev_header={:?}, result={:?}",
+                tracing::trace!("Filter header {}: filter_hash={:?}, prev_header={:?}, result={:?}",
                                start_height + i as u32, filter_hash, prev_header, filter_header);
             }
 
@@ -313,7 +321,7 @@ impl FilterSyncManager {
             return Ok(false);
         }
         
-        tracing::debug!("Filter header chain verification passed for {} headers", cf_headers.filter_hashes.len());
+        tracing::trace!("Filter header chain verification passed for {} headers", cf_headers.filter_hashes.len());
         Ok(true)
     }
     
@@ -370,52 +378,13 @@ impl FilterSyncManager {
             
             self.request_filters(network, current_height, stop_hash).await?;
             
-            // Collect filter responses for this batch
-            let mut timeout_count = 0;
-            let max_timeouts = 10;
-            let mut received_filters = 0;
-            let expected_filters = batch_end - current_height + 1;
+            // Note: Filter responses will be handled by the monitoring loop
+            // This method now just sends requests and trusts that responses 
+            // will be processed by the centralized message handler
+            tracing::debug!("Sent filter request for batch {} to {}", current_height, batch_end);
             
-            while received_filters < expected_filters {
-                match network.receive_message().await {
-                    Ok(Some(NetworkMessage::CFilter(cfilter))) => {
-                        timeout_count = 0;
-                        
-                        // Find the height for this filter by matching block hash
-                        if let Some(height) = self.find_height_for_block_hash(&cfilter.block_hash, storage, current_height, batch_end).await? {
-                            // Store the filter
-                            storage.store_filter(height, &cfilter.filter).await
-                                .map_err(|e| SyncError::SyncFailed(format!("Failed to store filter: {}", e)))?;
-                            
-                            received_filters += 1;
-                            filters_downloaded += 1;
-                            
-                            tracing::debug!("Stored filter for height {} (hash: {})", height, cfilter.block_hash);
-                        } else {
-                            tracing::warn!("Received filter for unknown block hash: {}", cfilter.block_hash);
-                        }
-                    }
-                    Ok(Some(_)) => {
-                        // Ignore other messages
-                        continue;
-                    }
-                    Ok(None) => {
-                        timeout_count += 1;
-                        if timeout_count >= max_timeouts {
-                            self.syncing_filters = false;
-                            return Err(SyncError::SyncTimeout);
-                        }
-                        
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                        continue;
-                    }
-                    Err(e) => {
-                        self.syncing_filters = false;
-                        return Err(SyncError::SyncFailed(format!("Network error during filter sync: {}", e)));
-                    }
-                }
-            }
-            
+            let batch_size_actual = batch_end - current_height + 1;
+            filters_downloaded += batch_size_actual;
             current_height = batch_end + 1;
         }
         
@@ -478,7 +447,7 @@ impl FilterSyncManager {
     }
     
     /// Request compact filters from the network.
-    async fn request_filters(
+    pub async fn request_filters(
         &mut self,
         network: &mut dyn NetworkManager,
         start_height: u32,
@@ -593,8 +562,8 @@ impl FilterSyncManager {
         let scripts: Vec<dashcore::ScriptBuf> = watch_items.iter()
             .filter_map(|item| {
                 match item {
-                    crate::types::WatchItem::Address(addr) => {
-                        Some(addr.script_pubkey())
+                    crate::types::WatchItem::Address { address, .. } => {
+                        Some(address.script_pubkey())
                     }
                     crate::types::WatchItem::Script(script) => {
                         Some(script.clone())
@@ -623,8 +592,8 @@ impl FilterSyncManager {
         
         for item in watch_items {
             match item {
-                crate::types::WatchItem::Address(addr) => {
-                    scripts.push(addr.script_pubkey());
+                crate::types::WatchItem::Address { address, .. } => {
+                    scripts.push(address.script_pubkey());
                 }
                 crate::types::WatchItem::Script(script) => {
                     scripts.push(script.clone());
@@ -731,9 +700,141 @@ impl FilterSyncManager {
         Ok(())
     }
     
+    /// Request a block for download after a filter match.
+    pub async fn request_block_download(
+        &mut self,
+        filter_match: crate::types::FilterMatch,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<()> {
+        // Check if already downloading or queued
+        if self.downloading_blocks.contains_key(&filter_match.block_hash) {
+            tracing::debug!("Block {} already being downloaded", filter_match.block_hash);
+            return Ok(());
+        }
+        
+        if self.pending_block_downloads.iter().any(|m| m.block_hash == filter_match.block_hash) {
+            tracing::debug!("Block {} already queued for download", filter_match.block_hash);
+            return Ok(());
+        }
+        
+        tracing::info!("📦 Requesting block download for {} at height {}", filter_match.block_hash, filter_match.height);
+        
+        // Create GetData message for the block
+        let inv = Inventory::Block(filter_match.block_hash);
+        
+        let getdata = vec![inv];
+        
+        // Send the request
+        network.send_message(NetworkMessage::GetData(getdata)).await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetData for block: {}", e)))?;
+        
+        // Mark as downloading and add to queue
+        self.downloading_blocks.insert(filter_match.block_hash, filter_match.height);
+        let block_hash = filter_match.block_hash;
+        self.pending_block_downloads.push_back(filter_match);
+        
+        tracing::debug!("Added block {} to download queue (queue size: {})", 
+                       block_hash, self.pending_block_downloads.len());
+        
+        Ok(())
+    }
+    
+    /// Handle a downloaded block and return whether it was expected.
+    pub async fn handle_downloaded_block(
+        &mut self,
+        block: &dashcore::block::Block,
+    ) -> SyncResult<Option<crate::types::FilterMatch>> {
+        let block_hash = block.block_hash();
+        
+        // Check if this block was requested
+        if let Some(height) = self.downloading_blocks.remove(&block_hash) {
+            tracing::info!("📦 Received expected block {} at height {}", block_hash, height);
+            
+            // Find and remove from pending queue
+            if let Some(pos) = self.pending_block_downloads.iter().position(|m| m.block_hash == block_hash) {
+                let mut filter_match = self.pending_block_downloads.remove(pos).unwrap();
+                filter_match.block_requested = true;
+                
+                tracing::debug!("Removed block {} from download queue (remaining: {})", 
+                               block_hash, self.pending_block_downloads.len());
+                
+                return Ok(Some(filter_match));
+            }
+        }
+        
+        tracing::warn!("Received unexpected block: {}", block_hash);
+        Ok(None)
+    }
+    
+    /// Check if there are pending block downloads.
+    pub fn has_pending_downloads(&self) -> bool {
+        !self.pending_block_downloads.is_empty() || !self.downloading_blocks.is_empty()
+    }
+    
+    /// Get the number of pending block downloads.
+    pub fn pending_download_count(&self) -> usize {
+        self.pending_block_downloads.len()
+    }
+    
+    /// Process filter matches and automatically request block downloads.
+    pub async fn process_filter_matches_and_download(
+        &mut self,
+        filter_matches: Vec<crate::types::FilterMatch>,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<Vec<crate::types::FilterMatch>> {
+        if filter_matches.is_empty() {
+            return Ok(filter_matches);
+        }
+        
+        tracing::info!("Processing {} filter matches for block downloads", filter_matches.len());
+        
+        // Filter out blocks already being downloaded or queued
+        let mut new_downloads = Vec::new();
+        let mut inventory_items = Vec::new();
+        
+        for filter_match in filter_matches {
+            // Check if already downloading or queued
+            if self.downloading_blocks.contains_key(&filter_match.block_hash) {
+                tracing::debug!("Block {} already being downloaded", filter_match.block_hash);
+                continue;
+            }
+            
+            if self.pending_block_downloads.iter().any(|m| m.block_hash == filter_match.block_hash) {
+                tracing::debug!("Block {} already queued for download", filter_match.block_hash);
+                continue;
+            }
+            
+            tracing::info!("📦 Queuing block download for {} at height {}", filter_match.block_hash, filter_match.height);
+            
+            // Add to inventory for bulk request
+            inventory_items.push(Inventory::Block(filter_match.block_hash));
+            
+            // Mark as downloading and add to queue
+            self.downloading_blocks.insert(filter_match.block_hash, filter_match.height);
+            self.pending_block_downloads.push_back(filter_match.clone());
+            new_downloads.push(filter_match);
+        }
+        
+        // Send single bundled GetData request for all blocks
+        if !inventory_items.is_empty() {
+            tracing::info!("📦 Requesting {} blocks in single GetData message", inventory_items.len());
+            
+            let getdata = NetworkMessage::GetData(inventory_items);
+            network.send_message(getdata).await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to send bundled GetData for blocks: {}", e)))?;
+                
+            tracing::debug!("Added {} blocks to download queue (total queue size: {})", 
+                           new_downloads.len(), self.pending_block_downloads.len());
+        }
+        
+        Ok(new_downloads)
+    }
+    
     /// Reset sync state.
     pub fn reset(&mut self) {
         self.syncing_filter_headers = false;
         self.syncing_filters = false;
+        self.pending_block_downloads.clear();
+        self.downloading_blocks.clear();
     }
 }

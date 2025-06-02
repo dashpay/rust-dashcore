@@ -76,10 +76,10 @@ impl HeaderSyncManager {
                         break;
                     }
                     
-                    tracing::debug!("Received {} headers", headers.len());
+                    tracing::debug!("Received {} headers starting at {}", headers.len(), headers[0].block_hash());
                     if !headers.is_empty() {
-                        tracing::debug!("First header: {:?}", headers[0].block_hash());
-                        tracing::debug!("Last header: {:?}", headers.last().unwrap().block_hash());
+                        tracing::trace!("First header: {:?}", headers[0].block_hash());
+                        tracing::trace!("Last header: {:?}", headers.last().unwrap().block_hash());
                     }
                     
                     // Validate headers

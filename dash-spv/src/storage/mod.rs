@@ -6,15 +6,18 @@ pub mod types;
 
 use std::ops::Range;
 use std::any::Any;
+use std::collections::HashMap;
 use async_trait::async_trait;
 
 use dashcore::{
     block::Header as BlockHeader,
     hash_types::FilterHeader,
+    Address, OutPoint,
 };
 
 use crate::error::StorageResult;
 use crate::types::ChainState;
+use crate::wallet::Utxo;
 
 pub use memory::MemoryStorageManager;
 pub use disk::DiskStorageManager;
@@ -85,6 +88,18 @@ pub trait StorageManager: Send + Sync {
     /// Get multiple headers in a single batch operation.
     /// Returns headers with their heights. More efficient than calling get_header multiple times.
     async fn get_headers_batch(&self, start_height: u32, end_height: u32) -> StorageResult<Vec<(u32, BlockHeader)>>;
+    
+    /// Store a UTXO.
+    async fn store_utxo(&mut self, outpoint: &OutPoint, utxo: &Utxo) -> StorageResult<()>;
+    
+    /// Remove a UTXO.
+    async fn remove_utxo(&mut self, outpoint: &OutPoint) -> StorageResult<()>;
+    
+    /// Get UTXOs for a specific address.
+    async fn get_utxos_for_address(&self, address: &Address) -> StorageResult<Vec<Utxo>>;
+    
+    /// Get all UTXOs.
+    async fn get_all_utxos(&self) -> StorageResult<HashMap<OutPoint, Utxo>>;
 }
 
 /// Helper trait to provide as_any_mut for all StorageManager implementations
