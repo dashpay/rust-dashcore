@@ -5,7 +5,7 @@ use dashcore::Network;
 use trust_dns_resolver::TokioAsyncResolver;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 
-use crate::error::{SpvError as Error, NetworkError};
+use crate::error::{SpvError as Error};
 use crate::network::constants::{MAINNET_DNS_SEEDS, TESTNET_DNS_SEEDS};
 
 /// DNS discovery for finding initial peers

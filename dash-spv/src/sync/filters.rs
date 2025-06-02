@@ -19,7 +19,7 @@ use crate::types::SyncProgress;
 
 /// Manages BIP157 filter synchronization.
 pub struct FilterSyncManager {
-    config: ClientConfig,
+    _config: ClientConfig,
     syncing_filter_headers: bool,
     syncing_filters: bool,
     /// Queue of blocks that have been requested and are waiting for response
@@ -32,7 +32,7 @@ impl FilterSyncManager {
     /// Create a new filter sync manager.
     pub fn new(config: &ClientConfig) -> Self {
         Self {
-            config: config.clone(),
+            _config: config.clone(),
             syncing_filter_headers: false,
             syncing_filters: false,
             pending_block_downloads: VecDeque::new(),
@@ -552,7 +552,7 @@ impl FilterSyncManager {
         filter_data: &[u8],
         block_hash: &BlockHash,
         watch_items: &[crate::types::WatchItem],
-        storage: &dyn StorageManager,
+        _storage: &dyn StorageManager,
     ) -> SyncResult<bool> {
         if watch_items.is_empty() {
             return Ok(false);

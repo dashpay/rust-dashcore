@@ -161,7 +161,7 @@ impl TransactionProcessor {
         is_coinbase: bool,
         watched_addresses: &[Address],
         wallet: &Wallet,
-        storage: &mut dyn StorageManager,
+        _storage: &mut dyn StorageManager,
     ) -> Result<TransactionResult> {
         let txid = transaction.txid();
         let mut utxos_added = Vec::new();
@@ -230,6 +230,7 @@ impl TransactionProcessor {
     ///
     /// This handles common script types like P2PKH, P2SH, etc.
     /// Returns None if the script type is not supported or doesn't contain an address.
+    #[allow(dead_code)]
     fn extract_address_from_script(&self, script: &dashcore::ScriptBuf) -> Option<Address> {
         // Try to get address from script - this handles P2PKH, P2SH, P2WPKH, P2WSH
         Address::from_script(script, dashcore::Network::Dash).ok()

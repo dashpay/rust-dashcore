@@ -122,8 +122,6 @@ impl MasternodeSyncManager {
         loop {
             match network.receive_message().await {
                 Ok(Some(NetworkMessage::MnListDiff(diff))) => {
-                    timeout_count = 0;
-                    
                     // Process the diff
                     self.process_masternode_diff(diff, storage).await?;
                     break;

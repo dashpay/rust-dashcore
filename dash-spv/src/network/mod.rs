@@ -72,7 +72,7 @@ pub struct TcpNetworkManager {
     config: crate::client::ClientConfig,
     connection: Option<TcpConnection>,
     handshake: HandshakeManager,
-    message_handler: MessageHandler,
+    _message_handler: MessageHandler,
 }
 
 impl TcpNetworkManager {
@@ -82,7 +82,7 @@ impl TcpNetworkManager {
             config: config.clone(),
             connection: None,
             handshake: HandshakeManager::new(config.network),
-            message_handler: MessageHandler::new(),
+            _message_handler: MessageHandler::new(),
         })
     }
 }

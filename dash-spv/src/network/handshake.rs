@@ -26,7 +26,7 @@ pub enum HandshakeState {
 
 /// Manages the network handshake process.
 pub struct HandshakeManager {
-    network: Network,
+    _network: Network,
     state: HandshakeState,
     our_version: u32,
     peer_version: Option<u32>,
@@ -36,7 +36,7 @@ impl HandshakeManager {
     /// Create a new handshake manager.
     pub fn new(network: Network) -> Self {
         Self {
-            network,
+            _network: network,
             state: HandshakeState::Init,
             our_version: constants::PROTOCOL_VERSION,
             peer_version: None,
