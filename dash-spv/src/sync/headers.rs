@@ -12,13 +12,18 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::types::SyncProgress;
 use crate::validation::ValidationManager;
 
 /// Manages header synchronization.
 pub struct HeaderSyncManager {
     config: ClientConfig,
     validation: ValidationManager,
+    total_headers_synced: u32,
+    last_progress_log: Option<std::time::Instant>,
+    /// Whether header sync is currently in progress
+    syncing_headers: bool,
+    /// Last time sync progress was made (for timeout detection)
+    last_sync_progress: std::time::Instant,
 }
 
 impl HeaderSyncManager {
@@ -27,15 +32,122 @@ impl HeaderSyncManager {
         Self {
             config: config.clone(),
             validation: ValidationManager::new(config.validation_mode),
+            total_headers_synced: 0,
+            last_progress_log: None,
+            syncing_headers: false,
+            last_sync_progress: std::time::Instant::now(),
         }
     }
     
-    /// Synchronize headers with the network.
-    pub async fn sync(
+    /// Handle a Headers message during header synchronization.
+    /// Returns true if the message was processed and sync should continue, false if sync is complete.
+    pub async fn handle_headers_message(
+        &mut self,
+        headers: Vec<BlockHeader>,
+        storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<bool> {
+        if !self.syncing_headers {
+            // Not currently syncing, ignore
+            return Ok(true);
+        }
+
+        self.last_sync_progress = std::time::Instant::now();
+        
+        if headers.is_empty() {
+            // No more headers available
+            self.syncing_headers = false;
+            return Ok(false);
+        }
+        
+        // Update progress tracking
+        self.total_headers_synced += headers.len() as u32;
+        
+        // Log progress periodically (every 10,000 headers or every 30 seconds)
+        let should_log = match self.last_progress_log {
+            None => true,
+            Some(last_time) => {
+                last_time.elapsed() >= std::time::Duration::from_secs(30) || 
+                self.total_headers_synced % 10000 == 0
+            }
+        };
+        
+        if should_log {
+            let current_tip_height = storage.get_tip_height().await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+                .unwrap_or(0);
+            
+            tracing::info!("📊 Header sync progress: {} headers synced (current tip: height {})", 
+                         self.total_headers_synced, current_tip_height + headers.len() as u32);
+            tracing::debug!("Latest batch: {} headers, range {} → {}", 
+                          headers.len(), headers[0].block_hash(), headers.last().unwrap().block_hash());
+            self.last_progress_log = Some(std::time::Instant::now());
+        } else {
+            // Just a brief debug message for each batch
+            tracing::debug!("Received {} headers (total synced: {})", headers.len(), self.total_headers_synced);
+        }
+        
+        // Validate headers
+        let validated_headers = self.validate_headers(&headers, storage).await?;
+        
+        // Store headers
+        storage.store_headers(&validated_headers).await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to store headers: {}", e)))?;
+        
+        // Request next batch
+        let last_header = headers.last().unwrap();
+        self.request_headers(network, Some(last_header.block_hash())).await?;
+        
+        Ok(true)
+    }
+
+    /// Check if a sync timeout has occurred and handle recovery.
+    pub async fn check_sync_timeout(
+        &mut self,
+        storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<bool> {
+        if !self.syncing_headers {
+            return Ok(false);
+        }
+
+        if self.last_sync_progress.elapsed() > std::time::Duration::from_secs(10) {
+            tracing::warn!("📊 No header sync progress for 10+ seconds, re-sending header request");
+            
+            // Get current tip for recovery
+            let current_tip_height = storage.get_tip_height().await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+            
+            let recovery_base_hash = match current_tip_height {
+                None => None, // Genesis
+                Some(height) => {
+                    // Get the current tip hash
+                    storage.get_header(height).await
+                        .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header for recovery: {}", e)))?
+                        .map(|h| h.block_hash())
+                }
+            };
+            
+            self.request_headers(network, recovery_base_hash).await?;
+            self.last_sync_progress = std::time::Instant::now();
+            
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    /// Start synchronizing headers (initialize the sync state).
+    /// This replaces the old sync method but doesn't loop for messages.
+    pub async fn start_sync(
         &mut self,
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
-    ) -> SyncResult<SyncProgress> {
+    ) -> SyncResult<bool> {
+        if self.syncing_headers {
+            return Err(SyncError::SyncInProgress);
+        }
+
         tracing::info!("Starting header synchronization");
         
         // Get current tip from storage
@@ -43,99 +155,28 @@ impl HeaderSyncManager {
             .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
         
         let base_hash = match current_tip_height {
-            None => {
-                // No headers in storage yet - start from genesis
-                // Use genesis block hash to request headers starting from block 1
-                let genesis_hash = self.config.network.known_genesis_block_hash().expect("unable to get genesis block hash");
-                Some(genesis_hash)
-            }
+            None => None, // Start from genesis
             Some(height) => {
-                // Get the tip hash - request headers after this one
+                // Get the current tip hash
                 let tip_header = storage.get_header(height).await
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
-                    .ok_or_else(|| SyncError::SyncFailed("Tip header not found".to_string()))?;
-                Some(tip_header.block_hash())
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?;
+                tip_header.map(|h| h.block_hash())
             }
         };
         
-        // Request headers starting from our tip
+        // Set sync state
+        self.syncing_headers = true;
+        self.last_sync_progress = std::time::Instant::now();
+        
+        // Request headers starting from our current tip
         self.request_headers(network, base_hash).await?;
         
-        // Process incoming headers
-        let mut new_headers = Vec::new();
-        let mut timeout_count = 0;
-        let max_timeouts = 10;
-        
-        loop {
-            match network.receive_message().await {
-                Ok(Some(NetworkMessage::Headers(headers))) => {
-                    timeout_count = 0;
-                    
-                    if headers.is_empty() {
-                        // No more headers available
-                        break;
-                    }
-                    
-                    tracing::debug!("Received {} headers starting at {}", headers.len(), headers[0].block_hash());
-                    if !headers.is_empty() {
-                        tracing::trace!("First header: {:?}", headers[0].block_hash());
-                        tracing::trace!("Last header: {:?}", headers.last().unwrap().block_hash());
-                    }
-                    
-                    // Validate headers
-                    let validated_headers = self.validate_headers(&headers, storage).await?;
-                    
-                    // Store validated headers
-                    storage.store_headers(&validated_headers).await
-                        .map_err(|e| SyncError::SyncFailed(format!("Failed to store headers: {}", e)))?;
-                    
-                    new_headers.extend(validated_headers);
-                    
-                    // If we got a full batch, request more
-                    if headers.len() == self.config.max_headers_per_message as usize {
-                        let last_hash = headers.last().unwrap().block_hash();
-                        self.request_headers(network, Some(last_hash)).await?;
-                    } else {
-                        // Partial batch means we're at the tip
-                        break;
-                    }
-                }
-                Ok(Some(_)) => {
-                    // Ignore other messages during header sync
-                    continue;
-                }
-                Ok(None) => {
-                    // No message available, check timeout
-                    timeout_count += 1;
-                    if timeout_count >= max_timeouts {
-                        return Err(SyncError::SyncTimeout);
-                    }
-                    
-                    // Small delay before trying again
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    continue;
-                }
-                Err(e) => {
-                    return Err(SyncError::SyncFailed(format!("Network error during header sync: {}", e)));
-                }
-            }
-        }
-        
-        let final_height = storage.get_tip_height().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get final tip height: {}", e)))?
-            .unwrap_or(0);
-        
-        tracing::info!("Header synchronization completed. New tip height: {}", final_height);
-        
-        Ok(SyncProgress {
-            header_height: final_height,
-            headers_synced: true,
-            ..SyncProgress::default()
-        })
+        Ok(true) // Sync started
     }
+
     
     /// Request headers from the network.
-    async fn request_headers(
+    pub async fn request_headers(
         &mut self,
         network: &mut dyn NetworkManager,
         base_hash: Option<BlockHash>,
@@ -143,10 +184,10 @@ impl HeaderSyncManager {
         // Note: Removed broken in-flight check that was preventing subsequent requests
         // The loop in sync() already handles request pacing properly
         
-        // Build block locator 
+        // Build block locator - use slices where possible to reduce allocations
         let block_locator = match base_hash {
-            Some(hash) => vec![hash],  // Include our tip hash to request headers after it
-            None => vec![],            // Empty locator to request headers from genesis
+            Some(hash) => vec![hash],  // Need vec here for GetHeadersMessage
+            None => Vec::new(),        // Empty locator to request headers from genesis
         };
         
         // No specific stop hash (all zeros means sync to tip)
@@ -161,13 +202,15 @@ impl HeaderSyncManager {
         
         // Headers request sent successfully
         
-        tracing::debug!("Requested headers starting from {:?}", base_hash);
+        if self.total_headers_synced % 10000 == 0 {
+            tracing::debug!("Requested headers starting from {:?}", base_hash);
+        }
         
         Ok(())
     }
     
     /// Validate a batch of headers.
-    async fn validate_headers(
+    pub async fn validate_headers(
         &self,
         headers: &[BlockHeader],
         storage: &dyn StorageManager,
@@ -176,7 +219,7 @@ impl HeaderSyncManager {
             return Ok(Vec::new());
         }
         
-        let mut validated = Vec::new();
+        let mut validated = Vec::with_capacity(headers.len());
         
         for (i, header) in headers.iter().enumerate() {
             // Get the previous header for validation
@@ -259,6 +302,7 @@ impl HeaderSyncManager {
     
     /// Reset sync state.
     pub fn reset(&mut self) {
-        // No state to reset currently
+        self.total_headers_synced = 0;
+        self.last_progress_log = None;
     }
 }

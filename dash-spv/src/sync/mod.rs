@@ -1,9 +1,20 @@
 //! Synchronization management for the Dash SPV client.
+//!
+//! This module provides different sync strategies:
+//!
+//! 1. **Sequential sync**: Headers first, then filter headers, then filters on-demand
+//! 2. **Interleaved sync**: Headers and filter headers synchronized simultaneously 
+//!    for better responsiveness and efficiency
+//!
+//! The interleaved sync mode requests filter headers immediately after each batch 
+//! of headers is received and stored, providing better user experience during 
+//! initial sync operations.
 
 pub mod headers;
 pub mod filters;
 pub mod masternodes;
 pub mod state;
+
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
@@ -37,6 +48,49 @@ impl SyncManager {
         }
     }
     
+    /// Handle a Headers message by routing it to the header sync manager.
+    pub async fn handle_headers_message(
+        &mut self,
+        headers: Vec<dashcore::block::Header>,
+        storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<bool> {
+        self.header_sync.handle_headers_message(headers, storage, network).await
+    }
+    
+    /// Handle a CFHeaders message by routing it to the filter sync manager.
+    pub async fn handle_cfheaders_message(
+        &mut self,
+        cf_headers: dashcore::network::message_filter::CFHeaders,
+        storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<bool> {
+        self.filter_sync.handle_cfheaders_message(cf_headers, storage, network).await
+    }
+    
+    /// Handle an MnListDiff message by routing it to the masternode sync manager.
+    pub async fn handle_mnlistdiff_message(
+        &mut self,
+        diff: dashcore::network::message_sml::MnListDiff,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<bool> {
+        self.masternode_sync.handle_mnlistdiff_message(diff, storage).await
+    }
+    
+    /// Check for sync timeouts and handle recovery across all sync managers.
+    pub async fn check_sync_timeouts(
+        &mut self,
+        storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<()> {
+        // Check all sync managers for timeouts
+        let _ = self.header_sync.check_sync_timeout(storage, network).await;
+        let _ = self.filter_sync.check_sync_timeout(storage, network).await;
+        let _ = self.masternode_sync.check_sync_timeout(storage, network).await;
+        
+        Ok(())
+    }
+    
     /// Synchronize all components to the tip.
     pub async fn sync_all(
         &mut self,
@@ -45,19 +99,20 @@ impl SyncManager {
     ) -> SyncResult<SyncProgress> {
         let mut progress = SyncProgress::default();
         
-        // Step 1: Sync headers first
-        if self.config.validation_mode != crate::types::ValidationMode::None {
+        // Step 1: Sync headers and filter headers (interleaved if both enabled)
+        if self.config.validation_mode != crate::types::ValidationMode::None && self.config.enable_filters {
+            // Use interleaved sync for better responsiveness and efficiency
+            progress = self.sync_headers_and_filter_headers_impl(network, storage).await?;
+        } else if self.config.validation_mode != crate::types::ValidationMode::None {
+            // Headers only
             progress = self.sync_headers(network, storage).await?;
-        }
-        
-        // Step 2: Sync filter headers if enabled
-        if self.config.enable_filters {
+        } else if self.config.enable_filters {
+            // Filter headers only (unusual case) 
             progress = self.sync_filter_headers(network, storage).await?;
             
-            // Step 2a: Sync recent compact filters for transaction discovery
-            // Only sync last 100 blocks to start with
-            let filter_progress = self.sync_filters(network, storage, None, Some(100)).await?;
-            progress.filters_downloaded += filter_progress.filters_downloaded;
+            // Note: Compact filter downloading is skipped during initial sync
+            // Use sync_and_check_filters() when you have specific watch items to check
+            tracing::info!("💡 Headers and filter headers synced. Use sync_and_check_filters() to download and check specific filters");
         }
         
         // Step 3: Sync masternode list if enabled
@@ -69,7 +124,7 @@ impl SyncManager {
         Ok(progress)
     }
     
-    /// Synchronize headers.
+    /// Synchronize headers using the new state-based approach.
     pub async fn sync_headers(
         &mut self,
         network: &mut dyn NetworkManager,
@@ -81,15 +136,93 @@ impl SyncManager {
         
         self.state.start_sync(SyncComponent::Headers);
         
-        let result = self.header_sync.sync(network, storage).await;
+        // Start header sync
+        let sync_started = self.header_sync.start_sync(network, storage).await?;
+        
+        if !sync_started {
+            // Already up to date
+            self.state.finish_sync(SyncComponent::Headers);
+            
+            let final_height = storage.get_tip_height().await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get final tip height: {}", e)))?
+                .unwrap_or(0);
+            
+            return Ok(SyncProgress {
+                header_height: final_height,
+                headers_synced: true,
+                ..SyncProgress::default()
+            });
+        }
+        
+        // Note: The actual sync now happens through the monitoring loop
+        // calling handle_headers_message() and check_sync_timeout()
+        tracing::info!("Header sync started - will be completed through monitoring loop");
         
         self.state.finish_sync(SyncComponent::Headers);
         
-        let progress = result?;
-        Ok(progress)
+        let final_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get final tip height: {}", e)))?
+            .unwrap_or(0);
+        
+        Ok(SyncProgress {
+            header_height: final_height,
+            headers_synced: false, // Sync is in progress, will complete asynchronously
+            ..SyncProgress::default()
+        })
     }
     
-    /// Synchronize filter headers.
+    /// Implementation of sequential header and filter header sync using the new state-based approach.
+    async fn sync_headers_and_filter_headers_impl(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<SyncProgress> {
+        tracing::info!("Starting sequential header and filter header synchronization");
+        
+        // Get current header tip
+        let current_tip_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+            .unwrap_or(0);
+        
+        let current_filter_tip_height = storage.get_filter_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e)))?
+            .unwrap_or(0);
+        
+        tracing::info!("Starting sync - headers: {}, filter headers: {}", current_tip_height, current_filter_tip_height);
+        
+        // Step 1: Start header sync
+        let header_sync_started = self.header_sync.start_sync(network, storage).await?;
+        if header_sync_started {
+            tracing::info!("Header sync started - will complete through monitoring loop");
+        }
+        
+        // Step 2: Start filter header sync
+        let filter_sync_started = self.filter_sync.start_sync_headers(network, storage).await?;
+        if filter_sync_started {
+            tracing::info!("Filter header sync started - will complete through monitoring loop");
+        }
+        
+        // Note: The actual sync now happens through the monitoring loop
+        // calling handle_headers_message(), handle_cfheaders_message(), and check_sync_timeout()
+        
+        let final_header_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get final header height: {}", e)))?
+            .unwrap_or(0);
+        
+        let final_filter_height = storage.get_filter_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get final filter height: {}", e)))?
+            .unwrap_or(0);
+        
+        Ok(SyncProgress {
+            header_height: final_header_height,
+            filter_header_height: final_filter_height,
+            headers_synced: !header_sync_started, // If sync didn't start, we're already up to date
+            filter_headers_synced: !filter_sync_started, // If sync didn't start, we're already up to date
+            ..SyncProgress::default()
+        })
+    }
+    
+    /// Synchronize filter headers using the new state-based approach.
     pub async fn sync_filter_headers(
         &mut self,
         network: &mut dyn NetworkManager,
@@ -101,12 +234,39 @@ impl SyncManager {
         
         self.state.start_sync(SyncComponent::FilterHeaders);
         
-        let result = self.filter_sync.sync_headers(network, storage).await;
+        // Start filter header sync
+        let sync_started = self.filter_sync.start_sync_headers(network, storage).await?;
+        
+        if !sync_started {
+            // Already up to date
+            self.state.finish_sync(SyncComponent::FilterHeaders);
+            
+            let final_filter_height = storage.get_filter_tip_height().await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e)))?
+                .unwrap_or(0);
+            
+            return Ok(SyncProgress {
+                filter_header_height: final_filter_height,
+                filter_headers_synced: true,
+                ..SyncProgress::default()
+            });
+        }
+        
+        // Note: The actual sync now happens through the monitoring loop
+        // calling handle_cfheaders_message() and check_sync_timeout()
+        tracing::info!("Filter header sync started - will be completed through monitoring loop");
         
         self.state.finish_sync(SyncComponent::FilterHeaders);
         
-        let progress = result?;
-        Ok(progress)
+        let final_filter_height = storage.get_filter_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e)))?
+            .unwrap_or(0);
+        
+        Ok(SyncProgress {
+            filter_header_height: final_filter_height,
+            filter_headers_synced: false, // Sync is in progress, will complete asynchronously
+            ..SyncProgress::default()
+        })
     }
     
     /// Synchronize compact filters.
@@ -169,7 +329,7 @@ impl SyncManager {
         self.filter_sync.pending_download_count()
     }
     
-    /// Synchronize masternode list.
+    /// Synchronize masternode list using the new state-based approach.
     pub async fn sync_masternodes(
         &mut self,
         network: &mut dyn NetworkManager,
@@ -181,12 +341,41 @@ impl SyncManager {
         
         self.state.start_sync(SyncComponent::Masternodes);
         
-        let result = self.masternode_sync.sync(network, storage).await;
+        // Start masternode sync
+        let sync_started = self.masternode_sync.start_sync(network, storage).await?;
+        
+        if !sync_started {
+            // Already up to date
+            self.state.finish_sync(SyncComponent::Masternodes);
+            
+            let final_height = match storage.load_masternode_state().await {
+                Ok(Some(state)) => state.last_height,
+                _ => 0,
+            };
+            
+            return Ok(SyncProgress {
+                masternode_height: final_height,
+                masternodes_synced: true,
+                ..SyncProgress::default()
+            });
+        }
+        
+        // Note: The actual sync now happens through the monitoring loop
+        // calling handle_mnlistdiff_message() and check_sync_timeout()
+        tracing::info!("Masternode sync started - will be completed through monitoring loop");
         
         self.state.finish_sync(SyncComponent::Masternodes);
         
-        let progress = result?;
-        Ok(progress)
+        let final_height = match storage.load_masternode_state().await {
+            Ok(Some(state)) => state.last_height,
+            _ => 0,
+        };
+        
+        Ok(SyncProgress {
+            masternode_height: final_height,
+            masternodes_synced: false, // Sync is in progress, will complete asynchronously
+            ..SyncProgress::default()
+        })
     }
     
     /// Get current sync state.
@@ -217,6 +406,64 @@ impl SyncManager {
     /// Get a reference to the filter sync manager.
     pub fn filter_sync(&self) -> &FilterSyncManager {
         &self.filter_sync
+    }
+    
+    /// Recover from sync stalls by re-sending appropriate requests based on current state.
+    async fn recover_sync_requests(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        storage: &dyn StorageManager,
+        headers_sync_completed: bool,
+        current_header_tip: u32,
+    ) -> SyncResult<()> {
+        tracing::info!("🔄 Recovering sync requests - headers_completed: {}, current_tip: {}", 
+                      headers_sync_completed, current_header_tip);
+        
+        // Always try to advance headers if not complete
+        if !headers_sync_completed {
+            // Get the current tip hash to request headers after it
+            let tip_hash = if current_header_tip > 0 {
+                storage.get_header(current_header_tip).await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header for recovery: {}", e)))?
+                    .map(|h| h.block_hash())
+            } else {
+                // Start from genesis
+                Some(self.config.network.known_genesis_block_hash()
+                    .expect("unable to get genesis block hash"))
+            };
+            
+            tracing::info!("🔄 Re-requesting headers from tip: {:?}", tip_hash);
+            self.header_sync.request_headers(network, tip_hash).await?;
+        }
+        
+        // Check if filter headers are lagging behind block headers and request catch-up
+        let header_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get header tip for recovery: {}", e)))?
+            .unwrap_or(0);
+        let filter_height = storage.get_filter_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip for recovery: {}", e)))?
+            .unwrap_or(0);
+        
+        tracing::info!("🔄 Sync state check - headers: {}, filter headers: {}", 
+                      header_height, filter_height);
+        
+        if filter_height < header_height {
+            let start_height = filter_height + 1;
+            let batch_size = 1999; // Match existing batch size
+            let end_height = (start_height + batch_size - 1).min(header_height);
+            
+            if let Some(stop_header) = storage.get_header(end_height).await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get stop header for recovery: {}", e)))? {
+                
+                let stop_hash = stop_header.block_hash();
+                tracing::info!("🔄 Re-requesting filter headers from {} to {} (stop: {})", 
+                              start_height, end_height, stop_hash);
+                
+                self.filter_sync.request_filter_headers(network, start_height, stop_hash).await?;
+            }
+        }
+        
+        Ok(())
     }
 }
 

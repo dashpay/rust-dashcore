@@ -12,13 +12,14 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::{StorageManager, MasternodeState};
-use crate::types::SyncProgress;
 
 /// Manages masternode list synchronization.
 pub struct MasternodeSyncManager {
     config: ClientConfig,
     sync_in_progress: bool,
     engine: Option<MasternodeListEngine>,
+    /// Last time sync progress was made (for timeout detection)
+    last_sync_progress: std::time::Instant,
 }
 
 impl MasternodeSyncManager {
@@ -39,129 +40,111 @@ impl MasternodeSyncManager {
             config: config.clone(),
             sync_in_progress: false,
             engine,
+            last_sync_progress: std::time::Instant::now(),
         }
     }
     
-    /// Synchronize masternode list.
-    pub async fn sync(
+    /// Handle an MnListDiff message during masternode synchronization.
+    /// Returns true if the message was processed and sync should continue, false if sync is complete.
+    pub async fn handle_mnlistdiff_message(
+        &mut self,
+        diff: MnListDiff,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<bool> {
+        if !self.sync_in_progress {
+            // Not currently syncing, ignore
+            return Ok(true);
+        }
+
+        self.last_sync_progress = std::time::Instant::now();
+        
+        // Process the diff
+        self.process_masternode_diff(diff, storage).await?;
+        
+        // Masternode sync typically completes after processing one diff
+        self.sync_in_progress = false;
+        Ok(false)
+    }
+
+    /// Check if a sync timeout has occurred and handle recovery.
+    pub async fn check_sync_timeout(
+        &mut self,
+        storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<bool> {
+        if !self.sync_in_progress {
+            return Ok(false);
+        }
+
+        if self.last_sync_progress.elapsed() > std::time::Duration::from_secs(10) {
+            tracing::warn!("📊 No masternode sync progress for 10+ seconds, re-sending request");
+            
+            // Get current header height for recovery request
+            let current_height = storage.get_tip_height().await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get current height: {}", e)))?
+                .unwrap_or(0);
+            
+            let last_masternode_height = match storage.load_masternode_state().await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to load masternode state: {}", e)))? {
+                Some(state) => state.last_height,
+                None => 0,
+            };
+            
+            self.request_masternode_diff(network, storage, last_masternode_height, current_height).await?;
+            self.last_sync_progress = std::time::Instant::now();
+            
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    /// Start synchronizing masternodes (initialize the sync state).
+    /// This replaces the old sync method but doesn't loop for messages.
+    pub async fn start_sync(
         &mut self,
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
-    ) -> SyncResult<SyncProgress> {
+    ) -> SyncResult<bool> {
         if self.sync_in_progress {
             return Err(SyncError::SyncInProgress);
         }
-        
-        let _engine = self.engine.as_mut()
-            .ok_or_else(|| SyncError::SyncFailed("Masternode engine not initialized".to_string()))?;
-        
-        self.sync_in_progress = true;
-        
-        tracing::info!("Starting masternode list synchronization");
-        
-        // Load existing masternode state
-        if let Some(state) = storage.load_masternode_state().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to load masternode state: {}", e)))? {
-            
-            // TODO: Restore engine state from serialized data
-            tracing::info!("Loaded existing masternode state from height {}", state.last_height);
+
+        // Skip if masternodes are disabled
+        if !self.config.enable_masternodes || self.engine.is_none() {
+            return Ok(false);
         }
+
+        tracing::info!("Starting masternode list synchronization");
         
         // Get current header height
         let current_height = storage.get_tip_height().await
             .map_err(|e| SyncError::SyncFailed(format!("Failed to get current height: {}", e)))?
             .unwrap_or(0);
         
-        // Get last synced masternode height
-        let mut last_masternode_height = storage.load_masternode_state().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to load masternode state: {}", e)))?
-            .map(|s| s.last_height)
-            .unwrap_or(0);
+        // Get last known masternode height
+        let last_masternode_height = match storage.load_masternode_state().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to load masternode state: {}", e)))? {
+            Some(state) => state.last_height,
+            None => 0,
+        };
         
-        // Check if we need to reset masternode engine due to inconsistent state
-        if last_masternode_height > 0 {
-            // If we have a stored masternode height but no engine state for it,
-            // we need to start fresh from genesis
-            tracing::warn!("Detected potential masternode state inconsistency. Starting fresh from genesis.");
-            tracing::warn!("Last masternode height: {}, Current height: {}", last_masternode_height, current_height);
-            
-            // Reset the masternode engine
-            if let Some(engine) = &mut self.engine {
-                *engine = MasternodeListEngine::default_for_network(self.config.network);
-                // Feed genesis block hash at height 0
-                if let Some(genesis_hash) = self.config.network.known_genesis_block_hash() {
-                    engine.feed_block_height(0, genesis_hash);
-                }
-            }
-            
-            // Clear stored masternode state to start fresh
-            // Note: For now we just reset the height, but ideally we'd have a clear_masternode_state method
-            tracing::info!("Masternode engine reset to start from genesis");
-            
-            // Start from height 0
-            last_masternode_height = 0;
-        }
-        
-        if current_height <= last_masternode_height {
+        // If we're already up to date, no need to sync
+        if last_masternode_height >= current_height {
             tracing::info!("Masternode list already synced to current height");
-            self.sync_in_progress = false;
-            return Ok(SyncProgress {
-                masternode_height: last_masternode_height,
-                masternodes_synced: true,
-                ..SyncProgress::default()
-            });
+            return Ok(false);
         }
+        
+        // Set sync state
+        self.sync_in_progress = true;
+        self.last_sync_progress = std::time::Instant::now();
         
         // Request masternode list diff
         self.request_masternode_diff(network, storage, last_masternode_height, current_height).await?;
         
-        // Process response
-        let mut timeout_count = 0;
-        let max_timeouts = 10;
-        
-        loop {
-            match network.receive_message().await {
-                Ok(Some(NetworkMessage::MnListDiff(diff))) => {
-                    // Process the diff
-                    self.process_masternode_diff(diff, storage).await?;
-                    break;
-                }
-                Ok(Some(_)) => {
-                    // Ignore other messages
-                    continue;
-                }
-                Ok(None) => {
-                    timeout_count += 1;
-                    if timeout_count >= max_timeouts {
-                        self.sync_in_progress = false;
-                        return Err(SyncError::SyncTimeout);
-                    }
-                    
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    continue;
-                }
-                Err(e) => {
-                    self.sync_in_progress = false;
-                    return Err(SyncError::SyncFailed(format!("Network error during masternode sync: {}", e)));
-                }
-            }
-        }
-        
-        self.sync_in_progress = false;
-        
-        let final_masternode_height = storage.load_masternode_state().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to load final masternode state: {}", e)))?
-            .map(|s| s.last_height)
-            .unwrap_or(0);
-        
-        tracing::info!("Masternode list synchronization completed. New height: {}", final_masternode_height);
-        
-        Ok(SyncProgress {
-            masternode_height: final_masternode_height,
-            masternodes_synced: final_masternode_height >= current_height,
-            ..SyncProgress::default()
-        })
+        Ok(true) // Sync started
     }
+
     
     /// Request masternode list diff.
     async fn request_masternode_diff(
