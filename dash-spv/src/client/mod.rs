@@ -327,11 +327,16 @@ impl DashSpvClient {
     async fn handle_network_message(&mut self, message: dashcore::network::message::NetworkMessage) -> Result<()> {
         use dashcore::network::message::NetworkMessage;
         
+        tracing::debug!("Client handling network message: {:?}", std::mem::discriminant(&message));
+        
         match message {
             NetworkMessage::Headers(headers) => {
+                tracing::debug!("Client received headers message with {} headers", headers.len());
                 // Route to header sync manager if active, otherwise process normally
                 if let Ok(false) = self.sync_manager.handle_headers_message(headers.clone(), &mut *self.storage, &mut *self.network).await {
                     tracing::info!("🎯 Header sync completed");
+                    // Properly finish the sync state
+                    self.sync_manager.sync_state_mut().finish_sync(crate::sync::SyncComponent::Headers);
                 } else {
                     // Only log significant header batches to reduce verbosity
                     if headers.len() >= 100 {
@@ -348,6 +353,8 @@ impl DashSpvClient {
                 // Route to filter sync manager if active
                 if let Ok(false) = self.sync_manager.handle_cfheaders_message(cf_headers, &mut *self.storage, &mut *self.network).await {
                     tracing::info!("🎯 Filter header sync completed");
+                    // Properly finish the sync state
+                    self.sync_manager.sync_state_mut().finish_sync(crate::sync::SyncComponent::FilterHeaders);
                 }
                 // CFHeaders are only relevant during sync, so we don't process them normally
             }
