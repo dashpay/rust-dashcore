@@ -207,6 +207,19 @@ impl TcpConnection {
                 tracing::info!("Peer {} connection reset/aborted", self.address);
                 Err(NetworkError::PeerDisconnected)
             }
+            Err(encode::Error::InvalidChecksum { expected, actual }) => {
+                // Special handling for checksum errors - skip the message and return empty queue
+                tracing::warn!("Skipping message with invalid checksum from {}: expected {:02x?}, actual {:02x?}", 
+                              self.address, expected, actual);
+                
+                // Check if this looks like a version message corruption by checking for all-zeros checksum
+                if actual == [0, 0, 0, 0] {
+                    tracing::warn!("All-zeros checksum detected from {}, likely corrupted version message - skipping", self.address);
+                }
+                
+                // Return empty queue instead of failing the connection
+                Ok(None)
+            }
             Err(e) => {
                 tracing::error!("Failed to decode message from {}: {}", self.address, e);
                 Err(NetworkError::Serialization(e))
