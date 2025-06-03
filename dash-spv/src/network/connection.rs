@@ -4,6 +4,7 @@ use std::io::{BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, SystemTime};
 use std::collections::HashMap;
+use tokio::sync::Mutex;
 
 use dashcore::consensus::{encode, Decodable};
 use dashcore::network::message::{NetworkMessage, RawNetworkMessage};
@@ -17,7 +18,9 @@ use crate::types::PeerInfo;
 pub struct TcpConnection {
     address: SocketAddr,
     write_stream: Option<TcpStream>,
-    read_stream: Option<BufReader<TcpStream>>,
+    // Wrap read_stream in a Mutex to ensure exclusive access during reads
+    // This prevents race conditions with BufReader's internal buffer
+    read_stream: Option<Mutex<BufReader<TcpStream>>>,
     timeout: Duration,
     connected_at: Option<SystemTime>,
     bytes_sent: u64,
@@ -67,7 +70,7 @@ impl TcpConnection {
         Ok(Self {
             address,
             write_stream: Some(write_stream),
-            read_stream: Some(read_stream),
+            read_stream: Some(Mutex::new(read_stream)),
             timeout,
             connected_at: Some(SystemTime::now()),
             bytes_sent: 0,
@@ -97,7 +100,7 @@ impl TcpConnection {
             .map_err(|e| NetworkError::ConnectionFailed(format!("Failed to set read stream non-blocking: {}", e)))?;
         
         self.write_stream = Some(stream);
-        self.read_stream = Some(BufReader::new(read_stream));
+        self.read_stream = Some(Mutex::new(BufReader::new(read_stream)));
         self.connected_at = Some(SystemTime::now());
         
         tracing::info!("Connected to peer {}", self.address);
@@ -162,11 +165,20 @@ impl TcpConnection {
     
     /// Receive a message from the peer.
     pub async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
-        let reader = self.read_stream.as_mut()
-            .ok_or_else(|| NetworkError::ConnectionFailed("Not connected".to_string()))?;
+        // First check if we have a reader stream
+        if self.read_stream.is_none() {
+            return Err(NetworkError::ConnectionFailed("Not connected".to_string()));
+        }
+        
+        // Get the reader mutex
+        let reader_mutex = self.read_stream.as_mut().unwrap();
+        
+        // Lock the reader to ensure exclusive access during the entire read operation
+        // This prevents race conditions with BufReader's internal buffer
+        let mut reader = reader_mutex.lock().await;
         
         // Read message from the BufReader
-        match RawNetworkMessage::consensus_decode(reader) {
+        let result = match RawNetworkMessage::consensus_decode(&mut *reader) {
             Ok(raw_message) => {
                 // Validate magic bytes match our network
                 if raw_message.magic != self.network.magic() {
@@ -179,30 +191,42 @@ impl TcpConnection {
                 }
                 
                 // Message received successfully
+                tracing::trace!("Successfully decoded message from {}: {:?}", self.address, raw_message.payload.cmd());
                 Ok(Some(raw_message.payload))
             }
             Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 Ok(None)
             }
             Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                // EOF can be temporary - don't immediately close connection
-                // Just return None to indicate no message available
-                tracing::debug!("EOF from peer {} - no data available", self.address);
-                Ok(None)
+                // EOF means peer closed their side of connection
+                tracing::info!("Peer {} closed connection (EOF)", self.address);
+                Err(NetworkError::PeerDisconnected)
             }
             Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::ConnectionAborted
                 || e.kind() == std::io::ErrorKind::ConnectionReset => {
                 tracing::info!("Peer {} connection reset/aborted", self.address);
-                self.write_stream = None;
-                self.read_stream = None;
-                self.connected_at = None;
                 Err(NetworkError::PeerDisconnected)
             }
             Err(e) => {
                 tracing::error!("Failed to decode message from {}: {}", self.address, e);
                 Err(NetworkError::Serialization(e))
             }
+        };
+        
+        // Drop the lock before disconnecting
+        drop(reader);
+        
+        // Handle disconnection if needed
+        match &result {
+            Err(NetworkError::PeerDisconnected) => {
+                self.write_stream = None;
+                self.read_stream = None;
+                self.connected_at = None;
+            }
+            _ => {}
         }
+        
+        result
     }
     
     /// Check if the connection is active.

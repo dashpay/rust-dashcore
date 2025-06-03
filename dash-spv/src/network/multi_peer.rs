@@ -47,6 +47,8 @@ pub struct MultiPeerNetworkManager {
     initial_peers: Vec<SocketAddr>,
     /// When we first started needing peers (for DNS delay)
     peer_search_started: Arc<Mutex<Option<SystemTime>>>,
+    /// Current sync peer (sticky during sync operations)
+    current_sync_peer: Arc<Mutex<Option<SocketAddr>>>,
 }
 
 impl MultiPeerNetworkManager {
@@ -70,6 +72,7 @@ impl MultiPeerNetworkManager {
             tasks: Arc::new(Mutex::new(JoinSet::new())),
             initial_peers: config.peers.clone(),
             peer_search_started: Arc::new(Mutex::new(None)),
+            current_sync_peer: Arc::new(Mutex::new(None)),
         })
     }
     
@@ -138,7 +141,7 @@ impl MultiPeerNetworkManager {
                             // Add to known addresses
                             addrv2_handler.add_known_address(addr, ServiceFlags::from(1)).await;
                             
-                            // Start message reader for this peer
+                            // // Start message reader for this peer
                             Self::start_peer_reader(
                                 addr,
                                 pool.clone(),
@@ -400,6 +403,58 @@ impl MultiPeerNetworkManager {
         });
     }
     
+    /// Send a message to a single peer (using sticky peer selection for sync consistency)
+    async fn send_to_single_peer(&self, message: NetworkMessage) -> NetworkResult<()> {
+        let connections = self.pool.get_all_connections().await;
+        
+        if connections.is_empty() {
+            return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
+        }
+        
+        // Try to use the current sync peer if it's still connected
+        let mut current_sync_peer = self.current_sync_peer.lock().await;
+        let selected_peer = if let Some(current_addr) = *current_sync_peer {
+            // Check if current sync peer is still connected
+            if connections.iter().any(|(addr, _)| *addr == current_addr) {
+                // Keep using the same peer for sync consistency
+                current_addr
+            } else {
+                // Current sync peer disconnected, pick a new one
+                let new_addr = connections[0].0;
+                log::info!("🔄 Sync peer switched from {} to {} (previous peer disconnected)", 
+                          current_addr, new_addr);
+                *current_sync_peer = Some(new_addr);
+                new_addr
+            }
+        } else {
+            // No current sync peer, pick the first available
+            let new_addr = connections[0].0;
+            log::info!("🔄 Sync peer selected: {}", new_addr);
+            *current_sync_peer = Some(new_addr);
+            new_addr
+        };
+        drop(current_sync_peer);
+        
+        // Find the connection for the selected peer
+        let (addr, conn) = connections.iter()
+            .find(|(a, _)| *a == selected_peer)
+            .ok_or_else(|| NetworkError::ConnectionFailed("Selected peer not found".to_string()))?;
+        
+        // Reduce verbosity for common sync messages
+        match &message {
+            NetworkMessage::GetHeaders(_) | NetworkMessage::GetCFilters(_) | NetworkMessage::GetCFHeaders(_) => {
+                log::debug!("Sending {} to {}", message.cmd(), addr);
+            }
+            _ => {
+                log::trace!("Sending {:?} to {}", message.cmd(), addr);
+            }
+        }
+        
+        let mut conn_guard = conn.write().await;
+        conn_guard.send_message(message).await
+            .map_err(|e| NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e)))
+    }
+    
     /// Broadcast a message to all connected peers
     pub async fn broadcast(&self, message: NetworkMessage) -> Vec<Result<(), Error>> {
         let connections = self.pool.get_all_connections().await;
@@ -407,7 +462,15 @@ impl MultiPeerNetworkManager {
         
         // Spawn tasks for concurrent sending
         for (addr, conn) in connections {
-            log::trace!("Broadcasting {:?} to {}", message.cmd(), addr);
+            // Reduce verbosity for common sync messages
+            match &message {
+                NetworkMessage::GetHeaders(_) | NetworkMessage::GetCFilters(_) => {
+                    log::debug!("Broadcasting {} to {}", message.cmd(), addr);
+                }
+                _ => {
+                    log::trace!("Broadcasting {:?} to {}", message.cmd(), addr);
+                }
+            }
             let msg = message.clone();
             
             let handle = tokio::spawn(async move {
@@ -487,6 +550,7 @@ impl Clone for MultiPeerNetworkManager {
             tasks: self.tasks.clone(),
             initial_peers: self.initial_peers.clone(),
             peer_search_started: self.peer_search_started.clone(),
+            current_sync_peer: self.current_sync_peer.clone(),
         }
     }
 }
@@ -509,30 +573,53 @@ impl NetworkManager for MultiPeerNetworkManager {
     }
     
     async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()> {
-        let results = self.broadcast(message).await;
-        
-        // Return error if all sends failed
-        if results.is_empty() {
-            return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
+        // For sync messages that require consistent responses, send to only one peer
+        match &message {
+            NetworkMessage::GetHeaders(_) | NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_) => {
+                self.send_to_single_peer(message).await
+            }
+            _ => {
+                // For other messages, broadcast to all peers
+                let results = self.broadcast(message).await;
+                
+                // Return error if all sends failed
+                if results.is_empty() {
+                    return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
+                }
+                
+                let successes = results.iter().filter(|r| r.is_ok()).count();
+                if successes == 0 {
+                    return Err(NetworkError::ProtocolError("Failed to send to any peer".to_string()));
+                }
+                
+                Ok(())
+            }
         }
-        
-        let successes = results.iter().filter(|r| r.is_ok()).count();
-        if successes == 0 {
-            return Err(NetworkError::ProtocolError("Failed to send to any peer".to_string()));
-        }
-        
-        Ok(())
     }
     
     async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
         let mut rx = self.message_rx.lock().await;
         
-        match rx.recv().await {
-            Some((addr, msg)) => {
-                log::trace!("Delivering {:?} from {} to client", msg.cmd(), addr);
+        // Use a timeout to prevent indefinite blocking when peers disconnect
+        match tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
+            Ok(Some((addr, msg))) => {
+                // Reduce verbosity for common sync messages
+                match &msg {
+                    NetworkMessage::Headers(_) | NetworkMessage::CFilter(_) => {
+                        // Headers and filters are logged by the sync managers - reduced verbosity
+                        log::debug!("Delivering {} from {} to client", msg.cmd(), addr);
+                    }
+                    _ => {
+                        log::trace!("Delivering {:?} from {} to client", msg.cmd(), addr);
+                    }
+                }
                 Ok(Some(msg))
             }
-            None => Ok(None),
+            Ok(None) => Ok(None),
+            Err(_) => {
+                // Timeout - no message available
+                Ok(None)
+            }
         }
     }
     
