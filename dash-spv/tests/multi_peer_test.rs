@@ -56,7 +56,7 @@ async fn test_multi_peer_connection() {
     
     println!("Connected to {} peers:", peer_count);
     for info in peer_info {
-        println!("  - {} (version: {})", info.address, info.version);
+        println!("  - {} (version: {:?})", info.address, info.version);
     }
     
     // Stop the client
