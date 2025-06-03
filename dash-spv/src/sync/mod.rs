@@ -158,7 +158,8 @@ impl SyncManager {
         // calling handle_headers_message() and check_sync_timeout()
         tracing::info!("Header sync started - will be completed through monitoring loop");
         
-        self.state.finish_sync(SyncComponent::Headers);
+        // Don't call finish_sync here! The sync is still in progress.
+        // It will be finished when handle_headers_message() returns false (sync complete)
         
         let final_height = storage.get_tip_height().await
             .map_err(|e| SyncError::SyncFailed(format!("Failed to get final tip height: {}", e)))?
@@ -256,7 +257,8 @@ impl SyncManager {
         // calling handle_cfheaders_message() and check_sync_timeout()
         tracing::info!("Filter header sync started - will be completed through monitoring loop");
         
-        self.state.finish_sync(SyncComponent::FilterHeaders);
+        // Don't call finish_sync here! The sync is still in progress.
+        // It will be finished when handle_cfheaders_message() returns false (sync complete)
         
         let final_filter_height = storage.get_filter_tip_height().await
             .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e)))?
@@ -381,6 +383,11 @@ impl SyncManager {
     /// Get current sync state.
     pub fn sync_state(&self) -> &SyncState {
         &self.state
+    }
+    
+    /// Get mutable sync state.
+    pub fn sync_state_mut(&mut self) -> &mut SyncState {
+        &mut self.state
     }
     
     /// Check if any sync is in progress.
