@@ -47,8 +47,12 @@ impl HeaderSyncManager {
         storage: &mut dyn StorageManager,
         network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
+        tracing::debug!("Handle headers message called with {} headers, syncing_headers: {}", 
+                       headers.len(), self.syncing_headers);
+        
         if !self.syncing_headers {
             // Not currently syncing, ignore
+            tracing::debug!("Not syncing headers, ignoring message");
             return Ok(true);
         }
 
@@ -56,6 +60,7 @@ impl HeaderSyncManager {
         
         if headers.is_empty() {
             // No more headers available
+            tracing::info!("Received empty headers response, sync complete");
             self.syncing_headers = false;
             return Ok(false);
         }
@@ -167,6 +172,7 @@ impl HeaderSyncManager {
         // Set sync state
         self.syncing_headers = true;
         self.last_sync_progress = std::time::Instant::now();
+        tracing::debug!("Set syncing_headers = true, requesting headers from {:?}", base_hash);
         
         // Request headers starting from our current tip
         self.request_headers(network, base_hash).await?;
