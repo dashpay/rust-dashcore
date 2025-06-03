@@ -341,7 +341,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let watch_items = client.get_watch_items().await;
     if !watch_items.is_empty() && matches.get_flag("no-filters") == false {
         tracing::info!("Checking recent filters for matches...");
-        match client.sync_and_check_filters(Some(1000)).await {
+        match client.sync_and_check_filters_with_monitoring(Some(1000)).await {
             Ok(matches) => {
                 if matches.is_empty() {
                     tracing::info!("No filter matches found in recent blocks");

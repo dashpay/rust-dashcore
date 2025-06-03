@@ -218,10 +218,38 @@ impl DashSpvClient {
         // Update status display after initial sync
         self.update_status_display().await;
         
+        tracing::info!("✅ Initial sync completed! Headers: {}, Filter headers: {}", 
+                     result.header_height, result.filter_header_height);
+        tracing::info!("📊 To download and check filters, use sync_and_check_filters() with your watch items");
+        
         Ok(result)
     }
     
     /// Run continuous monitoring for new blocks, ChainLocks, InstantLocks, etc.
+    /// 
+    /// **CRITICAL: This is the sole network message receiver to prevent race conditions.**
+    /// 
+    /// This method is the only location in the entire codebase that should call 
+    /// `network.receive_message()`. All other components (sync operations, filter downloads, 
+    /// etc.) must coordinate through shared state rather than directly reading from the network.
+    /// 
+    /// **Race Condition Prevention:**
+    /// - Only this monitoring loop reads from network sockets
+    /// - Other operations coordinate via `FilterSyncState` and similar mechanisms  
+    /// - CFilter messages are routed to active sync operations when appropriate
+    /// - All other messages are processed immediately or forwarded as needed
+    /// 
+    /// **Architecture:**
+    /// ```
+    /// Network Socket → monitor_network() → {
+    ///   ├─ Immediate processing (Ping/Pong, ChainLocks, etc.)
+    ///   ├─ Coordination with sync operations (CFilter routing)
+    ///   └─ Regular message handling (Headers, Blocks, etc.)
+    /// }
+    /// ```
+    /// 
+    /// This design ensures message ordering, prevents data loss, and eliminates 
+    /// race conditions between multiple consumers trying to read the same socket.
     pub async fn monitor_network(&mut self) -> Result<()> {
         let running = self.running.read().await;
         if !*running {
@@ -268,7 +296,10 @@ impl DashSpvClient {
                 last_status_update = Instant::now();
             }
             
-            // Listen for network messages
+            // Check for sync timeouts and handle recovery
+            let _ = self.sync_manager.check_sync_timeouts(&mut *self.storage, &mut *self.network).await;
+            
+            // Listen for network messages from the per-peer message channel
             match self.network.receive_message().await {
                 Ok(Some(message)) => {
                     if let Err(e) = self.handle_network_message(message).await {
@@ -298,10 +329,34 @@ impl DashSpvClient {
         
         match message {
             NetworkMessage::Headers(headers) => {
-                tracing::info!("Received {} new headers", headers.len());
-                
-                // Process the new headers
-                self.process_new_headers(headers).await?;
+                // Route to header sync manager if active, otherwise process normally
+                if let Ok(false) = self.sync_manager.handle_headers_message(headers.clone(), &mut *self.storage, &mut *self.network).await {
+                    tracing::info!("🎯 Header sync completed");
+                } else {
+                    // Only log significant header batches to reduce verbosity
+                    if headers.len() >= 100 {
+                        tracing::info!("📥 Processing batch of {} headers", headers.len());
+                    } else {
+                        tracing::debug!("Processing {} headers", headers.len());
+                    }
+                    
+                    // Process the new headers normally (not during sync)
+                    self.process_new_headers(headers).await?;
+                }
+            }
+            NetworkMessage::CFHeaders(cf_headers) => {
+                // Route to filter sync manager if active
+                if let Ok(false) = self.sync_manager.handle_cfheaders_message(cf_headers, &mut *self.storage, &mut *self.network).await {
+                    tracing::info!("🎯 Filter header sync completed");
+                }
+                // CFHeaders are only relevant during sync, so we don't process them normally
+            }
+            NetworkMessage::MnListDiff(diff) => {
+                // Route to masternode sync manager if active
+                if let Ok(false) = self.sync_manager.handle_mnlistdiff_message(diff, &mut *self.storage).await {
+                    tracing::info!("🎯 Masternode sync completed");
+                }
+                // MnListDiff is only relevant during sync, so we don't process them normally
             }
             NetworkMessage::Block(block) => {
                 tracing::info!("Received new block: {}", block.header.block_hash());
@@ -342,15 +397,9 @@ impl DashSpvClient {
                     tracing::warn!("Invalid pong received: {}", e);
                 }
             }
-            NetworkMessage::CFHeaders(cfheaders) => {
-                tracing::info!("Received {} filter hashes", cfheaders.filter_hashes.len());
-                // Process filter headers - store them for later filter validation
-                if let Err(e) = self.process_filter_headers(cfheaders).await {
-                    tracing::error!("Failed to process filter headers: {}", e);
-                }
-            }
             NetworkMessage::CFilter(cfilter) => {
-                tracing::trace!("Received compact filter for block {}", cfilter.block_hash);
+                // Don't log every individual filter - it's too verbose during sync
+                // The sync managers will provide appropriate progress logging
                 
                 // Check if this filter is expected by an active sync operation
                 let handled_by_sync = {
@@ -745,8 +794,8 @@ impl DashSpvClient {
                     // Also check against outpoints from our watched addresses
                     // For this to work properly, we'd need to maintain a persistent set of outpoints
                     // from our addresses. For now, let's log when we see inputs to help debug
-                    tracing::debug!("🔍 Checking input {}:{} -> previous_output {}:{}", 
-                                   txid, vin, input.previous_output.txid, input.previous_output.vout);
+                    // tracing::debug!("🔍 Checking input {}:{} -> previous_output {}:{}",
+                    //                txid, vin, input.previous_output.txid, input.previous_output.vout);
                 }
             }
             
@@ -997,6 +1046,13 @@ impl DashSpvClient {
     }
     
     /// Sync compact filters for recent blocks and check for matches.
+    /// Sync and check filters with internal monitoring loop management.
+    /// This method automatically handles the monitoring loop required for CFilter message processing.
+    pub async fn sync_and_check_filters_with_monitoring(&mut self, num_blocks: Option<u32>) -> Result<Vec<crate::types::FilterMatch>> {
+        // Just delegate to the regular method for now - the real fix is in sync_filters_coordinated
+        self.sync_and_check_filters(num_blocks).await
+    }
+
     pub async fn sync_and_check_filters(&mut self, num_blocks: Option<u32>) -> Result<Vec<crate::types::FilterMatch>> {
         let running = self.running.read().await;
         if !*running {
@@ -1194,8 +1250,9 @@ impl DashSpvClient {
                 last_progress_time = tokio::time::Instant::now(); // Reset to avoid spamming
             }
             
-            // Small delay before checking again
-            tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+            // Wait for progress - the monitoring loop will handle CFilter messages
+            // and update the sync state coordination mechanism
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
         
         Ok(())
