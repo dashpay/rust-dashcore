@@ -116,8 +116,22 @@ impl HeaderSyncManager {
             return Ok(false);
         }
 
-        if self.last_sync_progress.elapsed() > std::time::Duration::from_secs(10) {
-            tracing::warn!("📊 No header sync progress for 10+ seconds, re-sending header request");
+        let timeout_duration = if network.peer_count() == 0 {
+            // More aggressive timeout when no peers
+            std::time::Duration::from_secs(5)
+        } else {
+            std::time::Duration::from_secs(10)
+        };
+
+        if self.last_sync_progress.elapsed() > timeout_duration {
+            if network.peer_count() == 0 {
+                tracing::warn!("📊 Header sync stalled - no connected peers");
+                self.syncing_headers = false; // Reset state to allow restart
+                return Err(SyncError::SyncFailed("No connected peers for header sync".to_string()));
+            }
+            
+            tracing::warn!("📊 No header sync progress for {}+ seconds, re-sending header request", 
+                          timeout_duration.as_secs());
             
             // Get current tip for recovery
             let current_tip_height = storage.get_tip_height().await
