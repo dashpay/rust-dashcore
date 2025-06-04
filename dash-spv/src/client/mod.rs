@@ -368,6 +368,20 @@ impl DashSpvClient {
                     Ok(false) => {
                         tracing::info!("🎯 Header sync completed (handle_headers_message returned false)");
                         // Header sync manager has already cleared its internal syncing_headers flag
+                        
+                        // Auto-trigger masternode sync after header sync completion
+                        if self.config.enable_masternodes {
+                            tracing::info!("🚀 Header sync complete, starting masternode sync...");
+                            match self.sync_manager.sync_masternodes(&mut *self.network, &mut *self.storage).await {
+                                Ok(_) => {
+                                    tracing::info!("✅ Masternode sync initiated after header sync completion");
+                                }
+                                Err(e) => {
+                                    tracing::error!("❌ Failed to start masternode sync after headers: {}", e);
+                                    // Don't fail the entire flow if masternode sync fails to start
+                                }
+                            }
+                        }
                     }
                     Ok(true) => {
                         tracing::debug!("🔄 Header sync continuing (handle_headers_message returned true)");
