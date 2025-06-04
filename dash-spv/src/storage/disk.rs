@@ -265,14 +265,12 @@ impl DiskStorageManager {
             .min_by_key(|(_, s)| s.last_accessed)
             .map(|(id, s)| (*id, s.clone()))
         {
-            // Save if dirty before evicting - send to background worker
+            // Save if dirty before evicting - do it synchronously to ensure data consistency
             if oldest_segment.dirty {
-                if let Some(tx) = &self.worker_tx {
-                    let _ = tx.send(WorkerCommand::SaveHeaderSegment {
-                        segment_id: oldest_segment.segment_id,
-                        headers: oldest_segment.headers.clone(),
-                    }).await;
-                }
+                tracing::debug!("Synchronously saving dirty segment {} before eviction", oldest_segment.segment_id);
+                let segment_path = self.base_path.join(format!("headers/segment_{:04}.dat", oldest_segment.segment_id));
+                save_segment_to_disk(&segment_path, &oldest_segment.headers).await?;
+                tracing::debug!("Successfully saved segment {} to disk", oldest_segment.segment_id);
             }
             
             segments.remove(&oldest_id);
@@ -324,14 +322,12 @@ impl DiskStorageManager {
             .min_by_key(|(_, s)| s.last_accessed)
             .map(|(id, s)| (*id, s.clone()))
         {
-            // Save if dirty before evicting - send to background worker
+            // Save if dirty before evicting - do it synchronously to ensure data consistency
             if oldest_segment.dirty {
-                if let Some(tx) = &self.worker_tx {
-                    let _ = tx.send(WorkerCommand::SaveFilterSegment {
-                        segment_id: oldest_segment.segment_id,
-                        filter_headers: oldest_segment.filter_headers.clone(),
-                    }).await;
-                }
+                tracing::debug!("Synchronously saving dirty filter segment {} before eviction", oldest_segment.segment_id);
+                let segment_path = self.base_path.join(format!("headers/filter_segment_{:04}.dat", oldest_segment.segment_id));
+                save_filter_segment_to_disk(&segment_path, &oldest_segment.filter_headers).await?;
+                tracing::debug!("Successfully saved filter segment {} to disk", oldest_segment.segment_id);
             }
             
             segments.remove(&oldest_id);
