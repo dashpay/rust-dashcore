@@ -542,13 +542,14 @@ impl StorageManager for DiskStorageManager {
         self
     }
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
-        let mut next_height = {
-            let current_tip = self.cached_tip_height.read().await;
-            match *current_tip {
-                Some(tip) => tip + 1,
-                None => 0, // Start at height 0 if no headers stored yet
-            }
-        }; // Read lock is dropped here
+        // Acquire write locks for the entire operation to prevent race conditions
+        let mut cached_tip = self.cached_tip_height.write().await;
+        let mut reverse_index = self.header_hash_index.write().await;
+        
+        let mut next_height = match *cached_tip {
+            Some(tip) => tip + 1,
+            None => 0, // Start at height 0 if no headers stored yet
+        };
 
         for header in headers {
             let segment_id = Self::get_segment_id(next_height);
@@ -580,14 +581,18 @@ impl StorageManager for DiskStorageManager {
                 }
             }
             
-            // Update reverse index
-            self.header_hash_index.write().await.insert(header.block_hash(), next_height);
+            // Update reverse index (atomically with tip height)
+            reverse_index.insert(header.block_hash(), next_height);
             
             next_height += 1;
         }
 
-        // Update cached tip height
-        *self.cached_tip_height.write().await = Some(next_height - 1);
+        // Update cached tip height atomically with reverse index
+        *cached_tip = Some(next_height - 1);
+        
+        // Release locks before saving (to avoid deadlocks during background saves)
+        drop(reverse_index);
+        drop(cached_tip);
         
         // Save dirty segments periodically (every 1000 headers)
         if headers.len() >= 1000 || next_height % 1000 == 0 {
