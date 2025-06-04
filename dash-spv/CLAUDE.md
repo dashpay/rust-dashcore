@@ -62,6 +62,9 @@ cargo test --test handshake_test test_handshake_with_mainnet_peer
 
 # Run tests with output
 cargo test -- --nocapture
+
+# Run single test with debug output
+cargo test --test handshake_test test_handshake_with_mainnet_peer -- --nocapture
 ```
 
 **Integration Tests with Real Node:**
@@ -70,6 +73,9 @@ The integration tests in `tests/integration_real_node_test.rs` connect to a live
 ```bash
 # Run real node integration tests
 cargo test --test integration_real_node_test -- --nocapture
+
+# Test specific real node functionality
+cargo test --test integration_real_node_test test_real_header_sync_genesis_to_1000 -- --nocapture
 ```
 
 See `run_integration_tests.md` for detailed setup instructions.
@@ -167,6 +173,45 @@ Use domain-specific error types:
 - **Core dependencies**: `dashcore`, `tokio`, `async-trait`, `thiserror`
 - **Built on**: `dashcore` library with Dash-specific features enabled
 - **Async runtime**: Tokio with full feature set
+
+## Key Implementation Details
+
+### Storage Architecture
+- **Segmented storage**: Headers stored in 10,000-header segments with index files
+- **Filter storage**: Separate storage for filter headers and compact block filters
+- **State persistence**: Chain state, masternode data, and sync progress persisted between runs
+- **Storage paths**: Headers in `headers/`, filters in `filters/`, state in `state/`
+
+### Async Architecture Patterns
+- **Trait objects**: `Arc<dyn StorageManager>`, `Arc<dyn NetworkManager>` for runtime polymorphism
+- **Message passing**: Tokio channels for inter-component communication
+- **Timeout handling**: Configurable timeouts with recovery mechanisms
+- **State machines**: `SyncState` enum drives synchronization flow
+
+### Debugging and Troubleshooting
+
+**Common Debug Commands:**
+```bash
+# Run with tracing output
+RUST_LOG=debug cargo test --test integration_real_node_test -- --nocapture
+
+# Run specific test with verbose output  
+cargo test --test handshake_test test_handshake_with_mainnet_peer -- --nocapture --test-threads=1
+
+# Check storage state
+ls -la data*/headers/
+ls -la data*/state/
+```
+
+**Debug Data Locations:**
+- `test-debug/`: Debug data from test runs
+- `data*/`: Runtime data directories (numbered by run)
+- Storage index files show header counts and segment info
+
+**Network Debugging:**
+- Connection issues: Check if Dash Core node is running at `127.0.0.1:9999`
+- Handshake failures: Verify network (mainnet/testnet/devnet) matches node
+- Timeout issues: Node may be syncing or under load
 
 ## Current Status
 
