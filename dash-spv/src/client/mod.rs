@@ -400,6 +400,23 @@ impl DashSpvClient {
                         tracing::info!("🎯 Filter header sync completed (handle_cfheaders_message returned false)");
                         // Properly finish the sync state
                         self.sync_manager.sync_state_mut().finish_sync(crate::sync::SyncComponent::FilterHeaders);
+                        
+                        // Auto-trigger filter downloading after filter header sync completion
+                        if !self.get_watch_items().await.is_empty() {
+                            tracing::info!("🚀 Filter header sync complete, starting automatic filter download and checking...");
+                            // Pass None to let sync_and_check_filters determine the optimal range based on watch items
+                            match self.sync_and_check_filters(None).await {
+                                Ok(matches) => {
+                                    tracing::info!("✅ Automatic filter download completed with {} matches", matches.len());
+                                }
+                                Err(e) => {
+                                    tracing::error!("❌ Failed to start automatic filter download after filter headers: {}", e);
+                                    // Don't fail the entire flow if filter download fails to start
+                                }
+                            }
+                        } else {
+                            tracing::info!("💡 Filter header sync complete, but no watch items configured - skipping automatic filter download");
+                        }
                     }
                     Ok(true) => {
                         tracing::debug!("🔄 Filter header sync continuing (handle_cfheaders_message returned true)");
@@ -457,56 +474,67 @@ impl DashSpvClient {
                 }
             }
             NetworkMessage::CFilter(cfilter) => {
-                // Don't log every individual filter - it's too verbose during sync
-                // The sync managers will provide appropriate progress logging
+                tracing::debug!("Received CFilter for block {}", cfilter.block_hash);
                 
                 // Check if this filter is expected by an active sync operation
                 let handled_by_sync = {
                     let mut sync_state = self.filter_sync_state.write().await;
                     if sync_state.active {
+                        tracing::debug!("Active filter sync - checking if filter matches expected range");
                         // Check if this filter falls within the expected range
                         if let Some((start_height, end_height)) = sync_state.expected_range {
+                            tracing::debug!("Expected range: {} to {}", start_height, end_height);
                             // Find the height for this filter by matching block hash
-                            if let Some(height) = self.find_height_for_block_hash(cfilter.block_hash).await {
-                                if height >= start_height && height <= end_height {
-                                    sync_state.received_count += 1;
-                                    tracing::debug!("Filter sync: received filter {}/{} for height {} (hash: {})", 
-                                                   sync_state.received_count, sync_state.expected_count, height, cfilter.block_hash);
-                                    
-                                    // Store the filter
-                                    if let Err(e) = self.storage.store_filter(height, &cfilter.filter).await {
-                                        tracing::error!("Failed to store filter for height {}: {}", height, e);
+                            match self.find_height_for_block_hash(cfilter.block_hash).await {
+                                Some(height) => {
+                                    tracing::debug!("Found height {} for block {}", height, cfilter.block_hash);
+                                    if height >= start_height && height <= end_height {
+                                        sync_state.received_count += 1;
+                                        tracing::info!("Filter sync: received filter {}/{} for height {} (hash: {})", 
+                                                       sync_state.received_count, sync_state.expected_count, height, cfilter.block_hash);
+                                        
+                                        // Store the filter
+                                        if let Err(e) = self.storage.store_filter(height, &cfilter.filter).await {
+                                            tracing::error!("Failed to store filter for height {}: {}", height, e);
+                                        } else {
+                                            tracing::debug!("Stored filter for height {} (hash: {})", height, cfilter.block_hash);
+                                        }
+                                        
+                                        // Check if sync is complete
+                                        if sync_state.received_count >= sync_state.expected_count {
+                                            tracing::info!("Filter sync completed: received all {} expected filters", sync_state.expected_count);
+                                            sync_state.active = false;
+                                            sync_state.expected_range = None;
+                                            sync_state.received_count = 0;
+                                            sync_state.expected_count = 0;
+                                        }
+                                        
+                                        true // Handled by sync
                                     } else {
-                                        tracing::debug!("Stored filter for height {} (hash: {})", height, cfilter.block_hash);
+                                        tracing::debug!("Filter height {} is outside expected range {} to {}", height, start_height, end_height);
+                                        false // Not in expected range
                                     }
-                                    
-                                    // Check if sync is complete
-                                    if sync_state.received_count >= sync_state.expected_count {
-                                        tracing::info!("Filter sync completed: received all {} expected filters", sync_state.expected_count);
-                                        sync_state.active = false;
-                                        sync_state.expected_range = None;
-                                        sync_state.received_count = 0;
-                                        sync_state.expected_count = 0;
-                                    }
-                                    
-                                    true // Handled by sync
-                                } else {
-                                    false // Not in expected range
                                 }
-                            } else {
-                                false // Couldn't find height
+                                None => {
+                                    tracing::warn!("Could not find height for block hash {} - this may indicate a storage issue or the block header is not yet stored", cfilter.block_hash);
+                                    // Instead of rejecting the filter, let's try to process it as a regular filter
+                                    // This makes the system more robust to timing issues
+                                    false // Process as regular filter
+                                }
                             }
                         } else {
+                            tracing::debug!("No expected range set for active filter sync");
                             false // No expected range
                         }
                     } else {
+                        tracing::debug!("No active filter sync - processing as regular filter");
                         false // No active sync
                     }
                 };
                 
                 // If not handled by sync, process as a regular filter for watch items
                 if !handled_by_sync {
-                    tracing::info!("Received compact filter for block {} (not from sync)", cfilter.block_hash);
+                    tracing::info!("Processing compact filter for block {} as regular filter check", cfilter.block_hash);
                     if let Err(e) = self.process_and_check_filter(cfilter).await {
                         tracing::error!("Failed to process compact filter: {}", e);
                     }
