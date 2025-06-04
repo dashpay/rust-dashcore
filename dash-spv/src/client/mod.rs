@@ -323,8 +323,28 @@ impl DashSpvClient {
                     continue;
                 }
                 Err(e) => {
+                    // Handle specific network error types
+                    if let crate::error::NetworkError::ConnectionFailed(msg) = &e {
+                        if msg.contains("No connected peers") || self.network.peer_count() == 0 {
+                            tracing::warn!("All peers disconnected during monitoring, checking connection health");
+                            
+                            // Wait for potential reconnection
+                            let mut wait_count = 0;
+                            while wait_count < 10 && self.network.peer_count() == 0 {
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                wait_count += 1;
+                            }
+                            
+                            if self.network.peer_count() > 0 {
+                                tracing::info!("✅ Reconnected to {} peer(s), resuming monitoring", self.network.peer_count());
+                                continue;
+                            } else {
+                                tracing::warn!("No peers available after waiting, will retry monitoring");
+                            }
+                        }
+                    }
+                    
                     tracing::error!("Network error during monitoring: {}", e);
-                    // Try to reconnect or handle the error
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     continue;
                 }
