@@ -47,12 +47,12 @@ impl HeaderSyncManager {
         storage: &mut dyn StorageManager,
         network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
-        tracing::debug!("Handle headers message called with {} headers, syncing_headers: {}", 
+        tracing::info!("🔍 Handle headers message called with {} headers, syncing_headers: {}", 
                        headers.len(), self.syncing_headers);
         
         if !self.syncing_headers {
             // Not currently syncing, ignore
-            tracing::debug!("Not syncing headers, ignoring message");
+            tracing::warn!("⚠️ Not syncing headers (syncing_headers=false), ignoring {} headers message", headers.len());
             return Ok(true);
         }
 
@@ -172,7 +172,7 @@ impl HeaderSyncManager {
         // Set sync state
         self.syncing_headers = true;
         self.last_sync_progress = std::time::Instant::now();
-        tracing::debug!("Set syncing_headers = true, requesting headers from {:?}", base_hash);
+        tracing::info!("✅ Set syncing_headers = true, requesting headers from {:?}", base_hash);
         
         // Request headers starting from our current tip
         self.request_headers(network, base_hash).await?;
@@ -310,5 +310,10 @@ impl HeaderSyncManager {
     pub fn reset(&mut self) {
         self.total_headers_synced = 0;
         self.last_progress_log = None;
+    }
+    
+    /// Check if header sync is currently in progress.
+    pub fn is_syncing(&self) -> bool {
+        self.syncing_headers
     }
 }

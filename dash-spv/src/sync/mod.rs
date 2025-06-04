@@ -130,19 +130,16 @@ impl SyncManager {
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<SyncProgress> {
-        if self.state.is_syncing(SyncComponent::Headers) {
+        // Check if header sync is already in progress using the HeaderSyncManager's internal state
+        if self.header_sync.is_syncing() {
             return Err(SyncError::SyncInProgress);
         }
-        
-        self.state.start_sync(SyncComponent::Headers);
         
         // Start header sync
         let sync_started = self.header_sync.start_sync(network, storage).await?;
         
         if !sync_started {
-            // Already up to date
-            self.state.finish_sync(SyncComponent::Headers);
-            
+            // Already up to date - no need to call state.finish_sync since we never started
             let final_height = storage.get_tip_height().await
                 .map_err(|e| SyncError::SyncFailed(format!("Failed to get final tip height: {}", e)))?
                 .unwrap_or(0);
@@ -192,9 +189,14 @@ impl SyncManager {
         tracing::info!("Starting sync - headers: {}, filter headers: {}", current_tip_height, current_filter_tip_height);
         
         // Step 1: Start header sync
+        tracing::info!("🎯 About to call header_sync.start_sync()");
         let header_sync_started = self.header_sync.start_sync(network, storage).await?;
         if header_sync_started {
-            tracing::info!("Header sync started - will complete through monitoring loop");
+            tracing::info!("✅ Header sync started successfully - will complete through monitoring loop");
+            // The header sync manager already sets its internal syncing_headers flag
+            // Don't duplicate sync state tracking here
+        } else {
+            tracing::info!("📊 Headers already up to date (start_sync returned false)");
         }
         
         // Step 2: Start filter header sync

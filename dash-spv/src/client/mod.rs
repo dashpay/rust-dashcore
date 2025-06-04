@@ -331,22 +331,20 @@ impl DashSpvClient {
         
         match message {
             NetworkMessage::Headers(headers) => {
-                tracing::debug!("Client received headers message with {} headers", headers.len());
+                tracing::info!("📨 Client received headers message with {} headers", headers.len());
                 // Route to header sync manager if active, otherwise process normally
-                if let Ok(false) = self.sync_manager.handle_headers_message(headers.clone(), &mut *self.storage, &mut *self.network).await {
-                    tracing::info!("🎯 Header sync completed");
-                    // Properly finish the sync state
-                    self.sync_manager.sync_state_mut().finish_sync(crate::sync::SyncComponent::Headers);
-                } else {
-                    // Only log significant header batches to reduce verbosity
-                    if headers.len() >= 100 {
-                        tracing::info!("📥 Processing batch of {} headers", headers.len());
-                    } else {
-                        tracing::debug!("Processing {} headers", headers.len());
+                match self.sync_manager.handle_headers_message(headers.clone(), &mut *self.storage, &mut *self.network).await {
+                    Ok(false) => {
+                        tracing::info!("🎯 Header sync completed (handle_headers_message returned false)");
+                        // Header sync manager has already cleared its internal syncing_headers flag
                     }
-                    
-                    // Process the new headers normally (not during sync)
-                    self.process_new_headers(headers).await?;
+                    Ok(true) => {
+                        tracing::debug!("🔄 Header sync continuing (handle_headers_message returned true)");
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Error handling headers: {:?}", e);
+                        return Err(e.into());
+                    }
                 }
             }
             NetworkMessage::CFHeaders(cf_headers) => {
@@ -1292,7 +1290,7 @@ impl DashSpvClient {
         
         let genesis_header = match self.config.network {
             dashcore::Network::Dash => {
-                // Use the actual Dash genesis block parameters from the block explorer data
+                // Use the actual Dash mainnet genesis block parameters
                 BlockHeader {
                     version: Version::from_consensus(1),
                     prev_blockhash: dashcore::BlockHash::all_zeros(),
@@ -1301,6 +1299,18 @@ impl DashSpvClient {
                     time: 1390095618,
                     bits: CompactTarget::from_consensus(0x1e0ffff0),
                     nonce: 28917698,
+                }
+            }
+            dashcore::Network::Testnet => {
+                // Use the actual Dash testnet genesis block parameters
+                BlockHeader {
+                    version: Version::from_consensus(1),
+                    prev_blockhash: dashcore::BlockHash::all_zeros(),
+                    merkle_root: "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7".parse()
+                        .expect("valid merkle root"),
+                    time: 1390666206,
+                    bits: CompactTarget::from_consensus(0x1e0ffff0),
+                    nonce: 3861367235,
                 }
             }
             _ => {
