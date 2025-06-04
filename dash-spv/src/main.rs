@@ -322,49 +322,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     
-    // Start synchronization
-    tracing::info!("Starting synchronization to tip...");
-    match client.sync_to_tip().await {
-        Ok(progress) => {
-            tracing::info!("Synchronization completed!");
-            tracing::info!("Header height: {}", progress.header_height);
-            tracing::info!("Filter header height: {}", progress.filter_header_height);
-            tracing::info!("Masternode height: {}", progress.masternode_height);
-        }
-        Err(e) => {
-            tracing::error!("Synchronization failed: {}", e);
-            panic!("SPV client synchronization failed: {}", e);
-        }
-    }
+    // Start continuous monitoring first to avoid race conditions
+    tracing::info!("SPV client running. Starting network monitoring...");
+    
+    // Start synchronization and monitoring concurrently
+    tokio::select! {
+        _ = async {
+            // Wait a moment for monitoring loop to initialize
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            
+            // Start synchronization
+            tracing::info!("Starting synchronization to tip...");
+            match client.sync_to_tip().await {
+                Ok(progress) => {
+                    tracing::info!("Synchronization requests sent! (actual sync happens asynchronously)");
+                    tracing::info!("Current Header height: {}", progress.header_height);
+                    tracing::info!("Current Filter header height: {}", progress.filter_header_height);
+                    tracing::info!("Current Masternode height: {}", progress.masternode_height);
+                }
+                Err(e) => {
+                    tracing::error!("Synchronization startup failed: {}", e);
+                    panic!("SPV client synchronization startup failed: {}", e);
+                }
+            }
 
-    // Check filters for matches if we have watch items
-    let watch_items = client.get_watch_items().await;
-    if !watch_items.is_empty() && matches.get_flag("no-filters") == false {
-        tracing::info!("Checking recent filters for matches...");
-        match client.sync_and_check_filters_with_monitoring(Some(1000)).await {
-            Ok(matches) => {
-                if matches.is_empty() {
-                    tracing::info!("No filter matches found in recent blocks");
-                } else {
-                    tracing::info!("🎯 Found {} filter matches:", matches.len());
-                    for (i, filter_match) in matches.iter().enumerate() {
-                        tracing::info!("  {}: Block {} at height {}", 
-                                      i + 1, filter_match.block_hash, filter_match.height);
+            // Check filters for matches if we have watch items
+            let watch_items = client.get_watch_items().await;
+            if !watch_items.is_empty() && matches.get_flag("no-filters") == false {
+                tracing::info!("Checking recent filters for matches...");
+                match client.sync_and_check_filters_with_monitoring(Some(1000)).await {
+                    Ok(matches) => {
+                        if matches.is_empty() {
+                            tracing::info!("No filter matches found in recent blocks");
+                        } else {
+                            tracing::info!("🎯 Found {} filter matches:", matches.len());
+                            for (i, filter_match) in matches.iter().enumerate() {
+                                tracing::info!("  {}: Block {} at height {}", 
+                                              i + 1, filter_match.block_hash, filter_match.height);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to check filters: {}", e);
                     }
                 }
             }
-            Err(e) => {
-                tracing::error!("Failed to check filters: {}", e);
+            
+            tracing::info!("Initial sync and filter check completed. Monitoring for new blocks...");
+            
+            // Keep running to continue monitoring
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
             }
-        }
-    }
-
-    // The client will handle updating the terminal UI internally
-    
-    // Start continuous monitoring
-    tracing::info!("SPV client running. Starting network monitoring...");
-    
-    tokio::select! {
+        } => {}
         result = client.monitor_network() => {
             if let Err(e) = result {
                 tracing::error!("Network monitoring failed: {}", e);

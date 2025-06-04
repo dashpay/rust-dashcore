@@ -218,9 +218,9 @@ impl DashSpvClient {
         // Update status display after initial sync
         self.update_status_display().await;
         
-        tracing::info!("✅ Initial sync completed! Headers: {}, Filter headers: {}", 
+        tracing::info!("✅ Initial sync requests sent! Current state - Headers: {}, Filter headers: {}", 
                      result.header_height, result.filter_header_height);
-        tracing::info!("📊 To download and check filters, use sync_and_check_filters() with your watch items");
+        tracing::info!("📊 Actual sync will complete asynchronously through monitoring loop");
         
         Ok(result)
     }
