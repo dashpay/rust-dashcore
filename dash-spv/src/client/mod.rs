@@ -211,9 +211,19 @@ impl DashSpvClient {
         }
         drop(running);
         
-        // Run synchronization
-        let result = self.sync_manager.sync_all(&mut *self.network, &mut *self.storage).await
-            .map_err(|e| SpvError::Sync(e))?;
+        // Prepare sync state but don't send requests (monitoring loop will handle that)
+        tracing::info!("Preparing sync state for monitoring loop...");
+        let result = SyncProgress {
+            header_height: self.storage.get_tip_height().await
+                .map_err(|e| SpvError::Storage(e))?
+                .unwrap_or(0),
+            filter_header_height: self.storage.get_filter_tip_height().await
+                .map_err(|e| SpvError::Storage(e))?
+                .unwrap_or(0),
+            headers_synced: false, // Will be synced by monitoring loop
+            filter_headers_synced: false,
+            ..SyncProgress::default()
+        };
         
         // Update status display after initial sync
         self.update_status_display().await;
@@ -227,29 +237,8 @@ impl DashSpvClient {
     
     /// Run continuous monitoring for new blocks, ChainLocks, InstantLocks, etc.
     /// 
-    /// **CRITICAL: This is the sole network message receiver to prevent race conditions.**
-    /// 
-    /// This method is the only location in the entire codebase that should call 
-    /// `network.receive_message()`. All other components (sync operations, filter downloads, 
-    /// etc.) must coordinate through shared state rather than directly reading from the network.
-    /// 
-    /// **Race Condition Prevention:**
-    /// - Only this monitoring loop reads from network sockets
-    /// - Other operations coordinate via `FilterSyncState` and similar mechanisms  
-    /// - CFilter messages are routed to active sync operations when appropriate
-    /// - All other messages are processed immediately or forwarded as needed
-    /// 
-    /// **Architecture:**
-    /// ```
-    /// Network Socket → monitor_network() → {
-    ///   ├─ Immediate processing (Ping/Pong, ChainLocks, etc.)
-    ///   ├─ Coordination with sync operations (CFilter routing)
-    ///   └─ Regular message handling (Headers, Blocks, etc.)
-    /// }
-    /// ```
-    /// 
-    /// This design ensures message ordering, prevents data loss, and eliminates 
-    /// race conditions between multiple consumers trying to read the same socket.
+    /// This is the sole network message receiver to prevent race conditions.
+    /// All sync operations coordinate through this monitoring loop.
     pub async fn monitor_network(&mut self) -> Result<()> {
         let running = self.running.read().await;
         if !*running {
@@ -258,6 +247,14 @@ impl DashSpvClient {
         drop(running);
         
         tracing::info!("Starting continuous network monitoring...");
+        
+        // Check if sync is needed and send initial requests after monitoring starts
+        if let Ok(base_hash) = self.sync_manager.header_sync_mut().prepare_sync(&mut *self.storage).await {
+            tracing::info!("🚀 Monitoring active, sending initial header sync requests...");
+            if let Err(e) = self.sync_manager.header_sync_mut().request_headers(&mut *self.network, base_hash).await {
+                tracing::error!("Failed to send initial header requests: {}", e);
+            }
+        }
         
         // Print initial status
         self.update_status_display().await;

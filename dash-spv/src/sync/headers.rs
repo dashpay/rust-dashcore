@@ -142,6 +142,40 @@ impl HeaderSyncManager {
         Ok(false)
     }
 
+    /// Prepare sync state without sending network requests.
+    /// This allows monitoring to be set up before requests are sent.
+    pub async fn prepare_sync(
+        &mut self,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<Option<dashcore::BlockHash>> {
+        if self.syncing_headers {
+            return Err(SyncError::SyncInProgress);
+        }
+
+        tracing::info!("Preparing header synchronization");
+        
+        // Get current tip from storage
+        let current_tip_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+        
+        let base_hash = match current_tip_height {
+            None => None, // Start from genesis
+            Some(height) => {
+                // Get the current tip hash
+                let tip_header = storage.get_header(height).await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?;
+                tip_header.map(|h| h.block_hash())
+            }
+        };
+        
+        // Set sync state but don't send requests yet
+        self.syncing_headers = true;
+        self.last_sync_progress = std::time::Instant::now();
+        tracing::info!("✅ Prepared header sync state, ready to request headers from {:?}", base_hash);
+        
+        Ok(base_hash)
+    }
+    
     /// Start synchronizing headers (initialize the sync state).
     /// This replaces the old sync method but doesn't loop for messages.
     pub async fn start_sync(
