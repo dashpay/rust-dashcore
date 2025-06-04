@@ -86,17 +86,11 @@ impl SyncManager {
                             tracing::debug!("Starting filter header sync to catch up with headers");
                             if let Err(e) = self.filter_sync.start_sync_headers(network, storage).await {
                                 tracing::warn!("Failed to start filter header sync: {}", e);
-                                // Fall back to manual request
-                                if let Err(e) = self.filter_sync.request_filter_headers(network, start_height, last_header_hash).await {
-                                    tracing::warn!("Failed to request filter headers for new blocks: {}", e);
-                                }
                             }
                         } else {
-                            // Filter header sync is active, but we still need to request headers for this specific range
-                            tracing::debug!("Filter header sync active, sending additional request for new block range");
-                            if let Err(e) = self.filter_sync.request_filter_headers(network, start_height, last_header_hash).await {
-                                tracing::warn!("Failed to request filter headers for new blocks: {}", e);
-                            }
+                            // Filter header sync is already active and will handle new ranges automatically
+                            // The filter sync manager's handle_cfheaders_message will request next batches
+                            tracing::debug!("Filter header sync already active, relying on automatic batch progression");
                         }
                     }
                 }
