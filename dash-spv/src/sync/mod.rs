@@ -49,13 +49,58 @@ impl SyncManager {
     }
     
     /// Handle a Headers message by routing it to the header sync manager.
+    /// If filter headers are enabled, also requests filter headers for new blocks.
     pub async fn handle_headers_message(
         &mut self,
         headers: Vec<dashcore::block::Header>,
         storage: &mut dyn StorageManager,
         network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
-        self.header_sync.handle_headers_message(headers, storage, network).await
+        // First, let the header sync manager process the headers
+        let continue_sync = self.header_sync.handle_headers_message(headers.clone(), storage, network).await?;
+        
+        // If filters are enabled and we received new headers, request filter headers for them
+        if self.config.enable_filters && !headers.is_empty() {
+            // Get the height range of the newly stored headers
+            let first_header_hash = headers[0].block_hash();
+            let last_header_hash = headers.last().unwrap().block_hash();
+            
+            // Find heights for these headers
+            if let Some(first_height) = storage.get_header_height_by_hash(&first_header_hash).await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get first header height: {}", e)))? {
+                if let Some(last_height) = storage.get_header_height_by_hash(&last_header_hash).await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get last header height: {}", e)))? {
+                    
+                    // Check if we need filter headers for this range
+                    let current_filter_tip = storage.get_filter_tip_height().await
+                        .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip: {}", e)))?
+                        .unwrap_or(0);
+                    
+                    // Only request filter headers if we're behind
+                    if current_filter_tip < last_height {
+                        let start_height = (current_filter_tip + 1).max(first_height);
+                        tracing::info!("🔄 Requesting filter headers for new blocks: heights {} to {}", start_height, last_height);
+                        
+                        // Start filter header sync if not already started
+                        if !self.filter_sync.is_syncing_filter_headers() {
+                            tracing::debug!("Starting filter header sync to catch up with headers");
+                            if let Err(e) = self.filter_sync.start_sync_headers(network, storage).await {
+                                tracing::warn!("Failed to start filter header sync: {}", e);
+                                // Fall back to manual request
+                                if let Err(e) = self.filter_sync.request_filter_headers(network, start_height, last_header_hash).await {
+                                    tracing::warn!("Failed to request filter headers for new blocks: {}", e);
+                                }
+                            }
+                        } else {
+                            // Filter header sync is already active, so the requests should be handled automatically
+                            tracing::debug!("Filter header sync already active, expecting automatic processing");
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(continue_sync)
     }
     
     /// Handle a CFHeaders message by routing it to the filter sync manager.

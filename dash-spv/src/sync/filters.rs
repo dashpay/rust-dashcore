@@ -1091,4 +1091,9 @@ impl FilterSyncManager {
         self.pending_block_downloads.clear();
         self.downloading_blocks.clear();
     }
+    
+    /// Check if filter header sync is currently in progress.
+    pub fn is_syncing_filter_headers(&self) -> bool {
+        self.syncing_filter_headers
+    }
 }

@@ -256,6 +256,20 @@ impl DashSpvClient {
             }
         }
         
+        // Also start filter header sync if filters are enabled and we have headers
+        if self.config.enable_filters {
+            let header_tip = self.storage.get_tip_height().await.ok().flatten().unwrap_or(0);
+            let filter_tip = self.storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
+            
+            if header_tip > filter_tip {
+                tracing::info!("🚀 Starting filter header sync (headers: {}, filter headers: {})", header_tip, filter_tip);
+                if let Err(e) = self.sync_manager.filter_sync_mut().start_sync_headers(&mut *self.network, &mut *self.storage).await {
+                    tracing::warn!("Failed to start filter header sync: {}", e);
+                    // Don't fail startup if filter header sync fails
+                }
+            }
+        }
+        
         // Print initial status
         self.update_status_display().await;
         
@@ -345,13 +359,22 @@ impl DashSpvClient {
                 }
             }
             NetworkMessage::CFHeaders(cf_headers) => {
+                tracing::info!("📨 Client received CFHeaders message with {} filter headers", cf_headers.filter_hashes.len());
                 // Route to filter sync manager if active
-                if let Ok(false) = self.sync_manager.handle_cfheaders_message(cf_headers, &mut *self.storage, &mut *self.network).await {
-                    tracing::info!("🎯 Filter header sync completed");
-                    // Properly finish the sync state
-                    self.sync_manager.sync_state_mut().finish_sync(crate::sync::SyncComponent::FilterHeaders);
+                match self.sync_manager.handle_cfheaders_message(cf_headers, &mut *self.storage, &mut *self.network).await {
+                    Ok(false) => {
+                        tracing::info!("🎯 Filter header sync completed (handle_cfheaders_message returned false)");
+                        // Properly finish the sync state
+                        self.sync_manager.sync_state_mut().finish_sync(crate::sync::SyncComponent::FilterHeaders);
+                    }
+                    Ok(true) => {
+                        tracing::debug!("🔄 Filter header sync continuing (handle_cfheaders_message returned true)");
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Error handling CFHeaders: {:?}", e);
+                        // Don't fail the entire sync if filter header processing fails
+                    }
                 }
-                // CFHeaders are only relevant during sync, so we don't process them normally
             }
             NetworkMessage::MnListDiff(diff) => {
                 // Route to masternode sync manager if active
