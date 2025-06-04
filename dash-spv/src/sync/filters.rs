@@ -692,7 +692,11 @@ impl FilterSyncManager {
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
         // Get the block height for this hash by scanning headers
-        let height = self.find_height_for_block_hash(&block_hash, storage, 0, 10000).await?
+        let header_tip_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get header tip height: {}", e)))?
+            .unwrap_or(0);
+        
+        let height = self.find_height_for_block_hash(&block_hash, storage, 0, header_tip_height).await?
             .ok_or_else(|| SyncError::SyncFailed(format!(
                 "Cannot find height for block {} - header not found", block_hash
             )))?;
@@ -727,7 +731,11 @@ impl FilterSyncManager {
         }
         
         // Get the block height for this hash by scanning headers  
-        let height = self.find_height_for_block_hash(&block_hash, storage, 0, 10000).await?
+        let header_tip_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get header tip height: {}", e)))?
+            .unwrap_or(0);
+        
+        let height = self.find_height_for_block_hash(&block_hash, storage, 0, header_tip_height).await?
             .ok_or_else(|| SyncError::SyncFailed(format!(
                 "Cannot find height for block {} - header not found", block_hash
             )))?;
@@ -866,7 +874,11 @@ impl FilterSyncManager {
         }
         
         // Get the block height for the stop hash
-        let stop_height = self.find_height_for_block_hash(&cfheaders.stop_hash, storage, 0, 10000).await?
+        let header_tip_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get header tip height: {}", e)))?
+            .unwrap_or(0);
+        
+        let stop_height = self.find_height_for_block_hash(&cfheaders.stop_hash, storage, 0, header_tip_height).await?
             .ok_or_else(|| SyncError::SyncFailed(format!(
                 "Cannot find height for stop hash {} - header not found", cfheaders.stop_hash
             )))?;
