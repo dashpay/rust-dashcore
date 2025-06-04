@@ -81,7 +81,7 @@ impl SyncManager {
                         let start_height = (current_filter_tip + 1).max(first_height);
                         tracing::info!("🔄 Requesting filter headers for new blocks: heights {} to {}", start_height, last_height);
                         
-                        // Start filter header sync if not already started
+                        // Always ensure filter header requests are sent for new blocks
                         if !self.filter_sync.is_syncing_filter_headers() {
                             tracing::debug!("Starting filter header sync to catch up with headers");
                             if let Err(e) = self.filter_sync.start_sync_headers(network, storage).await {
@@ -92,8 +92,11 @@ impl SyncManager {
                                 }
                             }
                         } else {
-                            // Filter header sync is already active, so the requests should be handled automatically
-                            tracing::debug!("Filter header sync already active, expecting automatic processing");
+                            // Filter header sync is active, but we still need to request headers for this specific range
+                            tracing::debug!("Filter header sync active, sending additional request for new block range");
+                            if let Err(e) = self.filter_sync.request_filter_headers(network, start_height, last_header_hash).await {
+                                tracing::warn!("Failed to request filter headers for new blocks: {}", e);
+                            }
                         }
                     }
                 }
