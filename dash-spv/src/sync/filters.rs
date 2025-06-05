@@ -137,15 +137,30 @@ impl FilterSyncManager {
                     
                     // Request next batch
                     let next_batch_end_height = (self.current_sync_height + FILTER_BATCH_SIZE - 1).min(header_tip_height);
+                    tracing::debug!("Calculated next batch end height: {} (current: {}, tip: {})", 
+                                   next_batch_end_height, self.current_sync_height, header_tip_height);
+                    
                     let stop_hash = if next_batch_end_height < header_tip_height {
-                        storage.get_header(next_batch_end_height).await
-                            .map_err(|e| SyncError::SyncFailed(format!("Failed to get next batch stop header: {}", e)))?
-                            .ok_or_else(|| SyncError::SyncFailed("Next batch stop header not found".to_string()))?
-                            .block_hash()
+                        // Try to get the header at the calculated height
+                        match storage.get_header(next_batch_end_height).await {
+                            Ok(Some(header)) => header.block_hash(),
+                            Ok(None) => {
+                                tracing::warn!("Header not found at calculated height {}, falling back to tip {}", 
+                                              next_batch_end_height, header_tip_height);
+                                // Fallback to tip header if calculated height not found
+                                storage.get_header(header_tip_height).await
+                                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
+                                    .ok_or_else(|| SyncError::SyncFailed(format!("Tip header not found at height {}", header_tip_height)))?
+                                    .block_hash()
+                            }
+                            Err(e) => {
+                                return Err(SyncError::SyncFailed(format!("Failed to get next batch stop header at height {}: {}", next_batch_end_height, e)));
+                            }
+                        }
                     } else {
                         storage.get_header(header_tip_height).await
                             .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
-                            .ok_or_else(|| SyncError::SyncFailed("Tip header not found".to_string()))?
+                            .ok_or_else(|| SyncError::SyncFailed(format!("Tip header not found at height {}", header_tip_height)))?
                             .block_hash()
                     };
                     
@@ -187,14 +202,26 @@ impl FilterSyncManager {
             // Re-calculate current batch parameters for recovery
             let recovery_batch_end_height = (self.current_sync_height + FILTER_BATCH_SIZE - 1).min(header_tip_height);
             let recovery_batch_stop_hash = if recovery_batch_end_height < header_tip_height {
-                storage.get_header(recovery_batch_end_height).await
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get recovery batch stop header: {}", e)))?
-                    .ok_or_else(|| SyncError::SyncFailed("Recovery batch stop header not found".to_string()))?
-                    .block_hash()
+                // Try to get the header at the calculated height with fallback
+                match storage.get_header(recovery_batch_end_height).await {
+                    Ok(Some(header)) => header.block_hash(),
+                    Ok(None) => {
+                        tracing::warn!("Recovery header not found at calculated height {}, falling back to tip {}", 
+                                      recovery_batch_end_height, header_tip_height);
+                        // Fallback to tip header if calculated height not found
+                        storage.get_header(header_tip_height).await
+                            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
+                            .ok_or_else(|| SyncError::SyncFailed(format!("Tip header not found at height {}", header_tip_height)))?
+                            .block_hash()
+                    }
+                    Err(e) => {
+                        return Err(SyncError::SyncFailed(format!("Failed to get recovery batch stop header at height {}: {}", recovery_batch_end_height, e)));
+                    }
+                }
             } else {
                 storage.get_header(header_tip_height).await
                     .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
-                    .ok_or_else(|| SyncError::SyncFailed("Tip header not found".to_string()))?
+                    .ok_or_else(|| SyncError::SyncFailed(format!("Tip header not found at height {}", header_tip_height)))?
                     .block_hash()
             };
             
@@ -258,10 +285,22 @@ impl FilterSyncManager {
         
         // Get the hash at batch_end_height for the stop_hash
         let batch_stop_hash = if batch_end_height < header_tip_height {
-            storage.get_header(batch_end_height).await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get batch stop header: {}", e)))?
-                .ok_or_else(|| SyncError::SyncFailed("Batch stop header not found".to_string()))?
-                .block_hash()
+            // Try to get the header at the calculated height with fallback
+            match storage.get_header(batch_end_height).await {
+                Ok(Some(header)) => header.block_hash(),
+                Ok(None) => {
+                    tracing::warn!("Initial batch header not found at calculated height {}, falling back to tip {}", 
+                                  batch_end_height, header_tip_height);
+                    // Fallback to tip header if calculated height not found
+                    storage.get_header(header_tip_height).await
+                        .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
+                        .ok_or_else(|| SyncError::SyncFailed(format!("Tip header not found at height {}", header_tip_height)))?
+                        .block_hash()
+                }
+                Err(e) => {
+                    return Err(SyncError::SyncFailed(format!("Failed to get initial batch stop header at height {}: {}", batch_end_height, e)));
+                }
+            }
         } else {
             stop_hash
         };
