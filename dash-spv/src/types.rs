@@ -413,3 +413,93 @@ pub struct SpvStats {
     /// Connection uptime.
     pub uptime: std::time::Duration,
 }
+
+/// Balance information for an address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddressBalance {
+    /// Confirmed balance (6+ confirmations or InstantLocked).
+    pub confirmed: dashcore::Amount,
+    
+    /// Unconfirmed balance (less than 6 confirmations).
+    pub unconfirmed: dashcore::Amount,
+}
+
+impl AddressBalance {
+    /// Get the total balance (confirmed + unconfirmed).
+    pub fn total(&self) -> dashcore::Amount {
+        self.confirmed + self.unconfirmed
+    }
+}
+
+// Custom serialization for AddressBalance to handle Amount serialization
+impl Serialize for AddressBalance {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        
+        let mut state = serializer.serialize_struct("AddressBalance", 2)?;
+        state.serialize_field("confirmed", &self.confirmed.to_sat())?;
+        state.serialize_field("unconfirmed", &self.unconfirmed.to_sat())?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for AddressBalance {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{MapAccess, Visitor};
+        use std::fmt;
+        
+        struct AddressBalanceVisitor;
+        
+        impl<'de> Visitor<'de> for AddressBalanceVisitor {
+            type Value = AddressBalance;
+            
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an AddressBalance struct")
+            }
+            
+            fn visit_map<M>(self, mut map: M) -> Result<AddressBalance, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut confirmed: Option<u64> = None;
+                let mut unconfirmed: Option<u64> = None;
+                
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "confirmed" => {
+                            if confirmed.is_some() {
+                                return Err(serde::de::Error::duplicate_field("confirmed"));
+                            }
+                            confirmed = Some(map.next_value()?);
+                        }
+                        "unconfirmed" => {
+                            if unconfirmed.is_some() {
+                                return Err(serde::de::Error::duplicate_field("unconfirmed"));
+                            }
+                            unconfirmed = Some(map.next_value()?);
+                        }
+                        _ => {
+                            let _: serde::de::IgnoredAny = map.next_value()?;
+                        }
+                    }
+                }
+                
+                let confirmed = confirmed.ok_or_else(|| serde::de::Error::missing_field("confirmed"))?;
+                let unconfirmed = unconfirmed.ok_or_else(|| serde::de::Error::missing_field("unconfirmed"))?;
+                
+                Ok(AddressBalance {
+                    confirmed: dashcore::Amount::from_sat(confirmed),
+                    unconfirmed: dashcore::Amount::from_sat(unconfirmed),
+                })
+            }
+        }
+        
+        deserializer.deserialize_struct("AddressBalance", &["confirmed", "unconfirmed"], AddressBalanceVisitor)
+    }
+}

@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use crate::terminal::TerminalUI;
 
 use crate::error::{Result, SpvError};
-use crate::types::{ChainState, SpvStats, SyncProgress, WatchItem};
+use crate::types::{AddressBalance, ChainState, SpvStats, SyncProgress, WatchItem};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::SyncManager;
@@ -829,45 +829,39 @@ impl DashSpvClient {
         watch_items: &[WatchItem]
     ) -> Result<()> {
         let block_hash = block.block_hash();
+        let block_height = self.find_height_for_block_hash(block_hash).await.unwrap_or(0);
         let mut relevant_transactions = 0;
         let mut new_outpoints_to_watch = Vec::new();
+        let mut balance_changes: std::collections::HashMap<dashcore::Address, i64> = std::collections::HashMap::new();
         
         for (tx_index, transaction) in block.txdata.iter().enumerate() {
             let txid = transaction.txid();
             let mut transaction_relevant = false;
+            let is_coinbase = tx_index == 0;
             
-            // Check outputs for matches with watched items
-            for (vout, output) in transaction.output.iter().enumerate() {
-                for watch_item in watch_items {
-                    let matches = match watch_item {
-                        WatchItem::Address { address, .. } => {
-                            address.script_pubkey() == output.script_pubkey
-                        }
-                        WatchItem::Script(script) => {
-                            script == &output.script_pubkey
-                        }
-                        WatchItem::Outpoint(_) => false, // Outpoints don't match outputs
-                    };
-                    
-                    if matches {
-                        transaction_relevant = true;
-                        let outpoint = dashcore::OutPoint { txid, vout: vout as u32 };
-                        tracing::info!("💰 Found relevant output: {}:{} to {:?} (value: {})", 
-                                      txid, vout, watch_item, 
-                                      dashcore::Amount::from_sat(output.value));
-                        
-                        // Track this outpoint so we can detect when it's spent
-                        new_outpoints_to_watch.push(outpoint);
-                        tracing::debug!("📍 Now watching outpoint {}:{} for future spending", txid, vout);
-                    }
-                }
-            }
-            
-            // Check inputs for matches with watched outpoints
-            if !transaction.input.is_empty() && transaction.input[0].previous_output != dashcore::OutPoint::null() {
-                // Not a coinbase transaction
+            // Process inputs first (spending UTXOs)
+            if !is_coinbase {
                 for (vin, input) in transaction.input.iter().enumerate() {
-                    // Check against explicitly watched outpoints
+                    // Check if this input spends a UTXO from our watched addresses
+                    if let Ok(all_utxos) = self.storage.get_all_utxos().await {
+                        if let Some(spent_utxo) = all_utxos.get(&input.previous_output) {
+                            transaction_relevant = true;
+                            let amount = spent_utxo.value();
+                            
+                            tracing::info!("💸 Found relevant input: {}:{} spending UTXO {} (value: {})", 
+                                          txid, vin, input.previous_output, amount);
+                            
+                            // Update balance change for this address (subtract)
+                            *balance_changes.entry(spent_utxo.address.clone()).or_insert(0) -= amount.to_sat() as i64;
+                            
+                            // Remove the spent UTXO from storage
+                            if let Err(e) = self.storage.remove_utxo(&input.previous_output).await {
+                                tracing::error!("Failed to remove spent UTXO {}: {}", input.previous_output, e);
+                            }
+                        }
+                    }
+                    
+                    // Also check against explicitly watched outpoints
                     for watch_item in watch_items {
                         if let WatchItem::Outpoint(watched_outpoint) = watch_item {
                             if &input.previous_output == watched_outpoint {
@@ -877,19 +871,61 @@ impl DashSpvClient {
                             }
                         }
                     }
+                }
+            }
+            
+            // Process outputs (creating new UTXOs)
+            for (vout, output) in transaction.output.iter().enumerate() {
+                for watch_item in watch_items {
+                    let (matches, matched_address) = match watch_item {
+                        WatchItem::Address { address, .. } => {
+                            (address.script_pubkey() == output.script_pubkey, Some(address.clone()))
+                        }
+                        WatchItem::Script(script) => {
+                            (script == &output.script_pubkey, None)
+                        }
+                        WatchItem::Outpoint(_) => (false, None), // Outpoints don't match outputs
+                    };
                     
-                    // Also check against outpoints from our watched addresses
-                    // For this to work properly, we'd need to maintain a persistent set of outpoints
-                    // from our addresses. For now, let's log when we see inputs to help debug
-                    // tracing::debug!("🔍 Checking input {}:{} -> previous_output {}:{}",
-                    //                txid, vin, input.previous_output.txid, input.previous_output.vout);
+                    if matches {
+                        transaction_relevant = true;
+                        let outpoint = dashcore::OutPoint { txid, vout: vout as u32 };
+                        let amount = dashcore::Amount::from_sat(output.value);
+                        
+                        tracing::info!("💰 Found relevant output: {}:{} to {:?} (value: {})", 
+                                      txid, vout, watch_item, amount);
+                        
+                        // Create and store UTXO if we have an address
+                        if let Some(address) = matched_address {
+                            let utxo = crate::wallet::Utxo::new(
+                                outpoint,
+                                output.clone(),
+                                address.clone(),
+                                block_height,
+                                is_coinbase,
+                            );
+                            
+                            if let Err(e) = self.storage.store_utxo(&outpoint, &utxo).await {
+                                tracing::error!("Failed to store UTXO {}: {}", outpoint, e);
+                            } else {
+                                tracing::debug!("📝 Stored UTXO {}:{} for address {}", txid, vout, address);
+                            }
+                            
+                            // Update balance change for this address (add)
+                            *balance_changes.entry(address.clone()).or_insert(0) += amount.to_sat() as i64;
+                        }
+                        
+                        // Track this outpoint so we can detect when it's spent
+                        new_outpoints_to_watch.push(outpoint);
+                        tracing::debug!("📍 Now watching outpoint {}:{} for future spending", txid, vout);
+                    }
                 }
             }
             
             if transaction_relevant {
                 relevant_transactions += 1;
                 tracing::debug!("📝 Transaction {}: {} (index {}) is relevant", 
-                               txid, if tx_index == 0 { "coinbase" } else { "regular" }, tx_index);
+                               txid, if is_coinbase { "coinbase" } else { "regular" }, tx_index);
             }
         }
         
@@ -905,14 +941,104 @@ impl DashSpvClient {
                 }
             }
             
-            // TODO: Future wallet integration would happen here
-            // - Create/update UTXOs for relevant outputs
-            // - Mark UTXOs as spent for relevant inputs  
-            // - Update balance calculations
-            // - Store transaction history
+            // Report balance changes
+            if !balance_changes.is_empty() {
+                self.report_balance_changes(&balance_changes, block_height).await?;
+            }
         }
         
         Ok(())
+    }
+    
+    /// Report balance changes for watched addresses.
+    async fn report_balance_changes(
+        &self,
+        balance_changes: &std::collections::HashMap<dashcore::Address, i64>,
+        block_height: u32,
+    ) -> Result<()> {
+        tracing::info!("💰 Balance changes detected in block at height {}:", block_height);
+        
+        for (address, change_sat) in balance_changes {
+            if *change_sat != 0 {
+                let change_amount = dashcore::Amount::from_sat(change_sat.abs() as u64);
+                let sign = if *change_sat > 0 { "+" } else { "-" };
+                tracing::info!("  📍 Address {}: {}{}", address, sign, change_amount);
+            }
+        }
+        
+        // Calculate and report current balances for all watched addresses
+        let watch_items = self.get_watch_items().await;
+        for watch_item in watch_items.iter() {
+            if let WatchItem::Address { address, .. } = watch_item {
+                match self.get_address_balance(address).await {
+                    Ok(balance) => {
+                        tracing::info!("  💼 Address {} balance: {} (confirmed: {}, unconfirmed: {})", 
+                                      address, balance.total(), balance.confirmed, balance.unconfirmed);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to get balance for address {}: {}", address, e);
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Get the balance for a specific address.
+    pub async fn get_address_balance(&self, address: &dashcore::Address) -> Result<AddressBalance> {
+        // Get current tip height for confirmation calculations
+        let current_tip = self.storage.get_tip_height().await
+            .map_err(|e| SpvError::Storage(e))?
+            .unwrap_or(0);
+        
+        // Get UTXOs for this address
+        let utxos = self.storage.get_utxos_for_address(address).await
+            .map_err(|e| SpvError::Storage(e))?;
+        
+        let mut confirmed = dashcore::Amount::ZERO;
+        let mut unconfirmed = dashcore::Amount::ZERO;
+        
+        for utxo in utxos {
+            let confirmations = if current_tip >= utxo.height {
+                current_tip - utxo.height + 1
+            } else {
+                0
+            };
+            
+            // Consider confirmed if it has 6+ confirmations or is InstantLocked
+            if confirmations >= 6 || utxo.is_instantlocked {
+                confirmed += utxo.value();
+            } else {
+                unconfirmed += utxo.value();
+            }
+        }
+        
+        Ok(AddressBalance {
+            confirmed,
+            unconfirmed,
+        })
+    }
+    
+    /// Get balances for all watched addresses.
+    pub async fn get_all_balances(&self) -> Result<std::collections::HashMap<dashcore::Address, AddressBalance>> {
+        let mut balances = std::collections::HashMap::new();
+        
+        let watch_items = self.get_watch_items().await;
+        for watch_item in watch_items.iter() {
+            if let WatchItem::Address { address, .. } = watch_item {
+                match self.get_address_balance(address).await {
+                    Ok(balance) => {
+                        balances.insert(address.clone(), balance);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to get balance for address {}: {}", address, e);
+                    }
+                }
+            }
+        }
+        
+        Ok(balances)
     }
     
     /// Update chain state with information from the processed block.

@@ -923,9 +923,9 @@ impl StorageManager for DiskStorageManager {
     // TODO: In future phases, implement proper segmented UTXO storage for better performance
     
     async fn store_utxo(&mut self, outpoint: &OutPoint, utxo: &Utxo) -> StorageResult<()> {
-        // Store the UTXO
+        // Store the UTXO using JSON serialization to work with custom serde implementation
         let key = format!("utxo_{}", outpoint);
-        let data = bincode::serialize(utxo)
+        let data = serde_json::to_vec(utxo)
             .map_err(|e| StorageError::Serialization(format!("Failed to serialize UTXO: {}", e)))?;
         self.store_metadata(&key, &data).await?;
         
@@ -996,7 +996,7 @@ impl StorageManager for DiskStorageManager {
                     let key = format!("utxo_{}", outpoint);
                     if let Some(utxo_data) = self.load_metadata(&key).await? {
                         if !utxo_data.is_empty() { // Not deleted
-                            let utxo: Utxo = bincode::deserialize(&utxo_data)
+                            let utxo: Utxo = serde_json::from_slice(&utxo_data)
                                 .map_err(|e| StorageError::Serialization(format!("Failed to deserialize UTXO: {}", e)))?;
                             utxos.insert(outpoint, utxo);
                         }
