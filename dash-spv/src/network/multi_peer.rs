@@ -80,18 +80,23 @@ impl MultiPeerNetworkManager {
     pub async fn start(&self) -> Result<(), Error> {
         log::info!("Starting multi-peer network manager for {:?}", self.network);
         
-        // Load saved peers first
-        let saved_peers = self.peer_store.load_peers().await.unwrap_or_default();
-        
-        // Get initial peers
         let mut peer_addresses = self.initial_peers.clone();
-        peer_addresses.extend(saved_peers);
         
-        // Don't use DNS at startup - prioritize saved peers and let maintenance loop handle DNS after delay
-        log::info!("Starting with {} peers from config/disk (skipping DNS for now)", peer_addresses.len());
+        // If specific peers were configured via -p flag, use ONLY those (exclusive mode)
+        let exclusive_mode = !self.initial_peers.is_empty();
         
-        // Connect to initial peers
-        for addr in peer_addresses.iter().take(TARGET_PEERS) {
+        if exclusive_mode {
+            log::info!("Exclusive peer mode: connecting ONLY to {} specified peer(s)", self.initial_peers.len());
+        } else {
+            // Load saved peers only if no specific peers were configured
+            let saved_peers = self.peer_store.load_peers().await.unwrap_or_default();
+            peer_addresses.extend(saved_peers);
+            log::info!("Starting with {} peers from config/disk (skipping DNS for now)", peer_addresses.len());
+        }
+        
+        // Connect to peers (all in exclusive mode, or up to TARGET_PEERS in normal mode)
+        let max_connections = if exclusive_mode { peer_addresses.len() } else { TARGET_PEERS };
+        for addr in peer_addresses.iter().take(max_connections) {
             self.connect_to_peer(*addr).await;
         }
         
@@ -305,6 +310,10 @@ impl MultiPeerNetworkManager {
         let addrv2_handler = self.addrv2_handler.clone();
         let peer_store = self.peer_store.clone();
         let peer_search_started = self.peer_search_started.clone();
+        let initial_peers = self.initial_peers.clone();
+        
+        // Check if we're in exclusive mode (specific peers configured via -p)
+        let exclusive_mode = !initial_peers.is_empty();
         
         // Clone self for connection callback
         let connect_fn = {
@@ -324,58 +333,69 @@ impl MultiPeerNetworkManager {
                 let count = pool.connection_count().await;
                 log::debug!("Connected peers: {}", count);
                 
-                if count < MIN_PEERS {
-                    // Track when we first started needing peers
-                    let mut search_started = peer_search_started.lock().await;
-                    if search_started.is_none() {
-                        *search_started = Some(SystemTime::now());
-                        log::info!("Below minimum peers ({}/{}), starting peer search (will try DNS after 10s)", count, MIN_PEERS);
-                    }
-                    let search_time = search_started.unwrap();
-                    drop(search_started);
-                    
-                    // Try known addresses first
-                    let known = addrv2_handler.get_known_addresses().await;
-                    let needed = TARGET_PEERS.saturating_sub(count);
-                    let mut attempted = 0;
-                    
-                    for addr in known.into_iter().take(needed * 2) { // Try more to account for failures
-                        if !pool.is_connected(&addr).await && !pool.is_connecting(&addr).await {
-                            connect_fn(addr).await;
-                            attempted += 1;
-                            if attempted >= needed {
-                                break;
-                            }
-                        }
-                    }
-                    
-                    // If still need more, check if we can use DNS (after 10 second delay)
-                    let count = pool.connection_count().await;
-                    if count < MIN_PEERS {
-                        let elapsed = SystemTime::now().duration_since(search_time).unwrap_or(Duration::ZERO);
-                        if elapsed >= Duration::from_secs(10) {
-                            log::info!("Using DNS discovery after {}s delay", elapsed.as_secs());
-                            let dns_peers = discovery.discover_peers(network).await;
-                            let mut dns_attempted = 0;
-                            for addr in dns_peers.into_iter() {
-                                if !pool.is_connected(&addr).await && !pool.is_connecting(&addr).await {
-                                    connect_fn(addr).await;
-                                    dns_attempted += 1;
-                                    if dns_attempted >= needed {
-                                        break;
-                                    }
-                                }
-                            }
-                        } else {
-                            log::debug!("Waiting for DNS delay: {}s elapsed, need 10s", elapsed.as_secs());
+                if exclusive_mode {
+                    // In exclusive mode, only reconnect to originally specified peers
+                    for addr in initial_peers.iter() {
+                        if !pool.is_connected(addr).await && !pool.is_connecting(addr).await {
+                            log::info!("Reconnecting to exclusive peer: {}", addr);
+                            connect_fn(*addr).await;
                         }
                     }
                 } else {
-                    // We have enough peers, reset the search timer
-                    let mut search_started = peer_search_started.lock().await;
-                    if search_started.is_some() {
-                        log::trace!("Peer count restored, resetting DNS delay timer");
-                        *search_started = None;
+                    // Normal mode: try to maintain minimum peer count with discovery
+                    if count < MIN_PEERS {
+                        // Track when we first started needing peers
+                        let mut search_started = peer_search_started.lock().await;
+                        if search_started.is_none() {
+                            *search_started = Some(SystemTime::now());
+                            log::info!("Below minimum peers ({}/{}), starting peer search (will try DNS after 10s)", count, MIN_PEERS);
+                        }
+                        let search_time = search_started.unwrap();
+                        drop(search_started);
+                        
+                        // Try known addresses first
+                        let known = addrv2_handler.get_known_addresses().await;
+                        let needed = TARGET_PEERS.saturating_sub(count);
+                        let mut attempted = 0;
+                        
+                        for addr in known.into_iter().take(needed * 2) { // Try more to account for failures
+                            if !pool.is_connected(&addr).await && !pool.is_connecting(&addr).await {
+                                connect_fn(addr).await;
+                                attempted += 1;
+                                if attempted >= needed {
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // If still need more, check if we can use DNS (after 10 second delay)
+                        let count = pool.connection_count().await;
+                        if count < MIN_PEERS {
+                            let elapsed = SystemTime::now().duration_since(search_time).unwrap_or(Duration::ZERO);
+                            if elapsed >= Duration::from_secs(10) {
+                                log::info!("Using DNS discovery after {}s delay", elapsed.as_secs());
+                                let dns_peers = discovery.discover_peers(network).await;
+                                let mut dns_attempted = 0;
+                                for addr in dns_peers.into_iter() {
+                                    if !pool.is_connected(&addr).await && !pool.is_connecting(&addr).await {
+                                        connect_fn(addr).await;
+                                        dns_attempted += 1;
+                                        if dns_attempted >= needed {
+                                            break;
+                                        }
+                                    }
+                                }
+                            } else {
+                                log::debug!("Waiting for DNS delay: {}s elapsed, need 10s", elapsed.as_secs());
+                            }
+                        }
+                    } else {
+                        // We have enough peers, reset the search timer
+                        let mut search_started = peer_search_started.lock().await;
+                        if search_started.is_some() {
+                            log::trace!("Peer count restored, resetting DNS delay timer");
+                            *search_started = None;
+                        }
                     }
                 }
                 
@@ -390,11 +410,13 @@ impl MultiPeerNetworkManager {
                     conn_guard.cleanup_old_pings();
                 }
                 
-                // Periodically save known peers
-                let addresses = addrv2_handler.get_addresses_for_peer(MAX_ADDR_TO_STORE).await;
-                if !addresses.is_empty() {
-                    if let Err(e) = peer_store.save_peers(&addresses).await {
-                        log::warn!("Failed to save peers: {}", e);
+                // Only save known peers if not in exclusive mode
+                if !exclusive_mode {
+                    let addresses = addrv2_handler.get_addresses_for_peer(MAX_ADDR_TO_STORE).await;
+                    if !addresses.is_empty() {
+                        if let Err(e) = peer_store.save_peers(&addresses).await {
+                            log::warn!("Failed to save peers: {}", e);
+                        }
                     }
                 }
                 
