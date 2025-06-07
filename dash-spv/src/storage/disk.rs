@@ -51,13 +51,29 @@ enum WorkerCommand {
     Shutdown,
 }
 
+/// Notifications from the background worker
+#[derive(Debug, Clone)]
+enum WorkerNotification {
+    HeaderSegmentSaved { segment_id: u32 },
+    FilterSegmentSaved { segment_id: u32 },
+    IndexSaved,
+}
+
+
+/// State of a segment in memory
+#[derive(Debug, Clone, PartialEq)]
+enum SegmentState {
+    Clean,          // No changes, up to date on disk
+    Dirty,          // Has changes, needs saving
+    Saving,         // Currently being saved in background
+}
 
 /// In-memory cache for a segment of headers
 #[derive(Clone)]
 struct SegmentCache {
     segment_id: u32,
     headers: Vec<BlockHeader>,
-    dirty: bool,
+    state: SegmentState,
     last_saved: Instant,
     last_accessed: Instant,
 }
@@ -67,7 +83,7 @@ struct SegmentCache {
 struct FilterSegmentCache {
     segment_id: u32,
     filter_headers: Vec<FilterHeader>,
-    dirty: bool,
+    state: SegmentState,
     last_saved: Instant,
     last_accessed: Instant,
 }
@@ -86,6 +102,7 @@ pub struct DiskStorageManager {
     // Background worker
     worker_tx: Option<mpsc::Sender<WorkerCommand>>,
     worker_handle: Option<tokio::task::JoinHandle<()>>,
+    notification_rx: Arc<RwLock<mpsc::Receiver<WorkerNotification>>>,
     
     // Cached values
     cached_tip_height: Arc<RwLock<Option<u32>>>,
@@ -108,11 +125,13 @@ impl DiskStorageManager {
         fs::create_dir_all(&state_dir)?;
         
         
-        // Create background worker channel
+        // Create background worker channels
         let (worker_tx, mut worker_rx) = mpsc::channel::<WorkerCommand>(100);
+        let (notification_tx, notification_rx) = mpsc::channel::<WorkerNotification>(100);
         
         // Start background worker
         let worker_base_path = base_path.clone();
+        let worker_notification_tx = notification_tx.clone();
         let worker_handle = tokio::spawn(async move {
             while let Some(cmd) = worker_rx.recv().await {
                 match cmd {
@@ -120,18 +139,27 @@ impl DiskStorageManager {
                         let path = worker_base_path.join(format!("headers/segment_{:04}.dat", segment_id));
                         if let Err(e) = save_segment_to_disk(&path, &headers).await {
                             eprintln!("Failed to save segment {}: {}", segment_id, e);
+                        } else {
+                            tracing::trace!("Background worker completed saving header segment {}", segment_id);
+                            let _ = worker_notification_tx.send(WorkerNotification::HeaderSegmentSaved { segment_id }).await;
                         }
                     }
                     WorkerCommand::SaveFilterSegment { segment_id, filter_headers } => {
                         let path = worker_base_path.join(format!("headers/filter_segment_{:04}.dat", segment_id));
                         if let Err(e) = save_filter_segment_to_disk(&path, &filter_headers).await {
                             eprintln!("Failed to save filter segment {}: {}", segment_id, e);
+                        } else {
+                            tracing::trace!("Background worker completed saving filter segment {}", segment_id);
+                            let _ = worker_notification_tx.send(WorkerNotification::FilterSegmentSaved { segment_id }).await;
                         }
                     }
                     WorkerCommand::SaveIndex { index } => {
                         let path = worker_base_path.join("headers/index.dat");
                         if let Err(e) = save_index_to_disk(&path, &index).await {
                             eprintln!("Failed to save index: {}", e);
+                        } else {
+                            tracing::trace!("Background worker completed saving index");
+                            let _ = worker_notification_tx.send(WorkerNotification::IndexSaved).await;
                         }
                     }
                     WorkerCommand::Shutdown => {
@@ -148,6 +176,7 @@ impl DiskStorageManager {
             header_hash_index: Arc::new(RwLock::new(HashMap::new())),
             worker_tx: Some(worker_tx),
             worker_handle: Some(worker_handle),
+            notification_rx: Arc::new(RwLock::new(notification_rx)),
             cached_tip_height: Arc::new(RwLock::new(None)),
             cached_filter_tip_height: Arc::new(RwLock::new(None)),
         };
@@ -224,6 +253,9 @@ impl DiskStorageManager {
     
     /// Ensure a segment is loaded in memory.
     async fn ensure_segment_loaded(&self, segment_id: u32) -> StorageResult<()> {
+        // Process background worker notifications to clear save_pending flags
+        self.process_worker_notifications().await;
+        
         let mut segments = self.active_segments.write().await;
         
         if segments.contains_key(&segment_id) {
@@ -250,7 +282,7 @@ impl DiskStorageManager {
         segments.insert(segment_id, SegmentCache {
             segment_id,
             headers,
-            dirty: false,
+            state: SegmentState::Clean,
             last_saved: Instant::now(),
             last_accessed: Instant::now(),
         });
@@ -265,9 +297,10 @@ impl DiskStorageManager {
             .min_by_key(|(_, s)| s.last_accessed)
             .map(|(id, s)| (*id, s.clone()))
         {
-            // Save if dirty before evicting - do it synchronously to ensure data consistency
-            if oldest_segment.dirty {
-                tracing::debug!("Synchronously saving dirty segment {} before eviction", oldest_segment.segment_id);
+            // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
+            if oldest_segment.state != SegmentState::Clean {
+                tracing::debug!("Synchronously saving segment {} before eviction (state: {:?})", 
+                               oldest_segment.segment_id, oldest_segment.state);
                 let segment_path = self.base_path.join(format!("headers/segment_{:04}.dat", oldest_segment.segment_id));
                 save_segment_to_disk(&segment_path, &oldest_segment.headers).await?;
                 tracing::debug!("Successfully saved segment {} to disk", oldest_segment.segment_id);
@@ -281,6 +314,9 @@ impl DiskStorageManager {
     
     /// Ensure a filter segment is loaded in memory.
     async fn ensure_filter_segment_loaded(&self, segment_id: u32) -> StorageResult<()> {
+        // Process background worker notifications to clear save_pending flags
+        self.process_worker_notifications().await;
+        
         let mut segments = self.active_filter_segments.write().await;
         
         if segments.contains_key(&segment_id) {
@@ -307,7 +343,7 @@ impl DiskStorageManager {
         segments.insert(segment_id, FilterSegmentCache {
             segment_id,
             filter_headers,
-            dirty: false,
+            state: SegmentState::Clean,
             last_saved: Instant::now(),
             last_accessed: Instant::now(),
         });
@@ -322,9 +358,10 @@ impl DiskStorageManager {
             .min_by_key(|(_, s)| s.last_accessed)
             .map(|(id, s)| (*id, s.clone()))
         {
-            // Save if dirty before evicting - do it synchronously to ensure data consistency
-            if oldest_segment.dirty {
-                tracing::debug!("Synchronously saving dirty filter segment {} before eviction", oldest_segment.segment_id);
+            // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
+            if oldest_segment.state != SegmentState::Clean {
+                tracing::trace!("Synchronously saving filter segment {} before eviction (state: {:?})",
+                               oldest_segment.segment_id, oldest_segment.state);
                 let segment_path = self.base_path.join(format!("headers/filter_segment_{:04}.dat", oldest_segment.segment_id));
                 save_filter_segment_to_disk(&segment_path, &oldest_segment.filter_headers).await?;
                 tracing::debug!("Successfully saved filter segment {} to disk", oldest_segment.segment_id);
@@ -336,44 +373,87 @@ impl DiskStorageManager {
         Ok(())
     }
     
+    /// Process notifications from background worker to clear save_pending flags.
+    async fn process_worker_notifications(&self) {
+        let mut rx = self.notification_rx.write().await;
+        
+        // Process all pending notifications without blocking
+        while let Ok(notification) = rx.try_recv() {
+            match notification {
+                WorkerNotification::HeaderSegmentSaved { segment_id } => {
+                    let mut segments = self.active_segments.write().await;
+                    if let Some(segment) = segments.get_mut(&segment_id) {
+                        // Transition Saving -> Clean, unless new changes occurred (Saving -> Dirty)
+                        if segment.state == SegmentState::Saving {
+                            segment.state = SegmentState::Clean;
+                            tracing::debug!("Header segment {} save completed, state: Clean", segment_id);
+                        } else {
+                            tracing::debug!("Header segment {} save completed, but state is {:?} (likely dirty again)", segment_id, segment.state);
+                        }
+                    }
+                }
+                WorkerNotification::FilterSegmentSaved { segment_id } => {
+                    let mut segments = self.active_filter_segments.write().await;
+                    if let Some(segment) = segments.get_mut(&segment_id) {
+                        // Transition Saving -> Clean, unless new changes occurred (Saving -> Dirty)
+                        if segment.state == SegmentState::Saving {
+                            segment.state = SegmentState::Clean;
+                            tracing::debug!("Filter segment {} save completed, state: Clean", segment_id);
+                        } else {
+                            tracing::debug!("Filter segment {} save completed, but state is {:?} (likely dirty again)", segment_id, segment.state);
+                        }
+                    }
+                }
+                WorkerNotification::IndexSaved => {
+                    tracing::debug!("Index save completed");
+                }
+            }
+        }
+    }
+
     /// Save all dirty segments to disk via background worker.
+    /// CRITICAL FIX: Only mark segments as save_pending, not clean, until background save actually completes.
     async fn save_dirty_segments(&self) -> StorageResult<()> {
         if let Some(tx) = &self.worker_tx {
-            // Collect segments to save
-            let segments_to_save = {
+            // Collect segments to save (only dirty ones)
+            let (segments_to_save, segment_ids_to_mark) = {
                 let segments = self.active_segments.read().await;
-                segments.values()
-                    .filter(|s| s.dirty)
-                    .map(|s| (s.segment_id, s.headers.clone(), false))
-                    .collect::<Vec<_>>()
+                let to_save: Vec<_> = segments.values()
+                    .filter(|s| s.state == SegmentState::Dirty)
+                    .map(|s| (s.segment_id, s.headers.clone()))
+                    .collect();
+                let ids_to_mark: Vec<_> = to_save.iter().map(|(id, _)| *id).collect();
+                (to_save, ids_to_mark)
             };
             
             // Send header segments to worker
-            for (segment_id, headers, _) in segments_to_save {
+            for (segment_id, headers) in segments_to_save {
                 let _ = tx.send(WorkerCommand::SaveHeaderSegment {
                     segment_id,
                     headers,
                 }).await;
             }
             
-            // Mark header segments as clean
+            // Mark ONLY the header segments we're actually saving as Saving
             {
                 let mut segments = self.active_segments.write().await;
-                for segment in segments.values_mut() {
-                    if segment.dirty {
-                        segment.dirty = false;
+                for segment_id in &segment_ids_to_mark {
+                    if let Some(segment) = segments.get_mut(segment_id) {
+                        segment.state = SegmentState::Saving;
                         segment.last_saved = Instant::now();
                     }
                 }
             }
             
-            // Collect filter segments to save
-            let filter_segments_to_save = {
+            // Collect filter segments to save (only dirty ones)
+            let (filter_segments_to_save, filter_segment_ids_to_mark) = {
                 let segments = self.active_filter_segments.read().await;
-                segments.values()
-                    .filter(|s| s.dirty)
+                let to_save: Vec<_> = segments.values()
+                    .filter(|s| s.state == SegmentState::Dirty)
                     .map(|s| (s.segment_id, s.filter_headers.clone()))
-                    .collect::<Vec<_>>()
+                    .collect();
+                let ids_to_mark: Vec<_> = to_save.iter().map(|(id, _)| *id).collect();
+                (to_save, ids_to_mark)
             };
             
             // Send filter segments to worker
@@ -384,12 +464,12 @@ impl DiskStorageManager {
                 }).await;
             }
             
-            // Mark filter segments as clean
+            // Mark ONLY the filter segments we're actually saving as Saving
             {
                 let mut segments = self.active_filter_segments.write().await;
-                for segment in segments.values_mut() {
-                    if segment.dirty {
-                        segment.dirty = false;
+                for segment_id in &filter_segment_ids_to_mark {
+                    if let Some(segment) = segments.get_mut(segment_id) {
+                        segment.state = SegmentState::Saving;
                         segment.last_saved = Instant::now();
                     }
                 }
@@ -572,7 +652,8 @@ impl StorageManager for DiskStorageManager {
                         segment.headers.resize(offset + 1, default_header);
                     }
                     segment.headers[offset] = *header;
-                    segment.dirty = true;
+                    // Transition to Dirty state (from Clean, Dirty, or Saving)
+                    segment.state = SegmentState::Dirty;
                     segment.last_accessed = Instant::now();
                 }
             }
@@ -676,7 +757,8 @@ impl StorageManager for DiskStorageManager {
                         segment.filter_headers.resize(offset + 1, zero_filter_header);
                     }
                     segment.filter_headers[offset] = *header;
-                    segment.dirty = true;
+                    // Transition to Dirty state (from Clean, Dirty, or Saving)
+                    segment.state = SegmentState::Dirty;
                     segment.last_accessed = Instant::now();
                 }
             }

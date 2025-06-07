@@ -255,7 +255,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Ok(valid_addr) = addr.require_network(network) {
                         // For the example mainnet address (Crowdnode), set earliest height to 1,000,000
                         let watch_item = if network == dashcore::Network::Dash && addr_str == "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2" {
-                            dash_spv::WatchItem::address_from_height(valid_addr, 1_000_000)
+                            dash_spv::WatchItem::address_from_height(valid_addr, 500_000)
                         } else {
                             dash_spv::WatchItem::address(valid_addr)
                         };

@@ -39,7 +39,7 @@ impl HeaderSyncManager {
         }
     }
     
-    /// Handle a Headers message during header synchronization.
+    /// Handle a Headers message during header synchronization or for new blocks received post-sync.
     /// Returns true if the message was processed and sync should continue, false if sync is complete.
     pub async fn handle_headers_message(
         &mut self,
@@ -50,19 +50,21 @@ impl HeaderSyncManager {
         tracing::info!("🔍 Handle headers message called with {} headers, syncing_headers: {}", 
                        headers.len(), self.syncing_headers);
         
-        if !self.syncing_headers {
-            // Not currently syncing, ignore
-            tracing::warn!("⚠️ Not syncing headers (syncing_headers=false), ignoring {} headers message", headers.len());
-            return Ok(true);
+        if headers.is_empty() {
+            if self.syncing_headers {
+                // No more headers available during sync
+                tracing::info!("Received empty headers response, sync complete");
+                self.syncing_headers = false;
+                return Ok(false);
+            } else {
+                // Empty headers outside of sync - just ignore
+                tracing::debug!("Received empty headers response outside of sync");
+                return Ok(true);
+            }
         }
 
-        self.last_sync_progress = std::time::Instant::now();
-        
-        if headers.is_empty() {
-            // No more headers available
-            tracing::info!("Received empty headers response, sync complete");
-            self.syncing_headers = false;
-            return Ok(false);
+        if self.syncing_headers {
+            self.last_sync_progress = std::time::Instant::now();
         }
         
         // Update progress tracking
@@ -99,9 +101,17 @@ impl HeaderSyncManager {
         storage.store_headers(&validated_headers).await
             .map_err(|e| SyncError::SyncFailed(format!("Failed to store headers: {}", e)))?;
         
-        // Request next batch
-        let last_header = headers.last().unwrap();
-        self.request_headers(network, Some(last_header.block_hash())).await?;
+        if self.syncing_headers {
+            // During sync mode - request next batch
+            let last_header = headers.last().unwrap();
+            self.request_headers(network, Some(last_header.block_hash())).await?;
+        } else {
+            // Post-sync mode - new blocks received dynamically
+            tracing::info!("📋 Processed {} new headers post-sync", headers.len());
+            
+            // For post-sync headers, we return true to indicate successful processing
+            // The caller can then request filter headers and filters for these new blocks
+        }
         
         Ok(true)
     }

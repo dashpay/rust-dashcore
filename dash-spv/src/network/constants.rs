@@ -41,3 +41,9 @@ pub const MAX_ADDR_TO_STORE: usize = 2000;
 // Connection maintenance
 pub const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(10); // Check more frequently
 pub const PEER_DISCOVERY_INTERVAL: Duration = Duration::from_secs(60); // Discover more frequently
+
+
+// DNS and polling intervals
+pub const DNS_DISCOVERY_DELAY: Duration = Duration::from_secs(10);
+pub const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(10);
+pub const MESSAGE_RECEIVE_TIMEOUT: Duration = Duration::from_millis(100);

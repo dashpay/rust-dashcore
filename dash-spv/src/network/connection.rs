@@ -153,7 +153,7 @@ impl TcpConnection {
                 Err(NetworkError::Timeout)
             }
             Err(e) => {
-                tracing::error!("Failed to write to socket {}: {}", self.address, e);
+                tracing::warn!("Disconnecting {} due to write error: {}", self.address, e);
                 // Clear connection state on write error
                 self.write_stream = None;
                 self.read_stream = None;
@@ -178,6 +178,8 @@ impl TcpConnection {
         let mut reader = reader_mutex.lock().await;
         
         // Read message from the BufReader
+        // For debugging "unknown special transaction type" errors, we need to capture
+        // the raw message data before attempting deserialization
         let result = match RawNetworkMessage::consensus_decode(&mut *reader) {
             Ok(raw_message) => {
                 // Validate magic bytes match our network
@@ -222,6 +224,12 @@ impl TcpConnection {
             }
             Err(e) => {
                 tracing::error!("Failed to decode message from {}: {}", self.address, e);
+                
+                // Check if this is the specific "unknown special transaction type" error
+                if e.to_string().contains("unknown special transaction type") {
+                    tracing::warn!("Peer {} sent block with unsupported transaction type: {}", self.address, e);
+                }
+                
                 Err(NetworkError::Serialization(e))
             }
         };
@@ -250,6 +258,7 @@ impl TcpConnection {
     /// Check if connection appears healthy (not just connected).
     pub fn is_healthy(&self) -> bool {
         if !self.is_connected() {
+            tracing::warn!("Connection to {} marked unhealthy: not connected", self.address);
             return false;
         }
         
@@ -260,6 +269,8 @@ impl TcpConnection {
             if let Ok(duration) = now.duration_since(last_pong) {
                 // If no pong in 10 minutes, consider unhealthy
                 if duration > Duration::from_secs(600) {
+                    tracing::warn!("Connection to {} marked unhealthy: no pong received for {} seconds (limit: 600)", 
+                                  self.address, duration.as_secs());
                     return false;
                 }
             }
@@ -268,7 +279,8 @@ impl TcpConnection {
             if let Ok(duration) = now.duration_since(connected_at) {
                 // Give new connections 5 minutes before considering them unhealthy
                 if duration > Duration::from_secs(300) {
-                    tracing::debug!("Connection to {} has no pong activity after 5 minutes", self.address);
+                    tracing::warn!("Connection to {} marked unhealthy: no pong activity after {} seconds (limit: 300, last_ping_sent: {:?})", 
+                                  self.address, duration.as_secs(), self.last_ping_sent.is_some());
                     return false;
                 }
             }

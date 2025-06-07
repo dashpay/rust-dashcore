@@ -133,7 +133,7 @@ impl ConnectionPool {
             let mut connections = self.connections.write().await;
             for addr in unhealthy {
                 connections.remove(&addr);
-                log::info!("Cleaned up unhealthy peer: {}", addr);
+                log::warn!("Cleaned up unhealthy peer: {} (marked unhealthy by health check)", addr);
             }
         }
     }

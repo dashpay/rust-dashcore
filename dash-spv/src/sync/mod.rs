@@ -110,13 +110,32 @@ impl SyncManager {
         self.filter_sync.handle_cfheaders_message(cf_headers, storage, network).await
     }
     
+    /// Handle a CFilter message for sync coordination (tracking filter downloads).
+    /// Only needs the block hash to track completion, not the full filter data.
+    pub async fn handle_cfilter_message(
+        &mut self,
+        block_hash: dashcore::BlockHash,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<()> {
+        // For now, we don't have filter sync coordination implemented yet
+        // This is a placeholder for future filter download tracking
+        // The filter content itself is handled by the processing thread
+        tracing::trace!("Received CFilter for block {} - sync coordination placeholder", block_hash);
+        
+        // TODO: Implement filter sync coordination similar to how cfheaders works
+        // This would track which filters we've requested vs received and handle timeouts
+        
+        Ok(())
+    }
+    
     /// Handle an MnListDiff message by routing it to the masternode sync manager.
     pub async fn handle_mnlistdiff_message(
         &mut self,
         diff: dashcore::network::message_sml::MnListDiff,
         storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
-        self.masternode_sync.handle_mnlistdiff_message(diff, storage).await
+        self.masternode_sync.handle_mnlistdiff_message(diff, storage, network).await
     }
     
     /// Check for sync timeouts and handle recovery across all sync managers.
@@ -442,6 +461,11 @@ impl SyncManager {
     /// Get a reference to the masternode engine for validation.
     pub fn masternode_engine(&self) -> Option<&dashcore::sml::masternode_list_engine::MasternodeListEngine> {
         self.masternode_sync.engine()
+    }
+    
+    /// Get a reference to the header sync manager.
+    pub fn header_sync(&self) -> &HeaderSyncManager {
+        &self.header_sync
     }
     
     /// Get a mutable reference to the header sync manager.

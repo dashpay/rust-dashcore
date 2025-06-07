@@ -49,6 +49,7 @@ log = "0.4"
 tempfile = "3.0"
 tokio-test = "0.4"
 env_logger = "0.10"
+hex = "0.4"
 
 [[bin]]
 name = "dash-spv"

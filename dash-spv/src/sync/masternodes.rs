@@ -50,16 +50,43 @@ impl MasternodeSyncManager {
         &mut self,
         diff: MnListDiff,
         storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
         if !self.sync_in_progress {
-            // Not currently syncing, ignore
+            tracing::warn!("📨 Received MnListDiff but masternode sync is not in progress - ignoring message");
             return Ok(true);
         }
 
         self.last_sync_progress = std::time::Instant::now();
         
-        // Process the diff
-        self.process_masternode_diff(diff, storage).await?;
+        // Process the diff with fallback to genesis if incremental diff fails
+        match self.process_masternode_diff(diff, storage).await {
+            Ok(()) => {
+                // Success - diff applied
+            }
+            Err(e) if e.to_string().contains("MissingStartMasternodeList") => {
+                tracing::warn!("Incremental masternode diff failed with MissingStartMasternodeList, retrying from genesis");
+                
+                // Reset sync state but keep in progress
+                self.last_sync_progress = std::time::Instant::now();
+                
+                // Get current height again
+                let current_height = storage.get_tip_height().await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get current height for fallback: {}", e)))?
+                    .unwrap_or(0);
+                
+                // Request full diff from genesis
+                tracing::info!("Requesting fallback masternode diff from genesis to height {}", current_height);
+                self.request_masternode_diff(network, storage, 0, current_height).await?;
+                
+                // Return true to continue waiting for the new response
+                return Ok(true);
+            }
+            Err(e) => {
+                // Other error - propagate it
+                return Err(e);
+            }
+        }
         
         // Masternode sync typically completes after processing one diff
         self.sync_in_progress = false;
@@ -131,16 +158,29 @@ impl MasternodeSyncManager {
         
         // If we're already up to date, no need to sync
         if last_masternode_height >= current_height {
-            tracing::info!("Masternode list already synced to current height");
+            tracing::info!("Masternode list already synced to current height (last: {}, current: {})", 
+                          last_masternode_height, current_height);
             return Ok(false);
         }
+        
+        tracing::info!("Starting masternode sync: last_height={}, current_height={}", 
+                      last_masternode_height, current_height);
         
         // Set sync state
         self.sync_in_progress = true;
         self.last_sync_progress = std::time::Instant::now();
         
+        // Try incremental diff first if we have previous state, fallback to genesis if needed
+        let base_height = if last_masternode_height > 0 {
+            tracing::info!("Attempting incremental masternode diff from height {} to {}", last_masternode_height, current_height);
+            last_masternode_height
+        } else {
+            tracing::info!("No previous masternode state, requesting full diff from genesis to height {}", current_height);
+            0
+        };
+        
         // Request masternode list diff
-        self.request_masternode_diff(network, storage, last_masternode_height, current_height).await?;
+        self.request_masternode_diff(network, storage, base_height, current_height).await?;
         
         Ok(true) // Sync started
     }

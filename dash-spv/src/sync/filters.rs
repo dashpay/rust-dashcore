@@ -10,6 +10,7 @@ use dashcore::{
 };
 use dashcore_hashes::{sha256d, Hash};
 use std::collections::{HashMap, VecDeque};
+use tokio::sync::mpsc;
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
@@ -24,6 +25,9 @@ const RECEIVE_TIMEOUT_MILLIS: u64 = 100;
 const DEFAULT_FILTER_SYNC_RANGE: u32 = 100;
 const FILTER_REQUEST_BATCH_SIZE: u32 = 100; // For compact filter requests
 const MAX_TIMEOUTS: u32 = 10;
+
+/// Handle for sending CFilter messages to the processing thread.
+pub type FilterNotificationSender = mpsc::UnboundedSender<dashcore::network::message_filter::CFilter>;
 
 /// Manages BIP157 filter synchronization.
 pub struct FilterSyncManager {
@@ -42,6 +46,8 @@ pub struct FilterSyncManager {
     pending_block_downloads: VecDeque<crate::types::FilterMatch>,
     /// Blocks currently being downloaded (map for quick lookup)
     downloading_blocks: HashMap<BlockHash, u32>,
+    /// Blocks requested by the filter processing thread
+    pub processing_thread_requests: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<BlockHash>>>,
 }
 
 impl FilterSyncManager {
@@ -56,6 +62,7 @@ impl FilterSyncManager {
             syncing_filters: false,
             pending_block_downloads: VecDeque::new(),
             downloading_blocks: HashMap::new(),
+            processing_thread_requests: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         }
     }
     
@@ -145,13 +152,47 @@ impl FilterSyncManager {
                         match storage.get_header(next_batch_end_height).await {
                             Ok(Some(header)) => header.block_hash(),
                             Ok(None) => {
-                                tracing::warn!("Header not found at calculated height {}, falling back to tip {}", 
-                                              next_batch_end_height, header_tip_height);
-                                // Fallback to tip header if calculated height not found
-                                storage.get_header(header_tip_height).await
-                                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
-                                    .ok_or_else(|| SyncError::SyncFailed(format!("Tip header not found at height {}", header_tip_height)))?
-                                    .block_hash()
+                                tracing::warn!("Header not found at calculated height {}, scanning backwards to find actual available height", 
+                                              next_batch_end_height);
+                                
+                                // Scan backwards to find the highest available header
+                                let mut scan_height = next_batch_end_height.saturating_sub(1);
+                                let min_height = self.current_sync_height; // Don't go below where we are
+                                let mut found_header_hash = None;
+                                
+                                while scan_height >= min_height && found_header_hash.is_none() {
+                                    match storage.get_header(scan_height).await {
+                                        Ok(Some(header)) => {
+                                            tracing::info!("Found available header at height {} (originally tried {})", 
+                                                          scan_height, next_batch_end_height);
+                                            found_header_hash = Some(header.block_hash());
+                                            break;
+                                        }
+                                        Ok(None) => {
+                                            tracing::debug!("Header not found at height {}, trying {}", scan_height, scan_height.saturating_sub(1));
+                                            if scan_height == 0 { break; }
+                                            scan_height = scan_height.saturating_sub(1);
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Error checking header at height {}: {}", scan_height, e);
+                                            if scan_height == 0 { break; }
+                                            scan_height = scan_height.saturating_sub(1);
+                                        }
+                                    }
+                                }
+                                
+                                match found_header_hash {
+                                    Some(hash) => hash,
+                                    None => {
+                                        tracing::error!("No available headers found between {} and {} - storage appears to have gaps", 
+                                                       min_height, next_batch_end_height);
+                                        tracing::error!("This indicates a serious storage inconsistency. Stopping filter header sync.");
+                                        
+                                        // Mark sync as complete since we can't find any valid headers to request
+                                        self.syncing_filter_headers = false;
+                                        return Ok(false); // Signal sync completion
+                                    }
+                                }
                             }
                             Err(e) => {
                                 return Err(SyncError::SyncFailed(format!("Failed to get next batch stop header at height {}: {}", next_batch_end_height, e)));
@@ -202,17 +243,38 @@ impl FilterSyncManager {
             // Re-calculate current batch parameters for recovery
             let recovery_batch_end_height = (self.current_sync_height + FILTER_BATCH_SIZE - 1).min(header_tip_height);
             let recovery_batch_stop_hash = if recovery_batch_end_height < header_tip_height {
-                // Try to get the header at the calculated height with fallback
+                // Try to get the header at the calculated height with backward scanning
                 match storage.get_header(recovery_batch_end_height).await {
                     Ok(Some(header)) => header.block_hash(),
                     Ok(None) => {
-                        tracing::warn!("Recovery header not found at calculated height {}, falling back to tip {}", 
-                                      recovery_batch_end_height, header_tip_height);
-                        // Fallback to tip header if calculated height not found
-                        storage.get_header(header_tip_height).await
-                            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
-                            .ok_or_else(|| SyncError::SyncFailed(format!("Tip header not found at height {}", header_tip_height)))?
-                            .block_hash()
+                        tracing::warn!("Recovery header not found at calculated height {}, scanning backwards", 
+                                      recovery_batch_end_height);
+                        
+                        // Scan backwards to find available header
+                        let mut scan_height = recovery_batch_end_height.saturating_sub(1);
+                        let min_height = self.current_sync_height;
+                        
+                        let mut found_recovery_hash = None;
+                        while scan_height >= min_height && found_recovery_hash.is_none() {
+                            if let Ok(Some(header)) = storage.get_header(scan_height).await {
+                                tracing::info!("Found recovery header at height {} (originally tried {})", 
+                                              scan_height, recovery_batch_end_height);
+                                found_recovery_hash = Some(header.block_hash());
+                                break;
+                            } else {
+                                if scan_height == 0 { break; }
+                                scan_height = scan_height.saturating_sub(1);
+                            }
+                        }
+                        
+                        match found_recovery_hash {
+                            Some(hash) => hash,
+                            None => {
+                                tracing::error!("No headers available for recovery between {} and {}", 
+                                               min_height, recovery_batch_end_height);
+                                return Err(SyncError::SyncFailed("No headers available for recovery".to_string()));
+                            }
+                        }
                     }
                     Err(e) => {
                         return Err(SyncError::SyncFailed(format!("Failed to get recovery batch stop header at height {}: {}", recovery_batch_end_height, e)));
@@ -874,7 +936,7 @@ impl FilterSyncManager {
             script_bytes.push(script.as_bytes());
         }
         
-        tracing::debug!("Checking filter against {} watch scripts using BIP158 GCS", scripts.len());
+        // tracing::debug!("Checking filter against {} watch scripts using BIP158 GCS", scripts.len());
         
         // Use the BIP158 filter to check if any scripts match
         let mut filter_slice = filter_data;
@@ -883,7 +945,7 @@ impl FilterSyncManager {
                 if matches {
                     tracing::info!("BIP158 filter match found! Block {} contains watched scripts", block_hash);
                 } else {
-                    tracing::debug!("No BIP158 filter matches found for block {}", block_hash);
+                    tracing::trace!("No BIP158 filter matches found for block {}", block_hash);
                 }
                 Ok(matches)
             }
@@ -1051,7 +1113,7 @@ impl FilterSyncManager {
     ) -> SyncResult<Option<crate::types::FilterMatch>> {
         let block_hash = block.block_hash();
         
-        // Check if this block was requested
+        // Check if this block was requested by the sync manager
         if let Some(height) = self.downloading_blocks.remove(&block_hash) {
             tracing::info!("📦 Received expected block {} at height {}", block_hash, height);
             
@@ -1062,6 +1124,25 @@ impl FilterSyncManager {
                 
                 tracing::debug!("Removed block {} from download queue (remaining: {})", 
                                block_hash, self.pending_block_downloads.len());
+                
+                return Ok(Some(filter_match));
+            }
+        }
+        
+        // Check if this block was requested by the filter processing thread
+        {
+            let mut processing_requests = self.processing_thread_requests.lock().unwrap();
+            if processing_requests.remove(&block_hash) {
+                tracing::info!("📦 Received block {} requested by filter processing thread", block_hash);
+                
+                // We don't have height information for processing thread requests,
+                // so we'll need to look it up
+                // Create a minimal FilterMatch to indicate this was a processing thread request
+                let filter_match = crate::types::FilterMatch {
+                    block_hash,
+                    height: 0, // Height unknown for processing thread requests
+                    block_requested: true,
+                };
                 
                 return Ok(Some(filter_match));
             }
@@ -1146,5 +1227,150 @@ impl FilterSyncManager {
     /// Check if filter header sync is currently in progress.
     pub fn is_syncing_filter_headers(&self) -> bool {
         self.syncing_filter_headers
+    }
+    
+    /// Create a filter processing task that runs in a separate thread.
+    /// Returns a sender channel that the networking thread can use to send CFilter messages
+    /// for processing, and a watch item update sender for dynamic updates.
+    pub fn spawn_filter_processor(
+        initial_watch_items: Vec<crate::types::WatchItem>,
+        network_message_sender: mpsc::Sender<NetworkMessage>,
+        processing_thread_requests: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<BlockHash>>>,
+    ) -> (FilterNotificationSender, crate::client::WatchItemUpdateSender) {
+        let (filter_tx, mut filter_rx) = mpsc::unbounded_channel();
+        let (watch_update_tx, mut watch_update_rx) = mpsc::unbounded_channel::<Vec<crate::types::WatchItem>>();
+        
+        tokio::spawn(async move {
+            tracing::info!("🔄 Filter processing thread started with {} initial watch items", initial_watch_items.len());
+            
+            // Current watch items (can be updated dynamically)
+            let mut current_watch_items = initial_watch_items;
+            
+            loop {
+                tokio::select! {
+                    // Handle CFilter messages
+                    Some(cfilter) = filter_rx.recv() => {
+                        if let Err(e) = Self::process_filter_notification(cfilter, &current_watch_items, &network_message_sender, &processing_thread_requests).await {
+                            tracing::error!("Failed to process filter notification: {}", e);
+                        }
+                    }
+                    
+                    // Handle watch item updates
+                    Some(new_watch_items) = watch_update_rx.recv() => {
+                        tracing::info!("🔄 Filter processor received watch item update: {} items", new_watch_items.len());
+                        current_watch_items = new_watch_items;
+                    }
+                    
+                    // Exit when both channels are closed
+                    else => {
+                        tracing::info!("🔄 Filter processing thread stopped");
+                        break;
+                    }
+                }
+            }
+        });
+        
+        (filter_tx, watch_update_tx)
+    }
+    
+    /// Process a single filter notification by checking for matches and requesting blocks.
+    async fn process_filter_notification(
+        cfilter: dashcore::network::message_filter::CFilter,
+        watch_items: &[crate::types::WatchItem],
+        network_message_sender: &mpsc::Sender<NetworkMessage>,
+        processing_thread_requests: &std::sync::Arc<std::sync::Mutex<std::collections::HashSet<BlockHash>>>,
+    ) -> SyncResult<()> {
+        if watch_items.is_empty() {
+            return Ok(());
+        }
+        
+        // Convert watch items to scripts for filter checking
+        let mut scripts = Vec::with_capacity(watch_items.len());
+        for item in watch_items {
+            match item {
+                crate::types::WatchItem::Address { address, .. } => {
+                    scripts.push(address.script_pubkey());
+                }
+                crate::types::WatchItem::Script(script) => {
+                    scripts.push(script.clone());
+                }
+                crate::types::WatchItem::Outpoint(_) => {
+                    // Skip outpoints for now
+                }
+            }
+        }
+        
+        if scripts.is_empty() {
+            return Ok(());
+        }
+        
+        // Check if the filter matches any of our scripts
+        let matches = Self::check_filter_matches(&cfilter.filter, &cfilter.block_hash, &scripts)?;
+        
+        if matches {
+            tracing::info!("🎯 Filter match found in processing thread for block {}", cfilter.block_hash);
+            
+            // Register this request in the processing thread tracking
+            {
+                let mut requests = processing_thread_requests.lock().unwrap();
+                requests.insert(cfilter.block_hash);
+                tracing::debug!("Registered block {} in processing thread requests", cfilter.block_hash);
+            }
+            
+            // Request the full block download
+            let inv = dashcore::network::message_blockdata::Inventory::Block(cfilter.block_hash);
+            let getdata = dashcore::network::message::NetworkMessage::GetData(vec![inv]);
+            
+            if let Err(e) = network_message_sender.send(getdata).await {
+                tracing::error!("Failed to request block download for match: {}", e);
+                // Remove from tracking if request failed
+                let mut requests = processing_thread_requests.lock().unwrap();
+                requests.remove(&cfilter.block_hash);
+            } else {
+                tracing::info!("📦 Requested block download for filter match: {}", cfilter.block_hash);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Static method to check if a filter matches any scripts (used by the processing thread).
+    fn check_filter_matches(
+        filter_data: &[u8],
+        block_hash: &BlockHash,
+        scripts: &[ScriptBuf],
+    ) -> SyncResult<bool> {
+        if scripts.is_empty() || filter_data.is_empty() {
+            return Ok(false);
+        }
+        
+        // Create a BlockFilterReader with the block hash for proper key derivation
+        let filter_reader = BlockFilterReader::new(block_hash);
+        
+        // Convert scripts to byte slices for matching
+        let mut script_bytes = Vec::with_capacity(scripts.len());
+        for script in scripts {
+            script_bytes.push(script.as_bytes());
+        }
+        
+        // Use the BIP158 filter to check if any scripts match
+        let mut filter_slice = filter_data;
+        match filter_reader.match_any(&mut filter_slice, script_bytes.into_iter()) {
+            Ok(matches) => {
+                if matches {
+                    tracing::info!("BIP158 filter match found! Block {} contains watched scripts", block_hash);
+                }
+                Ok(matches)
+            }
+            Err(Bip158Error::Io(e)) => {
+                Err(SyncError::SyncFailed(format!("BIP158 filter IO error: {}", e)))
+            }
+            Err(Bip158Error::UtxoMissing(outpoint)) => {
+                Err(SyncError::SyncFailed(format!("BIP158 filter UTXO missing: {}", outpoint)))
+            }
+            Err(_) => {
+                Err(SyncError::SyncFailed("BIP158 filter error".to_string()))
+            }
+        }
     }
 }

@@ -15,9 +15,13 @@ use crate::types::{AddressBalance, ChainState, SpvStats, SyncProgress, WatchItem
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::SyncManager;
+use crate::sync::filters::FilterNotificationSender;
 use crate::validation::ValidationManager;
 
 pub use config::ClientConfig;
+
+/// Handle for sending watch item updates to the filter processor.
+pub type WatchItemUpdateSender = tokio::sync::mpsc::UnboundedSender<Vec<crate::types::WatchItem>>;
 
 /// Main Dash SPV client.
 pub struct DashSpvClient {
@@ -31,47 +35,10 @@ pub struct DashSpvClient {
     running: Arc<RwLock<bool>>,
     watch_items: Arc<RwLock<HashSet<WatchItem>>>,
     terminal_ui: Option<Arc<TerminalUI>>,
-    filter_sync_state: Arc<RwLock<FilterSyncState>>,
+    filter_processor: Option<FilterNotificationSender>,
+    watch_item_updater: Option<WatchItemUpdateSender>,
 }
 
-/// Coordination state for filter synchronization between the monitoring loop and sync operations.
-/// 
-/// This struct prevents race conditions by allowing the monitoring loop (which is the sole 
-/// message receiver) to coordinate with active filter sync operations. When a sync operation 
-/// is active, the monitoring loop will route relevant CFilter messages to storage instead 
-/// of processing them as regular filter checks.
-#[derive(Debug, Default)]
-struct FilterSyncState {
-    /// Whether a filter sync operation is currently running.
-    /// 
-    /// When `true`, the monitoring loop will check incoming CFilter messages against the 
-    /// `expected_range` and route matching filters to storage. When `false`, all CFilter 
-    /// messages are processed as regular filter checks for watch items.
-    active: bool,
-    
-    /// The height range of filters that the active sync operation is expecting.
-    /// 
-    /// Format: Some((start_height, end_height)) where both heights are inclusive.
-    /// For example, Some((1000, 1099)) means we're expecting filters for blocks 
-    /// 1000 through 1099. The monitoring loop uses this to determine if an incoming 
-    /// CFilter message belongs to the active sync operation.
-    expected_range: Option<(u32, u32)>,
-    
-    /// Number of CFilter messages received and processed by the monitoring loop 
-    /// for the current sync operation.
-    /// 
-    /// This counter increments each time the monitoring loop successfully stores 
-    /// a filter that falls within the `expected_range`. Used to track progress 
-    /// and determine when the sync operation is complete.
-    received_count: u32,
-    
-    /// Total number of CFilter messages expected for the current sync operation.
-    /// 
-    /// Set when the sync operation starts based on the requested range size.
-    /// When `received_count` reaches this value, the sync is considered complete 
-    /// and `active` is set back to `false`.
-    expected_count: u32,
-}
 
 impl DashSpvClient {
     /// Create a new SPV client with the given configuration.
@@ -117,7 +84,8 @@ impl DashSpvClient {
             running: Arc::new(RwLock::new(false)),
             watch_items: Arc::new(RwLock::new(HashSet::new())),
             terminal_ui: None,
-            filter_sync_state: Arc::new(RwLock::new(FilterSyncState::default())),
+            filter_processor: None,
+            watch_item_updater: None,
         })
     }
     
@@ -132,6 +100,21 @@ impl DashSpvClient {
         
         // Load watch items from storage
         self.load_watch_items().await?;
+        
+        // Always initialize filter processor if filters are enabled (regardless of watch items)
+        if self.config.enable_filters && self.filter_processor.is_none() {
+            let watch_items = self.get_watch_items().await;
+            let network_message_sender = self.network.get_message_sender();
+            let processing_thread_requests = self.sync_manager.filter_sync().processing_thread_requests.clone();
+            let (filter_processor, watch_item_updater) = crate::sync::filters::FilterSyncManager::spawn_filter_processor(
+                watch_items.clone(), 
+                network_message_sender,
+                processing_thread_requests
+            );
+            self.filter_processor = Some(filter_processor);
+            self.watch_item_updater = Some(watch_item_updater);
+            tracing::info!("🔄 Filter processor initialized (filters enabled, {} initial watch items)", watch_items.len());
+        }
         
         // Initialize genesis block if not already present
         self.initialize_genesis_block().await?;
@@ -248,27 +231,8 @@ impl DashSpvClient {
         
         tracing::info!("Starting continuous network monitoring...");
         
-        // Check if sync is needed and send initial requests after monitoring starts
-        if let Ok(base_hash) = self.sync_manager.header_sync_mut().prepare_sync(&mut *self.storage).await {
-            tracing::info!("🚀 Monitoring active, sending initial header sync requests...");
-            if let Err(e) = self.sync_manager.header_sync_mut().request_headers(&mut *self.network, base_hash).await {
-                tracing::error!("Failed to send initial header requests: {}", e);
-            }
-        }
-        
-        // Also start filter header sync if filters are enabled and we have headers
-        if self.config.enable_filters {
-            let header_tip = self.storage.get_tip_height().await.ok().flatten().unwrap_or(0);
-            let filter_tip = self.storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
-            
-            if header_tip > filter_tip {
-                tracing::info!("🚀 Starting filter header sync (headers: {}, filter headers: {})", header_tip, filter_tip);
-                if let Err(e) = self.sync_manager.filter_sync_mut().start_sync_headers(&mut *self.network, &mut *self.storage).await {
-                    tracing::warn!("Failed to start filter header sync: {}", e);
-                    // Don't fail startup if filter header sync fails
-                }
-            }
-        }
+        // Wait for at least one peer to connect before sending any protocol messages
+        let mut initial_sync_started = false;
         
         // Print initial status
         self.update_status_display().await;
@@ -300,6 +264,35 @@ impl DashSpvClient {
             
             // Clean up old pending pings
             self.network.cleanup_old_pings();
+            
+            // Check if we have connected peers and start initial sync operations (once)
+            if !initial_sync_started && self.network.peer_count() > 0 {
+                tracing::info!("🚀 Peers connected, starting initial sync operations...");
+                
+                // Check if sync is needed and send initial requests
+                if let Ok(base_hash) = self.sync_manager.header_sync_mut().prepare_sync(&mut *self.storage).await {
+                    tracing::info!("📡 Sending initial header sync requests...");
+                    if let Err(e) = self.sync_manager.header_sync_mut().request_headers(&mut *self.network, base_hash).await {
+                        tracing::error!("Failed to send initial header requests: {}", e);
+                    }
+                }
+                
+                // Also start filter header sync if filters are enabled and we have headers
+                if self.config.enable_filters {
+                    let header_tip = self.storage.get_tip_height().await.ok().flatten().unwrap_or(0);
+                    let filter_tip = self.storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
+                    
+                    if header_tip > filter_tip {
+                        tracing::info!("🚀 Starting filter header sync (headers: {}, filter headers: {})", header_tip, filter_tip);
+                        if let Err(e) = self.sync_manager.filter_sync_mut().start_sync_headers(&mut *self.network, &mut *self.storage).await {
+                            tracing::warn!("Failed to start filter header sync: {}", e);
+                            // Don't fail startup if filter header sync fails
+                        }
+                    }
+                }
+                
+                initial_sync_started = true;
+            }
             
             // Check if it's time to update the status display
             if last_status_update.elapsed() >= status_update_interval {
@@ -362,7 +355,6 @@ impl DashSpvClient {
         
         match message {
             NetworkMessage::Headers(headers) => {
-                tracing::info!("📨 Client received headers message with {} headers", headers.len());
                 // Route to header sync manager if active, otherwise process normally
                 match self.sync_manager.handle_headers_message(headers.clone(), &mut *self.storage, &mut *self.network).await {
                     Ok(false) => {
@@ -384,7 +376,14 @@ impl DashSpvClient {
                         }
                     }
                     Ok(true) => {
-                        tracing::debug!("🔄 Header sync continuing (handle_headers_message returned true)");
+                        // Headers processed successfully
+                        if self.sync_manager.header_sync().is_syncing() {
+                            tracing::debug!("🔄 Header sync continuing (handle_headers_message returned true)");
+                        } else {
+                            // Post-sync headers received - request filter headers and filters for new blocks
+                            tracing::info!("📋 Post-sync headers received, requesting filter headers and filters");
+                            self.handle_post_sync_headers(&headers).await?;
+                        }
                     }
                     Err(e) => {
                         tracing::error!("❌ Error handling headers: {:?}", e);
@@ -403,15 +402,20 @@ impl DashSpvClient {
                         
                         // Auto-trigger filter downloading after filter header sync completion
                         if !self.get_watch_items().await.is_empty() {
-                            tracing::info!("🚀 Filter header sync complete, starting automatic filter download and checking...");
-                            // Pass None to let sync_and_check_filters determine the optimal range based on watch items
-                            match self.sync_and_check_filters(None).await {
-                                Ok(matches) => {
-                                    tracing::info!("✅ Automatic filter download completed with {} matches", matches.len());
-                                }
-                                Err(e) => {
-                                    tracing::error!("❌ Failed to start automatic filter download after filter headers: {}", e);
-                                    // Don't fail the entire flow if filter download fails to start
+                            // Check if header sync is stable before starting filter download
+                            if self.sync_manager.header_sync().is_syncing() {
+                                tracing::info!("⏳ Filter header sync complete, but header sync still in progress - deferring automatic filter download");
+                            } else {
+                                tracing::info!("🚀 Filter header sync complete and header sync stable, starting automatic filter download and checking...");
+                                // Pass None to let sync_and_check_filters determine the optimal range based on watch items
+                                match self.sync_and_check_filters(None).await {
+                                    Ok(matches) => {
+                                        tracing::info!("✅ Automatic filter download completed with {} matches", matches.len());
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("❌ Failed to start automatic filter download after filter headers: {}", e);
+                                        // Don't fail the entire flow if filter download fails to start
+                                    }
                                 }
                             }
                         } else {
@@ -428,14 +432,26 @@ impl DashSpvClient {
                 }
             }
             NetworkMessage::MnListDiff(diff) => {
+                tracing::info!("📨 Received MnListDiff message: {} new masternodes, {} deleted masternodes, {} quorums", 
+                              diff.new_masternodes.len(), diff.deleted_masternodes.len(), diff.new_quorums.len());
                 // Route to masternode sync manager if active
-                if let Ok(false) = self.sync_manager.handle_mnlistdiff_message(diff, &mut *self.storage).await {
-                    tracing::info!("🎯 Masternode sync completed");
+                match self.sync_manager.handle_mnlistdiff_message(diff, &mut *self.storage, &mut *self.network).await {
+                    Ok(false) => {
+                        tracing::info!("🎯 Masternode sync completed");
+                    }
+                    Ok(true) => {
+                        tracing::debug!("MnListDiff processed, sync continuing");
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Failed to process MnListDiff: {}", e);
+                    }
                 }
                 // MnListDiff is only relevant during sync, so we don't process them normally
             }
             NetworkMessage::Block(block) => {
-                tracing::info!("Received new block: {}", block.header.block_hash());
+                let block_hash = block.header.block_hash();
+                tracing::info!("Received new block: {}", block_hash);
+                tracing::debug!("📋 Block {} contains {} transactions", block_hash, block.txdata.len());
                 // Process new block (update state, check watched items)
                 self.process_new_block(block).await?;
             }
@@ -476,68 +492,20 @@ impl DashSpvClient {
             NetworkMessage::CFilter(cfilter) => {
                 tracing::debug!("Received CFilter for block {}", cfilter.block_hash);
                 
-                // Check if this filter is expected by an active sync operation
-                let handled_by_sync = {
-                    let mut sync_state = self.filter_sync_state.write().await;
-                    if sync_state.active {
-                        tracing::debug!("Active filter sync - checking if filter matches expected range");
-                        // Check if this filter falls within the expected range
-                        if let Some((start_height, end_height)) = sync_state.expected_range {
-                            tracing::debug!("Expected range: {} to {}", start_height, end_height);
-                            // Find the height for this filter by matching block hash
-                            match self.find_height_for_block_hash(cfilter.block_hash).await {
-                                Some(height) => {
-                                    tracing::debug!("Found height {} for block {}", height, cfilter.block_hash);
-                                    if height >= start_height && height <= end_height {
-                                        sync_state.received_count += 1;
-                                        tracing::info!("Filter sync: received filter {}/{} for height {} (hash: {})", 
-                                                       sync_state.received_count, sync_state.expected_count, height, cfilter.block_hash);
-                                        
-                                        // Store the filter
-                                        if let Err(e) = self.storage.store_filter(height, &cfilter.filter).await {
-                                            tracing::error!("Failed to store filter for height {}: {}", height, e);
-                                        } else {
-                                            tracing::debug!("Stored filter for height {} (hash: {})", height, cfilter.block_hash);
-                                        }
-                                        
-                                        // Check if sync is complete
-                                        if sync_state.received_count >= sync_state.expected_count {
-                                            tracing::info!("Filter sync completed: received all {} expected filters", sync_state.expected_count);
-                                            sync_state.active = false;
-                                            sync_state.expected_range = None;
-                                            sync_state.received_count = 0;
-                                            sync_state.expected_count = 0;
-                                        }
-                                        
-                                        true // Handled by sync
-                                    } else {
-                                        tracing::debug!("Filter height {} is outside expected range {} to {}", height, start_height, end_height);
-                                        false // Not in expected range
-                                    }
-                                }
-                                None => {
-                                    tracing::warn!("Could not find height for block hash {} - this may indicate a storage issue or the block header is not yet stored", cfilter.block_hash);
-                                    // Instead of rejecting the filter, let's try to process it as a regular filter
-                                    // This makes the system more robust to timing issues
-                                    false // Process as regular filter
-                                }
-                            }
-                        } else {
-                            tracing::debug!("No expected range set for active filter sync");
-                            false // No expected range
-                        }
-                    } else {
-                        tracing::debug!("No active filter sync - processing as regular filter");
-                        false // No active sync
-                    }
-                };
+                // Let the sync manager handle sync coordination (just tracking, not the full filter)
+                if let Err(e) = self.sync_manager.handle_cfilter_message(cfilter.block_hash, &mut *self.storage).await {
+                    tracing::error!("Failed to handle CFilter in sync manager: {}", e);
+                }
                 
-                // If not handled by sync, process as a regular filter for watch items
-                if !handled_by_sync {
-                    tracing::info!("Processing compact filter for block {} as regular filter check", cfilter.block_hash);
-                    if let Err(e) = self.process_and_check_filter(cfilter).await {
-                        tracing::error!("Failed to process compact filter: {}", e);
+                // Always send to filter processor for watch item checking if available
+                if let Some(filter_processor) = &self.filter_processor {
+                    tracing::debug!("Sending compact filter for block {} to processing thread", cfilter.block_hash);
+                    if let Err(e) = filter_processor.send(cfilter) {
+                        tracing::error!("Failed to send filter to processing thread: {}", e);
                     }
+                } else {
+                    // This should not happen since we always create filter processor when filters are enabled
+                    tracing::warn!("Received CFilter for block {} but no filter processor available - filters may not be enabled", cfilter.block_hash);
                 }
             }
             _ => {
@@ -932,15 +900,7 @@ impl DashSpvClient {
         if relevant_transactions > 0 {
             tracing::info!("🎯 Block {} contains {} relevant transactions affecting watched items", 
                           block_hash, relevant_transactions);
-            
-            // Add new outpoints to watch list for future spending detection
-            for outpoint in new_outpoints_to_watch {
-                let watch_item = WatchItem::Outpoint(outpoint);
-                if let Err(e) = self.add_watch_item(watch_item).await {
-                    tracing::error!("Failed to add outpoint to watch list: {}", e);
-                }
-            }
-            
+
             // Report balance changes
             if !balance_changes.is_empty() {
                 self.report_balance_changes(&balance_changes, block_height).await?;
@@ -1222,6 +1182,13 @@ impl DashSpvClient {
             
             self.storage.store_metadata("watch_items", &serialized).await
                 .map_err(|e| SpvError::Storage(e))?;
+            
+            // Send updated watch items to filter processor if it exists
+            if let Some(updater) = &self.watch_item_updater {
+                if let Err(e) = updater.send(watch_list.clone()) {
+                    tracing::error!("Failed to send watch item update to filter processor: {}", e);
+                }
+            }
         }
         
         Ok(())
@@ -1242,6 +1209,13 @@ impl DashSpvClient {
             
             self.storage.store_metadata("watch_items", &serialized).await
                 .map_err(|e| SpvError::Storage(e))?;
+            
+            // Send updated watch items to filter processor if it exists
+            if let Some(updater) = &self.watch_item_updater {
+                if let Err(e) = updater.send(watch_list.clone()) {
+                    tracing::error!("Failed to send watch item update to filter processor: {}", e);
+                }
+            }
         }
         
         Ok(removed)
@@ -1281,6 +1255,11 @@ impl DashSpvClient {
         // Get current watch items to determine earliest height needed
         let watch_items = self.get_watch_items().await;
         
+        if watch_items.is_empty() {
+            tracing::info!("No watch items configured, skipping filter sync");
+            return Ok(Vec::new());
+        }
+        
         // Find the earliest height among all watch items
         let earliest_height = watch_items.iter()
             .filter_map(|item| item.earliest_height())
@@ -1292,78 +1271,35 @@ impl DashSpvClient {
         let start_height = earliest_height.min(default_start); // Go back to the earliest required height
         let actual_count = tip_height - start_height + 1; // Actual number of blocks available
         
-        tracing::info!("Syncing and checking filters from height {} to {} ({} blocks)", 
+        tracing::info!("Requesting filters from height {} to {} ({} blocks)", 
                       start_height, tip_height, actual_count);
+        tracing::info!("Filter processing and matching will happen automatically in background thread as CFilter messages arrive");
         
-        // Use the new coordinated sync method
+        // Send filter requests - processing will happen automatically in the background
         self.sync_filters_coordinated(start_height, actual_count).await?;
         
-        if watch_items.is_empty() {
-            tracing::info!("No watch items configured, skipping filter matching");
-            return Ok(Vec::new());
-        }
-        
-        // Check filters for matches
-        let matches = self.sync_manager.check_filter_matches(&*self.storage, &watch_items, start_height, tip_height).await
-            .map_err(|e| SpvError::Sync(e))?;
-        
-        tracing::info!("Found {} filter matches for {} watch items", matches.len(), watch_items.len());
-        
-        // Request block downloads for all matches
-        if !matches.is_empty() {
-            tracing::info!("🎯 Processing {} filter matches and requesting block downloads", matches.len());
-            
-            let processed_matches = self.sync_manager.request_block_downloads(matches.clone(), &mut *self.network).await
-                .map_err(|e| SpvError::Sync(e))?;
-            
-            tracing::info!("✅ Successfully requested {} block downloads", processed_matches.len());
-            
-            // Update statistics
-            {
-                let mut stats = self.stats.write().await;
-                stats.filter_matches += processed_matches.len() as u64;
-            }
-        }
-        
-        Ok(matches)
+        // Return empty vector since matching happens asynchronously in the filter processor thread
+        // Actual matches will be processed and blocks requested automatically when CFilter messages arrive
+        Ok(Vec::new())
     }
     
-    /// Sync filters in coordination with the monitoring loop using pipelined processing
+    /// Sync filters in coordination with the monitoring loop using simplified processing
     async fn sync_filters_coordinated(&mut self, start_height: u32, count: u32) -> Result<()> {
-        // Check if filter sync is already active
-        {
-            let sync_state = self.filter_sync_state.read().await;
-            if sync_state.active {
-                return Err(SpvError::Config("Filter sync already in progress".to_string()));
-            }
-        }
-        
         let end_height = start_height + count - 1;
-        
-        // Set up sync state for coordination with monitoring loop
-        {
-            let mut sync_state = self.filter_sync_state.write().await;
-            sync_state.active = true;
-            sync_state.expected_range = Some((start_height, end_height));
-            sync_state.received_count = 0;
-            sync_state.expected_count = count;
-        }
         
         tracing::info!("Starting coordinated filter sync from height {} to {} ({} filters expected)", 
                       start_height, end_height, count);
         
-        // Use pipelined processing: send a few batches, wait for responses, then send more
+        // Use batch processing to send filter requests
         let batch_size = 100;
-        let pipeline_window = 2; // Number of batches to keep "in flight" at once
         let mut current_height = start_height;
         let mut batches_sent = 0;
-        let mut last_received_count = 0;
         
-        // Send initial pipeline window of requests
-        while current_height <= end_height && batches_sent < pipeline_window {
+        // Send all filter requests in batches
+        while current_height <= end_height {
             let batch_end = (current_height + batch_size - 1).min(end_height);
             
-            tracing::debug!("Sending initial batch {}: heights {} to {}", batches_sent + 1, current_height, batch_end);
+            tracing::debug!("Sending batch {}: heights {} to {}", batches_sent + 1, current_height, batch_end);
             
             // Get stop hash for this batch
             let stop_hash = self.storage.get_header(batch_end).await
@@ -1371,7 +1307,7 @@ impl DashSpvClient {
                 .ok_or_else(|| SpvError::Config("Stop header not found".to_string()))?
                 .block_hash();
             
-            // Send the request - monitoring loop will handle the responses
+            // Send the request - monitoring loop will handle the responses via filter processor
             self.sync_manager.filter_sync_mut().request_filters(&mut *self.network, current_height, stop_hash).await
                 .map_err(|e| SpvError::Sync(e))?;
             
@@ -1379,94 +1315,7 @@ impl DashSpvClient {
             batches_sent += 1;
         }
         
-        // Now use pipelined processing for the remaining batches
-        let timeout = tokio::time::Duration::from_secs(45); // Increased timeout for pipelined approach
-        let start_time = tokio::time::Instant::now();
-        let batch_timeout = tokio::time::Duration::from_secs(10); // Timeout for individual batch responses
-        let mut last_progress_time = tokio::time::Instant::now();
-        
-        loop {
-            // Check current progress
-            let (sync_complete, received_count, progress_made) = {
-                let sync_state = self.filter_sync_state.read().await;
-                let progress_made = sync_state.received_count > last_received_count;
-                if progress_made {
-                    last_received_count = sync_state.received_count;
-                }
-                (
-                    !sync_state.active || sync_state.received_count >= sync_state.expected_count,
-                    sync_state.received_count,
-                    progress_made
-                )
-            };
-            
-            // Reset batch timeout if we made progress
-            if progress_made {
-                last_progress_time = tokio::time::Instant::now();
-                tracing::debug!("Filter sync progress: {}/{} filters received", received_count, count);
-            }
-            
-            // Check if sync is complete
-            if sync_complete {
-                tracing::info!("Filter sync completed successfully: received {}/{} filters", received_count, count);
-                break;
-            }
-            
-            // Send more requests if we have capacity and more batches to send
-            if current_height <= end_height {
-                // Check if we should send more batches (when we've received some responses)
-                let responses_per_batch = batch_size.min(end_height - current_height + batch_size);
-                let expected_responses_so_far = batches_sent * responses_per_batch;
-                let response_lag = expected_responses_so_far.saturating_sub(received_count);
-                
-                // Send another batch if we're not too far ahead
-                if response_lag < (pipeline_window * batch_size) && current_height <= end_height {
-                    let batch_end = (current_height + batch_size - 1).min(end_height);
-                    
-                    tracing::debug!("Sending additional batch: heights {} to {} (lag: {})", 
-                                   current_height, batch_end, response_lag);
-                    
-                    // Get stop hash for this batch
-                    let stop_hash = self.storage.get_header(batch_end).await
-                        .map_err(|e| SpvError::Storage(e))?
-                        .ok_or_else(|| SpvError::Config("Stop header not found".to_string()))?
-                        .block_hash();
-                    
-                    // Send the request
-                    self.sync_manager.filter_sync_mut().request_filters(&mut *self.network, current_height, stop_hash).await
-                        .map_err(|e| SpvError::Sync(e))?;
-                    
-                    current_height = batch_end + 1;
-                    batches_sent += 1;
-                }
-            }
-            
-            // Check for timeouts
-            if start_time.elapsed() > timeout {
-                // Reset sync state on overall timeout
-                {
-                    let mut sync_state = self.filter_sync_state.write().await;
-                    sync_state.active = false;
-                    sync_state.expected_range = None;
-                    sync_state.received_count = 0;
-                    sync_state.expected_count = 0;
-                }
-                return Err(SpvError::Config(format!(
-                    "Filter sync timeout: received {}/{} filters in {:?}", 
-                    received_count, count, start_time.elapsed()
-                )));
-            }
-            
-            // Check for batch timeout (no progress)
-            if last_progress_time.elapsed() > batch_timeout {
-                tracing::warn!("No filter sync progress for {:?}, continuing to wait...", last_progress_time.elapsed());
-                last_progress_time = tokio::time::Instant::now(); // Reset to avoid spamming
-            }
-            
-            // Wait for progress - the monitoring loop will handle CFilter messages
-            // and update the sync state coordination mechanism
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        }
+        tracing::info!("✅ All filter requests sent ({} batches), processing via filter processor thread", batches_sent);
         
         Ok(())
     }
@@ -1660,5 +1509,36 @@ impl DashSpvClient {
                 }
             );
         }
+    }
+    
+    /// Handle new headers received after the initial sync is complete.
+    /// Request filter headers for these new blocks. Filters will be requested
+    /// automatically when the CFHeaders responses arrive.
+    async fn handle_post_sync_headers(&mut self, headers: &[dashcore::block::Header]) -> Result<()> {
+        if !self.config.enable_filters {
+            tracing::debug!("Filters not enabled, skipping post-sync filter requests for {} headers", headers.len());
+            return Ok(());
+        }
+        
+        tracing::info!("Handling {} post-sync headers - requesting filter headers (filters will follow automatically)", headers.len());
+        
+        for header in headers {
+            let block_hash = header.block_hash();
+            
+            // Only request filter header for this new block
+            // The CFilter will be requested automatically when the CFHeader response arrives
+            // (this happens in the CFHeaders message handler)
+            if let Err(e) = self.sync_manager.filter_sync_mut().download_filter_header_for_block(
+                block_hash, &mut *self.network, &mut *self.storage
+            ).await {
+                tracing::error!("Failed to request filter header for new block {}: {}", block_hash, e);
+                continue;
+            }
+            
+            tracing::debug!("Requested filter header for new block {} (filter will be requested when CFHeader arrives)", block_hash);
+        }
+        
+        tracing::info!("✅ Completed post-sync filter header requests for {} new blocks", headers.len());
+        Ok(())
     }
 }

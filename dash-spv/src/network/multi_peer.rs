@@ -178,12 +178,24 @@ impl MultiPeerNetworkManager {
         shutdown: Arc<AtomicBool>,
     ) {
         tokio::spawn(async move {
+            log::debug!("Starting peer reader loop for {}", addr);
+            let mut loop_iteration = 0;
+            
             while !shutdown.load(Ordering::Relaxed) {
+                loop_iteration += 1;
+                log::trace!("Peer reader loop iteration {} for {}", loop_iteration, addr);
+                
+                // Check shutdown signal first with detailed logging
+                if shutdown.load(Ordering::Relaxed) {
+                    log::info!("Breaking peer reader loop for {} - shutdown signal received (iteration {})", addr, loop_iteration);
+                    break;
+                }
+                
                 // Get connection
                 let conn = match pool.get_connection(&addr).await {
                     Some(conn) => conn,
                     None => {
-                        log::debug!("Connection to {} no longer in pool", addr);
+                        log::warn!("Breaking peer reader loop for {} - connection no longer in pool (iteration {})", addr, loop_iteration);
                         break;
                     }
                 };
@@ -193,6 +205,7 @@ impl MultiPeerNetworkManager {
                     // Try to get a read lock first to check if connection is available
                     let conn_guard = conn.read().await;
                     if !conn_guard.is_connected() {
+                        log::warn!("Breaking peer reader loop for {} - connection no longer connected (iteration {})", addr, loop_iteration);
                         drop(conn_guard);
                         break;
                     }
@@ -234,7 +247,7 @@ impl MultiPeerNetworkManager {
                                     log::error!("Failed to handle ping from {}: {}", addr, e);
                                     // If we can't send pong, connection is likely broken
                                     if matches!(e, NetworkError::ConnectionFailed(_)) {
-                                        log::warn!("Connection to {} appears broken, will disconnect", addr);
+                                        log::warn!("Breaking peer reader loop for {} - failed to send pong response (iteration {})", addr, loop_iteration);
                                         break;
                                     }
                                 }
@@ -266,13 +279,13 @@ impl MultiPeerNetworkManager {
                         
                         // Forward message to client
                         if message_tx.send((addr, msg)).await.is_err() {
-                            log::error!("Failed to send message to client channel");
+                            log::warn!("Breaking peer reader loop for {} - failed to send message to client channel (iteration {})", addr, loop_iteration);
                             break;
                         }
                     }
                     Ok(None) => {
                         // No message available, brief pause to avoid aggressive polling but stay responsive
-                        time::sleep(Duration::from_millis(10)).await;
+                        time::sleep(MESSAGE_POLL_INTERVAL).await;
                     }
                     Err(e) => {
                         match e {
@@ -285,7 +298,17 @@ impl MultiPeerNetworkManager {
                                 continue;
                             }
                             _ => {
-                                log::warn!("Error reading from {}: {}", addr, e);
+                                log::error!("Fatal error reading from {}: {}", addr, e);
+                                
+                                // Check if this is a serialization error that might have context
+                                if let NetworkError::Serialization(ref decode_error) = e {
+                                    if decode_error.to_string().contains("unknown special transaction type") {
+                                        log::warn!("Peer {} sent block with unsupported transaction type: {}", addr, decode_error);
+                                    } else {
+                                        log::error!("Serialization error from {}: {}", addr, decode_error);
+                                    }
+                                }
+                                
                                 // For other errors, wait a bit then break
                                 tokio::time::sleep(Duration::from_secs(1)).await;
                                 break;
@@ -296,7 +319,7 @@ impl MultiPeerNetworkManager {
             }
             
             // Remove from pool
-            log::info!("Disconnecting from {}", addr);
+            log::warn!("Disconnecting from {} (peer reader loop ended)", addr);
             pool.remove_connection(&addr).await;
         });
     }
@@ -348,7 +371,7 @@ impl MultiPeerNetworkManager {
                         let mut search_started = peer_search_started.lock().await;
                         if search_started.is_none() {
                             *search_started = Some(SystemTime::now());
-                            log::info!("Below minimum peers ({}/{}), starting peer search (will try DNS after 10s)", count, MIN_PEERS);
+                            log::info!("Below minimum peers ({}/{}), starting peer search (will try DNS after {}s)", count, MIN_PEERS, DNS_DISCOVERY_DELAY.as_secs());
                         }
                         let search_time = search_started.unwrap();
                         drop(search_started);
@@ -372,7 +395,7 @@ impl MultiPeerNetworkManager {
                         let count = pool.connection_count().await;
                         if count < MIN_PEERS {
                             let elapsed = SystemTime::now().duration_since(search_time).unwrap_or(Duration::ZERO);
-                            if elapsed >= Duration::from_secs(10) {
+                            if elapsed >= DNS_DISCOVERY_DELAY {
                                 log::info!("Using DNS discovery after {}s delay", elapsed.as_secs());
                                 let dns_peers = discovery.discover_peers(network).await;
                                 let mut dns_attempted = 0;
@@ -386,7 +409,7 @@ impl MultiPeerNetworkManager {
                                     }
                                 }
                             } else {
-                                log::debug!("Waiting for DNS delay: {}s elapsed, need 10s", elapsed.as_secs());
+                                log::debug!("Waiting for DNS delay: {}s elapsed, need {}s", elapsed.as_secs(), DNS_DISCOVERY_DELAY.as_secs());
                             }
                         }
                     } else {
@@ -443,7 +466,7 @@ impl MultiPeerNetworkManager {
             } else {
                 // Current sync peer disconnected, pick a new one
                 let new_addr = connections[0].0;
-                log::info!("🔄 Sync peer switched from {} to {} (previous peer disconnected)", 
+                log::info!("Sync peer switched from {} to {} (previous peer disconnected)", 
                           current_addr, new_addr);
                 *current_sync_peer = Some(new_addr);
                 new_addr
@@ -451,7 +474,7 @@ impl MultiPeerNetworkManager {
         } else {
             // No current sync peer, pick the first available
             let new_addr = connections[0].0;
-            log::info!("🔄 Sync peer selected: {}", new_addr);
+            log::info!("Sync peer selected: {}", new_addr);
             *current_sync_peer = Some(new_addr);
             new_addr
         };
@@ -623,7 +646,7 @@ impl NetworkManager for MultiPeerNetworkManager {
         let mut rx = self.message_rx.lock().await;
         
         // Use a timeout to prevent indefinite blocking when peers disconnect
-        match tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
+        match tokio::time::timeout(MESSAGE_RECEIVE_TIMEOUT, rx.recv()).await {
             Ok(Some((addr, msg))) => {
                 // Reduce verbosity for common sync messages
                 match &msg {
@@ -706,5 +729,38 @@ impl NetworkManager for MultiPeerNetworkManager {
     
     fn cleanup_old_pings(&mut self) {
         // Individual connections handle their own ping cleanup
+    }
+    
+    fn get_message_sender(&self) -> mpsc::Sender<NetworkMessage> {
+        // Create a sender that routes messages to our internal send_message logic
+        let (tx, mut rx) = mpsc::channel(1000);
+        let pool = Arc::clone(&self.pool);
+        
+        tokio::spawn(async move {
+            while let Some(message) = rx.recv().await {
+                // Route message through the multi-peer logic
+                // For sync messages that require consistent responses, send to only one peer
+                match &message {
+                    NetworkMessage::GetHeaders(_) | NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_) | NetworkMessage::GetData(_) => {
+                        // Send to a single peer for sync messages including GetData for block downloads
+                        let connections = pool.get_all_connections().await;
+                        if let Some((_, conn)) = connections.first() {
+                            let mut conn_guard = conn.write().await;
+                            let _ = conn_guard.send_message(message).await;
+                        }
+                    }
+                    _ => {
+                        // Broadcast to all peers for other messages
+                        let connections = pool.get_all_connections().await;
+                        for (_, conn) in connections {
+                            let mut conn_guard = conn.write().await;
+                            let _ = conn_guard.send_message(message.clone()).await;
+                        }
+                    }
+                }
+            }
+        });
+        
+        tx
     }
 }

@@ -15,6 +15,7 @@ pub mod pool;
 mod tests;
 
 use async_trait::async_trait;
+use tokio::sync::mpsc;
 
 use dashcore::network::message::NetworkMessage;
 use crate::error::{NetworkError, NetworkResult};
@@ -65,6 +66,9 @@ pub trait NetworkManager: Send + Sync {
     
     /// Clean up old pending pings.
     fn cleanup_old_pings(&mut self);
+    
+    /// Get a message sender channel for sending messages from other components.
+    fn get_message_sender(&self) -> mpsc::Sender<NetworkMessage>;
 }
 
 /// TCP-based network manager implementation.
@@ -73,16 +77,22 @@ pub struct TcpNetworkManager {
     connection: Option<TcpConnection>,
     handshake: HandshakeManager,
     _message_handler: MessageHandler,
+    message_sender: mpsc::Sender<NetworkMessage>,
+    message_receiver: mpsc::Receiver<NetworkMessage>,
 }
 
 impl TcpNetworkManager {
     /// Create a new TCP network manager.
     pub async fn new(config: &crate::client::ClientConfig) -> NetworkResult<Self> {
+        let (message_sender, message_receiver) = mpsc::channel(1000);
+        
         Ok(Self {
             config: config.clone(),
             connection: None,
             handshake: HandshakeManager::new(config.network),
             _message_handler: MessageHandler::new(),
+            message_sender,
+            message_receiver,
         })
     }
 }
@@ -179,5 +189,9 @@ impl NetworkManager for TcpNetworkManager {
         if let Some(connection) = self.connection.as_mut() {
             connection.cleanup_old_pings();
         }
+    }
+    
+    fn get_message_sender(&self) -> mpsc::Sender<NetworkMessage> {
+        self.message_sender.clone()
     }
 }
