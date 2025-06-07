@@ -573,6 +573,9 @@ impl Decodable for RawNetworkMessage {
             "clsig" => {
                 NetworkMessage::CLSig(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
             }
+            "isdlock" => {
+                NetworkMessage::ISLock(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
+            }
             _ => NetworkMessage::Unknown {
                 command: cmd,
                 payload: mem_d.into_inner(),
