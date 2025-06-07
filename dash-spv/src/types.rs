@@ -337,7 +337,7 @@ impl<'de> Deserialize<'de> for WatchItem {
                             if earliest_height.is_some() {
                                 return Err(serde::de::Error::duplicate_field("earliest_height"));
                             }
-                            earliest_height = Some(map.next_value()?);
+                            earliest_height = map.next_value()?;
                         }
                         _ => {
                             let _: serde::de::IgnoredAny = map.next_value()?;
