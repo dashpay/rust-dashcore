@@ -804,6 +804,12 @@ impl DashSpvClient {
         // Update chain state if needed
         self.update_chain_state_with_block(&block).await?;
         
+        // Update statistics for successful block processing
+        {
+            let mut stats = self.stats.write().await;
+            stats.blocks_processed += 1;
+        }
+        
         Ok(())
     }
     
@@ -1515,15 +1521,23 @@ impl DashSpvClient {
                 state.last_chainlock_height.unwrap_or(0)
             };
             
+            // Get block processing statistics
+            let stats = self.stats.read().await;
+            let blocks_requested = stats.blocks_requested;
+            let blocks_processed = stats.blocks_processed;
+            drop(stats);
+            
             tracing::info!(
-                "📊 [SYNC STATUS] Headers: {} | Filter Headers: {} | Latest ChainLock: {}",
+                "📊 [SYNC STATUS] Headers: {} | Filter Headers: {} | Latest ChainLock: {} | Blocks Requested: {} | Blocks Processed: {}",
                 header_height,
                 filter_height,
                 if chainlock_height > 0 {
                     format!("#{}", chainlock_height)
                 } else {
                     "None".to_string()
-                }
+                },
+                blocks_requested,
+                blocks_processed
             );
         }
     }

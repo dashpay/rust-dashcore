@@ -401,6 +401,9 @@ pub struct SpvStats {
     /// Number of full blocks requested.
     pub blocks_requested: u64,
     
+    /// Number of full blocks processed.
+    pub blocks_processed: u64,
+    
     /// Number of masternode diffs processed.
     pub masternode_diffs_processed: u64,
     
