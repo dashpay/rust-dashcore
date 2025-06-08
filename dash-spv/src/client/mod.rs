@@ -241,6 +241,10 @@ impl DashSpvClient {
         let mut last_status_update = Instant::now();
         let status_update_interval = std::time::Duration::from_secs(5);
         
+        // Timer for request timeout checking
+        let mut last_timeout_check = Instant::now();
+        let timeout_check_interval = std::time::Duration::from_secs(1);
+        
         loop {
             // Check if we should stop
             let running = self.running.read().await;
@@ -302,6 +306,14 @@ impl DashSpvClient {
             
             // Check for sync timeouts and handle recovery
             let _ = self.sync_manager.check_sync_timeouts(&mut *self.storage, &mut *self.network).await;
+            
+            // Check for request timeouts and handle retries
+            if last_timeout_check.elapsed() >= timeout_check_interval {
+                if let Err(e) = self.handle_request_timeouts().await {
+                    tracing::error!("Error handling request timeouts: {}", e);
+                }
+                last_timeout_check = Instant::now();
+            }
             
             // Listen for network messages from the per-peer message channel
             match self.network.receive_message().await {
@@ -452,6 +464,11 @@ impl DashSpvClient {
                 let block_hash = block.header.block_hash();
                 tracing::info!("Received new block: {}", block_hash);
                 tracing::debug!("📋 Block {} contains {} transactions", block_hash, block.txdata.len());
+                
+                // Store this as the last successfully received block
+                // This helps identify what block comes next when decoding fails
+                tracing::info!("LAST SUCCESSFUL BLOCK BEFORE POTENTIAL FAILURE: {}", block_hash);
+                
                 // Process new block (update state, check watched items)
                 self.process_new_block(block).await?;
             }
@@ -1539,6 +1556,23 @@ impl DashSpvClient {
         }
         
         tracing::info!("✅ Completed post-sync filter header requests for {} new blocks", headers.len());
+        Ok(())
+    }
+    
+    /// Handle request timeouts by calling the network manager's timeout handler.
+    /// This checks for requests that have timed out and initiates retries with exponential backoff.
+    async fn handle_request_timeouts(&mut self) -> Result<()> {
+        // Downcast the network manager to MultiPeerNetworkManager to access request tracker
+        let network = self.network.as_any()
+            .downcast_ref::<crate::network::multi_peer::MultiPeerNetworkManager>()
+            .ok_or_else(|| SpvError::Config("Network manager does not support request tracking".to_string()))?;
+        
+        // Handle timeouts and retries
+        network.handle_request_timeouts().await
+            .map_err(|e| SpvError::Network(crate::error::NetworkError::ConnectionFailed(
+                format!("Failed to handle request timeouts: {}", e)
+            )))?;
+        
         Ok(())
     }
 }

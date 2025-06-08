@@ -194,6 +194,13 @@ impl TcpConnection {
                 
                 // Message received successfully
                 tracing::trace!("Successfully decoded message from {}: {:?}", self.address, raw_message.payload.cmd());
+                
+                // Log block messages specifically for debugging
+                if let NetworkMessage::Block(ref block) = raw_message.payload {
+                    let block_hash = block.block_hash();
+                    tracing::info!("Successfully decoded block {} from {}", block_hash, self.address);
+                }
+                
                 Ok(Some(raw_message.payload))
             }
             Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -226,8 +233,23 @@ impl TcpConnection {
                 tracing::error!("Failed to decode message from {}: {}", self.address, e);
                 
                 // Check if this is the specific "unknown special transaction type" error
-                if e.to_string().contains("unknown special transaction type") {
+                let error_msg = e.to_string();
+                if error_msg.contains("unknown special transaction type") {
                     tracing::warn!("Peer {} sent block with unsupported transaction type: {}", self.address, e);
+                    tracing::error!("BLOCK DECODE FAILURE - Error details: {}", error_msg);
+                } else if error_msg.contains("Failed to decode transactions for block") {
+                    // Extract block hash from the enhanced error message
+                    tracing::error!("Peer {} sent block that failed transaction decoding: {}", self.address, e);
+                    if let Some(hash_start) = error_msg.find("block ") {
+                        if let Some(hash_end) = error_msg[hash_start + 6..].find(':') {
+                            let block_hash = &error_msg[hash_start + 6..hash_start + 6 + hash_end];
+                            tracing::error!("FAILING BLOCK HASH: {}", block_hash);
+                        }
+                    }
+                } else if error_msg.contains("IO error") {
+                    // This might be our wrapped error - log it prominently
+                    tracing::error!("BLOCK DECODE FAILURE - IO error (possibly unknown transaction type) from peer {}", self.address);
+                    tracing::error!("Raw error details: {:?}", e);
                 }
                 
                 Err(NetworkError::Serialization(e))

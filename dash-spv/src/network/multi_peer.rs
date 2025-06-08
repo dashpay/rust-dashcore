@@ -21,6 +21,7 @@ use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
 use crate::network::persist::PeerStore;
 use crate::network::pool::ConnectionPool;
+use crate::network::request_tracker::{RequestTracker, RequestTrackerConfig, RequestType, RequestData};
 use crate::client::ClientConfig;
 use crate::types::PeerInfo;
 
@@ -49,6 +50,8 @@ pub struct MultiPeerNetworkManager {
     peer_search_started: Arc<Mutex<Option<SystemTime>>>,
     /// Current sync peer (sticky during sync operations)
     current_sync_peer: Arc<Mutex<Option<SocketAddr>>>,
+    /// Request tracker
+    request_tracker: Arc<Mutex<RequestTracker>>,
 }
 
 impl MultiPeerNetworkManager {
@@ -59,6 +62,9 @@ impl MultiPeerNetworkManager {
         let discovery = DnsDiscovery::new().await?;
         let data_dir = config.storage_path.clone().unwrap_or_else(|| PathBuf::from("."));
         let peer_store = PeerStore::new(config.network, data_dir);
+        
+        // Create request tracker with default config (can be customized later)
+        let request_tracker = RequestTracker::new(RequestTrackerConfig::default());
         
         Ok(Self {
             pool: Arc::new(ConnectionPool::new()),
@@ -73,6 +79,7 @@ impl MultiPeerNetworkManager {
             initial_peers: config.peers.clone(),
             peer_search_started: Arc::new(Mutex::new(None)),
             current_sync_peer: Arc::new(Mutex::new(None)),
+            request_tracker: Arc::new(Mutex::new(request_tracker)),
         })
     }
     
@@ -123,6 +130,7 @@ impl MultiPeerNetworkManager {
         let message_tx = self.message_tx.clone();
         let addrv2_handler = self.addrv2_handler.clone();
         let shutdown = self.shutdown.clone();
+        let request_tracker = self.request_tracker.clone();
         
         // Spawn connection task
         let mut tasks = self.tasks.lock().await;
@@ -153,6 +161,7 @@ impl MultiPeerNetworkManager {
                                 message_tx,
                                 addrv2_handler,
                                 shutdown,
+                                request_tracker.clone(),
                             ).await;
                         }
                         Err(e) => {
@@ -176,6 +185,7 @@ impl MultiPeerNetworkManager {
         message_tx: mpsc::Sender<(SocketAddr, NetworkMessage)>,
         addrv2_handler: Arc<AddrV2Handler>,
         shutdown: Arc<AtomicBool>,
+        request_tracker: Arc<Mutex<RequestTracker>>,
     ) {
         tokio::spawn(async move {
             log::debug!("Starting peer reader loop for {}", addr);
@@ -277,6 +287,42 @@ impl MultiPeerNetworkManager {
                             }
                         }
                         
+                        // Check if this completes a tracked request
+                        {
+                            let mut tracker = request_tracker.lock().await;
+                            match &msg {
+                                NetworkMessage::Block(block) => {
+                                    let block_hash = block.block_hash();
+                                    if let Some(request_id) = tracker.find_request_by_data(&RequestType::BlockDownload(block_hash)) {
+                                        tracker.complete_request(request_id);
+                                        log::debug!("Completed block download request for {}", block_hash);
+                                    }
+                                }
+                                NetworkMessage::CFilter(filter) => {
+                                    // TODO: More complex matching for filter by height range
+                                    log::trace!("Received CFilter response for block {}", filter.block_hash);
+                                }
+                                NetworkMessage::CFHeaders(_headers) => {
+                                    // TODO: Match by stop hash and height range
+                                    log::trace!("Received CFHeaders response");
+                                }
+                                NetworkMessage::Headers(headers) => {
+                                    // TODO: Match by header sequence
+                                    if !headers.is_empty() {
+                                        log::trace!("Received {} headers", headers.len());
+                                    }
+                                }
+                                NetworkMessage::Tx(transaction) => {
+                                    let txid = transaction.txid();
+                                    if let Some(request_id) = tracker.find_request_by_data(&RequestType::Transaction(txid)) {
+                                        tracker.complete_request(request_id);
+                                        log::debug!("Completed transaction request for {}", txid);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        
                         // Forward message to client
                         if message_tx.send((addr, msg)).await.is_err() {
                             log::warn!("Breaking peer reader loop for {} - failed to send message to client channel (iteration {})", addr, loop_iteration);
@@ -302,8 +348,24 @@ impl MultiPeerNetworkManager {
                                 
                                 // Check if this is a serialization error that might have context
                                 if let NetworkError::Serialization(ref decode_error) = e {
-                                    if decode_error.to_string().contains("unknown special transaction type") {
+                                    let error_msg = decode_error.to_string();
+                                    if error_msg.contains("unknown special transaction type") {
                                         log::warn!("Peer {} sent block with unsupported transaction type: {}", addr, decode_error);
+                                        log::error!("BLOCK DECODE FAILURE - Error details: {}", error_msg);
+                                    } else if error_msg.contains("Failed to decode transactions for block") {
+                                        // The error now includes the block hash
+                                        log::error!("Peer {} sent block that failed transaction decoding: {}", addr, decode_error);
+                                        // Try to extract the block hash from the error message
+                                        if let Some(hash_start) = error_msg.find("block ") {
+                                            if let Some(hash_end) = error_msg[hash_start + 6..].find(':') {
+                                                let block_hash = &error_msg[hash_start + 6..hash_start + 6 + hash_end];
+                                                log::error!("FAILING BLOCK HASH: {}", block_hash);
+                                            }
+                                        }
+                                    } else if error_msg.contains("IO error") {
+                                        // This might be our wrapped error - log it prominently
+                                        log::error!("BLOCK DECODE FAILURE - IO error (possibly unknown transaction type) from peer {}", addr);
+                                        log::error!("Serialization error from {}: {}", addr, decode_error);
                                     } else {
                                         log::error!("Serialization error from {}: {}", addr, decode_error);
                                     }
@@ -540,10 +602,205 @@ impl MultiPeerNetworkManager {
         results
     }
     
+    /// Send a message to a single peer with request tracking
+    pub async fn send_message_tracked(
+        &self,
+        message: NetworkMessage,
+        target_peer: Option<SocketAddr>,
+    ) -> Result<Option<crate::network::request_tracker::RequestId>, Error> {
+        use dashcore::network::message_blockdata::Inventory;
+        
+        // Choose target peer
+        let peer = if let Some(addr) = target_peer {
+            addr
+        } else {
+            self.select_peer().await
+                .ok_or_else(|| Error::Network(NetworkError::ConnectionFailed("No peers available".to_string())))?
+        };
+        
+        // Extract trackable requests from the message
+        let request_id = match &message {
+            NetworkMessage::GetData(inventory_items) => {
+                // Track block and transaction requests
+                let mut tracker = self.request_tracker.lock().await;
+                for item in inventory_items {
+                    match item {
+                        Inventory::Block(block_hash) => {
+                            return Ok(Some(tracker.track_request(
+                                RequestType::BlockDownload(*block_hash),
+                                peer,
+                                RequestData::Block { hash: *block_hash, height: None }
+                            )));
+                        }
+                        Inventory::Transaction(txid) => {
+                            return Ok(Some(tracker.track_request(
+                                RequestType::Transaction(*txid),
+                                peer,
+                                RequestData::Transaction { txid: *txid }
+                            )));
+                        }
+                        _ => {} // Don't track other inventory types
+                    }
+                }
+                None
+            }
+            NetworkMessage::GetCFilters(get_filters) => {
+                let mut tracker = self.request_tracker.lock().await;
+                Some(tracker.track_request(
+                    RequestType::FilterData { 
+                        start_height: get_filters.start_height, 
+                        stop_height: 0 // Will be calculated from stop_hash
+                    },
+                    peer,
+                    RequestData::Filters {
+                        filter_type: get_filters.filter_type,
+                        start_height: get_filters.start_height,
+                        stop_height: 0, // Will be calculated from stop_hash
+                    }
+                ))
+            }
+            NetworkMessage::GetCFHeaders(get_headers) => {
+                let mut tracker = self.request_tracker.lock().await;
+                Some(tracker.track_request(
+                    RequestType::FilterHeaders {
+                        start_height: get_headers.start_height,
+                        stop_height: 0, // Will be calculated from stop_hash
+                    },
+                    peer,
+                    RequestData::FilterHeaders {
+                        filter_type: get_headers.filter_type,
+                        start_height: get_headers.start_height,
+                        stop_height: 0, // Will be calculated from stop_hash
+                    }
+                ))
+            }
+            NetworkMessage::GetHeaders(get_headers) => {
+                let mut tracker = self.request_tracker.lock().await;
+                let start_height = 0; // TODO: Calculate from locator hashes
+                Some(tracker.track_request(
+                    RequestType::Headers(start_height),
+                    peer,
+                    RequestData::Headers {
+                        start_height,
+                        locator_hashes: get_headers.locator_hashes.clone(),
+                    }
+                ))
+            }
+            _ => None
+        };
+        
+        // Send the message
+        self.send_to_peer(peer, message).await?;
+        
+        Ok(request_id)
+    }
+    
+    /// Select a peer for sending a message
+    async fn select_peer(&self) -> Option<SocketAddr> {
+        // Try to use current sync peer if available
+        let current_sync_peer = self.current_sync_peer.lock().await;
+        if let Some(peer) = *current_sync_peer {
+            // Check if still connected
+            if self.pool.is_connected(&peer).await {
+                return Some(peer);
+            }
+        }
+        drop(current_sync_peer);
+        
+        // Otherwise pick the first available peer
+        let connections = self.pool.get_all_connections().await;
+        connections.first().map(|(addr, _)| *addr)
+    }
+    
+    /// Send a message to a specific peer
+    async fn send_to_peer(&self, peer: SocketAddr, message: NetworkMessage) -> Result<(), Error> {
+        let connections = self.pool.get_all_connections().await;
+        let conn = connections.iter()
+            .find(|(addr, _)| *addr == peer)
+            .map(|(_, conn)| conn)
+            .ok_or_else(|| Error::Network(NetworkError::ConnectionFailed(format!("Peer {} not connected", peer))))?;
+        
+        let mut conn_guard = conn.write().await;
+        conn_guard.send_message(message).await
+            .map_err(|e| Error::Network(e))
+    }
+    
+    /// Check for timed out requests and handle retries
+    pub async fn handle_request_timeouts(&self) -> Result<(), Error> {
+        let mut tracker = self.request_tracker.lock().await;
+        let retry_requests = tracker.check_timeouts(std::time::Instant::now());
+        drop(tracker);
+        
+        // Handle retries
+        for retry in retry_requests {
+            log::info!("Retrying request {:?} (attempt {})", retry.id, retry.retry_count);
+            
+            // Reconstruct the message based on request type
+            let message = match &retry.data {
+                RequestData::Block { hash, .. } => {
+                    use dashcore::network::message_blockdata::Inventory;
+                    NetworkMessage::GetData(vec![Inventory::Block(*hash)])
+                }
+                RequestData::Transaction { txid } => {
+                    use dashcore::network::message_blockdata::Inventory;
+                    NetworkMessage::GetData(vec![Inventory::Transaction(*txid)])
+                }
+                RequestData::Filters { filter_type, start_height, stop_height: _ } => {
+                    use dashcore::network::message_filter::GetCFilters;
+                    NetworkMessage::GetCFilters(GetCFilters {
+                        filter_type: *filter_type,
+                        start_height: *start_height,
+                        stop_hash: dashcore::BlockHash::from([0u8; 32]), // TODO: Calculate stop hash
+                    })
+                }
+                RequestData::FilterHeaders { filter_type, start_height, stop_height: _ } => {
+                    use dashcore::network::message_filter::GetCFHeaders;
+                    NetworkMessage::GetCFHeaders(GetCFHeaders {
+                        filter_type: *filter_type,
+                        start_height: *start_height,
+                        stop_hash: dashcore::BlockHash::from([0u8; 32]), // TODO: Calculate stop hash
+                    })
+                }
+                RequestData::Headers { locator_hashes, .. } => {
+                    use dashcore::network::message_blockdata::GetHeadersMessage;
+                    NetworkMessage::GetHeaders(GetHeadersMessage {
+                        version: 70214,
+                        locator_hashes: locator_hashes.clone(),
+                        stop_hash: dashcore::BlockHash::from([0u8; 32]),
+                    })
+                }
+            };
+            
+            // Apply retry delay
+            if retry.delay > std::time::Duration::ZERO {
+                tokio::time::sleep(retry.delay).await;
+            }
+            
+            // Resend the message (will be re-tracked)
+            self.send_message_tracked(message, None).await?;
+        }
+        
+        Ok(())
+    }
+    
     /// Disconnect a specific peer
     pub async fn disconnect_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
         log::info!("Disconnecting peer {} - reason: {}", addr, reason);
+        
+        // Handle request reassignment for disconnected peer
+        let mut tracker = self.request_tracker.lock().await;
+        let reassign_requests = tracker.handle_peer_disconnection(*addr);
+        drop(tracker);
+        
+        // Remove the connection
         self.pool.remove_connection(addr).await;
+        
+        // Log reassignment info
+        if !reassign_requests.is_empty() {
+            log::info!("Reassigning {} requests from disconnected peer {}", reassign_requests.len(), addr);
+            // TODO: Implement actual reassignment logic
+        }
+        
         Ok(())
     }
     
@@ -596,6 +853,7 @@ impl Clone for MultiPeerNetworkManager {
             initial_peers: self.initial_peers.clone(),
             peer_search_started: self.peer_search_started.clone(),
             current_sync_peer: self.current_sync_peer.clone(),
+            request_tracker: self.request_tracker.clone(),
         }
     }
 }
