@@ -10,7 +10,6 @@ pub mod multi_peer;
 pub mod peer;
 pub mod persist;
 pub mod pool;
-pub mod request_tracker;
 
 #[cfg(test)]
 mod tests;
