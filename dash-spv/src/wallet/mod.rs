@@ -247,11 +247,15 @@ impl Wallet {
     }
     
     /// Get the current blockchain tip height.
-    /// TODO: This should integrate with the sync manager to get the real tip height.
     async fn get_current_tip_height(&self) -> Option<u32> {
-        // Placeholder implementation - in the future this would get the height from storage
-        // or sync manager state
-        None
+        let storage = self.storage.read().await;
+        match storage.get_tip_height().await {
+            Ok(height) => height,
+            Err(e) => {
+                tracing::warn!("Failed to get tip height from storage: {}", e);
+                None
+            }
+        }
     }
     
     /// Check if a UTXO is ChainLocked.
