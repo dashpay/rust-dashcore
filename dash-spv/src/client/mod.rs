@@ -474,7 +474,7 @@ impl DashSpvClient {
             Box::new(crate::storage::MemoryStorageManager::new().await
                 .map_err(|e| SpvError::Storage(e))?)
         };
-        
+
         // Create shared data structures
         let watch_items = Arc::new(RwLock::new(HashSet::new()));
         
@@ -584,7 +584,7 @@ impl DashSpvClient {
             let header_height = self.storage.get_tip_height().await
                 .map_err(|e| SpvError::Storage(e))?
                 .unwrap_or(0);
-            
+
             let filter_height = self.storage.get_filter_tip_height().await
                 .map_err(|e| SpvError::Storage(e))?
                 .unwrap_or(0);
@@ -658,19 +658,19 @@ impl DashSpvClient {
             filter_headers_synced: false,
             ..SyncProgress::default()
         };
-        
+
         // Update status display after initial sync
         self.update_status_display().await;
-        
-        tracing::info!("✅ Initial sync requests sent! Current state - Headers: {}, Filter headers: {}", 
+
+        tracing::info!("✅ Initial sync requests sent! Current state - Headers: {}, Filter headers: {}",
                      result.header_height, result.filter_header_height);
         tracing::info!("📊 Actual sync will complete asynchronously through monitoring loop");
-        
+
         Ok(result)
     }
-    
+
     /// Run continuous monitoring for new blocks, ChainLocks, InstantLocks, etc.
-    /// 
+    ///
     /// This is the sole network message receiver to prevent race conditions.
     /// All sync operations coordinate through this monitoring loop.
     pub async fn monitor_network(&mut self) -> Result<()> {
@@ -679,19 +679,19 @@ impl DashSpvClient {
             return Err(SpvError::Config("Client not running".to_string()));
         }
         drop(running);
-        
+
         tracing::info!("Starting continuous network monitoring...");
-        
+
         // Wait for at least one peer to connect before sending any protocol messages
         let mut initial_sync_started = false;
-        
+
         // Print initial status
         self.update_status_display().await;
-        
+
         // Timer for periodic status updates
         let mut last_status_update = Instant::now();
         let status_update_interval = std::time::Duration::from_secs(5);
-        
+
         // Timer for request timeout checking
         let mut last_timeout_check = Instant::now();
         let timeout_check_interval = std::time::Duration::from_secs(1);
@@ -704,7 +704,7 @@ impl DashSpvClient {
                 break;
             }
             drop(running);
-            
+
             // Check if we need to send a ping
             if self.network.should_ping() {
                 match self.network.send_ping().await {
@@ -716,14 +716,14 @@ impl DashSpvClient {
                     }
                 }
             }
-            
+
             // Clean up old pending pings
             self.network.cleanup_old_pings();
-            
+
             // Check if we have connected peers and start initial sync operations (once)
             if !initial_sync_started && self.network.peer_count() > 0 {
                 tracing::info!("🚀 Peers connected, starting initial sync operations...");
-                
+
                 // Check if sync is needed and send initial requests
                 if let Ok(base_hash) = self.sync_manager.header_sync_mut().prepare_sync(&mut *self.storage).await {
                     tracing::info!("📡 Sending initial header sync requests...");
@@ -731,12 +731,12 @@ impl DashSpvClient {
                         tracing::error!("Failed to send initial header requests: {}", e);
                     }
                 }
-                
+
                 // Also start filter header sync if filters are enabled and we have headers
                 if self.config.enable_filters {
                     let header_tip = self.storage.get_tip_height().await.ok().flatten().unwrap_or(0);
                     let filter_tip = self.storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
-                    
+
                     if header_tip > filter_tip {
                         tracing::info!("🚀 Starting filter header sync (headers: {}, filter headers: {})", header_tip, filter_tip);
                         if let Err(e) = self.sync_manager.filter_sync_mut().start_sync_headers(&mut *self.network, &mut *self.storage).await {
@@ -745,10 +745,10 @@ impl DashSpvClient {
                         }
                     }
                 }
-                
+
                 initial_sync_started = true;
             }
-            
+
             // Check if it's time to update the status display
             if last_status_update.elapsed() >= status_update_interval {
                 self.update_status_display().await;
@@ -781,14 +781,14 @@ impl DashSpvClient {
                     if let crate::error::NetworkError::ConnectionFailed(msg) = &e {
                         if msg.contains("No connected peers") || self.network.peer_count() == 0 {
                             tracing::warn!("All peers disconnected during monitoring, checking connection health");
-                            
+
                             // Wait for potential reconnection
                             let mut wait_count = 0;
                             while wait_count < 10 && self.network.peer_count() == 0 {
                                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                                 wait_count += 1;
                             }
-                            
+
                             if self.network.peer_count() > 0 {
                                 tracing::info!("✅ Reconnected to {} peer(s), resuming monitoring", self.network.peer_count());
                                 continue;
@@ -797,16 +797,16 @@ impl DashSpvClient {
                             }
                         }
                     }
-                    
+
                     tracing::error!("Network error during monitoring: {}", e);
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Handle incoming network messages during monitoring.
     async fn handle_network_message(&mut self, message: dashcore::network::message::NetworkMessage) -> Result<()> {
         use dashcore::network::message::NetworkMessage;
@@ -1063,12 +1063,12 @@ impl DashSpvClient {
         if headers.is_empty() {
             return Ok(());
         }
-        
+
         // Get the height before storing new headers
         let initial_height = self.storage.get_tip_height().await
             .map_err(|e| SpvError::Storage(e))?
             .unwrap_or(0);
-        
+
         // Store the headers using the sync manager
         // This will validate and store them properly
         self.sync_manager.sync_all(&mut *self.network, &mut *self.storage).await
@@ -1080,30 +1080,30 @@ impl DashSpvClient {
             let new_height = self.storage.get_tip_height().await
                 .map_err(|e| SpvError::Storage(e))?
                 .unwrap_or(0);
-            
+
             // If we stored new headers, request filter headers for them
             if new_height > initial_height {
-                tracing::info!("New headers stored from height {} to {}, requesting filter headers", 
+                tracing::info!("New headers stored from height {} to {}, requesting filter headers",
                               initial_height + 1, new_height);
-                
+
                 // Request filter headers for each new header
                 for height in (initial_height + 1)..=new_height {
                     if let Some(header) = self.storage.get_header(height).await
                         .map_err(|e| SpvError::Storage(e))? {
-                        
+
                         let block_hash = header.block_hash();
                         tracing::debug!("Requesting filter header for block {} at height {}", block_hash, height);
-                        
+
                         // Request filter header for this block
                         self.sync_manager.filter_sync_mut().download_filter_header_for_block(
                             block_hash, &mut *self.network, &mut *self.storage
                         ).await.map_err(|e| SpvError::Sync(e))?;
-                        
+
                         // Also check if we have watch items and request the filter
                         let watch_items = self.watch_items.read().await;
                         if !watch_items.is_empty() {
                             drop(watch_items); // Release the lock before async call
-                            
+
                             let watch_items_vec: Vec<_> = self.get_watch_items().await;
                             self.sync_manager.filter_sync_mut().download_and_check_filter(
                                 block_hash, &watch_items_vec, &mut *self.network, &mut *self.storage
@@ -1111,12 +1111,12 @@ impl DashSpvClient {
                         }
                     }
                 }
-                
+
                 // Update status display after processing new headers
                 self.update_status_display().await;
             }
         }
-        
+
         Ok(())
     }
     
@@ -1131,33 +1131,33 @@ impl DashSpvClient {
         
         Ok(())
     }
-    
+
     /// Process received filter headers.
     async fn process_filter_headers(&mut self, cfheaders: dashcore::network::message_filter::CFHeaders) -> Result<()> {
         tracing::debug!("Processing filter headers for block {}", cfheaders.stop_hash);
-        
-        tracing::info!("✅ Received filter headers for block {} (type: {}, count: {})", 
+
+        tracing::info!("✅ Received filter headers for block {} (type: {}, count: {})",
                       cfheaders.stop_hash, cfheaders.filter_type, cfheaders.filter_hashes.len());
-        
+
         // Store filter headers in storage via FilterSyncManager
         self.sync_manager.filter_sync_mut().store_filter_headers(cfheaders, &mut *self.storage).await
             .map_err(|e| SpvError::Sync(e))?;
-        
+
         Ok(())
     }
-    
+
     /// Process and check a compact filter for matches.
     async fn process_and_check_filter(&mut self, cfilter: dashcore::network::message_filter::CFilter) -> Result<()> {
         tracing::debug!("Processing compact filter for block {}", cfilter.block_hash);
-        
+
         // Get watch items to check against
         let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
-        
+
         if watch_items.is_empty() {
             tracing::debug!("No watch items configured, skipping filter check");
             return Ok(());
         }
-        
+
         // Use FilterSyncManager to check for matches
         let has_matches = self.sync_manager.filter_sync().check_filter_for_matches(
             &cfilter.filter,
@@ -1165,10 +1165,10 @@ impl DashSpvClient {
             &watch_items,
             &*self.storage
         ).await.map_err(|e| SpvError::Sync(e))?;
-        
+
         if has_matches {
             tracing::info!("🎯 Filter match found for block {}!", cfilter.block_hash);
-            
+
             // Get block height for the FilterMatch
             let height = self.find_height_for_block_hash(cfilter.block_hash).await
                 .unwrap_or(0);
@@ -1179,21 +1179,21 @@ impl DashSpvClient {
                 height,
                 block_requested: false,
             };
-            
+
             // Request the full block download
             self.sync_manager.filter_sync_mut()
                 .request_block_download(filter_match, &mut *self.network)
                 .await
                 .map_err(|e| SpvError::Sync(e))?;
-            
+
             self.report_filter_match(cfilter.block_hash).await?;
         } else {
             tracing::debug!("No filter matches for block {}", cfilter.block_hash);
         }
-        
+
         Ok(())
     }
-    
+
     /// Report a filter match to the user.
     async fn report_filter_match(&self, block_hash: dashcore::BlockHash) -> Result<()> {
         // Get block height for better reporting by scanning headers
@@ -1208,15 +1208,15 @@ impl DashSpvClient {
             let mut stats = self.stats.write().await;
             stats.filter_matches += 1;
         }
-        
+
         // TODO: Additional actions could be taken here:
         // - Store the match in a database
         // - Send notifications  
         // - Update wallet balance (now happens in process_new_block when the full block arrives)
-        
+
         Ok(())
     }
-    
+
     /// Helper method to find height for a block hash.
     async fn find_height_for_block_hash(&self, block_hash: dashcore::BlockHash) -> Option<u32> {
         // Use the efficient reverse index
@@ -1248,8 +1248,8 @@ impl DashSpvClient {
     
     /// Process transactions in a block to check for matches with watch items.
     async fn process_block_transactions(
-        &mut self, 
-        block: &dashcore::Block, 
+        &mut self,
+        block: &dashcore::Block,
         watch_items: &[WatchItem]
     ) -> Result<()> {
         let block_hash = block.block_hash();
@@ -1257,12 +1257,12 @@ impl DashSpvClient {
         let mut relevant_transactions = 0;
         let mut new_outpoints_to_watch = Vec::new();
         let mut balance_changes: std::collections::HashMap<dashcore::Address, i64> = std::collections::HashMap::new();
-        
+
         for (tx_index, transaction) in block.txdata.iter().enumerate() {
             let txid = transaction.txid();
             let mut transaction_relevant = false;
             let is_coinbase = tx_index == 0;
-            
+
             // Process inputs first (spending UTXOs)
             if !is_coinbase {
                 for (vin, input) in transaction.input.iter().enumerate() {
@@ -1290,14 +1290,14 @@ impl DashSpvClient {
                         if let WatchItem::Outpoint(watched_outpoint) = watch_item {
                             if &input.previous_output == watched_outpoint {
                                 transaction_relevant = true;
-                                tracing::info!("💸 Found relevant input: {}:{} spending explicitly watched outpoint {:?}", 
+                                tracing::info!("💸 Found relevant input: {}:{} spending explicitly watched outpoint {:?}",
                                               txid, vin, watched_outpoint);
                             }
                         }
                     }
                 }
             }
-            
+
             // Process outputs (creating new UTXOs)
             for (vout, output) in transaction.output.iter().enumerate() {
                 for watch_item in watch_items {
@@ -1310,15 +1310,15 @@ impl DashSpvClient {
                         }
                         WatchItem::Outpoint(_) => (false, None), // Outpoints don't match outputs
                     };
-                    
+
                     if matches {
                         transaction_relevant = true;
                         let outpoint = dashcore::OutPoint { txid, vout: vout as u32 };
                         let amount = dashcore::Amount::from_sat(output.value);
-                        
-                        tracing::info!("💰 Found relevant output: {}:{} to {:?} (value: {})", 
+
+                        tracing::info!("💰 Found relevant output: {}:{} to {:?} (value: {})",
                                       txid, vout, watch_item, amount);
-                        
+
                         // Create and store UTXO if we have an address
                         if let Some(address) = matched_address {
                             let utxo = crate::wallet::Utxo::new(
@@ -1334,25 +1334,25 @@ impl DashSpvClient {
                             } else {
                                 tracing::debug!("📝 Stored UTXO {}:{} for address {}", txid, vout, address);
                             }
-                            
+
                             // Update balance change for this address (add)
                             *balance_changes.entry(address.clone()).or_insert(0) += amount.to_sat() as i64;
                         }
-                        
+
                         // Track this outpoint so we can detect when it's spent
                         new_outpoints_to_watch.push(outpoint);
                         tracing::debug!("📍 Now watching outpoint {}:{} for future spending", txid, vout);
                     }
                 }
             }
-            
+
             if transaction_relevant {
                 relevant_transactions += 1;
                 tracing::debug!("📝 Transaction {}: {} (index {}) is relevant", 
                                txid, if is_coinbase { "coinbase" } else { "regular" }, tx_index);
             }
         }
-        
+
         if relevant_transactions > 0 {
             tracing::info!("🎯 Block {} contains {} relevant transactions affecting watched items", 
                           block_hash, relevant_transactions);
@@ -1362,10 +1362,10 @@ impl DashSpvClient {
                 self.report_balance_changes(&balance_changes, block_height).await?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Report balance changes for watched addresses.
     async fn report_balance_changes(
         &self,
@@ -1373,7 +1373,7 @@ impl DashSpvClient {
         block_height: u32,
     ) -> Result<()> {
         tracing::info!("💰 Balance changes detected in block at height {}:", block_height);
-        
+
         for (address, change_sat) in balance_changes {
             if *change_sat != 0 {
                 let change_amount = dashcore::Amount::from_sat(change_sat.abs() as u64);
@@ -1381,7 +1381,7 @@ impl DashSpvClient {
                 tracing::info!("  📍 Address {}: {}{}", address, sign, change_amount);
             }
         }
-        
+
         // Calculate and report current balances for all watched addresses
         let watch_items = self.get_watch_items().await;
         for watch_item in watch_items.iter() {
@@ -1397,10 +1397,10 @@ impl DashSpvClient {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get the balance for a specific address.
     pub async fn get_address_balance(&self, address: &dashcore::Address) -> Result<AddressBalance> {
         // Get current tip height for confirmation calculations
@@ -1435,7 +1435,7 @@ impl DashSpvClient {
             unconfirmed,
         })
     }
-    
+
     /// Get balances for all watched addresses.
     pub async fn get_all_balances(&self) -> Result<std::collections::HashMap<dashcore::Address, AddressBalance>> {
         let mut balances = std::collections::HashMap::new();
@@ -1453,7 +1453,7 @@ impl DashSpvClient {
                 }
             }
         }
-        
+
         Ok(balances)
     }
     
@@ -1481,23 +1481,23 @@ impl DashSpvClient {
     pub fn peer_count(&self) -> usize {
         self.network.peer_count()
     }
-    
+
     /// Get information about connected peers.
     pub fn peer_info(&self) -> Vec<crate::types::PeerInfo> {
         self.network.peer_info()
     }
-    
+
     /// Disconnect a specific peer.
     pub async fn disconnect_peer(&self, addr: &std::net::SocketAddr, reason: &str) -> Result<()> {
         // Cast network manager to MultiPeerNetworkManager to access disconnect_peer
         let network = self.network.as_any()
             .downcast_ref::<crate::network::multi_peer::MultiPeerNetworkManager>()
             .ok_or_else(|| SpvError::Config("Network manager does not support peer disconnection".to_string()))?;
-        
+
         network.disconnect_peer(addr, reason).await
     }
-    
-    
+
+
     /// Process a transaction.
     async fn process_transaction(&mut self, _tx: dashcore::Transaction) -> Result<()> {
         // TODO: Implement transaction processing
@@ -1507,65 +1507,65 @@ impl DashSpvClient {
         tracing::debug!("Transaction processing not yet implemented");
         Ok(())
     }
-    
+
     /// Process and validate a ChainLock.
     async fn process_chainlock(&mut self, chainlock: dashcore::ephemerealdata::chain_lock::ChainLock) -> Result<()> {
         tracing::info!("Processing ChainLock for block {} at height {}", 
                       chainlock.block_hash, chainlock.block_height);
-        
+
         // Verify ChainLock using the masternode engine
         if let Some(engine) = self.sync_manager.masternode_engine() {
             match engine.verify_chain_lock(&chainlock) {
                 Ok(_) => {
-                    tracing::info!("✅ ChainLock signature verified successfully for block {} at height {}", 
+                    tracing::info!("✅ ChainLock signature verified successfully for block {} at height {}",
                                   chainlock.block_hash, chainlock.block_height);
-                    
+
                     // Check if this ChainLock supersedes previous ones
                     let mut state = self.state.write().await;
                     if let Some(current_chainlock_height) = state.last_chainlock_height {
                         if chainlock.block_height <= current_chainlock_height {
-                            tracing::debug!("ChainLock for height {} does not supersede current ChainLock at height {}", 
+                            tracing::debug!("ChainLock for height {} does not supersede current ChainLock at height {}",
                                            chainlock.block_height, current_chainlock_height);
                             return Ok(());
                         }
                     }
-                    
+
                     // Update our confirmed chain tip
                     state.last_chainlock_height = Some(chainlock.block_height);
                     state.last_chainlock_hash = Some(chainlock.block_hash);
-                    
-                    tracing::info!("🔒 Updated confirmed chain tip to ChainLock at height {} ({})", 
+
+                    tracing::info!("🔒 Updated confirmed chain tip to ChainLock at height {} ({})",
                                   chainlock.block_height, chainlock.block_hash);
-                    
+
                     // Store ChainLock for future reference in storage
                     drop(state); // Release the lock before storage operation
-                    
+
                     // Create a metadata key for this ChainLock
                     let chainlock_key = format!("chainlock_{}", chainlock.block_height);
-                    
+
                     // Serialize the ChainLock
                     let chainlock_bytes = serde_json::to_vec(&chainlock)
                         .map_err(|e| SpvError::Storage(crate::error::StorageError::Serialization(
                             format!("Failed to serialize ChainLock: {}", e)
                         )))?;
-                    
+
                     // Store the ChainLock
                     self.storage.store_metadata(&chainlock_key, &chainlock_bytes).await
                         .map_err(|e| SpvError::Storage(e))?;
-                    
+
                     tracing::debug!("Stored ChainLock for height {} in persistent storage", chainlock.block_height);
-                    
+
                     // Also store the latest ChainLock height for quick lookup
                     let latest_key = "latest_chainlock_height";
                     let height_bytes = chainlock.block_height.to_le_bytes();
                     self.storage.store_metadata(latest_key, &height_bytes).await
                         .map_err(|e| SpvError::Storage(e))?;
-                    
+
                     // Save the updated chain state to persist ChainLock fields
                     let updated_state = self.state.read().await;
                     self.storage.store_chain_state(&*updated_state).await
                         .map_err(|e| SpvError::Storage(e))?;
-                    
+
                     // Update status display after chainlock update
                     self.update_status_display().await;
                 },
@@ -1576,36 +1576,36 @@ impl DashSpvClient {
                 }
             }
         } else {
-            tracing::warn!("⚠️  No masternode engine available - cannot verify ChainLock signature for block {} at height {}", 
+            tracing::warn!("⚠️  No masternode engine available - cannot verify ChainLock signature for block {} at height {}",
                           chainlock.block_hash, chainlock.block_height);
-            
+
             // Still log the ChainLock details even if we can't verify
-            tracing::info!("ChainLock received: block_hash={}, height={}, signature={}...", 
-                          chainlock.block_hash, chainlock.block_height, 
+            tracing::info!("ChainLock received: block_hash={}, height={}, signature={}...",
+                          chainlock.block_hash, chainlock.block_height,
                           chainlock.signature.to_string().chars().take(20).collect::<String>());
         }
-        
+
         Ok(())
     }
-    
+
     /// Process and validate an InstantSendLock.
     async fn process_instantsendlock(&mut self, islock: dashcore::ephemerealdata::instant_lock::InstantLock) -> Result<()> {
         tracing::info!("Processing InstantSendLock for tx {}", islock.txid);
-        
-        // TODO: Implement InstantSendLock validation  
+
+        // TODO: Implement InstantSendLock validation
         // - Verify BLS signature against known quorum
         // - Check if all inputs are locked
         // - Mark transaction as instantly confirmed
         // - Store InstantSendLock for future reference
-        
+
         // For now, just log the InstantSendLock details
         tracing::info!("InstantSendLock validated: txid={}, inputs={}, signature={:?}",
                       islock.txid, islock.inputs.len(),
                       islock.signature.to_string().chars().take(20).collect::<String>());
-        
+
         Ok(())
     }
-    
+
     /// Get current sync progress.
     pub async fn sync_progress(&self) -> Result<SyncProgress> {
         let state = self.state.read().await;
@@ -1676,18 +1676,18 @@ impl DashSpvClient {
         
         Ok(removed)
     }
-    
+
     /// Get all watch items.
     pub async fn get_watch_items(&self) -> Vec<WatchItem> {
         let watch_items = self.watch_items.read().await;
         watch_items.iter().cloned().collect()
     }
-    
+
     /// Get the number of connected peers.
     pub async fn get_peer_count(&self) -> usize {
         self.network.peer_count()
     }
-    
+
     /// Sync compact filters for recent blocks and check for matches.
     /// Sync and check filters with internal monitoring loop management.
     /// This method automatically handles the monitoring loop required for CFilter message processing.
@@ -1775,32 +1775,32 @@ impl DashSpvClient {
         
         Ok(())
     }
-    
+
     /// Initialize genesis block if not already present in storage.
     async fn initialize_genesis_block(&mut self) -> Result<()> {
         // Check if we already have any headers in storage
         let current_tip = self.storage.get_tip_height().await
             .map_err(|e| SpvError::Storage(e))?;
-        
+
         if current_tip.is_some() {
             // We already have headers, genesis block should be at height 0
             tracing::debug!("Headers already exist in storage, skipping genesis initialization");
             return Ok(());
         }
-        
+
         // Get the genesis block hash for this network
         let genesis_hash = self.config.network.known_genesis_block_hash()
             .ok_or_else(|| SpvError::Config("No known genesis hash for network".to_string()))?;
-        
+
         tracing::info!("Initializing genesis block for network {:?}: {}", self.config.network, genesis_hash);
-        
+
         // Create the correct genesis header using known Dash genesis block parameters
         use dashcore::{
             block::{Header as BlockHeader, Version},
             pow::CompactTarget,
         };
         use dashcore_hashes::Hash;
-        
+
         let genesis_header = match self.config.network {
             dashcore::Network::Dash => {
                 // Use the actual Dash mainnet genesis block parameters
@@ -1831,28 +1831,28 @@ impl DashSpvClient {
                 dashcore::blockdata::constants::genesis_block(self.config.network).header
             }
         };
-        
+
         // Verify the header produces the expected genesis hash
         let calculated_hash = genesis_header.block_hash();
         if calculated_hash != genesis_hash {
             return Err(SpvError::Config(format!(
-                "Genesis header hash mismatch! Expected: {}, Calculated: {}", 
+                "Genesis header hash mismatch! Expected: {}, Calculated: {}",
                 genesis_hash, calculated_hash
             )));
         }
-        
+
         tracing::debug!("Using genesis block header with hash: {}", calculated_hash);
-        
+
         // Store the genesis header at height 0
         let genesis_headers = vec![genesis_header];
         self.storage.store_headers(&genesis_headers).await
             .map_err(|e| SpvError::Storage(e))?;
-        
+
         tracing::info!("✅ Genesis block initialized at height 0");
-        
+
         Ok(())
     }
-    
+
     /// Load watch items from storage.
     async fn load_watch_items(&mut self) -> Result<()> {
         if let Some(data) = self.storage.load_metadata("watch_items").await
