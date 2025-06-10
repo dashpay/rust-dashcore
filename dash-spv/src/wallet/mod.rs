@@ -258,6 +258,19 @@ impl Wallet {
         }
     }
     
+    /// Get the height for a specific block hash.
+    /// This is a public method that allows external components to query block heights.
+    pub async fn get_block_height(&self, block_hash: &dashcore::BlockHash) -> Option<u32> {
+        let storage = self.storage.read().await;
+        match storage.get_header_height_by_hash(block_hash).await {
+            Ok(height) => height,
+            Err(e) => {
+                tracing::warn!("Failed to get height for block {}: {}", block_hash, e);
+                None
+            }
+        }
+    }
+    
     /// Check if a UTXO is ChainLocked.
     /// TODO: This should check against actual ChainLock data.
     async fn is_chainlocked(&self, _utxo: &Utxo) -> bool {

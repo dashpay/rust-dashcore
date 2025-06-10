@@ -395,8 +395,11 @@ pub struct SpvStats {
     /// Number of filters downloaded.
     pub filters_downloaded: u64,
     
-    /// Number of filter matches found.
-    pub filter_matches: u64,
+    /// Number of compact filters that matched watch items.
+    pub filters_matched: u64,
+    
+    /// Number of blocks with relevant transactions (after full block processing).
+    pub blocks_with_relevant_transactions: u64,
     
     /// Number of full blocks requested.
     pub blocks_requested: u64,

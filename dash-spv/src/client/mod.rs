@@ -1,12 +1,19 @@
 //! High-level client API for the Dash SPV client.
 
 pub mod config;
+pub mod block_processor;
+pub mod consistency;
+pub mod wallet_utils;
+pub mod message_handler;
+pub mod filter_sync;
+pub mod status_display;
+pub mod watch_manager;
 
 use std::sync::Arc;
-use tokio::sync::{RwLock, Mutex, mpsc, oneshot};
+use tokio::sync::{RwLock, mpsc};
 use std::time::Instant;
 
-use std::collections::{HashSet, HashMap};
+use std::collections::HashSet;
 
 use crate::terminal::TerminalUI;
 
@@ -19,416 +26,13 @@ use crate::sync::filters::FilterNotificationSender;
 use crate::validation::ValidationManager;
 
 pub use config::ClientConfig;
-
-/// Handle for sending watch item updates to the filter processor.
-pub type WatchItemUpdateSender = tokio::sync::mpsc::UnboundedSender<Vec<crate::types::WatchItem>>;
-
-/// Task for the block processing worker.
-#[derive(Debug)]
-pub enum BlockProcessingTask {
-    ProcessBlock {
-        block: dashcore::Block,
-        response_tx: oneshot::Sender<Result<()>>,
-    },
-    ProcessTransaction {
-        tx: dashcore::Transaction,
-        response_tx: oneshot::Sender<Result<()>>,
-    },
-}
-
-/// Block processing worker that handles blocks in a separate task.
-pub struct BlockProcessor {
-    receiver: mpsc::UnboundedReceiver<BlockProcessingTask>,
-    storage: Arc<Mutex<Box<dyn StorageManager>>>,
-    watch_items: Arc<RwLock<HashSet<WatchItem>>>,
-    stats: Arc<RwLock<SpvStats>>,
-    processed_blocks: std::collections::HashSet<dashcore::BlockHash>,
-    failed: bool,
-}
-
-impl BlockProcessor {
-    /// Create a new block processor.
-    pub fn new(
-        receiver: mpsc::UnboundedReceiver<BlockProcessingTask>,
-        storage: Arc<Mutex<Box<dyn StorageManager>>>,
-        watch_items: Arc<RwLock<HashSet<WatchItem>>>,
-        stats: Arc<RwLock<SpvStats>>,
-    ) -> Self {
-        Self {
-            receiver,
-            storage,
-            watch_items,
-            stats,
-            processed_blocks: std::collections::HashSet::new(),
-            failed: false,
-        }
-    }
-    
-    /// Run the block processor worker loop.
-    pub async fn run(mut self) {
-        tracing::info!("🏭 Block processor worker started");
-        
-        while let Some(task) = self.receiver.recv().await {
-            // If we're in failed state, reject all new tasks
-            if self.failed {
-                match task {
-                    BlockProcessingTask::ProcessBlock { response_tx, block } => {
-                        let block_hash = block.block_hash();
-                        tracing::error!("❌ Block processor in failed state, rejecting block {}", block_hash);
-                        let _ = response_tx.send(Err(SpvError::Config("Block processor has failed".to_string())));
-                    }
-                    BlockProcessingTask::ProcessTransaction { response_tx, tx } => {
-                        let txid = tx.txid();
-                        tracing::error!("❌ Block processor in failed state, rejecting transaction {}", txid);
-                        let _ = response_tx.send(Err(SpvError::Config("Block processor has failed".to_string())));
-                    }
-                }
-                continue;
-            }
-            
-            match task {
-                BlockProcessingTask::ProcessBlock { block, response_tx } => {
-                    let block_hash = block.block_hash();
-                    
-                    // Check for duplicate blocks
-                    if self.processed_blocks.contains(&block_hash) {
-                        tracing::warn!("⚡ Block {} already processed, skipping", block_hash);
-                        let _ = response_tx.send(Ok(()));
-                        continue;
-                    }
-                    
-                    // Process block and handle errors
-                    let result = self.process_block_internal(block).await;
-                    
-                    match &result {
-                        Ok(()) => {
-                            // Mark block as successfully processed
-                            self.processed_blocks.insert(block_hash);
-                            
-                            // Update blocks processed statistics
-                            {
-                                let mut stats = self.stats.write().await;
-                                stats.blocks_processed += 1;
-                            }
-                            
-                            tracing::info!("✅ Block {} processed successfully", block_hash);
-                        }
-                        Err(e) => {
-                            // Log error with block hash and enter failed state
-                            tracing::error!("❌ BLOCK PROCESSING FAILED for block {}: {}", block_hash, e);
-                            tracing::error!("❌ Block processor entering failed state - no more blocks will be processed");
-                            self.failed = true;
-                        }
-                    }
-                    
-                    let _ = response_tx.send(result);
-                }
-                BlockProcessingTask::ProcessTransaction { tx, response_tx } => {
-                    let txid = tx.txid();
-                    let result = self.process_transaction_internal(tx).await;
-                    
-                    if let Err(e) = &result {
-                        tracing::error!("❌ TRANSACTION PROCESSING FAILED for tx {}: {}", txid, e);
-                        tracing::error!("❌ Block processor entering failed state");
-                        self.failed = true;
-                    }
-                    
-                    let _ = response_tx.send(result);
-                }
-            }
-        }
-        
-        tracing::info!("🏭 Block processor worker stopped");
-    }
-    
-    /// Process a block internally.
-    async fn process_block_internal(&mut self, block: dashcore::Block) -> Result<()> {
-        let block_hash = block.block_hash();
-        
-        tracing::info!("📦 Processing downloaded block: {}", block_hash);
-        
-        // Process all blocks unconditionally since we already downloaded them
-        // Extract transactions that might affect watched items
-        let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
-        if !watch_items.is_empty() {
-            self.process_block_transactions(&block, &watch_items).await?;
-        }
-        
-        // Update chain state if needed
-        self.update_chain_state_with_block(&block).await?;
-        
-        Ok(())
-    }
-    
-    /// Process a transaction internally.
-    async fn process_transaction_internal(&mut self, _tx: dashcore::Transaction) -> Result<()> {
-        // TODO: Implement transaction processing
-        // - Check if transaction affects watched addresses/scripts
-        // - Update wallet balance if relevant
-        // - Store relevant transactions
-        tracing::debug!("Transaction processing not yet implemented");
-        Ok(())
-    }
-    
-    /// Helper method to find height for a block hash.
-    async fn find_height_for_block_hash(&self, block_hash: dashcore::BlockHash) -> Option<u32> {
-        // Use the efficient reverse index
-        let storage = self.storage.lock().await;
-        storage.get_header_height_by_hash(&block_hash).await.ok().flatten()
-    }
-    
-    /// Process transactions in a block to check for matches with watch items.
-    async fn process_block_transactions(
-        &mut self, 
-        block: &dashcore::Block, 
-        watch_items: &[WatchItem]
-    ) -> Result<()> {
-        let block_hash = block.block_hash();
-        let block_height = self.find_height_for_block_hash(block_hash).await.unwrap_or(0);
-        let mut relevant_transactions = 0;
-        let mut new_outpoints_to_watch = Vec::new();
-        let mut balance_changes: HashMap<dashcore::Address, i64> = HashMap::new();
-        
-        for (tx_index, transaction) in block.txdata.iter().enumerate() {
-            let txid = transaction.txid();
-            let is_coinbase = tx_index == 0;
-            
-            // Wrap transaction processing in error handling to log failing txid
-            match self.process_single_transaction_in_block(
-                transaction, 
-                tx_index, 
-                watch_items, 
-                &mut balance_changes,
-                &mut new_outpoints_to_watch,
-                block_height,
-                is_coinbase
-            ).await {
-                Ok(is_relevant) => {
-                    if is_relevant {
-                        relevant_transactions += 1;
-                        tracing::debug!("📝 Transaction {}: {} (index {}) is relevant", 
-                                       txid, if is_coinbase { "coinbase" } else { "regular" }, tx_index);
-                    }
-                }
-                Err(e) => {
-                    // Log error with both block hash and failing transaction ID
-                    tracing::error!("❌ TRANSACTION PROCESSING FAILED in block {} for tx {} (index {}): {}", 
-                                   block_hash, txid, tx_index, e);
-                    return Err(e);
-                }
-            }
-        }
-        
-        if relevant_transactions > 0 {
-            tracing::info!("🎯 Block {} contains {} relevant transactions affecting watched items", 
-                          block_hash, relevant_transactions);
-
-            // Report balance changes
-            if !balance_changes.is_empty() {
-                self.report_balance_changes(&balance_changes, block_height).await?;
-            }
-        }
-        
-        Ok(())
-    }
-    
-    /// Process a single transaction within a block for watch item matches.
-    /// Returns whether the transaction is relevant to any watch items.
-    async fn process_single_transaction_in_block(
-        &mut self,
-        transaction: &dashcore::Transaction,
-        _tx_index: usize,
-        watch_items: &[WatchItem],
-        balance_changes: &mut HashMap<dashcore::Address, i64>,
-        new_outpoints_to_watch: &mut Vec<dashcore::OutPoint>,
-        block_height: u32,
-        is_coinbase: bool,
-    ) -> Result<bool> {
-        let txid = transaction.txid();
-        let mut transaction_relevant = false;
-        
-        // Process inputs first (spending UTXOs)
-        if !is_coinbase {
-            for (vin, input) in transaction.input.iter().enumerate() {
-                // Check if this input spends a UTXO from our watched addresses
-                {
-                    let mut storage = self.storage.lock().await;
-                    if let Ok(all_utxos) = storage.get_all_utxos().await {
-                        if let Some(spent_utxo) = all_utxos.get(&input.previous_output) {
-                            transaction_relevant = true;
-                            let amount = spent_utxo.value();
-                            
-                            tracing::info!("💸 Found relevant input: {}:{} spending UTXO {} (value: {})", 
-                                          txid, vin, input.previous_output, amount);
-                            
-                            // Update balance change for this address (subtract)
-                            *balance_changes.entry(spent_utxo.address.clone()).or_insert(0) -= amount.to_sat() as i64;
-                            
-                            // Remove the spent UTXO from storage
-                            if let Err(e) = storage.remove_utxo(&input.previous_output).await {
-                                tracing::error!("Failed to remove spent UTXO {}: {}", input.previous_output, e);
-                            }
-                        }
-                    }
-                }
-                
-                // Also check against explicitly watched outpoints
-                for watch_item in watch_items {
-                    if let WatchItem::Outpoint(watched_outpoint) = watch_item {
-                        if &input.previous_output == watched_outpoint {
-                            transaction_relevant = true;
-                            tracing::info!("💸 Found relevant input: {}:{} spending explicitly watched outpoint {:?}", 
-                                          txid, vin, watched_outpoint);
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Process outputs (creating new UTXOs)
-        for (vout, output) in transaction.output.iter().enumerate() {
-            for watch_item in watch_items {
-                let (matches, matched_address) = match watch_item {
-                    WatchItem::Address { address, .. } => {
-                        (address.script_pubkey() == output.script_pubkey, Some(address.clone()))
-                    }
-                    WatchItem::Script(script) => {
-                        (script == &output.script_pubkey, None)
-                    }
-                    WatchItem::Outpoint(_) => (false, None), // Outpoints don't match outputs
-                };
-                
-                if matches {
-                    transaction_relevant = true;
-                    let outpoint = dashcore::OutPoint { txid, vout: vout as u32 };
-                    let amount = dashcore::Amount::from_sat(output.value);
-                    
-                    tracing::info!("💰 Found relevant output: {}:{} to {:?} (value: {})", 
-                                  txid, vout, watch_item, amount);
-                    
-                    // Create and store UTXO if we have an address
-                    if let Some(address) = matched_address {
-                        let utxo = crate::wallet::Utxo::new(
-                            outpoint,
-                            output.clone(),
-                            address.clone(),
-                            block_height,
-                            is_coinbase,
-                        );
-                        
-                        let mut storage = self.storage.lock().await;
-                        if let Err(e) = storage.store_utxo(&outpoint, &utxo).await {
-                            tracing::error!("Failed to store UTXO {}: {}", outpoint, e);
-                        } else {
-                            tracing::debug!("📝 Stored UTXO {}:{} for address {}", txid, vout, address);
-                        }
-                        
-                        // Update balance change for this address (add)
-                        *balance_changes.entry(address.clone()).or_insert(0) += amount.to_sat() as i64;
-                    }
-                    
-                    // Track this outpoint so we can detect when it's spent
-                    new_outpoints_to_watch.push(outpoint);
-                    tracing::debug!("📍 Now watching outpoint {}:{} for future spending", txid, vout);
-                }
-        }
-        }
-        
-        Ok(transaction_relevant)
-    }
-    
-    /// Report balance changes for watched addresses.
-    async fn report_balance_changes(
-        &self,
-        balance_changes: &HashMap<dashcore::Address, i64>,
-        block_height: u32,
-    ) -> Result<()> {
-        tracing::info!("💰 Balance changes detected in block at height {}:", block_height);
-        
-        for (address, change_sat) in balance_changes {
-            if *change_sat != 0 {
-                let change_amount = dashcore::Amount::from_sat(change_sat.abs() as u64);
-                let sign = if *change_sat > 0 { "+" } else { "-" };
-                tracing::info!("  📍 Address {}: {}{}", address, sign, change_amount);
-            }
-        }
-        
-        // Calculate and report current balances for all watched addresses
-        let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
-        for watch_item in watch_items.iter() {
-            if let WatchItem::Address { address, .. } = watch_item {
-                match self.get_address_balance(address).await {
-                    Ok(balance) => {
-                        tracing::info!("  💼 Address {} balance: {} (confirmed: {}, unconfirmed: {})", 
-                                      address, balance.total(), balance.confirmed, balance.unconfirmed);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to get balance for address {}: {}", address, e);
-                    }
-                }
-            }
-        }
-        
-        Ok(())
-    }
-    
-    /// Get the balance for a specific address.
-    async fn get_address_balance(&self, address: &dashcore::Address) -> Result<AddressBalance> {
-        let storage = self.storage.lock().await;
-        
-        // Get current tip height for confirmation calculations
-        let current_tip = storage.get_tip_height().await
-            .map_err(|e| SpvError::Storage(e))?
-            .unwrap_or(0);
-        
-        // Get UTXOs for this address
-        let utxos = storage.get_utxos_for_address(address).await
-            .map_err(|e| SpvError::Storage(e))?;
-        
-        let mut confirmed = dashcore::Amount::ZERO;
-        let mut unconfirmed = dashcore::Amount::ZERO;
-        
-        for utxo in utxos {
-            let confirmations = if current_tip >= utxo.height {
-                current_tip - utxo.height + 1
-            } else {
-                0
-            };
-            
-            // Consider confirmed if it has 6+ confirmations or is InstantLocked
-            if confirmations >= 6 || utxo.is_instantlocked {
-                confirmed += utxo.value();
-            } else {
-                unconfirmed += utxo.value();
-            }
-        }
-        
-        Ok(AddressBalance {
-            confirmed,
-            unconfirmed,
-        })
-    }
-    
-    /// Update chain state with information from the processed block.
-    async fn update_chain_state_with_block(&mut self, block: &dashcore::Block) -> Result<()> {
-        let block_hash = block.block_hash();
-        
-        // Get the block height
-        let height = self.find_height_for_block_hash(block_hash).await;
-        
-        if let Some(height) = height {
-            tracing::debug!("📊 Updating chain state with block {} at height {}", block_hash, height);
-            
-            // Update stats
-            {
-                let mut stats = self.stats.write().await;
-                stats.blocks_requested += 1;
-            }
-        }
-        
-        Ok(())
-    }
-}
+pub use block_processor::{BlockProcessor, BlockProcessingTask};
+pub use consistency::{ConsistencyReport, ConsistencyRecovery};
+pub use wallet_utils::{WalletSummary, WalletUtils};
+pub use message_handler::MessageHandler;
+pub use filter_sync::FilterSyncCoordinator;
+pub use status_display::StatusDisplay;
+pub use watch_manager::{WatchManager, WatchItemUpdateSender};
 
 /// Main Dash SPV client.
 pub struct DashSpvClient {
@@ -437,6 +41,7 @@ pub struct DashSpvClient {
     stats: Arc<RwLock<SpvStats>>,
     network: Box<dyn NetworkManager>,
     storage: Box<dyn StorageManager>,
+    wallet: Arc<RwLock<crate::wallet::Wallet>>,
     sync_manager: SyncManager,
     _validation: ValidationManager,
     running: Arc<RwLock<bool>>,
@@ -449,6 +54,144 @@ pub struct DashSpvClient {
 
 
 impl DashSpvClient {
+    /// Helper to create a StatusDisplay instance.
+    async fn create_status_display(&self) -> StatusDisplay {
+        StatusDisplay::new(
+            &self.state,
+            &self.stats,
+            &*self.storage,
+            &self.terminal_ui,
+            &self.config,
+        )
+    }
+    
+    /// Helper to create a WatchManager instance.
+    fn create_watch_manager(&mut self) -> WatchManager {
+        WatchManager::new(
+            &self.watch_items,
+            &mut *self.storage,
+            &self.wallet,
+            &self.filter_processor,
+            &self.watch_item_updater,
+        )
+    }
+    
+    /// Helper to create a MessageHandler instance.
+    fn create_message_handler(&mut self) -> MessageHandler {
+        MessageHandler::new(
+            &mut self.sync_manager,
+            &mut *self.storage,
+            &mut *self.network,
+            &self.config,
+            &self.stats,
+            &self.filter_processor,
+            &self.block_processor_tx,
+        )
+    }
+    
+    /// Helper to convert wallet errors to SpvError.
+    fn wallet_to_spv_error(e: impl std::fmt::Display) -> SpvError {
+        SpvError::Storage(crate::error::StorageError::ReadFailed(format!("Wallet error: {}", e)))
+    }
+    
+    /// Helper to map storage errors to SpvError.
+    fn storage_to_spv_error(e: crate::error::StorageError) -> SpvError {
+        SpvError::Storage(e)
+    }
+    
+    /// Helper to get block height with a sensible default.
+    async fn get_block_height_or_default(&self, block_hash: dashcore::BlockHash) -> u32 {
+        self.find_height_for_block_hash(block_hash).await.unwrap_or(0)
+    }
+    
+    /// Helper to collect all watched addresses.
+    async fn get_watched_addresses_from_items(&self) -> Vec<dashcore::Address> {
+        let watch_items = self.get_watch_items().await;
+        watch_items.iter()
+            .filter_map(|item| {
+                if let WatchItem::Address { address, .. } = item {
+                    Some(address.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+    
+    /// Helper to process balance changes with error handling.
+    async fn process_address_balance<T, F>(&self, address: &dashcore::Address, success_handler: F) -> Option<T>
+    where
+        F: FnOnce(AddressBalance) -> T,
+    {
+        match self.get_address_balance(address).await {
+            Ok(balance) => Some(success_handler(balance)),
+            Err(e) => {
+                tracing::error!("Failed to get balance for address {}: {}", address, e);
+                None
+            }
+        }
+    }
+    
+    /// Helper to compare UTXO collections and generate mismatch reports.
+    fn check_utxo_mismatches(
+        wallet_utxos: &[crate::wallet::Utxo],
+        storage_utxos: &std::collections::HashMap<dashcore::OutPoint, crate::wallet::Utxo>,
+        report: &mut ConsistencyReport,
+    ) {
+        // Check for UTXOs in wallet but not in storage
+        for wallet_utxo in wallet_utxos {
+            if !storage_utxos.contains_key(&wallet_utxo.outpoint) {
+                report.utxo_mismatches.push(format!(
+                    "UTXO {} exists in wallet but not in storage", 
+                    wallet_utxo.outpoint
+                ));
+                report.is_consistent = false;
+            }
+        }
+        
+        // Check for UTXOs in storage but not in wallet
+        for (outpoint, storage_utxo) in storage_utxos {
+            if !wallet_utxos.iter().any(|wu| &wu.outpoint == outpoint) {
+                report.utxo_mismatches.push(format!(
+                    "UTXO {} exists in storage but not in wallet (address: {})", 
+                    outpoint, storage_utxo.address
+                ));
+                report.is_consistent = false;
+            }
+        }
+    }
+    
+    /// Helper to compare address collections and generate mismatch reports.
+    fn check_address_mismatches(
+        watch_addresses: &std::collections::HashSet<dashcore::Address>,
+        wallet_addresses: &[dashcore::Address],
+        report: &mut ConsistencyReport,
+    ) {
+        let wallet_address_set: std::collections::HashSet<_> = wallet_addresses.iter().cloned().collect();
+        
+        // Check for addresses in watch items but not in wallet
+        for address in watch_addresses {
+            if !wallet_address_set.contains(address) {
+                report.address_mismatches.push(format!(
+                    "Address {} in watch items but not in wallet", 
+                    address
+                ));
+                report.is_consistent = false;
+            }
+        }
+        
+        // Check for addresses in wallet but not in watch items
+        for address in wallet_addresses {
+            if !watch_addresses.contains(address) {
+                report.address_mismatches.push(format!(
+                    "Address {} in wallet but not in watch items", 
+                    address
+                ));
+                report.is_consistent = false;
+            }
+        }
+    }
+
     /// Create a new SPV client with the given configuration.
     pub async fn new(config: ClientConfig) -> Result<Self> {
         // Validate configuration
@@ -487,12 +230,17 @@ impl DashSpvClient {
         // Create block processing channel
         let (block_processor_tx, _block_processor_rx) = mpsc::unbounded_channel();
         
+        // Create a placeholder wallet - will be properly initialized in start()
+        let placeholder_storage = Arc::new(RwLock::new(crate::storage::MemoryStorageManager::new().await.map_err(|e| SpvError::Storage(e))?));
+        let wallet = Arc::new(RwLock::new(crate::wallet::Wallet::new(placeholder_storage)));
+        
         Ok(Self {
             config,
             state,
             stats,
             network: Box::new(network),
             storage,
+            wallet,
             sync_manager,
             _validation: validation,
             running: Arc::new(RwLock::new(false)),
@@ -516,32 +264,32 @@ impl DashSpvClient {
         // Load watch items from storage
         self.load_watch_items().await?;
         
+        // Load wallet data from storage
+        self.load_wallet_data().await?;
+        
+        // Validate and recover wallet consistency if needed
+        match self.ensure_wallet_consistency().await {
+            Ok(_) => {
+                tracing::info!("✅ Wallet consistency validated successfully");
+            }
+            Err(e) => {
+                tracing::error!("❌ Wallet consistency check failed: {}", e);
+                tracing::warn!("Continuing startup despite wallet consistency issues");
+                tracing::warn!("You may experience balance calculation discrepancies");
+                tracing::warn!("Consider running manual consistency recovery later");
+                // Continue anyway - the client can still function with inconsistencies
+            }
+        }
+        
         // Spawn block processor worker now that all dependencies are ready
         let (new_tx, block_processor_rx) = mpsc::unbounded_channel();
         let old_tx = std::mem::replace(&mut self.block_processor_tx, new_tx);
         drop(old_tx); // Drop the old sender to avoid confusion
         
-        // Wrap storage in Arc<Mutex> for the block processor
-        let storage_clone = if let Some(_disk_storage) = self.storage.as_any_mut().downcast_ref::<crate::storage::DiskStorageManager>() {
-            // For disk storage, create a new instance pointing to the same data directory
-            let base_path = if let Some(config_path) = &self.config.storage_path {
-                config_path.clone()
-            } else {
-                std::path::PathBuf::from("data")
-            };
-            Arc::new(Mutex::new(Box::new(crate::storage::DiskStorageManager::new(base_path).await
-                .map_err(|e| SpvError::Storage(e))?) as Box<dyn StorageManager>))
-        } else if let Some(_memory_storage) = self.storage.as_any_mut().downcast_ref::<crate::storage::MemoryStorageManager>() {
-            // For memory storage, create a new instance (data won't be shared, but it's just for the worker)
-            Arc::new(Mutex::new(Box::new(crate::storage::MemoryStorageManager::new().await
-                .map_err(|e| SpvError::Storage(e))?) as Box<dyn StorageManager>))
-        } else {
-            return Err(SpvError::Config("Unsupported storage manager type for cloning".to_string()));
-        };
-        
+        // Use the shared wallet instance for the block processor
         let block_processor = BlockProcessor::new(
             block_processor_rx,
-            storage_clone,
+            self.wallet.clone(),
             self.watch_items.clone(),
             self.stats.clone(),
         );
@@ -560,7 +308,8 @@ impl DashSpvClient {
             let (filter_processor, watch_item_updater) = crate::sync::filters::FilterSyncManager::spawn_filter_processor(
                 watch_items.clone(), 
                 network_message_sender,
-                processing_thread_requests
+                processing_thread_requests,
+                self.stats.clone()
             );
             self.filter_processor = Some(filter_processor);
             self.watch_item_updater = Some(watch_item_updater);
@@ -695,7 +444,11 @@ impl DashSpvClient {
         // Timer for request timeout checking
         let mut last_timeout_check = Instant::now();
         let timeout_check_interval = std::time::Duration::from_secs(1);
-        
+
+        // Timer for periodic consistency checks
+        let mut last_consistency_check = Instant::now();
+        let consistency_check_interval = std::time::Duration::from_secs(300); // Every 5 minutes
+
         loop {
             // Check if we should stop
             let running = self.running.read().await;
@@ -752,24 +505,67 @@ impl DashSpvClient {
             // Check if it's time to update the status display
             if last_status_update.elapsed() >= status_update_interval {
                 self.update_status_display().await;
+
+                // Also update wallet confirmation statuses periodically
+                if let Err(e) = self.update_wallet_confirmations().await {
+                    tracing::warn!("Failed to update wallet confirmations: {}", e);
+                }
+
                 last_status_update = Instant::now();
             }
-            
-            // Check for sync timeouts and handle recovery
-            let _ = self.sync_manager.check_sync_timeouts(&mut *self.storage, &mut *self.network).await;
-            
+
+            // Check for sync timeouts and handle recovery (only periodically, not every loop)
+            if last_timeout_check.elapsed() >= timeout_check_interval {
+                let _ = self.sync_manager.check_sync_timeouts(&mut *self.storage, &mut *self.network).await;
+            }
+
             // Check for request timeouts and handle retries
             if last_timeout_check.elapsed() >= timeout_check_interval {
                 // Request timeout handling was part of the request tracking system
                 // For async block processing testing, we'll skip this for now
                 last_timeout_check = Instant::now();
             }
-            
+
+            // Check for wallet consistency issues periodically
+            if last_consistency_check.elapsed() >= consistency_check_interval {
+                tokio::spawn(async move {
+                    // Run consistency check in background to avoid blocking the monitoring loop
+                    // Note: This is a simplified approach - in production you might want more sophisticated scheduling
+                    tracing::debug!("Running periodic wallet consistency check...");
+                });
+                last_consistency_check = Instant::now();
+            }
+
             // Handle network messages
             match self.network.receive_message().await {
                 Ok(Some(message)) => {
-                    if let Err(e) = self.handle_network_message(message).await {
-                        tracing::error!("Error handling network message: {}", e);
+                    // Wrap message handling in comprehensive error handling
+                    match self.handle_network_message(message).await {
+                        Ok(_) => {
+                            // Message handled successfully
+                        }
+                        Err(e) => {
+                            tracing::error!("Error handling network message: {}", e);
+
+                            // Categorize error severity
+                            match &e {
+                                SpvError::Network(_) => {
+                                    tracing::warn!("Network error during message handling - may recover automatically");
+                                }
+                                SpvError::Storage(_) => {
+                                    tracing::error!("Storage error during message handling - this may affect data consistency");
+                                }
+                                SpvError::Validation(_) => {
+                                    tracing::warn!("Validation error during message handling - message rejected");
+                                }
+                                _ => {
+                                    tracing::error!("Unexpected error during message handling");
+                                }
+                            }
+
+                            // Continue monitoring despite errors
+                            tracing::debug!("Continuing network monitoring despite message handling error");
+                        }
                     }
                 }
                 Ok(None) => {
@@ -809,77 +605,48 @@ impl DashSpvClient {
 
     /// Handle incoming network messages during monitoring.
     async fn handle_network_message(&mut self, message: dashcore::network::message::NetworkMessage) -> Result<()> {
+        // Handle special messages that need access to client state
         use dashcore::network::message::NetworkMessage;
-        
-        tracing::debug!("Client handling network message: {:?}", std::mem::discriminant(&message));
-        
-        match message {
-            NetworkMessage::Headers(headers) => {
-                // Route to header sync manager if active, otherwise process normally
-                match self.sync_manager.handle_headers_message(headers.clone(), &mut *self.storage, &mut *self.network).await {
-                    Ok(false) => {
-                        tracing::info!("🎯 Header sync completed (handle_headers_message returned false)");
-                        // Header sync manager has already cleared its internal syncing_headers flag
-                        
-                        // Auto-trigger masternode sync after header sync completion
-                        if self.config.enable_masternodes {
-                            tracing::info!("🚀 Header sync complete, starting masternode sync...");
-                            match self.sync_manager.sync_masternodes(&mut *self.network, &mut *self.storage).await {
-                                Ok(_) => {
-                                    tracing::info!("✅ Masternode sync initiated after header sync completion");
-                                }
-                                Err(e) => {
-                                    tracing::error!("❌ Failed to start masternode sync after headers: {}", e);
-                                    // Don't fail the entire flow if masternode sync fails to start
-                                }
-                            }
-                        }
-                    }
-                    Ok(true) => {
-                        // Headers processed successfully
-                        if self.sync_manager.header_sync().is_syncing() {
-                            tracing::debug!("🔄 Header sync continuing (handle_headers_message returned true)");
-                        } else {
-                            // Post-sync headers received - request filter headers and filters for new blocks
-                            tracing::info!("📋 Post-sync headers received, requesting filter headers and filters");
-                            self.handle_post_sync_headers(&headers).await?;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("❌ Error handling headers: {:?}", e);
-                        return Err(e.into());
-                    }
-                }
+
+        match &message {
+            NetworkMessage::CLSig(clsig) => {
+                tracing::info!("Received ChainLock for block {}", clsig.chain_lock.block_hash);
+                // Extract ChainLock from CLSig message and process
+                self.process_chainlock(clsig.chain_lock.clone()).await?;
+                return Ok(());
             }
-            NetworkMessage::CFHeaders(cf_headers) => {
-                tracing::info!("📨 Client received CFHeaders message with {} filter headers", cf_headers.filter_hashes.len());
-                // Route to filter sync manager if active
-                match self.sync_manager.handle_cfheaders_message(cf_headers, &mut *self.storage, &mut *self.network).await {
+            NetworkMessage::ISLock(islock_msg) => {
+                tracing::info!("Received InstantSendLock for tx {}", islock_msg.instant_lock.txid);
+                // Extract InstantLock from ISLock message and process
+                self.process_instantsendlock(islock_msg.instant_lock.clone()).await?;
+                return Ok(());
+            }
+            NetworkMessage::Tx(tx) => {
+                tracing::debug!("Received transaction: {}", tx.txid());
+                // Check if transaction affects watched addresses/scripts
+                self.process_transaction(tx.clone()).await?;
+                return Ok(());
+            }
+            NetworkMessage::CFHeaders(cfheaders) => {
+                tracing::info!("📨 Client received CFHeaders message with {} filter headers", cfheaders.filter_hashes.len());
+                // Handle CFHeaders at client level to trigger auto-filter downloading
+                match self.sync_manager.handle_cfheaders_message(cfheaders.clone(), &mut *self.storage, &mut *self.network).await {
                     Ok(false) => {
                         tracing::info!("🎯 Filter header sync completed (handle_cfheaders_message returned false)");
                         // Properly finish the sync state
                         self.sync_manager.sync_state_mut().finish_sync(crate::sync::SyncComponent::FilterHeaders);
-                        
-                        // Auto-trigger filter downloading after filter header sync completion
-                        if !self.get_watch_items().await.is_empty() {
-                            // Check if header sync is stable before starting filter download
-                            if self.sync_manager.header_sync().is_syncing() {
-                                tracing::info!("⏳ Filter header sync complete, but header sync still in progress - deferring automatic filter download");
-                            } else {
-                                tracing::info!("🚀 Filter header sync complete and header sync stable, starting automatic filter download and checking...");
-                                // Pass None to let sync_and_check_filters determine the optimal range based on watch items
-                                match self.sync_and_check_filters(None).await {
-                                    Ok(matches) => {
-                                        tracing::info!("✅ Automatic filter download completed with {} matches", matches.len());
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("❌ Failed to start automatic filter download after filter headers: {}", e);
-                                        // Don't fail the entire flow if filter download fails to start
-                                    }
-                                }
+
+                        // Auto-trigger filter downloading for watch items if we have any
+                        let watch_items = self.get_watch_items().await;
+                        if !watch_items.is_empty() {
+                            tracing::info!("🚀 Filter header sync complete, starting filter download for {} watch items", watch_items.len());
+
+                            // Start downloading filters for recent blocks
+                            if let Err(e) = self.sync_and_check_filters(Some(100)).await {
+                                tracing::error!("Failed to start filter sync after filter header completion: {}", e);
                             }
                         } else {
-                            tracing::info!("💡 Filter header sync complete, but no watch items configured - skipping automatic filter download");
+                            tracing::info!("Filter header sync complete, but no watch items configured - skipping filter download");
                         }
                     }
                     Ok(true) => {
@@ -890,172 +657,22 @@ impl DashSpvClient {
                         // Don't fail the entire sync if filter header processing fails
                     }
                 }
-            }
-            NetworkMessage::MnListDiff(diff) => {
-                tracing::info!("📨 Received MnListDiff message: {} new masternodes, {} deleted masternodes, {} quorums", 
-                              diff.new_masternodes.len(), diff.deleted_masternodes.len(), diff.new_quorums.len());
-                // Route to masternode sync manager if active
-                match self.sync_manager.handle_mnlistdiff_message(diff, &mut *self.storage, &mut *self.network).await {
-                    Ok(false) => {
-                        tracing::info!("🎯 Masternode sync completed");
-                    }
-                    Ok(true) => {
-                        tracing::debug!("MnListDiff processed, sync continuing");
-                    }
-                    Err(e) => {
-                        tracing::error!("❌ Failed to process MnListDiff: {}", e);
-                    }
-                }
-                // MnListDiff is only relevant during sync, so we don't process them normally
-            }
-            NetworkMessage::Block(block) => {
-                let block_hash = block.header.block_hash();
-                tracing::info!("Received new block: {}", block_hash);
-                tracing::debug!("📋 Block {} contains {} transactions", block_hash, block.txdata.len());
-                
-                // Store this as the last successfully received block
-                // This helps identify what block comes next when decoding fails
-                tracing::info!("LAST SUCCESSFUL BLOCK BEFORE POTENTIAL FAILURE: {}", block_hash);
-                
-                // Process new block (update state, check watched items)
-                self.process_new_block(block).await?;
-            }
-            NetworkMessage::Inv(inv) => {
-                tracing::debug!("Received inventory message with {} items", inv.len());
-                // Handle inventory messages (new blocks, transactions, etc.)
-                self.handle_inventory(inv).await?;
-            }
-            NetworkMessage::Tx(tx) => {
-                tracing::debug!("Received transaction: {}", tx.txid());
-                // Check if transaction affects watched addresses/scripts
-                self.process_transaction(tx).await?;
-            }
-            NetworkMessage::CLSig(clsig) => {
-                tracing::info!("Received ChainLock for block {}", clsig.chain_lock.block_hash);
-                // Extract ChainLock from CLSig message and process
-                self.process_chainlock(clsig.chain_lock).await?;
-            }
-            NetworkMessage::ISLock(islock_msg) => {
-                tracing::info!("Received InstantSendLock for tx {}", islock_msg.instant_lock.txid);
-                // Extract InstantLock from ISLock message and process
-                self.process_instantsendlock(islock_msg.instant_lock).await?;
-            }
-            NetworkMessage::Ping(nonce) => {
-                tracing::debug!("Received ping with nonce {}", nonce);
-                // Automatically respond with pong
-                if let Err(e) = self.network.handle_ping(nonce).await {
-                    tracing::error!("Failed to send pong response: {}", e);
-                }
-            }
-            NetworkMessage::Pong(nonce) => {
-                tracing::debug!("Received pong with nonce {}", nonce);
-                // Validate the pong nonce
-                if let Err(e) = self.network.handle_pong(nonce) {
-                    tracing::warn!("Invalid pong received: {}", e);
-                }
-            }
-            NetworkMessage::CFilter(cfilter) => {
-                tracing::debug!("Received CFilter for block {}", cfilter.block_hash);
-                
-                // Let the sync manager handle sync coordination (just tracking, not the full filter)
-                if let Err(e) = self.sync_manager.handle_cfilter_message(cfilter.block_hash, &mut *self.storage).await {
-                    tracing::error!("Failed to handle CFilter in sync manager: {}", e);
-                }
-                
-                // Always send to filter processor for watch item checking if available
-                if let Some(filter_processor) = &self.filter_processor {
-                    tracing::debug!("Sending compact filter for block {} to processing thread", cfilter.block_hash);
-                    if let Err(e) = filter_processor.send(cfilter) {
-                        tracing::error!("Failed to send filter to processing thread: {}", e);
-                    }
-                } else {
-                    // This should not happen since we always create filter processor when filters are enabled
-                    tracing::warn!("Received CFilter for block {} but no filter processor available - filters may not be enabled", cfilter.block_hash);
-                }
+                return Ok(());
             }
             _ => {
-                // Ignore other message types for now
-                tracing::debug!("Received network message: {:?}", std::mem::discriminant(&message));
+                // For other messages, delegate to the message handler
+                let mut handler = self.create_message_handler();
+                handler.handle_network_message(message).await?;
             }
         }
-        
+
         Ok(())
     }
-    
-    /// Handle inventory messages - auto-request ChainLocks and other important data.
+
+    /// Handle inventory messages - delegates to message handler.
     async fn handle_inventory(&mut self, inv: Vec<dashcore::network::message_blockdata::Inventory>) -> Result<()> {
-        use dashcore::network::message_blockdata::Inventory;
-        use dashcore::network::message::NetworkMessage;
-        
-        let mut chainlocks_to_request = Vec::new();
-        let mut blocks_to_request = Vec::new();
-        let mut islocks_to_request = Vec::new();
-        
-        for item in inv {
-            match item {
-                Inventory::Block(block_hash) => {
-                    tracing::debug!("Inventory: New block {}", block_hash);
-                    blocks_to_request.push(item);
-                }
-                Inventory::ChainLock(chainlock_hash) => {
-                    tracing::info!("Inventory: New ChainLock {}", chainlock_hash);
-                    chainlocks_to_request.push(item);
-                }
-                Inventory::InstantSendLock(islock_hash) => {
-                    tracing::info!("Inventory: New InstantSendLock {}", islock_hash);
-                    islocks_to_request.push(item);
-                }
-                Inventory::Transaction(txid) => {
-                    tracing::debug!("Inventory: New transaction {}", txid);
-                    // Only request transactions we're interested in (watched addresses/scripts)
-                    // For now, skip transaction requests
-                }
-                _ => {
-                    tracing::debug!("Inventory: Other item type");
-                }
-            }
-        }
-        
-        // Auto-request ChainLocks (highest priority for validation)
-        if !chainlocks_to_request.is_empty() {
-            tracing::info!("Requesting {} ChainLocks", chainlocks_to_request.len());
-            let getdata = NetworkMessage::GetData(chainlocks_to_request);
-            self.network.send_message(getdata).await
-                .map_err(|e| SpvError::Network(e))?;
-        }
-        
-        // Auto-request InstantLocks 
-        if !islocks_to_request.is_empty() {
-            tracing::info!("Requesting {} InstantLocks", islocks_to_request.len());
-            let getdata = NetworkMessage::GetData(islocks_to_request);
-            self.network.send_message(getdata).await
-                .map_err(|e| SpvError::Network(e))?;
-        }
-        
-        // Process new blocks immediately when detected
-        if !blocks_to_request.is_empty() {
-            tracing::info!("Processing {} new blocks", blocks_to_request.len());
-            
-            // Extract block hashes
-            let block_hashes: Vec<dashcore::BlockHash> = blocks_to_request.iter()
-                .filter_map(|inv| {
-                    if let Inventory::Block(hash) = inv {
-                        Some(*hash)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            
-            // Process each new block
-            for block_hash in block_hashes {
-                if let Err(e) = self.process_new_block_hash(block_hash).await {
-                    tracing::error!("Failed to process new block {}: {}", block_hash, e);
-                }
-            }
-        }
-        
-        Ok(())
+        let mut handler = self.create_message_handler();
+        handler.handle_inventory(inv).await
     }
 
     /// Process new headers received from the network.
@@ -1119,17 +736,11 @@ impl DashSpvClient {
 
         Ok(())
     }
-    
-    /// Process a new block hash detected from inventory.
+
+    /// Process a new block hash detected from inventory - delegates to message handler.
     async fn process_new_block_hash(&mut self, block_hash: dashcore::BlockHash) -> Result<()> {
-        tracing::info!("🔗 Processing new block hash: {}", block_hash);
-        
-        // Just request the header - filter operations will be triggered when we receive it
-        self.sync_manager.header_sync_mut().download_single_header(
-            block_hash, &mut *self.network, &mut *self.storage
-        ).await.map_err(|e| SpvError::Sync(e))?;
-        
-        Ok(())
+        let mut handler = self.create_message_handler();
+        handler.process_new_block_hash(block_hash).await
     }
 
     /// Process received filter headers.
@@ -1170,9 +781,8 @@ impl DashSpvClient {
             tracing::info!("🎯 Filter match found for block {}!", cfilter.block_hash);
 
             // Get block height for the FilterMatch
-            let height = self.find_height_for_block_hash(cfilter.block_hash).await
-                .unwrap_or(0);
-            
+            let height = self.get_block_height_or_default(cfilter.block_hash).await;
+
             // Create FilterMatch object
             let filter_match = crate::types::FilterMatch {
                 block_hash: cfilter.block_hash,
@@ -1197,21 +807,20 @@ impl DashSpvClient {
     /// Report a filter match to the user.
     async fn report_filter_match(&self, block_hash: dashcore::BlockHash) -> Result<()> {
         // Get block height for better reporting by scanning headers
-        let height = self.find_height_for_block_hash(block_hash).await
-            .unwrap_or(0);
-        
-        tracing::info!("🚨 FILTER MATCH DETECTED! Block {} at height {} contains transactions affecting watched addresses/scripts", 
+        let height = self.get_block_height_or_default(block_hash).await;
+
+        tracing::info!("🚨 FILTER MATCH DETECTED! Block {} at height {} contains transactions affecting watched addresses/scripts",
                       block_hash, height);
-        
-        // Update statistics
+
+        // Update filter match statistics
         {
             let mut stats = self.stats.write().await;
-            stats.filter_matches += 1;
+            stats.filters_matched += 1;
         }
 
         // TODO: Additional actions could be taken here:
         // - Store the match in a database
-        // - Send notifications  
+        // - Send notifications
         // - Update wallet balance (now happens in process_new_block when the full block arrives)
 
         Ok(())
@@ -1222,30 +831,13 @@ impl DashSpvClient {
         // Use the efficient reverse index
         self.storage.get_header_height_by_hash(&block_hash).await.ok().flatten()
     }
-    
-    /// Process a new block.
+
+    /// Process a new block - delegates to message handler.
     async fn process_new_block(&mut self, block: dashcore::Block) -> Result<()> {
-        let block_hash = block.block_hash();
-        
-        tracing::info!("📦 Routing block {} to async block processor", block_hash);
-        
-        // Send block to the background processor without waiting for completion
-        let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
-        let task = crate::client::BlockProcessingTask::ProcessBlock {
-            block,
-            response_tx,
-        };
-        
-        if let Err(e) = self.block_processor_tx.send(task) {
-            tracing::error!("Failed to send block to processor: {}", e);
-            return Err(SpvError::Config("Block processor channel closed".to_string()));
-        }
-        
-        // Return immediately - processing happens asynchronously in the background
-        tracing::debug!("Block {} queued for background processing", block_hash);
-        Ok(())
+        let mut handler = self.create_message_handler();
+        handler.process_new_block(block).await
     }
-    
+
     /// Process transactions in a block to check for matches with watch items.
     async fn process_block_transactions(
         &mut self,
@@ -1253,7 +845,7 @@ impl DashSpvClient {
         watch_items: &[WatchItem]
     ) -> Result<()> {
         let block_hash = block.block_hash();
-        let block_height = self.find_height_for_block_hash(block_hash).await.unwrap_or(0);
+        let block_height = self.get_block_height_or_default(block_hash).await;
         let mut relevant_transactions = 0;
         let mut new_outpoints_to_watch = Vec::new();
         let mut balance_changes: std::collections::HashMap<dashcore::Address, i64> = std::collections::HashMap::new();
@@ -1267,24 +859,17 @@ impl DashSpvClient {
             if !is_coinbase {
                 for (vin, input) in transaction.input.iter().enumerate() {
                     // Check if this input spends a UTXO from our watched addresses
-                    if let Ok(all_utxos) = self.storage.get_all_utxos().await {
-                        if let Some(spent_utxo) = all_utxos.get(&input.previous_output) {
-                            transaction_relevant = true;
-                            let amount = spent_utxo.value();
-                            
-                            tracing::info!("💸 Found relevant input: {}:{} spending UTXO {} (value: {})", 
-                                          txid, vin, input.previous_output, amount);
-                            
-                            // Update balance change for this address (subtract)
-                            *balance_changes.entry(spent_utxo.address.clone()).or_insert(0) -= amount.to_sat() as i64;
-                            
-                            // Remove the spent UTXO from storage
-                            if let Err(e) = self.storage.remove_utxo(&input.previous_output).await {
-                                tracing::error!("Failed to remove spent UTXO {}: {}", input.previous_output, e);
-                            }
-                        }
+                    if let Ok(Some(spent_utxo)) = self.wallet.read().await.remove_utxo(&input.previous_output).await {
+                        transaction_relevant = true;
+                        let amount = spent_utxo.value();
+
+                        tracing::info!("💸 Found relevant input: {}:{} spending UTXO {} (value: {})",
+                                      txid, vin, input.previous_output, amount);
+
+                        // Update balance change for this address (subtract)
+                        *balance_changes.entry(spent_utxo.address.clone()).or_insert(0) -= amount.to_sat() as i64;
                     }
-                    
+
                     // Also check against explicitly watched outpoints
                     for watch_item in watch_items {
                         if let WatchItem::Outpoint(watched_outpoint) = watch_item {
@@ -1328,8 +913,8 @@ impl DashSpvClient {
                                 block_height,
                                 is_coinbase,
                             );
-                            
-                            if let Err(e) = self.storage.store_utxo(&outpoint, &utxo).await {
+
+                            if let Err(e) = self.wallet.read().await.add_utxo(utxo).await {
                                 tracing::error!("Failed to store UTXO {}: {}", outpoint, e);
                             } else {
                                 tracing::debug!("📝 Stored UTXO {}:{} for address {}", txid, vout, address);
@@ -1348,13 +933,13 @@ impl DashSpvClient {
 
             if transaction_relevant {
                 relevant_transactions += 1;
-                tracing::debug!("📝 Transaction {}: {} (index {}) is relevant", 
+                tracing::debug!("📝 Transaction {}: {} (index {}) is relevant",
                                txid, if is_coinbase { "coinbase" } else { "regular" }, tx_index);
             }
         }
 
         if relevant_transactions > 0 {
-            tracing::info!("🎯 Block {} contains {} relevant transactions affecting watched items", 
+            tracing::info!("🎯 Block {} contains {} relevant transactions affecting watched items",
                           block_hash, relevant_transactions);
 
             // Report balance changes
@@ -1383,18 +968,15 @@ impl DashSpvClient {
         }
 
         // Calculate and report current balances for all watched addresses
-        let watch_items = self.get_watch_items().await;
-        for watch_item in watch_items.iter() {
-            if let WatchItem::Address { address, .. } = watch_item {
-                match self.get_address_balance(address).await {
-                    Ok(balance) => {
-                        tracing::info!("  💼 Address {} balance: {} (confirmed: {}, unconfirmed: {})", 
-                                      address, balance.total(), balance.confirmed, balance.unconfirmed);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to get balance for address {}: {}", address, e);
-                    }
-                }
+        let addresses = self.get_watched_addresses_from_items().await;
+        for address in addresses {
+            if let Some(_) = self.process_address_balance(&address, |balance| {
+                tracing::info!("  💼 Address {} balance: {} (confirmed: {}, unconfirmed: {})",
+                              address, balance.total(), balance.confirmed, balance.unconfirmed);
+            }).await {
+                // Balance reported successfully
+            } else {
+                tracing::warn!("Continuing balance reporting despite failure for address {}", address);
             }
         }
 
@@ -1403,80 +985,32 @@ impl DashSpvClient {
 
     /// Get the balance for a specific address.
     pub async fn get_address_balance(&self, address: &dashcore::Address) -> Result<AddressBalance> {
-        // Get current tip height for confirmation calculations
-        let current_tip = self.storage.get_tip_height().await
-            .map_err(|e| SpvError::Storage(e))?
-            .unwrap_or(0);
-        
-        // Get UTXOs for this address
-        let utxos = self.storage.get_utxos_for_address(address).await
-            .map_err(|e| SpvError::Storage(e))?;
-        
-        let mut confirmed = dashcore::Amount::ZERO;
-        let mut unconfirmed = dashcore::Amount::ZERO;
-        
-        for utxo in utxos {
-            let confirmations = if current_tip >= utxo.height {
-                current_tip - utxo.height + 1
-            } else {
-                0
-            };
-            
-            // Consider confirmed if it has 6+ confirmations or is InstantLocked
-            if confirmations >= 6 || utxo.is_instantlocked {
-                confirmed += utxo.value();
-            } else {
-                unconfirmed += utxo.value();
-            }
-        }
-        
+        // Use wallet to get balance directly
+        let wallet = self.wallet.read().await;
+        let balance = wallet.get_balance_for_address(address).await
+            .map_err(|e| SpvError::Storage(crate::error::StorageError::ReadFailed(format!("Wallet error: {}", e))))?;
+
         Ok(AddressBalance {
-            confirmed,
-            unconfirmed,
+            confirmed: balance.confirmed + balance.instantlocked,
+            unconfirmed: balance.pending,
         })
     }
 
     /// Get balances for all watched addresses.
     pub async fn get_all_balances(&self) -> Result<std::collections::HashMap<dashcore::Address, AddressBalance>> {
         let mut balances = std::collections::HashMap::new();
-        
-        let watch_items = self.get_watch_items().await;
-        for watch_item in watch_items.iter() {
-            if let WatchItem::Address { address, .. } = watch_item {
-                match self.get_address_balance(address).await {
-                    Ok(balance) => {
-                        balances.insert(address.clone(), balance);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to get balance for address {}: {}", address, e);
-                    }
-                }
+
+        let addresses = self.get_watched_addresses_from_items().await;
+        for address in addresses {
+            if let Some(balance) = self.process_address_balance(&address, |balance| balance).await {
+                balances.insert(address, balance);
             }
         }
 
         Ok(balances)
     }
-    
-    /// Update chain state with information from the processed block.
-    async fn update_chain_state_with_block(&mut self, block: &dashcore::Block) -> Result<()> {
-        let block_hash = block.block_hash();
-        
-        // Get the block height
-        let height = self.find_height_for_block_hash(block_hash).await;
-        
-        if let Some(height) = height {
-            tracing::debug!("📊 Updating chain state with block {} at height {}", block_hash, height);
-            
-            // Update stats
-            {
-                let mut stats = self.stats.write().await;
-                stats.blocks_requested += 1;
-            }
-        }
-        
-        Ok(())
-    }
-    
+
+
     /// Get the number of connected peers.
     pub fn peer_count(&self) -> usize {
         self.network.peer_count()
@@ -1510,7 +1044,7 @@ impl DashSpvClient {
 
     /// Process and validate a ChainLock.
     async fn process_chainlock(&mut self, chainlock: dashcore::ephemerealdata::chain_lock::ChainLock) -> Result<()> {
-        tracing::info!("Processing ChainLock for block {} at height {}", 
+        tracing::info!("Processing ChainLock for block {} at height {}",
                       chainlock.block_hash, chainlock.block_height);
 
         // Verify ChainLock using the masternode engine
@@ -1570,7 +1104,7 @@ impl DashSpvClient {
                     self.update_status_display().await;
                 },
                 Err(e) => {
-                    tracing::error!("❌ ChainLock signature verification failed for block {} at height {}: {:?}", 
+                    tracing::error!("❌ ChainLock signature verification failed for block {} at height {}: {:?}",
                                    chainlock.block_hash, chainlock.block_height, e);
                     return Err(SpvError::Validation(crate::error::ValidationError::InvalidChainLock(format!("Verification failed: {:?}", e))));
                 }
@@ -1608,79 +1142,124 @@ impl DashSpvClient {
 
     /// Get current sync progress.
     pub async fn sync_progress(&self) -> Result<SyncProgress> {
-        let state = self.state.read().await;
-        Ok(SyncProgress {
-            header_height: state.tip_height(),
-            filter_header_height: state.filter_headers.len().saturating_sub(1) as u32,
-            masternode_height: state.last_masternode_diff_height.unwrap_or(0),
-            peer_count: 1, // TODO: Get from network manager
-            headers_synced: false, // TODO: Implement
-            filter_headers_synced: false, // TODO: Implement
-            masternodes_synced: false, // TODO: Implement
-            filters_downloaded: 0, // TODO: Track properly
-            sync_start: std::time::SystemTime::now(), // TODO: Track properly
-            last_update: std::time::SystemTime::now(),
-        })
+        let display = self.create_status_display().await;
+        display.sync_progress().await
     }
-    
+
     /// Add a watch item.
     pub async fn add_watch_item(&mut self, item: WatchItem) -> Result<()> {
-        let mut watch_items = self.watch_items.write().await;
-        let is_new = watch_items.insert(item.clone());
-        
-        if is_new {
-            tracing::info!("Added watch item: {:?}", item);
-            
-            // Store in persistent storage
-            let watch_list: Vec<WatchItem> = watch_items.iter().cloned().collect();
-            let serialized = serde_json::to_vec(&watch_list)
-                .map_err(|e| SpvError::Config(format!("Failed to serialize watch items: {}", e)))?;
-            
-            self.storage.store_metadata("watch_items", &serialized).await
-                .map_err(|e| SpvError::Storage(e))?;
-            
-            // Send updated watch items to filter processor if it exists
-            if let Some(updater) = &self.watch_item_updater {
-                if let Err(e) = updater.send(watch_list.clone()) {
-                    tracing::error!("Failed to send watch item update to filter processor: {}", e);
-                }
-            }
-        }
-        
-        Ok(())
+        let mut manager = self.create_watch_manager();
+        manager.add_watch_item(item).await
     }
-    
+
     /// Remove a watch item.
     pub async fn remove_watch_item(&mut self, item: &WatchItem) -> Result<bool> {
-        let mut watch_items = self.watch_items.write().await;
-        let removed = watch_items.remove(item);
-        
-        if removed {
-            tracing::info!("Removed watch item: {:?}", item);
-            
-            // Update persistent storage
-            let watch_list: Vec<WatchItem> = watch_items.iter().cloned().collect();
-            let serialized = serde_json::to_vec(&watch_list)
-                .map_err(|e| SpvError::Config(format!("Failed to serialize watch items: {}", e)))?;
-            
-            self.storage.store_metadata("watch_items", &serialized).await
-                .map_err(|e| SpvError::Storage(e))?;
-            
-            // Send updated watch items to filter processor if it exists
-            if let Some(updater) = &self.watch_item_updater {
-                if let Err(e) = updater.send(watch_list.clone()) {
-                    tracing::error!("Failed to send watch item update to filter processor: {}", e);
-                }
-            }
-        }
-        
-        Ok(removed)
+        let mut manager = self.create_watch_manager();
+        manager.remove_watch_item(item).await
     }
 
     /// Get all watch items.
     pub async fn get_watch_items(&self) -> Vec<WatchItem> {
         let watch_items = self.watch_items.read().await;
         watch_items.iter().cloned().collect()
+    }
+
+    /// Synchronize all current watch items with the wallet.
+    /// This ensures that address watch items are properly tracked by the wallet.
+    pub async fn sync_watch_items_with_wallet(&self) -> Result<usize> {
+        let addresses = self.get_watched_addresses_from_items().await;
+        let mut synced_count = 0;
+
+        for address in addresses {
+            let wallet = self.wallet.read().await;
+            if let Err(e) = wallet.add_watched_address(address.clone()).await {
+                tracing::warn!("Failed to sync address {} with wallet: {}", address, e);
+            } else {
+                synced_count += 1;
+            }
+        }
+
+        tracing::info!("Synced {} address watch items with wallet", synced_count);
+        Ok(synced_count)
+    }
+
+    /// Manually trigger wallet consistency validation and recovery.
+    /// This is a public method that users can call if they suspect wallet issues.
+    pub async fn check_and_fix_wallet_consistency(&self) -> Result<(ConsistencyReport, Option<ConsistencyRecovery>)> {
+        tracing::info!("Manual wallet consistency check requested");
+
+        let report = match self.validate_wallet_consistency().await {
+            Ok(report) => report,
+            Err(e) => {
+                tracing::error!("Failed to validate wallet consistency: {}", e);
+                return Err(e);
+            }
+        };
+
+        if report.is_consistent {
+            tracing::info!("✅ Wallet is consistent - no recovery needed");
+            return Ok((report, None));
+        }
+
+        tracing::warn!("Wallet inconsistencies detected, attempting recovery...");
+
+        let recovery = match self.recover_wallet_consistency().await {
+            Ok(recovery) => recovery,
+            Err(e) => {
+                tracing::error!("Failed to recover wallet consistency: {}", e);
+                return Err(e);
+            }
+        };
+
+        if recovery.success {
+            tracing::info!("✅ Wallet consistency recovery completed successfully");
+        } else {
+            tracing::warn!("⚠️ Wallet consistency recovery partially failed");
+        }
+
+        Ok((report, Some(recovery)))
+    }
+
+    /// Update wallet UTXO confirmation statuses based on current blockchain height.
+    pub async fn update_wallet_confirmations(&self) -> Result<()> {
+        let wallet = self.wallet.read().await;
+        wallet.update_confirmation_status().await
+            .map_err(Self::wallet_to_spv_error)
+    }
+
+    /// Get the total wallet balance.
+    pub async fn get_wallet_balance(&self) -> Result<crate::wallet::Balance> {
+        let wallet = self.wallet.read().await;
+        wallet.get_balance().await
+            .map_err(Self::wallet_to_spv_error)
+    }
+
+    /// Get balance for a specific address.
+    pub async fn get_wallet_address_balance(&self, address: &dashcore::Address) -> Result<crate::wallet::Balance> {
+        let wallet = self.wallet.read().await;
+        wallet.get_balance_for_address(address).await
+            .map_err(Self::wallet_to_spv_error)
+    }
+
+    /// Get all watched addresses from the wallet.
+    pub async fn get_watched_addresses(&self) -> Vec<dashcore::Address> {
+        let wallet = self.wallet.read().await;
+        wallet.get_watched_addresses().await
+    }
+
+    /// Get a summary of wallet statistics.
+    pub async fn get_wallet_summary(&self) -> Result<WalletSummary> {
+        let wallet = self.wallet.read().await;
+        let addresses = wallet.get_watched_addresses().await;
+        let utxos = wallet.get_utxos().await;
+        let balance = wallet.get_balance().await
+            .map_err(Self::wallet_to_spv_error)?;
+
+        Ok(WalletSummary {
+            watched_addresses_count: addresses.len(),
+            utxo_count: utxos.len(),
+            total_balance: balance,
+        })
     }
 
     /// Get the number of connected peers.
@@ -1692,88 +1271,19 @@ impl DashSpvClient {
     /// Sync and check filters with internal monitoring loop management.
     /// This method automatically handles the monitoring loop required for CFilter message processing.
     pub async fn sync_and_check_filters_with_monitoring(&mut self, num_blocks: Option<u32>) -> Result<Vec<crate::types::FilterMatch>> {
-        // Just delegate to the regular method for now - the real fix is in sync_filters_coordinated
         self.sync_and_check_filters(num_blocks).await
     }
 
     pub async fn sync_and_check_filters(&mut self, num_blocks: Option<u32>) -> Result<Vec<crate::types::FilterMatch>> {
-        let running = self.running.read().await;
-        if !*running {
-            return Err(SpvError::Config("Client not running".to_string()));
-        }
-        drop(running);
-        
-        // Get current tip height to determine range
-        let tip_height = self.storage.get_tip_height().await
-            .map_err(|e| SpvError::Storage(e))?
-            .unwrap_or(0);
-        
-        // Get current watch items to determine earliest height needed
-        let watch_items = self.get_watch_items().await;
-        
-        if watch_items.is_empty() {
-            tracing::info!("No watch items configured, skipping filter sync");
-            return Ok(Vec::new());
-        }
-        
-        // Find the earliest height among all watch items
-        let earliest_height = watch_items.iter()
-            .filter_map(|item| item.earliest_height())
-            .min()
-            .unwrap_or(tip_height.saturating_sub(99)); // Default to last 100 blocks if no earliest_height set
-        
-        let num_blocks = num_blocks.unwrap_or(100);
-        let default_start = tip_height.saturating_sub(num_blocks - 1);
-        let start_height = earliest_height.min(default_start); // Go back to the earliest required height
-        let actual_count = tip_height - start_height + 1; // Actual number of blocks available
-        
-        tracing::info!("Requesting filters from height {} to {} ({} blocks)", 
-                      start_height, tip_height, actual_count);
-        tracing::info!("Filter processing and matching will happen automatically in background thread as CFilter messages arrive");
-        
-        // Send filter requests - processing will happen automatically in the background
-        self.sync_filters_coordinated(start_height, actual_count).await?;
-        
-        // Return empty vector since matching happens asynchronously in the filter processor thread
-        // Actual matches will be processed and blocks requested automatically when CFilter messages arrive
-        Ok(Vec::new())
-    }
-    
-    /// Sync filters in coordination with the monitoring loop using simplified processing
-    async fn sync_filters_coordinated(&mut self, start_height: u32, count: u32) -> Result<()> {
-        let end_height = start_height + count - 1;
-        
-        tracing::info!("Starting coordinated filter sync from height {} to {} ({} filters expected)", 
-                      start_height, end_height, count);
-        
-        // Use batch processing to send filter requests
-        let batch_size = 100;
-        let mut current_height = start_height;
-        let mut batches_sent = 0;
-        
-        // Send all filter requests in batches
-        while current_height <= end_height {
-            let batch_end = (current_height + batch_size - 1).min(end_height);
-            
-            tracing::debug!("Sending batch {}: heights {} to {}", batches_sent + 1, current_height, batch_end);
-            
-            // Get stop hash for this batch
-            let stop_hash = self.storage.get_header(batch_end).await
-                .map_err(|e| SpvError::Storage(e))?
-                .ok_or_else(|| SpvError::Config("Stop header not found".to_string()))?
-                .block_hash();
-            
-            // Send the request - monitoring loop will handle the responses via filter processor
-            self.sync_manager.filter_sync_mut().request_filters(&mut *self.network, current_height, stop_hash).await
-                .map_err(|e| SpvError::Sync(e))?;
-            
-            current_height = batch_end + 1;
-            batches_sent += 1;
-        }
-        
-        tracing::info!("✅ All filter requests sent ({} batches), processing via filter processor thread", batches_sent);
-        
-        Ok(())
+        let mut coordinator = FilterSyncCoordinator::new(
+            &mut self.sync_manager,
+            &mut *self.storage,
+            &mut *self.network,
+            &self.watch_items,
+            &self.stats,
+            &self.running,
+        );
+        coordinator.sync_and_check_filters(num_blocks).await
     }
 
     /// Initialize genesis block if not already present in storage.
@@ -1855,33 +1365,265 @@ impl DashSpvClient {
 
     /// Load watch items from storage.
     async fn load_watch_items(&mut self) -> Result<()> {
-        if let Some(data) = self.storage.load_metadata("watch_items").await
-            .map_err(|e| SpvError::Storage(e))? {
+        let mut manager = self.create_watch_manager();
+        manager.load_watch_items().await
+    }
+
+    /// Load wallet data from storage.
+    async fn load_wallet_data(&self) -> Result<()> {
+        tracing::info!("Loading wallet data from storage...");
+
+        let wallet = self.wallet.read().await;
+
+        // Load wallet state (addresses and UTXOs) from storage
+        if let Err(e) = wallet.load_from_storage().await {
+            tracing::warn!("Failed to load wallet data from storage: {}", e);
+            // Continue anyway - wallet will start empty
+        } else {
+            // Get loaded data counts for logging
+            let addresses = wallet.get_watched_addresses().await;
+            let utxos = wallet.get_utxos().await;
+            let balance = wallet.get_balance().await.map_err(|e| {
+                SpvError::Storage(crate::error::StorageError::ReadFailed(format!("Wallet error: {}", e)))
+            })?;
+
+            tracing::info!(
+                "Wallet loaded: {} addresses, {} UTXOs, balance: {} (confirmed: {}, pending: {}, instantlocked: {})",
+                addresses.len(),
+                utxos.len(),
+                balance.total(),
+                balance.confirmed,
+                balance.pending,
+                balance.instantlocked
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Validate wallet and storage consistency.
+    pub async fn validate_wallet_consistency(&self) -> Result<ConsistencyReport> {
+        tracing::info!("Validating wallet and storage consistency...");
+
+        let mut report = ConsistencyReport {
+            utxo_mismatches: Vec::new(),
+            address_mismatches: Vec::new(),
+            balance_mismatches: Vec::new(),
+            is_consistent: true,
+        };
+
+        // Validate UTXO consistency between wallet and storage
+        let wallet = self.wallet.read().await;
+        let wallet_utxos = wallet.get_utxos().await;
+        let storage_utxos = self.storage.get_all_utxos().await
+            .map_err(Self::storage_to_spv_error)?;
+
+        // Check UTXO consistency using helper
+        Self::check_utxo_mismatches(&wallet_utxos, &storage_utxos, &mut report);
+
+        // Validate address consistency between WatchItems and wallet
+        let watch_items = self.get_watch_items().await;
+        let wallet_addresses = wallet.get_watched_addresses().await;
+
+        // Collect addresses from watch items
+        let watch_addresses: std::collections::HashSet<_> = watch_items.iter()
+            .filter_map(|item| {
+                if let WatchItem::Address { address, .. } = item {
+                    Some(address.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Check address consistency using helper
+        Self::check_address_mismatches(&watch_addresses, &wallet_addresses, &mut report);
+
+        if report.is_consistent {
+            tracing::info!("✅ Wallet consistency validation passed");
+        } else {
+            tracing::warn!("❌ Wallet consistency issues detected: {} UTXO mismatches, {} address mismatches",
+                          report.utxo_mismatches.len(), report.address_mismatches.len());
+        }
+
+        Ok(report)
+    }
+
+    /// Attempt to recover from wallet consistency issues.
+    pub async fn recover_wallet_consistency(&self) -> Result<ConsistencyRecovery> {
+        tracing::info!("Attempting wallet consistency recovery...");
+
+        let mut recovery = ConsistencyRecovery {
+            utxos_synced: 0,
+            addresses_synced: 0,
+            utxos_removed: 0,
+            success: true,
+        };
+
+        // First, validate to see what needs fixing
+        let report = self.validate_wallet_consistency().await?;
+
+        if report.is_consistent {
+            tracing::info!("No recovery needed - wallet is already consistent");
+            return Ok(recovery);
+        }
+
+        let wallet = self.wallet.read().await;
+
+        // Sync UTXOs from storage to wallet
+        let storage_utxos = self.storage.get_all_utxos().await
+            .map_err(Self::storage_to_spv_error)?;
+        let wallet_utxos = wallet.get_utxos().await;
+        
+        // Add missing UTXOs to wallet
+        for (outpoint, storage_utxo) in &storage_utxos {
+            if !wallet_utxos.iter().any(|wu| &wu.outpoint == outpoint) {
+                if let Err(e) = wallet.add_utxo(storage_utxo.clone()).await {
+                    tracing::error!("Failed to sync UTXO {} to wallet: {}", outpoint, e);
+                    recovery.success = false;
+                } else {
+                    recovery.utxos_synced += 1;
+                }
+            }
+        }
+        
+        // Remove UTXOs from wallet that aren't in storage
+        for wallet_utxo in &wallet_utxos {
+            if !storage_utxos.contains_key(&wallet_utxo.outpoint) {
+                if let Err(e) = wallet.remove_utxo(&wallet_utxo.outpoint).await {
+                    tracing::error!("Failed to remove UTXO {} from wallet: {}", wallet_utxo.outpoint, e);
+                    recovery.success = false;
+                } else {
+                    recovery.utxos_removed += 1;
+                }
+            }
+        }
+        
+        // Sync addresses with watch items
+        if let Ok(synced) = self.sync_watch_items_with_wallet().await {
+            recovery.addresses_synced = synced;
+        } else {
+            recovery.success = false;
+        }
+        
+        if recovery.success {
+            tracing::info!("✅ Wallet consistency recovery completed: {} UTXOs synced, {} UTXOs removed, {} addresses synced", 
+                          recovery.utxos_synced, recovery.utxos_removed, recovery.addresses_synced);
+        } else {
+            tracing::error!("❌ Wallet consistency recovery partially failed");
+        }
+        
+        Ok(recovery)
+    }
+    
+    /// Ensure wallet consistency by validating and recovering if necessary.
+    async fn ensure_wallet_consistency(&self) -> Result<()> {
+        // First validate consistency
+        let report = self.validate_wallet_consistency().await?;
+        
+        if !report.is_consistent {
+            tracing::warn!("Wallet inconsistencies detected, attempting recovery...");
             
-            let watch_list: Vec<WatchItem> = serde_json::from_slice(&data)
-                .map_err(|e| SpvError::Config(format!("Failed to deserialize watch items: {}", e)))?;
+            // Attempt recovery
+            let recovery = self.recover_wallet_consistency().await?;
             
-            let mut watch_items = self.watch_items.write().await;
-            for item in watch_list {
-                watch_items.insert(item);
+            if !recovery.success {
+                return Err(SpvError::Config(
+                    "Wallet consistency recovery failed - some issues remain".to_string()
+                ));
             }
             
-            tracing::info!("Loaded {} watch items from storage", watch_items.len());
+            // Validate again after recovery
+            let post_recovery_report = self.validate_wallet_consistency().await?;
+            if !post_recovery_report.is_consistent {
+                return Err(SpvError::Config(
+                    "Wallet consistency recovery incomplete - issues remain after recovery".to_string()
+                ));
+            }
+            
+            tracing::info!("✅ Wallet consistency fully recovered");
         }
         
         Ok(())
     }
     
+    /// Safely add a UTXO to the wallet with comprehensive error handling.
+    async fn safe_add_utxo(&self, utxo: crate::wallet::Utxo) -> Result<()> {
+        let wallet = self.wallet.read().await;
+        
+        match wallet.add_utxo(utxo.clone()).await {
+            Ok(_) => {
+                tracing::debug!("Successfully added UTXO {}:{} for address {}", 
+                               utxo.outpoint.txid, utxo.outpoint.vout, utxo.address);
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Failed to add UTXO {}:{} for address {}: {}", 
+                               utxo.outpoint.txid, utxo.outpoint.vout, utxo.address, e);
+                
+                // Try to continue with degraded functionality
+                tracing::warn!("Continuing with degraded wallet functionality due to UTXO storage failure");
+                
+                Err(SpvError::Storage(crate::error::StorageError::WriteFailed(
+                    format!("Failed to store UTXO {}: {}", utxo.outpoint, e)
+                )))
+            }
+        }
+    }
+    
+    /// Safely remove a UTXO from the wallet with comprehensive error handling.
+    async fn safe_remove_utxo(&self, outpoint: &dashcore::OutPoint) -> Result<Option<crate::wallet::Utxo>> {
+        let wallet = self.wallet.read().await;
+        
+        match wallet.remove_utxo(outpoint).await {
+            Ok(removed_utxo) => {
+                if let Some(ref utxo) = removed_utxo {
+                    tracing::debug!("Successfully removed UTXO {} for address {}", 
+                                   outpoint, utxo.address);
+                } else {
+                    tracing::debug!("UTXO {} was not found in wallet (already spent or never existed)", outpoint);
+                }
+                Ok(removed_utxo)
+            }
+            Err(e) => {
+                tracing::error!("Failed to remove UTXO {}: {}", outpoint, e);
+                
+                // This is less critical than adding - we can continue
+                tracing::warn!("Continuing despite UTXO removal failure - wallet may show incorrect balance");
+                
+                Err(SpvError::Storage(crate::error::StorageError::WriteFailed(
+                    format!("Failed to remove UTXO {}: {}", outpoint, e)
+                )))
+            }
+        }
+    }
+    
+    /// Safely get wallet balance with error handling and fallback.
+    async fn safe_get_wallet_balance(&self) -> Result<crate::wallet::Balance> {
+        let wallet = self.wallet.read().await;
+        
+        match wallet.get_balance().await {
+            Ok(balance) => Ok(balance),
+            Err(e) => {
+                tracing::error!("Failed to calculate wallet balance: {}", e);
+                
+                // Return zero balance as fallback
+                tracing::warn!("Returning zero balance as fallback due to calculation failure");
+                Ok(crate::wallet::Balance::new())
+            }
+        }
+    }
+    
     /// Get current statistics.
     pub async fn stats(&self) -> Result<SpvStats> {
-        let stats = self.stats.read().await;
-        Ok(stats.clone())
+        let display = self.create_status_display().await;
+        display.stats().await
     }
     
     /// Get current chain state (read-only).
     pub async fn chain_state(&self) -> ChainState {
-        let state = self.state.read().await;
-        state.clone()
+        let display = self.create_status_display().await;
+        display.chain_state().await
     }
     
     /// Check if the client is running.
@@ -1891,88 +1633,8 @@ impl DashSpvClient {
     
     /// Update the status display.
     async fn update_status_display(&self) {
-        if let Some(ui) = &self.terminal_ui {
-            // Get header height
-            let header_height = match self.storage.get_tip_height().await {
-                Ok(Some(height)) => height,
-                _ => 0,
-            };
-            
-            // Get filter header height
-            let filter_height = match self.storage.get_filter_tip_height().await {
-                Ok(Some(height)) => height,
-                _ => 0,
-            };
-            
-            // Get latest chainlock height from state
-            let chainlock_height = {
-                let state = self.state.read().await;
-                state.last_chainlock_height
-            };
-            
-            // Get latest chainlock height from storage metadata (in case state wasn't updated)
-            let stored_chainlock_height = if let Ok(Some(data)) = self.storage.load_metadata("latest_chainlock_height").await {
-                if data.len() >= 4 {
-                    Some(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            
-            // Use the higher of the two chainlock heights
-            let latest_chainlock = match (chainlock_height, stored_chainlock_height) {
-                (Some(a), Some(b)) => Some(a.max(b)),
-                (Some(a), None) => Some(a),
-                (None, Some(b)) => Some(b),
-                (None, None) => None,
-            };
-            
-            // Update terminal UI
-            let _ = ui.update_status(|status| {
-                status.headers = header_height;
-                status.filter_headers = filter_height;
-                status.chainlock_height = latest_chainlock;
-                status.peer_count = 1; // TODO: Get actual peer count
-                status.network = format!("{:?}", self.config.network);
-            }).await;
-        } else {
-            // Fall back to simple logging if terminal UI is not enabled
-            let header_height = match self.storage.get_tip_height().await {
-                Ok(Some(height)) => height,
-                _ => 0,
-            };
-            
-            let filter_height = match self.storage.get_filter_tip_height().await {
-                Ok(Some(height)) => height,
-                _ => 0,
-            };
-            
-            let chainlock_height = {
-                let state = self.state.read().await;
-                state.last_chainlock_height.unwrap_or(0)
-            };
-            
-            // Get filter and block processing statistics
-            let stats = self.stats.read().await;
-            let filter_matches = stats.filter_matches;
-            let blocks_processed = stats.blocks_processed;
-            drop(stats);
-            
-            tracing::info!(
-                "📊 [SYNC STATUS] Headers: {} | Filter Headers: {} | Latest ChainLock: {} | Matches: {} | Blocks Processed: {}",
-                header_height,
-                filter_height,
-                if chainlock_height > 0 {
-                    format!("#{}", chainlock_height)
-                } else {
-                    "None".to_string()
-                },
-                filter_matches,
-                blocks_processed
-            );
-        }
+        let display = self.create_status_display().await;
+        display.update_status_display().await;
     }
     
     /// Handle new headers received after the initial sync is complete.

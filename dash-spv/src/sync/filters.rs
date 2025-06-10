@@ -79,7 +79,7 @@ impl FilterSyncManager {
             return Ok(true);
         }
 
-        self.last_sync_progress = std::time::Instant::now();
+        // Don't update last_sync_progress here - only update when we actually make progress
         
         if cf_headers.filter_hashes.is_empty() {
             // Empty response indicates end of sync
@@ -110,13 +110,18 @@ impl FilterSyncManager {
             
             // Handle overlapping headers using the helper method
             let skip_count = (self.current_sync_height - batch_start_height) as usize;
-            let (_, new_current_height) = self.handle_overlapping_headers(
+            let (new_headers_stored, new_current_height) = self.handle_overlapping_headers(
                 &cf_headers, 
                 skip_count, 
                 self.current_sync_height, 
                 storage
             ).await?;
             self.current_sync_height = new_current_height;
+            
+            // Only record progress if we actually stored new headers
+            if new_headers_stored > 0 {
+                self.last_sync_progress = std::time::Instant::now();
+            }
         } else if batch_start_height > self.current_sync_height {
             // Gap in the sequence - this shouldn't happen in normal operation
             tracing::error!("❌ Gap detected in filter header sequence: expected start={}, received start={} (gap of {} headers)", 
@@ -132,8 +137,9 @@ impl FilterSyncManager {
                     // Store the verified filter headers
                     self.store_filter_headers(cf_headers.clone(), storage).await?;
                     
-                    // Update current height
+                    // Update current height and record progress
                     self.current_sync_height = stop_height + 1;
+                    self.last_sync_progress = std::time::Instant::now();
                     
                     // Check if we've reached the header tip
                     if stop_height >= header_tip_height {
@@ -1236,6 +1242,7 @@ impl FilterSyncManager {
         initial_watch_items: Vec<crate::types::WatchItem>,
         network_message_sender: mpsc::Sender<NetworkMessage>,
         processing_thread_requests: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<BlockHash>>>,
+        stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
     ) -> (FilterNotificationSender, crate::client::WatchItemUpdateSender) {
         let (filter_tx, mut filter_rx) = mpsc::unbounded_channel();
         let (watch_update_tx, mut watch_update_rx) = mpsc::unbounded_channel::<Vec<crate::types::WatchItem>>();
@@ -1250,7 +1257,7 @@ impl FilterSyncManager {
                 tokio::select! {
                     // Handle CFilter messages
                     Some(cfilter) = filter_rx.recv() => {
-                        if let Err(e) = Self::process_filter_notification(cfilter, &current_watch_items, &network_message_sender, &processing_thread_requests).await {
+                        if let Err(e) = Self::process_filter_notification(cfilter, &current_watch_items, &network_message_sender, &processing_thread_requests, &stats).await {
                             tracing::error!("Failed to process filter notification: {}", e);
                         }
                     }
@@ -1279,6 +1286,7 @@ impl FilterSyncManager {
         watch_items: &[crate::types::WatchItem],
         network_message_sender: &mpsc::Sender<NetworkMessage>,
         processing_thread_requests: &std::sync::Arc<std::sync::Mutex<std::collections::HashSet<BlockHash>>>,
+        stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
     ) -> SyncResult<()> {
         if watch_items.is_empty() {
             return Ok(());
@@ -1309,6 +1317,12 @@ impl FilterSyncManager {
         
         if matches {
             tracing::info!("🎯 Filter match found in processing thread for block {}", cfilter.block_hash);
+            
+            // Update filter match statistics
+            {
+                let mut stats_lock = stats.write().await;
+                stats_lock.filters_matched += 1;
+            }
             
             // Register this request in the processing thread tracking
             {

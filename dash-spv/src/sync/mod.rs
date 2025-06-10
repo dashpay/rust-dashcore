@@ -115,7 +115,7 @@ impl SyncManager {
     pub async fn handle_cfilter_message(
         &mut self,
         block_hash: dashcore::BlockHash,
-        storage: &mut dyn StorageManager,
+        _storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
         // For now, we don't have filter sync coordination implemented yet
         // This is a placeholder for future filter download tracking
