@@ -1288,6 +1288,9 @@ impl FilterSyncManager {
         processing_thread_requests: &std::sync::Arc<std::sync::Mutex<std::collections::HashSet<BlockHash>>>,
         stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
     ) -> SyncResult<()> {
+        // Update filter reception tracking
+        Self::update_filter_received(stats).await;
+        
         if watch_items.is_empty() {
             return Ok(());
         }
@@ -1386,5 +1389,75 @@ impl FilterSyncManager {
                 Err(SyncError::SyncFailed("BIP158 filter error".to_string()))
             }
         }
+    }
+    
+    /// Start tracking filter sync progress.
+    pub async fn start_filter_sync_tracking(
+        stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
+        total_filters_requested: u64,
+    ) {
+        let mut stats_lock = stats.write().await;
+        stats_lock.filters_requested = total_filters_requested;
+        stats_lock.filters_received = 0;
+        stats_lock.filter_sync_start_time = Some(std::time::Instant::now());
+        stats_lock.last_filter_received_time = None;
+        tracing::info!("📊 Started filter sync tracking: {} filters requested", total_filters_requested);
+    }
+    
+    /// Update filter reception tracking.
+    pub async fn update_filter_received(
+        stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
+    ) {
+        let mut stats_lock = stats.write().await;
+        stats_lock.filters_received += 1;
+        stats_lock.last_filter_received_time = Some(std::time::Instant::now());
+    }
+    
+    /// Get filter sync progress as percentage.
+    pub async fn get_filter_sync_progress(
+        stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
+    ) -> f64 {
+        let stats_lock = stats.read().await;
+        if stats_lock.filters_requested == 0 {
+            return 0.0;
+        }
+        (stats_lock.filters_received as f64 / stats_lock.filters_requested as f64) * 100.0
+    }
+    
+    /// Check if filter sync has timed out (no filters received for 30+ seconds).
+    pub async fn check_filter_sync_timeout(
+        stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
+    ) -> bool {
+        let stats_lock = stats.read().await;
+        if let Some(last_received) = stats_lock.last_filter_received_time {
+            last_received.elapsed() > std::time::Duration::from_secs(30)
+        } else if let Some(sync_start) = stats_lock.filter_sync_start_time {
+            // No filters received yet, check if we've been waiting too long
+            sync_start.elapsed() > std::time::Duration::from_secs(30)
+        } else {
+            false
+        }
+    }
+    
+    /// Get filter sync status information.
+    pub async fn get_filter_sync_status(
+        stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
+    ) -> (u64, u64, f64, bool) {
+        let stats_lock = stats.read().await;
+        let progress = if stats_lock.filters_requested == 0 {
+            0.0
+        } else {
+            (stats_lock.filters_received as f64 / stats_lock.filters_requested as f64) * 100.0
+        };
+        
+        let timeout = if let Some(last_received) = stats_lock.last_filter_received_time {
+            last_received.elapsed() > std::time::Duration::from_secs(30)
+        } else if let Some(sync_start) = stats_lock.filter_sync_start_time {
+            sync_start.elapsed() > std::time::Duration::from_secs(30)
+        } else {
+            false
+        };
+        
+        (stats_lock.filters_requested, stats_lock.filters_received, progress, timeout)
     }
 }

@@ -418,6 +418,20 @@ pub struct SpvStats {
     
     /// Connection uptime.
     pub uptime: std::time::Duration,
+    
+    /// Number of filters requested during sync.
+    pub filters_requested: u64,
+    
+    /// Number of filters received during sync.
+    pub filters_received: u64,
+    
+    /// Filter sync start time.
+    #[serde(skip)]
+    pub filter_sync_start_time: Option<std::time::Instant>,
+    
+    /// Last time a filter was received.
+    #[serde(skip)]
+    pub last_filter_received_time: Option<std::time::Instant>,
 }
 
 /// Balance information for an address.

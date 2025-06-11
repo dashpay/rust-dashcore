@@ -98,6 +98,12 @@ impl<'a> FilterSyncCoordinator<'a> {
         tracing::info!("Starting coordinated filter sync from height {} to {} ({} filters expected)", 
                       start_height, end_height, count);
         
+        // Start tracking filter sync progress
+        crate::sync::filters::FilterSyncManager::start_filter_sync_tracking(
+            self.stats, 
+            count as u64
+        ).await;
+        
         // Use batch processing to send filter requests
         let batch_size = 100;
         let mut current_height = start_height;
@@ -134,80 +140,10 @@ impl<'a> FilterSyncCoordinator<'a> {
         watch_items.iter().cloned().collect()
     }
     
-    /// Report a filter match to the user.
-    pub async fn report_filter_match(&self, block_hash: dashcore::BlockHash) -> Result<()> {
-        // Get block height for better reporting by scanning headers
-        let height = self.find_height_for_block_hash(block_hash).await
-            .unwrap_or(0);
-        
-        tracing::info!("🚨 FILTER MATCH DETECTED! Block {} at height {} contains transactions affecting watched addresses/scripts", 
-                      block_hash, height);
-        
-        // Update statistics
-        {
-            let mut stats = self.stats.write().await;
-            stats.filters_matched += 1;
-        }
-        
-        // TODO: Additional actions could be taken here:
-        // - Store the match in a database
-        // - Send notifications  
-        // - Update wallet balance (now happens in process_new_block when the full block arrives)
-        
-        Ok(())
-    }
-    
     /// Helper method to find height for a block hash.
     async fn find_height_for_block_hash(&self, block_hash: dashcore::BlockHash) -> Option<u32> {
         // Use the efficient reverse index
         self.storage.get_header_height_by_hash(&block_hash).await.ok().flatten()
     }
     
-    /// Process and check a compact filter for matches.
-    pub async fn process_and_check_filter(&mut self, cfilter: dashcore::network::message_filter::CFilter) -> Result<()> {
-        tracing::debug!("Processing compact filter for block {}", cfilter.block_hash);
-        
-        // Get watch items to check against
-        let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
-        
-        if watch_items.is_empty() {
-            tracing::debug!("No watch items configured, skipping filter check");
-            return Ok(());
-        }
-        
-        // Use FilterSyncManager to check for matches
-        let has_matches = self.sync_manager.filter_sync().check_filter_for_matches(
-            &cfilter.filter,
-            &cfilter.block_hash,
-            &watch_items,
-            &*self.storage
-        ).await.map_err(|e| SpvError::Sync(e))?;
-        
-        if has_matches {
-            tracing::info!("🎯 Filter match found for block {}!", cfilter.block_hash);
-            
-            // Get block height for the FilterMatch
-            let height = self.find_height_for_block_hash(cfilter.block_hash).await
-                .unwrap_or(0);
-            
-            // Create FilterMatch object
-            let filter_match = FilterMatch {
-                block_hash: cfilter.block_hash,
-                height,
-                block_requested: false,
-            };
-            
-            // Request the full block download
-            self.sync_manager.filter_sync_mut()
-                .request_block_download(filter_match, &mut *self.network)
-                .await
-                .map_err(|e| SpvError::Sync(e))?;
-            
-            self.report_filter_match(cfilter.block_hash).await?;
-        } else {
-            tracing::debug!("No filter matches for block {}", cfilter.block_hash);
-        }
-        
-        Ok(())
-    }
 }

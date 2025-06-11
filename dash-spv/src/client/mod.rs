@@ -506,6 +506,19 @@ impl DashSpvClient {
             if last_status_update.elapsed() >= status_update_interval {
                 self.update_status_display().await;
 
+                // Report filter sync progress if active
+                let (filters_requested, filters_received, progress, timeout) = 
+                    crate::sync::filters::FilterSyncManager::get_filter_sync_status(&self.stats).await;
+                
+                if filters_requested > 0 {
+                    tracing::info!("📊 Filter sync progress: {:.1}% ({}/{} filters received)", 
+                                  progress, filters_received, filters_requested);
+                    
+                    if timeout {
+                        tracing::warn!("⚠️  Filter sync timeout: no filters received in 30+ seconds");
+                    }
+                }
+
                 // Also update wallet confirmation statuses periodically
                 if let Err(e) = self.update_wallet_confirmations().await {
                     tracing::warn!("Failed to update wallet confirmations: {}", e);
@@ -753,75 +766,6 @@ impl DashSpvClient {
         // Store filter headers in storage via FilterSyncManager
         self.sync_manager.filter_sync_mut().store_filter_headers(cfheaders, &mut *self.storage).await
             .map_err(|e| SpvError::Sync(e))?;
-
-        Ok(())
-    }
-
-    /// Process and check a compact filter for matches.
-    async fn process_and_check_filter(&mut self, cfilter: dashcore::network::message_filter::CFilter) -> Result<()> {
-        tracing::debug!("Processing compact filter for block {}", cfilter.block_hash);
-
-        // Get watch items to check against
-        let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
-
-        if watch_items.is_empty() {
-            tracing::debug!("No watch items configured, skipping filter check");
-            return Ok(());
-        }
-
-        // Use FilterSyncManager to check for matches
-        let has_matches = self.sync_manager.filter_sync().check_filter_for_matches(
-            &cfilter.filter,
-            &cfilter.block_hash,
-            &watch_items,
-            &*self.storage
-        ).await.map_err(|e| SpvError::Sync(e))?;
-
-        if has_matches {
-            tracing::info!("🎯 Filter match found for block {}!", cfilter.block_hash);
-
-            // Get block height for the FilterMatch
-            let height = self.get_block_height_or_default(cfilter.block_hash).await;
-
-            // Create FilterMatch object
-            let filter_match = crate::types::FilterMatch {
-                block_hash: cfilter.block_hash,
-                height,
-                block_requested: false,
-            };
-
-            // Request the full block download
-            self.sync_manager.filter_sync_mut()
-                .request_block_download(filter_match, &mut *self.network)
-                .await
-                .map_err(|e| SpvError::Sync(e))?;
-
-            self.report_filter_match(cfilter.block_hash).await?;
-        } else {
-            tracing::debug!("No filter matches for block {}", cfilter.block_hash);
-        }
-
-        Ok(())
-    }
-
-    /// Report a filter match to the user.
-    async fn report_filter_match(&self, block_hash: dashcore::BlockHash) -> Result<()> {
-        // Get block height for better reporting by scanning headers
-        let height = self.get_block_height_or_default(block_hash).await;
-
-        tracing::info!("🚨 FILTER MATCH DETECTED! Block {} at height {} contains transactions affecting watched addresses/scripts",
-                      block_hash, height);
-
-        // Update filter match statistics
-        {
-            let mut stats = self.stats.write().await;
-            stats.filters_matched += 1;
-        }
-
-        // TODO: Additional actions could be taken here:
-        // - Store the match in a database
-        // - Send notifications
-        // - Update wallet balance (now happens in process_new_block when the full block arrives)
 
         Ok(())
     }
