@@ -1,0 +1,29 @@
+[package]
+name = "key-wallet-ffi"
+version = "0.39.6"
+authors = ["The Dash Core Developers"]
+edition = "2021"
+description = "FFI bindings for key-wallet library"
+keywords = ["dash", "wallet", "ffi", "bindings"]
+readme = "README.md"
+license = "CC0-1.0"
+
+[lib]
+name = "key_wallet_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[features]
+default = []
+
+[dependencies]
+key-wallet = { path = "../key-wallet", default-features = false, features = ["std"] }
+bitcoin_hashes = "0.14.0"
+secp256k1 = { version = "0.29.0", features = ["global-context"] }
+uniffi = { version = "0.27", features = ["cli"] }
+thiserror = "1.0"
+
+[build-dependencies]
+uniffi = { version = "0.27", features = ["build"] }
+
+[dev-dependencies]
+uniffi = { version = "0.27", features = ["bindgen-tests"] }

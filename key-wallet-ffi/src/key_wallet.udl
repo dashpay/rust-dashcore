@@ -1,0 +1,158 @@
+namespace key_wallet_ffi {
+    // Initialize the library (for any global setup)
+    void initialize();
+    
+    // Validate a mnemonic phrase
+    [Throws=KeyWalletError]
+    boolean validate_mnemonic(string phrase, Language language);
+};
+
+// Network enum
+enum Network {
+    "Dash",
+    "Testnet",
+    "Regtest",
+    "Devnet",
+};
+
+// Language enum for mnemonics
+enum Language {
+    "English",
+    "ChineseSimplified",
+    "ChineseTraditional", 
+    "French",
+    "Italian",
+    "Japanese",
+    "Korean",
+    "Spanish",
+};
+
+// Address type enum
+enum AddressType {
+    "P2PKH",
+    "P2SH",
+};
+
+// Error types
+[Error]
+interface KeyWalletError {
+    InvalidMnemonic(string message);
+    InvalidDerivationPath(string message);
+    InvalidAddress(string message);
+    Bip32Error(string message);
+    KeyError(string message);
+};
+
+// Mnemonic interface
+interface Mnemonic {
+    // Generate a new mnemonic
+    [Throws=KeyWalletError]
+    constructor(u32 word_count, Language language);
+    
+    // Create from phrase
+    [Throws=KeyWalletError, Name="from_phrase"]
+    constructor(string phrase, Language language);
+    
+    // Get the phrase
+    string get_phrase();
+    
+    // Get word count
+    u32 get_word_count();
+    
+    // Convert to seed with optional passphrase
+    sequence<u8> to_seed(string passphrase);
+};
+
+// Extended key interface
+interface ExtendedKey {
+    // Get the fingerprint
+    sequence<u8> get_fingerprint();
+    
+    // Get the chain code
+    sequence<u8> get_chain_code();
+    
+    // Get depth
+    u8 get_depth();
+    
+    // Get child number
+    u32 get_child_number();
+    
+    // Serialize to string
+    string to_string();
+};
+
+// HD Wallet interface
+interface HDWallet {
+    // Create from seed
+    [Throws=KeyWalletError, Name="from_seed"]
+    constructor(sequence<u8> seed, Network network);
+    
+    // Create from mnemonic
+    [Throws=KeyWalletError, Name="from_mnemonic"]
+    constructor(Mnemonic mnemonic, string passphrase, Network network);
+    
+    // Get master extended private key
+    [Throws=KeyWalletError]
+    ExtendedKey get_master_key();
+    
+    // Get master extended public key
+    [Throws=KeyWalletError]
+    ExtendedKey get_master_pub_key();
+    
+    // Derive a key at path
+    [Throws=KeyWalletError]
+    ExtendedKey derive(string path);
+    
+    // Derive a public key at path
+    [Throws=KeyWalletError]
+    ExtendedKey derive_pub(string path);
+    
+    // Get BIP44 account
+    [Throws=KeyWalletError]
+    ExtendedKey get_bip44_account(u32 account);
+    
+    // Get CoinJoin account
+    [Throws=KeyWalletError]
+    ExtendedKey get_coinjoin_account(u32 account);
+    
+    // Get identity authentication key
+    [Throws=KeyWalletError]
+    ExtendedKey get_identity_authentication_key(u32 identity_index, u32 key_index);
+};
+
+// Address interface
+interface Address {
+    // Create P2PKH address from public key
+    [Throws=KeyWalletError, Name="p2pkh"]
+    constructor(sequence<u8> pubkey, Network network);
+    
+    // Parse from string
+    [Throws=KeyWalletError, Name="from_string"]
+    constructor(string address, Network network);
+    
+    // Get string representation
+    string to_string();
+    
+    // Get address type
+    AddressType get_type();
+    
+    // Get network
+    Network get_network();
+    
+    // Get script pubkey
+    sequence<u8> get_script_pubkey();
+};
+
+// Address generator interface
+interface AddressGenerator {
+    // Create new generator
+    constructor(Network network);
+    
+    // Generate P2PKH address from extended public key
+    [Throws=KeyWalletError]
+    Address generate_p2pkh(ExtendedKey xpub);
+    
+    // Generate a range of addresses
+    [Throws=KeyWalletError]
+    sequence<Address> generate_range(ExtendedKey account_xpub, boolean external, u32 start, u32 count);
+};
