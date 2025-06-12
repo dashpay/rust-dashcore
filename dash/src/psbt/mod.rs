@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::Amount;
 use crate::bip32::{self, ExtendedPrivKey, ExtendedPubKey, KeySource};
+use crate::Network;
 use crate::blockdata::script::ScriptBuf;
 use crate::blockdata::transaction::Transaction;
 use crate::blockdata::transaction::txout::TxOut;
@@ -513,7 +514,16 @@ impl GetKey for ExtendedPrivKey {
             KeyRequest::Bip32((fingerprint, path)) => {
                 let key = if self.fingerprint(secp) == fingerprint {
                     let k = self.derive_priv(secp, &path)?;
-                    Some(k.to_priv())
+                    Some(PrivateKey {
+                        compressed: true,
+                        network: match k.network {
+                            key_wallet::Network::Dash => Network::Dash,
+                            key_wallet::Network::Testnet => Network::Testnet,
+                            key_wallet::Network::Regtest => Network::Regtest,
+                            key_wallet::Network::Devnet => Network::Devnet,
+                        },
+                        inner: k.private_key,
+                    })
                 } else {
                     None
                 };
@@ -547,7 +557,16 @@ impl GetKey for $set<ExtendedPrivKey> {
                 for xpriv in self.iter() {
                     if xpriv.parent_fingerprint == fingerprint {
                         let k = xpriv.derive_priv(secp, &path)?;
-                        return Ok(Some(k.to_priv()));
+                        return Ok(Some(PrivateKey {
+                            compressed: true,
+                            network: match k.network {
+                                key_wallet::Network::Dash => Network::Dash,
+                                key_wallet::Network::Testnet => Network::Testnet,
+                                key_wallet::Network::Regtest => Network::Regtest,
+                                key_wallet::Network::Devnet => Network::Devnet,
+                            },
+                            inner: k.private_key,
+                        }));
                     }
                 }
                 Ok(None)
@@ -582,7 +601,7 @@ impl_get_key_for_map!(BTreeMap);
 impl_get_key_for_map!(HashMap);
 
 /// Errors when getting a key.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 #[non_exhaustive]
 pub enum GetKeyError {
     /// A bip32 error.
@@ -829,7 +848,6 @@ mod tests {
     use secp256k1::{All, SecretKey};
 
     use super::*;
-    use crate::Network::Dash;
     use crate::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
     use crate::blockdata::script::ScriptBuf;
     use crate::blockdata::transaction::Transaction;
@@ -879,7 +897,7 @@ mod tests {
 
         let mut hd_keypaths: BTreeMap<secp256k1::PublicKey, KeySource> = Default::default();
 
-        let mut sk: ExtendedPrivKey = ExtendedPrivKey::new_master(Dash, &seed).unwrap();
+        let mut sk: ExtendedPrivKey = ExtendedPrivKey::new_master(key_wallet::Network::Dash, &seed).unwrap();
 
         let fprint = sk.fingerprint(secp);
 

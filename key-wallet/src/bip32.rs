@@ -163,6 +163,62 @@ impl ChainCode {
     }
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for ChainCode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ChainCode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        
+        let s = String::deserialize(deserializer)?;
+        if s.len() != 64 {
+            return Err(D::Error::custom("invalid chaincode length"));
+        }
+        
+        let mut bytes = [0u8; 32];
+        for (i, chunk) in s.as_bytes().chunks(2).enumerate() {
+            if i >= 32 {
+                return Err(D::Error::custom("invalid chaincode"));
+            }
+            let high = chunk[0]
+                .to_ascii_lowercase()
+                .checked_sub(b'0')
+                .and_then(|c| (c < 10).then(|| c))
+                .or_else(|| {
+                    chunk[0]
+                        .to_ascii_lowercase()
+                        .checked_sub(b'a')
+                        .and_then(|c| (c < 6).then(|| c + 10))
+                })
+                .ok_or_else(|| D::Error::custom("invalid hex character"))?;
+            let low = chunk[1]
+                .to_ascii_lowercase()
+                .checked_sub(b'0')
+                .and_then(|c| (c < 10).then(|| c))
+                .or_else(|| {
+                    chunk[1]
+                        .to_ascii_lowercase()
+                        .checked_sub(b'a')
+                        .and_then(|c| (c < 6).then(|| c + 10))
+                })
+                .ok_or_else(|| D::Error::custom("invalid hex character"))?;
+            bytes[i] = (high << 4) | low;
+        }
+        Ok(ChainCode(bytes))
+    }
+}
+
 /// A fingerprint
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Fingerprint([u8; 4]);
@@ -219,6 +275,46 @@ impl fmt::Debug for Fingerprint {
     }
 }
 
+impl core::str::FromStr for Fingerprint {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() != 8 {
+            return Err(Error::InvalidPublicKeyHexLength(s.len()));
+        }
+        let mut bytes = [0u8; 4];
+        for (i, chunk) in s.as_bytes().chunks(2).enumerate() {
+            if i >= 4 {
+                return Err(Error::InvalidPublicKeyHexLength(s.len()));
+            }
+            let high = chunk[0]
+                .to_ascii_lowercase()
+                .checked_sub(b'0')
+                .and_then(|c| (c < 10).then(|| c))
+                .or_else(|| {
+                    chunk[0]
+                        .to_ascii_lowercase()
+                        .checked_sub(b'a')
+                        .and_then(|c| (c < 6).then(|| c + 10))
+                })
+                .ok_or(Error::InvalidPublicKeyHexLength(s.len()))?;
+            let low = chunk[1]
+                .to_ascii_lowercase()
+                .checked_sub(b'0')
+                .and_then(|c| (c < 10).then(|| c))
+                .or_else(|| {
+                    chunk[1]
+                        .to_ascii_lowercase()
+                        .checked_sub(b'a')
+                        .and_then(|c| (c < 6).then(|| c + 10))
+                })
+                .ok_or(Error::InvalidPublicKeyHexLength(s.len()))?;
+            bytes[i] = (high << 4) | low;
+        }
+        Ok(Fingerprint(bytes))
+    }
+}
+
 impl fmt::LowerHex for Fingerprint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for &byte in &self.0 {
@@ -265,6 +361,29 @@ impl core::ops::Index<core::ops::RangeFull> for Fingerprint {
 
     fn index(&self, _: core::ops::RangeFull) -> &Self::Output {
         &self.0[..]
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Fingerprint {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&format!("{:x}", self))
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Fingerprint {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        
+        let s = String::deserialize(deserializer)?;
+        Self::from_str(&s).map_err(|_| D::Error::custom("invalid fingerprint"))
     }
 }
 

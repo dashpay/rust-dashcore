@@ -11,6 +11,10 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+#[cfg(test)]
+#[macro_use]
+mod test_macros;
+
 pub mod address;
 pub mod bip32;
 pub mod derivation;

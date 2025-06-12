@@ -103,13 +103,15 @@ pub mod amount;
 pub mod base58;
 pub mod bip152;
 pub mod bip158;
-pub mod bip32;
+// Re-export bip32 from key-wallet
+pub use key_wallet::bip32;
 pub mod blockdata;
 pub mod consensus;
 // Private until we either make this a crate or flatten it - still to be decided.
 pub mod bls_sig_utils;
 pub(crate) mod crypto;
-mod dip9;
+// Re-export dip9 from key-wallet  
+use key_wallet::dip9;
 pub mod ephemerealdata;
 pub mod error;
 pub mod hash_types;

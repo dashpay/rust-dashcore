@@ -15,7 +15,7 @@ serde = ["dep:serde", "bitcoin_hashes/serde", "secp256k1/serde"]
 
 [dependencies]
 bitcoin_hashes = { version = "0.14.0", default-features = false }
-secp256k1 = { version = "0.29.0", default-features = false, features = ["hashes", "recovery"] }
+secp256k1 = { version = "0.30.0", default-features = false, features = ["hashes", "recovery"] }
 bip39 = { version = "2.0.0", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
 base58ck = { version = "0.1.0", default-features = false }
