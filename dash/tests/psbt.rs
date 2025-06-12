@@ -131,7 +131,9 @@ fn build_extended_private_key() -> ExtendedPrivKey {
     let xpriv = ExtendedPrivKey::from_str(extended_private_key).unwrap();
 
     let sk = PrivateKey::from_wif(seed).unwrap();
-    let seeded = ExtendedPrivKey::new_master(key_wallet::Network::Testnet, &sk.inner.secret_bytes()).unwrap();
+    let seeded =
+        ExtendedPrivKey::new_master(key_wallet::Network::Testnet, &sk.inner.secret_bytes())
+            .unwrap();
     assert_eq!(xpriv, seeded);
 
     xpriv

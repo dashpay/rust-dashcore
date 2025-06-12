@@ -10,7 +10,7 @@ license = "CC0-1.0"
 
 [lib]
 name = "key_wallet_ffi"
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "lib"]
 
 [features]
 default = []

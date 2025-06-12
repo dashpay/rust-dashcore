@@ -110,7 +110,7 @@ pub mod consensus;
 // Private until we either make this a crate or flatten it - still to be decided.
 pub mod bls_sig_utils;
 pub(crate) mod crypto;
-// Re-export dip9 from key-wallet  
+// Re-export dip9 from key-wallet
 use key_wallet::dip9;
 pub mod ephemerealdata;
 pub mod error;

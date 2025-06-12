@@ -12,6 +12,9 @@ use secp256k1::{PublicKey, Secp256k1};
 // Include the UniFFI scaffolding
 uniffi::include_scaffolding!("key_wallet");
 
+#[cfg(test)]
+mod lib_tests;
+
 // Initialize function
 pub fn initialize() {
     // Any global initialization if needed

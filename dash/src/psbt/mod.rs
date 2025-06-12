@@ -12,8 +12,8 @@ use core::{cmp, fmt};
 use std::collections::{HashMap, HashSet};
 
 use crate::Amount;
-use crate::bip32::{self, ExtendedPrivKey, ExtendedPubKey, KeySource};
 use crate::Network;
+use crate::bip32::{self, ExtendedPrivKey, ExtendedPubKey, KeySource};
 use crate::blockdata::script::ScriptBuf;
 use crate::blockdata::transaction::Transaction;
 use crate::blockdata::transaction::txout::TxOut;
@@ -897,7 +897,8 @@ mod tests {
 
         let mut hd_keypaths: BTreeMap<secp256k1::PublicKey, KeySource> = Default::default();
 
-        let mut sk: ExtendedPrivKey = ExtendedPrivKey::new_master(key_wallet::Network::Dash, &seed).unwrap();
+        let mut sk: ExtendedPrivKey =
+            ExtendedPrivKey::new_master(key_wallet::Network::Dash, &seed).unwrap();
 
         let fprint = sk.fingerprint(secp);
 

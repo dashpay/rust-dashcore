@@ -180,12 +180,12 @@ impl<'de> serde::Deserialize<'de> for ChainCode {
         D: serde::Deserializer<'de>,
     {
         use serde::de::Error;
-        
+
         let s = String::deserialize(deserializer)?;
         if s.len() != 64 {
             return Err(D::Error::custom("invalid chaincode length"));
         }
-        
+
         let mut bytes = [0u8; 32];
         for (i, chunk) in s.as_bytes().chunks(2).enumerate() {
             if i >= 32 {
@@ -381,7 +381,7 @@ impl<'de> serde::Deserialize<'de> for Fingerprint {
         D: serde::Deserializer<'de>,
     {
         use serde::de::Error;
-        
+
         let s = String::deserialize(deserializer)?;
         Self::from_str(&s).map_err(|_| D::Error::custom("invalid fingerprint"))
     }
