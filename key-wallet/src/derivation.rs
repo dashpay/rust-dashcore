@@ -57,7 +57,7 @@ impl HDWallet {
     }
 
     /// Create from a seed
-    pub fn from_seed(seed: &[u8], network: crate::address::Network) -> Result<Self> {
+    pub fn from_seed(seed: &[u8], network: crate::Network) -> Result<Self> {
         let master_key = ExtendedPrivKey::new_master(network, seed)?;
         Ok(Self::new(master_key))
     }
@@ -86,14 +86,16 @@ impl HDWallet {
     /// Get a standard BIP44 account key
     pub fn bip44_account(&self, account: u32) -> Result<ExtendedPrivKey> {
         let path = match self.master_key.network {
-            crate::address::Network::Dash => crate::dip9::DASH_BIP44_PATH_MAINNET,
-            crate::address::Network::Testnet => crate::dip9::DASH_BIP44_PATH_TESTNET,
+            crate::Network::Dash => crate::dip9::DASH_BIP44_PATH_MAINNET,
+            crate::Network::Testnet => crate::dip9::DASH_BIP44_PATH_TESTNET,
             _ => return Err(Error::InvalidNetwork),
         };
 
         // Convert to DerivationPath and append account index
         let mut full_path = crate::bip32::DerivationPath::from(path);
-        full_path.push(crate::bip32::ChildNumber::from_hardened_idx(account).unwrap());
+        let child_number = crate::bip32::ChildNumber::from_hardened_idx(account)
+            .map_err(|e| Error::InvalidDerivationPath(e.to_string()))?;
+        full_path.push(child_number);
 
         self.derive(&full_path)
     }
@@ -101,14 +103,16 @@ impl HDWallet {
     /// Get a CoinJoin account key
     pub fn coinjoin_account(&self, account: u32) -> Result<ExtendedPrivKey> {
         let path = match self.master_key.network {
-            crate::address::Network::Dash => crate::dip9::COINJOIN_PATH_MAINNET,
-            crate::address::Network::Testnet => crate::dip9::COINJOIN_PATH_TESTNET,
+            crate::Network::Dash => crate::dip9::COINJOIN_PATH_MAINNET,
+            crate::Network::Testnet => crate::dip9::COINJOIN_PATH_TESTNET,
             _ => return Err(Error::InvalidNetwork),
         };
 
         // Convert to DerivationPath and append account index
         let mut full_path = crate::bip32::DerivationPath::from(path);
-        full_path.push(crate::bip32::ChildNumber::from_hardened_idx(account).unwrap());
+        let child_number = crate::bip32::ChildNumber::from_hardened_idx(account)
+            .map_err(|e| Error::InvalidDerivationPath(e.to_string()))?;
+        full_path.push(child_number);
 
         self.derive(&full_path)
     }
@@ -120,8 +124,8 @@ impl HDWallet {
         key_index: u32,
     ) -> Result<ExtendedPrivKey> {
         let path = match self.master_key.network {
-            crate::address::Network::Dash => crate::dip9::IDENTITY_AUTHENTICATION_PATH_MAINNET,
-            crate::address::Network::Testnet => crate::dip9::IDENTITY_AUTHENTICATION_PATH_TESTNET,
+            crate::Network::Dash => crate::dip9::IDENTITY_AUTHENTICATION_PATH_MAINNET,
+            crate::Network::Testnet => crate::dip9::IDENTITY_AUTHENTICATION_PATH_TESTNET,
             _ => return Err(Error::InvalidNetwork),
         };
 
@@ -179,7 +183,7 @@ mod tests {
         ).unwrap();
 
         let seed = mnemonic.to_seed("");
-        let wallet = HDWallet::from_seed(&seed, crate::address::Network::Dash).unwrap();
+        let wallet = HDWallet::from_seed(&seed, crate::Network::Dash).unwrap();
 
         // Test BIP44 account derivation
         let account0 = wallet.bip44_account(0).unwrap();

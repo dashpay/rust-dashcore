@@ -7,8 +7,8 @@ use std::{env, process};
 
 use dashcore::consensus::{Decodable, encode};
 use dashcore::network::{address, constants, message, message_network};
-use dashcore::secp256k1;
 use dashcore::secp256k1::rand::Rng;
+use dashcore::{Network, secp256k1};
 use secp256k1::rand;
 
 fn main() {
@@ -30,7 +30,7 @@ fn main() {
     let version_message = build_version_message(address);
 
     let first_message = message::RawNetworkMessage {
-        magic: constants::Network::Dash.magic(),
+        magic: Network::Dash.magic(),
         payload: version_message,
     };
 
@@ -50,7 +50,7 @@ fn main() {
                     println!("Received version message: {:?}", reply.payload);
 
                     let second_message = message::RawNetworkMessage {
-                        magic: constants::Network::Dash.magic(),
+                        magic: Network::Dash.magic(),
                         payload: message::NetworkMessage::Verack,
                     };
 

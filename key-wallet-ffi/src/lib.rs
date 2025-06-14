@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use key_wallet::{
     self as kw, address as kw_address, derivation::HDWallet as KwHDWallet, mnemonic as kw_mnemonic,
-    DerivationPath, ExtendedPrivKey, ExtendedPubKey,
+    DerivationPath as KwDerivationPath, ExtendedPrivKey, ExtendedPubKey, Network as KwNetwork,
 };
 use secp256k1::{PublicKey, Secp256k1};
 
@@ -67,6 +67,7 @@ impl From<Language> for kw_mnemonic::Language {
     }
 }
 
+// Define address type for FFI
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressType {
     P2PKH,
@@ -82,27 +83,79 @@ impl From<kw_address::AddressType> for AddressType {
     }
 }
 
-// Error types
-#[derive(Debug, thiserror::Error)]
+impl From<AddressType> for kw_address::AddressType {
+    fn from(t: AddressType) -> Self {
+        match t {
+            AddressType::P2PKH => kw_address::AddressType::P2PKH,
+            AddressType::P2SH => kw_address::AddressType::P2SH,
+        }
+    }
+}
+
+// Define derivation path type
+pub struct DerivationPath {
+    pub path: String,
+}
+
+impl DerivationPath {
+    pub fn new(path: String) -> Result<Self, KeyWalletError> {
+        // Validate the path by trying to parse it
+        KwDerivationPath::from_str(&path).map_err(|e| KeyWalletError::InvalidDerivationPath {
+            message: e.to_string(),
+        })?;
+        Ok(Self {
+            path,
+        })
+    }
+}
+
+// Define account extended keys
+pub struct AccountXPriv {
+    pub derivation_path: String,
+    pub xpriv: String,
+}
+
+pub struct AccountXPub {
+    pub derivation_path: String,
+    pub xpub: String,
+    pub pub_key: Option<Vec<u8>>,
+}
+
+impl AccountXPub {
+    pub fn new(derivation_path: String, xpub: String) -> Self {
+        Self {
+            derivation_path,
+            xpub,
+            pub_key: None,
+        }
+    }
+}
+
+// Custom error type for FFI
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum KeyWalletError {
     #[error("Invalid mnemonic: {message}")]
     InvalidMnemonic {
         message: String,
     },
+
     #[error("Invalid derivation path: {message}")]
     InvalidDerivationPath {
         message: String,
     },
-    #[error("Invalid address: {message}")]
-    InvalidAddress {
-        message: String,
-    },
-    #[error("BIP32 error: {message}")]
-    Bip32Error {
-        message: String,
-    },
+
     #[error("Key error: {message}")]
     KeyError {
+        message: String,
+    },
+
+    #[error("Secp256k1 error: {message}")]
+    Secp256k1Error {
+        message: String,
+    },
+
+    #[error("Address error: {message}")]
+    AddressError {
         message: String,
     },
 }
@@ -116,132 +169,69 @@ impl From<kw::Error> for KeyWalletError {
             kw::Error::InvalidDerivationPath(msg) => KeyWalletError::InvalidDerivationPath {
                 message: msg,
             },
-            kw::Error::InvalidAddress(msg) => KeyWalletError::InvalidAddress {
+            kw::Error::Bip32(err) => KeyWalletError::KeyError {
+                message: err.to_string(),
+            },
+            kw::Error::Secp256k1(err) => KeyWalletError::Secp256k1Error {
+                message: err.to_string(),
+            },
+            kw::Error::InvalidAddress(msg) => KeyWalletError::AddressError {
                 message: msg,
             },
-            kw::Error::Bip32(e) => KeyWalletError::Bip32Error {
-                message: e.to_string(),
+            kw::Error::Base58 => KeyWalletError::AddressError {
+                message: "Base58 encoding error".into(),
+            },
+            kw::Error::InvalidNetwork => KeyWalletError::AddressError {
+                message: "Invalid network".into(),
             },
             kw::Error::KeyError(msg) => KeyWalletError::KeyError {
                 message: msg,
             },
-            _ => KeyWalletError::KeyError {
-                message: e.to_string(),
-            },
         }
     }
+}
+
+impl From<kw::bip32::Error> for KeyWalletError {
+    fn from(e: kw::bip32::Error) -> Self {
+        KeyWalletError::KeyError {
+            message: e.to_string(),
+        }
+    }
+}
+
+// Validate mnemonic function
+pub fn validate_mnemonic(phrase: String, language: Language) -> Result<bool, KeyWalletError> {
+    Ok(kw::Mnemonic::validate(&phrase, language.into()))
 }
 
 // Mnemonic wrapper
 pub struct Mnemonic {
-    inner: kw_mnemonic::Mnemonic,
+    inner: kw::Mnemonic,
 }
 
 impl Mnemonic {
-    pub fn new(word_count: u32, language: Language) -> Result<Self, KeyWalletError> {
-        let mnemonic = kw_mnemonic::Mnemonic::generate(word_count as usize, language.into())
+    pub fn new(phrase: String, language: Language) -> Result<Self, KeyWalletError> {
+        let inner = kw::Mnemonic::from_phrase(&phrase, language.into())
             .map_err(|e| KeyWalletError::from(e))?;
         Ok(Self {
-            inner: mnemonic,
+            inner,
         })
     }
 
-    pub fn from_phrase(phrase: String, language: Language) -> Result<Self, KeyWalletError> {
-        let mnemonic = kw_mnemonic::Mnemonic::from_phrase(&phrase, language.into())
+    pub fn generate(language: Language, word_count: u8) -> Result<Self, KeyWalletError> {
+        let inner = kw::Mnemonic::generate(word_count as usize, language.into())
             .map_err(|e| KeyWalletError::from(e))?;
         Ok(Self {
-            inner: mnemonic,
+            inner,
         })
     }
 
-    pub fn get_phrase(&self) -> String {
-        self.inner.phrase().to_string()
-    }
-
-    pub fn get_word_count(&self) -> u32 {
-        self.inner.word_count() as u32
+    pub fn phrase(&self) -> String {
+        self.inner.phrase()
     }
 
     pub fn to_seed(&self, passphrase: String) -> Vec<u8> {
         self.inner.to_seed(&passphrase).to_vec()
-    }
-}
-
-// Namespace-level function for validating mnemonics
-pub fn validate_mnemonic(phrase: String, language: Language) -> Result<bool, KeyWalletError> {
-    Ok(kw_mnemonic::Mnemonic::validate(&phrase, language.into()))
-}
-
-// Extended key wrapper
-pub struct ExtendedKey {
-    priv_key: Option<ExtendedPrivKey>,
-    pub_key: Option<ExtendedPubKey>,
-}
-
-impl ExtendedKey {
-    fn from_priv(key: ExtendedPrivKey) -> Self {
-        Self {
-            priv_key: Some(key),
-            pub_key: None,
-        }
-    }
-
-    fn from_pub(key: ExtendedPubKey) -> Self {
-        Self {
-            priv_key: None,
-            pub_key: Some(key),
-        }
-    }
-
-    pub fn get_fingerprint(&self) -> Vec<u8> {
-        let secp = Secp256k1::new();
-        if let Some(ref priv_key) = self.priv_key {
-            priv_key.fingerprint(&secp).as_ref().to_vec()
-        } else if let Some(ref pub_key) = self.pub_key {
-            pub_key.fingerprint().as_ref().to_vec()
-        } else {
-            vec![]
-        }
-    }
-
-    pub fn get_chain_code(&self) -> Vec<u8> {
-        if let Some(ref priv_key) = self.priv_key {
-            priv_key.chain_code.as_ref().to_vec()
-        } else if let Some(ref pub_key) = self.pub_key {
-            pub_key.chain_code.as_ref().to_vec()
-        } else {
-            vec![]
-        }
-    }
-
-    pub fn get_depth(&self) -> u8 {
-        if let Some(ref priv_key) = self.priv_key {
-            priv_key.depth
-        } else if let Some(ref pub_key) = self.pub_key {
-            pub_key.depth
-        } else {
-            0
-        }
-    }
-
-    pub fn get_child_number(&self) -> u32 {
-        if let Some(ref priv_key) = self.priv_key {
-            u32::from(priv_key.child_number)
-        } else if let Some(ref pub_key) = self.pub_key {
-            u32::from(pub_key.child_number)
-        } else {
-            0
-        }
-    }
-
-    pub fn to_string(&self) -> String {
-        if let Some(ref priv_key) = self.priv_key {
-            priv_key.to_string()
-        } else if let Some(ref pub_key) = self.pub_key {
-            pub_key.to_string()
-        } else {
-            String::new()
-        }
     }
 }
 
@@ -251,69 +241,185 @@ pub struct HDWallet {
 }
 
 impl HDWallet {
-    pub fn from_seed(seed: Vec<u8>, network: Network) -> Result<Self, KeyWalletError> {
-        let wallet =
-            KwHDWallet::from_seed(&seed, network.into()).map_err(|e| KeyWalletError::from(e))?;
-        Ok(Self {
-            inner: wallet,
-        })
-    }
-
     pub fn from_mnemonic(
         mnemonic: Arc<Mnemonic>,
         passphrase: String,
         network: Network,
     ) -> Result<Self, KeyWalletError> {
-        let seed = mnemonic.inner.to_seed(&passphrase);
-        Self::from_seed(seed.to_vec(), network)
+        let seed = mnemonic.to_seed(passphrase);
+        Self::from_seed(seed, network)
     }
 
-    pub fn get_master_key(&self) -> Result<Arc<ExtendedKey>, KeyWalletError> {
-        Ok(Arc::new(ExtendedKey::from_priv(self.inner.master_key().clone())))
+    pub fn from_seed(seed: Vec<u8>, network: Network) -> Result<Self, KeyWalletError> {
+        let inner =
+            KwHDWallet::from_seed(&seed, network.into()).map_err(|e| KeyWalletError::from(e))?;
+        Ok(Self {
+            inner,
+        })
     }
 
-    pub fn get_master_pub_key(&self) -> Result<Arc<ExtendedKey>, KeyWalletError> {
-        Ok(Arc::new(ExtendedKey::from_pub(self.inner.master_pub_key())))
+    pub fn get_account_xpriv(&self, account: u32) -> Result<AccountXPriv, KeyWalletError> {
+        let account_key = self.inner.bip44_account(account).map_err(|e| KeyWalletError::from(e))?;
+
+        let derivation_path = format!("m/44'/5'/{}'", account);
+
+        Ok(AccountXPriv {
+            derivation_path,
+            xpriv: account_key.to_string(),
+        })
     }
 
-    pub fn derive(&self, path: String) -> Result<Arc<ExtendedKey>, KeyWalletError> {
-        let derivation_path =
-            DerivationPath::from_str(&path).map_err(|e| KeyWalletError::InvalidDerivationPath {
-                message: e.to_string(),
-            })?;
-        let key = self.inner.derive(&derivation_path).map_err(|e| KeyWalletError::from(e))?;
-        Ok(Arc::new(ExtendedKey::from_priv(key)))
+    pub fn get_account_xpub(&self, account: u32) -> Result<AccountXPub, KeyWalletError> {
+        let account_key = self.inner.bip44_account(account).map_err(|e| KeyWalletError::from(e))?;
+
+        let secp = Secp256k1::new();
+        let xpub = ExtendedPubKey::from_priv(&secp, &account_key);
+
+        let derivation_path = format!("m/44'/5'/{}'", account);
+
+        Ok(AccountXPub {
+            derivation_path,
+            xpub: xpub.to_string(),
+            pub_key: Some(xpub.public_key.serialize().to_vec()),
+        })
     }
 
-    pub fn derive_pub(&self, path: String) -> Result<Arc<ExtendedKey>, KeyWalletError> {
-        let derivation_path =
-            DerivationPath::from_str(&path).map_err(|e| KeyWalletError::InvalidDerivationPath {
-                message: e.to_string(),
-            })?;
-        let key = self.inner.derive_pub(&derivation_path).map_err(|e| KeyWalletError::from(e))?;
-        Ok(Arc::new(ExtendedKey::from_pub(key)))
-    }
-
-    pub fn get_bip44_account(&self, account: u32) -> Result<Arc<ExtendedKey>, KeyWalletError> {
-        let key = self.inner.bip44_account(account).map_err(|e| KeyWalletError::from(e))?;
-        Ok(Arc::new(ExtendedKey::from_priv(key)))
-    }
-
-    pub fn get_coinjoin_account(&self, account: u32) -> Result<Arc<ExtendedKey>, KeyWalletError> {
-        let key = self.inner.coinjoin_account(account).map_err(|e| KeyWalletError::from(e))?;
-        Ok(Arc::new(ExtendedKey::from_priv(key)))
-    }
-
-    pub fn get_identity_authentication_key(
+    pub fn get_identity_authentication_key_at_index(
         &self,
         identity_index: u32,
         key_index: u32,
-    ) -> Result<Arc<ExtendedKey>, KeyWalletError> {
+    ) -> Result<Vec<u8>, KeyWalletError> {
         let key = self
             .inner
             .identity_authentication_key(identity_index, key_index)
             .map_err(|e| KeyWalletError::from(e))?;
-        Ok(Arc::new(ExtendedKey::from_priv(key)))
+        Ok(key.private_key[..].to_vec())
+    }
+
+    pub fn derive_xpriv(&self, path: String) -> Result<String, KeyWalletError> {
+        let derivation_path = KwDerivationPath::from_str(&path).map_err(|e| {
+            KeyWalletError::InvalidDerivationPath {
+                message: e.to_string(),
+            }
+        })?;
+
+        let xpriv = self.inner.derive(&derivation_path).map_err(|e| KeyWalletError::from(e))?;
+
+        Ok(xpriv.to_string())
+    }
+
+    pub fn derive_xpub(&self, path: String) -> Result<AccountXPub, KeyWalletError> {
+        let derivation_path = KwDerivationPath::from_str(&path).map_err(|e| {
+            KeyWalletError::InvalidDerivationPath {
+                message: e.to_string(),
+            }
+        })?;
+
+        let xpub = self.inner.derive_pub(&derivation_path).map_err(|e| KeyWalletError::from(e))?;
+
+        Ok(AccountXPub {
+            derivation_path: path,
+            xpub: xpub.to_string(),
+            pub_key: Some(xpub.public_key.serialize().to_vec()),
+        })
+    }
+}
+
+// Extended Private Key wrapper
+pub struct ExtPrivKey {
+    inner: ExtendedPrivKey,
+}
+
+impl ExtPrivKey {
+    pub fn from_string(xpriv: String) -> Result<Self, KeyWalletError> {
+        let inner = ExtendedPrivKey::from_str(&xpriv).map_err(|e| KeyWalletError::KeyError {
+            message: e.to_string(),
+        })?;
+        Ok(Self {
+            inner,
+        })
+    }
+
+    pub fn get_xpub(&self) -> AccountXPub {
+        let secp = Secp256k1::new();
+        let xpub = ExtendedPubKey::from_priv(&secp, &self.inner);
+
+        AccountXPub {
+            derivation_path: String::new(),
+            xpub: xpub.to_string(),
+            pub_key: Some(xpub.public_key.serialize().to_vec()),
+        }
+    }
+
+    pub fn derive_child(
+        &self,
+        index: u32,
+        hardened: bool,
+    ) -> Result<Arc<ExtPrivKey>, KeyWalletError> {
+        let child_number = if hardened {
+            kw::ChildNumber::from_hardened_idx(index)
+        } else {
+            kw::ChildNumber::from_normal_idx(index)
+        }
+        .map_err(|e| KeyWalletError::InvalidDerivationPath {
+            message: e.to_string(),
+        })?;
+
+        let secp = Secp256k1::new();
+        let child =
+            self.inner.ckd_priv(&secp, child_number).map_err(|e| KeyWalletError::KeyError {
+                message: e.to_string(),
+            })?;
+
+        Ok(Arc::new(ExtPrivKey {
+            inner: child,
+        }))
+    }
+
+    pub fn to_string(&self) -> String {
+        self.inner.to_string()
+    }
+}
+
+// Extended Public Key wrapper
+pub struct ExtPubKey {
+    inner: ExtendedPubKey,
+}
+
+impl ExtPubKey {
+    pub fn from_string(xpub: String) -> Result<Self, KeyWalletError> {
+        let inner = ExtendedPubKey::from_str(&xpub).map_err(|e| KeyWalletError::KeyError {
+            message: e.to_string(),
+        })?;
+        Ok(Self {
+            inner,
+        })
+    }
+
+    pub fn derive_child(&self, index: u32) -> Result<Arc<ExtPubKey>, KeyWalletError> {
+        let child_number = kw::ChildNumber::from_normal_idx(index).map_err(|e| {
+            KeyWalletError::InvalidDerivationPath {
+                message: e.to_string(),
+            }
+        })?;
+
+        let secp = Secp256k1::new();
+        let child =
+            self.inner.ckd_pub(&secp, child_number).map_err(|e| KeyWalletError::KeyError {
+                message: e.to_string(),
+            })?;
+
+        Ok(Arc::new(ExtPubKey {
+            inner: child,
+        }))
+    }
+
+    pub fn get_public_key(&self) -> Vec<u8> {
+        self.inner.public_key.serialize().to_vec()
+    }
+
+    pub fn to_string(&self) -> String {
+        self.inner.to_string()
     }
 }
 
@@ -323,21 +429,22 @@ pub struct Address {
 }
 
 impl Address {
-    pub fn p2pkh(pubkey: Vec<u8>, network: Network) -> Result<Self, KeyWalletError> {
-        let pk = PublicKey::from_slice(&pubkey).map_err(|e| KeyWalletError::KeyError {
-            message: e.to_string(),
-        })?;
-        let addr = kw_address::Address::p2pkh(&pk, network.into());
+    pub fn from_string(address: String, network: Network) -> Result<Self, KeyWalletError> {
+        let inner = kw_address::Address::from_str(&address, network.into())
+            .map_err(|e| KeyWalletError::from(e))?;
         Ok(Self {
-            inner: addr,
+            inner,
         })
     }
 
-    pub fn from_string(address: String, network: Network) -> Result<Self, KeyWalletError> {
-        let addr = kw_address::Address::from_str(&address, network.into())
-            .map_err(|e| KeyWalletError::from(e))?;
+    pub fn from_public_key(public_key: Vec<u8>, network: Network) -> Result<Self, KeyWalletError> {
+        let pubkey =
+            PublicKey::from_slice(&public_key).map_err(|e| KeyWalletError::Secp256k1Error {
+                message: e.to_string(),
+            })?;
+        let inner = kw_address::Address::p2pkh(&pubkey, network.into());
         Ok(Self {
-            inner: addr,
+            inner,
         })
     }
 
@@ -351,10 +458,11 @@ impl Address {
 
     pub fn get_network(&self) -> Network {
         match self.inner.network {
-            kw_address::Network::Dash => Network::Dash,
-            kw_address::Network::Testnet => Network::Testnet,
-            kw_address::Network::Regtest => Network::Regtest,
-            kw_address::Network::Devnet => Network::Devnet,
+            KwNetwork::Dash => Network::Dash,
+            KwNetwork::Testnet => Network::Testnet,
+            KwNetwork::Regtest => Network::Regtest,
+            KwNetwork::Devnet => Network::Devnet,
+            _ => Network::Testnet, // Default for unknown networks
         }
     }
 
@@ -375,37 +483,88 @@ impl AddressGenerator {
         }
     }
 
-    pub fn generate_p2pkh(&self, xpub: Arc<ExtendedKey>) -> Result<Arc<Address>, KeyWalletError> {
-        let pub_key = xpub.pub_key.as_ref().ok_or_else(|| KeyWalletError::KeyError {
-            message: "Expected public key".into(),
+    pub fn generate(
+        &self,
+        account_xpub: AccountXPub,
+        external: bool,
+        index: u32,
+    ) -> Result<Address, KeyWalletError> {
+        // Parse the extended public key from string
+        let xpub =
+            ExtendedPubKey::from_str(&account_xpub.xpub).map_err(|e| KeyWalletError::KeyError {
+                message: e.to_string(),
+            })?;
+
+        // Generate addresses for a single index
+        let addrs = self
+            .inner
+            .generate_range(&xpub, external, index, 1)
+            .map_err(|e| KeyWalletError::from(e))?;
+
+        let addr = addrs.into_iter().next().ok_or_else(|| KeyWalletError::KeyError {
+            message: "Failed to generate address".into(),
         })?;
-        let addr = self.inner.generate_p2pkh(pub_key);
-        Ok(Arc::new(Address {
+
+        Ok(Address {
             inner: addr,
-        }))
+        })
     }
 
     pub fn generate_range(
         &self,
-        account_xpub: Arc<ExtendedKey>,
+        account_xpub: AccountXPub,
         external: bool,
         start: u32,
         count: u32,
-    ) -> Result<Vec<Arc<Address>>, KeyWalletError> {
-        let pub_key = account_xpub.pub_key.as_ref().ok_or_else(|| KeyWalletError::KeyError {
-            message: "Expected public key".into(),
-        })?;
+    ) -> Result<Vec<Address>, KeyWalletError> {
+        // Parse the extended public key from string
+        let xpub =
+            ExtendedPubKey::from_str(&account_xpub.xpub).map_err(|e| KeyWalletError::KeyError {
+                message: e.to_string(),
+            })?;
+
         let addrs = self
             .inner
-            .generate_range(pub_key, external, start, count)
+            .generate_range(&xpub, external, start, count)
             .map_err(|e| KeyWalletError::from(e))?;
+
         Ok(addrs
             .into_iter()
-            .map(|addr| {
-                Arc::new(Address {
-                    inner: addr,
-                })
+            .map(|addr| Address {
+                inner: addr,
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod network_compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn test_network_compatibility_with_dash_network_ffi() {
+        // Ensure our Network enum values match dash-network-ffi
+        // We can't directly compare with dash_network_ffi::Network because it's defined in the FFI lib.rs
+        // But we can ensure the values are consistent
+        assert_eq!(Network::Dash as u8, 0);
+        assert_eq!(Network::Testnet as u8, 1);
+        assert_eq!(Network::Devnet as u8, 2);
+        assert_eq!(Network::Regtest as u8, 3);
+    }
+
+    #[test]
+    fn test_network_conversion_to_key_wallet() {
+        // Test conversion to key_wallet::Network
+        let networks = vec![
+            (Network::Dash, key_wallet::Network::Dash),
+            (Network::Testnet, key_wallet::Network::Testnet),
+            (Network::Devnet, key_wallet::Network::Devnet),
+            (Network::Regtest, key_wallet::Network::Regtest),
+        ];
+
+        for (ffi_network, expected_kw_network) in networks {
+            let kw_network: key_wallet::Network = ffi_network.into();
+            assert_eq!(kw_network, expected_kw_network);
+        }
     }
 }

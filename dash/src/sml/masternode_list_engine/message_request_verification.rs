@@ -1,6 +1,7 @@
 use hashes::Hash;
 
 use crate::hash_types::QuorumOrderingHash;
+use crate::sml::llmq_type::network::NetworkLLMQExt;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_engine::MasternodeListEngine;
 use crate::sml::message_verification_error::MessageVerificationError;
@@ -351,7 +352,7 @@ mod tests {
     use crate::consensus::deserialize;
     use crate::hashes::Hash;
     use crate::hashes::hex::FromHex;
-    use crate::sml::llmq_type::LLMQType;
+    use crate::sml::llmq_type::{LLMQType, network::NetworkLLMQExt};
     use crate::sml::masternode_list_engine::MasternodeListEngine;
     use crate::{BlockHash, ChainLock, InstantLock, QuorumHash};
 

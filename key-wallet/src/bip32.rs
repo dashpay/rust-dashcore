@@ -33,7 +33,6 @@ use secp256k1::{self, Secp256k1, XOnlyPublicKey};
 #[cfg(feature = "serde")]
 use serde;
 
-use crate::address::Network;
 use crate::dip9::{
     COINJOIN_PATH_MAINNET, COINJOIN_PATH_TESTNET, DASH_BIP44_PATH_MAINNET, DASH_BIP44_PATH_TESTNET,
     IDENTITY_AUTHENTICATION_PATH_MAINNET, IDENTITY_AUTHENTICATION_PATH_TESTNET,
@@ -43,6 +42,7 @@ use crate::dip9::{
 };
 use alloc::{string::String, vec::Vec};
 use base58ck;
+use dash_network::Network;
 
 /// XpubIdentifier as a hash160 result
 type XpubIdentifier = hash160::Hash;
@@ -182,39 +182,8 @@ impl<'de> serde::Deserialize<'de> for ChainCode {
         use serde::de::Error;
 
         let s = String::deserialize(deserializer)?;
-        if s.len() != 64 {
-            return Err(D::Error::custom("invalid chaincode length"));
-        }
-
         let mut bytes = [0u8; 32];
-        for (i, chunk) in s.as_bytes().chunks(2).enumerate() {
-            if i >= 32 {
-                return Err(D::Error::custom("invalid chaincode"));
-            }
-            let high = chunk[0]
-                .to_ascii_lowercase()
-                .checked_sub(b'0')
-                .and_then(|c| (c < 10).then(|| c))
-                .or_else(|| {
-                    chunk[0]
-                        .to_ascii_lowercase()
-                        .checked_sub(b'a')
-                        .and_then(|c| (c < 6).then(|| c + 10))
-                })
-                .ok_or_else(|| D::Error::custom("invalid hex character"))?;
-            let low = chunk[1]
-                .to_ascii_lowercase()
-                .checked_sub(b'0')
-                .and_then(|c| (c < 10).then(|| c))
-                .or_else(|| {
-                    chunk[1]
-                        .to_ascii_lowercase()
-                        .checked_sub(b'a')
-                        .and_then(|c| (c < 6).then(|| c + 10))
-                })
-                .ok_or_else(|| D::Error::custom("invalid hex character"))?;
-            bytes[i] = (high << 4) | low;
-        }
+        crate::utils::parse_hex_bytes(&s, &mut bytes).map_err(D::Error::custom)?;
         Ok(ChainCode(bytes))
     }
 }
@@ -279,38 +248,9 @@ impl core::str::FromStr for Fingerprint {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.len() != 8 {
-            return Err(Error::InvalidPublicKeyHexLength(s.len()));
-        }
         let mut bytes = [0u8; 4];
-        for (i, chunk) in s.as_bytes().chunks(2).enumerate() {
-            if i >= 4 {
-                return Err(Error::InvalidPublicKeyHexLength(s.len()));
-            }
-            let high = chunk[0]
-                .to_ascii_lowercase()
-                .checked_sub(b'0')
-                .and_then(|c| (c < 10).then(|| c))
-                .or_else(|| {
-                    chunk[0]
-                        .to_ascii_lowercase()
-                        .checked_sub(b'a')
-                        .and_then(|c| (c < 6).then(|| c + 10))
-                })
-                .ok_or(Error::InvalidPublicKeyHexLength(s.len()))?;
-            let low = chunk[1]
-                .to_ascii_lowercase()
-                .checked_sub(b'0')
-                .and_then(|c| (c < 10).then(|| c))
-                .or_else(|| {
-                    chunk[1]
-                        .to_ascii_lowercase()
-                        .checked_sub(b'a')
-                        .and_then(|c| (c < 6).then(|| c + 10))
-                })
-                .ok_or(Error::InvalidPublicKeyHexLength(s.len()))?;
-            bytes[i] = (high << 4) | low;
-        }
+        crate::utils::parse_hex_bytes(s, &mut bytes)
+            .map_err(|_| Error::InvalidPublicKeyHexLength(s.len()))?;
         Ok(Fingerprint(bytes))
     }
 }
@@ -1477,7 +1417,7 @@ impl ExtendedPrivKey {
         ret[0..4].copy_from_slice(
             &match self.network {
                 Network::Dash => [0x04, 0x88, 0xAD, 0xE4],
-                Network::Testnet | Network::Devnet | Network::Regtest => [0x04, 0x35, 0x83, 0x94],
+                _ => [0x04, 0x35, 0x83, 0x94], // Testnet/Devnet/Regtest/Unknown
             }[..],
         );
         ret[4] = self.depth;
@@ -1543,7 +1483,7 @@ impl ExtendedPrivKey {
         // Version bytes
         let version: [u8; 4] = match self.network {
             Network::Dash => [0x0E, 0xEC, 0xF0, 0x2E],
-            Network::Testnet | Network::Devnet | Network::Regtest => [0x0E, 0xED, 0x27, 0x74],
+            _ => [0x0E, 0xED, 0x27, 0x74], // Testnet/Devnet/Regtest/Unknown
         };
         ret[0..4].copy_from_slice(&version);
 
@@ -1763,7 +1703,7 @@ impl ExtendedPubKey {
         ret[0..4].copy_from_slice(
             &match self.network {
                 Network::Dash => [0x04u8, 0x88, 0xB2, 0x1E],
-                Network::Testnet | Network::Devnet | Network::Regtest => [0x04u8, 0x35, 0x87, 0xCF],
+                _ => [0x04u8, 0x35, 0x87, 0xCF], // Testnet/Devnet/Regtest/Unknown
             }[..],
         );
         ret[4] = self.depth;
@@ -1781,7 +1721,7 @@ impl ExtendedPubKey {
         // Version bytes
         let version: [u8; 4] = match self.network {
             Network::Dash => [0x0E, 0xEC, 0xEF, 0xC5],
-            Network::Testnet | Network::Devnet | Network::Regtest => [0x0E, 0xED, 0x27, 0x0B],
+            _ => [0x0E, 0xED, 0x27, 0x0B], // Testnet/Devnet/Regtest/Unknown
         };
         ret[0..4].copy_from_slice(&version);
 
@@ -1925,7 +1865,7 @@ mod tests {
 
     use super::ChildNumber::{Hardened, Normal};
     use super::*;
-    use crate::address::Network::{self, Dash};
+    use dash_network::Network::{self, Dash};
 
     #[test]
     fn test_parse_derivation_path() {

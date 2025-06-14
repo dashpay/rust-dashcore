@@ -24,8 +24,8 @@ use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
 use crate::internal_macros::impl_bytes_newtype;
-use crate::network::constants::Network;
 use crate::pow::CompactTarget;
+use dash_network::Network;
 
 /// How many satoshis are in "one dash".
 pub const COIN_VALUE: u64 = 100_000_000;
@@ -159,6 +159,17 @@ pub fn genesis_block(network: Network) -> Block {
             },
             txdata,
         },
+        _ => Block {
+            header: block::Header {
+                version: block::Version::ONE,
+                prev_blockhash: Hash::all_zeros(),
+                merkle_root,
+                time: 1296688602,
+                bits: CompactTarget::from_consensus(0x207fffff),
+                nonce: 2,
+            },
+            txdata,
+        },
     }
 }
 
@@ -211,7 +222,7 @@ mod test {
     use super::*;
     use crate::consensus::encode::serialize;
     use crate::internal_macros::hex;
-    use crate::network::constants::Network;
+    use dash_network::Network;
 
     #[test]
     fn bitcoin_genesis_first_transaction() {

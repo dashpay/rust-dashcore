@@ -8,6 +8,7 @@ use bitcoin_hashes::{hash160, Hash};
 use secp256k1::{PublicKey, Secp256k1};
 
 use crate::error::{Error, Result};
+use dash_network::Network;
 
 /// Address types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,37 +19,34 @@ pub enum AddressType {
     P2SH,
 }
 
-/// Network type for address encoding
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Network {
-    /// Dash mainnet
-    Dash,
-    /// Dash testnet
-    Testnet,
-    /// Dash devnet
-    Devnet,
-    /// Dash regtest
-    Regtest,
+/// Extension trait for Network to add address-specific methods
+pub trait NetworkExt {
+    /// Get P2PKH version byte
+    fn p2pkh_version(&self) -> u8;
+    /// Get P2SH version byte
+    fn p2sh_version(&self) -> u8;
 }
 
-impl Network {
+impl NetworkExt for Network {
     /// Get P2PKH version byte
-    pub fn p2pkh_version(&self) -> u8 {
+    fn p2pkh_version(&self) -> u8 {
         match self {
             Network::Dash => 76,     // 'X' prefix
             Network::Testnet => 140, // 'y' prefix
             Network::Devnet => 140,  // 'y' prefix
             Network::Regtest => 140, // 'y' prefix
+            _ => 140,                // default to testnet version
         }
     }
 
     /// Get P2SH version byte
-    pub fn p2sh_version(&self) -> u8 {
+    fn p2sh_version(&self) -> u8 {
         match self {
             Network::Dash => 16,    // '7' prefix
             Network::Testnet => 19, // '8' or '9' prefix
             Network::Devnet => 19,  // '8' or '9' prefix
             Network::Regtest => 19, // '8' or '9' prefix
+            _ => 19,                // default to testnet version
         }
     }
 }
@@ -193,9 +191,15 @@ impl AddressGenerator {
         };
 
         for i in start..(start + count) {
-            let path = format!("m/{}/{}", change, i)
-                .parse::<crate::bip32::DerivationPath>()
-                .map_err(|e| Error::InvalidDerivationPath(e.to_string()))?;
+            // Create relative path from account
+            let path = crate::bip32::DerivationPath::from(vec![
+                crate::bip32::ChildNumber::Normal {
+                    index: change,
+                },
+                crate::bip32::ChildNumber::Normal {
+                    index: i,
+                },
+            ]);
 
             let child_xpub = account_xpub.derive_pub(&secp, &path)?;
             addresses.push(self.generate_p2pkh(&child_xpub));

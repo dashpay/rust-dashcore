@@ -21,9 +21,11 @@ pub mod derivation;
 pub mod dip9;
 pub mod error;
 pub mod mnemonic;
+pub(crate) mod utils;
 
-pub use address::{Address, AddressType, Network};
+pub use address::{Address, AddressType, NetworkExt};
 pub use bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
+pub use dash_network::Network;
 pub use derivation::KeyDerivation;
 pub use dip9::{DerivationPathReference, DerivationPathType};
 pub use error::{Error, Result};
@@ -35,15 +37,4 @@ pub mod prelude {
         Address, AddressType, ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey,
         KeyDerivation, Mnemonic, Result,
     };
-}
-
-#[cfg(test)]
-mod tests {
-    // use super::*;
-
-    #[test]
-    fn test_basic_functionality() {
-        // Basic test to ensure the library compiles
-        assert!(true);
-    }
 }

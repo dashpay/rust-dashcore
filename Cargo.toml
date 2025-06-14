@@ -1,5 +1,5 @@
 [workspace]
-members = ["dash", "hashes", "internals", "fuzz", "rpc-client", "rpc-json", "rpc-integration-test", "key-wallet", "key-wallet-ffi"]
+members = ["dash", "dash-network", "dash-network-ffi", "hashes", "internals", "fuzz", "rpc-client", "rpc-json", "rpc-integration-test", "key-wallet", "key-wallet-ffi"]
 resolver = "2"
 
 [workspace.package]

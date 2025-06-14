@@ -1,7 +1,7 @@
+use dashcore::Network;
 use dashcore::address::Address;
 use dashcore::blockdata::script;
 use dashcore::consensus::encode;
-use dashcore::network::constants::Network;
 use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {

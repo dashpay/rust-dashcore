@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::Network;
 use crate::hash_types::{QuorumModifierHash, ScoreHash};
 use crate::network::message_qrinfo::QuorumSnapshot;
-use crate::sml::llmq_type::LLMQType;
+use crate::sml::llmq_type::{LLMQType, network::NetworkLLMQExt};
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list_entry::EntryMasternodeType;
 use crate::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;

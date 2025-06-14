@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use crate::hash_types::QuorumOrderingHash;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
-use crate::sml::llmq_type::LLMQType;
+use crate::sml::llmq_type::{LLMQType, network::NetworkLLMQExt};
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::message_verification_error::MessageVerificationError;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;

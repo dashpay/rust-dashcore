@@ -951,7 +951,7 @@ mod tests {
     #[test]
     fn test_is_coinbase() {
         use crate::blockdata::constants;
-        use crate::network::constants::Network;
+        use dash_network::Network;
 
         let genesis = constants::genesis_block(Network::Dash);
         assert!(genesis.txdata[0].is_coin_base());

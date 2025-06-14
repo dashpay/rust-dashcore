@@ -1,4 +1,6 @@
+use crate::BlockHash;
 use crate::bls_sig_utils::BLSSignature;
+use crate::network::constants::NetworkExt;
 use crate::network::message_sml::MnListDiff;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::{
@@ -8,7 +10,7 @@ use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
 };
-use crate::{BlockHash, Network};
+use dash_network::Network;
 use hashes::Hash;
 use std::collections::BTreeMap;
 

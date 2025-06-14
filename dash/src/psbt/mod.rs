@@ -516,12 +516,7 @@ impl GetKey for ExtendedPrivKey {
                     let k = self.derive_priv(secp, &path)?;
                     Some(PrivateKey {
                         compressed: true,
-                        network: match k.network {
-                            key_wallet::Network::Dash => Network::Dash,
-                            key_wallet::Network::Testnet => Network::Testnet,
-                            key_wallet::Network::Regtest => Network::Regtest,
-                            key_wallet::Network::Devnet => Network::Devnet,
-                        },
+                        network: k.network.into(),
                         inner: k.private_key,
                     })
                 } else {
@@ -559,12 +554,7 @@ impl GetKey for $set<ExtendedPrivKey> {
                         let k = xpriv.derive_priv(secp, &path)?;
                         return Ok(Some(PrivateKey {
                             compressed: true,
-                            network: match k.network {
-                                key_wallet::Network::Dash => Network::Dash,
-                                key_wallet::Network::Testnet => Network::Testnet,
-                                key_wallet::Network::Regtest => Network::Regtest,
-                                key_wallet::Network::Devnet => Network::Devnet,
-                            },
+                            network: k.network.into(),
                             inner: k.private_key,
                         }));
                     }
