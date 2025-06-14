@@ -94,6 +94,30 @@ pub struct FilterSyncManager {
 }
 
 impl FilterSyncManager {
+    /// Calculate the start height of a CFHeaders batch.
+    fn calculate_batch_start_height(cf_headers: &CFHeaders, stop_height: u32) -> u32 {
+        stop_height.saturating_sub(cf_headers.filter_hashes.len() as u32 - 1)
+    }
+    
+    /// Get the height range for a CFHeaders batch.
+    async fn get_batch_height_range(
+        &self,
+        cf_headers: &CFHeaders,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<(u32, u32, u32)> {
+        let header_tip_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get header tip height: {}", e)))?
+            .unwrap_or(0);
+        
+        let stop_height = self.find_height_for_block_hash(&cf_headers.stop_hash, storage, 0, header_tip_height).await?
+            .ok_or_else(|| SyncError::SyncFailed(format!(
+                "Cannot find height for stop hash {} in CFHeaders", cf_headers.stop_hash
+            )))?;
+        
+        let start_height = Self::calculate_batch_start_height(cf_headers, stop_height);
+        Ok((start_height, stop_height, header_tip_height))
+    }
+
     /// Create a new filter sync manager.
     pub fn new(config: &ClientConfig, received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>) -> Self {
         Self {
@@ -139,18 +163,8 @@ impl FilterSyncManager {
             return Ok(false);
         }
 
-        // Get header tip height for validation
-        let header_tip_height = storage.get_tip_height().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get header tip height: {}", e)))?
-            .unwrap_or(0);
-
-        // Determine the actual start height of this batch
-        let stop_height = self.find_height_for_block_hash(&cf_headers.stop_hash, storage, 0, header_tip_height).await?
-            .ok_or_else(|| SyncError::SyncFailed(format!(
-                "Cannot find height for stop hash {} in CFHeaders", cf_headers.stop_hash
-            )))?;
-
-        let batch_start_height = stop_height.saturating_sub(cf_headers.filter_hashes.len() as u32 - 1);
+        // Get the height range for this batch
+        let (batch_start_height, stop_height, header_tip_height) = self.get_batch_height_range(&cf_headers, storage).await?;
         
         tracing::debug!("Received CFHeaders batch: start={}, stop={}, count={} (expected start={})", 
                        batch_start_height, stop_height, cf_headers.filter_hashes.len(), self.current_sync_height);
@@ -161,10 +175,8 @@ impl FilterSyncManager {
                           self.current_sync_height, batch_start_height);
             
             // Handle overlapping headers using the helper method
-            let skip_count = (self.current_sync_height - batch_start_height) as usize;
             let (new_headers_stored, new_current_height) = self.handle_overlapping_headers(
                 &cf_headers, 
-                skip_count, 
                 self.current_sync_height, 
                 storage
             ).await?;
@@ -516,20 +528,20 @@ impl FilterSyncManager {
     async fn handle_overlapping_headers(
         &self,
         cf_headers: &CFHeaders,
-        skip_count: usize,
         expected_start_height: u32,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<(usize, u32)> {
+        // Get the height range for this batch
+        let (batch_start_height, stop_height, _header_tip_height) = self.get_batch_height_range(cf_headers, storage).await?;
+        let skip_count = expected_start_height.saturating_sub(batch_start_height) as usize;
+        
+        // Complete overlap case - all headers already processed
         if skip_count >= cf_headers.filter_hashes.len() {
-            tracing::info!("✅ All {} headers in this batch already processed, skipping", cf_headers.filter_hashes.len());
+            tracing::info!("✅ All {} headers in batch already processed, skipping", cf_headers.filter_hashes.len());
             return Ok((0, expected_start_height));
         }
         
-        // We need to compute the filter headers for the entire batch first,
-        // then extract only the new ones we need to store.
-        // This is because each filter header depends on the previous one.
-        
-        // First, find where in our chain the cf_headers.previous_filter_header connects
+        // Find connection point in our chain
         let current_filter_tip = storage.get_filter_tip_height().await
             .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip: {}", e)))?
             .unwrap_or(0);
@@ -544,62 +556,28 @@ impl FilterSyncManager {
             }
         }
         
-        // If we can't find a connection point, check if this is overlapping data we can safely ignore
         let connection_height = match connection_height {
             Some(height) => height,
             None => {
-                // Calculate the height range this batch would cover
-                // Get header tip height since the stop hash might be beyond our current filter tip
-                let header_tip_height = storage.get_tip_height().await
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get header tip height: {}", e)))?
-                    .unwrap_or(0);
-                    
-                let stop_height = self.find_height_for_block_hash(&cf_headers.stop_hash, storage, 0, header_tip_height).await?
-                    .ok_or_else(|| SyncError::SyncFailed(format!(
-                        "Cannot find height for stop hash {} in overlapping headers", cf_headers.stop_hash
-                    )))?;
-                let batch_start_height = stop_height.saturating_sub(cf_headers.filter_hashes.len() as u32 - 1);
-                
-                // Check if we already have valid data for the overlapping range
+                // No connection found - check if this is overlapping data we can safely ignore
                 let overlap_end = expected_start_height.saturating_sub(1);
                 if batch_start_height <= overlap_end && overlap_end <= current_filter_tip {
-                    // This is an overlapping batch from a different peer with different previous_filter_header
-                    // We already have valid data for the overlapping range, so we can safely ignore this batch
-                    tracing::warn!("📋 Cannot find connection point for overlapping headers from different peer.");
-                    tracing::warn!("📋 Batch range: {}-{}, our tip: {}, expected start: {}", 
-                                   batch_start_height, stop_height, current_filter_tip, expected_start_height);
-                    tracing::warn!("📋 This appears to be overlapping data from a different peer view - ignoring safely");
-                    
-                    // Calculate how many new headers we would have processed (for progress tracking)
-                    let would_be_new_count = if stop_height > current_filter_tip {
-                        (stop_height - current_filter_tip) as usize
-                    } else {
-                        0
-                    };
-                    
-                    // Return success with the count of headers we would have added if this was valid
-                    let new_current_height = if would_be_new_count > 0 {
-                        current_filter_tip + would_be_new_count as u32 + 1
-                    } else {
-                        expected_start_height
-                    };
-                    
-                    return Ok((would_be_new_count, new_current_height));
+                    tracing::warn!("📋 Ignoring overlapping headers from different peer view (range {}-{})", 
+                                   batch_start_height, stop_height);
+                    return Ok((0, expected_start_height));
                 } else {
-                    // This is a real problem - we can't connect and we don't have the data
                     return Err(SyncError::SyncFailed("Cannot find connection point for overlapping headers".to_string()));
                 }
             }
         };
         
-        // Process all filter headers starting from the connection point
+        // Process all filter headers from the connection point
         let batch_start_height = connection_height + 1;
         let all_filter_headers = self.process_filter_headers(cf_headers, batch_start_height, storage).await?;
         
-        // Now extract only the new headers we need (skip the overlapping ones)
+        // Extract only the new headers we need
         let headers_to_skip = expected_start_height.saturating_sub(batch_start_height) as usize;
         if headers_to_skip >= all_filter_headers.len() {
-            tracing::info!("✅ All headers in overlapping batch already stored");
             return Ok((0, expected_start_height));
         }
         
@@ -620,6 +598,8 @@ impl FilterSyncManager {
     }
     
     /// Verify filter header chain connects to our local chain.
+    /// This is a simplified version focused only on cryptographic chain verification,
+    /// with overlap detection handled by the dedicated overlap resolution system.
     async fn verify_filter_header_chain(
         &self,
         cf_headers: &CFHeaders,
@@ -650,36 +630,10 @@ impl FilterSyncManager {
             .map_err(|e| SyncError::SyncFailed(format!("Failed to get previous filter header at height {}: {}", prev_height, e)))?
             .ok_or_else(|| SyncError::SyncFailed(format!("Missing previous filter header at height {}", prev_height)))?;
         
-        // Always check if the previous_filter_header from the message exists anywhere in our chain
-        // This handles both normal continuation and overlapping ranges from recovery/multi-peer scenarios
-        let current_filter_tip = storage.get_filter_tip_height().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip during overlap check: {}", e)))?
-            .unwrap_or(0);
-        
-        // Search through our stored headers to see if the received previous_filter_header
-        // matches any valid point in our chain
-        let mut found_valid_connection = false;
-        let mut _connection_height = None;
-        
-        for check_height in (0..=current_filter_tip).rev() {
-            if let Ok(Some(stored_header)) = storage.get_filter_header(check_height).await {
-                if stored_header == cf_headers.previous_filter_header {
-                    found_valid_connection = true;
-                    _connection_height = Some(check_height);
-                    
-                    if cf_headers.previous_filter_header == expected_prev_header {
-                        tracing::debug!("Filter headers connect normally at expected height {}", check_height);
-                    } else {
-                        tracing::info!("Filter headers connect via overlap at height {} (expected at {})", check_height, prev_height);
-                    }
-                    break;
-                }
-            }
-        }
-        
-        if !found_valid_connection {
+        // Simple chain continuity check - the received headers should connect to our expected previous header
+        if cf_headers.previous_filter_header != expected_prev_header {
             tracing::error!(
-                "Filter header chain verification failed: received previous_filter_header {:?} doesn't match any stored header (expected: {:?} at height {})",
+                "Filter header chain verification failed: received previous_filter_header {:?} doesn't match expected header {:?} at height {}",
                 cf_headers.previous_filter_header,
                 expected_prev_header,
                 prev_height
@@ -1434,18 +1388,8 @@ impl FilterSyncManager {
             return Ok(());
         }
         
-        // Get the block height for the stop hash
-        let header_tip_height = storage.get_tip_height().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get header tip height: {}", e)))?
-            .unwrap_or(0);
-        
-        let stop_height = self.find_height_for_block_hash(&cfheaders.stop_hash, storage, 0, header_tip_height).await?
-            .ok_or_else(|| SyncError::SyncFailed(format!(
-                "Cannot find height for stop hash {} - header not found", cfheaders.stop_hash
-            )))?;
-        
-        // Calculate the start height based on the number of filter hashes
-        let start_height = stop_height.saturating_sub(cfheaders.filter_hashes.len() as u32 - 1);
+        // Get the height range for this batch
+        let (start_height, stop_height, _header_tip_height) = self.get_batch_height_range(&cfheaders, storage).await?;
         
         tracing::info!("Received {} filter headers from height {} to {}", 
                       cfheaders.filter_hashes.len(), start_height, stop_height);
@@ -1478,10 +1422,9 @@ impl FilterSyncManager {
                           current_filter_tip, start_height, stop_height);
             
             // Use the handle_overlapping_headers method which properly handles the chain continuity
-            let skip_count = (current_filter_tip + 1 - start_height) as usize;
             let expected_start = current_filter_tip + 1;
             
-            match self.handle_overlapping_headers(&cfheaders, skip_count, expected_start, storage).await {
+            match self.handle_overlapping_headers(&cfheaders, expected_start, storage).await {
                 Ok((stored_count, _)) => {
                     if stored_count > 0 {
                         tracing::info!("✅ Successfully handled overlapping filter headers");

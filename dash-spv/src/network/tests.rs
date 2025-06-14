@@ -27,6 +27,9 @@ mod multi_peer_tests {
             max_peers: 3,
             enable_persistence: false,
             log_level: "info".to_string(),
+            enable_filter_flow_control: true,
+            filter_request_delay_ms: 0,
+            max_concurrent_filter_requests: 50,
         }
     }
     
