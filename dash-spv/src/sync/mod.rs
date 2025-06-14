@@ -38,10 +38,10 @@ pub struct SyncManager {
 
 impl SyncManager {
     /// Create a new sync manager.
-    pub fn new(config: &ClientConfig) -> Self {
+    pub fn new(config: &ClientConfig, received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>) -> Self {
         Self {
             header_sync: HeaderSyncManager::new(config),
-            filter_sync: FilterSyncManager::new(config),
+            filter_sync: FilterSyncManager::new(config, received_filter_heights),
             masternode_sync: MasternodeSyncManager::new(config),
             state: SyncState::new(),
             config: config.clone(),
@@ -115,16 +115,21 @@ impl SyncManager {
     pub async fn handle_cfilter_message(
         &mut self,
         block_hash: dashcore::BlockHash,
-        _storage: &mut dyn StorageManager,
+        storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
     ) -> SyncResult<()> {
-        // For now, we don't have filter sync coordination implemented yet
-        // This is a placeholder for future filter download tracking
-        // The filter content itself is handled by the processing thread
-        tracing::trace!("Received CFilter for block {} - sync coordination placeholder", block_hash);
+        // Check if this completes any active filter requests
+        let completed_requests = self.filter_sync.mark_filter_received(block_hash, storage).await?;
         
-        // TODO: Implement filter sync coordination similar to how cfheaders works
-        // This would track which filters we've requested vs received and handle timeouts
+        // Process next queued requests for any completed batches
+        if !completed_requests.is_empty() {
+            let (pending_count, active_count, _enabled) = self.filter_sync.get_flow_control_status();
+            tracing::debug!("🎯 Filter batch completion triggered processing of {} queued requests ({} active)", 
+                           pending_count, active_count);
+            self.filter_sync.process_next_queued_requests(network).await?;
+        }
         
+        tracing::trace!("Processed CFilter for block {} - flow control coordination completed", block_hash);
         Ok(())
     }
     
@@ -148,6 +153,9 @@ impl SyncManager {
         let _ = self.header_sync.check_sync_timeout(storage, network).await;
         let _ = self.filter_sync.check_sync_timeout(storage, network).await;
         let _ = self.masternode_sync.check_sync_timeout(storage, network).await;
+        
+        // Check for filter request timeouts with flow control
+        let _ = self.filter_sync.check_filter_request_timeouts(network, storage).await;
         
         Ok(())
     }

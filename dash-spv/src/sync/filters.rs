@@ -9,7 +9,7 @@ use dashcore::{
     bip158::{BlockFilterReader, Error as Bip158Error},
 };
 use dashcore_hashes::{sha256d, Hash};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque, HashSet};
 use tokio::sync::mpsc;
 
 use crate::client::ClientConfig;
@@ -19,15 +19,40 @@ use crate::storage::StorageManager;
 use crate::types::SyncProgress;
 
 // Constants for filter synchronization
-const FILTER_BATCH_SIZE: u32 = 1999; // Stay under Dash Core's 2000 limit
+const FILTER_BATCH_SIZE: u32 = 1999; // Stay under Dash Core's 2000 limit (for CFHeaders)
 const SYNC_TIMEOUT_SECONDS: u64 = 5;
 const RECEIVE_TIMEOUT_MILLIS: u64 = 100;
 const DEFAULT_FILTER_SYNC_RANGE: u32 = 100;
-const FILTER_REQUEST_BATCH_SIZE: u32 = 100; // For compact filter requests
+const FILTER_REQUEST_BATCH_SIZE: u32 = 100; // For compact filter requests (CFilters)
+const MAX_FILTER_REQUEST_SIZE: u32 = 1000; // Maximum filters per CFilter request (Dash Core limit)
 const MAX_TIMEOUTS: u32 = 10;
+
+// Flow control constants
+const MAX_CONCURRENT_FILTER_REQUESTS: usize = 50; // Maximum concurrent filter batches (increased for better performance)
+const FILTER_REQUEST_DELAY_MS: u64 = 0;           // No delay for normal requests
+const FILTER_RETRY_DELAY_MS: u64 = 100;           // Delay for retry requests to avoid hammering peers
+const REQUEST_TIMEOUT_SECONDS: u64 = 30;          // Timeout for individual requests
+const COMPLETION_CHECK_INTERVAL_MS: u64 = 100;    // How often to check for completions
 
 /// Handle for sending CFilter messages to the processing thread.
 pub type FilterNotificationSender = mpsc::UnboundedSender<dashcore::network::message_filter::CFilter>;
+
+/// Represents a filter request to be sent or queued.
+#[derive(Debug, Clone)]
+struct FilterRequest {
+    start_height: u32,
+    end_height: u32,
+    stop_hash: BlockHash,
+    request_time: std::time::Instant,
+    is_retry: bool,
+}
+
+/// Represents an active filter request that has been sent and is awaiting response.
+#[derive(Debug)]
+struct ActiveRequest {
+    request: FilterRequest,
+    sent_time: std::time::Instant,
+}
 
 /// Manages BIP157 filter synchronization.
 pub struct FilterSyncManager {
@@ -40,6 +65,10 @@ pub struct FilterSyncManager {
     expected_stop_hash: Option<BlockHash>,
     /// Last time sync progress was made (for timeout detection)
     last_sync_progress: std::time::Instant,
+    /// Last time filter header tip height was checked for stability
+    last_stability_check: std::time::Instant,
+    /// Filter tip height from last stability check
+    last_filter_tip_height: Option<u32>,
     /// Whether filter sync is currently in progress
     syncing_filters: bool,
     /// Queue of blocks that have been requested and are waiting for response
@@ -48,21 +77,44 @@ pub struct FilterSyncManager {
     downloading_blocks: HashMap<BlockHash, u32>,
     /// Blocks requested by the filter processing thread
     pub processing_thread_requests: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<BlockHash>>>,
+    /// Track requested filter ranges: (start_height, end_height) -> request_time
+    requested_filter_ranges: HashMap<(u32, u32), std::time::Instant>,
+    /// Track individual filter heights that have been received (shared with stats)
+    received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
+    /// Maximum retries for a filter range
+    max_filter_retries: u32,
+    /// Retry attempts per range
+    filter_retry_counts: HashMap<(u32, u32), u32>,
+    /// Queue of pending filter requests
+    pending_filter_requests: VecDeque<FilterRequest>,
+    /// Currently active filter requests (limited by MAX_CONCURRENT_FILTER_REQUESTS)
+    active_filter_requests: HashMap<(u32, u32), ActiveRequest>,
+    /// Whether flow control is enabled
+    flow_control_enabled: bool,
 }
 
 impl FilterSyncManager {
     /// Create a new filter sync manager.
-    pub fn new(config: &ClientConfig) -> Self {
+    pub fn new(config: &ClientConfig, received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>) -> Self {
         Self {
             _config: config.clone(),
             syncing_filter_headers: false,
             current_sync_height: 0,
             expected_stop_hash: None,
             last_sync_progress: std::time::Instant::now(),
+            last_stability_check: std::time::Instant::now(),
+            last_filter_tip_height: None,
             syncing_filters: false,
             pending_block_downloads: VecDeque::new(),
             downloading_blocks: HashMap::new(),
             processing_thread_requests: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            requested_filter_ranges: HashMap::new(),
+            received_filter_heights,
+            max_filter_retries: 3,
+            filter_retry_counts: HashMap::new(),
+            pending_filter_requests: VecDeque::new(),
+            active_filter_requests: HashMap::new(),
+            flow_control_enabled: true,
         }
     }
     
@@ -143,9 +195,18 @@ impl FilterSyncManager {
                     
                     // Check if we've reached the header tip
                     if stop_height >= header_tip_height {
-                        tracing::info!("🎯 Filter header sync complete at height {}", stop_height);
-                        self.syncing_filter_headers = false;
-                        return Ok(false);
+                        // Perform stability check before declaring completion
+                        if let Ok(is_stable) = self.check_filter_header_stability(storage).await {
+                            if is_stable {
+                                tracing::info!("🎯 Filter header sync complete at height {} (stability confirmed)", stop_height);
+                                self.syncing_filter_headers = false;
+                                return Ok(false);
+                            } else {
+                                tracing::debug!("Filter header sync reached tip at height {} but stability check failed, continuing sync", stop_height);
+                            }
+                        } else {
+                            tracing::debug!("Filter header sync reached tip at height {} but stability check errored, continuing sync", stop_height);
+                        }
                     }
                     
                     // Request next batch
@@ -703,6 +764,365 @@ impl FilterSyncManager {
         })
     }
     
+    /// Synchronize compact filters with flow control to prevent overwhelming peers.
+    pub async fn sync_filters_with_flow_control(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        storage: &mut dyn StorageManager,
+        start_height: Option<u32>,
+        count: Option<u32>,
+    ) -> SyncResult<SyncProgress> {
+        if !self.flow_control_enabled {
+            // Fall back to original method if flow control is disabled
+            return self.sync_filters(network, storage, start_height, count).await;
+        }
+        
+        if self.syncing_filters {
+            return Err(SyncError::SyncInProgress);
+        }
+        
+        self.syncing_filters = true;
+        
+        // Build the queue of filter requests
+        self.build_filter_request_queue(storage, start_height, count).await?;
+        
+        // Start processing the queue with flow control
+        self.process_filter_request_queue(network, storage).await?;
+        
+        // Note: Actual completion will be tracked by the monitoring loop
+        // This method just queues up requests and starts the flow control process
+        tracing::info!("✅ Filter sync with flow control initiated ({} requests queued, {} active)", 
+                      self.pending_filter_requests.len(), self.active_filter_requests.len());
+        
+        self.syncing_filters = false;
+        
+        Ok(SyncProgress {
+            filters_downloaded: 0, // Will be updated by monitoring loop
+            ..SyncProgress::default()
+        })
+    }
+    
+    /// Build queue of filter requests from the specified range.
+    async fn build_filter_request_queue(
+        &mut self,
+        storage: &dyn StorageManager,
+        start_height: Option<u32>,
+        count: Option<u32>,
+    ) -> SyncResult<()> {
+        // Clear any existing queue
+        self.pending_filter_requests.clear();
+        
+        // Determine range to sync
+        let filter_tip_height = storage.get_filter_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip: {}", e)))?
+            .unwrap_or(0);
+            
+        let start = start_height.unwrap_or_else(|| {
+            filter_tip_height.saturating_sub(DEFAULT_FILTER_SYNC_RANGE)
+        });
+        
+        let end = count.map(|c| start + c - 1)
+            .unwrap_or(filter_tip_height)
+            .min(filter_tip_height);
+            
+        if start > end {
+            return Ok(());
+        }
+        
+        tracing::info!("🔄 Building filter request queue from height {} to {} ({} blocks)", 
+                      start, end, end - start + 1);
+        
+        // Build requests in batches
+        let batch_size = FILTER_REQUEST_BATCH_SIZE;
+        let mut current_height = start;
+        
+        while current_height <= end {
+            let batch_end = (current_height + batch_size - 1).min(end);
+            
+            // Get stop hash for this batch
+            let stop_hash = storage.get_header(batch_end).await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get stop header: {}", e)))?
+                .ok_or_else(|| SyncError::SyncFailed("Stop header not found".to_string()))?
+                .block_hash();
+            
+            // Create filter request and add to queue
+            let request = FilterRequest {
+                start_height: current_height,
+                end_height: batch_end,
+                stop_hash,
+                request_time: std::time::Instant::now(),
+                is_retry: false,
+            };
+            
+            self.pending_filter_requests.push_back(request);
+            
+            tracing::debug!("Queued filter request for heights {} to {}", current_height, batch_end);
+            
+            current_height = batch_end + 1;
+        }
+        
+        tracing::info!("📋 Filter request queue built with {} batches", self.pending_filter_requests.len());
+        Ok(())
+    }
+    
+    /// Process the filter request queue with flow control.
+    async fn process_filter_request_queue(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        _storage: &dyn StorageManager,
+    ) -> SyncResult<()> {
+        // Send initial batch up to MAX_CONCURRENT_FILTER_REQUESTS
+        let initial_send_count = MAX_CONCURRENT_FILTER_REQUESTS.min(self.pending_filter_requests.len());
+        
+        for _ in 0..initial_send_count {
+            if let Some(request) = self.pending_filter_requests.pop_front() {
+                self.send_filter_request(network, request).await?;
+            }
+        }
+        
+        tracing::info!("🚀 Sent initial batch of {} filter requests ({} queued, {} active)", 
+                      initial_send_count, self.pending_filter_requests.len(), self.active_filter_requests.len());
+        
+        Ok(())
+    }
+    
+    /// Send a single filter request and track it as active.
+    async fn send_filter_request(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        request: FilterRequest,
+    ) -> SyncResult<()> {
+        // Send the actual network request
+        self.request_filters(network, request.start_height, request.stop_hash).await?;
+        
+        // Track this request as active
+        let range = (request.start_height, request.end_height);
+        let active_request = ActiveRequest {
+            request: request.clone(),
+            sent_time: std::time::Instant::now(),
+        };
+        
+        self.active_filter_requests.insert(range, active_request);
+        
+        // Also record in the existing tracking system
+        self.record_filter_request(request.start_height, request.end_height);
+        
+        tracing::debug!("📡 Sent filter request for range {}-{} (now {} active)", 
+                       request.start_height, request.end_height, self.active_filter_requests.len());
+        
+        // Apply delay only for retry requests to avoid hammering peers
+        if request.is_retry && FILTER_RETRY_DELAY_MS > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(FILTER_RETRY_DELAY_MS)).await;
+        }
+        
+        Ok(())
+    }
+    
+    /// Mark a filter as received and check for batch completion.
+    /// Returns list of completed request ranges.
+    pub async fn mark_filter_received(
+        &mut self,
+        block_hash: BlockHash,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<Vec<(u32, u32)>> {
+        if !self.flow_control_enabled {
+            return Ok(Vec::new());
+        }
+        
+        // Record the received filter
+        self.record_individual_filter_received(block_hash, storage).await?;
+        
+        // Check which active requests are now complete
+        let mut completed_requests = Vec::new();
+        
+        for ((start, end), _active_req) in &self.active_filter_requests {
+            if self.is_request_complete(*start, *end).await? {
+                completed_requests.push((*start, *end));
+            }
+        }
+        
+        // Remove completed requests from active tracking
+        for range in &completed_requests {
+            self.active_filter_requests.remove(range);
+            tracing::debug!("✅ Filter request range {}-{} completed", range.0, range.1);
+        }
+        
+        // Always return at least one "completion" to trigger queue processing
+        // This ensures we continuously utilize available slots instead of waiting for 100% completion
+        if completed_requests.is_empty() && !self.pending_filter_requests.is_empty() {
+            // If we have available slots and pending requests, trigger processing
+            let available_slots = MAX_CONCURRENT_FILTER_REQUESTS.saturating_sub(self.active_filter_requests.len());
+            if available_slots > 0 {
+                completed_requests.push((0, 0)); // Dummy completion to trigger processing
+            }
+        }
+        
+        Ok(completed_requests)
+    }
+    
+    /// Check if a filter request range is complete (all filters received).
+    async fn is_request_complete(&self, start: u32, end: u32) -> SyncResult<bool> {
+        if let Ok(received_heights) = self.received_filter_heights.lock() {
+            for height in start..=end {
+                if !received_heights.contains(&height) {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        } else {
+            Err(SyncError::SyncFailed("Failed to lock received filter heights".to_string()))
+        }
+    }
+    
+    /// Record that a filter was received at a specific height.
+    async fn record_individual_filter_received(
+        &mut self,
+        block_hash: BlockHash,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<()> {
+        // Look up height for the block hash
+        if let Some(height) = storage.get_header_height_by_hash(&block_hash).await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get header height by hash: {}", e)))? {
+            
+            // Record in received filter heights
+            if let Ok(mut heights) = self.received_filter_heights.lock() {
+                heights.insert(height);
+                tracing::trace!("📊 Recorded filter received at height {} for block {}", height, block_hash);
+            }
+        } else {
+            tracing::warn!("Could not find height for filter block hash {}", block_hash);
+        }
+        
+        Ok(())
+    }
+    
+    /// Process next requests from the queue when active requests complete.
+    pub async fn process_next_queued_requests(
+        &mut self,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<()> {
+        if !self.flow_control_enabled {
+            return Ok(());
+        }
+        
+        let available_slots = MAX_CONCURRENT_FILTER_REQUESTS.saturating_sub(self.active_filter_requests.len());
+        let mut sent_count = 0;
+        
+        for _ in 0..available_slots {
+            if let Some(request) = self.pending_filter_requests.pop_front() {
+                self.send_filter_request(network, request).await?;
+                sent_count += 1;
+            } else {
+                break;
+            }
+        }
+        
+        if sent_count > 0 {
+            tracing::debug!("🚀 Sent {} additional filter requests from queue ({} queued, {} active)", 
+                           sent_count, self.pending_filter_requests.len(), self.active_filter_requests.len());
+        }
+        
+        Ok(())
+    }
+    
+    /// Get status of flow control system.
+    pub fn get_flow_control_status(&self) -> (usize, usize, bool) {
+        (
+            self.pending_filter_requests.len(),
+            self.active_filter_requests.len(), 
+            self.flow_control_enabled
+        )
+    }
+    
+    /// Check for timed out filter requests and handle recovery.
+    pub async fn check_filter_request_timeouts(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<()> {
+        if !self.flow_control_enabled {
+            // Fall back to original timeout checking
+            return self.check_and_retry_missing_filters(network, storage).await;
+        }
+        
+        let now = std::time::Instant::now();
+        let timeout_duration = std::time::Duration::from_secs(REQUEST_TIMEOUT_SECONDS);
+        
+        // Check for timed out active requests
+        let mut timed_out_requests = Vec::new();
+        for ((start, end), active_req) in &self.active_filter_requests {
+            if now.duration_since(active_req.sent_time) > timeout_duration {
+                timed_out_requests.push((*start, *end));
+            }
+        }
+        
+        // Handle timeouts: remove from active, retry or give up based on retry count
+        for range in timed_out_requests {
+            self.handle_request_timeout(range, network, storage).await?;
+        }
+        
+        // Check queue status and send next batch if needed
+        self.process_next_queued_requests(network).await?;
+        
+        Ok(())
+    }
+    
+    /// Handle a specific filter request timeout.
+    async fn handle_request_timeout(
+        &mut self,
+        range: (u32, u32),
+        network: &mut dyn NetworkManager,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<()> {
+        let (start, end) = range;
+        let retry_count = self.filter_retry_counts.get(&range).copied().unwrap_or(0);
+        
+        // Remove from active requests
+        self.active_filter_requests.remove(&range);
+        
+        if retry_count >= self.max_filter_retries {
+            tracing::error!("❌ Filter range {}-{} failed after {} retries, giving up", 
+                          start, end, retry_count);
+            return Ok(());
+        }
+        
+        // Calculate stop hash for retry
+        match storage.get_header(end).await {
+            Ok(Some(header)) => {
+                let stop_hash = header.block_hash();
+                
+                tracing::info!("🔄 Retrying timed out filter range {}-{} (attempt {}/{})", 
+                              start, end, retry_count + 1, self.max_filter_retries);
+                
+                // Create new request and add back to queue for retry
+                let retry_request = FilterRequest {
+                    start_height: start,
+                    end_height: end,
+                    stop_hash,
+                    request_time: std::time::Instant::now(),
+                    is_retry: true,
+                };
+                
+                // Update retry count
+                self.filter_retry_counts.insert(range, retry_count + 1);
+                
+                // Add to front of queue for priority retry
+                self.pending_filter_requests.push_front(retry_request);
+                
+                Ok(())
+            }
+            Ok(None) => {
+                tracing::error!("Cannot retry filter range {}-{}: header not found at height {}", 
+                              start, end, end);
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Failed to get header at height {} for retry: {}", end, e);
+                Ok(())
+            }
+        }
+    }
+    
     /// Check filters against watch list and return matches.
     pub async fn check_filters_for_matches(
         &self,
@@ -770,6 +1190,40 @@ impl FilterSyncManager {
         tracing::debug!("Requested filters from height {} to {}", start_height, stop_hash);
         
         Ok(())
+    }
+    
+    /// Request compact filters with range tracking.
+    pub async fn request_filters_with_tracking(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        storage: &dyn StorageManager,
+        start_height: u32,
+        stop_hash: BlockHash,
+    ) -> SyncResult<()> {
+        // Find the end height for the stop hash
+        let header_tip_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get header tip height: {}", e)))?
+            .unwrap_or(0);
+        
+        let end_height = self.find_height_for_block_hash(&stop_hash, storage, start_height, header_tip_height).await?
+            .ok_or_else(|| SyncError::SyncFailed(format!(
+                "Cannot find height for stop hash {} in range {}-{}", stop_hash, start_height, header_tip_height
+            )))?;
+        
+        // Safety check: ensure we don't request more than the Dash Core limit
+        let range_size = end_height.saturating_sub(start_height) + 1;
+        if range_size > MAX_FILTER_REQUEST_SIZE {
+            return Err(SyncError::SyncFailed(format!(
+                "Filter request range {}-{} ({} filters) exceeds maximum allowed size of {}", 
+                start_height, end_height, range_size, MAX_FILTER_REQUEST_SIZE
+            )));
+        }
+        
+        // Record this request for tracking
+        self.record_filter_request(start_height, end_height);
+        
+        // Send the actual request
+        self.request_filters(network, start_height, stop_hash).await
     }
     
     /// Find height for a block hash within a range.
@@ -1391,6 +1845,34 @@ impl FilterSyncManager {
         }
     }
     
+    /// Check if filter header sync is stable (tip height hasn't changed for 3+ seconds).
+    /// This prevents premature completion detection when filter headers are still arriving.
+    async fn check_filter_header_stability(&mut self, storage: &dyn StorageManager) -> SyncResult<bool> {
+        let current_filter_tip = storage.get_filter_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e)))?;
+        
+        let now = std::time::Instant::now();
+        
+        // Check if the tip height has changed since last check
+        if self.last_filter_tip_height != current_filter_tip {
+            // Tip height changed, reset stability timer
+            self.last_filter_tip_height = current_filter_tip;
+            self.last_stability_check = now;
+            tracing::debug!("Filter tip height changed to {:?}, resetting stability timer", current_filter_tip);
+            return Ok(false);
+        }
+        
+        // Check if enough time has passed since last change
+        const STABILITY_DURATION: std::time::Duration = std::time::Duration::from_secs(3);
+        if now.duration_since(self.last_stability_check) >= STABILITY_DURATION {
+            tracing::debug!("Filter header sync stability confirmed (tip height {:?} stable for 3+ seconds)", current_filter_tip);
+            return Ok(true);
+        }
+        
+        tracing::debug!("Filter header sync stability check: waiting for tip height {:?} to stabilize", current_filter_tip);
+        Ok(false)
+    }
+    
     /// Start tracking filter sync progress.
     pub async fn start_filter_sync_tracking(
         stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
@@ -1411,6 +1893,29 @@ impl FilterSyncManager {
         let mut stats_lock = stats.write().await;
         stats_lock.filters_received += 1;
         stats_lock.last_filter_received_time = Some(std::time::Instant::now());
+    }
+    
+    /// Record filter received at specific height (used by processing thread).
+    pub async fn record_filter_received_at_height(
+        stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
+        storage: &dyn StorageManager,
+        block_hash: &BlockHash,
+    ) {
+        // Look up height for the block hash
+        if let Ok(Some(height)) = storage.get_header_height_by_hash(block_hash).await {
+            // Get the shared filter heights arc from stats
+            let stats_lock = stats.read().await;
+            let received_filter_heights = stats_lock.received_filter_heights.clone();
+            drop(stats_lock); // Release the stats lock before acquiring the mutex
+            
+            // Now lock the heights and insert
+            if let Ok(mut heights) = received_filter_heights.lock() {
+                heights.insert(height);
+                tracing::trace!("📊 Recorded filter received at height {} for block {}", height, block_hash);
+            };
+        } else {
+            tracing::warn!("Could not find height for filter block hash {}", block_hash);
+        }
     }
     
     /// Get filter sync progress as percentage.
@@ -1459,5 +1964,364 @@ impl FilterSyncManager {
         };
         
         (stats_lock.filters_requested, stats_lock.filters_received, progress, timeout)
+    }
+    
+    /// Get enhanced filter sync status with gap information.
+    /// 
+    /// This function provides comprehensive filter sync status by combining:
+    /// 1. Basic progress tracking (filters_received vs filters_requested)
+    /// 2. Gap analysis of active filter requests
+    /// 3. Correction logic for tracking inconsistencies
+    /// 
+    /// The function addresses a bug where completion could be incorrectly reported
+    /// when active request tracking (requested_filter_ranges) was empty but
+    /// basic progress indicated incomplete sync. This could happen when filter
+    /// range requests were marked complete but individual filters within those
+    /// ranges were never actually received.
+    /// 
+    /// Returns: (filters_requested, filters_received, basic_progress, timeout, total_missing, actual_coverage, missing_ranges)
+    pub async fn get_filter_sync_status_with_gaps(
+        stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
+        filter_sync: &FilterSyncManager,
+    ) -> (u64, u64, f64, bool, u32, f64, Vec<(u32, u32)>) {
+        let stats_lock = stats.read().await;
+        let basic_progress = if stats_lock.filters_requested == 0 {
+            0.0
+        } else {
+            (stats_lock.filters_received as f64 / stats_lock.filters_requested as f64) * 100.0
+        };
+        
+        let timeout = if let Some(last_received) = stats_lock.last_filter_received_time {
+            last_received.elapsed() > std::time::Duration::from_secs(30)
+        } else if let Some(sync_start) = stats_lock.filter_sync_start_time {
+            sync_start.elapsed() > std::time::Duration::from_secs(30)
+        } else {
+            false
+        };
+        
+        // Get gap information from active requests
+        let missing_ranges = filter_sync.find_missing_ranges();
+        let total_missing = filter_sync.get_total_missing_filters();
+        let actual_coverage = filter_sync.get_actual_coverage_percentage();
+        
+        // If active request tracking shows no gaps but basic progress indicates incomplete sync,
+        // we may have a tracking inconsistency. In this case, trust the basic progress calculation.
+        let corrected_total_missing = if total_missing == 0 && stats_lock.filters_received < stats_lock.filters_requested {
+            // Gap detection failed, but basic stats show incomplete sync
+            tracing::debug!("Gap detection shows complete ({}), but basic progress shows {}/{} - treating as incomplete", 
+                           total_missing, stats_lock.filters_received, stats_lock.filters_requested);
+            (stats_lock.filters_requested - stats_lock.filters_received) as u32
+        } else {
+            total_missing
+        };
+        
+        (
+            stats_lock.filters_requested,
+            stats_lock.filters_received,
+            basic_progress,
+            timeout,
+            corrected_total_missing,
+            actual_coverage,
+            missing_ranges,
+        )
+    }
+    
+    /// Record a filter range request for tracking.
+    pub fn record_filter_request(&mut self, start_height: u32, end_height: u32) {
+        self.requested_filter_ranges.insert((start_height, end_height), std::time::Instant::now());
+        tracing::debug!("📊 Recorded filter request for range {}-{}", start_height, end_height);
+    }
+    
+    /// Record receipt of a filter at a specific height.
+    pub fn record_filter_received(&mut self, height: u32) {
+        if let Ok(mut heights) = self.received_filter_heights.lock() {
+            heights.insert(height);
+            tracing::trace!("📊 Recorded filter received at height {}", height);
+        }
+    }
+    
+    /// Find missing filter ranges within the requested ranges.
+    pub fn find_missing_ranges(&self) -> Vec<(u32, u32)> {
+        let mut missing_ranges = Vec::new();
+        
+        let heights = match self.received_filter_heights.lock() {
+            Ok(heights) => heights.clone(),
+            Err(_) => return missing_ranges, // Return empty if lock fails
+        };
+        
+        // For each requested range
+        for ((start, end), _) in &self.requested_filter_ranges {
+            let mut current = *start;
+            
+            // Find gaps within this range
+            while current <= *end {
+                if !heights.contains(&current) {
+                    // Start of a gap
+                    let gap_start = current;
+                    
+                    // Find end of gap
+                    while current <= *end && !heights.contains(&current) {
+                        current += 1;
+                    }
+                    
+                    missing_ranges.push((gap_start, current - 1));
+                } else {
+                    current += 1;
+                }
+            }
+        }
+        
+        // Merge adjacent ranges for efficiency
+        Self::merge_adjacent_ranges(&mut missing_ranges);
+        missing_ranges
+    }
+    
+    /// Get filter ranges that have timed out (no response after 30+ seconds).
+    pub fn get_timed_out_ranges(&self, timeout_duration: std::time::Duration) -> Vec<(u32, u32)> {
+        let now = std::time::Instant::now();
+        let mut timed_out = Vec::new();
+        
+        let heights = match self.received_filter_heights.lock() {
+            Ok(heights) => heights.clone(),
+            Err(_) => return timed_out, // Return empty if lock fails
+        };
+        
+        for ((start, end), request_time) in &self.requested_filter_ranges {
+            if now.duration_since(*request_time) > timeout_duration {
+                // Check if this range is incomplete
+                let mut is_incomplete = false;
+                for height in *start..=*end {
+                    if !heights.contains(&height) {
+                        is_incomplete = true;
+                        break;
+                    }
+                }
+                
+                if is_incomplete {
+                    timed_out.push((*start, *end));
+                }
+            }
+        }
+        
+        timed_out
+    }
+    
+    /// Check if a filter range is complete (all heights received).
+    pub fn is_range_complete(&self, start_height: u32, end_height: u32) -> bool {
+        let heights = match self.received_filter_heights.lock() {
+            Ok(heights) => heights,
+            Err(_) => return false, // Return false if lock fails
+        };
+        
+        for height in start_height..=end_height {
+            if !heights.contains(&height) {
+                return false;
+            }
+        }
+        true
+    }
+    
+    /// Get total number of missing filters across all ranges.
+    pub fn get_total_missing_filters(&self) -> u32 {
+        let missing_ranges = self.find_missing_ranges();
+        missing_ranges.iter().map(|(start, end)| end - start + 1).sum()
+    }
+    
+    /// Get actual coverage percentage (considering gaps).
+    pub fn get_actual_coverage_percentage(&self) -> f64 {
+        if self.requested_filter_ranges.is_empty() {
+            return 0.0;
+        }
+        
+        let total_requested: u32 = self.requested_filter_ranges.iter()
+            .map(|((start, end), _)| end - start + 1)
+            .sum();
+            
+        if total_requested == 0 {
+            return 0.0;
+        }
+        
+        let total_missing = self.get_total_missing_filters();
+        let received = total_requested - total_missing;
+        
+        (received as f64 / total_requested as f64) * 100.0
+    }
+    
+    /// Retry missing or timed out filter ranges.
+    pub async fn retry_missing_filters(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<u32> {
+        let missing = self.find_missing_ranges();
+        let timed_out = self.get_timed_out_ranges(std::time::Duration::from_secs(30));
+        
+        // Combine and deduplicate
+        let mut ranges_to_retry: HashSet<(u32, u32)> = missing.into_iter().collect();
+        ranges_to_retry.extend(timed_out);
+        
+        if ranges_to_retry.is_empty() {
+            return Ok(0);
+        }
+        
+        let mut retried_count = 0;
+        
+        for (start, end) in ranges_to_retry {
+            let retry_count = self.filter_retry_counts.get(&(start, end)).copied().unwrap_or(0);
+            
+            if retry_count >= self.max_filter_retries {
+                tracing::error!("❌ Filter range {}-{} failed after {} retries, giving up", 
+                              start, end, retry_count);
+                continue;
+            }
+            
+            // Calculate stop hash for this range
+            match storage.get_header(end).await {
+                Ok(Some(header)) => {
+                    let stop_hash = header.block_hash();
+                    
+                    tracing::info!("🔄 Retrying filter range {}-{} (attempt {}/{})", 
+                                  start, end, retry_count + 1, self.max_filter_retries);
+                    
+                    // Re-request the range, but respect batch size limits
+                    let range_size = end - start + 1;
+                    if range_size <= MAX_FILTER_REQUEST_SIZE {
+                        // Range is within limits, request directly
+                        self.request_filters(network, start, stop_hash).await?;
+                        self.filter_retry_counts.insert((start, end), retry_count + 1);
+                        retried_count += 1;
+                    } else {
+                        // Range is too large, split into smaller batches
+                        tracing::warn!("Filter range {}-{} ({} filters) exceeds Dash Core's 1000 filter limit, splitting into batches", 
+                                      start, end, range_size);
+                        
+                        let max_batch_size = MAX_FILTER_REQUEST_SIZE;
+                        let mut current_start = start;
+                        
+                        while current_start <= end {
+                            let batch_end = (current_start + max_batch_size - 1).min(end);
+                            
+                            // Get stop hash for this batch
+                            if let Ok(Some(batch_header)) = storage.get_header(batch_end).await {
+                                let batch_stop_hash = batch_header.block_hash();
+                                
+                                tracing::info!("🔄 Retrying filter batch {}-{} (part of range {}-{}, attempt {}/{})", 
+                                              current_start, batch_end, start, end, retry_count + 1, self.max_filter_retries);
+                                
+                                self.request_filters(network, current_start, batch_stop_hash).await?;
+                                current_start = batch_end + 1;
+                            } else {
+                                tracing::error!("Cannot get header at height {} for batch retry", batch_end);
+                                break;
+                            }
+                        }
+                        
+                        // Update retry count for the original range
+                        self.filter_retry_counts.insert((start, end), retry_count + 1);
+                        retried_count += 1;
+                    }
+                }
+                Ok(None) => {
+                    tracing::error!("Cannot retry filter range {}-{}: header not found at height {}", 
+                                  start, end, end);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to get header at height {} for retry: {}", end, e);
+                }
+            }
+        }
+        
+        if retried_count > 0 {
+            tracing::info!("📡 Retried {} filter ranges", retried_count);
+        }
+        
+        Ok(retried_count)
+    }
+    
+    /// Check and retry missing filters (main entry point for monitoring loop).
+    pub async fn check_and_retry_missing_filters(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<()> {
+        let missing_ranges = self.find_missing_ranges();
+        let total_missing = self.get_total_missing_filters();
+        
+        if total_missing > 0 {
+            tracing::info!("📊 Filter gap check: {} missing ranges covering {} filters", 
+                          missing_ranges.len(), total_missing);
+            
+            // Show first few missing ranges for debugging
+            for (i, (start, end)) in missing_ranges.iter().enumerate() {
+                if i >= 5 {
+                    tracing::info!("  ... and {} more missing ranges", missing_ranges.len() - 5);
+                    break;
+                }
+                tracing::info!("  Missing range: {}-{} ({} filters)", start, end, end - start + 1);
+            }
+            
+            let retried = self.retry_missing_filters(network, storage).await?;
+            if retried > 0 {
+                tracing::info!("✅ Initiated retry for {} filter ranges", retried);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Reset filter range tracking (useful for testing or restart scenarios).
+    pub fn reset_filter_tracking(&mut self) {
+        self.requested_filter_ranges.clear();
+        if let Ok(mut heights) = self.received_filter_heights.lock() {
+            heights.clear();
+        }
+        self.filter_retry_counts.clear();
+        tracing::info!("🔄 Reset filter range tracking");
+    }
+    
+    /// Merge adjacent ranges for efficiency, but respect the maximum filter request size.
+    fn merge_adjacent_ranges(ranges: &mut Vec<(u32, u32)>) {
+        if ranges.is_empty() {
+            return;
+        }
+        
+        ranges.sort_by_key(|(start, _)| *start);
+        
+        let mut merged = Vec::new();
+        let mut current = ranges[0];
+        
+        for &(start, end) in ranges.iter().skip(1) {
+            let potential_merged_size = end.saturating_sub(current.0) + 1;
+            
+            if start <= current.1 + 1 && potential_merged_size <= MAX_FILTER_REQUEST_SIZE {
+                // Merge ranges only if the result doesn't exceed the limit
+                current.1 = current.1.max(end);
+            } else {
+                // Non-adjacent or would exceed limit, push current and start new
+                merged.push(current);
+                current = (start, end);
+            }
+        }
+        
+        merged.push(current);
+        
+        // Final pass: split any ranges that still exceed the limit
+        let mut final_ranges = Vec::new();
+        for (start, end) in merged {
+            let range_size = end.saturating_sub(start) + 1;
+            if range_size <= MAX_FILTER_REQUEST_SIZE {
+                final_ranges.push((start, end));
+            } else {
+                // Split large range into smaller chunks
+                let mut chunk_start = start;
+                while chunk_start <= end {
+                    let chunk_end = (chunk_start + MAX_FILTER_REQUEST_SIZE - 1).min(end);
+                    final_ranges.push((chunk_start, chunk_end));
+                    chunk_start = chunk_end + 1;
+                }
+            }
+        }
+        
+        *ranges = final_ranges;
     }
 }

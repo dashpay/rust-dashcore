@@ -55,8 +55,9 @@ impl<'a> FilterSyncCoordinator<'a> {
         }
         drop(running);
         
-        // Get current tip height to determine range
-        let tip_height = self.storage.get_tip_height().await
+        // Get current filter tip height to determine range (use filter headers, not block headers)
+        // This ensures consistency between range calculation and progress tracking
+        let tip_height = self.storage.get_filter_tip_height().await
             .map_err(|e| SpvError::Storage(e))?
             .unwrap_or(0);
         
@@ -79,7 +80,7 @@ impl<'a> FilterSyncCoordinator<'a> {
         let start_height = earliest_height.min(default_start); // Go back to the earliest required height
         let actual_count = tip_height - start_height + 1; // Actual number of blocks available
         
-        tracing::info!("Requesting filters from height {} to {} ({} blocks)", 
+        tracing::info!("Requesting filters from height {} to {} ({} blocks based on filter tip height)", 
                       start_height, tip_height, actual_count);
         tracing::info!("Filter processing and matching will happen automatically in background thread as CFilter messages arrive");
         
@@ -91,12 +92,10 @@ impl<'a> FilterSyncCoordinator<'a> {
         Ok(Vec::new())
     }
     
-    /// Sync filters in coordination with the monitoring loop using simplified processing
+    /// Sync filters in coordination with the monitoring loop using flow control processing
     async fn sync_filters_coordinated(&mut self, start_height: u32, count: u32) -> Result<()> {
-        let end_height = start_height + count - 1;
-        
-        tracing::info!("Starting coordinated filter sync from height {} to {} ({} filters expected)", 
-                      start_height, end_height, count);
+        tracing::info!("Starting coordinated filter sync with flow control from height {} to {} ({} filters expected)", 
+                      start_height, start_height + count - 1, count);
         
         // Start tracking filter sync progress
         crate::sync::filters::FilterSyncManager::start_filter_sync_tracking(
@@ -104,32 +103,19 @@ impl<'a> FilterSyncCoordinator<'a> {
             count as u64
         ).await;
         
-        // Use batch processing to send filter requests
-        let batch_size = 100;
-        let mut current_height = start_height;
-        let mut batches_sent = 0;
+        // Use the new flow control method
+        self.sync_manager.filter_sync_mut()
+            .sync_filters_with_flow_control(
+                &mut *self.network,
+                &mut *self.storage,
+                Some(start_height),
+                Some(count)
+            ).await
+            .map_err(|e| SpvError::Sync(e))?;
         
-        // Send all filter requests in batches
-        while current_height <= end_height {
-            let batch_end = (current_height + batch_size - 1).min(end_height);
-            
-            tracing::debug!("Sending batch {}: heights {} to {}", batches_sent + 1, current_height, batch_end);
-            
-            // Get stop hash for this batch
-            let stop_hash = self.storage.get_header(batch_end).await
-                .map_err(|e| SpvError::Storage(e))?
-                .ok_or_else(|| SpvError::Config("Stop header not found".to_string()))?
-                .block_hash();
-            
-            // Send the request - monitoring loop will handle the responses via filter processor
-            self.sync_manager.filter_sync_mut().request_filters(&mut *self.network, current_height, stop_hash).await
-                .map_err(|e| SpvError::Sync(e))?;
-            
-            current_height = batch_end + 1;
-            batches_sent += 1;
-        }
-        
-        tracing::info!("✅ All filter requests sent ({} batches), processing via filter processor thread", batches_sent);
+        let (pending_count, active_count, flow_enabled) = self.sync_manager.filter_sync().get_flow_control_status();
+        tracing::info!("✅ Filter sync with flow control initiated (flow control enabled: {}, {} requests queued, {} active)", 
+                      flow_enabled, pending_count, active_count);
         
         Ok(())
     }

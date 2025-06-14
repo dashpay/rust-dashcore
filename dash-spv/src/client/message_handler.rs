@@ -177,8 +177,19 @@ impl<'a> MessageHandler<'a> {
             NetworkMessage::CFilter(cfilter) => {
                 tracing::debug!("Received CFilter for block {}", cfilter.block_hash);
                 
-                // Let the sync manager handle sync coordination (just tracking, not the full filter)
-                if let Err(e) = self.sync_manager.handle_cfilter_message(cfilter.block_hash, &mut *self.storage).await {
+                // Record the height of this received filter for gap tracking
+                crate::sync::filters::FilterSyncManager::record_filter_received_at_height(
+                    self.stats, 
+                    &*self.storage, 
+                    &cfilter.block_hash
+                ).await;
+                
+                // Enhanced sync coordination with flow control
+                if let Err(e) = self.sync_manager.handle_cfilter_message(
+                    cfilter.block_hash, 
+                    &mut *self.storage, 
+                    &mut *self.network
+                ).await {
                     tracing::error!("Failed to handle CFilter in sync manager: {}", e);
                 }
                 

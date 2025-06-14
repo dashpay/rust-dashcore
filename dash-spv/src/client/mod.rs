@@ -221,8 +221,8 @@ impl DashSpvClient {
         // Create shared data structures
         let watch_items = Arc::new(RwLock::new(HashSet::new()));
         
-        // Create sync manager
-        let sync_manager = SyncManager::new(&config);
+        // Create sync manager with shared filter heights
+        let sync_manager = SyncManager::new(&config, stats.read().await.received_filter_heights.clone());
         
         // Create validation manager
         let validation = ValidationManager::new(config.validation_mode);
@@ -449,6 +449,10 @@ impl DashSpvClient {
         let mut last_consistency_check = Instant::now();
         let consistency_check_interval = std::time::Duration::from_secs(300); // Every 5 minutes
 
+        // Timer for filter gap checking
+        let mut last_filter_gap_check = Instant::now();
+        let filter_gap_check_interval = std::time::Duration::from_secs(10);
+
         loop {
             // Check if we should stop
             let running = self.running.read().await;
@@ -506,13 +510,40 @@ impl DashSpvClient {
             if last_status_update.elapsed() >= status_update_interval {
                 self.update_status_display().await;
 
-                // Report filter sync progress if active
-                let (filters_requested, filters_received, progress, timeout) = 
-                    crate::sync::filters::FilterSyncManager::get_filter_sync_status(&self.stats).await;
+                // Report enhanced filter sync progress if active
+                let (filters_requested, filters_received, basic_progress, timeout, total_missing, actual_coverage, missing_ranges) = 
+                    crate::sync::filters::FilterSyncManager::get_filter_sync_status_with_gaps(&self.stats, self.sync_manager.filter_sync()).await;
                 
                 if filters_requested > 0 {
-                    tracing::info!("📊 Filter sync progress: {:.1}% ({}/{} filters received)", 
-                                  progress, filters_received, filters_requested);
+                    // Check if sync is truly complete: both basic progress AND gap analysis must indicate completion
+                    // This fixes a bug where "Complete!" was shown when only gap analysis returned 0 missing filters
+                    // but basic progress (filters_received < filters_requested) indicated incomplete sync.
+                    let is_complete = filters_received >= filters_requested && total_missing == 0;
+                    
+                    // Debug logging for completion detection
+                    if filters_received >= filters_requested && total_missing > 0 {
+                        tracing::debug!("🔍 Completion discrepancy detected: basic progress complete ({}/{}) but {} missing filters detected", 
+                                       filters_received, filters_requested, total_missing);
+                    }
+                    
+                    if !is_complete {
+                        tracing::info!("📊 Filter sync: Basic {:.1}% ({}/{}), Actual coverage {:.1}%, Missing: {} filters in {} ranges", 
+                                      basic_progress, filters_received, filters_requested, actual_coverage, total_missing, missing_ranges.len());
+                        
+                        // Show first few missing ranges for debugging
+                        if missing_ranges.len() > 0 {
+                            let show_count = missing_ranges.len().min(3);
+                            for (i, (start, end)) in missing_ranges.iter().enumerate().take(show_count) {
+                                tracing::warn!("  Gap {}: range {}-{} ({} filters)", i + 1, start, end, end - start + 1);
+                            }
+                            if missing_ranges.len() > show_count {
+                                tracing::warn!("  ... and {} more gaps", missing_ranges.len() - show_count);
+                            }
+                        }
+                    } else {
+                        tracing::info!("📊 Filter sync progress: {:.1}% ({}/{} filters received) - Complete!", 
+                                      basic_progress, filters_received, filters_requested);
+                    }
                     
                     if timeout {
                         tracing::warn!("⚠️  Filter sync timeout: no filters received in 30+ seconds");
@@ -547,6 +578,17 @@ impl DashSpvClient {
                     tracing::debug!("Running periodic wallet consistency check...");
                 });
                 last_consistency_check = Instant::now();
+            }
+
+            // Check for missing filters and retry periodically
+            if last_filter_gap_check.elapsed() >= filter_gap_check_interval {
+                if self.config.enable_filters {
+                    if let Err(e) = self.sync_manager.filter_sync_mut()
+                        .check_and_retry_missing_filters(&mut *self.network, &*self.storage).await {
+                        tracing::warn!("Failed to check and retry missing filters: {}", e);
+                    }
+                }
+                last_filter_gap_check = Instant::now();
             }
 
             // Handle network messages

@@ -384,7 +384,7 @@ impl<'de> Deserialize<'de> for WatchItem {
 }
 
 /// Statistics about the SPV client.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpvStats {
     /// Number of headers downloaded.
     pub headers_downloaded: u64,
@@ -432,6 +432,49 @@ pub struct SpvStats {
     /// Last time a filter was received.
     #[serde(skip)]
     pub last_filter_received_time: Option<std::time::Instant>,
+    
+    /// Received filter heights for gap tracking (shared with FilterSyncManager).
+    #[serde(skip)]
+    pub received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
+    
+    /// Number of filter requests currently active.
+    pub active_filter_requests: u32,
+    
+    /// Number of filter requests currently queued.
+    pub pending_filter_requests: u32,
+    
+    /// Number of filter request timeouts.
+    pub filter_request_timeouts: u64,
+    
+    /// Number of filter requests retried.
+    pub filter_requests_retried: u64,
+}
+
+impl Default for SpvStats {
+    fn default() -> Self {
+        Self {
+            headers_downloaded: 0,
+            filter_headers_downloaded: 0,
+            filters_downloaded: 0,
+            filters_matched: 0,
+            blocks_with_relevant_transactions: 0,
+            blocks_requested: 0,
+            blocks_processed: 0,
+            masternode_diffs_processed: 0,
+            bytes_received: 0,
+            bytes_sent: 0,
+            uptime: std::time::Duration::default(),
+            filters_requested: 0,
+            filters_received: 0,
+            filter_sync_start_time: None,
+            last_filter_received_time: None,
+            received_filter_heights: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            active_filter_requests: 0,
+            pending_filter_requests: 0,
+            filter_request_timeouts: 0,
+            filter_requests_retried: 0,
+        }
+    }
 }
 
 /// Balance information for an address.

@@ -56,6 +56,15 @@ pub struct ClientConfig {
     
     /// Log level for tracing.
     pub log_level: String,
+    
+    /// Maximum concurrent filter requests (default: 8).
+    pub max_concurrent_filter_requests: usize,
+    
+    /// Enable flow control for filter requests (default: true).
+    pub enable_filter_flow_control: bool,
+    
+    /// Delay between filter requests in milliseconds (default: 50).
+    pub filter_request_delay_ms: u64,
 }
 
 impl Default for ClientConfig {
@@ -76,6 +85,9 @@ impl Default for ClientConfig {
             max_peers: 8,
             enable_persistence: true,
             log_level: "info".to_string(),
+            max_concurrent_filter_requests: 16,
+            enable_filter_flow_control: true,
+            filter_request_delay_ms: 0,
         }
     }
 }
@@ -159,6 +171,24 @@ impl ClientConfig {
         self
     }
     
+    /// Set maximum concurrent filter requests.
+    pub fn with_max_concurrent_filter_requests(mut self, max_requests: usize) -> Self {
+        self.max_concurrent_filter_requests = max_requests;
+        self
+    }
+    
+    /// Enable or disable filter flow control.
+    pub fn with_filter_flow_control(mut self, enabled: bool) -> Self {
+        self.enable_filter_flow_control = enabled;
+        self
+    }
+    
+    /// Set delay between filter requests.
+    pub fn with_filter_request_delay(mut self, delay_ms: u64) -> Self {
+        self.filter_request_delay_ms = delay_ms;
+        self
+    }
+    
     /// Validate the configuration.
     pub fn validate(&self) -> Result<(), String> {
         if self.peers.is_empty() {
@@ -175,6 +205,10 @@ impl ClientConfig {
         
         if self.max_peers == 0 {
             return Err("max_peers must be > 0".to_string());
+        }
+        
+        if self.max_concurrent_filter_requests == 0 {
+            return Err("max_concurrent_filter_requests must be > 0".to_string());
         }
         
         Ok(())
