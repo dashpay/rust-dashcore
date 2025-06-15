@@ -5,10 +5,9 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        validate_mnemonic, AccountXPriv, AccountXPub, Address, AddressGenerator, ExtPrivKey,
-        ExtPubKey, HDWallet, Language, Mnemonic, Network,
+        validate_mnemonic, Address, AddressGenerator, ExtPrivKey, ExtPubKey, HDWallet, Language,
+        Mnemonic, Network,
     };
-    use std::sync::Arc;
 
     #[test]
     fn test_mnemonic_functionality() {

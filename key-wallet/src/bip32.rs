@@ -1237,10 +1237,6 @@ impl fmt::Display for Error {
             Error::InvalidPublicKeyHexLength(got) => {
                 write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got)
             }
-            #[cfg(feature = "bls-signatures")]
-            Error::BLSError(ref msg) => write!(f, "BLS signature error: {}", msg),
-            #[cfg(feature = "ed25519-dalek")]
-            Error::Ed25519Dalek(ref msg) => write!(f, "Ed25519 error: {}", msg),
             Error::NotSupported(ref msg) => write!(f, "Not supported: {}", msg),
         }
     }

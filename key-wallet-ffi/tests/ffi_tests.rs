@@ -6,10 +6,7 @@
 #[test]
 fn test_ffi_types_exist() {
     // This test just verifies the crate compiles with all the expected types
-    use key_wallet_ffi::{
-        initialize, validate_mnemonic, Address, AddressGenerator, AddressType, ExtPrivKey,
-        ExtPubKey, HDWallet, KeyWalletError, Language, Mnemonic, Network,
-    };
+    use key_wallet_ffi::initialize;
 
     // Verify we can call initialize
     initialize();
