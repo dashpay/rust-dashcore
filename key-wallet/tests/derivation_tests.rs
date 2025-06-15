@@ -1,8 +1,9 @@
 //! Derivation tests
 
-use key_wallet::derivation::{AccountDerivation, HDWallet, KeyDerivation};
+use key_wallet::derivation::{AccountDerivation, HDWallet};
 use key_wallet::mnemonic::{Language, Mnemonic};
-use key_wallet::{DerivationPath, Network};
+use key_wallet::{DerivationPath, ExtendedPubKey, Network};
+use secp256k1::Secp256k1;
 use std::str::FromStr;
 
 #[test]
@@ -103,7 +104,8 @@ fn test_public_key_derivation() {
 
     // Should match derivation from private key
     let xprv = wallet.derive(&path).unwrap();
-    let xpub_from_prv = wallet.derive_pub(&path).unwrap();
+    let secp = Secp256k1::new();
+    let xpub_from_prv = ExtendedPubKey::from_priv(&secp, &xprv);
 
     assert_eq!(xpub.public_key, xpub_from_prv.public_key);
 }
