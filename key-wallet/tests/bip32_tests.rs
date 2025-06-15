@@ -1,6 +1,5 @@
 //! BIP32 tests
 
-use key_wallet::mnemonic::{Language, Mnemonic};
 use key_wallet::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey, Network};
 use secp256k1::Secp256k1;
 use std::str::FromStr;
@@ -51,6 +50,7 @@ fn test_extended_key_serialization() {
     assert_eq!(master.parent_fingerprint, deserialized.parent_fingerprint);
     assert_eq!(master.child_number, deserialized.child_number);
     assert_eq!(master.chain_code, deserialized.chain_code);
+    assert_eq!(master.private_key, deserialized.private_key);
 }
 
 #[test]
