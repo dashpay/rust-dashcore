@@ -67,7 +67,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     // 8. Address parsing example
     println!("\n8. Address parsing...");
     let test_address = "XyPvhVmhWKDgvMJLwfFfMwhxpxGgd3TBxq";
-    match key_wallet::address::Address::from_str(test_address, Network::Dash) {
+    match key_wallet::address::Address::from_str(test_address) {
         Ok(parsed) => {
             println!("   Parsed address: {}", parsed);
             println!("   Type: {:?}", parsed.address_type);

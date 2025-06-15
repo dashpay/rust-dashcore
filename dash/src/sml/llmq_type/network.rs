@@ -16,7 +16,7 @@ impl NetworkLLMQExt for Network {
             Network::Testnet => LLMQType::Llmqtype50_60,
             Network::Devnet => LLMQType::LlmqtypeDevnet,
             Network::Regtest => LLMQType::LlmqtypeTestInstantSend,
-            _ => LLMQType::LlmqtypeTestInstantSend,
+            other => unreachable!("Unsupported network variant {other:?}"),
         }
     }
 
@@ -26,7 +26,7 @@ impl NetworkLLMQExt for Network {
             Network::Testnet => LLMQType::Llmqtype60_75,
             Network::Devnet => LLMQType::LlmqtypeDevnetDIP0024,
             Network::Regtest => LLMQType::LlmqtypeTestDIP0024,
-            _ => LLMQType::LlmqtypeTestDIP0024,
+            other => unreachable!("Unsupported network variant {other:?}"),
         }
     }
 
@@ -36,7 +36,7 @@ impl NetworkLLMQExt for Network {
             Network::Testnet => LLMQType::Llmqtype50_60,
             Network::Devnet => LLMQType::LlmqtypeDevnet,
             Network::Regtest => LLMQType::LlmqtypeTest,
-            _ => LLMQType::LlmqtypeTest,
+            other => unreachable!("Unsupported network variant {other:?}"),
         }
     }
 
@@ -46,7 +46,7 @@ impl NetworkLLMQExt for Network {
             Network::Testnet => LLMQType::Llmqtype25_67,
             Network::Devnet => LLMQType::LlmqtypeDevnet,
             Network::Regtest => LLMQType::LlmqtypeTest,
-            _ => LLMQType::LlmqtypeTest,
+            other => unreachable!("Unsupported network variant {other:?}"),
         }
     }
 }

@@ -159,17 +159,8 @@ pub fn genesis_block(network: Network) -> Block {
             },
             txdata,
         },
-        _ => Block {
-            header: block::Header {
-                version: block::Version::ONE,
-                prev_blockhash: Hash::all_zeros(),
-                merkle_root,
-                time: 1296688602,
-                bits: CompactTarget::from_consensus(0x207fffff),
-                nonce: 2,
-            },
-            txdata,
-        },
+        // Any new network variant must be handled explicitly.
+        other => unreachable!("genesis_block(): unsupported network variant {other:?}"),
     }
 }
 

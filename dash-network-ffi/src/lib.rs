@@ -37,7 +37,7 @@ impl From<DashNetwork> for Network {
             DashNetwork::Testnet => Network::Testnet,
             DashNetwork::Devnet => Network::Devnet,
             DashNetwork::Regtest => Network::Regtest,
-            _ => Network::Testnet, // Default for unknown networks
+            unknown => panic!("Unhandled Network variant {:?}", unknown),
         }
     }
 }

@@ -21,12 +21,13 @@ pub fn initialize() {
 }
 
 // Re-export enums for UniFFI
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Network {
-    Dash,
-    Testnet,
-    Regtest,
-    Devnet,
+    Dash = 0,
+    Testnet = 1,
+    Regtest = 2,
+    Devnet = 3,
 }
 
 impl From<Network> for key_wallet::Network {
@@ -115,6 +116,7 @@ pub struct AccountXPriv {
     pub xpriv: String,
 }
 
+#[derive(Clone)]
 pub struct AccountXPub {
     pub derivation_path: String,
     pub xpub: String,
@@ -238,6 +240,7 @@ impl Mnemonic {
 // HD Wallet wrapper
 pub struct HDWallet {
     inner: KwHDWallet,
+    network: Network,
 }
 
 impl HDWallet {
@@ -255,13 +258,19 @@ impl HDWallet {
             KwHDWallet::from_seed(&seed, network.into()).map_err(|e| KeyWalletError::from(e))?;
         Ok(Self {
             inner,
+            network,
         })
     }
 
     pub fn get_account_xpriv(&self, account: u32) -> Result<AccountXPriv, KeyWalletError> {
         let account_key = self.inner.bip44_account(account).map_err(|e| KeyWalletError::from(e))?;
 
-        let derivation_path = format!("m/44'/5'/{}'", account);
+        // Use correct coin type based on network
+        let coin_type = match self.network {
+            Network::Dash => 5, // Dash mainnet
+            _ => 1,             // Testnet/devnet/regtest
+        };
+        let derivation_path = format!("m/44'/{}'/{}'", coin_type, account);
 
         Ok(AccountXPriv {
             derivation_path,
@@ -275,7 +284,12 @@ impl HDWallet {
         let secp = Secp256k1::new();
         let xpub = ExtendedPubKey::from_priv(&secp, &account_key);
 
-        let derivation_path = format!("m/44'/5'/{}'", account);
+        // Use correct coin type based on network
+        let coin_type = match self.network {
+            Network::Dash => 5, // Dash mainnet
+            _ => 1,             // Testnet/devnet/regtest
+        };
+        let derivation_path = format!("m/44'/{}'/{}'", coin_type, account);
 
         Ok(AccountXPub {
             derivation_path,
@@ -430,8 +444,18 @@ pub struct Address {
 
 impl Address {
     pub fn from_string(address: String, network: Network) -> Result<Self, KeyWalletError> {
-        let inner = kw_address::Address::from_str(&address, network.into())
-            .map_err(|e| KeyWalletError::from(e))?;
+        let inner = kw_address::Address::from_str(&address).map_err(|e| KeyWalletError::from(e))?;
+
+        // Validate that the parsed network matches the expected network
+        if inner.network != network.into() {
+            return Err(KeyWalletError::AddressError {
+                message: format!(
+                    "Address is for network {:?}, expected {:?}",
+                    inner.network, network
+                ),
+            });
+        }
+
         Ok(Self {
             inner,
         })
@@ -488,7 +512,7 @@ impl AddressGenerator {
         account_xpub: AccountXPub,
         external: bool,
         index: u32,
-    ) -> Result<Address, KeyWalletError> {
+    ) -> Result<Arc<Address>, KeyWalletError> {
         // Parse the extended public key from string
         let xpub =
             ExtendedPubKey::from_str(&account_xpub.xpub).map_err(|e| KeyWalletError::KeyError {
@@ -505,9 +529,9 @@ impl AddressGenerator {
             message: "Failed to generate address".into(),
         })?;
 
-        Ok(Address {
+        Ok(Arc::new(Address {
             inner: addr,
-        })
+        }))
     }
 
     pub fn generate_range(
@@ -516,7 +540,7 @@ impl AddressGenerator {
         external: bool,
         start: u32,
         count: u32,
-    ) -> Result<Vec<Address>, KeyWalletError> {
+    ) -> Result<Vec<Arc<Address>>, KeyWalletError> {
         // Parse the extended public key from string
         let xpub =
             ExtendedPubKey::from_str(&account_xpub.xpub).map_err(|e| KeyWalletError::KeyError {
@@ -530,9 +554,9 @@ impl AddressGenerator {
 
         Ok(addrs
             .into_iter()
-            .map(|addr| Address {
+            .map(|addr| Arc::new(Address {
                 inner: addr,
-            })
+            }))
             .collect())
     }
 }
@@ -548,8 +572,8 @@ mod network_compatibility_tests {
         // But we can ensure the values are consistent
         assert_eq!(Network::Dash as u8, 0);
         assert_eq!(Network::Testnet as u8, 1);
-        assert_eq!(Network::Devnet as u8, 2);
-        assert_eq!(Network::Regtest as u8, 3);
+        assert_eq!(Network::Regtest as u8, 2);
+        assert_eq!(Network::Devnet as u8, 3);
     }
 
     #[test]

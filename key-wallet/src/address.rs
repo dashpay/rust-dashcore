@@ -96,8 +96,8 @@ impl Address {
         base58ck::encode_check(&data)
     }
 
-    /// Parse an address from a string
-    pub fn from_str(s: &str, network: Network) -> Result<Self> {
+    /// Parse an address from a string (network is inferred from version byte)
+    pub fn from_str(s: &str) -> Result<Self> {
         let data = base58ck::decode_check(s)
             .map_err(|_| Error::InvalidAddress("Invalid base58 encoding".into()))?;
 
@@ -109,12 +109,21 @@ impl Address {
         let hash = hash160::Hash::from_slice(&data[1..])
             .map_err(|_| Error::InvalidAddress("Invalid hash".into()))?;
 
-        let address_type = if version == network.p2pkh_version() {
-            AddressType::P2PKH
-        } else if version == network.p2sh_version() {
-            AddressType::P2SH
-        } else {
-            return Err(Error::InvalidAddress("Invalid version byte".into()));
+        // Infer network and address type from version byte
+        let (network, address_type) = match version {
+            76 => (Network::Dash, AddressType::P2PKH), // Dash mainnet P2PKH
+            16 => (Network::Dash, AddressType::P2SH),  // Dash mainnet P2SH
+            140 => {
+                // Could be testnet, devnet, or regtest P2PKH
+                // Default to testnet, but this is ambiguous
+                (Network::Testnet, AddressType::P2PKH)
+            }
+            19 => {
+                // Could be testnet, devnet, or regtest P2SH
+                // Default to testnet, but this is ambiguous
+                (Network::Testnet, AddressType::P2SH)
+            }
+            _ => return Err(Error::InvalidAddress(format!("Unknown version byte: {}", version))),
         };
 
         Ok(Self {
@@ -230,7 +239,7 @@ mod tests {
     #[test]
     fn test_address_parsing() {
         let address_str = "XmnGSJav3CWVmzDv5U68k7XT9rRPqyavtE";
-        let address = Address::from_str(address_str, Network::Dash).unwrap();
+        let address = Address::from_str(address_str).unwrap();
 
         assert_eq!(address.address_type, AddressType::P2PKH);
         assert_eq!(address.network, Network::Dash);

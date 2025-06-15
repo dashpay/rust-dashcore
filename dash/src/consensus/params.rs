@@ -123,20 +123,7 @@ impl Params {
                 allow_min_difficulty_blocks: true,
                 no_pow_retargeting: true,
             },
-            _ => Params {
-                network: network,
-                bip16_time: 1333238400,  // Apr 1 2012
-                bip34_height: 100000000, // not activated on regtest
-                bip65_height: 1351,
-                bip66_height: 1251,                    // used only in rpc tests
-                rule_change_activation_threshold: 108, // 75%
-                miner_confirmation_window: 144,
-                pow_limit: Work::REGTEST_MIN,
-                pow_target_spacing: 10 * 60,            // 10 minutes.
-                pow_target_timespan: 14 * 24 * 60 * 60, // 2 weeks.
-                allow_min_difficulty_blocks: true,
-                no_pow_retargeting: true,
-            },
+            other => panic!("Unsupported network variant: {other:?}"),
         }
     }
 

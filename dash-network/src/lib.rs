@@ -67,7 +67,10 @@ impl Network {
         match self {
             Network::Dash => 1987776,
             Network::Testnet => 905100,
-            _ => 1, //todo: this might not be 1
+            Network::Devnet => 1,  // v20 active from genesis on devnet
+            Network::Regtest => 1, // v20 active from genesis on regtest
+            #[allow(unreachable_patterns)]
+            other => panic!("Unknown activation height for network {:?}", other),
         }
     }
 

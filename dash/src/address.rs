@@ -884,18 +884,18 @@ impl<V: NetworkValidation> Address<V> {
         let p2pkh_prefix = match self.network() {
             Network::Dash => PUBKEY_ADDRESS_PREFIX_MAIN,
             Network::Testnet | Network::Devnet | Network::Regtest => PUBKEY_ADDRESS_PREFIX_TEST,
-            _ => PUBKEY_ADDRESS_PREFIX_TEST,
+            other => unreachable!("Unknown network {other:?} – add explicit prefix"),
         };
         let p2sh_prefix = match self.network() {
             Network::Dash => SCRIPT_ADDRESS_PREFIX_MAIN,
             Network::Testnet | Network::Devnet | Network::Regtest => SCRIPT_ADDRESS_PREFIX_TEST,
-            _ => SCRIPT_ADDRESS_PREFIX_TEST,
+            other => unreachable!("Unknown network {other:?} – add explicit prefix"),
         };
         let bech32_hrp = match self.network() {
             Network::Dash => "ds",
             Network::Testnet | Network::Devnet => "tb",
             Network::Regtest => "dsrt",
-            _ => "tb",
+            other => unreachable!("Unknown network {other:?} – add explicit prefix"),
         };
         let encoding = AddressEncoding {
             payload: self.payload(),

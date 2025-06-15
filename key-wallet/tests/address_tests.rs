@@ -62,7 +62,7 @@ fn test_p2sh_address_creation() {
 fn test_address_parsing() {
     // Test mainnet P2PKH
     let addr_str = "XmnGSJav3CWVmzDv5U68k7XT9rRPqyavtE";
-    let address = Address::from_str(addr_str, Network::Dash).unwrap();
+    let address = Address::from_str(addr_str).unwrap();
 
     assert_eq!(address.network, Network::Dash);
     assert_eq!(address.address_type, AddressType::P2PKH);
