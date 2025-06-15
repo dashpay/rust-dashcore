@@ -5,8 +5,8 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        validate_mnemonic, Address, AddressGenerator, HDWallet, Language, Mnemonic,
-        Network, ExtPrivKey, ExtPubKey, AccountXPriv, AccountXPub,
+        validate_mnemonic, AccountXPriv, AccountXPub, Address, AddressGenerator, ExtPrivKey,
+        ExtPubKey, HDWallet, Language, Mnemonic, Network,
     };
     use std::sync::Arc;
 
@@ -98,18 +98,18 @@ mod tests {
         let seed = vec![0u8; 64];
         let wallet = HDWallet::from_seed(seed, Network::Testnet).unwrap();
         let account_xpriv = wallet.get_account_xpriv(0).unwrap();
-        
+
         // Test ExtPrivKey
         let xpriv = ExtPrivKey::from_string(account_xpriv.xpriv).unwrap();
-        
+
         // Test getting xpub
         let xpub = xpriv.get_xpub();
         assert!(xpub.xpub.starts_with("tpub")); // Testnet public key
-        
+
         // Test deriving child
         let child = xpriv.derive_child(0, false).unwrap();
         assert!(!child.to_string().is_empty());
-        
+
         // Test ExtPubKey
         let xpub_obj = ExtPubKey::from_string(xpub.xpub).unwrap();
         let pubkey_bytes = xpub_obj.get_public_key();
@@ -132,5 +132,32 @@ mod tests {
         let wallet = HDWallet::from_seed(seed, Network::Testnet).unwrap();
         let result = wallet.derive_xpriv("invalid/path".to_string());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_network_compatibility_in_address_parsing() {
+        // Create a testnet address
+        let pubkey = vec![
+            0x02, 0x9b, 0x63, 0x47, 0x39, 0x85, 0x05, 0xf5, 0xec, 0x93, 0x82, 0x6d, 0xc6, 0x1c,
+            0x19, 0xf4, 0x7c, 0x66, 0xc0, 0x28, 0x3e, 0xe9, 0xbe, 0x98, 0x0e, 0x29, 0xce, 0x32,
+            0x5a, 0x0f, 0x46, 0x79, 0xef,
+        ];
+        let testnet_addr = Address::from_public_key(pubkey, Network::Testnet).unwrap();
+        let addr_str = testnet_addr.to_string();
+
+        // Should work with testnet
+        let parsed = Address::from_string(addr_str.clone(), Network::Testnet);
+        assert!(parsed.is_ok());
+
+        // Should also work with devnet and regtest (same prefixes)
+        let parsed = Address::from_string(addr_str.clone(), Network::Devnet);
+        assert!(parsed.is_ok());
+
+        let parsed = Address::from_string(addr_str.clone(), Network::Regtest);
+        assert!(parsed.is_ok());
+
+        // Should fail with mainnet (different prefix)
+        let parsed = Address::from_string(addr_str.clone(), Network::Dash);
+        assert!(parsed.is_err());
     }
 }

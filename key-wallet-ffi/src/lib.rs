@@ -447,7 +447,26 @@ impl Address {
         let inner = kw_address::Address::from_str(&address).map_err(|e| KeyWalletError::from(e))?;
 
         // Validate that the parsed network matches the expected network
-        if inner.network != network.into() {
+        // Note: Testnet, Devnet, and Regtest all share the same address prefixes (140/19)
+        // so we need to be flexible when comparing these networks
+        let parsed_network: KwNetwork = inner.network;
+        let expected_network: KwNetwork = network.into();
+
+        let networks_compatible = match (parsed_network, expected_network) {
+            // Exact matches are always OK
+            (n1, n2) if n1 == n2 => true,
+            // Testnet addresses can be used on devnet/regtest and vice versa
+            (KwNetwork::Testnet, KwNetwork::Devnet)
+            | (KwNetwork::Testnet, KwNetwork::Regtest)
+            | (KwNetwork::Devnet, KwNetwork::Testnet)
+            | (KwNetwork::Devnet, KwNetwork::Regtest)
+            | (KwNetwork::Regtest, KwNetwork::Testnet)
+            | (KwNetwork::Regtest, KwNetwork::Devnet) => true,
+            // All other combinations are incompatible
+            _ => false,
+        };
+
+        if !networks_compatible {
             return Err(KeyWalletError::AddressError {
                 message: format!(
                     "Address is for network {:?}, expected {:?}",
@@ -486,7 +505,7 @@ impl Address {
             KwNetwork::Testnet => Network::Testnet,
             KwNetwork::Regtest => Network::Regtest,
             KwNetwork::Devnet => Network::Devnet,
-            _ => Network::Testnet, // Default for unknown networks
+            unknown => unreachable!("Unhandled network variant: {:?}", unknown),
         }
     }
 
@@ -554,9 +573,11 @@ impl AddressGenerator {
 
         Ok(addrs
             .into_iter()
-            .map(|addr| Arc::new(Address {
-                inner: addr,
-            }))
+            .map(|addr| {
+                Arc::new(Address {
+                    inner: addr,
+                })
+            })
             .collect())
     }
 }
