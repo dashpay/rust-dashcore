@@ -9,12 +9,13 @@ mod validation;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
+use crate::network::constants::NetworkExt;
 use crate::network::message_qrinfo::{QRInfo, QuorumSnapshot};
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
-use crate::sml::llmq_type::LLMQType;
+use crate::sml::llmq_type::{LLMQType, network::NetworkLLMQExt};
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
 use crate::sml::quorum_entry::qualified_quorum_entry::{
@@ -22,9 +23,10 @@ use crate::sml::quorum_entry::qualified_quorum_entry::{
 };
 use crate::sml::quorum_validation_error::{ClientDataRetrievalError, QuorumValidationError};
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
-use crate::{BlockHash, Network, QuorumHash};
+use crate::{BlockHash, QuorumHash};
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
+use dash_network::Network;
 use hashes::Hash;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

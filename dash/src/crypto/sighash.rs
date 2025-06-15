@@ -1183,8 +1183,8 @@ mod tests {
     use crate::crypto::key::PublicKey;
     use crate::crypto::sighash::{LegacySighash, TapSighash};
     use crate::internal_macros::hex;
-    use crate::network::constants::Network;
     use crate::taproot::TapLeafHash;
+    use dash_network::Network;
 
     #[test]
     fn sighash_single_bug() {

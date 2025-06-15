@@ -7,3 +7,37 @@ fuzz/hfuzz_workspace
 
 .idea
 .DS_STORE
+
+# Claude Flow and AI assistant files
+.claude-flow.pid
+.claude/
+.roo/
+.roomodes
+claude-flow
+memory/
+memory-bank.md
+coordination.md
+
+# IDE and editor files
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+**/*.rs.bk
+
+# Test and coverage
+tarpaulin-report.html
+cobertura.xml
+
+# Backup files
+*.backup
+*.bak
+
+# Temporary files
+*.tmp
+.tmp/
+
+# Build scripts artifacts
+*.log

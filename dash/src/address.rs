@@ -64,9 +64,9 @@ use crate::blockdata::script::{
 use crate::crypto::key::{PublicKey, TapTweak, TweakedPublicKey, UntweakedPublicKey};
 use crate::error::ParseIntError;
 use crate::hash_types::{PubkeyHash, ScriptHash};
-use crate::network::constants::Network;
 use crate::prelude::*;
 use crate::taproot::TapNodeHash;
+use dash_network::Network;
 
 /// Address error.
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -884,15 +884,18 @@ impl<V: NetworkValidation> Address<V> {
         let p2pkh_prefix = match self.network() {
             Network::Dash => PUBKEY_ADDRESS_PREFIX_MAIN,
             Network::Testnet | Network::Devnet | Network::Regtest => PUBKEY_ADDRESS_PREFIX_TEST,
+            other => unreachable!("Unknown network {other:?} – add explicit prefix"),
         };
         let p2sh_prefix = match self.network() {
             Network::Dash => SCRIPT_ADDRESS_PREFIX_MAIN,
             Network::Testnet | Network::Devnet | Network::Regtest => SCRIPT_ADDRESS_PREFIX_TEST,
+            other => unreachable!("Unknown network {other:?} – add explicit prefix"),
         };
         let bech32_hrp = match self.network() {
             Network::Dash => "ds",
             Network::Testnet | Network::Devnet => "tb",
             Network::Regtest => "dsrt",
+            other => unreachable!("Unknown network {other:?} – add explicit prefix"),
         };
         let encoding = AddressEncoding {
             payload: self.payload(),
@@ -1140,6 +1143,7 @@ impl Address<NetworkUnchecked> {
             (Network::Dash, _) | (_, Network::Dash) => false,
             (Network::Regtest, _) | (_, Network::Regtest) if !is_legacy => false,
             (Network::Testnet, _) | (Network::Regtest, _) | (Network::Devnet, _) => true,
+            _ => false,
         }
     }
 
@@ -1353,7 +1357,7 @@ mod tests {
 
     use super::*;
     use crate::crypto::key::PublicKey;
-    use crate::network::constants::Network::{Dash, Testnet};
+    use dash_network::Network::{Dash, Testnet};
 
     fn roundtrips(addr: &Address) {
         assert_eq!(

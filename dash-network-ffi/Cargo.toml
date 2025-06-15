@@ -1,0 +1,29 @@
+[package]
+name = "dash-network-ffi"
+version.workspace = true
+edition = "2021"
+authors = ["Quantum Explorer <quantum@dash.org>"]
+license = "CC0-1.0"
+repository = "https://github.com/dashpay/rust-dashcore/"
+description = "FFI bindings for dash-network types"
+keywords = ["dash", "network", "ffi", "bindings"]
+readme = "README.md"
+
+[dependencies]
+dash-network = { path = "../dash-network", default-features = false }
+uniffi = { version = "0.29.3", features = ["cli"] }
+thiserror = "2.0.12"
+
+[build-dependencies]
+uniffi = { version = "0.29.3", features = ["build"] }
+
+[dev-dependencies]
+hex = "0.4"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+name = "dash_network_ffi"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"

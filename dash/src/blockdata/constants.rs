@@ -24,8 +24,8 @@ use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
 use crate::internal_macros::impl_bytes_newtype;
-use crate::network::constants::Network;
 use crate::pow::CompactTarget;
+use dash_network::Network;
 
 /// How many satoshis are in "one dash".
 pub const COIN_VALUE: u64 = 100_000_000;
@@ -159,6 +159,8 @@ pub fn genesis_block(network: Network) -> Block {
             },
             txdata,
         },
+        // Any new network variant must be handled explicitly.
+        other => unreachable!("genesis_block(): unsupported network variant {other:?}"),
     }
 }
 
@@ -211,7 +213,7 @@ mod test {
     use super::*;
     use crate::consensus::encode::serialize;
     use crate::internal_macros::hex;
-    use crate::network::constants::Network;
+    use dash_network::Network;
 
     #[test]
     fn bitcoin_genesis_first_transaction() {

@@ -103,13 +103,15 @@ pub mod amount;
 pub mod base58;
 pub mod bip152;
 pub mod bip158;
-pub mod bip32;
+// Re-export bip32 from key-wallet
+pub use key_wallet::bip32;
 pub mod blockdata;
 pub mod consensus;
 // Private until we either make this a crate or flatten it - still to be decided.
 pub mod bls_sig_utils;
 pub(crate) mod crypto;
-mod dip9;
+// Re-export dip9 from key-wallet
+pub use key_wallet::dip9;
 pub mod ephemerealdata;
 pub mod error;
 pub mod hash_types;
@@ -159,11 +161,11 @@ pub use crate::hash_types::{
     TxMerkleNode, Txid, WPubkeyHash, WScriptHash, Wtxid,
 };
 pub use crate::merkle_tree::MerkleBlock;
-pub use crate::network::constants::Network;
 pub use crate::pow::{CompactTarget, Target, Work};
 pub use crate::transaction::outpoint::OutPoint;
 pub use crate::transaction::txin::TxIn;
 pub use crate::transaction::txout::TxOut;
+pub use dash_network::Network;
 
 #[cfg(not(feature = "std"))]
 mod io_extras {

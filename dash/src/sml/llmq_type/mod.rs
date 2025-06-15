@@ -1,4 +1,4 @@
-mod network;
+pub mod network;
 pub mod rotation;
 
 use std::fmt::{Display, Formatter};
@@ -7,8 +7,8 @@ use std::io;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
-use crate::Network;
 use crate::consensus::{Decodable, Encodable, encode};
+use dash_network::Network;
 
 #[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]

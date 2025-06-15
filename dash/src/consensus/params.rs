@@ -22,7 +22,7 @@
 //!
 
 use crate::Work;
-use crate::network::constants::Network;
+use dash_network::Network;
 
 /// Parameters that influence chain consensus.
 #[non_exhaustive]
@@ -123,6 +123,7 @@ impl Params {
                 allow_min_difficulty_blocks: true,
                 no_pow_retargeting: true,
             },
+            other => panic!("Unsupported network variant: {other:?}"),
         }
     }
 

@@ -95,7 +95,7 @@ impl OutPoint {
     ///
     /// ```rust
     /// use dashcore::blockdata::constants::genesis_block;
-    /// use dashcore::network::constants::Network;
+    /// use dashcore::Network;
     ///
     /// let block = genesis_block(Network::Dash);
     /// let tx = &block.txdata[0];

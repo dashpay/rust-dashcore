@@ -1,0 +1,30 @@
+[package]
+name = "dash-network"
+version.workspace = true
+edition = "2021"
+authors = ["Quantum Explorer <quantum@dash.org>"]
+license = "CC0-1.0"
+repository = "https://github.com/dashpay/rust-dashcore/"
+documentation = "https://docs.rs/dash-network/"
+description = "Dash network types shared across Dash crates"
+keywords = ["dash", "network"]
+readme = "README.md"
+
+[dependencies]
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+
+# Optional dependencies for serialization
+serde = { version = "1.0", default-features = false, optional = true, features = ["derive", "alloc"] }
+bincode = { version = "=2.0.0-rc.3", optional = true, default-features = false }
+bincode_derive = { version= "=2.0.0-rc.3", optional = true }
+
+[features]
+default = ["std"]
+std = ["hex/std"]
+no-std = []
+serde = ["dep:serde"]
+bincode = ["dep:bincode", "dep:bincode_derive"]
+
+[lib]
+name = "dash_network"
+path = "src/lib.rs"

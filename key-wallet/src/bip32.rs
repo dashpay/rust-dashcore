@@ -28,14 +28,11 @@ use core::str::FromStr;
 #[cfg(feature = "std")]
 use std::error;
 
-use hashes::{Hash, HashEngine, Hmac, HmacEngine, hex as hashesHex, sha512};
-use internals::impl_array_newtype;
+use bitcoin_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
 use secp256k1::{self, Secp256k1, XOnlyPublicKey};
 #[cfg(feature = "serde")]
 use serde;
 
-use crate::base58;
-use crate::crypto::key::{self, Keypair, PrivateKey, PublicKey};
 use crate::dip9::{
     COINJOIN_PATH_MAINNET, COINJOIN_PATH_TESTNET, DASH_BIP44_PATH_MAINNET, DASH_BIP44_PATH_TESTNET,
     IDENTITY_AUTHENTICATION_PATH_MAINNET, IDENTITY_AUTHENTICATION_PATH_TESTNET,
@@ -43,17 +40,122 @@ use crate::dip9::{
     IDENTITY_REGISTRATION_PATH_MAINNET, IDENTITY_REGISTRATION_PATH_TESTNET,
     IDENTITY_TOPUP_PATH_MAINNET, IDENTITY_TOPUP_PATH_TESTNET,
 };
-use crate::hash_types::XpubIdentifier;
-use crate::internal_macros::impl_bytes_newtype;
-use crate::io::Write;
-use crate::network::constants::Network;
-use crate::prelude::*;
+use alloc::{string::String, vec::Vec};
+use base58ck;
+use dash_network::Network;
+
+/// XpubIdentifier as a hash160 result
+type XpubIdentifier = hash160::Hash;
+
+pub use secp256k1::Keypair;
+pub use secp256k1::PublicKey;
+/// Re-export key types from secp256k1
+pub use secp256k1::SecretKey as PrivateKey;
 
 /// A chain code
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ChainCode([u8; 32]);
-impl_array_newtype!(ChainCode, u8, 32);
-impl_bytes_newtype!(ChainCode, 32);
+
+impl ChainCode {
+    /// Create a new ChainCode from a byte array
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        ChainCode(bytes)
+    }
+
+    /// Get the inner byte array
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl AsRef<[u8]> for ChainCode {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<[u8; 32]> for ChainCode {
+    fn from(bytes: [u8; 32]) -> Self {
+        ChainCode(bytes)
+    }
+}
+
+impl TryFrom<&[u8]> for ChainCode {
+    type Error = Error;
+
+    fn try_from(slice: &[u8]) -> Result<Self, Self::Error> {
+        if slice.len() != 32 {
+            return Err(Error::InvalidChildNumberFormat);
+        }
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(slice);
+        Ok(ChainCode(bytes))
+    }
+}
+
+impl fmt::Display for ChainCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for &byte in &self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for ChainCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ChainCode({}))", self)
+    }
+}
+
+impl fmt::LowerHex for ChainCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for &byte in &self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+impl core::ops::Index<usize> for ChainCode {
+    type Output = u8;
+
+    fn index(&self, idx: usize) -> &Self::Output {
+        &self.0[idx]
+    }
+}
+
+impl core::ops::Index<core::ops::Range<usize>> for ChainCode {
+    type Output = [u8];
+
+    fn index(&self, idx: core::ops::Range<usize>) -> &Self::Output {
+        &self.0[idx]
+    }
+}
+
+impl core::ops::Index<core::ops::RangeTo<usize>> for ChainCode {
+    type Output = [u8];
+
+    fn index(&self, idx: core::ops::RangeTo<usize>) -> &Self::Output {
+        &self.0[idx]
+    }
+}
+
+impl core::ops::Index<core::ops::RangeFrom<usize>> for ChainCode {
+    type Output = [u8];
+
+    fn index(&self, idx: core::ops::RangeFrom<usize>) -> &Self::Output {
+        &self.0[idx]
+    }
+}
+
+impl core::ops::Index<core::ops::RangeFull> for ChainCode {
+    type Output = [u8];
+
+    fn index(&self, _: core::ops::RangeFull) -> &Self::Output {
+        &self.0[..]
+    }
+}
 
 impl ChainCode {
     fn from_hmac(hmac: Hmac<sha512::Hash>) -> Self {
@@ -61,11 +163,169 @@ impl ChainCode {
     }
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for ChainCode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ChainCode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        let s = String::deserialize(deserializer)?;
+        let mut bytes = [0u8; 32];
+        crate::utils::parse_hex_bytes(&s, &mut bytes).map_err(D::Error::custom)?;
+        Ok(ChainCode(bytes))
+    }
+}
+
 /// A fingerprint
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Fingerprint([u8; 4]);
-impl_array_newtype!(Fingerprint, u8, 4);
-impl_bytes_newtype!(Fingerprint, 4);
+
+impl Fingerprint {
+    /// Create a new Fingerprint from a byte array
+    pub fn from_bytes(bytes: [u8; 4]) -> Self {
+        Fingerprint(bytes)
+    }
+
+    /// Get the inner byte array
+    pub fn to_bytes(&self) -> [u8; 4] {
+        self.0
+    }
+}
+
+impl AsRef<[u8]> for Fingerprint {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<[u8; 4]> for Fingerprint {
+    fn from(bytes: [u8; 4]) -> Self {
+        Fingerprint(bytes)
+    }
+}
+
+impl TryFrom<&[u8]> for Fingerprint {
+    type Error = Error;
+
+    fn try_from(slice: &[u8]) -> Result<Self, Self::Error> {
+        if slice.len() != 4 {
+            return Err(Error::InvalidChildNumberFormat);
+        }
+        let mut bytes = [0u8; 4];
+        bytes.copy_from_slice(slice);
+        Ok(Fingerprint(bytes))
+    }
+}
+
+impl fmt::Display for Fingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for &byte in &self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for Fingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Fingerprint({}))", self)
+    }
+}
+
+impl core::str::FromStr for Fingerprint {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut bytes = [0u8; 4];
+        crate::utils::parse_hex_bytes(s, &mut bytes)
+            .map_err(|_| Error::InvalidPublicKeyHexLength(s.len()))?;
+        Ok(Fingerprint(bytes))
+    }
+}
+
+impl fmt::LowerHex for Fingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for &byte in &self.0 {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+impl core::ops::Index<usize> for Fingerprint {
+    type Output = u8;
+
+    fn index(&self, idx: usize) -> &Self::Output {
+        &self.0[idx]
+    }
+}
+
+impl core::ops::Index<core::ops::Range<usize>> for Fingerprint {
+    type Output = [u8];
+
+    fn index(&self, idx: core::ops::Range<usize>) -> &Self::Output {
+        &self.0[idx]
+    }
+}
+
+impl core::ops::Index<core::ops::RangeTo<usize>> for Fingerprint {
+    type Output = [u8];
+
+    fn index(&self, idx: core::ops::RangeTo<usize>) -> &Self::Output {
+        &self.0[idx]
+    }
+}
+
+impl core::ops::Index<core::ops::RangeFrom<usize>> for Fingerprint {
+    type Output = [u8];
+
+    fn index(&self, idx: core::ops::RangeFrom<usize>) -> &Self::Output {
+        &self.0[idx]
+    }
+}
+
+impl core::ops::Index<core::ops::RangeFull> for Fingerprint {
+    type Output = [u8];
+
+    fn index(&self, _: core::ops::RangeFull) -> &Self::Output {
+        &self.0[..]
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Fingerprint {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&format!("{:x}", self))
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Fingerprint {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        let s = String::deserialize(deserializer)?;
+        Self::from_str(&s).map_err(|_| D::Error::custom("invalid fingerprint"))
+    }
+}
 
 /// Extended private key
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -85,7 +345,25 @@ pub struct ExtendedPrivKey {
     pub chain_code: ChainCode,
 }
 #[cfg(feature = "serde")]
-crate::serde_utils::serde_string_impl!(ExtendedPrivKey, "a BIP-32 extended private key");
+impl serde::Serialize for ExtendedPrivKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ExtendedPrivKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        String::deserialize(deserializer)?.parse().map_err(D::Error::custom)
+    }
+}
 
 #[cfg(not(feature = "std"))]
 #[cfg_attr(docsrs, doc(cfg(not(feature = "std"))))]
@@ -118,7 +396,25 @@ pub struct ExtendedPubKey {
     pub chain_code: ChainCode,
 }
 #[cfg(feature = "serde")]
-crate::serde_utils::serde_string_impl!(ExtendedPubKey, "a BIP-32 extended public key");
+impl serde::Serialize for ExtendedPubKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ExtendedPubKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        String::deserialize(deserializer)?.parse().map_err(D::Error::custom)
+    }
+}
 
 /// A child number for a derived key
 #[derive(Copy, Clone, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
@@ -351,10 +647,13 @@ impl fmt::Display for ChildNumber {
             ChildNumber::Hardened256 {
                 index,
             } => {
+                write!(f, "0x")?;
+                for byte in index {
+                    write!(f, "{:02x}", byte)?;
+                }
                 write!(
                     f,
-                    "0x{}{}",
-                    hex::encode(index),
+                    "{}",
                     if f.alternate() {
                         "h"
                     } else {
@@ -365,7 +664,11 @@ impl fmt::Display for ChildNumber {
             ChildNumber::Normal256 {
                 index,
             } => {
-                write!(f, "0x{}", hex::encode(index))
+                write!(f, "0x")?;
+                for byte in index {
+                    write!(f, "{:02x}", byte)?;
+                }
+                Ok(())
             }
         }
     }
@@ -385,7 +688,28 @@ impl FromStr for ChildNumber {
         if index_str.starts_with("0x") || index_str.starts_with("0X") {
             // Parse as a 256-bit hex number
             let hex_str = &index_str[2..];
-            let hex_bytes = hex::decode(hex_str).map_err(|_| Error::InvalidChildNumberFormat)?;
+            // Simple hex decoder
+            let hex_bytes = hex_str
+                .as_bytes()
+                .chunks(2)
+                .map(|chunk| {
+                    let high = chunk[0];
+                    let low = chunk.get(1).copied().unwrap_or(b'0');
+                    let h = match high {
+                        b'0'..=b'9' => high - b'0',
+                        b'a'..=b'f' => high - b'a' + 10,
+                        b'A'..=b'F' => high - b'A' + 10,
+                        _ => return Err(Error::InvalidChildNumberFormat),
+                    };
+                    let l = match low {
+                        b'0'..=b'9' => low - b'0',
+                        b'a'..=b'f' => low - b'a' + 10,
+                        b'A'..=b'F' => low - b'A' + 10,
+                        _ => return Err(Error::InvalidChildNumberFormat),
+                    };
+                    Ok((h << 4) | l)
+                })
+                .collect::<Result<Vec<u8>, Error>>()?;
             if hex_bytes.len() != 32 {
                 return Err(Error::InvalidChildNumberFormat);
             }
@@ -608,7 +932,25 @@ impl DerivationPath {
 }
 
 #[cfg(feature = "serde")]
-crate::serde_utils::serde_string_impl!(DerivationPath, "a BIP-32 derivation path");
+impl serde::Serialize for DerivationPath {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for DerivationPath {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        String::deserialize(deserializer)?.parse().map_err(D::Error::custom)
+    }
+}
 
 impl<I> Index<I> for DerivationPath
 where
@@ -678,7 +1020,7 @@ impl ::core::iter::FromIterator<ChildNumber> for DerivationPath {
 
 impl<'a> ::core::iter::IntoIterator for &'a DerivationPath {
     type Item = &'a ChildNumber;
-    type IntoIter = slice::Iter<'a, ChildNumber>;
+    type IntoIter = core::slice::Iter<'a, ChildNumber>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
     }
@@ -745,6 +1087,11 @@ impl DerivationPath {
         self.0.is_empty()
     }
 
+    /// Push a child number to the path
+    pub fn push(&mut self, child: ChildNumber) {
+        self.0.push(child)
+    }
+
     /// Returns derivation path for a master key (i.e. empty derivation path)
     pub fn master() -> DerivationPath {
         DerivationPath(vec![])
@@ -799,7 +1146,7 @@ impl DerivationPath {
     /// Concatenate `self` with `path` and return the resulting new path.
     ///
     /// ```
-    /// use dashcore::bip32::{DerivationPath, ChildNumber};
+    /// use key_wallet::{DerivationPath, ChildNumber};
     /// use std::str::FromStr;
     ///
     /// let base = DerivationPath::from_str("m/42").unwrap();
@@ -841,7 +1188,7 @@ impl fmt::Debug for DerivationPath {
 pub type KeySource = (Fingerprint, DerivationPath);
 
 /// A BIP32 error
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Error {
     /// A pk->pk derivation was attempted on a hardened key
     CannotDeriveFromHardenedKey,
@@ -858,17 +1205,11 @@ pub enum Error {
     /// Encoded extended key data has wrong length
     WrongExtendedKeyLength(usize),
     /// Base58 encoding error
-    Base58(base58::Error),
+    Base58(base58ck::Error),
     /// Hexadecimal decoding error
-    Hex(hashesHex::Error),
+    Hex(bitcoin_hashes::FromSliceError),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidPublicKeyHexLength(usize),
-    /// bls signatures related error
-    #[cfg(feature = "bls-signatures")]
-    BLSError(String),
-    /// edwards 25519 related error
-    #[cfg(feature = "ed25519-dalek")]
-    Ed25519Dalek(String),
     /// Something is not supported based on active features
     NotSupported(String),
 }
@@ -896,10 +1237,6 @@ impl fmt::Display for Error {
             Error::InvalidPublicKeyHexLength(got) => {
                 write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got)
             }
-            #[cfg(feature = "bls-signatures")]
-            Error::BLSError(ref msg) => write!(f, "BLS signature error: {}", msg),
-            #[cfg(feature = "ed25519-dalek")]
-            Error::Ed25519Dalek(ref msg) => write!(f, "Ed25519 error: {}", msg),
             Error::NotSupported(ref msg) => write!(f, "Not supported: {}", msg),
         }
     }
@@ -916,31 +1253,14 @@ impl error::Error for Error {
     }
 }
 
-impl From<key::Error> for Error {
-    fn from(err: key::Error) -> Self {
-        match err {
-            key::Error::Base58(e) => Error::Base58(e),
-            key::Error::Secp256k1(e) => Error::Secp256k1(e),
-            key::Error::InvalidKeyPrefix(_) => Error::Secp256k1(secp256k1::Error::InvalidPublicKey),
-            key::Error::Hex(e) => Error::Hex(e),
-            key::Error::InvalidHexLength(got) => Error::InvalidPublicKeyHexLength(got),
-            #[cfg(feature = "bls-signatures")]
-            key::Error::BLSError(e) => Error::BLSError(e),
-            #[cfg(feature = "ed25519-dalek")]
-            key::Error::Ed25519Dalek(e) => Error::Ed25519Dalek(e),
-            key::Error::NotSupported(e) => Error::NotSupported(e),
-        }
-    }
-}
-
 impl From<secp256k1::Error> for Error {
     fn from(e: secp256k1::Error) -> Error {
         Error::Secp256k1(e)
     }
 }
 
-impl From<base58::Error> for Error {
-    fn from(err: base58::Error) -> Self {
+impl From<base58ck::Error> for Error {
+    fn from(err: base58ck::Error) -> Self {
         Error::Base58(err)
     }
 }
@@ -962,20 +1282,10 @@ impl ExtendedPrivKey {
         })
     }
 
-    /// Constructs ECDSA compressed private key matching internal secret key representation.
-    pub fn to_priv(&self) -> PrivateKey {
-        PrivateKey {
-            compressed: true,
-            network: self.network,
-            inner: self.private_key,
-        }
-    }
-
     /// Constructs BIP340 keypair for Schnorr signatures and Taproot use matching the internal
     /// secret key representation.
     pub fn to_keypair<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> Keypair {
-        Keypair::from_seckey_slice(secp, &self.private_key[..])
-            .expect("BIP32 internal private key representation is broken")
+        Keypair::from_secret_key(secp, &self.private_key)
     }
 
     /// Attempts to derive an extended private key from a path.
@@ -1103,7 +1413,7 @@ impl ExtendedPrivKey {
         ret[0..4].copy_from_slice(
             &match self.network {
                 Network::Dash => [0x04, 0x88, 0xAD, 0xE4],
-                Network::Testnet | Network::Devnet | Network::Regtest => [0x04, 0x35, 0x83, 0x94],
+                _ => [0x04, 0x35, 0x83, 0x94], // Testnet/Devnet/Regtest/Unknown
             }[..],
         );
         ret[4] = self.depth;
@@ -1169,7 +1479,7 @@ impl ExtendedPrivKey {
         // Version bytes
         let version: [u8; 4] = match self.network {
             Network::Dash => [0x0E, 0xEC, 0xF0, 0x2E],
-            Network::Testnet | Network::Devnet | Network::Regtest => [0x0E, 0xED, 0x27, 0x74],
+            _ => [0x0E, 0xED, 0x27, 0x74], // Testnet/Devnet/Regtest/Unknown
         };
         ret[0..4].copy_from_slice(&version);
 
@@ -1246,14 +1556,6 @@ impl ExtendedPubKey {
             child_number: sk.child_number,
             public_key: secp256k1::PublicKey::from_secret_key(secp, &sk.private_key),
             chain_code: sk.chain_code,
-        }
-    }
-
-    /// Constructs ECDSA compressed public key matching internal public key representation.
-    pub fn to_pub(&self) -> PublicKey {
-        PublicKey {
-            compressed: true,
-            inner: self.public_key,
         }
     }
 
@@ -1397,7 +1699,7 @@ impl ExtendedPubKey {
         ret[0..4].copy_from_slice(
             &match self.network {
                 Network::Dash => [0x04u8, 0x88, 0xB2, 0x1E],
-                Network::Testnet | Network::Devnet | Network::Regtest => [0x04u8, 0x35, 0x87, 0xCF],
+                _ => [0x04u8, 0x35, 0x87, 0xCF], // Testnet/Devnet/Regtest/Unknown
             }[..],
         );
         ret[4] = self.depth;
@@ -1415,7 +1717,7 @@ impl ExtendedPubKey {
         // Version bytes
         let version: [u8; 4] = match self.network {
             Network::Dash => [0x0E, 0xEC, 0xEF, 0xC5],
-            Network::Testnet | Network::Devnet | Network::Regtest => [0x0E, 0xED, 0x27, 0x0B],
+            _ => [0x0E, 0xED, 0x27, 0x0B], // Testnet/Devnet/Regtest/Unknown
         };
         ret[0..4].copy_from_slice(&version);
 
@@ -1510,7 +1812,7 @@ impl ExtendedPubKey {
     /// Returns the HASH160 of the chaincode
     pub fn identifier(&self) -> XpubIdentifier {
         let mut engine = XpubIdentifier::engine();
-        engine.write_all(&self.public_key.serialize()).expect("engines don't error");
+        engine.input(&self.public_key.serialize());
         XpubIdentifier::from_engine(engine)
     }
 
@@ -1522,7 +1824,7 @@ impl ExtendedPubKey {
 
 impl fmt::Display for ExtendedPrivKey {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        base58::encode_check_to_fmt(fmt, &self.encode()[..])
+        fmt.write_str(&base58ck::encode_check(&self.encode()[..]))
     }
 }
 
@@ -1530,14 +1832,14 @@ impl FromStr for ExtendedPrivKey {
     type Err = Error;
 
     fn from_str(inp: &str) -> Result<ExtendedPrivKey, Error> {
-        let data = base58::decode_check(inp)?;
+        let data = base58ck::decode_check(inp)?;
         ExtendedPrivKey::decode(&data)
     }
 }
 
 impl fmt::Display for ExtendedPubKey {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        base58::encode_check_to_fmt(fmt, &self.encode()[..])
+        fmt.write_str(&base58ck::encode_check(&self.encode()[..]))
     }
 }
 
@@ -1545,7 +1847,7 @@ impl FromStr for ExtendedPubKey {
     type Err = Error;
 
     fn from_str(inp: &str) -> Result<ExtendedPubKey, Error> {
-        let data = base58::decode_check(inp)?;
+        let data = base58ck::decode_check(inp)?;
         ExtendedPubKey::decode(&data)
     }
 }
@@ -1554,12 +1856,12 @@ impl FromStr for ExtendedPubKey {
 mod tests {
     use core::str::FromStr;
 
-    use hashes::hex::FromHex;
+    use bitcoin_hashes::hex::FromHex;
     use secp256k1::{self, Secp256k1};
 
     use super::ChildNumber::{Hardened, Normal};
     use super::*;
-    use crate::network::constants::Network::{self, Dash};
+    use dash_network::Network::{self, Dash};
 
     #[test]
     fn test_parse_derivation_path() {
@@ -2158,7 +2460,7 @@ mod tests {
                 Network::Dash,
             )
             .unwrap();
-        assert_eq!(sk.to_priv().to_wif(), "XGtY11vBj7wfeoHxJQjhBzpbZem2CpEwa62WCisXkwzCLmmD4jRD");
+        assert_eq!(sk.to_string(), "xprvA4FGorKLZVC4VT3Lf2UZS3hYZBpc8wGmmyyo5HPTUS8RcyX1yw2qHddBZVxn1u4NVduXDob1sKnx3d9e5wdY3VP8qibq7CgMqPhjUoV5G2K");
         // Add correct expected value
     }
 
@@ -2171,7 +2473,7 @@ mod tests {
                 Network::Dash,
             )
             .unwrap();
-        assert_eq!(sk.to_priv().to_wif(), "XJavmPyJdYEpqZwzVAarQVRhpR7mVLiFHgHoZZTuZdzrpEKDhy6f");
+        assert_eq!(sk.to_string(), "xprvA4F8hpkJuhhk4xqnnmY44WiVwUVPMdbF9VHE8vVmAiF6NyVXNmnyg5KnZF4VibNUuycJs6Dov4YBLm6bT2qGa81B5HHgqhUvixW2Qcgg5AE");
         // Add correct expected value
     }
 

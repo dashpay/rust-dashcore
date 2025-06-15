@@ -1,0 +1,41 @@
+namespace dash_network_ffi {
+    // Initialize function for any setup needs
+    void initialize();
+};
+
+// Network enum matching the dash-network crate
+enum Network {
+    "Dash",
+    "Testnet", 
+    "Devnet",
+    "Regtest",
+};
+
+// Interface for network-related operations
+interface NetworkInfo {
+    // Constructor
+    [Name=new]
+    constructor(Network network);
+    
+    // Create from magic bytes
+    [Name=from_magic, Throws=NetworkError]
+    constructor(u32 magic);
+    
+    // Get the magic bytes for this network
+    u32 magic();
+    
+    // Get the network as a string
+    string to_string();
+    
+    // Check if core v20 is active at a given height
+    boolean is_core_v20_active(u32 block_height);
+    
+    // Get the core v20 activation height
+    u32 core_v20_activation_height();
+};
+
+[Error]
+enum NetworkError {
+    "InvalidMagic",
+    "InvalidNetwork",
+};

@@ -131,7 +131,9 @@ fn build_extended_private_key() -> ExtendedPrivKey {
     let xpriv = ExtendedPrivKey::from_str(extended_private_key).unwrap();
 
     let sk = PrivateKey::from_wif(seed).unwrap();
-    let seeded = ExtendedPrivKey::new_master(NETWORK, &sk.inner.secret_bytes()).unwrap();
+    let seeded =
+        ExtendedPrivKey::new_master(key_wallet::Network::Testnet, &sk.inner.secret_bytes())
+            .unwrap();
     assert_eq!(xpriv, seeded);
 
     xpriv
@@ -326,8 +328,12 @@ fn parse_and_verify_keys(
 
         let path =
             derivation_path.into_derivation_path().expect("failed to convert derivation path");
-        let derived_priv =
-            ext_priv.derive_priv(secp, &path).expect("failed to derive ext priv key").to_priv();
+        let ext_derived = ext_priv.derive_priv(secp, &path).expect("failed to derive ext priv key");
+        let derived_priv = PrivateKey {
+            compressed: true,
+            network: ext_derived.network.into(),
+            inner: ext_derived.private_key,
+        };
         assert_eq!(wif_priv, derived_priv);
         let derived_pub = derived_priv.public_key(secp);
         key_map.insert(derived_pub, derived_priv);
