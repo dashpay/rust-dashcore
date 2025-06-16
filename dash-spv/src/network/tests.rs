@@ -30,6 +30,10 @@ mod multi_peer_tests {
             enable_filter_flow_control: true,
             filter_request_delay_ms: 0,
             max_concurrent_filter_requests: 50,
+            enable_cfheader_gap_restart: true,
+            cfheader_gap_check_interval_secs: 15,
+            cfheader_gap_restart_cooldown_secs: 30,
+            max_cfheader_gap_restart_attempts: 5,
         }
     }
     

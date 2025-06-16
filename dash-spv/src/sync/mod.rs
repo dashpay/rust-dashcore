@@ -76,8 +76,9 @@ impl SyncManager {
                         .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip: {}", e)))?
                         .unwrap_or(0);
                     
-                    // Only request filter headers if we're behind
-                    if current_filter_tip < last_height {
+                    // Only request filter headers if we're behind by more than 1 block
+                    // (within 1 block is considered "caught up" to handle edge cases)
+                    if current_filter_tip + 1 < last_height {
                         let start_height = (current_filter_tip + 1).max(first_height);
                         tracing::info!("🔄 Requesting filter headers for new blocks: heights {} to {}", start_height, last_height);
                         
@@ -92,6 +93,8 @@ impl SyncManager {
                             // The filter sync manager's handle_cfheaders_message will request next batches
                             tracing::debug!("Filter header sync already active, relying on automatic batch progression");
                         }
+                    } else if current_filter_tip == last_height {
+                        tracing::debug!("Filter headers already caught up to block headers at height {}", last_height);
                     }
                 }
             }

@@ -24,8 +24,8 @@ use dashcore::{
     block::{Header as BlockHeader, Version},
 };
 use dashcore_hashes::{sha256d, Hash};
-use std::net::SocketAddr;
-use async_trait::async_trait;
+use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
 
 /// Mock network manager for testing filter sync
 #[derive(Debug)]
@@ -88,6 +88,11 @@ impl NetworkManager for MockNetworkManager {
     
     fn handle_pong(&mut self, _nonce: u64) -> Result<(), NetworkError> { 
         Ok(()) 
+    }
+
+    fn get_message_sender(&self) -> tokio::sync::mpsc::Sender<NetworkMessage> {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        tx
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -168,7 +173,8 @@ async fn test_filter_header_verification_failure_reproduction() {
     let mut network = MockNetworkManager::new();
     
     let config = ClientConfig::new(Network::Dash);
-    let mut filter_sync = FilterSyncManager::new(&config);
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
     
     // Step 1: Store initial headers to simulate having a synced header chain
     println!("Step 1: Setting up initial header chain...");
@@ -328,7 +334,8 @@ async fn test_overlapping_batches_from_different_peers() {
     let mut network = MockNetworkManager::new();
     
     let config = ClientConfig::new(Network::Dash);
-    let mut filter_sync = FilterSyncManager::new(&config);
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
     
     // Step 1: Set up headers for the full range we'll need
     println!("Step 1: Setting up header chain (heights 1-3000)...");
@@ -501,7 +508,8 @@ async fn test_filter_header_verification_overlapping_batches() {
     let mut network = MockNetworkManager::new();
     
     let config = ClientConfig::new(Network::Dash);
-    let mut filter_sync = FilterSyncManager::new(&config);
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
     
     // Set up initial headers - start from 1 for proper sync
     let initial_headers = create_test_headers_range(1, 2000);
@@ -599,7 +607,8 @@ async fn test_filter_header_verification_race_condition_simulation() {
     let mut network = MockNetworkManager::new();
     
     let config = ClientConfig::new(Network::Dash);
-    let mut filter_sync = FilterSyncManager::new(&config);
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
     
     // Set up headers - need enough for batch B (up to height 3000)
     let initial_headers = create_test_headers_range(1, 3001);

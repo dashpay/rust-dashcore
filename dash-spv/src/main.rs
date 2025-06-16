@@ -234,7 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let example_addresses = match network {
             dashcore::Network::Dash => vec![
                 // Some example mainnet addresses (these are from block explorers/faucets)
-                "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2", // Crowdnode
+                "Xesjop7V9xLndFMgZoCrckJ5ZPgJdJFbA3", // Crowdnode
             ],
             dashcore::Network::Testnet => vec![
                 // Testnet addresses
@@ -255,7 +255,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Ok(valid_addr) = addr.require_network(network) {
                         // For the example mainnet address (Crowdnode), set earliest height to 1,000,000
                         let watch_item = if network == dashcore::Network::Dash && addr_str == "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2" {
-                            dash_spv::WatchItem::address_from_height(valid_addr, 500_000)
+                            dash_spv::WatchItem::address_from_height(valid_addr, 200_000)
                         } else {
                             dash_spv::WatchItem::address(valid_addr)
                         };

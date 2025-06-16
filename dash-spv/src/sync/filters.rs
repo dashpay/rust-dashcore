@@ -91,6 +91,14 @@ pub struct FilterSyncManager {
     active_filter_requests: HashMap<(u32, u32), ActiveRequest>,
     /// Whether flow control is enabled
     flow_control_enabled: bool,
+    /// Last time we detected a gap and attempted restart
+    last_gap_restart_attempt: Option<std::time::Instant>,
+    /// Minimum time between gap restart attempts (to prevent spam)
+    gap_restart_cooldown: std::time::Duration,
+    /// Number of consecutive gap restart failures
+    gap_restart_failure_count: u32,
+    /// Maximum gap restart attempts before giving up
+    max_gap_restart_attempts: u32,
 }
 
 impl FilterSyncManager {
@@ -139,6 +147,10 @@ impl FilterSyncManager {
             pending_filter_requests: VecDeque::new(),
             active_filter_requests: HashMap::new(),
             flow_control_enabled: true,
+            last_gap_restart_attempt: None,
+            gap_restart_cooldown: std::time::Duration::from_secs(config.cfheader_gap_restart_cooldown_secs),
+            gap_restart_failure_count: 0,
+            max_gap_restart_attempts: config.max_cfheader_gap_restart_attempts,
         }
     }
     
@@ -221,6 +233,14 @@ impl FilterSyncManager {
                         }
                     }
                     
+                    // Check if our next sync height would exceed the header tip
+                    if self.current_sync_height > header_tip_height {
+                        tracing::info!("Filter header sync complete - current sync height {} exceeds header tip {}", 
+                                      self.current_sync_height, header_tip_height);
+                        self.syncing_filter_headers = false;
+                        return Ok(false);
+                    }
+                    
                     // Request next batch
                     let next_batch_end_height = (self.current_sync_height + FILTER_BATCH_SIZE - 1).min(header_tip_height);
                     tracing::debug!("Calculated next batch end height: {} (current: {}, tip: {})", 
@@ -237,14 +257,14 @@ impl FilterSyncManager {
                                 // Scan backwards to find the highest available header
                                 let mut scan_height = next_batch_end_height.saturating_sub(1);
                                 let min_height = self.current_sync_height; // Don't go below where we are
-                                let mut found_header_hash = None;
+                                let mut found_header_info = None;
                                 
-                                while scan_height >= min_height && found_header_hash.is_none() {
+                                while scan_height >= min_height && found_header_info.is_none() {
                                     match storage.get_header(scan_height).await {
                                         Ok(Some(header)) => {
                                             tracing::info!("Found available header at height {} (originally tried {})", 
                                                           scan_height, next_batch_end_height);
-                                            found_header_hash = Some(header.block_hash());
+                                            found_header_info = Some((header.block_hash(), scan_height));
                                             break;
                                         }
                                         Ok(None) => {
@@ -260,8 +280,19 @@ impl FilterSyncManager {
                                     }
                                 }
                                 
-                                match found_header_hash {
-                                    Some(hash) => hash,
+                                match found_header_info {
+                                    Some((hash, height)) => {
+                                        // Check if we found a header at a height less than our current sync height
+                                        if height < self.current_sync_height {
+                                            tracing::warn!("Found header at height {} which is less than current sync height {}. This means we already have filter headers up to {}. Marking sync as complete.", 
+                                                          height, self.current_sync_height, self.current_sync_height - 1);
+                                            // We already have filter headers up to current_sync_height - 1
+                                            // No need to request more, mark sync as complete
+                                            self.syncing_filter_headers = false;
+                                            return Ok(false);
+                                        }
+                                        hash
+                                    },
                                     None => {
                                         tracing::error!("No available headers found between {} and {} - storage appears to have gaps", 
                                                        min_height, next_batch_end_height);
@@ -333,12 +364,12 @@ impl FilterSyncManager {
                         let mut scan_height = recovery_batch_end_height.saturating_sub(1);
                         let min_height = self.current_sync_height;
                         
-                        let mut found_recovery_hash = None;
-                        while scan_height >= min_height && found_recovery_hash.is_none() {
+                        let mut found_recovery_info = None;
+                        while scan_height >= min_height && found_recovery_info.is_none() {
                             if let Ok(Some(header)) = storage.get_header(scan_height).await {
                                 tracing::info!("Found recovery header at height {} (originally tried {})", 
                                               scan_height, recovery_batch_end_height);
-                                found_recovery_hash = Some(header.block_hash());
+                                found_recovery_info = Some((header.block_hash(), scan_height));
                                 break;
                             } else {
                                 if scan_height == 0 { break; }
@@ -346,8 +377,19 @@ impl FilterSyncManager {
                             }
                         }
                         
-                        match found_recovery_hash {
-                            Some(hash) => hash,
+                        match found_recovery_info {
+                            Some((hash, height)) => {
+                                // Check if we found a header at a height less than our current sync height
+                                if height < self.current_sync_height {
+                                    tracing::warn!("Recovery: Found header at height {} which is less than current sync height {}. This indicates we already have filter headers up to {}. Marking sync as complete.", 
+                                                  height, self.current_sync_height, self.current_sync_height - 1);
+                                    // We already have filter headers up to current_sync_height - 1
+                                    // No point in trying to recover, mark sync as complete
+                                    self.syncing_filter_headers = false;
+                                    return Ok(false);
+                                }
+                                hash
+                            },
                             None => {
                                 tracing::error!("No headers available for recovery between {} and {}", 
                                                min_height, recovery_batch_end_height);
@@ -403,9 +445,17 @@ impl FilterSyncManager {
             return Ok(false); // Already synced
         }
         
+        // Double-check that we actually have headers to sync
+        let next_height = current_filter_height + 1;
+        if next_height > header_tip_height {
+            tracing::warn!("Filter sync requested but next height {} > header tip {}, nothing to sync", 
+                          next_height, header_tip_height);
+            return Ok(false);
+        }
+        
         // Set up sync state
         self.syncing_filter_headers = true;
-        self.current_sync_height = current_filter_height + 1;
+        self.current_sync_height = next_height;
         self.last_sync_progress = std::time::Instant::now();
         
         // Get the stop hash (tip of headers)
@@ -459,6 +509,14 @@ impl FilterSyncManager {
         start_height: u32,
         stop_hash: BlockHash,
     ) -> SyncResult<()> {
+        // Validation: ensure this is a valid request
+        // Note: We can't easily get the stop height here without storage access,
+        // but we can at least check obvious invalid cases
+        if start_height == 0 {
+            tracing::error!("Invalid filter header request: start_height cannot be 0");
+            return Err(SyncError::SyncFailed("Invalid start_height 0 for filter headers".to_string()));
+        }
+        
         let get_cf_headers = GetCFHeaders {
             filter_type: 0, // Basic filter type
             start_height,
@@ -767,24 +825,31 @@ impl FilterSyncManager {
         self.pending_filter_requests.clear();
         
         // Determine range to sync
-        let filter_tip_height = storage.get_filter_tip_height().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip: {}", e)))?
+        // Note: get_filter_tip_height() returns the highest filter HEADER height, not filter height
+        let filter_header_tip_height = storage.get_filter_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter header tip: {}", e)))?
             .unwrap_or(0);
             
         let start = start_height.unwrap_or_else(|| {
-            filter_tip_height.saturating_sub(DEFAULT_FILTER_SYNC_RANGE)
+            filter_header_tip_height.saturating_sub(DEFAULT_FILTER_SYNC_RANGE)
         });
         
-        let end = count.map(|c| start + c - 1)
-            .unwrap_or(filter_tip_height)
-            .min(filter_tip_height);
+        // Calculate the end height based on the requested count
+        // Do NOT cap at the current filter position - we want to sync UP TO the filter header tip
+        let end = if let Some(c) = count {
+            (start + c - 1).min(filter_header_tip_height)
+        } else {
+            filter_header_tip_height
+        };
             
         if start > end {
+            tracing::warn!("⚠️ Filter sync requested from height {} but end height is {} - no filters to sync", 
+                          start, end);
             return Ok(());
         }
         
-        tracing::info!("🔄 Building filter request queue from height {} to {} ({} blocks)", 
-                      start, end, end - start + 1);
+        tracing::info!("🔄 Building filter request queue from height {} to {} ({} blocks, filter headers available up to {})", 
+                      start, end, end - start + 1, filter_header_tip_height);
         
         // Build requests in batches
         let batch_size = FILTER_REQUEST_BATCH_SIZE;
@@ -816,6 +881,16 @@ impl FilterSyncManager {
         }
         
         tracing::info!("📋 Filter request queue built with {} batches", self.pending_filter_requests.len());
+        
+        // Log the first few batches for debugging
+        for (i, request) in self.pending_filter_requests.iter().take(3).enumerate() {
+            tracing::debug!("  Batch {}: heights {}-{} (stop hash: {})", 
+                           i + 1, request.start_height, request.end_height, request.stop_hash);
+        }
+        if self.pending_filter_requests.len() > 3 {
+            tracing::debug!("  ... and {} more batches", self.pending_filter_requests.len() - 3);
+        }
+        
         Ok(())
     }
     
@@ -1632,6 +1707,11 @@ impl FilterSyncManager {
         self.syncing_filter_headers
     }
     
+    /// Check if filter sync is currently in progress.
+    pub fn is_syncing_filters(&self) -> bool {
+        self.syncing_filters || !self.active_filter_requests.is_empty() || !self.pending_filter_requests.is_empty()
+    }
+    
     /// Create a filter processing task that runs in a separate thread.
     /// Returns a sender channel that the networking thread can use to send CFilter messages
     /// for processing, and a watch item update sender for dynamic updates.
@@ -1822,11 +1902,35 @@ impl FilterSyncManager {
         total_filters_requested: u64,
     ) {
         let mut stats_lock = stats.write().await;
-        stats_lock.filters_requested = total_filters_requested;
-        stats_lock.filters_received = 0;
-        stats_lock.filter_sync_start_time = Some(std::time::Instant::now());
-        stats_lock.last_filter_received_time = None;
-        tracing::info!("📊 Started filter sync tracking: {} filters requested", total_filters_requested);
+        
+        // If we're starting a new sync session while one is already in progress,
+        // add to the existing count instead of resetting
+        if stats_lock.filter_sync_start_time.is_some() {
+            // Accumulate the new request count
+            stats_lock.filters_requested += total_filters_requested;
+            tracing::info!("📊 Added {} filters to existing sync tracking (total: {} filters requested)", 
+                          total_filters_requested, stats_lock.filters_requested);
+        } else {
+            // Fresh start - reset everything
+            stats_lock.filters_requested = total_filters_requested;
+            stats_lock.filters_received = 0;
+            stats_lock.filter_sync_start_time = Some(std::time::Instant::now());
+            stats_lock.last_filter_received_time = None;
+            // Clear the received heights tracking for a fresh start
+            if let Ok(mut heights) = stats_lock.received_filter_heights.lock() {
+                heights.clear();
+            }
+            tracing::info!("📊 Started new filter sync tracking: {} filters requested", total_filters_requested);
+        }
+    }
+    
+    /// Complete filter sync tracking (marks the sync session as complete).
+    pub async fn complete_filter_sync_tracking(
+        stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
+    ) {
+        let mut stats_lock = stats.write().await;
+        stats_lock.filter_sync_start_time = None;
+        tracing::info!("📊 Completed filter sync tracking");
     }
     
     /// Update filter reception tracking.
@@ -2088,6 +2192,116 @@ impl FilterSyncManager {
         let received = total_requested - total_missing;
         
         (received as f64 / total_requested as f64) * 100.0
+    }
+    
+    /// Check if there's a gap between block headers and filter headers
+    /// Returns (has_gap, block_height, filter_height, gap_size)
+    pub async fn check_cfheader_gap(&self, storage: &dyn StorageManager) -> SyncResult<(bool, u32, u32, u32)> {
+        let block_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get block tip: {}", e)))?
+            .unwrap_or(0);
+        
+        let filter_height = storage.get_filter_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip: {}", e)))?
+            .unwrap_or(0);
+        
+        let gap_size = if block_height > filter_height {
+            block_height - filter_height
+        } else {
+            0
+        };
+        
+        // Consider within 1 block as "no gap" to handle edge cases at the tip
+        let has_gap = gap_size > 1;
+        
+        tracing::debug!("CFHeader gap check: block_height={}, filter_height={}, gap={}", 
+                       block_height, filter_height, gap_size);
+        
+        Ok((has_gap, block_height, filter_height, gap_size))
+    }
+    
+    /// Check if there's a gap between synced filters and filter headers.
+    pub async fn check_filter_gap(&self, storage: &dyn StorageManager, progress: &crate::types::SyncProgress) -> SyncResult<(bool, u32, u32, u32)> {
+        // Get filter header tip height
+        let filter_header_height = storage.get_filter_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e)))?
+            .unwrap_or(0);
+        
+        // Get last synced filter height from progress tracking
+        let last_synced_filter = progress.last_synced_filter_height.unwrap_or(0);
+        
+        // Calculate gap
+        let gap_size = filter_header_height.saturating_sub(last_synced_filter);
+        let has_gap = gap_size > 0;
+        
+        tracing::debug!("Filter gap check: filter_header_height={}, last_synced_filter={}, gap={}", 
+                       filter_header_height, last_synced_filter, gap_size);
+        
+        Ok((has_gap, filter_header_height, last_synced_filter, gap_size))
+    }
+    
+    /// Attempt to restart filter header sync if there's a gap and conditions are met
+    pub async fn maybe_restart_cfheader_sync_for_gap(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<bool> {
+        // Check if we're already syncing
+        if self.syncing_filter_headers {
+            return Ok(false);
+        }
+        
+        // Check gap detection cooldown
+        if let Some(last_attempt) = self.last_gap_restart_attempt {
+            if last_attempt.elapsed() < self.gap_restart_cooldown {
+                return Ok(false); // Too soon since last attempt
+            }
+        }
+        
+        // Check if we've exceeded max attempts
+        if self.gap_restart_failure_count >= self.max_gap_restart_attempts {
+            tracing::warn!("⚠️  CFHeader gap restart disabled after {} failed attempts", 
+                          self.max_gap_restart_attempts);
+            return Ok(false);
+        }
+        
+        // Check for gap
+        let (has_gap, block_height, filter_height, gap_size) = self.check_cfheader_gap(storage).await?;
+        
+        if !has_gap {
+            // Reset failure count if no gap
+            if self.gap_restart_failure_count > 0 {
+                tracing::debug!("✅ CFHeader gap resolved, resetting failure count");
+                self.gap_restart_failure_count = 0;
+            }
+            return Ok(false);
+        }
+        
+        // Gap detected - attempt restart
+        tracing::info!("🔄 CFHeader gap detected: {} block headers vs {} filter headers (gap: {})", 
+                      block_height, filter_height, gap_size);
+        tracing::info!("🚀 Auto-restarting filter header sync to close gap...");
+        
+        self.last_gap_restart_attempt = Some(std::time::Instant::now());
+        
+        match self.start_sync_headers(network, storage).await {
+            Ok(started) => {
+                if started {
+                    tracing::info!("✅ CFHeader sync restarted successfully");
+                    self.gap_restart_failure_count = 0; // Reset on success
+                    Ok(true)
+                } else {
+                    tracing::warn!("⚠️  CFHeader sync restart returned false (already up to date?)");
+                    self.gap_restart_failure_count += 1;
+                    Ok(false)
+                }
+            }
+            Err(e) => {
+                tracing::error!("❌ Failed to restart CFHeader sync: {}", e);
+                self.gap_restart_failure_count += 1;
+                Err(e)
+            }
+        }
     }
     
     /// Retry missing or timed out filter ranges.

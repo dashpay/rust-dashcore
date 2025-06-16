@@ -39,6 +39,15 @@ impl<'a> StatusDisplay<'a> {
     /// Get current sync progress.
     pub async fn sync_progress(&self) -> Result<SyncProgress> {
         let state = self.state.read().await;
+        let stats = self.stats.read().await;
+        
+        // Calculate last synced filter height from received filter heights
+        let last_synced_filter_height = if let Ok(heights) = stats.received_filter_heights.lock() {
+            heights.iter().max().copied()
+        } else {
+            None
+        };
+        
         Ok(SyncProgress {
             header_height: state.tip_height(),
             filter_header_height: state.filter_headers.len().saturating_sub(1) as u32,
@@ -47,7 +56,8 @@ impl<'a> StatusDisplay<'a> {
             headers_synced: false, // TODO: Implement
             filter_headers_synced: false, // TODO: Implement
             masternodes_synced: false, // TODO: Implement
-            filters_downloaded: 0, // TODO: Track properly
+            filters_downloaded: stats.filters_received,
+            last_synced_filter_height,
             sync_start: std::time::SystemTime::now(), // TODO: Track properly
             last_update: std::time::SystemTime::now(),
         })

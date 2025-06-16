@@ -451,7 +451,7 @@ impl DashSpvClient {
 
         // Timer for filter gap checking
         let mut last_filter_gap_check = Instant::now();
-        let filter_gap_check_interval = std::time::Duration::from_secs(10);
+        let filter_gap_check_interval = std::time::Duration::from_secs(self.config.cfheader_gap_check_interval_secs);
 
         loop {
             // Check if we should stop
@@ -509,6 +509,17 @@ impl DashSpvClient {
             // Check if it's time to update the status display
             if last_status_update.elapsed() >= status_update_interval {
                 self.update_status_display().await;
+
+                // Report CFHeader gap information if enabled
+                if self.config.enable_filters {
+                    if let Ok((has_gap, block_height, filter_height, gap_size)) = 
+                        self.sync_manager.filter_sync().check_cfheader_gap(&*self.storage).await {
+                        if has_gap && gap_size >= 100 { // Only log significant gaps
+                            tracing::info!("📏 CFHeader Gap: {} block headers vs {} filter headers (gap: {})", 
+                                          block_height, filter_height, gap_size);
+                        }
+                    }
+                }
 
                 // Report enhanced filter sync progress if active
                 let (filters_requested, filters_received, basic_progress, timeout, total_missing, actual_coverage, missing_ranges) = 
@@ -586,6 +597,68 @@ impl DashSpvClient {
                     if let Err(e) = self.sync_manager.filter_sync_mut()
                         .check_and_retry_missing_filters(&mut *self.network, &*self.storage).await {
                         tracing::warn!("Failed to check and retry missing filters: {}", e);
+                    }
+                    
+                    // Check for CFHeader gaps and auto-restart if needed
+                    if self.config.enable_cfheader_gap_restart {
+                        match self.sync_manager.filter_sync_mut()
+                            .maybe_restart_cfheader_sync_for_gap(&mut *self.network, &mut *self.storage).await {
+                            Ok(restarted) => {
+                                if restarted {
+                                    tracing::info!("🔄 Auto-restarted CFHeader sync due to detected gap");
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to check/restart CFHeader sync for gap: {}", e);
+                            }
+                        }
+                    }
+                    
+                    // Check for filter gaps and auto-restart if needed
+                    if self.config.enable_filter_gap_restart && !self.watch_items.read().await.is_empty() {
+                        // Get current sync progress
+                        let progress = self.sync_progress().await?;
+                        
+                        // Check if there's a gap between synced filters and filter headers
+                        match self.sync_manager.filter_sync()
+                            .check_filter_gap(&*self.storage, &progress).await {
+                            Ok((has_gap, filter_header_height, last_synced_filter, gap_size)) => {
+                                if has_gap && gap_size >= self.config.min_filter_gap_size {
+                                    tracing::info!("🔍 Detected filter gap: filter headers at {}, last synced filter at {} (gap: {} blocks)",
+                                                  filter_header_height, last_synced_filter, gap_size);
+                                    
+                                    // Check if we're not already syncing filters
+                                    if !self.sync_manager.filter_sync().is_syncing_filters() {
+                                        // Start filter sync for the missing range
+                                        let start_height = last_synced_filter + 1;
+                                        
+                                        // Limit the sync size to avoid overwhelming the system
+                                        let max_sync_size = self.config.max_filter_gap_sync_size;
+                                        let sync_count = gap_size.min(max_sync_size);
+                                        
+                                        if sync_count < gap_size {
+                                            tracing::info!("🔄 Auto-starting filter sync for gap from height {} ({} blocks of {} total gap)", 
+                                                          start_height, sync_count, gap_size);
+                                        } else {
+                                            tracing::info!("🔄 Auto-starting filter sync for gap from height {} ({} blocks)", 
+                                                          start_height, sync_count);
+                                        }
+                                        
+                                        match self.sync_filters_range(Some(start_height), Some(sync_count)).await {
+                                            Ok(_) => {
+                                                tracing::info!("✅ Successfully started filter sync for gap");
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!("Failed to start filter sync for gap: {}", e);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::debug!("Failed to check filter gap: {}", e);
+                            }
+                        }
                     }
                 }
                 last_filter_gap_check = Instant::now();
@@ -1270,6 +1343,19 @@ impl DashSpvClient {
             &self.running,
         );
         coordinator.sync_and_check_filters(num_blocks).await
+    }
+    
+    /// Sync filters for a specific height range.
+    pub async fn sync_filters_range(&mut self, start_height: Option<u32>, count: Option<u32>) -> Result<()> {
+        let mut coordinator = FilterSyncCoordinator::new(
+            &mut self.sync_manager,
+            &mut *self.storage,
+            &mut *self.network,
+            &self.watch_items,
+            &self.stats,
+            &self.running,
+        );
+        coordinator.sync_filters_range(start_height, count).await
     }
 
     /// Initialize genesis block if not already present in storage.

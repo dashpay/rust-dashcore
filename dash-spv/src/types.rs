@@ -37,6 +37,9 @@ pub struct SyncProgress {
     /// Number of compact filters downloaded.
     pub filters_downloaded: u64,
     
+    /// Last height where filters were synced/verified.
+    pub last_synced_filter_height: Option<u32>,
+    
     /// Sync start time.
     pub sync_start: SystemTime,
     
@@ -56,6 +59,7 @@ impl Default for SyncProgress {
             filter_headers_synced: false,
             masternodes_synced: false,
             filters_downloaded: 0,
+            last_synced_filter_height: None,
             sync_start: now,
             last_update: now,
         }

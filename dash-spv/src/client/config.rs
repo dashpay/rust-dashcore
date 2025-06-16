@@ -65,6 +65,36 @@ pub struct ClientConfig {
     
     /// Delay between filter requests in milliseconds (default: 50).
     pub filter_request_delay_ms: u64,
+    
+    /// Enable automatic CFHeader gap detection and restart
+    pub enable_cfheader_gap_restart: bool,
+    
+    /// Interval for checking CFHeader gaps (seconds)
+    pub cfheader_gap_check_interval_secs: u64,
+    
+    /// Cooldown between CFHeader restart attempts (seconds)  
+    pub cfheader_gap_restart_cooldown_secs: u64,
+    
+    /// Maximum CFHeader gap restart attempts
+    pub max_cfheader_gap_restart_attempts: u32,
+    
+    /// Enable automatic filter gap detection and restart
+    pub enable_filter_gap_restart: bool,
+    
+    /// Interval for checking filter gaps (seconds)
+    pub filter_gap_check_interval_secs: u64,
+    
+    /// Minimum filter gap size to trigger restart (blocks)
+    pub min_filter_gap_size: u32,
+    
+    /// Cooldown between filter restart attempts (seconds)
+    pub filter_gap_restart_cooldown_secs: u64,
+    
+    /// Maximum filter gap restart attempts
+    pub max_filter_gap_restart_attempts: u32,
+    
+    /// Maximum number of filters to sync in a single gap sync batch
+    pub max_filter_gap_sync_size: u32,
 }
 
 impl Default for ClientConfig {
@@ -88,6 +118,16 @@ impl Default for ClientConfig {
             max_concurrent_filter_requests: 16,
             enable_filter_flow_control: true,
             filter_request_delay_ms: 0,
+            enable_cfheader_gap_restart: true,
+            cfheader_gap_check_interval_secs: 15,
+            cfheader_gap_restart_cooldown_secs: 30,
+            max_cfheader_gap_restart_attempts: 5,
+            enable_filter_gap_restart: true,
+            filter_gap_check_interval_secs: 20,
+            min_filter_gap_size: 10,
+            filter_gap_restart_cooldown_secs: 30,
+            max_filter_gap_restart_attempts: 5,
+            max_filter_gap_sync_size: 50000,
         }
     }
 }

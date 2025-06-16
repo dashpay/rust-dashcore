@@ -92,6 +92,21 @@ impl<'a> FilterSyncCoordinator<'a> {
         Ok(Vec::new())
     }
     
+    /// Sync filters for a specific height range.
+    pub async fn sync_filters_range(&mut self, start_height: Option<u32>, count: Option<u32>) -> Result<()> {
+        // Get filter tip height to determine default values
+        let filter_tip_height = self.storage.get_filter_tip_height().await
+            .map_err(|e| SpvError::Storage(e))?
+            .unwrap_or(0);
+        
+        let start = start_height.unwrap_or(filter_tip_height.saturating_sub(99));
+        let num_blocks = count.unwrap_or(100);
+        
+        tracing::info!("Starting filter sync for specific range from height {} ({} blocks)", start, num_blocks);
+        
+        self.sync_filters_coordinated(start, num_blocks).await
+    }
+    
     /// Sync filters in coordination with the monitoring loop using flow control processing
     async fn sync_filters_coordinated(&mut self, start_height: u32, count: u32) -> Result<()> {
         tracing::info!("Starting coordinated filter sync with flow control from height {} to {} ({} filters expected)", 

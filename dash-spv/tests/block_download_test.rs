@@ -1,16 +1,15 @@
 //! Tests for block downloading on filter match functionality.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
 use tokio::sync::RwLock;
 
 use dashcore::{
     block::{Block, Header as BlockHeader, Version},
-    consensus::encode,
-    hash_types::FilterHeader,
     network::message::NetworkMessage,
     network::message_blockdata::Inventory,
     pow::CompactTarget,
-    BlockHash, Transaction, TxIn, TxOut, OutPoint, Txid, ScriptBuf,
+    BlockHash,
     Network, Address,
 };
 use dashcore_hashes::Hash;
@@ -111,6 +110,11 @@ impl NetworkManager for MockNetworkManager {
     }
     
     fn cleanup_old_pings(&mut self) {}
+    
+    fn get_message_sender(&self) -> tokio::sync::mpsc::Sender<NetworkMessage> {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        tx
+    }
 }
 
 fn create_test_config() -> ClientConfig {
@@ -155,7 +159,8 @@ fn create_test_filter_match(block_hash: BlockHash, height: u32) -> FilterMatch {
 #[tokio::test]
 async fn test_filter_sync_manager_creation() {
     let config = create_test_config();
-    let filter_sync = FilterSyncManager::new(&config);
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let filter_sync = FilterSyncManager::new(&config, received_heights);
     
     assert!(!filter_sync.has_pending_downloads());
     assert_eq!(filter_sync.pending_download_count(), 0);
@@ -164,7 +169,8 @@ async fn test_filter_sync_manager_creation() {
 #[tokio::test]
 async fn test_request_block_download() {
     let config = create_test_config();
-    let mut filter_sync = FilterSyncManager::new(&config);
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
     
     let block_hash = BlockHash::from_slice(&[1u8; 32]).unwrap();
@@ -199,7 +205,8 @@ async fn test_request_block_download() {
 #[tokio::test]
 async fn test_duplicate_block_request_prevention() {
     let config = create_test_config();
-    let mut filter_sync = FilterSyncManager::new(&config);
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
     
     let block_hash = BlockHash::from_slice(&[1u8; 32]).unwrap();
@@ -220,7 +227,8 @@ async fn test_duplicate_block_request_prevention() {
 #[tokio::test]
 async fn test_handle_downloaded_block() {
     let config = create_test_config();
-    let mut filter_sync = FilterSyncManager::new(&config);
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
     
     let block = create_test_block();
@@ -248,7 +256,8 @@ async fn test_handle_downloaded_block() {
 #[tokio::test]
 async fn test_handle_unexpected_block() {
     let config = create_test_config();
-    let mut filter_sync = FilterSyncManager::new(&config);
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
     
     let block = create_test_block();
     
@@ -262,7 +271,8 @@ async fn test_handle_unexpected_block() {
 #[tokio::test]
 async fn test_process_multiple_filter_matches() {
     let config = create_test_config();
-    let mut filter_sync = FilterSyncManager::new(&config);
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
     
     // Create multiple filter matches
@@ -291,7 +301,8 @@ async fn test_process_multiple_filter_matches() {
 #[tokio::test]
 async fn test_sync_manager_integration() {
     let config = create_test_config();
-    let mut sync_manager = SyncManager::new(&config);
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut sync_manager = SyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
     
     let block_hash = BlockHash::from_slice(&[1u8; 32]).unwrap();
@@ -314,13 +325,14 @@ async fn test_sync_manager_integration() {
 #[tokio::test]
 async fn test_filter_match_and_download_workflow() {
     let config = create_test_config();
-    let mut storage = MemoryStorageManager::new().await.unwrap();
-    let mut filter_sync = FilterSyncManager::new(&config);
+    let _storage = MemoryStorageManager::new().await.unwrap();
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
     
     // Create test address and watch item
     let address = create_test_address();
-    let watch_items = vec![WatchItem::address(address)];
+    let _watch_items = vec![WatchItem::address(address)];
     
     // This is a simplified test - in real usage, we'd need to:
     // 1. Store filter headers and filters
@@ -342,7 +354,8 @@ async fn test_filter_match_and_download_workflow() {
 #[tokio::test]
 async fn test_reset_clears_download_state() {
     let config = create_test_config();
-    let mut filter_sync = FilterSyncManager::new(&config);
+    let received_heights = Arc::new(Mutex::new(HashSet::new()));
+    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
     
     let block_hash = BlockHash::from_slice(&[1u8; 32]).unwrap();
