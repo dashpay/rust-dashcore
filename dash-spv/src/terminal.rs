@@ -88,6 +88,13 @@ impl TerminalUI {
         // Save cursor position
         stdout.queue(cursor::SavePosition)?;
         
+        // Check if terminal is large enough
+        if height < 2 {
+            // Terminal too small to draw status bar
+            stdout.queue(cursor::RestorePosition)?;
+            return stdout.flush();
+        }
+        
         // Draw separator line
         stdout.queue(cursor::MoveTo(0, height - 2))?;
         stdout.queue(terminal::Clear(ClearType::CurrentLine))?;
