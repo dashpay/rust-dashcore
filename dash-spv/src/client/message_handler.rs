@@ -148,14 +148,14 @@ impl<'a> MessageHandler<'a> {
                 // This would need access to transaction processing logic
                 tracing::debug!("Transaction processing not yet implemented in message handler");
             }
-            NetworkMessage::CLSig(clsig) => {
-                tracing::info!("Received ChainLock for block {}", clsig.chain_lock.block_hash);
+            NetworkMessage::CLSig(chain_lock) => {
+                tracing::info!("Received ChainLock for block {}", chain_lock.block_hash);
                 // ChainLock processing would need access to state and validation
                 // This might need to be handled at the client level
                 tracing::debug!("ChainLock processing not yet implemented in message handler");
             }
-            NetworkMessage::ISLock(islock_msg) => {
-                tracing::info!("Received InstantSendLock for tx {}", islock_msg.instant_lock.txid);
+            NetworkMessage::ISLock(instant_lock) => {
+                tracing::info!("Received InstantSendLock for tx {}", instant_lock.txid);
                 // InstantLock processing would need access to validation
                 // This might need to be handled at the client level
                 tracing::debug!("InstantLock processing not yet implemented in message handler");

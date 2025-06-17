@@ -32,6 +32,7 @@ use crate::network::{
     message_blockdata, message_bloom, message_compact_blocks, message_filter, message_network,
     message_qrinfo, message_sml,
 };
+use crate::{ChainLock, InstantLock};
 use crate::prelude::*;
 
 /// The maximum number of [super::message_blockdata::Inventory] items in an `inv` message.
@@ -260,8 +261,9 @@ pub enum NetworkMessage {
     /// `qrinfo`
     QRInfo(message_qrinfo::QRInfo),
     /// `clsig`
-    CLSig(message_sml::CLSig),
-    ISLock(message_sml::ISLock),
+    CLSig(ChainLock),
+    /// `isdlock`
+    ISLock(InstantLock),
     /// Any other message.
     Unknown {
         /// The command of this message.
