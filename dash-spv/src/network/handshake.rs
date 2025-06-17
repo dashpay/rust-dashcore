@@ -10,7 +10,7 @@ use dashcore::network::constants;
 use dashcore::Network;
 // Hash trait not needed in current implementation
 
-use crate::error::NetworkResult;
+use crate::error::{NetworkError, NetworkResult};
 use crate::network::connection::TcpConnection;
 
 /// Handshake state.
@@ -45,19 +45,44 @@ impl HandshakeManager {
     
     /// Perform the handshake with a peer.
     pub async fn perform_handshake(&mut self, connection: &mut TcpConnection) -> NetworkResult<()> {
+        use tokio::time::{timeout, Duration};
+        
         // Send version message
         self.send_version(connection).await?;
         self.state = HandshakeState::VersionSent;
         
-        // Wait for responses
+        // Define timeout for the entire handshake process
+        const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+        const MESSAGE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+        
+        let start_time = tokio::time::Instant::now();
+        
+        // Wait for responses with timeout
         loop {
-            if let Some(message) = connection.receive_message().await? {
-                match self.handle_handshake_message(connection, message).await? {
-                    Some(HandshakeState::Complete) => {
-                        self.state = HandshakeState::Complete;
-                        break;
+            // Check if we've exceeded the overall handshake timeout
+            if start_time.elapsed() > HANDSHAKE_TIMEOUT {
+                return Err(NetworkError::Timeout);
+            }
+            
+            // Try to receive a message with a short timeout
+            match timeout(MESSAGE_POLL_INTERVAL, connection.receive_message()).await {
+                Ok(Ok(Some(message))) => {
+                    match self.handle_handshake_message(connection, message).await? {
+                        Some(HandshakeState::Complete) => {
+                            self.state = HandshakeState::Complete;
+                            break;
+                        }
+                        _ => continue,
                     }
-                    _ => continue,
+                }
+                Ok(Ok(None)) => {
+                    // No message available, yield to prevent tight loop
+                    tokio::task::yield_now().await;
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    // Timeout on receive_message, continue to check overall timeout
+                    continue;
                 }
             }
         }
