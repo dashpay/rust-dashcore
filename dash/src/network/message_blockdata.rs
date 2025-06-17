@@ -26,7 +26,7 @@ use std::io;
 use hashes::sha256d;
 
 use crate::consensus::encode::{self, Decodable, Encodable};
-use crate::hash_types::{BlockHash, Txid, Wtxid};
+use crate::hash_types::{BlockHash, ChainLockHash, InstantSendLockHash, Txid, Wtxid};
 use crate::hashes::Hash;
 use crate::internal_macros::impl_consensus_encoding;
 use crate::network::constants;
@@ -41,6 +41,8 @@ pub enum Inventory {
     Transaction(Txid),
     /// Block
     Block(BlockHash),
+    /// Filtered Block (merkle block)
+    FilteredBlock(BlockHash),
     /// Compact Block
     CompactBlock(BlockHash),
     /// Witness Transaction by Wtxid
@@ -49,6 +51,10 @@ pub enum Inventory {
     WitnessTransaction(Txid),
     /// Witness Block
     WitnessBlock(BlockHash),
+
+    ChainLock(ChainLockHash),
+    InstantSendLock(InstantSendLockHash),
+
     /// Unknown inventory type
     Unknown {
         /// The inventory item type.
@@ -70,10 +76,15 @@ impl Encodable for Inventory {
             Inventory::Error => encode_inv!(0, sha256d::Hash::all_zeros()),
             Inventory::Transaction(ref t) => encode_inv!(1, t),
             Inventory::Block(ref b) => encode_inv!(2, b),
+            Inventory::FilteredBlock(ref b) => encode_inv!(3, b),
             Inventory::CompactBlock(ref b) => encode_inv!(4, b),
             Inventory::WTx(w) => encode_inv!(5, w),
             Inventory::WitnessTransaction(ref t) => encode_inv!(0x40000001, t),
             Inventory::WitnessBlock(ref b) => encode_inv!(0x40000002, b),
+
+            Inventory::ChainLock(ref b) => encode_inv!(29, b),
+            Inventory::InstantSendLock(ref b) => encode_inv!(31, b),
+
             Inventory::Unknown {
                 inv_type: t,
                 hash: ref d,
@@ -90,8 +101,11 @@ impl Decodable for Inventory {
             0 => Inventory::Error,
             1 => Inventory::Transaction(Decodable::consensus_decode(r)?),
             2 => Inventory::Block(Decodable::consensus_decode(r)?),
+            3 => Inventory::FilteredBlock(Decodable::consensus_decode(r)?),
             4 => Inventory::CompactBlock(Decodable::consensus_decode(r)?),
             5 => Inventory::WTx(Decodable::consensus_decode(r)?),
+            29 => Inventory::ChainLock(Decodable::consensus_decode(r)?),
+            31 => Inventory::InstantSendLock(Decodable::consensus_decode(r)?),
             0x40000001 => Inventory::WitnessTransaction(Decodable::consensus_decode(r)?),
             0x40000002 => Inventory::WitnessBlock(Decodable::consensus_decode(r)?),
             tp => Inventory::Unknown {

@@ -32,6 +32,7 @@ use crate::network::{
     message_blockdata, message_bloom, message_compact_blocks, message_filter, message_network,
     message_qrinfo, message_sml,
 };
+use crate::{ChainLock, InstantLock};
 use crate::prelude::*;
 
 /// The maximum number of [super::message_blockdata::Inventory] items in an `inv` message.
@@ -259,6 +260,10 @@ pub enum NetworkMessage {
     GetQRInfo(message_qrinfo::GetQRInfo),
     /// `qrinfo`
     QRInfo(message_qrinfo::QRInfo),
+    /// `clsig`
+    CLSig(ChainLock),
+    /// `isdlock`
+    ISLock(InstantLock),
     /// Any other message.
     Unknown {
         /// The command of this message.
@@ -316,6 +321,8 @@ impl NetworkMessage {
             NetworkMessage::MnListDiff(_) => "mnlistdiff",
             NetworkMessage::GetQRInfo(_) => "getqrinfo",
             NetworkMessage::QRInfo(_) => "qrinfo",
+            NetworkMessage::CLSig(_) => "clsig",
+            NetworkMessage::ISLock(_) => "isdlock",
             NetworkMessage::Unknown {
                 ..
             } => "unknown",
@@ -415,6 +422,8 @@ impl Encodable for RawNetworkMessage {
             NetworkMessage::MnListDiff(ref dat) => serialize(dat),
             NetworkMessage::GetQRInfo(ref dat) => serialize(dat),
             NetworkMessage::QRInfo(ref dat) => serialize(dat),
+            NetworkMessage::CLSig(ref dat) => serialize(dat),
+            NetworkMessage::ISLock(ref dat) => serialize(dat),
         })
         .consensus_encode(w)?;
         Ok(len)
@@ -483,7 +492,23 @@ impl Decodable for RawNetworkMessage {
             ),
             "mempool" => NetworkMessage::MemPool,
             "block" => {
-                NetworkMessage::Block(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
+                // First decode just the header to get block hash for error context
+                let header: block::Header = Decodable::consensus_decode_from_finite_reader(&mut mem_d)?;
+                let block_hash = header.block_hash();
+                
+                // Now decode the transactions
+                match Vec::<transaction::Transaction>::consensus_decode_from_finite_reader(&mut mem_d) {
+                    Ok(txdata) => {
+                        NetworkMessage::Block(block::Block { header, txdata })
+                    }
+                    Err(e) => {
+                        // Include block hash in error message for debugging
+                        return Err(encode::Error::Io(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Failed to decode transactions for block {}: {}", block_hash, e)
+                        )));
+                    }
+                }
             }
             "headers" => NetworkMessage::Headers(
                 HeaderDeserializationWrapper::consensus_decode_from_finite_reader(&mut mem_d)?.0,
@@ -562,6 +587,12 @@ impl Decodable for RawNetworkMessage {
             ),
             "qrinfo" => {
                 NetworkMessage::QRInfo(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
+            }
+            "clsig" => {
+                NetworkMessage::CLSig(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
+            }
+            "isdlock" => {
+                NetworkMessage::ISLock(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
             }
             _ => NetworkMessage::Unknown {
                 command: cmd,

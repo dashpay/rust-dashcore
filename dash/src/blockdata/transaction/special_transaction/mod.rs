@@ -28,17 +28,18 @@ use bincode::{Decode, Encode};
 
 use crate::blockdata::transaction::special_transaction::TransactionPayload::{
     AssetLockPayloadType, AssetUnlockPayloadType, CoinbasePayloadType,
-    ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType,
+    MnhfSignalPayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType,
     ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType,
     QuorumCommitmentPayloadType,
 };
 use crate::blockdata::transaction::special_transaction::TransactionType::{
-    AssetLock, AssetUnlock, Classic, Coinbase, ProviderRegistration, ProviderUpdateRegistrar,
+    AssetLock, AssetUnlock, Classic, Coinbase, MnhfSignal, ProviderRegistration, ProviderUpdateRegistrar,
     ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment,
 };
 use crate::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
 use crate::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
+use crate::blockdata::transaction::special_transaction::mnhf_signal::MnhfSignalPayload;
 use crate::blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
 use crate::blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
 use crate::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
@@ -52,6 +53,7 @@ use crate::io;
 pub mod asset_lock;
 pub mod asset_unlock;
 pub mod coinbase;
+pub mod mnhf_signal;
 pub mod provider_registration;
 pub mod provider_update_registrar;
 pub mod provider_update_revocation;
@@ -77,6 +79,8 @@ pub enum TransactionPayload {
     CoinbasePayloadType(CoinbasePayload),
     /// A wrapper for a Quorum Commitment payload
     QuorumCommitmentPayloadType(QuorumCommitmentPayload),
+    /// A wrapper for a MNHF Signal payload
+    MnhfSignalPayloadType(MnhfSignalPayload),
     /// A wrapper for an Asset Lock payload
     AssetLockPayloadType(AssetLockPayload),
     /// A wrapper for an Asset Unlock payload
@@ -92,6 +96,7 @@ impl Encodable for TransactionPayload {
             ProviderUpdateRevocationPayloadType(p) => p.consensus_encode(w),
             CoinbasePayloadType(p) => p.consensus_encode(w),
             QuorumCommitmentPayloadType(p) => p.consensus_encode(w),
+            MnhfSignalPayloadType(p) => p.consensus_encode(w),
             AssetLockPayloadType(p) => p.consensus_encode(w),
             AssetUnlockPayloadType(p) => p.consensus_encode(w),
         }
@@ -108,6 +113,7 @@ impl TransactionPayload {
             ProviderUpdateRevocationPayloadType(_) => ProviderUpdateRevocation,
             CoinbasePayloadType(_) => Coinbase,
             QuorumCommitmentPayloadType(_) => QuorumCommitment,
+            MnhfSignalPayloadType(_) => MnhfSignal,
             AssetLockPayloadType(_) => AssetLock,
             AssetUnlockPayloadType(_) => AssetUnlock,
         }
@@ -123,6 +129,7 @@ impl TransactionPayload {
             ProviderUpdateRevocationPayloadType(p) => p.size(),
             CoinbasePayloadType(p) => p.size(),
             QuorumCommitmentPayloadType(p) => p.size(),
+            MnhfSignalPayloadType(p) => p.size(),
             AssetLockPayloadType(p) => p.size(),
             AssetUnlockPayloadType(p) => p.size(),
         }
@@ -245,6 +252,20 @@ impl TransactionPayload {
             })
         }
     }
+
+    /// Convenience method that assumes the payload to be a MNHF signal payload to get it
+    /// easier.
+    /// Errors if it is not a MNHF signal payload.
+    pub fn to_mnhf_signal_payload(self) -> Result<MnhfSignalPayload, encode::Error> {
+        if let MnhfSignalPayloadType(payload) = self {
+            Ok(payload)
+        } else {
+            Err(encode::Error::WrongSpecialTransactionPayloadConversion {
+                expected: MnhfSignal,
+                actual: self.get_type(),
+            })
+        }
+    }
 }
 
 /// The transaction type. Special transactions were introduced in DIP2.
@@ -269,6 +290,8 @@ pub enum TransactionType {
     Coinbase = 5,
     /// A Quorum Commitment Transaction, used to save quorum information to the state
     QuorumCommitment = 6,
+    /// A MNHF Signal Transaction, used by masternodes to signal consensus for hard fork activations
+    MnhfSignal = 7,
     /// An Asset Lock Transaction, used to transfer credits to Dash Platform, by locking them until withdrawals occur
     AssetLock = 8,
     /// An Asset Unlock Transaction, used to withdraw credits from Dash Platform, by unlocking them
@@ -285,6 +308,7 @@ impl Debug for TransactionType {
             ProviderUpdateRevocation => write!(f, "Provider Update Revocation Transaction"),
             Coinbase => write!(f, "Coinbase Transaction"),
             QuorumCommitment => write!(f, "Quorum Commitment Transaction"),
+            MnhfSignal => write!(f, "MNHF Signal Transaction"),
             AssetLock => write!(f, "Asset Lock Transaction"),
             AssetUnlock => write!(f, "Asset Unlock Transaction"),
         }
@@ -301,6 +325,7 @@ impl Display for TransactionType {
             ProviderUpdateRevocation => write!(f, "Provider Update Revocation"),
             Coinbase => write!(f, "Coinbase"),
             QuorumCommitment => write!(f, "Quorum Commitment"),
+            MnhfSignal => write!(f, "MNHF Signal"),
             AssetLock => write!(f, "Asset Lock"),
             AssetUnlock => write!(f, "Asset Unlock"),
         }
@@ -319,6 +344,7 @@ impl TryFrom<u16> for TransactionType {
             4 => Ok(ProviderUpdateRevocation),
             5 => Ok(Coinbase),
             6 => Ok(QuorumCommitment),
+            7 => Ok(MnhfSignal),
             8 => Ok(AssetLock),
             9 => Ok(AssetUnlock),
             _ => Err(encode::Error::UnknownSpecialTransactionType(value)),
@@ -371,6 +397,7 @@ impl TransactionType {
             QuorumCommitment => {
                 Some(QuorumCommitmentPayloadType(QuorumCommitmentPayload::consensus_decode(d)?))
             }
+            MnhfSignal => Some(MnhfSignalPayloadType(MnhfSignalPayload::consensus_decode(d)?)),
             AssetLock => Some(AssetLockPayloadType(AssetLockPayload::consensus_decode(d)?)),
             AssetUnlock => Some(AssetUnlockPayloadType(AssetUnlockPayload::consensus_decode(d)?)),
         })

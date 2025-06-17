@@ -58,7 +58,7 @@ impl Network {
             Network::Dash => 0xBD6B0CBF,
             Network::Testnet => 0xFFCAE2CE,
             Network::Devnet => 0xCEFFCAE2,
-            Network::Regtest => 0xDAB5BFFA,
+            Network::Regtest => 0xDCB7C1FC,
         }
     }
 
