@@ -66,16 +66,6 @@ impl DashSpvClient {
         )
     }
     
-    /// Helper to create a WatchManager instance.
-    fn create_watch_manager(&mut self) -> WatchManager {
-        WatchManager::new(
-            &self.watch_items,
-            &mut *self.storage,
-            &self.wallet,
-            &self.filter_processor,
-            &self.watch_item_updater,
-        )
-    }
     
     /// Helper to create a MessageHandler instance.
     fn create_message_handler(&mut self) -> MessageHandler {
@@ -1208,14 +1198,24 @@ impl DashSpvClient {
 
     /// Add a watch item.
     pub async fn add_watch_item(&mut self, item: WatchItem) -> Result<()> {
-        let mut manager = self.create_watch_manager();
-        manager.add_watch_item(item).await
+        WatchManager::add_watch_item(
+            &self.watch_items,
+            &self.wallet,
+            &self.watch_item_updater,
+            item,
+            &mut *self.storage
+        ).await
     }
 
     /// Remove a watch item.
     pub async fn remove_watch_item(&mut self, item: &WatchItem) -> Result<bool> {
-        let mut manager = self.create_watch_manager();
-        manager.remove_watch_item(item).await
+        WatchManager::remove_watch_item(
+            &self.watch_items,
+            &self.wallet,
+            &self.watch_item_updater,
+            item,
+            &mut *self.storage
+        ).await
     }
 
     /// Get all watch items.
@@ -1438,8 +1438,11 @@ impl DashSpvClient {
 
     /// Load watch items from storage.
     async fn load_watch_items(&mut self) -> Result<()> {
-        let mut manager = self.create_watch_manager();
-        manager.load_watch_items().await
+        WatchManager::load_watch_items(
+            &self.watch_items,
+            &self.wallet,
+            &*self.storage
+        ).await
     }
 
     /// Load wallet data from storage.
