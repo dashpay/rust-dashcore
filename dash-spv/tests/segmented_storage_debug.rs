@@ -26,9 +26,7 @@ async fn test_basic_storage() {
     println!("Temp dir: {:?}", temp_dir.path());
 
     println!("Creating storage manager...");
-    let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf())
-        .await
-        .unwrap();
+    let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await.unwrap();
     println!("Storage manager created");
 
     // Store just 10 headers
@@ -43,7 +41,7 @@ async fn test_basic_storage() {
     let tip = storage.get_tip_height().await.unwrap();
     println!("Tip height: {:?}", tip);
     assert_eq!(tip, Some(9));
-    
+
     // Read back a header
     let header = storage.get_header(5).await.unwrap();
     println!("Header at height 5: {:?}", header.is_some());

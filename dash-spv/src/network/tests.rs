@@ -2,13 +2,13 @@
 
 #[cfg(test)]
 mod multi_peer_tests {
+    use crate::client::ClientConfig;
     use crate::network::multi_peer::MultiPeerNetworkManager;
     use crate::network::NetworkManager;
-    use crate::client::ClientConfig;
     use dashcore::Network;
     use std::time::Duration;
     use tempfile::TempDir;
-    
+
     fn create_test_config() -> ClientConfig {
         let temp_dir = TempDir::new().unwrap();
         ClientConfig {
@@ -34,30 +34,35 @@ mod multi_peer_tests {
             cfheader_gap_check_interval_secs: 15,
             cfheader_gap_restart_cooldown_secs: 30,
             max_cfheader_gap_restart_attempts: 5,
+            enable_filter_gap_restart: true,
+            filter_gap_check_interval_secs: 20,
+            min_filter_gap_size: 10,
+            filter_gap_restart_cooldown_secs: 30,
+            max_filter_gap_restart_attempts: 5,
+            max_filter_gap_sync_size: 50000,
         }
     }
-    
+
     #[tokio::test]
     async fn test_multi_peer_manager_creation() {
         let config = create_test_config();
         let manager = MultiPeerNetworkManager::new(&config).await.unwrap();
-        
+
         // Should start with zero peers
         assert_eq!(manager.peer_count_async().await, 0);
         // Note: is_connected() still uses sync approach, so we'll check async
         assert_eq!(manager.peer_count_async().await, 0);
     }
-    
+
     #[tokio::test]
     async fn test_as_any_downcast() {
         let config = create_test_config();
         let manager = MultiPeerNetworkManager::new(&config).await.unwrap();
-        
+
         // Test that we can downcast through the trait
         let network_manager: &dyn NetworkManager = &manager;
-        let downcasted = network_manager.as_any()
-            .downcast_ref::<MultiPeerNetworkManager>();
-        
+        let downcasted = network_manager.as_any().downcast_ref::<MultiPeerNetworkManager>();
+
         assert!(downcasted.is_some());
     }
 }
@@ -65,15 +70,15 @@ mod multi_peer_tests {
 #[cfg(test)]
 mod connection_tests {
     use crate::network::connection::TcpConnection;
-    use std::time::Duration;
     use dashcore::Network;
-    
+    use std::time::Duration;
+
     #[test]
     fn test_tcp_connection_creation() {
         let addr = "127.0.0.1:9999".parse().unwrap();
         let timeout = Duration::from_secs(30);
         let conn = TcpConnection::new(addr, timeout, Network::Dash);
-        
+
         assert!(!conn.is_connected());
         assert_eq!(conn.peer_info().address, addr);
     }
@@ -81,22 +86,22 @@ mod connection_tests {
 
 #[cfg(test)]
 mod pool_tests {
-    use crate::network::pool::ConnectionPool;
     use crate::network::constants::{MAX_PEERS, MIN_PEERS};
-    
+    use crate::network::pool::ConnectionPool;
+
     #[tokio::test]
     async fn test_pool_limits() {
         let pool = ConnectionPool::new();
-        
+
         // Test needs_more_connections logic
         assert!(pool.needs_more_connections().await);
-        
+
         // Can accept up to MAX_PEERS
         assert!(pool.can_accept_connections().await);
-        
+
         // Test connection count
         assert_eq!(pool.connection_count().await, 0);
-        
+
         // Verify constants
         assert!(MIN_PEERS < MAX_PEERS);
         assert!(MIN_PEERS > 0);

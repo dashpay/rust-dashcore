@@ -1,17 +1,14 @@
 //! Basic test for CFHeader gap detection functionality.
 
-use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use dash_spv::{
     client::ClientConfig,
     storage::{MemoryStorageManager, StorageManager},
     sync::filters::FilterSyncManager,
 };
-use dashcore::{
-    block::Header as BlockHeader,
-    Network, BlockHash,
-};
+use dashcore::{block::Header as BlockHeader, BlockHash, Network};
 use dashcore_hashes::Hash;
 
 /// Create a mock block header
@@ -31,22 +28,18 @@ async fn test_basic_gap_detection() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
     let filter_sync = FilterSyncManager::new(&config, received_heights);
-    
+
     let mut storage = MemoryStorageManager::new().await.unwrap();
-    
+
     // Store just a few headers to test basic functionality
-    let headers = vec![
-        create_mock_header(1),
-        create_mock_header(2),
-        create_mock_header(3),
-    ];
-    
+    let headers = vec![create_mock_header(1), create_mock_header(2), create_mock_header(3)];
+
     storage.store_headers(&headers).await.unwrap();
-    
+
     // Check gap detection - should detect gap since no filter headers stored
     let result = filter_sync.check_cfheader_gap(&storage).await;
     assert!(result.is_ok(), "Gap detection should not error");
-    
+
     let (has_gap, block_height, filter_height, gap_size) = result.unwrap();
     assert!(has_gap, "Should detect gap when no filter headers exist");
     assert!(block_height > 0, "Block height should be > 0");

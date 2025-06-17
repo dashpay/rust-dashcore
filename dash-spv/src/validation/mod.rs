@@ -1,19 +1,16 @@
 //! Validation functionality for the Dash SPV client.
 
-pub mod headers;
 pub mod chainlock;
+pub mod headers;
 pub mod instantlock;
 
-use dashcore::{
-    block::Header as BlockHeader,
-    ChainLock, InstantLock,
-};
+use dashcore::{block::Header as BlockHeader, ChainLock, InstantLock};
 
 use crate::error::ValidationResult;
 use crate::types::ValidationMode;
 
-pub use headers::HeaderValidator;
 pub use chainlock::ChainLockValidator;
+pub use headers::HeaderValidator;
 pub use instantlock::InstantLockValidator;
 
 /// Manages all validation operations.
@@ -34,7 +31,7 @@ impl ValidationManager {
             instantlock_validator: InstantLockValidator::new(),
         }
     }
-    
+
     /// Validate a block header.
     pub fn validate_header(
         &self,
@@ -48,7 +45,7 @@ impl ValidationManager {
             }
         }
     }
-    
+
     /// Validate a chain of headers.
     pub fn validate_header_chain(
         &self,
@@ -57,15 +54,13 @@ impl ValidationManager {
     ) -> ValidationResult<()> {
         match self.mode {
             ValidationMode::None => Ok(()),
-            ValidationMode::Basic => {
-                self.header_validator.validate_chain_basic(headers)
-            }
+            ValidationMode::Basic => self.header_validator.validate_chain_basic(headers),
             ValidationMode::Full => {
                 self.header_validator.validate_chain_full(headers, validate_pow)
             }
         }
     }
-    
+
     /// Validate a ChainLock.
     pub fn validate_chainlock(&self, chainlock: &ChainLock) -> ValidationResult<()> {
         match self.mode {
@@ -75,7 +70,7 @@ impl ValidationManager {
             }
         }
     }
-    
+
     /// Validate an InstantLock.
     pub fn validate_instantlock(&self, instantlock: &InstantLock) -> ValidationResult<()> {
         match self.mode {
@@ -85,12 +80,12 @@ impl ValidationManager {
             }
         }
     }
-    
+
     /// Get current validation mode.
     pub fn mode(&self) -> ValidationMode {
         self.mode
     }
-    
+
     /// Set validation mode.
     pub fn set_mode(&mut self, mode: ValidationMode) {
         self.mode = mode;

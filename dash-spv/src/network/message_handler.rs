@@ -15,11 +15,11 @@ impl MessageHandler {
             stats: MessageStats::default(),
         }
     }
-    
+
     /// Handle an incoming message.
     pub async fn handle_message(&mut self, message: NetworkMessage) -> MessageHandleResult {
         self.stats.messages_received += 1;
-        
+
         match message {
             NetworkMessage::Version(_) => {
                 self.stats.version_messages += 1;
@@ -70,7 +70,7 @@ impl MessageHandler {
             }
             NetworkMessage::GetData(getdata) => {
                 self.stats.getdata_messages += 1;
-                // TODO: Handle getdata messages properly  
+                // TODO: Handle getdata messages properly
                 MessageHandleResult::Unhandled(NetworkMessage::GetData(getdata))
             }
             other => {
@@ -80,12 +80,12 @@ impl MessageHandler {
             }
         }
     }
-    
+
     /// Get message statistics.
     pub fn stats(&self) -> &MessageStats {
         &self.stats
     }
-    
+
     /// Reset statistics.
     pub fn reset_stats(&mut self) {
         self.stats = MessageStats::default();
@@ -97,43 +97,43 @@ impl MessageHandler {
 pub enum MessageHandleResult {
     /// Handshake message (version, verack).
     Handshake(NetworkMessage),
-    
+
     /// Ping message with nonce.
     Ping(u64),
-    
+
     /// Pong message.
     Pong,
-    
+
     /// Block headers.
     Headers(Vec<dashcore::block::Header>),
-    
+
     /// Filter headers.
     FilterHeaders(dashcore::network::message_filter::CFHeaders),
-    
+
     /// Filter checkpoint.
     FilterCheckpoint(dashcore::network::message_filter::CFCheckpt),
-    
+
     /// Compact filter.
     Filter(dashcore::network::message_filter::CFilter),
-    
+
     /// Full block.
     Block(dashcore::block::Block),
-    
+
     /// Masternode list diff.
     MasternodeDiff(dashcore::network::message_sml::MnListDiff),
-    
+
     /// ChainLock.
     ChainLock(dashcore::ChainLock),
-    
+
     /// InstantLock.
     InstantLock(dashcore::InstantLock),
-    
+
     /// Inventory message.
     Inventory(Vec<dashcore::network::message_blockdata::Inventory>),
-    
+
     /// GetData message.
     GetData(Vec<dashcore::network::message_blockdata::Inventory>),
-    
+
     /// Unhandled message.
     Unhandled(NetworkMessage),
 }

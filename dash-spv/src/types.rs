@@ -3,11 +3,8 @@
 use std::time::SystemTime;
 
 use dashcore::{
-    block::Header as BlockHeader,
-    hash_types::FilterHeader,
-    sml::masternode_list_engine::MasternodeListEngine,
-    BlockHash, Network,
-    network::constants::NetworkExt
+    block::Header as BlockHeader, hash_types::FilterHeader, network::constants::NetworkExt,
+    sml::masternode_list_engine::MasternodeListEngine, BlockHash, Network,
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,34 +13,34 @@ use serde::{Deserialize, Serialize};
 pub struct SyncProgress {
     /// Current height of synchronized headers.
     pub header_height: u32,
-    
+
     /// Current height of synchronized filter headers.
     pub filter_header_height: u32,
-    
+
     /// Current height of synchronized masternode list.
     pub masternode_height: u32,
-    
+
     /// Total number of peers connected.
     pub peer_count: u32,
-    
+
     /// Whether header sync is complete.
     pub headers_synced: bool,
-    
+
     /// Whether filter headers sync is complete.
     pub filter_headers_synced: bool,
-    
+
     /// Whether masternode list is synced.
     pub masternodes_synced: bool,
-    
+
     /// Number of compact filters downloaded.
     pub filters_downloaded: u64,
-    
+
     /// Last height where filters were synced/verified.
     pub last_synced_filter_height: Option<u32>,
-    
+
     /// Sync start time.
     pub sync_start: SystemTime,
-    
+
     /// Last update time.
     pub last_update: SystemTime,
 }
@@ -72,22 +69,22 @@ impl Default for SyncProgress {
 pub struct ChainState {
     /// Block headers indexed by height.
     pub headers: Vec<BlockHeader>,
-    
+
     /// Filter headers indexed by height.
     pub filter_headers: Vec<FilterHeader>,
-    
+
     /// Last ChainLock height.
     pub last_chainlock_height: Option<u32>,
-    
+
     /// Last ChainLock hash.
     pub last_chainlock_hash: Option<BlockHash>,
-    
+
     /// Current filter tip.
     pub current_filter_tip: Option<FilterHeader>,
-    
+
     /// Masternode list engine.
     pub masternode_engine: Option<MasternodeListEngine>,
-    
+
     /// Last masternode diff height processed.
     pub last_masternode_diff_height: Option<u32>,
 }
@@ -110,42 +107,42 @@ impl ChainState {
     /// Create a new chain state for the given network.
     pub fn new_for_network(network: Network) -> Self {
         let mut state = Self::default();
-        
+
         // Initialize masternode engine for the network
         let mut engine = MasternodeListEngine::default_for_network(network);
         if let Some(genesis_hash) = network.known_genesis_block_hash() {
             engine.feed_block_height(0, genesis_hash);
         }
         state.masternode_engine = Some(engine);
-        
+
         state
     }
-    
+
     /// Get the current tip height.
     pub fn tip_height(&self) -> u32 {
         self.headers.len().saturating_sub(1) as u32
     }
-    
+
     /// Get the current tip hash.
     pub fn tip_hash(&self) -> Option<BlockHash> {
         self.headers.last().map(|h| h.block_hash())
     }
-    
+
     /// Get header at the given height.
     pub fn header_at_height(&self, height: u32) -> Option<&BlockHeader> {
         self.headers.get(height as usize)
     }
-    
+
     /// Get filter header at the given height.
     pub fn filter_header_at_height(&self, height: u32) -> Option<&FilterHeader> {
         self.filter_headers.get(height as usize)
     }
-    
+
     /// Add headers to the chain.
     pub fn add_headers(&mut self, headers: Vec<BlockHeader>) {
         self.headers.extend(headers);
     }
-    
+
     /// Add filter headers to the chain.
     pub fn add_filter_headers(&mut self, filter_headers: Vec<FilterHeader>) {
         if let Some(last) = filter_headers.last() {
@@ -173,10 +170,10 @@ impl std::fmt::Debug for ChainState {
 pub enum ValidationMode {
     /// Validate only basic structure and signatures.
     Basic,
-    
+
     /// Validate proof of work and chain rules.
     Full,
-    
+
     /// Skip most validation (useful for testing).
     None,
 }
@@ -192,22 +189,22 @@ impl Default for ValidationMode {
 pub struct PeerInfo {
     /// Peer address.
     pub address: std::net::SocketAddr,
-    
+
     /// Connection state.
     pub connected: bool,
-    
+
     /// Last seen time.
     pub last_seen: SystemTime,
-    
+
     /// Peer version.
     pub version: Option<u32>,
-    
+
     /// Peer services.
     pub services: Option<u64>,
-    
+
     /// User agent.
     pub user_agent: Option<String>,
-    
+
     /// Best height reported by peer.
     pub best_height: Option<i32>,
 }
@@ -217,10 +214,10 @@ pub struct PeerInfo {
 pub struct FilterMatch {
     /// Block hash where match was found.
     pub block_hash: BlockHash,
-    
+
     /// Block height.
     pub height: u32,
-    
+
     /// Whether we requested the full block.
     pub block_requested: bool,
 }
@@ -233,10 +230,10 @@ pub enum WatchItem {
         address: dashcore::Address,
         earliest_height: Option<u32>,
     },
-    
+
     /// Watch a script.
     Script(dashcore::ScriptBuf),
-    
+
     /// Watch an outpoint.
     Outpoint(dashcore::OutPoint),
 }
@@ -249,7 +246,7 @@ impl WatchItem {
             earliest_height: None,
         }
     }
-    
+
     /// Create a new address watch item with earliest height restriction.
     pub fn address_from_height(address: dashcore::Address, earliest_height: u32) -> Self {
         Self::Address {
@@ -257,11 +254,14 @@ impl WatchItem {
             earliest_height: Some(earliest_height),
         }
     }
-    
+
     /// Get the earliest height for this watch item.
     pub fn earliest_height(&self) -> Option<u32> {
         match self {
-            WatchItem::Address { earliest_height, .. } => *earliest_height,
+            WatchItem::Address {
+                earliest_height,
+                ..
+            } => *earliest_height,
             _ => None,
         }
     }
@@ -274,9 +274,12 @@ impl Serialize for WatchItem {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        
+
         match self {
-            WatchItem::Address { address, earliest_height } => {
+            WatchItem::Address {
+                address,
+                earliest_height,
+            } => {
                 let mut state = serializer.serialize_struct("WatchItem", 3)?;
                 state.serialize_field("type", "Address")?;
                 state.serialize_field("value", &address.to_string())?;
@@ -306,16 +309,16 @@ impl<'de> Deserialize<'de> for WatchItem {
     {
         use serde::de::{MapAccess, Visitor};
         use std::fmt;
-        
+
         struct WatchItemVisitor;
-        
+
         impl<'de> Visitor<'de> for WatchItemVisitor {
             type Value = WatchItem;
-            
+
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("a WatchItem struct")
             }
-            
+
             fn visit_map<M>(self, mut map: M) -> Result<WatchItem, M::Error>
             where
                 M: MapAccess<'de>,
@@ -323,7 +326,7 @@ impl<'de> Deserialize<'de> for WatchItem {
                 let mut item_type: Option<String> = None;
                 let mut value: Option<String> = None;
                 let mut earliest_height: Option<u32> = None;
-                
+
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "type" => {
@@ -349,14 +352,17 @@ impl<'de> Deserialize<'de> for WatchItem {
                         }
                     }
                 }
-                
+
                 let item_type = item_type.ok_or_else(|| serde::de::Error::missing_field("type"))?;
                 let value = value.ok_or_else(|| serde::de::Error::missing_field("value"))?;
-                
+
                 match item_type.as_str() {
                     "Address" => {
-                        let addr = value.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>()
-                            .map_err(|e| serde::de::Error::custom(format!("Invalid address: {}", e)))?
+                        let addr = value
+                            .parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>()
+                            .map_err(|e| {
+                                serde::de::Error::custom(format!("Invalid address: {}", e))
+                            })?
                             .assume_checked();
                         Ok(WatchItem::Address {
                             address: addr,
@@ -364,8 +370,9 @@ impl<'de> Deserialize<'de> for WatchItem {
                         })
                     }
                     "Script" => {
-                        let script = dashcore::ScriptBuf::from_hex(&value)
-                            .map_err(|e| serde::de::Error::custom(format!("Invalid script: {}", e)))?;
+                        let script = dashcore::ScriptBuf::from_hex(&value).map_err(|e| {
+                            serde::de::Error::custom(format!("Invalid script: {}", e))
+                        })?;
                         Ok(WatchItem::Script(script))
                     }
                     "Outpoint" => {
@@ -373,18 +380,30 @@ impl<'de> Deserialize<'de> for WatchItem {
                         if parts.len() != 2 {
                             return Err(serde::de::Error::custom("Invalid outpoint format"));
                         }
-                        let txid = parts[0].parse()
-                            .map_err(|e| serde::de::Error::custom(format!("Invalid txid: {}", e)))?;
-                        let vout = parts[1].parse()
-                            .map_err(|e| serde::de::Error::custom(format!("Invalid vout: {}", e)))?;
-                        Ok(WatchItem::Outpoint(dashcore::OutPoint { txid, vout }))
+                        let txid = parts[0].parse().map_err(|e| {
+                            serde::de::Error::custom(format!("Invalid txid: {}", e))
+                        })?;
+                        let vout = parts[1].parse().map_err(|e| {
+                            serde::de::Error::custom(format!("Invalid vout: {}", e))
+                        })?;
+                        Ok(WatchItem::Outpoint(dashcore::OutPoint {
+                            txid,
+                            vout,
+                        }))
                     }
-                    _ => Err(serde::de::Error::custom(format!("Unknown WatchItem type: {}", item_type)))
+                    _ => Err(serde::de::Error::custom(format!(
+                        "Unknown WatchItem type: {}",
+                        item_type
+                    ))),
                 }
             }
         }
-        
-        deserializer.deserialize_struct("WatchItem", &["type", "value", "earliest_height"], WatchItemVisitor)
+
+        deserializer.deserialize_struct(
+            "WatchItem",
+            &["type", "value", "earliest_height"],
+            WatchItemVisitor,
+        )
     }
 }
 
@@ -393,64 +412,64 @@ impl<'de> Deserialize<'de> for WatchItem {
 pub struct SpvStats {
     /// Number of headers downloaded.
     pub headers_downloaded: u64,
-    
+
     /// Number of filter headers downloaded.
     pub filter_headers_downloaded: u64,
-    
+
     /// Number of filters downloaded.
     pub filters_downloaded: u64,
-    
+
     /// Number of compact filters that matched watch items.
     pub filters_matched: u64,
-    
+
     /// Number of blocks with relevant transactions (after full block processing).
     pub blocks_with_relevant_transactions: u64,
-    
+
     /// Number of full blocks requested.
     pub blocks_requested: u64,
-    
+
     /// Number of full blocks processed.
     pub blocks_processed: u64,
-    
+
     /// Number of masternode diffs processed.
     pub masternode_diffs_processed: u64,
-    
+
     /// Total bytes received.
     pub bytes_received: u64,
-    
+
     /// Total bytes sent.
     pub bytes_sent: u64,
-    
+
     /// Connection uptime.
     pub uptime: std::time::Duration,
-    
+
     /// Number of filters requested during sync.
     pub filters_requested: u64,
-    
+
     /// Number of filters received during sync.
     pub filters_received: u64,
-    
+
     /// Filter sync start time.
     #[serde(skip)]
     pub filter_sync_start_time: Option<std::time::Instant>,
-    
+
     /// Last time a filter was received.
     #[serde(skip)]
     pub last_filter_received_time: Option<std::time::Instant>,
-    
+
     /// Received filter heights for gap tracking (shared with FilterSyncManager).
     #[serde(skip)]
     pub received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
-    
+
     /// Number of filter requests currently active.
     pub active_filter_requests: u32,
-    
+
     /// Number of filter requests currently queued.
     pub pending_filter_requests: u32,
-    
+
     /// Number of filter request timeouts.
     pub filter_request_timeouts: u64,
-    
+
     /// Number of filter requests retried.
     pub filter_requests_retried: u64,
 }
@@ -473,7 +492,9 @@ impl Default for SpvStats {
             filters_received: 0,
             filter_sync_start_time: None,
             last_filter_received_time: None,
-            received_filter_heights: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            received_filter_heights: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
             active_filter_requests: 0,
             pending_filter_requests: 0,
             filter_request_timeouts: 0,
@@ -487,7 +508,7 @@ impl Default for SpvStats {
 pub struct AddressBalance {
     /// Confirmed balance (6+ confirmations or InstantLocked).
     pub confirmed: dashcore::Amount,
-    
+
     /// Unconfirmed balance (less than 6 confirmations).
     pub unconfirmed: dashcore::Amount,
 }
@@ -506,7 +527,7 @@ impl Serialize for AddressBalance {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        
+
         let mut state = serializer.serialize_struct("AddressBalance", 2)?;
         state.serialize_field("confirmed", &self.confirmed.to_sat())?;
         state.serialize_field("unconfirmed", &self.unconfirmed.to_sat())?;
@@ -521,23 +542,23 @@ impl<'de> Deserialize<'de> for AddressBalance {
     {
         use serde::de::{MapAccess, Visitor};
         use std::fmt;
-        
+
         struct AddressBalanceVisitor;
-        
+
         impl<'de> Visitor<'de> for AddressBalanceVisitor {
             type Value = AddressBalance;
-            
+
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("an AddressBalance struct")
             }
-            
+
             fn visit_map<M>(self, mut map: M) -> Result<AddressBalance, M::Error>
             where
                 M: MapAccess<'de>,
             {
                 let mut confirmed: Option<u64> = None;
                 let mut unconfirmed: Option<u64> = None;
-                
+
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "confirmed" => {
@@ -557,17 +578,23 @@ impl<'de> Deserialize<'de> for AddressBalance {
                         }
                     }
                 }
-                
-                let confirmed = confirmed.ok_or_else(|| serde::de::Error::missing_field("confirmed"))?;
-                let unconfirmed = unconfirmed.ok_or_else(|| serde::de::Error::missing_field("unconfirmed"))?;
-                
+
+                let confirmed =
+                    confirmed.ok_or_else(|| serde::de::Error::missing_field("confirmed"))?;
+                let unconfirmed =
+                    unconfirmed.ok_or_else(|| serde::de::Error::missing_field("unconfirmed"))?;
+
                 Ok(AddressBalance {
                     confirmed: dashcore::Amount::from_sat(confirmed),
                     unconfirmed: dashcore::Amount::from_sat(unconfirmed),
                 })
             }
         }
-        
-        deserializer.deserialize_struct("AddressBalance", &["confirmed", "unconfirmed"], AddressBalanceVisitor)
+
+        deserializer.deserialize_struct(
+            "AddressBalance",
+            &["confirmed", "unconfirmed"],
+            AddressBalanceVisitor,
+        )
     }
 }

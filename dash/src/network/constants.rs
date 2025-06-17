@@ -90,7 +90,7 @@ impl NetworkExt for Network {
                         .expect("expected valid hex");
                 block_hash.reverse();
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            },
+            }
             Network::Devnet => None,
             Network::Regtest => {
                 let mut block_hash =
@@ -98,7 +98,7 @@ impl NetworkExt for Network {
                         .expect("expected valid hex");
                 block_hash.reverse();
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            },
+            }
             _ => None,
         }
     }

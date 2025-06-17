@@ -7,8 +7,7 @@ use dashcore_hashes::Hash;
 
 #[tokio::test]
 async fn test_memory_storage_basic_operations() {
-    let mut storage = MemoryStorageManager::new().await
-        .expect("Failed to create memory storage");
+    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
 
     // Test initial state
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
@@ -18,8 +17,7 @@ async fn test_memory_storage_basic_operations() {
     let test_headers = create_test_headers(5);
 
     // Store headers
-    storage.store_headers(&test_headers).await
-        .expect("Failed to store headers");
+    storage.store_headers(&test_headers).await.expect("Failed to store headers");
 
     // Verify tip height
     assert_eq!(storage.get_tip_height().await.unwrap(), Some(4)); // 0-indexed
@@ -27,7 +25,7 @@ async fn test_memory_storage_basic_operations() {
     // Verify header retrieval
     let retrieved_headers = storage.load_headers(0..5).await.unwrap();
     assert_eq!(retrieved_headers.len(), 5);
-    
+
     for (i, header) in retrieved_headers.iter().enumerate() {
         assert_eq!(header.block_hash(), test_headers[i].block_hash());
     }
@@ -45,20 +43,18 @@ async fn test_memory_storage_basic_operations() {
 
 #[tokio::test]
 async fn test_memory_storage_header_ranges() {
-    let mut storage = MemoryStorageManager::new().await
-        .expect("Failed to create memory storage");
+    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
 
     let test_headers = create_test_headers(10);
-    storage.store_headers(&test_headers).await
-        .expect("Failed to store headers");
+    storage.store_headers(&test_headers).await.expect("Failed to store headers");
 
     // Test various ranges
     let partial_headers = storage.load_headers(2..7).await.unwrap();
     assert_eq!(partial_headers.len(), 5);
-    
+
     let first_three = storage.load_headers(0..3).await.unwrap();
     assert_eq!(first_three.len(), 3);
-    
+
     let last_three = storage.load_headers(7..10).await.unwrap();
     assert_eq!(last_three.len(), 3);
 
@@ -73,15 +69,13 @@ async fn test_memory_storage_header_ranges() {
 
 #[tokio::test]
 async fn test_memory_storage_incremental_headers() {
-    let mut storage = MemoryStorageManager::new().await
-        .expect("Failed to create memory storage");
+    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
 
     // Add headers incrementally to simulate real sync
     for i in 0..3 {
         let batch = create_test_headers_from(i * 5, 5);
-        storage.store_headers(&batch).await
-            .expect("Failed to store header batch");
-        
+        storage.store_headers(&batch).await.expect("Failed to store header batch");
+
         let expected_tip = (i + 1) * 5 - 1;
         assert_eq!(storage.get_tip_height().await.unwrap(), Some(expected_tip as u32));
     }
@@ -99,14 +93,15 @@ async fn test_memory_storage_incremental_headers() {
 
 #[tokio::test]
 async fn test_memory_storage_filter_headers() {
-    let mut storage = MemoryStorageManager::new().await
-        .expect("Failed to create memory storage");
+    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
 
     // Create test filter headers
     let test_filter_headers = create_test_filter_headers(5);
 
     // Store filter headers
-    storage.store_filter_headers(&test_filter_headers).await
+    storage
+        .store_filter_headers(&test_filter_headers)
+        .await
         .expect("Failed to store filter headers");
 
     // Verify filter tip height
@@ -125,13 +120,11 @@ async fn test_memory_storage_filter_headers() {
 
 #[tokio::test]
 async fn test_memory_storage_filters() {
-    let mut storage = MemoryStorageManager::new().await
-        .expect("Failed to create memory storage");
+    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
 
     // Store some test filters
     let filter_data = vec![1, 2, 3, 4, 5];
-    storage.store_filter(100, &filter_data).await
-        .expect("Failed to store filter");
+    storage.store_filter(100, &filter_data).await.expect("Failed to store filter");
 
     // Retrieve filter
     let retrieved_filter = storage.load_filter(100).await.unwrap();
@@ -144,15 +137,13 @@ async fn test_memory_storage_filters() {
 
 #[tokio::test]
 async fn test_memory_storage_chain_state() {
-    let mut storage = MemoryStorageManager::new().await
-        .expect("Failed to create memory storage");
+    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
 
     // Create test chain state
     let chain_state = ChainState::new_for_network(Network::Dash);
 
     // Store chain state
-    storage.store_chain_state(&chain_state).await
-        .expect("Failed to store chain state");
+    storage.store_chain_state(&chain_state).await.expect("Failed to store chain state");
 
     // Retrieve chain state
     let retrieved_state = storage.load_chain_state().await.unwrap();
@@ -161,21 +152,18 @@ async fn test_memory_storage_chain_state() {
     assert!(retrieved_state.is_some());
 
     // Test initial state
-    let fresh_storage = MemoryStorageManager::new().await
-        .expect("Failed to create fresh storage");
+    let fresh_storage = MemoryStorageManager::new().await.expect("Failed to create fresh storage");
     assert!(fresh_storage.load_chain_state().await.unwrap().is_none());
 }
 
 #[tokio::test]
 async fn test_memory_storage_metadata() {
-    let mut storage = MemoryStorageManager::new().await
-        .expect("Failed to create memory storage");
+    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
 
     // Store metadata
     let key = "test_key";
     let value = b"test_value";
-    storage.store_metadata(key, value).await
-        .expect("Failed to store metadata");
+    storage.store_metadata(key, value).await.expect("Failed to store metadata");
 
     // Retrieve metadata
     let retrieved_value = storage.load_metadata(key).await.unwrap();
@@ -188,23 +176,22 @@ async fn test_memory_storage_metadata() {
     // Store multiple metadata entries
     storage.store_metadata("key1", b"value1").await.unwrap();
     storage.store_metadata("key2", b"value2").await.unwrap();
-    
+
     assert_eq!(storage.load_metadata("key1").await.unwrap().unwrap(), b"value1");
     assert_eq!(storage.load_metadata("key2").await.unwrap().unwrap(), b"value2");
 }
 
 #[tokio::test]
 async fn test_memory_storage_clear() {
-    let mut storage = MemoryStorageManager::new().await
-        .expect("Failed to create memory storage");
+    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
 
     // Add some data
     let test_headers = create_test_headers(5);
     storage.store_headers(&test_headers).await.unwrap();
-    
+
     let filter_headers = create_test_filter_headers(3);
     storage.store_filter_headers(&filter_headers).await.unwrap();
-    
+
     storage.store_filter(1, &vec![1, 2, 3]).await.unwrap();
     storage.store_metadata("test", b"data").await.unwrap();
 
@@ -227,8 +214,7 @@ async fn test_memory_storage_clear() {
 
 #[tokio::test]
 async fn test_memory_storage_stats() {
-    let mut storage = MemoryStorageManager::new().await
-        .expect("Failed to create memory storage");
+    let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
 
     // Initially empty
     let stats = storage.stats().await.expect("Failed to get stats");
@@ -239,10 +225,10 @@ async fn test_memory_storage_stats() {
     // Add some data
     let test_headers = create_test_headers(10);
     storage.store_headers(&test_headers).await.unwrap();
-    
+
     let filter_headers = create_test_filter_headers(5);
     storage.store_filter_headers(&filter_headers).await.unwrap();
-    
+
     storage.store_filter(1, &vec![1, 2, 3, 4, 5]).await.unwrap();
     storage.store_filter(2, &vec![6, 7, 8]).await.unwrap();
 
@@ -265,17 +251,17 @@ fn create_test_headers(count: usize) -> Vec<BlockHeader> {
 
 fn create_test_headers_from(start: usize, count: usize) -> Vec<BlockHeader> {
     let mut headers = Vec::new();
-    
+
     for i in start..(start + count) {
         // Create a minimal valid header for testing
         // Note: These are not real headers, just valid structures for testing
         let header = BlockHeader {
             version: Version::from_consensus(1),
-            prev_blockhash: if i == 0 { 
-                dashcore::BlockHash::all_zeros() 
-            } else { 
+            prev_blockhash: if i == 0 {
+                dashcore::BlockHash::all_zeros()
+            } else {
                 // In real implementation, this would be the hash of the previous header
-                dashcore::BlockHash::from_byte_array([i as u8; 32]) 
+                dashcore::BlockHash::from_byte_array([i as u8; 32])
             },
             merkle_root: dashcore::TxMerkleNode::from_byte_array([(i + 1) as u8; 32]),
             time: 1234567890 + i as u32,
@@ -284,17 +270,17 @@ fn create_test_headers_from(start: usize, count: usize) -> Vec<BlockHeader> {
         };
         headers.push(header);
     }
-    
+
     headers
 }
 
 fn create_test_filter_headers(count: usize) -> Vec<dashcore::hash_types::FilterHeader> {
     let mut filter_headers = Vec::new();
-    
+
     for i in 0..count {
         let filter_header = dashcore::hash_types::FilterHeader::from_byte_array([i as u8; 32]);
         filter_headers.push(filter_header);
     }
-    
+
     filter_headers
 }

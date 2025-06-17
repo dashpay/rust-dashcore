@@ -11,7 +11,6 @@ pub const MAX_PEERS: usize = 5;
 const _: () = assert!(MIN_PEERS <= TARGET_PEERS, "MIN_PEERS must be <= TARGET_PEERS");
 const _: () = assert!(TARGET_PEERS <= MAX_PEERS, "TARGET_PEERS must be <= MAX_PEERS");
 
-
 // Timeouts
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -29,10 +28,7 @@ pub const MAINNET_DNS_SEEDS: &[&str] = &[
 ];
 
 // DNS seeds for Dash testnet
-pub const TESTNET_DNS_SEEDS: &[&str] = &[
-    "testnet-seed.dashdot.io",
-    "test.dnsseed.masternode.io",
-];
+pub const TESTNET_DNS_SEEDS: &[&str] = &["testnet-seed.dashdot.io", "test.dnsseed.masternode.io"];
 
 // Peer exchange
 pub const MAX_ADDR_TO_SEND: usize = 1000;
@@ -41,7 +37,6 @@ pub const MAX_ADDR_TO_STORE: usize = 2000;
 // Connection maintenance
 pub const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(10); // Check more frequently
 pub const PEER_DISCOVERY_INTERVAL: Duration = Duration::from_secs(60); // Discover more frequently
-
 
 // DNS and polling intervals
 pub const DNS_DISCOVERY_DELAY: Duration = Duration::from_secs(10);

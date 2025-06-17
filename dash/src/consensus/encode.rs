@@ -865,14 +865,21 @@ impl Decodable for CheckedData {
         let expected_checksum = sha2_checksum(&ret);
         if expected_checksum != checksum {
             // Debug logging for checksum mismatches
-            eprintln!("CHECKSUM DEBUG: len={}, checksum={:02x?}, payload_len={}, payload={:02x?}", 
-                     len, checksum, ret.len(), &ret[..ret.len().min(32)]);
-            
+            eprintln!(
+                "CHECKSUM DEBUG: len={}, checksum={:02x?}, payload_len={}, payload={:02x?}",
+                len,
+                checksum,
+                ret.len(),
+                &ret[..ret.len().min(32)]
+            );
+
             // Special case: all-zeros checksum is definitely corruption
             if checksum == [0, 0, 0, 0] {
-                eprintln!("CORRUPTION DETECTED: All-zeros checksum indicates corrupted stream or connection");
+                eprintln!(
+                    "CORRUPTION DETECTED: All-zeros checksum indicates corrupted stream or connection"
+                );
             }
-            
+
             Err(self::Error::InvalidChecksum {
                 expected: expected_checksum,
                 actual: checksum,

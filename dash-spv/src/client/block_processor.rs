@@ -1,8 +1,8 @@
 //! Block processing functionality for the Dash SPV client.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc, oneshot};
-use std::collections::{HashSet, HashMap};
+use tokio::sync::{mpsc, oneshot, RwLock};
 
 use crate::error::{Result, SpvError};
 use crate::types::{AddressBalance, SpvStats, WatchItem};
@@ -48,103 +48,127 @@ impl BlockProcessor {
             failed: false,
         }
     }
-    
+
     /// Run the block processor worker loop.
     pub async fn run(mut self) {
         tracing::info!("🏭 Block processor worker started");
-        
+
         while let Some(task) = self.receiver.recv().await {
             // If we're in failed state, reject all new tasks
             if self.failed {
                 match task {
-                    BlockProcessingTask::ProcessBlock { response_tx, block } => {
+                    BlockProcessingTask::ProcessBlock {
+                        response_tx,
+                        block,
+                    } => {
                         let block_hash = block.block_hash();
-                        tracing::error!("❌ Block processor in failed state, rejecting block {}", block_hash);
-                        let _ = response_tx.send(Err(SpvError::Config("Block processor has failed".to_string())));
+                        tracing::error!(
+                            "❌ Block processor in failed state, rejecting block {}",
+                            block_hash
+                        );
+                        let _ = response_tx
+                            .send(Err(SpvError::Config("Block processor has failed".to_string())));
                     }
-                    BlockProcessingTask::ProcessTransaction { response_tx, tx } => {
+                    BlockProcessingTask::ProcessTransaction {
+                        response_tx,
+                        tx,
+                    } => {
                         let txid = tx.txid();
-                        tracing::error!("❌ Block processor in failed state, rejecting transaction {}", txid);
-                        let _ = response_tx.send(Err(SpvError::Config("Block processor has failed".to_string())));
+                        tracing::error!(
+                            "❌ Block processor in failed state, rejecting transaction {}",
+                            txid
+                        );
+                        let _ = response_tx
+                            .send(Err(SpvError::Config("Block processor has failed".to_string())));
                     }
                 }
                 continue;
             }
-            
+
             match task {
-                BlockProcessingTask::ProcessBlock { block, response_tx } => {
+                BlockProcessingTask::ProcessBlock {
+                    block,
+                    response_tx,
+                } => {
                     let block_hash = block.block_hash();
-                    
+
                     // Check for duplicate blocks
                     if self.processed_blocks.contains(&block_hash) {
                         tracing::warn!("⚡ Block {} already processed, skipping", block_hash);
                         let _ = response_tx.send(Ok(()));
                         continue;
                     }
-                    
+
                     // Process block and handle errors
                     let result = self.process_block_internal(block).await;
-                    
+
                     match &result {
                         Ok(()) => {
                             // Mark block as successfully processed
                             self.processed_blocks.insert(block_hash);
-                            
+
                             // Update blocks processed statistics
                             {
                                 let mut stats = self.stats.write().await;
                                 stats.blocks_processed += 1;
                             }
-                            
+
                             tracing::info!("✅ Block {} processed successfully", block_hash);
                         }
                         Err(e) => {
                             // Log error with block hash and enter failed state
-                            tracing::error!("❌ BLOCK PROCESSING FAILED for block {}: {}", block_hash, e);
+                            tracing::error!(
+                                "❌ BLOCK PROCESSING FAILED for block {}: {}",
+                                block_hash,
+                                e
+                            );
                             tracing::error!("❌ Block processor entering failed state - no more blocks will be processed");
                             self.failed = true;
                         }
                     }
-                    
+
                     let _ = response_tx.send(result);
                 }
-                BlockProcessingTask::ProcessTransaction { tx, response_tx } => {
+                BlockProcessingTask::ProcessTransaction {
+                    tx,
+                    response_tx,
+                } => {
                     let txid = tx.txid();
                     let result = self.process_transaction_internal(tx).await;
-                    
+
                     if let Err(e) = &result {
                         tracing::error!("❌ TRANSACTION PROCESSING FAILED for tx {}: {}", txid, e);
                         tracing::error!("❌ Block processor entering failed state");
                         self.failed = true;
                     }
-                    
+
                     let _ = response_tx.send(result);
                 }
             }
         }
-        
+
         tracing::info!("🏭 Block processor worker stopped");
     }
-    
+
     /// Process a block internally.
     async fn process_block_internal(&mut self, block: dashcore::Block) -> Result<()> {
         let block_hash = block.block_hash();
-        
+
         tracing::info!("📦 Processing downloaded block: {}", block_hash);
-        
+
         // Process all blocks unconditionally since we already downloaded them
         // Extract transactions that might affect watched items
         let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
         if !watch_items.is_empty() {
             self.process_block_transactions(&block, &watch_items).await?;
         }
-        
+
         // Update chain state if needed
         self.update_chain_state_with_block(&block).await?;
-        
+
         Ok(())
     }
-    
+
     /// Process a transaction internally.
     async fn process_transaction_internal(&mut self, _tx: dashcore::Transaction) -> Result<()> {
         // TODO: Implement transaction processing
@@ -157,61 +181,80 @@ impl BlockProcessor {
 
     /// Process transactions in a block to check for matches with watch items.
     async fn process_block_transactions(
-        &mut self, 
-        block: &dashcore::Block, 
-        watch_items: &[WatchItem]
+        &mut self,
+        block: &dashcore::Block,
+        watch_items: &[WatchItem],
     ) -> Result<()> {
         let block_hash = block.block_hash();
         let mut relevant_transactions = 0;
         let mut new_outpoints_to_watch = Vec::new();
         let mut balance_changes: HashMap<dashcore::Address, i64> = HashMap::new();
-        
+
         // Get block height from wallet
         let block_height = {
             let wallet = self.wallet.read().await;
             wallet.get_block_height(&block_hash).await.unwrap_or(0)
         };
-        
+
         for (tx_index, transaction) in block.txdata.iter().enumerate() {
             let txid = transaction.txid();
             let is_coinbase = tx_index == 0;
-            
+
             // Wrap transaction processing in error handling to log failing txid
-            match self.process_single_transaction_in_block(
-                transaction, 
-                tx_index, 
-                watch_items, 
-                &mut balance_changes,
-                &mut new_outpoints_to_watch,
-                block_height,
-                is_coinbase
-            ).await {
+            match self
+                .process_single_transaction_in_block(
+                    transaction,
+                    tx_index,
+                    watch_items,
+                    &mut balance_changes,
+                    &mut new_outpoints_to_watch,
+                    block_height,
+                    is_coinbase,
+                )
+                .await
+            {
                 Ok(is_relevant) => {
                     if is_relevant {
                         relevant_transactions += 1;
-                        tracing::debug!("📝 Transaction {}: {} (index {}) is relevant", 
-                                       txid, if is_coinbase { "coinbase" } else { "regular" }, tx_index);
+                        tracing::debug!(
+                            "📝 Transaction {}: {} (index {}) is relevant",
+                            txid,
+                            if is_coinbase {
+                                "coinbase"
+                            } else {
+                                "regular"
+                            },
+                            tx_index
+                        );
                     }
                 }
                 Err(e) => {
                     // Log error with both block hash and failing transaction ID
-                    tracing::error!("❌ TRANSACTION PROCESSING FAILED in block {} for tx {} (index {}): {}", 
-                                   block_hash, txid, tx_index, e);
+                    tracing::error!(
+                        "❌ TRANSACTION PROCESSING FAILED in block {} for tx {} (index {}): {}",
+                        block_hash,
+                        txid,
+                        tx_index,
+                        e
+                    );
                     return Err(e);
                 }
             }
         }
-        
+
         if relevant_transactions > 0 {
-            tracing::info!("🎯 Block {} contains {} relevant transactions affecting watched items", 
-                          block_hash, relevant_transactions);
+            tracing::info!(
+                "🎯 Block {} contains {} relevant transactions affecting watched items",
+                block_hash,
+                relevant_transactions
+            );
 
             // Update statistics since we found a block with relevant transactions
             {
                 let mut stats = self.stats.write().await;
                 stats.blocks_with_relevant_transactions += 1;
             }
-            
+
             tracing::info!("🚨 BLOCK MATCH DETECTED! Block {} at height {} contains {} transactions affecting watched addresses/scripts", 
                           block_hash, block_height, relevant_transactions);
 
@@ -220,10 +263,10 @@ impl BlockProcessor {
                 self.report_balance_changes(&balance_changes, block_height).await?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Process a single transaction within a block for watch item matches.
     /// Returns whether the transaction is relevant to any watch items.
     async fn process_single_transaction_in_block(
@@ -239,7 +282,7 @@ impl BlockProcessor {
         let txid = transaction.txid();
         let mut transaction_relevant = false;
         let mut tx_balance_changes: HashMap<dashcore::Address, i64> = HashMap::new();
-        
+
         // Process inputs first (spending UTXOs)
         if !is_coinbase {
             for (vin, input) in transaction.input.iter().enumerate() {
@@ -249,54 +292,63 @@ impl BlockProcessor {
                     if let Ok(Some(spent_utxo)) = wallet.remove_utxo(&input.previous_output).await {
                         transaction_relevant = true;
                         let amount = spent_utxo.value();
-                        
+
                         let balance_impact = -(amount.to_sat() as i64);
                         tracing::info!("💸 TX {} input {}:{} spending UTXO {} (value: {}) - Address {} balance impact: {}", 
                                       txid, txid, vin, input.previous_output, amount, spent_utxo.address, balance_impact);
-                        
+
                         // Update balance change for this address (subtract)
-                        *balance_changes.entry(spent_utxo.address.clone()).or_insert(0) += balance_impact;
-                        *tx_balance_changes.entry(spent_utxo.address.clone()).or_insert(0) += balance_impact;
+                        *balance_changes.entry(spent_utxo.address.clone()).or_insert(0) +=
+                            balance_impact;
+                        *tx_balance_changes.entry(spent_utxo.address.clone()).or_insert(0) +=
+                            balance_impact;
                     }
                 }
-                
+
                 // Also check against explicitly watched outpoints
                 for watch_item in watch_items {
                     if let WatchItem::Outpoint(watched_outpoint) = watch_item {
                         if &input.previous_output == watched_outpoint {
                             transaction_relevant = true;
-                            tracing::info!("💸 TX {} input {}:{} spending explicitly watched outpoint {:?}", 
-                                          txid, txid, vin, watched_outpoint);
+                            tracing::info!(
+                                "💸 TX {} input {}:{} spending explicitly watched outpoint {:?}",
+                                txid,
+                                txid,
+                                vin,
+                                watched_outpoint
+                            );
                         }
                     }
                 }
             }
         }
-        
+
         // Process outputs (creating new UTXOs)
         for (vout, output) in transaction.output.iter().enumerate() {
             for watch_item in watch_items {
                 let (matches, matched_address) = match watch_item {
-                    WatchItem::Address { address, .. } => {
-                        (address.script_pubkey() == output.script_pubkey, Some(address.clone()))
-                    }
-                    WatchItem::Script(script) => {
-                        (script == &output.script_pubkey, None)
-                    }
+                    WatchItem::Address {
+                        address,
+                        ..
+                    } => (address.script_pubkey() == output.script_pubkey, Some(address.clone())),
+                    WatchItem::Script(script) => (script == &output.script_pubkey, None),
                     WatchItem::Outpoint(_) => (false, None), // Outpoints don't match outputs
                 };
-                
+
                 if matches {
                     transaction_relevant = true;
-                    let outpoint = dashcore::OutPoint { txid, vout: vout as u32 };
+                    let outpoint = dashcore::OutPoint {
+                        txid,
+                        vout: vout as u32,
+                    };
                     let amount = dashcore::Amount::from_sat(output.value);
-                    
+
                     // Create and store UTXO if we have an address
                     if let Some(address) = matched_address {
                         let balance_impact = amount.to_sat() as i64;
                         tracing::info!("💰 TX {} output {}:{} to {:?} (value: {}) - Address {} balance impact: +{}", 
                                       txid, txid, vout, watch_item, amount, address, balance_impact);
-                        
+
                         let utxo = crate::wallet::Utxo::new(
                             outpoint,
                             output.clone(),
@@ -304,17 +356,24 @@ impl BlockProcessor {
                             block_height,
                             is_coinbase,
                         );
-                        
+
                         // Use the parent client's safe method through a temporary approach
                         // Note: In a real implementation, this would be refactored to avoid this pattern
                         let wallet = self.wallet.read().await;
                         if let Err(e) = wallet.add_utxo(utxo).await {
                             tracing::error!("Failed to store UTXO {}: {}", outpoint, e);
-                            tracing::warn!("Continuing block processing despite UTXO storage failure");
+                            tracing::warn!(
+                                "Continuing block processing despite UTXO storage failure"
+                            );
                         } else {
-                            tracing::debug!("📝 Stored UTXO {}:{} for address {}", txid, vout, address);
+                            tracing::debug!(
+                                "📝 Stored UTXO {}:{} for address {}",
+                                txid,
+                                vout,
+                                address
+                            );
                         }
-                        
+
                         // Update balance change for this address (add)
                         *balance_changes.entry(address.clone()).or_insert(0) += balance_impact;
                         *tx_balance_changes.entry(address.clone()).or_insert(0) += balance_impact;
@@ -322,29 +381,42 @@ impl BlockProcessor {
                         tracing::info!("💰 TX {} output {}:{} to {:?} (value: {}) - No address to track balance", 
                                       txid, txid, vout, watch_item, amount);
                     }
-                    
+
                     // Track this outpoint so we can detect when it's spent
                     new_outpoints_to_watch.push(outpoint);
-                    tracing::debug!("📍 Now watching outpoint {}:{} for future spending", txid, vout);
+                    tracing::debug!(
+                        "📍 Now watching outpoint {}:{} for future spending",
+                        txid,
+                        vout
+                    );
                 }
+            }
         }
-        }
-        
+
         // Report per-transaction balance changes if this transaction was relevant
         if transaction_relevant && !tx_balance_changes.is_empty() {
             tracing::info!("🧾 Transaction {} balance summary:", txid);
             for (address, change_sat) in &tx_balance_changes {
                 if *change_sat != 0 {
                     let change_amount = dashcore::Amount::from_sat(change_sat.abs() as u64);
-                    let sign = if *change_sat > 0 { "+" } else { "-" };
-                    tracing::info!("  📊 Address {}: {}{} (net change for this tx)", address, sign, change_amount);
+                    let sign = if *change_sat > 0 {
+                        "+"
+                    } else {
+                        "-"
+                    };
+                    tracing::info!(
+                        "  📊 Address {}: {}{} (net change for this tx)",
+                        address,
+                        sign,
+                        change_amount
+                    );
                 }
             }
         }
-        
+
         Ok(transaction_relevant)
     }
-    
+
     /// Report balance changes for watched addresses.
     async fn report_balance_changes(
         &self,
@@ -352,60 +424,89 @@ impl BlockProcessor {
         block_height: u32,
     ) -> Result<()> {
         tracing::info!("💰 Balance changes detected in block at height {}:", block_height);
-        
+
         for (address, change_sat) in balance_changes {
             if *change_sat != 0 {
                 let change_amount = dashcore::Amount::from_sat(change_sat.abs() as u64);
-                let sign = if *change_sat > 0 { "+" } else { "-" };
-                tracing::info!("  📍 Address {}: {}{} (net change for this block)", address, sign, change_amount);
-                
+                let sign = if *change_sat > 0 {
+                    "+"
+                } else {
+                    "-"
+                };
+                tracing::info!(
+                    "  📍 Address {}: {}{} (net change for this block)",
+                    address,
+                    sign,
+                    change_amount
+                );
+
                 // Additional context about the change
                 if *change_sat > 0 {
-                    tracing::info!("    ⬆️  Net increase indicates received more than spent in this block");
+                    tracing::info!(
+                        "    ⬆️  Net increase indicates received more than spent in this block"
+                    );
                 } else {
-                    tracing::info!("    ⬇️  Net decrease indicates spent more than received in this block");
+                    tracing::info!(
+                        "    ⬇️  Net decrease indicates spent more than received in this block"
+                    );
                 }
             }
         }
-        
+
         // Calculate and report current balances for all watched addresses
         let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
         for watch_item in watch_items.iter() {
-            if let WatchItem::Address { address, .. } = watch_item {
+            if let WatchItem::Address {
+                address,
+                ..
+            } = watch_item
+            {
                 match self.get_address_balance(address).await {
                     Ok(balance) => {
-                        tracing::info!("  💼 Address {} balance: {} (confirmed: {}, unconfirmed: {})", 
-                                      address, balance.total(), balance.confirmed, balance.unconfirmed);
+                        tracing::info!(
+                            "  💼 Address {} balance: {} (confirmed: {}, unconfirmed: {})",
+                            address,
+                            balance.total(),
+                            balance.confirmed,
+                            balance.unconfirmed
+                        );
                     }
                     Err(e) => {
                         tracing::error!("Failed to get balance for address {}: {}", address, e);
-                        tracing::warn!("Continuing balance reporting despite failure for address {}", address);
+                        tracing::warn!(
+                            "Continuing balance reporting despite failure for address {}",
+                            address
+                        );
                         // Continue with other addresses even if this one fails
                     }
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get the balance for a specific address.
     async fn get_address_balance(&self, address: &dashcore::Address) -> Result<AddressBalance> {
         // Use wallet to get balance directly
         let wallet = self.wallet.read().await;
-        let balance = wallet.get_balance_for_address(address).await
-            .map_err(|e| SpvError::Storage(crate::error::StorageError::ReadFailed(format!("Wallet error: {}", e))))?;
-        
+        let balance = wallet.get_balance_for_address(address).await.map_err(|e| {
+            SpvError::Storage(crate::error::StorageError::ReadFailed(format!(
+                "Wallet error: {}",
+                e
+            )))
+        })?;
+
         Ok(AddressBalance {
             confirmed: balance.confirmed + balance.instantlocked,
             unconfirmed: balance.pending,
         })
     }
-    
+
     /// Update chain state with information from the processed block.
     async fn update_chain_state_with_block(&mut self, block: &dashcore::Block) -> Result<()> {
         let block_hash = block.block_hash();
-        
+
         // Get the block height from wallet
         let height = {
             let wallet = self.wallet.read().await;
@@ -413,15 +514,19 @@ impl BlockProcessor {
         };
 
         if let Some(height) = height {
-            tracing::debug!("📊 Updating chain state with block {} at height {}", block_hash, height);
-            
+            tracing::debug!(
+                "📊 Updating chain state with block {} at height {}",
+                block_hash,
+                height
+            );
+
             // Update stats
             {
                 let mut stats = self.stats.write().await;
                 stats.blocks_requested += 1;
             }
         }
-        
+
         Ok(())
     }
 }

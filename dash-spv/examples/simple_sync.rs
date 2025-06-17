@@ -1,6 +1,6 @@
 //! Simple header synchronization example.
 
-use dash_spv::{ClientConfig, DashSpvClient, init_logging};
+use dash_spv::{init_logging, ClientConfig, DashSpvClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -9,8 +9,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a simple configuration
     let config = ClientConfig::mainnet()
-        .without_filters()        // Skip filter sync for this example
-        .without_masternodes();   // Skip masternode sync for this example
+        .without_filters() // Skip filter sync for this example
+        .without_masternodes(); // Skip masternode sync for this example
 
     // Create the client
     let mut client = DashSpvClient::new(config).await?;

@@ -52,22 +52,23 @@ pub mod error;
 pub mod network;
 pub mod storage;
 pub mod sync;
+pub mod terminal;
 pub mod types;
 pub mod validation;
-pub mod terminal;
 pub mod wallet;
 
 // Re-export main types for convenience
 pub use client::{ClientConfig, DashSpvClient};
-pub use error::{SpvError, NetworkError, StorageError, ValidationError, SyncError};
+pub use error::{NetworkError, SpvError, StorageError, SyncError, ValidationError};
 pub use types::{
-    ChainState, SyncProgress, ValidationMode, WatchItem, FilterMatch, 
-    PeerInfo, SpvStats
+    ChainState, FilterMatch, PeerInfo, SpvStats, SyncProgress, ValidationMode, WatchItem,
 };
-pub use wallet::{Wallet, Balance, Utxo, TransactionProcessor, TransactionResult, BlockResult, AddressStats};
+pub use wallet::{
+    AddressStats, Balance, BlockResult, TransactionProcessor, TransactionResult, Utxo, Wallet,
+};
 
 // Re-export commonly used dashcore types
-pub use dashcore::{Address, Network, BlockHash, ScriptBuf, OutPoint};
+pub use dashcore::{Address, BlockHash, Network, OutPoint, ScriptBuf};
 
 /// Current version of the dash-spv library.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -78,7 +79,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// with a simple format suitable for most applications.
 pub fn init_logging(level: &str) -> Result<(), Box<dyn std::error::Error>> {
     use tracing_subscriber::fmt;
-    
+
     let level = match level {
         "error" => tracing::Level::ERROR,
         "warn" => tracing::Level::WARN,
@@ -87,7 +88,7 @@ pub fn init_logging(level: &str) -> Result<(), Box<dyn std::error::Error>> {
         "trace" => tracing::Level::TRACE,
         _ => tracing::Level::INFO,
     };
-    
+
     fmt()
         .with_target(false)
         .with_thread_ids(false)
@@ -95,4 +96,3 @@ pub fn init_logging(level: &str) -> Result<(), Box<dyn std::error::Error>> {
         .try_init()
         .map_err(|e| format!("Failed to initialize logging: {}", e).into())
 }
-

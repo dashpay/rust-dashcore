@@ -1,16 +1,15 @@
 //! Terminal UI utilities for displaying status information.
 
+use crossterm::{
+    cursor, execute,
+    style::{Print, Stylize},
+    terminal::{self, ClearType},
+    QueueableCommand,
+};
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
-use crossterm::{
-    cursor,
-    execute,
-    style::{Stylize, Print},
-    terminal::{self, ClearType},
-    QueueableCommand,
-};
 
 /// Status information to display in the terminal
 #[derive(Clone, Default)]
@@ -51,7 +50,7 @@ impl TerminalUI {
         // Don't clear screen or hide cursor - we want normal log output
         // Just add some space for the status bar
         println!(); // Add blank line before status bar
-        
+
         Ok(())
     }
 
@@ -62,12 +61,8 @@ impl TerminalUI {
         }
 
         // Restore terminal
-        execute!(
-            io::stdout(),
-            cursor::Show,
-            cursor::MoveTo(0, terminal::size()?.1)
-        )?;
-        
+        execute!(io::stdout(), cursor::Show, cursor::MoveTo(0, terminal::size()?.1))?;
+
         println!(); // Add a newline after the status bar
 
         Ok(())
@@ -81,29 +76,29 @@ impl TerminalUI {
 
         let status = self.status.read().await;
         let (width, height) = terminal::size()?;
-        
+
         // Lock stdout for the entire draw operation
         let mut stdout = io::stdout();
-        
+
         // Save cursor position
         stdout.queue(cursor::SavePosition)?;
-        
+
         // Check if terminal is large enough
         if height < 2 {
             // Terminal too small to draw status bar
             stdout.queue(cursor::RestorePosition)?;
             return stdout.flush();
         }
-        
+
         // Draw separator line
         stdout.queue(cursor::MoveTo(0, height - 2))?;
         stdout.queue(terminal::Clear(ClearType::CurrentLine))?;
         stdout.queue(Print("─".repeat(width as usize).dark_grey()))?;
-        
+
         // Draw status bar
         stdout.queue(cursor::MoveTo(0, height - 1))?;
         stdout.queue(terminal::Clear(ClearType::CurrentLine))?;
-        
+
         // Format status bar
         let status_text = format!(
             " {} {} │ {} {} │ {} {} │ {} {} │ {} {}",
@@ -112,7 +107,8 @@ impl TerminalUI {
             "Filters:".cyan().bold(),
             format_number(status.filter_headers).white(),
             "ChainLock:".cyan().bold(),
-            status.chainlock_height
+            status
+                .chainlock_height
                 .map(|h| format!("#{}", format_number(h)))
                 .unwrap_or_else(|| "None".to_string())
                 .yellow(),
@@ -123,18 +119,18 @@ impl TerminalUI {
         );
 
         stdout.queue(Print(&status_text))?;
-        
+
         // Add padding to fill the rest of the line
         let status_len = strip_ansi_codes(&status_text).len();
         if status_len < width as usize {
             stdout.queue(Print(" ".repeat(width as usize - status_len)))?;
         }
-        
+
         // Restore cursor position
         stdout.queue(cursor::RestorePosition)?;
-        
+
         stdout.flush()?;
-        
+
         Ok(())
     }
 
@@ -158,7 +154,7 @@ impl TerminalUI {
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_millis(100)); // Update 10 times per second
-            
+
             loop {
                 interval.tick().await;
                 if let Err(e) = self.draw().await {
@@ -175,7 +171,7 @@ fn format_number(n: u32) -> String {
     let s = n.to_string();
     let mut result = String::new();
     let mut count = 0;
-    
+
     for ch in s.chars().rev() {
         if count > 0 && count % 3 == 0 {
             result.push(',');
@@ -183,7 +179,7 @@ fn format_number(n: u32) -> String {
         result.push(ch);
         count += 1;
     }
-    
+
     result.chars().rev().collect()
 }
 
@@ -192,7 +188,7 @@ fn strip_ansi_codes(s: &str) -> String {
     // Simple implementation - in production you'd use a proper ANSI stripping library
     let mut result = String::new();
     let mut in_escape = false;
-    
+
     for ch in s.chars() {
         if ch == '\x1b' {
             in_escape = true;
@@ -202,7 +198,7 @@ fn strip_ansi_codes(s: &str) -> String {
             result.push(ch);
         }
     }
-    
+
     result
 }
 
@@ -215,7 +211,9 @@ impl TerminalGuard {
     pub fn new(ui: Arc<TerminalUI>) -> io::Result<Self> {
         ui.init()?;
         ui.clone().start_update_loop();
-        Ok(Self { ui })
+        Ok(Self {
+            ui,
+        })
     }
 }
 
@@ -224,4 +222,3 @@ impl Drop for TerminalGuard {
         let _ = self.ui.cleanup();
     }
 }
-

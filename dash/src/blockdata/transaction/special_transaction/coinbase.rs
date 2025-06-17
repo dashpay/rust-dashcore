@@ -169,26 +169,30 @@ mod tests {
     fn regression_test_version_1_payload_decode() {
         // Regression test for coinbase payload version 1 over-reading bug
         // This is the exact payload from block 1028171 that was causing the issue
-        let payload_hex = "01004bb00f002176daba0c98fecfa0903fa527d118fbb704c497ee6ab817945e68ba9ba8743b";
+        let payload_hex =
+            "01004bb00f002176daba0c98fecfa0903fa527d118fbb704c497ee6ab817945e68ba9ba8743b";
         let payload_bytes = hex_decode(payload_hex).unwrap();
-        
+
         // Verify payload is 38 bytes (version 1 should be: 2+4+32 = 38 bytes)
         assert_eq!(payload_bytes.len(), 38);
-        
+
         let mut cursor = std::io::Cursor::new(&payload_bytes);
         let coinbase_payload = CoinbasePayload::consensus_decode(&mut cursor).unwrap();
-        
+
         // Verify the payload was decoded correctly
         assert_eq!(coinbase_payload.version, 1);
         assert_eq!(coinbase_payload.height, 1028171); // 0x0fb04b in little endian
-        
+
         // Most importantly: verify we consumed exactly the payload length (no over-reading)
-        assert_eq!(cursor.position() as usize, payload_bytes.len(),
-                   "Decoder over-read the payload! This indicates the version 1 fix is not working");
-        
+        assert_eq!(
+            cursor.position() as usize,
+            payload_bytes.len(),
+            "Decoder over-read the payload! This indicates the version 1 fix is not working"
+        );
+
         // Verify the size calculation matches
         assert_eq!(coinbase_payload.size(), 38);
-        
+
         // Verify encoding produces the same length
         let encoded_len = coinbase_payload.consensus_encode(&mut Vec::new()).unwrap();
         assert_eq!(encoded_len, 38);
@@ -197,7 +201,7 @@ mod tests {
     #[test]
     fn test_version_conditional_fields() {
         // Test that merkle_root_quorums is only included for version >= 2
-        
+
         // Version 1: should NOT include merkle_root_quorums
         let payload_v1 = CoinbasePayload {
             version: 1,
@@ -209,7 +213,7 @@ mod tests {
             asset_locked_amount: None,
         };
         assert_eq!(payload_v1.size(), 38); // 2 + 4 + 32 = 38 (no quorum root)
-        
+
         // Version 2: should include merkle_root_quorums
         let payload_v2 = CoinbasePayload {
             version: 2,
@@ -221,24 +225,26 @@ mod tests {
             asset_locked_amount: None,
         };
         assert_eq!(payload_v2.size(), 70); // 2 + 4 + 32 + 32 = 70 (includes quorum root)
-        
+
         // Test round-trip encoding/decoding for both versions
         let mut encoded_v1 = Vec::new();
         let len_v1 = payload_v1.consensus_encode(&mut encoded_v1).unwrap();
         assert_eq!(len_v1, 38);
         assert_eq!(encoded_v1.len(), 38);
-        
+
         let mut encoded_v2 = Vec::new();
         let len_v2 = payload_v2.consensus_encode(&mut encoded_v2).unwrap();
         assert_eq!(len_v2, 70);
         assert_eq!(encoded_v2.len(), 70);
-        
+
         // Decode and verify
-        let decoded_v1 = CoinbasePayload::consensus_decode(&mut std::io::Cursor::new(&encoded_v1)).unwrap();
+        let decoded_v1 =
+            CoinbasePayload::consensus_decode(&mut std::io::Cursor::new(&encoded_v1)).unwrap();
         assert_eq!(decoded_v1.version, 1);
         assert_eq!(decoded_v1.height, 1000);
-        
-        let decoded_v2 = CoinbasePayload::consensus_decode(&mut std::io::Cursor::new(&encoded_v2)).unwrap();
+
+        let decoded_v2 =
+            CoinbasePayload::consensus_decode(&mut std::io::Cursor::new(&encoded_v2)).unwrap();
         assert_eq!(decoded_v2.version, 2);
         assert_eq!(decoded_v2.height, 1000);
     }
@@ -247,7 +253,7 @@ mod tests {
         if s.len() % 2 != 0 {
             return Err("Hex string has odd length");
         }
-        
+
         let mut bytes = Vec::with_capacity(s.len() / 2);
         for chunk in s.as_bytes().chunks(2) {
             let high = hex_digit(chunk[0])?;
@@ -256,7 +262,7 @@ mod tests {
         }
         Ok(bytes)
     }
-    
+
     fn hex_digit(digit: u8) -> Result<u8, &'static str> {
         match digit {
             b'0'..=b'9' => Ok(digit - b'0'),

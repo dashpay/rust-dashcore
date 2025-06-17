@@ -4,11 +4,11 @@
 
 #[cfg(all(not(feature = "std"), not(test)))]
 use alloc::vec::Vec;
+use bincode::{Decode, Encode};
 use core::fmt::{Debug, Formatter};
+use hashes::{Hash, HashEngine};
 #[cfg(any(feature = "std", test))]
 pub use std::vec::Vec;
-use bincode::{Decode, Encode};
-use hashes::{Hash, HashEngine};
 
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::Encodable;
