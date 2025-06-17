@@ -92,8 +92,7 @@ pub fn init_logging(level: &str) -> Result<(), Box<dyn std::error::Error>> {
         .with_target(false)
         .with_thread_ids(false)
         .with_max_level(level)
-        .init();
-    
-    Ok(())
+        .try_init()
+        .map_err(|e| format!("Failed to initialize logging: {}", e).into())
 }
 
