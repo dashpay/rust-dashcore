@@ -154,7 +154,7 @@ impl DiskStorageManager {
                         }
                     }
                     WorkerCommand::SaveFilterSegment { segment_id, filter_headers } => {
-                        let path = worker_base_path.join(format!("headers/filter_segment_{:04}.dat", segment_id));
+                        let path = worker_base_path.join(format!("filters/filter_segment_{:04}.dat", segment_id));
                         if let Err(e) = save_filter_segment_to_disk(&path, &filter_headers).await {
                             eprintln!("Failed to save filter segment {}: {}", segment_id, e);
                         } else {
@@ -233,9 +233,19 @@ impl DiskStorageManager {
                         if let Ok(id) = name[8..12].parse::<u32>() {
                             max_segment_id = Some(max_segment_id.map_or(id, |max: u32| max.max(id)));
                         }
-                    } else if name.starts_with("filter_segment_") && name.ends_with(".dat") {
-                        if let Ok(id) = name[15..19].parse::<u32>() {
-                            max_filter_segment_id = Some(max_filter_segment_id.map_or(id, |max: u32| max.max(id)));
+                    }
+                }
+            }
+            
+            // Also check the filters directory for filter segments
+            let filters_dir = self.base_path.join("filters");
+            if let Ok(entries) = fs::read_dir(&filters_dir) {
+                for entry in entries.flatten() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        if name.starts_with("filter_segment_") && name.ends_with(".dat") {
+                            if let Ok(id) = name[15..19].parse::<u32>() {
+                                max_filter_segment_id = Some(max_filter_segment_id.map_or(id, |max: u32| max.max(id)));
+                            }
                         }
                     }
                 }
@@ -352,7 +362,7 @@ impl DiskStorageManager {
         }
         
         // Load segment from disk
-        let segment_path = self.base_path.join(format!("headers/filter_segment_{:04}.dat", segment_id));
+        let segment_path = self.base_path.join(format!("filters/filter_segment_{:04}.dat", segment_id));
         let filter_headers = if segment_path.exists() {
             self.load_filter_headers_from_file(&segment_path).await?
         } else {
@@ -386,7 +396,7 @@ impl DiskStorageManager {
             if oldest_segment.state != SegmentState::Clean {
                 tracing::trace!("Synchronously saving filter segment {} before eviction (state: {:?})",
                                oldest_segment.segment_id, oldest_segment.state);
-                let segment_path = self.base_path.join(format!("headers/filter_segment_{:04}.dat", oldest_segment.segment_id));
+                let segment_path = self.base_path.join(format!("filters/filter_segment_{:04}.dat", oldest_segment.segment_id));
                 save_filter_segment_to_disk(&segment_path, &oldest_segment.filter_headers).await?;
                 tracing::debug!("Successfully saved filter segment {} to disk", oldest_segment.segment_id);
             }
