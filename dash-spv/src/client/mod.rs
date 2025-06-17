@@ -738,15 +738,15 @@ impl DashSpvClient {
 
         match &message {
             NetworkMessage::CLSig(clsig) => {
-                tracing::info!("Received ChainLock for block {}", clsig.chain_lock.block_hash);
+                tracing::info!("Received ChainLock for block {}", clsig.block_hash);
                 // Extract ChainLock from CLSig message and process
-                self.process_chainlock(clsig.chain_lock.clone()).await?;
+                self.process_chainlock(clsig.clone()).await?;
                 return Ok(());
             }
             NetworkMessage::ISLock(islock_msg) => {
-                tracing::info!("Received InstantSendLock for tx {}", islock_msg.instant_lock.txid);
+                tracing::info!("Received InstantSendLock for tx {}", islock_msg.txid);
                 // Extract InstantLock from ISLock message and process
-                self.process_instantsendlock(islock_msg.instant_lock.clone()).await?;
+                self.process_instantsendlock(islock_msg.clone()).await?;
                 return Ok(());
             }
             NetworkMessage::Tx(tx) => {
