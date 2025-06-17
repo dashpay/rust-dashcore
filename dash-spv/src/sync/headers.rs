@@ -5,6 +5,7 @@ use dashcore::{
     network::message::NetworkMessage,
     network::message_blockdata::GetHeadersMessage,
     BlockHash,
+    network::constants::NetworkExt
 };
 use dashcore_hashes::Hash;
 

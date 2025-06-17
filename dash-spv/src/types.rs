@@ -7,6 +7,7 @@ use dashcore::{
     hash_types::FilterHeader,
     sml::masternode_list_engine::MasternodeListEngine,
     BlockHash, Network,
+    network::constants::NetworkExt
 };
 use serde::{Deserialize, Serialize};
 

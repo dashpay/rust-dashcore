@@ -21,6 +21,7 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::SyncProgress;
+use dashcore::network::constants::NetworkExt;
 
 pub use headers::HeaderSyncManager;
 pub use filters::FilterSyncManager;

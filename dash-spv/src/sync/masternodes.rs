@@ -5,6 +5,7 @@ use dashcore::{
     network::message_sml::{GetMnListDiff, MnListDiff},
     sml::masternode_list_engine::MasternodeListEngine,
     BlockHash,
+    network::constants::NetworkExt
 };
 use dashcore_hashes::Hash;
 

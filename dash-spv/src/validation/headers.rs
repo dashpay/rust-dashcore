@@ -4,6 +4,7 @@ use dashcore::{
     block::Header as BlockHeader,
     error::Error as DashError,
     Network,
+    network::constants::NetworkExt
 };
 
 use crate::error::{ValidationError, ValidationResult};

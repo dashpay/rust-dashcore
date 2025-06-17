@@ -24,6 +24,7 @@ use crate::storage::StorageManager;
 use crate::sync::SyncManager;
 use crate::sync::filters::FilterNotificationSender;
 use crate::validation::ValidationManager;
+use dashcore::network::constants::NetworkExt;
 
 pub use config::ClientConfig;
 pub use block_processor::{BlockProcessor, BlockProcessingTask};
