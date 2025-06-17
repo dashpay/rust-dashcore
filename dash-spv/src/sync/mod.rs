@@ -441,7 +441,8 @@ impl SyncManager {
         // calling handle_mnlistdiff_message() and check_sync_timeout()
         tracing::info!("Masternode sync started - will be completed through monitoring loop");
         
-        self.state.finish_sync(SyncComponent::Masternodes);
+        // Don't call finish_sync here! The sync is still in progress.
+        // It will be finished when handle_mnlistdiff_message() returns false
         
         let final_height = match storage.load_masternode_state().await {
             Ok(Some(state)) => state.last_height,

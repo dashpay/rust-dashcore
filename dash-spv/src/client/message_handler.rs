@@ -116,6 +116,8 @@ impl<'a> MessageHandler<'a> {
                 match self.sync_manager.handle_mnlistdiff_message(diff, &mut *self.storage, &mut *self.network).await {
                     Ok(false) => {
                         tracing::info!("🎯 Masternode sync completed");
+                        // Properly finish the sync state
+                        self.sync_manager.sync_state_mut().finish_sync(crate::sync::SyncComponent::Masternodes);
                     }
                     Ok(true) => {
                         tracing::debug!("MnListDiff processed, sync continuing");
