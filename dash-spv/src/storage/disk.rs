@@ -129,9 +129,12 @@ impl DiskStorageManager {
         let filters_dir = base_path.join("filters");
         let state_dir = base_path.join("state");
         
-        fs::create_dir_all(&headers_dir)?;
-        fs::create_dir_all(&filters_dir)?;
-        fs::create_dir_all(&state_dir)?;
+        fs::create_dir_all(&headers_dir)
+            .map_err(|e| StorageError::WriteFailed(format!("Failed to create headers directory: {}", e)))?;
+        fs::create_dir_all(&filters_dir)
+            .map_err(|e| StorageError::WriteFailed(format!("Failed to create filters directory: {}", e)))?;
+        fs::create_dir_all(&state_dir)
+            .map_err(|e| StorageError::WriteFailed(format!("Failed to create state directory: {}", e)))?;
         
         
         // Create background worker channels
