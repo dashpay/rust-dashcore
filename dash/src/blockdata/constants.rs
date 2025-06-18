@@ -174,8 +174,8 @@ impl ChainHash {
     // Mainnet value can be verified at https://github.com/lightning/bolts/blob/master/00-introduction.md
     /// `ChainHash` for mainnet dash.
     pub const DASH: Self = Self([
-        4, 56, 21, 192, 10, 42, 23, 242, 90, 219, 163, 1, 98, 89, 58, 167, 5, 4, 25, 91, 183, 218,
-        230, 227, 167, 85, 39, 96, 51, 189, 13, 217,
+        31, 206, 219, 159, 237, 128, 98, 250, 59, 68, 162, 177, 88, 247, 112, 126, 30, 188, 238,
+        123, 223, 166, 251, 66, 69, 17, 71, 123, 239, 57, 230, 139,
     ]);
     /// `ChainHash` for testnet dash.
     pub const TESTNET: Self = Self([
@@ -258,12 +258,12 @@ mod test {
             "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
         );
 
-        assert_eq!(genesis_block.header.time, 1231006505);
-        assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x1d00ffff));
-        assert_eq!(genesis_block.header.nonce, 2083236893);
+        assert_eq!(genesis_block.header.time, 1390095618);
+        assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x1e0ffff0));
+        assert_eq!(genesis_block.header.nonce, 28917698);
         assert_eq!(
             genesis_block.header.block_hash().to_string(),
-            "043815c00a2a17f25adba30162593aa70504195bb7dae6e3a755276033bd0dd9"
+            "1fcedb9fed8062fa3b44a2b158f7707e1ebcee7bdfa6fb424511477bef39e68b"
         );
     }
 
@@ -350,7 +350,7 @@ mod test {
     #[test]
     fn mainnet_chain_hash_test_vector() {
         let got = ChainHash::using_genesis_block(Network::Dash).to_string();
-        let want = "043815c00a2a17f25adba30162593aa70504195bb7dae6e3a755276033bd0dd9";
+        let want = "1fcedb9fed8062fa3b44a2b158f7707e1ebcee7bdfa6fb424511477bef39e68b";
         assert_eq!(got, want);
     }
 }

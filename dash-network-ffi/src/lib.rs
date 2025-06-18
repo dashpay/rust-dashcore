@@ -123,7 +123,7 @@ mod tests {
         assert_eq!(devnet_info.magic(), 0xCEFFCAE2);
 
         let regtest_info = NetworkInfo::new(Network::Regtest);
-        assert_eq!(regtest_info.magic(), 0xDAB5BFFA);
+        assert_eq!(regtest_info.magic(), 0xDCB7C1FC);
     }
 
     #[test]
@@ -132,7 +132,7 @@ mod tests {
         assert!(NetworkInfo::from_magic(0xBD6B0CBF).is_ok());
         assert!(NetworkInfo::from_magic(0xFFCAE2CE).is_ok());
         assert!(NetworkInfo::from_magic(0xCEFFCAE2).is_ok());
-        assert!(NetworkInfo::from_magic(0xDAB5BFFA).is_ok());
+        assert!(NetworkInfo::from_magic(0xDCB7C1FC).is_ok());
 
         // Invalid magic bytes
         assert!(matches!(NetworkInfo::from_magic(0x12345678), Err(NetworkError::InvalidMagic)));

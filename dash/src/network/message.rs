@@ -32,8 +32,8 @@ use crate::network::{
     message_blockdata, message_bloom, message_compact_blocks, message_filter, message_network,
     message_qrinfo, message_sml,
 };
-use crate::{ChainLock, InstantLock};
 use crate::prelude::*;
+use crate::{ChainLock, InstantLock};
 
 /// The maximum number of [super::message_blockdata::Inventory] items in an `inv` message.
 ///
@@ -493,19 +493,26 @@ impl Decodable for RawNetworkMessage {
             "mempool" => NetworkMessage::MemPool,
             "block" => {
                 // First decode just the header to get block hash for error context
-                let header: block::Header = Decodable::consensus_decode_from_finite_reader(&mut mem_d)?;
+                let header: block::Header =
+                    Decodable::consensus_decode_from_finite_reader(&mut mem_d)?;
                 let block_hash = header.block_hash();
-                
+
                 // Now decode the transactions
-                match Vec::<transaction::Transaction>::consensus_decode_from_finite_reader(&mut mem_d) {
-                    Ok(txdata) => {
-                        NetworkMessage::Block(block::Block { header, txdata })
-                    }
+                match Vec::<transaction::Transaction>::consensus_decode_from_finite_reader(
+                    &mut mem_d,
+                ) {
+                    Ok(txdata) => NetworkMessage::Block(block::Block {
+                        header,
+                        txdata,
+                    }),
                     Err(e) => {
                         // Include block hash in error message for debugging
                         return Err(encode::Error::Io(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            format!("Failed to decode transactions for block {}: {}", block_hash, e)
+                            format!(
+                                "Failed to decode transactions for block {}: {}",
+                                block_hash, e
+                            ),
                         )));
                     }
                 }

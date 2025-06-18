@@ -1,8 +1,8 @@
 //! BIP157 filter synchronization example.
 
+use dash_spv::{init_logging, ClientConfig, DashSpvClient, WatchItem};
+use dashcore::{Address, Network};
 use std::str::FromStr;
-use dash_spv::{ClientConfig, DashSpvClient, Address, WatchItem, init_logging};
-use dashcore::Network;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -10,7 +10,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging("info")?;
 
     // Parse a Dash address to watch
-    let watch_address = Address::from_str("XdJrGEWVUXuDHNH2BteZjjNG1XYe6CgBGr")?;
+    let watch_address = Address::<dashcore::address::NetworkUnchecked>::from_str(
+        "Xan9iCVe1q5jYRDZ4VSMCtBjq2VyQA3Dge",
+    )?;
 
     // Create configuration with filter support
     let config = ClientConfig::mainnet()
@@ -37,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stats = client.stats().await?;
     println!("Filter headers downloaded: {}", stats.filter_headers_downloaded);
     println!("Filters downloaded: {}", stats.filters_downloaded);
-    println!("Filter matches found: {}", stats.filter_matches);
+    println!("Filter matches found: {}", stats.filters_matched);
     println!("Blocks requested: {}", stats.blocks_requested);
 
     // Stop the client

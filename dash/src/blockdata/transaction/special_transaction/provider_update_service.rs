@@ -116,41 +116,43 @@ impl Encodable for ProviderUpdateServicePayload {
 impl Decodable for ProviderUpdateServicePayload {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode(r)?;
-        
+
         // Version validation like C++ SERIALIZE_METHODS
         if version == 0 || version > ProTxVersion::BasicBLS as u16 {
             return Err(encode::Error::ParseFailed("unsupported ProUpServTx version"));
         }
-        
+
         // Read nType for BasicBLS version
         let mn_type = if version == ProTxVersion::BasicBLS as u16 {
             Some(u16::consensus_decode(r)?)
         } else {
             None
         };
-        
+
         // Read core fields
         let pro_tx_hash = Txid::consensus_decode(r)?;
         let ip_address = u128::consensus_decode(r)?;
         let port = u16::swap_bytes(u16::consensus_decode(r)?);
         let script_payout = ScriptBuf::consensus_decode(r)?;
         let inputs_hash = InputsHash::consensus_decode(r)?;
-        
+
         // Read Evo platform fields if needed
-        let (platform_node_id, platform_p2p_port, platform_http_port) = 
-            if version == ProTxVersion::BasicBLS as u16 && mn_type == Some(ProviderMasternodeType::HighPerformance as u16) {
-                let node_id = {
-                    let mut buf = [0u8; 20];
-                    r.read_exact(&mut buf)?;
-                    buf
-                };
-                let p2p_port = u16::consensus_decode(r)?;
-                let http_port = u16::consensus_decode(r)?;
-                (Some(node_id), Some(p2p_port), Some(http_port))
-            } else {
-                (None, None, None)
+        let (platform_node_id, platform_p2p_port, platform_http_port) = if version
+            == ProTxVersion::BasicBLS as u16
+            && mn_type == Some(ProviderMasternodeType::HighPerformance as u16)
+        {
+            let node_id = {
+                let mut buf = [0u8; 20];
+                r.read_exact(&mut buf)?;
+                buf
             };
-        
+            let p2p_port = u16::consensus_decode(r)?;
+            let http_port = u16::consensus_decode(r)?;
+            (Some(node_id), Some(p2p_port), Some(http_port))
+        } else {
+            (None, None, None)
+        };
+
         // Read BLS signature (assuming not SER_GETHASH context)
         let payload_sig = BLSSignature::consensus_decode(r)?;
 
@@ -181,7 +183,7 @@ mod tests {
     use crate::blockdata::transaction::special_transaction::TransactionPayload::ProviderUpdateServicePayloadType;
     use crate::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
     use crate::bls_sig_utils::BLSSignature;
-    use crate::consensus::{Encodable, Decodable, deserialize};
+    use crate::consensus::{Decodable, Encodable, deserialize};
     use crate::hash_types::InputsHash;
     use crate::internal_macros::hex;
     use crate::{Network, ScriptBuf, Transaction, Txid};
@@ -307,18 +309,20 @@ mod tests {
 
     #[test]
     fn test_protx_update_v2_block_parsing() {
+        use crate::blockdata::block::Block;
+        use crate::blockdata::transaction::special_transaction::TransactionType;
+        use crate::consensus::deserialize;
         use std::fs;
         use std::path::Path;
-        use crate::blockdata::block::Block;
-        use crate::consensus::deserialize;
-        use crate::blockdata::transaction::special_transaction::TransactionType;
-        
+
         // Load block data containing ProTx Update Service v2 transactions (BasicBLS version)
-        let block_data_path = Path::new(env!("CARGO_MANIFEST_DIR")).parent()
-            .unwrap().join("protx_update_v2_block.data");
-        
+        let block_data_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("protx_update_v2_block.data");
+
         println!("🔍 Testing ProTx Update Service v2 (BasicBLS) block parsing");
-        
+
         let block_hex_string = match fs::read_to_string(&block_data_path) {
             Ok(content) => content.trim().to_string(),
             Err(_e) => {
@@ -326,7 +330,7 @@ mod tests {
                 return; // Skip test if file not found
             }
         };
-        
+
         // Decode hex to bytes
         let block_bytes = match hex::decode(&block_hex_string) {
             Ok(bytes) => bytes,
@@ -334,15 +338,17 @@ mod tests {
                 panic!("❌ Failed to decode hex: {}", e);
             }
         };
-        
+
         // Try to compute block hash from header first
         let expected_block_hash = if block_bytes.len() >= 80 {
-            match crate::blockdata::block::Header::consensus_decode(&mut std::io::Cursor::new(&block_bytes[0..80])) {
+            match crate::blockdata::block::Header::consensus_decode(&mut std::io::Cursor::new(
+                &block_bytes[0..80],
+            )) {
                 Ok(header) => {
                     let hash = header.block_hash();
                     println!("🔗 Block hash: {}", hash);
                     Some(hash)
-                },
+                }
                 Err(e) => {
                     panic!("❌ Failed to decode block header: {}", e);
                 }
@@ -350,7 +356,7 @@ mod tests {
         } else {
             panic!("❌ Block data too short");
         };
-        
+
         // Now try to deserialize the full block - this should succeed with our ProTx fix
         match deserialize::<Block>(&block_bytes) {
             Ok(block) => {
@@ -358,12 +364,12 @@ mod tests {
                 println!("✅ Successfully deserialized block with ProTx transactions!");
                 println!("  Block hash: {}", actual_hash);
                 println!("  Transaction count: {}", block.txdata.len());
-                
+
                 // Verify block hash matches
                 if let Some(expected_hash) = expected_block_hash {
                     assert_eq!(expected_hash, actual_hash, "Block hash mismatch");
                 }
-                
+
                 // Analyze transactions for ProUpServTx (Type 2) transactions
                 let mut found_protx = false;
                 for (i, tx) in block.txdata.iter().enumerate() {
@@ -371,7 +377,7 @@ mod tests {
                     if tx_type == TransactionType::ProviderUpdateService {
                         println!("  🎯 Found ProUpServTx (Type 2) at index {}", i);
                         found_protx = true;
-                        
+
                         // Test that we can parse the payload
                         if let Some(payload) = &tx.special_transaction_payload {
                             match payload.clone().to_update_service_payload() {
@@ -380,9 +386,18 @@ mod tests {
                                     println!("       Version: {}", protx_payload.version);
                                     println!("       ProTxHash: {}", protx_payload.pro_tx_hash);
                                     println!("       Port: {}", protx_payload.port);
-                                    println!("       Script length: {}", protx_payload.script_payout.len());
-                                    println!("       Has nType: {}", protx_payload.mn_type.is_some());
-                                    println!("       Has platform fields: {}", protx_payload.platform_node_id.is_some());
+                                    println!(
+                                        "       Script length: {}",
+                                        protx_payload.script_payout.len()
+                                    );
+                                    println!(
+                                        "       Has nType: {}",
+                                        protx_payload.mn_type.is_some()
+                                    );
+                                    println!(
+                                        "       Has platform fields: {}",
+                                        protx_payload.platform_node_id.is_some()
+                                    );
                                 }
                                 Err(e) => {
                                     panic!("❌ Failed to parse ProUpServTx payload: {}", e);
@@ -391,11 +406,11 @@ mod tests {
                         }
                     }
                 }
-                
+
                 if !found_protx {
                     println!("⚠️  No ProUpServTx transactions found in this block");
                 }
-                
+
                 println!("🎉 ProTx block parsing test passed!");
             }
             Err(e) => {
@@ -404,20 +419,22 @@ mod tests {
         }
     }
 
-    #[test] 
+    #[test]
     fn test_protx_block_parsing_with_pro_reg_tx() {
+        use crate::blockdata::block::Block;
+        use crate::blockdata::transaction::special_transaction::TransactionType;
+        use crate::consensus::deserialize;
         use std::fs;
         use std::path::Path;
-        use crate::blockdata::block::Block;
-        use crate::consensus::deserialize;
-        use crate::blockdata::transaction::special_transaction::TransactionType;
-        
+
         // Test block with Provider Registration transactions
-        let block_data_path = Path::new(env!("CARGO_MANIFEST_DIR")).parent()
-            .unwrap().join("block_with_pro_reg_tx.data");
-        
+        let block_data_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("block_with_pro_reg_tx.data");
+
         println!("🔍 Testing ProTx block parsing with ProRegTx transactions");
-        
+
         let block_hex_string = match fs::read_to_string(&block_data_path) {
             Ok(content) => content.trim().to_string(),
             Err(_e) => {
@@ -425,36 +442,38 @@ mod tests {
                 return; // Skip test if file not found
             }
         };
-        
+
         let block_bytes = match hex::decode(&block_hex_string) {
             Ok(bytes) => bytes,
             Err(e) => {
                 panic!("❌ Failed to decode hex: {}", e);
             }
         };
-        
+
         let expected_hash = "000000000000002016c49d804e7b5d6ca84663ed032222e9061b2efec302edc3";
-        
+
         // Verify block hash from header
         if block_bytes.len() >= 80 {
-            match crate::blockdata::block::Header::consensus_decode(&mut std::io::Cursor::new(&block_bytes[0..80])) {
+            match crate::blockdata::block::Header::consensus_decode(&mut std::io::Cursor::new(
+                &block_bytes[0..80],
+            )) {
                 Ok(header) => {
                     let hash = header.block_hash();
                     assert_eq!(hash.to_string(), expected_hash, "Wrong block - hash mismatch");
                     println!("🔗 Confirmed correct block hash: {}", expected_hash);
-                },
+                }
                 Err(e) => {
                     panic!("❌ Failed to decode block header: {}", e);
                 }
             }
         }
-        
+
         // Parse the full block
         match deserialize::<Block>(&block_bytes) {
             Ok(block) => {
                 println!("✅ Successfully parsed block with ProRegTx transactions!");
                 println!("  Transaction count: {}", block.txdata.len());
-                
+
                 // Look for Provider Registration transactions
                 let mut found_pro_reg = false;
                 for (i, tx) in block.txdata.iter().enumerate() {
@@ -462,19 +481,27 @@ mod tests {
                     if tx_type == TransactionType::ProviderRegistration {
                         println!("  🎯 Found ProRegTx (Type 1) at index {}", i);
                         found_pro_reg = true;
-                        
+
                         // Test payload parsing
                         if let Some(payload) = &tx.special_transaction_payload {
                             match payload.clone().to_provider_registration_payload() {
                                 Ok(pro_reg_payload) => {
                                     println!("    ✅ Successfully parsed ProRegTx payload:");
                                     println!("       Version: {}", pro_reg_payload.version);
-                                    println!("       Masternode type: {:?}", pro_reg_payload.masternode_type);
-                                    println!("       Service address: {}", pro_reg_payload.service_address);
-                                    println!("       Platform fields: node_id={:?}, p2p_port={:?}, http_port={:?}", 
-                                             pro_reg_payload.platform_node_id.is_some(), 
-                                             pro_reg_payload.platform_p2p_port,
-                                             pro_reg_payload.platform_http_port);
+                                    println!(
+                                        "       Masternode type: {:?}",
+                                        pro_reg_payload.masternode_type
+                                    );
+                                    println!(
+                                        "       Service address: {}",
+                                        pro_reg_payload.service_address
+                                    );
+                                    println!(
+                                        "       Platform fields: node_id={:?}, p2p_port={:?}, http_port={:?}",
+                                        pro_reg_payload.platform_node_id.is_some(),
+                                        pro_reg_payload.platform_p2p_port,
+                                        pro_reg_payload.platform_http_port
+                                    );
                                 }
                                 Err(e) => {
                                     panic!("❌ Failed to parse ProRegTx payload: {}", e);
@@ -483,11 +510,11 @@ mod tests {
                         }
                     }
                 }
-                
+
                 if !found_pro_reg {
                     println!("⚠️  No ProRegTx transactions found in this block");
                 }
-                
+
                 println!("🎉 ProRegTx block parsing test passed!");
             }
             Err(e) => {

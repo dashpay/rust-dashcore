@@ -36,7 +36,7 @@ impl Network {
             0xBD6B0CBF => Some(Network::Dash),
             0xFFCAE2CE => Some(Network::Testnet),
             0xCEFFCAE2 => Some(Network::Devnet),
-            0xDAB5BFFA => Some(Network::Regtest),
+            0xDCB7C1FC => Some(Network::Regtest),
             _ => None,
         }
     }
@@ -114,7 +114,7 @@ mod tests {
         assert_eq!(Network::Dash.magic(), 0xBD6B0CBF);
         assert_eq!(Network::Testnet.magic(), 0xFFCAE2CE);
         assert_eq!(Network::Devnet.magic(), 0xCEFFCAE2);
-        assert_eq!(Network::Regtest.magic(), 0xDAB5BFFA);
+        assert_eq!(Network::Regtest.magic(), 0xDCB7C1FC);
     }
 
     #[test]
@@ -122,7 +122,7 @@ mod tests {
         assert_eq!(Network::from_magic(0xBD6B0CBF), Some(Network::Dash));
         assert_eq!(Network::from_magic(0xFFCAE2CE), Some(Network::Testnet));
         assert_eq!(Network::from_magic(0xCEFFCAE2), Some(Network::Devnet));
-        assert_eq!(Network::from_magic(0xDAB5BFFA), Some(Network::Regtest));
+        assert_eq!(Network::from_magic(0xDCB7C1FC), Some(Network::Regtest));
         assert_eq!(Network::from_magic(0x12345678), None);
     }
 

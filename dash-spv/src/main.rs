@@ -7,8 +7,8 @@ use std::process;
 use clap::{Arg, Command};
 use tokio::signal;
 
-use dash_spv::{ClientConfig, DashSpvClient, Network};
 use dash_spv::terminal::TerminalGuard;
+use dash_spv::{ClientConfig, DashSpvClient, Network};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .value_name("NETWORK")
                 .help("Network to connect to")
                 .value_parser(["mainnet", "testnet", "regtest"])
-                .default_value("mainnet")
+                .default_value("mainnet"),
         )
         .arg(
             Arg::new("data-dir")
@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .long("data-dir")
                 .value_name("DIR")
                 .help("Data directory for storage")
-                .default_value("./dash-spv-data")
+                .default_value("./dash-spv-data"),
         )
         .arg(
             Arg::new("peer")
@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .long("peer")
                 .value_name("ADDRESS")
                 .help("Peer address to connect to (can be used multiple times)")
-                .action(clap::ArgAction::Append)
+                .action(clap::ArgAction::Append),
         )
         .arg(
             Arg::new("log-level")
@@ -47,19 +47,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .value_name("LEVEL")
                 .help("Log level")
                 .value_parser(["error", "warn", "info", "debug", "trace"])
-                .default_value("info")
+                .default_value("info"),
         )
         .arg(
             Arg::new("no-filters")
                 .long("no-filters")
                 .help("Disable BIP157 filter synchronization")
-                .action(clap::ArgAction::SetTrue)
+                .action(clap::ArgAction::SetTrue),
         )
         .arg(
             Arg::new("no-masternodes")
                 .long("no-masternodes")
                 .help("Disable masternode list synchronization")
-                .action(clap::ArgAction::SetTrue)
+                .action(clap::ArgAction::SetTrue),
         )
         .arg(
             Arg::new("validation-mode")
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .value_name("MODE")
                 .help("Validation mode")
                 .value_parser(["none", "basic", "full"])
-                .default_value("full")
+                .default_value("full"),
         )
         .arg(
             Arg::new("watch-address")
@@ -75,19 +75,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .long("watch-address")
                 .value_name("ADDRESS")
                 .help("Dash address to watch for transactions (can be used multiple times)")
-                .action(clap::ArgAction::Append)
+                .action(clap::ArgAction::Append),
         )
         .arg(
             Arg::new("add-example-addresses")
                 .long("add-example-addresses")
                 .help("Add some example Dash addresses to watch for testing")
-                .action(clap::ArgAction::SetTrue)
+                .action(clap::ArgAction::SetTrue),
         )
         .arg(
             Arg::new("no-terminal-ui")
                 .long("no-terminal-ui")
                 .help("Disable terminal UI status bar")
-                .action(clap::ArgAction::SetTrue)
+                .action(clap::ArgAction::SetTrue),
         )
         .get_matches();
 
@@ -168,18 +168,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Enable terminal UI in the client if requested
     let _terminal_guard = if enable_terminal_ui {
         client.enable_terminal_ui();
-        
+
         // Get the terminal UI from the client and initialize it
         if let Some(ui) = client.get_terminal_ui() {
             match TerminalGuard::new(ui.clone()) {
                 Ok(guard) => {
                     // Initial update with network info
                     let network_name = format!("{:?}", client.network());
-                    let _ = ui.update_status(|status| {
-                        status.network = network_name;
-                        status.peer_count = 0; // Will be updated when connected
-                    }).await;
-                    
+                    let _ = ui
+                        .update_status(|status| {
+                            status.network = network_name;
+                            status.peer_count = 0; // Will be updated when connected
+                        })
+                        .await;
+
                     Some(guard)
                 }
                 Err(e) => {
@@ -211,8 +213,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     });
                     match checked_addr {
                         Ok(valid_addr) => {
-                            if let Err(e) = client.add_watch_item(dash_spv::WatchItem::address(valid_addr)).await {
-                                tracing::error!("Failed to add watch address '{}': {}", addr_str, e);
+                            if let Err(e) = client
+                                .add_watch_item(dash_spv::WatchItem::address(valid_addr))
+                                .await
+                            {
+                                tracing::error!(
+                                    "Failed to add watch address '{}': {}",
+                                    addr_str,
+                                    e
+                                );
                             } else {
                                 tracing::info!("Added watch address: {}", addr_str);
                             }
@@ -254,21 +263,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(addr) => {
                     if let Ok(valid_addr) = addr.require_network(network) {
                         // For the example mainnet address (Crowdnode), set earliest height to 1,000,000
-                        let watch_item = if network == dashcore::Network::Dash && addr_str == "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2" {
+                        let watch_item = if network == dashcore::Network::Dash
+                            && addr_str == "Xesjop7V9xLndFMgZoCrckJ5ZPgJdJFbA3"
+                        {
                             dash_spv::WatchItem::address_from_height(valid_addr, 200_000)
                         } else {
                             dash_spv::WatchItem::address(valid_addr)
                         };
-                        
+
                         if let Err(e) = client.add_watch_item(watch_item).await {
                             tracing::error!("Failed to add example address '{}': {}", addr_str, e);
                         } else {
-                            let height_info = if network == dashcore::Network::Dash && addr_str == "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2" {
+                            let height_info = if network == dashcore::Network::Dash
+                                && addr_str == "Xesjop7V9xLndFMgZoCrckJ5ZPgJdJFbA3"
+                            {
                                 " (from height 1,000,000)"
                             } else {
                                 ""
                             };
-                            tracing::info!("Added example watch address: {}{}", addr_str, height_info);
+                            tracing::info!(
+                                "Added example watch address: {}{}",
+                                addr_str,
+                                height_info
+                            );
                         }
                     }
                 }
@@ -285,12 +302,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("Watching {} items:", watch_items.len());
         for (i, item) in watch_items.iter().enumerate() {
             match item {
-                dash_spv::WatchItem::Address { address, earliest_height } => {
-                    let height_info = earliest_height.map(|h| format!(" (from height {})", h)).unwrap_or_default();
+                dash_spv::WatchItem::Address {
+                    address,
+                    earliest_height,
+                } => {
+                    let height_info = earliest_height
+                        .map(|h| format!(" (from height {})", h))
+                        .unwrap_or_default();
                     tracing::info!("  {}: Address {}{}", i + 1, address, height_info);
                 }
-                dash_spv::WatchItem::Script(script) => tracing::info!("  {}: Script {}", i + 1, script.to_hex_string()),
-                dash_spv::WatchItem::Outpoint(outpoint) => tracing::info!("  {}: Outpoint {}:{}", i + 1, outpoint.txid, outpoint.vout),
+                dash_spv::WatchItem::Script(script) => {
+                    tracing::info!("  {}: Script {}", i + 1, script.to_hex_string())
+                }
+                dash_spv::WatchItem::Outpoint(outpoint) => {
+                    tracing::info!("  {}: Outpoint {}:{}", i + 1, outpoint.txid, outpoint.vout)
+                }
             }
         }
     } else {
@@ -301,32 +327,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Waiting for peers to connect...");
     let mut wait_time = 0;
     const MAX_WAIT_TIME: u64 = 60; // Wait up to 60 seconds for peers
-    
+
     loop {
         let peer_count = client.get_peer_count().await;
         if peer_count > 0 {
             tracing::info!("Connected to {} peer(s), starting synchronization", peer_count);
             break;
         }
-        
+
         if wait_time >= MAX_WAIT_TIME {
             tracing::error!("No peers connected after {} seconds", MAX_WAIT_TIME);
             panic!("SPV client failed to connect to any peers");
         }
-        
+
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         wait_time += 1;
-        
+
         if wait_time % 5 == 0 {
             tracing::info!("Still waiting for peers... ({}s elapsed)", wait_time);
         }
     }
-    
+
     // Check filters for matches if we have watch items before starting monitoring
     let watch_items = client.get_watch_items().await;
     let should_check_filters = !watch_items.is_empty() && !matches.get_flag("no-filters");
-    
-    // Start synchronization first, then monitoring immediately 
+
+    // Start synchronization first, then monitoring immediately
     // The key is to minimize the gap between sync requests and monitoring startup
     tracing::info!("Starting synchronization to tip...");
     match client.sync_to_tip().await {
@@ -344,14 +370,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start monitoring immediately after sync requests are sent
     tracing::info!("Starting network monitoring...");
-    
+
     // For now, just focus on the core fix - getting headers to sync properly
     // Filter checking can be done manually later
     if should_check_filters {
         tracing::info!("Filter checking will be available after headers sync completes");
         tracing::info!("You can manually trigger filter sync later if needed");
     }
-    
+
     tokio::select! {
         result = client.monitor_network() => {
             if let Err(e) = result {

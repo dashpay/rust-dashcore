@@ -110,6 +110,7 @@ fn build_version_message(address: SocketAddr) -> message::NetworkMessage {
         nonce,
         user_agent,
         start_height,
+        false, // relay
         mn_auth_challenge,
     ))
 }

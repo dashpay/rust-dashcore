@@ -1,5 +1,6 @@
 //! Disk-based storage implementation with segmented files and async background saving.
 
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write};
@@ -7,20 +8,19 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-use async_trait::async_trait;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 
 use dashcore::{
     block::{Header as BlockHeader, Version},
     consensus::{encode, Decodable, Encodable},
     hash_types::FilterHeader,
     pow::CompactTarget,
-    BlockHash, Address, OutPoint,
+    Address, BlockHash, OutPoint,
 };
 use dashcore_hashes::Hash;
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::{StorageManager, MasternodeState, StorageStats};
+use crate::storage::{MasternodeState, StorageManager, StorageStats};
 use crate::types::ChainState;
 use crate::wallet::Utxo;
 
@@ -57,19 +57,22 @@ enum WorkerCommand {
 /// Notifications from the background worker
 #[derive(Debug, Clone)]
 enum WorkerNotification {
-    HeaderSegmentSaved { segment_id: u32 },
-    FilterSegmentSaved { segment_id: u32 },
+    HeaderSegmentSaved {
+        segment_id: u32,
+    },
+    FilterSegmentSaved {
+        segment_id: u32,
+    },
     IndexSaved,
     UtxoCacheSaved,
 }
 
-
 /// State of a segment in memory
 #[derive(Debug, Clone, PartialEq)]
 enum SegmentState {
-    Clean,          // No changes, up to date on disk
-    Dirty,          // Has changes, needs saving
-    Saving,         // Currently being saved in background
+    Clean,  // No changes, up to date on disk
+    Dirty,  // Has changes, needs saving
+    Saving, // Currently being saved in background
 }
 
 /// In-memory cache for a segment of headers
@@ -95,23 +98,23 @@ struct FilterSegmentCache {
 /// Disk-based storage manager with segmented files and async background saving.
 pub struct DiskStorageManager {
     base_path: PathBuf,
-    
+
     // Segmented header storage
     active_segments: Arc<RwLock<HashMap<u32, SegmentCache>>>,
     active_filter_segments: Arc<RwLock<HashMap<u32, FilterSegmentCache>>>,
-    
+
     // Reverse index for O(1) lookups
     header_hash_index: Arc<RwLock<HashMap<BlockHash, u32>>>,
-    
+
     // Background worker
     worker_tx: Option<mpsc::Sender<WorkerCommand>>,
     worker_handle: Option<tokio::task::JoinHandle<()>>,
     notification_rx: Arc<RwLock<mpsc::Receiver<WorkerNotification>>>,
-    
+
     // Cached values
     cached_tip_height: Arc<RwLock<Option<u32>>>,
     cached_filter_tip_height: Arc<RwLock<Option<u32>>>,
-    
+
     // In-memory UTXO cache for high performance
     utxo_cache: Arc<RwLock<HashMap<OutPoint, Utxo>>>,
     utxo_address_index: Arc<RwLock<HashMap<Address, Vec<OutPoint>>>>,
@@ -124,63 +127,94 @@ impl DiskStorageManager {
         // Create directories if they don't exist
         fs::create_dir_all(&base_path)
             .map_err(|e| StorageError::WriteFailed(format!("Failed to create directory: {}", e)))?;
-        
+
         let headers_dir = base_path.join("headers");
         let filters_dir = base_path.join("filters");
         let state_dir = base_path.join("state");
-        
-        fs::create_dir_all(&headers_dir)
-            .map_err(|e| StorageError::WriteFailed(format!("Failed to create headers directory: {}", e)))?;
-        fs::create_dir_all(&filters_dir)
-            .map_err(|e| StorageError::WriteFailed(format!("Failed to create filters directory: {}", e)))?;
-        fs::create_dir_all(&state_dir)
-            .map_err(|e| StorageError::WriteFailed(format!("Failed to create state directory: {}", e)))?;
-        
-        
+
+        fs::create_dir_all(&headers_dir).map_err(|e| {
+            StorageError::WriteFailed(format!("Failed to create headers directory: {}", e))
+        })?;
+        fs::create_dir_all(&filters_dir).map_err(|e| {
+            StorageError::WriteFailed(format!("Failed to create filters directory: {}", e))
+        })?;
+        fs::create_dir_all(&state_dir).map_err(|e| {
+            StorageError::WriteFailed(format!("Failed to create state directory: {}", e))
+        })?;
+
         // Create background worker channels
         let (worker_tx, mut worker_rx) = mpsc::channel::<WorkerCommand>(100);
         let (notification_tx, notification_rx) = mpsc::channel::<WorkerNotification>(100);
-        
+
         // Start background worker
         let worker_base_path = base_path.clone();
         let worker_notification_tx = notification_tx.clone();
         let worker_handle = tokio::spawn(async move {
             while let Some(cmd) = worker_rx.recv().await {
                 match cmd {
-                    WorkerCommand::SaveHeaderSegment { segment_id, headers } => {
-                        let path = worker_base_path.join(format!("headers/segment_{:04}.dat", segment_id));
+                    WorkerCommand::SaveHeaderSegment {
+                        segment_id,
+                        headers,
+                    } => {
+                        let path =
+                            worker_base_path.join(format!("headers/segment_{:04}.dat", segment_id));
                         if let Err(e) = save_segment_to_disk(&path, &headers).await {
                             eprintln!("Failed to save segment {}: {}", segment_id, e);
                         } else {
-                            tracing::trace!("Background worker completed saving header segment {}", segment_id);
-                            let _ = worker_notification_tx.send(WorkerNotification::HeaderSegmentSaved { segment_id }).await;
+                            tracing::trace!(
+                                "Background worker completed saving header segment {}",
+                                segment_id
+                            );
+                            let _ = worker_notification_tx
+                                .send(WorkerNotification::HeaderSegmentSaved {
+                                    segment_id,
+                                })
+                                .await;
                         }
                     }
-                    WorkerCommand::SaveFilterSegment { segment_id, filter_headers } => {
-                        let path = worker_base_path.join(format!("filters/filter_segment_{:04}.dat", segment_id));
+                    WorkerCommand::SaveFilterSegment {
+                        segment_id,
+                        filter_headers,
+                    } => {
+                        let path = worker_base_path
+                            .join(format!("filters/filter_segment_{:04}.dat", segment_id));
                         if let Err(e) = save_filter_segment_to_disk(&path, &filter_headers).await {
                             eprintln!("Failed to save filter segment {}: {}", segment_id, e);
                         } else {
-                            tracing::trace!("Background worker completed saving filter segment {}", segment_id);
-                            let _ = worker_notification_tx.send(WorkerNotification::FilterSegmentSaved { segment_id }).await;
+                            tracing::trace!(
+                                "Background worker completed saving filter segment {}",
+                                segment_id
+                            );
+                            let _ = worker_notification_tx
+                                .send(WorkerNotification::FilterSegmentSaved {
+                                    segment_id,
+                                })
+                                .await;
                         }
                     }
-                    WorkerCommand::SaveIndex { index } => {
+                    WorkerCommand::SaveIndex {
+                        index,
+                    } => {
                         let path = worker_base_path.join("headers/index.dat");
                         if let Err(e) = save_index_to_disk(&path, &index).await {
                             eprintln!("Failed to save index: {}", e);
                         } else {
                             tracing::trace!("Background worker completed saving index");
-                            let _ = worker_notification_tx.send(WorkerNotification::IndexSaved).await;
+                            let _ =
+                                worker_notification_tx.send(WorkerNotification::IndexSaved).await;
                         }
                     }
-                    WorkerCommand::SaveUtxoCache { utxos } => {
+                    WorkerCommand::SaveUtxoCache {
+                        utxos,
+                    } => {
                         let path = worker_base_path.join("state/utxos.dat");
                         if let Err(e) = save_utxo_cache_to_disk(&path, &utxos).await {
                             eprintln!("Failed to save UTXO cache: {}", e);
                         } else {
                             tracing::trace!("Background worker completed saving UTXO cache");
-                            let _ = worker_notification_tx.send(WorkerNotification::UtxoCacheSaved).await;
+                            let _ = worker_notification_tx
+                                .send(WorkerNotification::UtxoCacheSaved)
+                                .await;
                         }
                     }
                     WorkerCommand::Shutdown => {
@@ -189,7 +223,7 @@ impl DiskStorageManager {
                 }
             }
         });
-        
+
         let mut storage = Self {
             base_path,
             active_segments: Arc::new(RwLock::new(HashMap::new())),
@@ -204,42 +238,75 @@ impl DiskStorageManager {
             utxo_address_index: Arc::new(RwLock::new(HashMap::new())),
             utxo_cache_dirty: Arc::new(RwLock::new(false)),
         };
-        
+
         // Load segment metadata and rebuild index
         storage.load_segment_metadata().await?;
-        
+
         // Load UTXO cache from disk
         storage.load_utxo_cache_into_memory().await?;
-        
+
         Ok(storage)
     }
-    
+
     /// Load segment metadata and rebuild indexes.
     async fn load_segment_metadata(&mut self) -> StorageResult<()> {
         // Load header index if it exists
         let index_path = self.base_path.join("headers/index.dat");
+        let mut index_loaded = false;
         if index_path.exists() {
             if let Ok(index) = self.load_index_from_file(&index_path).await {
                 *self.header_hash_index.write().await = index;
+                index_loaded = true;
             }
         }
-        
+
         // Find highest segment to determine tip height
         let headers_dir = self.base_path.join("headers");
         if let Ok(entries) = fs::read_dir(&headers_dir) {
             let mut max_segment_id = None;
             let mut max_filter_segment_id = None;
-            
+            let mut all_segment_ids = Vec::new();
+
             for entry in entries.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
                     if name.starts_with("segment_") && name.ends_with(".dat") {
                         if let Ok(id) = name[8..12].parse::<u32>() {
-                            max_segment_id = Some(max_segment_id.map_or(id, |max: u32| max.max(id)));
+                            all_segment_ids.push(id);
+                            max_segment_id =
+                                Some(max_segment_id.map_or(id, |max: u32| max.max(id)));
                         }
                     }
                 }
             }
-            
+
+            // If index wasn't loaded but we have segments, rebuild it
+            if !index_loaded && !all_segment_ids.is_empty() {
+                tracing::info!("Index file not found, rebuilding from segments...");
+                let mut new_index = HashMap::new();
+
+                // Sort segment IDs to process in order
+                all_segment_ids.sort();
+
+                for segment_id in all_segment_ids {
+                    let segment_path =
+                        self.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
+                    if let Ok(headers) = self.load_headers_from_file(&segment_path).await {
+                        let start_height = segment_id * HEADERS_PER_SEGMENT;
+                        for (offset, header) in headers.iter().enumerate() {
+                            let height = start_height + offset as u32;
+                            let hash = header.block_hash();
+                            new_index.insert(hash, height);
+                        }
+                    }
+                }
+
+                *self.header_hash_index.write().await = new_index;
+                tracing::info!(
+                    "Index rebuilt with {} entries",
+                    self.header_hash_index.read().await.len()
+                );
+            }
+
             // Also check the filters directory for filter segments
             let filters_dir = self.base_path.join("filters");
             if let Ok(entries) = fs::read_dir(&filters_dir) {
@@ -247,54 +314,57 @@ impl DiskStorageManager {
                     if let Some(name) = entry.file_name().to_str() {
                         if name.starts_with("filter_segment_") && name.ends_with(".dat") {
                             if let Ok(id) = name[15..19].parse::<u32>() {
-                                max_filter_segment_id = Some(max_filter_segment_id.map_or(id, |max: u32| max.max(id)));
+                                max_filter_segment_id =
+                                    Some(max_filter_segment_id.map_or(id, |max: u32| max.max(id)));
                             }
                         }
                     }
                 }
             }
-            
+
             // If we have segments, load the highest one to find tip
             if let Some(segment_id) = max_segment_id {
                 self.ensure_segment_loaded(segment_id).await?;
                 let segments = self.active_segments.read().await;
                 if let Some(segment) = segments.get(&segment_id) {
-                    let tip_height = segment_id * HEADERS_PER_SEGMENT + segment.headers.len() as u32 - 1;
+                    let tip_height =
+                        segment_id * HEADERS_PER_SEGMENT + segment.headers.len() as u32 - 1;
                     *self.cached_tip_height.write().await = Some(tip_height);
                 }
             }
-            
+
             // If we have filter segments, load the highest one to find filter tip
             if let Some(segment_id) = max_filter_segment_id {
                 self.ensure_filter_segment_loaded(segment_id).await?;
                 let segments = self.active_filter_segments.read().await;
                 if let Some(segment) = segments.get(&segment_id) {
-                    let tip_height = segment_id * HEADERS_PER_SEGMENT + segment.filter_headers.len() as u32 - 1;
+                    let tip_height =
+                        segment_id * HEADERS_PER_SEGMENT + segment.filter_headers.len() as u32 - 1;
                     *self.cached_filter_tip_height.write().await = Some(tip_height);
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get the segment ID for a given height.
     fn get_segment_id(height: u32) -> u32 {
         height / HEADERS_PER_SEGMENT
     }
-    
+
     /// Get the offset within a segment for a given height.
     fn get_segment_offset(height: u32) -> usize {
         (height % HEADERS_PER_SEGMENT) as usize
     }
-    
+
     /// Ensure a segment is loaded in memory.
     async fn ensure_segment_loaded(&self, segment_id: u32) -> StorageResult<()> {
         // Process background worker notifications to clear save_pending flags
         self.process_worker_notifications().await;
-        
+
         let mut segments = self.active_segments.write().await;
-        
+
         if segments.contains_key(&segment_id) {
             // Update last accessed time
             if let Some(segment) = segments.get_mut(&segment_id) {
@@ -302,7 +372,7 @@ impl DiskStorageManager {
             }
             return Ok(());
         }
-        
+
         // Load segment from disk
         let segment_path = self.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
         let headers = if segment_path.exists() {
@@ -310,52 +380,67 @@ impl DiskStorageManager {
         } else {
             Vec::new()
         };
-        
+
         // Evict old segments if needed
         if segments.len() >= MAX_ACTIVE_SEGMENTS {
             self.evict_oldest_segment(&mut segments).await?;
         }
-        
-        segments.insert(segment_id, SegmentCache {
+
+        segments.insert(
             segment_id,
-            headers,
-            state: SegmentState::Clean,
-            last_saved: Instant::now(),
-            last_accessed: Instant::now(),
-        });
-        
+            SegmentCache {
+                segment_id,
+                headers,
+                state: SegmentState::Clean,
+                last_saved: Instant::now(),
+                last_accessed: Instant::now(),
+            },
+        );
+
         Ok(())
     }
-    
+
     /// Evict the oldest (least recently accessed) segment.
-    async fn evict_oldest_segment(&self, segments: &mut HashMap<u32, SegmentCache>) -> StorageResult<()> {
-        if let Some((oldest_id, oldest_segment)) = segments
-            .iter()
-            .min_by_key(|(_, s)| s.last_accessed)
-            .map(|(id, s)| (*id, s.clone()))
+    async fn evict_oldest_segment(
+        &self,
+        segments: &mut HashMap<u32, SegmentCache>,
+    ) -> StorageResult<()> {
+        if let Some(oldest_id) =
+            segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, _)| *id)
         {
-            // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
-            if oldest_segment.state != SegmentState::Clean {
-                tracing::debug!("Synchronously saving segment {} before eviction (state: {:?})", 
-                               oldest_segment.segment_id, oldest_segment.state);
-                let segment_path = self.base_path.join(format!("headers/segment_{:04}.dat", oldest_segment.segment_id));
-                save_segment_to_disk(&segment_path, &oldest_segment.headers).await?;
-                tracing::debug!("Successfully saved segment {} to disk", oldest_segment.segment_id);
+            // Get the segment to check if it needs saving
+            if let Some(oldest_segment) = segments.get(&oldest_id) {
+                // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
+                if oldest_segment.state != SegmentState::Clean {
+                    tracing::debug!(
+                        "Synchronously saving segment {} before eviction (state: {:?})",
+                        oldest_segment.segment_id,
+                        oldest_segment.state
+                    );
+                    let segment_path = self
+                        .base_path
+                        .join(format!("headers/segment_{:04}.dat", oldest_segment.segment_id));
+                    save_segment_to_disk(&segment_path, &oldest_segment.headers).await?;
+                    tracing::debug!(
+                        "Successfully saved segment {} to disk",
+                        oldest_segment.segment_id
+                    );
+                }
             }
-            
+
             segments.remove(&oldest_id);
         }
-        
+
         Ok(())
     }
-    
+
     /// Ensure a filter segment is loaded in memory.
     async fn ensure_filter_segment_loaded(&self, segment_id: u32) -> StorageResult<()> {
         // Process background worker notifications to clear save_pending flags
         self.process_worker_notifications().await;
-        
+
         let mut segments = self.active_filter_segments.write().await;
-        
+
         if segments.contains_key(&segment_id) {
             // Update last accessed time
             if let Some(segment) = segments.get_mut(&segment_id) {
@@ -363,79 +448,102 @@ impl DiskStorageManager {
             }
             return Ok(());
         }
-        
+
         // Load segment from disk
-        let segment_path = self.base_path.join(format!("filters/filter_segment_{:04}.dat", segment_id));
+        let segment_path =
+            self.base_path.join(format!("filters/filter_segment_{:04}.dat", segment_id));
         let filter_headers = if segment_path.exists() {
             self.load_filter_headers_from_file(&segment_path).await?
         } else {
             Vec::new()
         };
-        
+
         // Evict old segments if needed
         if segments.len() >= MAX_ACTIVE_SEGMENTS {
             self.evict_oldest_filter_segment(&mut segments).await?;
         }
-        
-        segments.insert(segment_id, FilterSegmentCache {
+
+        segments.insert(
             segment_id,
-            filter_headers,
-            state: SegmentState::Clean,
-            last_saved: Instant::now(),
-            last_accessed: Instant::now(),
-        });
-        
+            FilterSegmentCache {
+                segment_id,
+                filter_headers,
+                state: SegmentState::Clean,
+                last_saved: Instant::now(),
+                last_accessed: Instant::now(),
+            },
+        );
+
         Ok(())
     }
-    
+
     /// Evict the oldest (least recently accessed) filter segment.
-    async fn evict_oldest_filter_segment(&self, segments: &mut HashMap<u32, FilterSegmentCache>) -> StorageResult<()> {
-        if let Some((oldest_id, oldest_segment)) = segments
-            .iter()
-            .min_by_key(|(_, s)| s.last_accessed)
-            .map(|(id, s)| (*id, s.clone()))
+    async fn evict_oldest_filter_segment(
+        &self,
+        segments: &mut HashMap<u32, FilterSegmentCache>,
+    ) -> StorageResult<()> {
+        if let Some((oldest_id, oldest_segment)) =
+            segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, s)| (*id, s.clone()))
         {
             // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
             if oldest_segment.state != SegmentState::Clean {
-                tracing::trace!("Synchronously saving filter segment {} before eviction (state: {:?})",
-                               oldest_segment.segment_id, oldest_segment.state);
-                let segment_path = self.base_path.join(format!("filters/filter_segment_{:04}.dat", oldest_segment.segment_id));
+                tracing::trace!(
+                    "Synchronously saving filter segment {} before eviction (state: {:?})",
+                    oldest_segment.segment_id,
+                    oldest_segment.state
+                );
+                let segment_path = self
+                    .base_path
+                    .join(format!("filters/filter_segment_{:04}.dat", oldest_segment.segment_id));
                 save_filter_segment_to_disk(&segment_path, &oldest_segment.filter_headers).await?;
-                tracing::debug!("Successfully saved filter segment {} to disk", oldest_segment.segment_id);
+                tracing::debug!(
+                    "Successfully saved filter segment {} to disk",
+                    oldest_segment.segment_id
+                );
             }
-            
+
             segments.remove(&oldest_id);
         }
-        
+
         Ok(())
     }
-    
+
     /// Process notifications from background worker to clear save_pending flags.
     async fn process_worker_notifications(&self) {
         let mut rx = self.notification_rx.write().await;
-        
+
         // Process all pending notifications without blocking
         while let Ok(notification) = rx.try_recv() {
             match notification {
-                WorkerNotification::HeaderSegmentSaved { segment_id } => {
+                WorkerNotification::HeaderSegmentSaved {
+                    segment_id,
+                } => {
                     let mut segments = self.active_segments.write().await;
                     if let Some(segment) = segments.get_mut(&segment_id) {
                         // Transition Saving -> Clean, unless new changes occurred (Saving -> Dirty)
                         if segment.state == SegmentState::Saving {
                             segment.state = SegmentState::Clean;
-                            tracing::debug!("Header segment {} save completed, state: Clean", segment_id);
+                            tracing::debug!(
+                                "Header segment {} save completed, state: Clean",
+                                segment_id
+                            );
                         } else {
                             tracing::debug!("Header segment {} save completed, but state is {:?} (likely dirty again)", segment_id, segment.state);
                         }
                     }
                 }
-                WorkerNotification::FilterSegmentSaved { segment_id } => {
+                WorkerNotification::FilterSegmentSaved {
+                    segment_id,
+                } => {
                     let mut segments = self.active_filter_segments.write().await;
                     if let Some(segment) = segments.get_mut(&segment_id) {
                         // Transition Saving -> Clean, unless new changes occurred (Saving -> Dirty)
                         if segment.state == SegmentState::Saving {
                             segment.state = SegmentState::Clean;
-                            tracing::debug!("Filter segment {} save completed, state: Clean", segment_id);
+                            tracing::debug!(
+                                "Filter segment {} save completed, state: Clean",
+                                segment_id
+                            );
                         } else {
                             tracing::debug!("Filter segment {} save completed, but state is {:?} (likely dirty again)", segment_id, segment.state);
                         }
@@ -458,22 +566,25 @@ impl DiskStorageManager {
             // Collect segments to save (only dirty ones)
             let (segments_to_save, segment_ids_to_mark) = {
                 let segments = self.active_segments.read().await;
-                let to_save: Vec<_> = segments.values()
+                let to_save: Vec<_> = segments
+                    .values()
                     .filter(|s| s.state == SegmentState::Dirty)
                     .map(|s| (s.segment_id, s.headers.clone()))
                     .collect();
                 let ids_to_mark: Vec<_> = to_save.iter().map(|(id, _)| *id).collect();
                 (to_save, ids_to_mark)
             };
-            
+
             // Send header segments to worker
             for (segment_id, headers) in segments_to_save {
-                let _ = tx.send(WorkerCommand::SaveHeaderSegment {
-                    segment_id,
-                    headers,
-                }).await;
+                let _ = tx
+                    .send(WorkerCommand::SaveHeaderSegment {
+                        segment_id,
+                        headers,
+                    })
+                    .await;
             }
-            
+
             // Mark ONLY the header segments we're actually saving as Saving
             {
                 let mut segments = self.active_segments.write().await;
@@ -484,26 +595,29 @@ impl DiskStorageManager {
                     }
                 }
             }
-            
+
             // Collect filter segments to save (only dirty ones)
             let (filter_segments_to_save, filter_segment_ids_to_mark) = {
                 let segments = self.active_filter_segments.read().await;
-                let to_save: Vec<_> = segments.values()
+                let to_save: Vec<_> = segments
+                    .values()
                     .filter(|s| s.state == SegmentState::Dirty)
                     .map(|s| (s.segment_id, s.filter_headers.clone()))
                     .collect();
                 let ids_to_mark: Vec<_> = to_save.iter().map(|(id, _)| *id).collect();
                 (to_save, ids_to_mark)
             };
-            
+
             // Send filter segments to worker
             for (segment_id, filter_headers) in filter_segments_to_save {
-                let _ = tx.send(WorkerCommand::SaveFilterSegment {
-                    segment_id,
-                    filter_headers,
-                }).await;
+                let _ = tx
+                    .send(WorkerCommand::SaveFilterSegment {
+                        segment_id,
+                        filter_headers,
+                    })
+                    .await;
             }
-            
+
             // Mark ONLY the filter segments we're actually saving as Saving
             {
                 let mut segments = self.active_filter_segments.write().await;
@@ -514,23 +628,31 @@ impl DiskStorageManager {
                     }
                 }
             }
-            
+
             // Save the index
             let index = self.header_hash_index.read().await.clone();
-            let _ = tx.send(WorkerCommand::SaveIndex { index }).await;
-            
+            let _ = tx
+                .send(WorkerCommand::SaveIndex {
+                    index,
+                })
+                .await;
+
             // Save UTXO cache if dirty
             let is_dirty = *self.utxo_cache_dirty.read().await;
             if is_dirty {
                 let utxos = self.utxo_cache.read().await.clone();
-                let _ = tx.send(WorkerCommand::SaveUtxoCache { utxos }).await;
+                let _ = tx
+                    .send(WorkerCommand::SaveUtxoCache {
+                        utxos,
+                    })
+                    .await;
                 *self.utxo_cache_dirty.write().await = false;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Load headers from file.
     async fn load_headers_from_file(&self, path: &Path) -> StorageResult<Vec<BlockHeader>> {
         tokio::task::spawn_blocking({
@@ -539,20 +661,31 @@ impl DiskStorageManager {
                 let file = File::open(&path)?;
                 let mut reader = BufReader::new(file);
                 let mut headers = Vec::new();
-                
+
                 loop {
                     match BlockHeader::consensus_decode(&mut reader) {
                         Ok(header) => headers.push(header),
-                        Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                        Err(e) => return Err(StorageError::ReadFailed(format!("Failed to decode header: {}", e))),
+                        Err(encode::Error::Io(ref e))
+                            if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                        {
+                            break
+                        }
+                        Err(e) => {
+                            return Err(StorageError::ReadFailed(format!(
+                                "Failed to decode header: {}",
+                                e
+                            )))
+                        }
                     }
                 }
-                
+
                 Ok(headers)
             }
-        }).await.map_err(|e| StorageError::ReadFailed(format!("Task join error: {}", e)))?
+        })
+        .await
+        .map_err(|e| StorageError::ReadFailed(format!("Task join error: {}", e)))?
     }
-    
+
     /// Load filter headers from file.
     async fn load_filter_headers_from_file(&self, path: &Path) -> StorageResult<Vec<FilterHeader>> {
         tokio::task::spawn_blocking({
@@ -561,135 +694,151 @@ impl DiskStorageManager {
                 let file = File::open(&path)?;
                 let mut reader = BufReader::new(file);
                 let mut headers = Vec::new();
-                
+
                 loop {
                     match FilterHeader::consensus_decode(&mut reader) {
                         Ok(header) => headers.push(header),
-                        Err(encode::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                        Err(e) => return Err(StorageError::ReadFailed(format!("Failed to decode filter header: {}", e))),
+                        Err(encode::Error::Io(ref e))
+                            if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                        {
+                            break
+                        }
+                        Err(e) => {
+                            return Err(StorageError::ReadFailed(format!(
+                                "Failed to decode filter header: {}",
+                                e
+                            )))
+                        }
                     }
                 }
-                
+
                 Ok(headers)
             }
-        }).await.map_err(|e| StorageError::ReadFailed(format!("Task join error: {}", e)))?
+        })
+        .await
+        .map_err(|e| StorageError::ReadFailed(format!("Task join error: {}", e)))?
     }
-    
+
     /// Load index from file.
     async fn load_index_from_file(&self, path: &Path) -> StorageResult<HashMap<BlockHash, u32>> {
         tokio::task::spawn_blocking({
             let path = path.to_path_buf();
             move || {
                 let content = fs::read(&path)?;
-                bincode::deserialize(&content)
-                    .map_err(|e| StorageError::ReadFailed(format!("Failed to deserialize index: {}", e)))
+                bincode::deserialize(&content).map_err(|e| {
+                    StorageError::ReadFailed(format!("Failed to deserialize index: {}", e))
+                })
             }
-        }).await.map_err(|e| StorageError::ReadFailed(format!("Task join error: {}", e)))?
+        })
+        .await
+        .map_err(|e| StorageError::ReadFailed(format!("Task join error: {}", e)))?
     }
-    
+
     /// Shutdown the storage manager.
     pub async fn shutdown(&mut self) -> StorageResult<()> {
         // Save all dirty segments
         self.save_dirty_segments().await?;
-        
+
         // Persist UTXO cache if dirty
         self.persist_utxo_cache_if_dirty().await?;
-        
+
         // Shutdown background worker
         if let Some(tx) = self.worker_tx.take() {
             let _ = tx.send(WorkerCommand::Shutdown).await;
         }
-        
+
         if let Some(handle) = self.worker_handle.take() {
             let _ = handle.await;
         }
-        
+
         Ok(())
     }
-    
+
     /// Load the consolidated UTXO cache from disk.
     async fn load_utxo_cache(&self) -> StorageResult<HashMap<OutPoint, Utxo>> {
         let path = self.base_path.join("state/utxos.dat");
         if !path.exists() {
             return Ok(HashMap::new());
         }
-        
+
         let data = tokio::fs::read(path).await?;
         if data.is_empty() {
             return Ok(HashMap::new());
         }
-        
-        let utxos = bincode::deserialize::<HashMap<OutPoint, Utxo>>(&data)
-            .map_err(|e| StorageError::Serialization(format!("Failed to deserialize UTXO cache: {}", e)))?;
-        
+
+        let utxos = bincode::deserialize::<HashMap<OutPoint, Utxo>>(&data).map_err(|e| {
+            StorageError::Serialization(format!("Failed to deserialize UTXO cache: {}", e))
+        })?;
+
         Ok(utxos)
     }
-    
+
     /// Store the consolidated UTXO cache to disk.
     async fn store_utxo_cache(&self, utxos: &HashMap<OutPoint, Utxo>) -> StorageResult<()> {
         let path = self.base_path.join("state/utxos.dat");
-        
+
         // Ensure the directory exists
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        
-        let data = bincode::serialize(utxos)
-            .map_err(|e| StorageError::Serialization(format!("Failed to serialize UTXO cache: {}", e)))?;
-        
+
+        let data = bincode::serialize(utxos).map_err(|e| {
+            StorageError::Serialization(format!("Failed to serialize UTXO cache: {}", e))
+        })?;
+
         // Atomic write using temporary file
         let temp_path = path.with_extension("tmp");
         tokio::fs::write(&temp_path, &data).await?;
         tokio::fs::rename(&temp_path, &path).await?;
-        
+
         Ok(())
     }
-    
+
     /// Load UTXO cache from disk into memory on startup.
     async fn load_utxo_cache_into_memory(&self) -> StorageResult<()> {
         let utxos = self.load_utxo_cache().await?;
-        
+
         // Populate in-memory cache
         {
             let mut cache = self.utxo_cache.write().await;
             *cache = utxos.clone();
         }
-        
+
         // Build address index
         {
             let mut address_index = self.utxo_address_index.write().await;
             address_index.clear();
-            
+
             for (outpoint, utxo) in &utxos {
                 let entry = address_index.entry(utxo.address.clone()).or_insert_with(Vec::new);
                 entry.push(*outpoint);
             }
         }
-        
+
         // Mark cache as clean
         *self.utxo_cache_dirty.write().await = false;
-        
+
         tracing::info!("Loaded {} UTXOs into memory cache with address indexing", utxos.len());
         Ok(())
     }
-    
+
     /// Persist UTXO cache to disk if dirty.
     async fn persist_utxo_cache_if_dirty(&self) -> StorageResult<()> {
         let is_dirty = *self.utxo_cache_dirty.read().await;
         if !is_dirty {
             return Ok(());
         }
-        
+
         let utxos = self.utxo_cache.read().await.clone();
         self.store_utxo_cache(&utxos).await?;
-        
+
         // Mark as clean after successful persist
         *self.utxo_cache_dirty.write().await = false;
-        
+
         tracing::debug!("Persisted {} UTXOs to disk", utxos.len());
         Ok(())
     }
-    
+
     /// Update the address index when adding a UTXO.
     async fn update_address_index_add(&self, outpoint: OutPoint, utxo: &Utxo) {
         let mut address_index = self.utxo_address_index.write().await;
@@ -698,7 +847,7 @@ impl DiskStorageManager {
             entry.push(outpoint);
         }
     }
-    
+
     /// Update the address index when removing a UTXO.
     async fn update_address_index_remove(&self, outpoint: &OutPoint, utxo: &Utxo) {
         let mut address_index = self.utxo_address_index.write().await;
@@ -711,7 +860,6 @@ impl DiskStorageManager {
     }
 }
 
-
 /// Save a segment of headers to disk.
 async fn save_segment_to_disk(path: &Path, headers: &[BlockHeader]) -> StorageResult<()> {
     tokio::task::spawn_blocking({
@@ -720,36 +868,45 @@ async fn save_segment_to_disk(path: &Path, headers: &[BlockHeader]) -> StorageRe
         move || {
             let file = OpenOptions::new().create(true).write(true).truncate(true).open(&path)?;
             let mut writer = BufWriter::new(file);
-            
+
             for header in headers {
-                header.consensus_encode(&mut writer)
-                    .map_err(|e| StorageError::WriteFailed(format!("Failed to encode header: {}", e)))?;
+                header.consensus_encode(&mut writer).map_err(|e| {
+                    StorageError::WriteFailed(format!("Failed to encode header: {}", e))
+                })?;
             }
-            
+
             writer.flush()?;
             Ok(())
         }
-    }).await.map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
+    })
+    .await
+    .map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
 }
 
 /// Save a segment of filter headers to disk.
-async fn save_filter_segment_to_disk(path: &Path, filter_headers: &[FilterHeader]) -> StorageResult<()> {
+async fn save_filter_segment_to_disk(
+    path: &Path,
+    filter_headers: &[FilterHeader],
+) -> StorageResult<()> {
     tokio::task::spawn_blocking({
         let path = path.to_path_buf();
         let filter_headers = filter_headers.to_vec();
         move || {
             let file = OpenOptions::new().create(true).write(true).truncate(true).open(&path)?;
             let mut writer = BufWriter::new(file);
-            
+
             for header in filter_headers {
-                header.consensus_encode(&mut writer)
-                    .map_err(|e| StorageError::WriteFailed(format!("Failed to encode filter header: {}", e)))?;
+                header.consensus_encode(&mut writer).map_err(|e| {
+                    StorageError::WriteFailed(format!("Failed to encode filter header: {}", e))
+                })?;
             }
-            
+
             writer.flush()?;
             Ok(())
         }
-    }).await.map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
+    })
+    .await
+    .map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
 }
 
 /// Save index to disk.
@@ -758,16 +915,22 @@ async fn save_index_to_disk(path: &Path, index: &HashMap<BlockHash, u32>) -> Sto
         let path = path.to_path_buf();
         let index = index.clone();
         move || {
-            let data = bincode::serialize(&index)
-                .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize index: {}", e)))?;
+            let data = bincode::serialize(&index).map_err(|e| {
+                StorageError::WriteFailed(format!("Failed to serialize index: {}", e))
+            })?;
             fs::write(&path, data)?;
             Ok(())
         }
-    }).await.map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
+    })
+    .await
+    .map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
 }
 
 /// Save UTXO cache to disk.
-async fn save_utxo_cache_to_disk(path: &Path, utxos: &HashMap<OutPoint, Utxo>) -> StorageResult<()> {
+async fn save_utxo_cache_to_disk(
+    path: &Path,
+    utxos: &HashMap<OutPoint, Utxo>,
+) -> StorageResult<()> {
     tokio::task::spawn_blocking({
         let path = path.to_path_buf();
         let utxos = utxos.clone();
@@ -776,18 +939,21 @@ async fn save_utxo_cache_to_disk(path: &Path, utxos: &HashMap<OutPoint, Utxo>) -
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            
-            let data = bincode::serialize(&utxos)
-                .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize UTXO cache: {}", e)))?;
-            
+
+            let data = bincode::serialize(&utxos).map_err(|e| {
+                StorageError::WriteFailed(format!("Failed to serialize UTXO cache: {}", e))
+            })?;
+
             // Atomic write using temporary file
             let temp_path = path.with_extension("tmp");
             std::fs::write(&temp_path, &data)?;
             std::fs::rename(&temp_path, &path)?;
-            
+
             Ok(())
         }
-    }).await.map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
+    })
+    .await
+    .map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
 }
 
 #[async_trait]
@@ -799,7 +965,7 @@ impl StorageManager for DiskStorageManager {
         // Acquire write locks for the entire operation to prevent race conditions
         let mut cached_tip = self.cached_tip_height.write().await;
         let mut reverse_index = self.header_hash_index.write().await;
-        
+
         let mut next_height = match *cached_tip {
             Some(tip) => tip + 1,
             None => 0, // Start at height 0 if no headers stored yet
@@ -808,10 +974,10 @@ impl StorageManager for DiskStorageManager {
         for header in headers {
             let segment_id = Self::get_segment_id(next_height);
             let offset = Self::get_segment_offset(next_height);
-            
+
             // Ensure segment is loaded
             self.ensure_segment_loaded(segment_id).await?;
-            
+
             // Update segment
             {
                 let mut segments = self.active_segments.write().await;
@@ -835,20 +1001,20 @@ impl StorageManager for DiskStorageManager {
                     segment.last_accessed = Instant::now();
                 }
             }
-            
+
             // Update reverse index (atomically with tip height)
             reverse_index.insert(header.block_hash(), next_height);
-            
+
             next_height += 1;
         }
 
         // Update cached tip height atomically with reverse index
         *cached_tip = Some(next_height - 1);
-        
+
         // Release locks before saving (to avoid deadlocks during background saves)
         drop(reverse_index);
         drop(cached_tip);
-        
+
         // Save dirty segments periodically (every 1000 headers)
         if headers.len() >= 1000 || next_height % 1000 == 0 {
             self.save_dirty_segments().await?;
@@ -856,58 +1022,56 @@ impl StorageManager for DiskStorageManager {
 
         Ok(())
     }
-    
+
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
         let mut headers = Vec::new();
-        
+
         let start_segment = Self::get_segment_id(range.start);
         let end_segment = Self::get_segment_id(range.end.saturating_sub(1));
-        
+
         for segment_id in start_segment..=end_segment {
             self.ensure_segment_loaded(segment_id).await?;
-            
+
             let segments = self.active_segments.read().await;
             if let Some(segment) = segments.get(&segment_id) {
                 let _segment_start_height = segment_id * HEADERS_PER_SEGMENT;
                 let _segment_end_height = _segment_start_height + segment.headers.len() as u32;
-                
+
                 let start_idx = if segment_id == start_segment {
                     Self::get_segment_offset(range.start)
                 } else {
                     0
                 };
-                
+
                 let end_idx = if segment_id == end_segment {
                     Self::get_segment_offset(range.end.saturating_sub(1)) + 1
                 } else {
                     segment.headers.len()
                 };
-                
+
                 if start_idx < segment.headers.len() && end_idx <= segment.headers.len() {
                     headers.extend_from_slice(&segment.headers[start_idx..end_idx]);
                 }
             }
         }
-        
+
         Ok(headers)
     }
-    
+
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
         let segment_id = Self::get_segment_id(height);
         let offset = Self::get_segment_offset(height);
-        
+
         self.ensure_segment_loaded(segment_id).await?;
-        
+
         let segments = self.active_segments.read().await;
-        Ok(segments.get(&segment_id)
-            .and_then(|segment| segment.headers.get(offset))
-            .copied())
+        Ok(segments.get(&segment_id).and_then(|segment| segment.headers.get(offset)).copied())
     }
-    
+
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
         Ok(*self.cached_tip_height.read().await)
     }
-    
+
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
         let mut next_height = {
             let current_tip = self.cached_filter_tip_height.read().await;
@@ -916,14 +1080,14 @@ impl StorageManager for DiskStorageManager {
                 None => 0, // Start at height 0 if no headers stored yet
             }
         }; // Read lock is dropped here
-        
+
         for header in headers {
             let segment_id = Self::get_segment_id(next_height);
             let offset = Self::get_segment_offset(next_height);
-            
+
             // Ensure segment is loaded
             self.ensure_filter_segment_loaded(segment_id).await?;
-            
+
             // Update segment
             {
                 let mut segments = self.active_filter_segments.write().await;
@@ -940,30 +1104,30 @@ impl StorageManager for DiskStorageManager {
                     segment.last_accessed = Instant::now();
                 }
             }
-            
+
             next_height += 1;
         }
-        
+
         // Update cached tip height
         *self.cached_filter_tip_height.write().await = Some(next_height - 1);
-        
+
         // Save dirty segments periodically (every 1000 filter headers)
         if headers.len() >= 1000 || next_height % 1000 == 0 {
             self.save_dirty_segments().await?;
         }
-        
+
         Ok(())
     }
-    
+
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {
         let mut filter_headers = Vec::new();
-        
+
         let start_segment = Self::get_segment_id(range.start);
         let end_segment = Self::get_segment_id(range.end.saturating_sub(1));
-        
+
         for segment_id in start_segment..=end_segment {
             self.ensure_filter_segment_loaded(segment_id).await?;
-            
+
             let segments = self.active_filter_segments.read().await;
             if let Some(segment) = segments.get(&segment_id) {
                 let start_idx = if segment_id == start_segment {
@@ -971,67 +1135,72 @@ impl StorageManager for DiskStorageManager {
                 } else {
                     0
                 };
-                
+
                 let end_idx = if segment_id == end_segment {
                     Self::get_segment_offset(range.end.saturating_sub(1)) + 1
                 } else {
                     segment.filter_headers.len()
                 };
-                
-                if start_idx < segment.filter_headers.len() && end_idx <= segment.filter_headers.len() {
+
+                if start_idx < segment.filter_headers.len()
+                    && end_idx <= segment.filter_headers.len()
+                {
                     filter_headers.extend_from_slice(&segment.filter_headers[start_idx..end_idx]);
                 }
             }
         }
-        
+
         Ok(filter_headers)
     }
-    
+
     async fn get_filter_header(&self, height: u32) -> StorageResult<Option<FilterHeader>> {
         let segment_id = Self::get_segment_id(height);
         let offset = Self::get_segment_offset(height);
-        
+
         self.ensure_filter_segment_loaded(segment_id).await?;
-        
+
         let segments = self.active_filter_segments.read().await;
-        Ok(segments.get(&segment_id)
+        Ok(segments
+            .get(&segment_id)
             .and_then(|segment| segment.filter_headers.get(offset))
             .copied())
     }
-    
+
     async fn get_filter_tip_height(&self) -> StorageResult<Option<u32>> {
         Ok(*self.cached_filter_tip_height.read().await)
     }
-    
+
     async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
         let path = self.base_path.join("state/masternode.json");
-        let json = serde_json::to_string_pretty(state)
-            .map_err(|e| StorageError::Serialization(format!("Failed to serialize masternode state: {}", e)))?;
-        
+        let json = serde_json::to_string_pretty(state).map_err(|e| {
+            StorageError::Serialization(format!("Failed to serialize masternode state: {}", e))
+        })?;
+
         tokio::fs::write(path, json).await?;
         Ok(())
     }
-    
+
     async fn load_masternode_state(&self) -> StorageResult<Option<MasternodeState>> {
         let path = self.base_path.join("state/masternode.json");
         if !path.exists() {
             return Ok(None);
         }
-        
+
         let content = tokio::fs::read_to_string(path).await?;
-        let state = serde_json::from_str(&content)
-            .map_err(|e| StorageError::Serialization(format!("Failed to deserialize masternode state: {}", e)))?;
-        
+        let state = serde_json::from_str(&content).map_err(|e| {
+            StorageError::Serialization(format!("Failed to deserialize masternode state: {}", e))
+        })?;
+
         Ok(Some(state))
     }
-    
+
     async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
         // First store all headers
         self.store_headers(&state.headers).await?;
-        
+
         // Store filter headers
         self.store_filter_headers(&state.filter_headers).await?;
-        
+
         // Store other state as JSON
         let state_data = serde_json::json!({
             "last_chainlock_height": state.last_chainlock_height,
@@ -1039,75 +1208,80 @@ impl StorageManager for DiskStorageManager {
             "current_filter_tip": state.current_filter_tip,
             "last_masternode_diff_height": state.last_masternode_diff_height,
         });
-        
+
         let path = self.base_path.join("state/chain.json");
         tokio::fs::write(path, state_data.to_string()).await?;
-        
+
         Ok(())
     }
-    
+
     async fn load_chain_state(&self) -> StorageResult<Option<ChainState>> {
         let path = self.base_path.join("state/chain.json");
         if !path.exists() {
             return Ok(None);
         }
-        
+
         let content = tokio::fs::read_to_string(path).await?;
-        let value: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| StorageError::Serialization(format!("Failed to parse chain state: {}", e)))?;
-        
+        let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+            StorageError::Serialization(format!("Failed to parse chain state: {}", e))
+        })?;
+
         let mut state = ChainState::default();
-        
+
         // Load all headers
         if let Some(tip_height) = self.get_tip_height().await? {
             state.headers = self.load_headers(0..tip_height + 1).await?;
         }
-        
+
         // Load all filter headers
         if let Some(filter_tip_height) = self.get_filter_tip_height().await? {
             state.filter_headers = self.load_filter_headers(0..filter_tip_height + 1).await?;
         }
-        
-        state.last_chainlock_height = value.get("last_chainlock_height").and_then(|v| v.as_u64()).map(|h| h as u32);
-        state.last_chainlock_hash = value.get("last_chainlock_hash").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
-        state.current_filter_tip = value.get("current_filter_tip").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
-        state.last_masternode_diff_height = value.get("last_masternode_diff_height").and_then(|v| v.as_u64()).map(|h| h as u32);
-        
+
+        state.last_chainlock_height =
+            value.get("last_chainlock_height").and_then(|v| v.as_u64()).map(|h| h as u32);
+        state.last_chainlock_hash =
+            value.get("last_chainlock_hash").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
+        state.current_filter_tip =
+            value.get("current_filter_tip").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
+        state.last_masternode_diff_height =
+            value.get("last_masternode_diff_height").and_then(|v| v.as_u64()).map(|h| h as u32);
+
         Ok(Some(state))
     }
-    
+
     async fn store_filter(&mut self, height: u32, filter: &[u8]) -> StorageResult<()> {
         let path = self.base_path.join(format!("filters/{}.dat", height));
         tokio::fs::write(path, filter).await?;
         Ok(())
     }
-    
+
     async fn load_filter(&self, height: u32) -> StorageResult<Option<Vec<u8>>> {
         let path = self.base_path.join(format!("filters/{}.dat", height));
         if !path.exists() {
             return Ok(None);
         }
-        
+
         let data = tokio::fs::read(path).await?;
         Ok(Some(data))
     }
-    
+
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()> {
         let path = self.base_path.join(format!("state/{}.dat", key));
         tokio::fs::write(path, value).await?;
         Ok(())
     }
-    
+
     async fn load_metadata(&self, key: &str) -> StorageResult<Option<Vec<u8>>> {
         let path = self.base_path.join(format!("state/{}.dat", key));
         if !path.exists() {
             return Ok(None);
         }
-        
+
         let data = tokio::fs::read(path).await?;
         Ok(Some(data))
     }
-    
+
     async fn clear(&mut self) -> StorageResult<()> {
         // Clear in-memory data
         self.active_segments.write().await.clear();
@@ -1115,25 +1289,25 @@ impl StorageManager for DiskStorageManager {
         self.header_hash_index.write().await.clear();
         *self.cached_tip_height.write().await = None;
         *self.cached_filter_tip_height.write().await = None;
-        
+
         // Clear UTXO cache
         self.utxo_cache.write().await.clear();
         self.utxo_address_index.write().await.clear();
         *self.utxo_cache_dirty.write().await = false;
-        
+
         // Remove all files
         if self.base_path.exists() {
             tokio::fs::remove_dir_all(&self.base_path).await?;
             tokio::fs::create_dir_all(&self.base_path).await?;
         }
-        
+
         Ok(())
     }
-    
+
     async fn stats(&self) -> StorageResult<StorageStats> {
         let mut component_sizes = HashMap::new();
         let mut total_size = 0u64;
-        
+
         // Calculate directory sizes
         if let Ok(mut entries) = tokio::fs::read_dir(&self.base_path).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
@@ -1144,14 +1318,16 @@ impl StorageManager for DiskStorageManager {
                 }
             }
         }
-        
+
         let header_count = self.cached_tip_height.read().await.map_or(0, |h| h as u64 + 1);
-        let filter_header_count = self.cached_filter_tip_height.read().await.map_or(0, |h| h as u64 + 1);
-        
+        let filter_header_count =
+            self.cached_filter_tip_height.read().await.map_or(0, |h| h as u64 + 1);
+
         component_sizes.insert("headers".to_string(), header_count * 80);
         component_sizes.insert("filter_headers".to_string(), filter_header_count * 32);
-        component_sizes.insert("index".to_string(), self.header_hash_index.read().await.len() as u64 * 40);
-        
+        component_sizes
+            .insert("index".to_string(), self.header_hash_index.read().await.len() as u64 * 40);
+
         Ok(StorageStats {
             header_count,
             filter_header_count,
@@ -1160,94 +1336,97 @@ impl StorageManager for DiskStorageManager {
             component_sizes,
         })
     }
-    
-    async fn get_header_height_by_hash(&self, hash: &dashcore::BlockHash) -> StorageResult<Option<u32>> {
+
+    async fn get_header_height_by_hash(
+        &self,
+        hash: &dashcore::BlockHash,
+    ) -> StorageResult<Option<u32>> {
         Ok(self.header_hash_index.read().await.get(hash).copied())
     }
-    
-    async fn get_headers_batch(&self, start_height: u32, end_height: u32) -> StorageResult<Vec<(u32, BlockHeader)>> {
+
+    async fn get_headers_batch(
+        &self,
+        start_height: u32,
+        end_height: u32,
+    ) -> StorageResult<Vec<(u32, BlockHeader)>> {
         if start_height > end_height {
             return Ok(Vec::new());
         }
-        
+
         // Use the existing load_headers method which handles segmentation internally
         // Note: Range is exclusive at the end, so we need end_height + 1
         let range_end = end_height.saturating_add(1);
         let headers = self.load_headers(start_height..range_end).await?;
-        
+
         // Convert to the expected format with heights
         let mut results = Vec::with_capacity(headers.len());
         for (idx, header) in headers.into_iter().enumerate() {
             results.push((start_height + idx as u32, header));
         }
-        
+
         Ok(results)
     }
-    
+
     // High-performance UTXO storage using in-memory cache with address indexing
-    
+
     async fn store_utxo(&mut self, outpoint: &OutPoint, utxo: &Utxo) -> StorageResult<()> {
         // Add to in-memory cache
         {
             let mut cache = self.utxo_cache.write().await;
             cache.insert(*outpoint, utxo.clone());
         }
-        
+
         // Update address index
         self.update_address_index_add(*outpoint, utxo).await;
-        
+
         // Mark cache as dirty for background persistence
         *self.utxo_cache_dirty.write().await = true;
-        
+
         Ok(())
     }
-    
+
     async fn remove_utxo(&mut self, outpoint: &OutPoint) -> StorageResult<()> {
         // Get the UTXO before removing to update address index
         let utxo = {
             let cache = self.utxo_cache.read().await;
             cache.get(outpoint).cloned()
         };
-        
+
         if let Some(utxo) = utxo {
             // Remove from in-memory cache
             {
                 let mut cache = self.utxo_cache.write().await;
                 cache.remove(outpoint);
             }
-            
+
             // Update address index
             self.update_address_index_remove(outpoint, &utxo).await;
-            
+
             // Mark cache as dirty for background persistence
             *self.utxo_cache_dirty.write().await = true;
         }
-        
+
         Ok(())
     }
-    
+
     async fn get_utxos_for_address(&self, address: &Address) -> StorageResult<Vec<Utxo>> {
         // Use address index for O(1) lookup
         let outpoints = {
             let address_index = self.utxo_address_index.read().await;
             address_index.get(address).cloned().unwrap_or_default()
         };
-        
+
         // Fetch UTXOs from cache
         let cache = self.utxo_cache.read().await;
-        let utxos: Vec<Utxo> = outpoints
-            .into_iter()
-            .filter_map(|outpoint| cache.get(&outpoint).cloned())
-            .collect();
-            
+        let utxos: Vec<Utxo> =
+            outpoints.into_iter().filter_map(|outpoint| cache.get(&outpoint).cloned()).collect();
+
         Ok(utxos)
     }
-    
+
     async fn get_all_utxos(&self) -> StorageResult<HashMap<OutPoint, Utxo>> {
         // Return a clone of the in-memory cache
         let cache = self.utxo_cache.read().await;
         Ok(cache.clone())
     }
-
 }
-

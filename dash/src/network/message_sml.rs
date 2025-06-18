@@ -99,7 +99,6 @@ pub struct DeletedQuorum {
 
 impl_consensus_encoding!(DeletedQuorum, llmq_type, quorum_hash);
 
-
 #[cfg(test)]
 mod tests {
     use std::fs::File;

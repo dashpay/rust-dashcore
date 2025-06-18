@@ -27,14 +27,14 @@ use core::fmt::{Debug, Display, Formatter};
 use bincode::{Decode, Encode};
 
 use crate::blockdata::transaction::special_transaction::TransactionPayload::{
-    AssetLockPayloadType, AssetUnlockPayloadType, CoinbasePayloadType,
-    MnhfSignalPayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType,
+    AssetLockPayloadType, AssetUnlockPayloadType, CoinbasePayloadType, MnhfSignalPayloadType,
+    ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType,
     ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType,
     QuorumCommitmentPayloadType,
 };
 use crate::blockdata::transaction::special_transaction::TransactionType::{
-    AssetLock, AssetUnlock, Classic, Coinbase, MnhfSignal, ProviderRegistration, ProviderUpdateRegistrar,
-    ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment,
+    AssetLock, AssetUnlock, Classic, Coinbase, MnhfSignal, ProviderRegistration,
+    ProviderUpdateRegistrar, ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment,
 };
 use crate::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;

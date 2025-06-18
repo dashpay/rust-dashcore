@@ -23,28 +23,26 @@ fn create_test_header(height: u32) -> BlockHeader {
 async fn test_simple_storage() {
     println!("Creating temp dir...");
     let temp_dir = TempDir::new().unwrap();
-    
+
     println!("Creating storage manager...");
-    let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf())
-        .await
-        .unwrap();
-    
+    let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await.unwrap();
+
     println!("Testing get_tip_height before storing anything...");
     let initial_tip = storage.get_tip_height().await.unwrap();
     println!("Initial tip: {:?}", initial_tip);
     assert_eq!(initial_tip, None);
-    
+
     println!("Creating single header...");
     let header = create_test_header(0);
-    
+
     println!("Storing single header...");
     storage.store_headers(&[header]).await.unwrap();
     println!("Single header stored");
-    
+
     println!("Checking tip height...");
     let tip = storage.get_tip_height().await.unwrap();
     println!("Tip height after storing one header: {:?}", tip);
     assert_eq!(tip, Some(0));
-    
+
     println!("Test completed successfully");
 }
