@@ -23,6 +23,8 @@ pub struct FFIWatchItem {
 
 impl FFIWatchItem {
     pub unsafe fn to_watch_item(&self) -> Result<WatchItem, String> {
+        // Note: This method uses NetworkUnchecked for backward compatibility.
+        // Consider using to_watch_item_with_network for proper network validation.
         let data_str = FFIString::from_ptr(self.data.ptr)?;
 
         match self.item_type {
@@ -50,6 +52,43 @@ impl FFIWatchItem {
                 let txid: Txid = parts[0].parse().map_err(|e| format!("Invalid txid: {}", e))?;
                 let vout: u32 = parts[1].parse().map_err(|e| format!("Invalid vout: {}", e))?;
                 Ok(WatchItem::Outpoint(OutPoint::new(txid, vout)))
+            }
+        }
+    }
+
+    /// Convert FFIWatchItem to WatchItem with network validation
+    pub unsafe fn to_watch_item_with_network(
+        &self,
+        network: dashcore::Network,
+    ) -> Result<WatchItem, String> {
+        let data_str = FFIString::from_ptr(self.data.ptr)?;
+
+        match self.item_type {
+            FFIWatchItemType::Address => {
+                let addr =
+                    dashcore::Address::<dashcore::address::NetworkUnchecked>::from_str(&data_str)
+                        .map_err(|e| format!("Invalid address: {}", e))?;
+
+                // Validate that the address belongs to the expected network
+                let checked_addr = addr.require_network(network).map_err(|_| {
+                    format!("Address {} is not valid for network {:?}", data_str, network)
+                })?;
+
+                Ok(WatchItem::Address {
+                    address: checked_addr,
+                    earliest_height: None,
+                })
+            }
+            FFIWatchItemType::Script => {
+                let script_bytes =
+                    hex::decode(&data_str).map_err(|e| format!("Invalid script hex: {}", e))?;
+                let script = ScriptBuf::from(script_bytes);
+                Ok(WatchItem::Script(script))
+            }
+            FFIWatchItemType::Outpoint => {
+                let outpoint = OutPoint::from_str(&data_str)
+                    .map_err(|e| format!("Invalid outpoint: {}", e))?;
+                Ok(WatchItem::Outpoint(outpoint))
             }
         }
     }
@@ -297,6 +336,7 @@ pub unsafe extern "C" fn dash_spv_ffi_utxo_destroy(utxo: *mut FFIUtxo) {
         let utxo = Box::from_raw(utxo);
         dash_spv_ffi_string_destroy(utxo.txid);
         dash_spv_ffi_string_destroy(utxo.script_pubkey);
+        dash_spv_ffi_string_destroy(utxo.address);
     }
 }
 

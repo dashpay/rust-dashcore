@@ -163,11 +163,18 @@ mod tests {
 
     #[test]
     fn test_invalid_enum_handling() {
-        // Test with invalid network value (simulated through direct memory manipulation)
-        // This would typically come from C code passing invalid values
+        // Test with invalid network value
+        // Since we can't safely create an invalid enum in Rust, we'll test the C API
+        // by calling it with a raw value that doesn't correspond to any valid variant
         unsafe {
-            let invalid_network = std::mem::transmute::<i32, FFINetwork>(999);
-            let config = dash_spv_ffi_config_new(invalid_network);
+            // dash_spv_ffi_config_new expects FFINetwork but we'll cast an invalid i32
+            // This simulates what could happen from C code
+            let config = {
+                extern "C" {
+                    fn dash_spv_ffi_config_new(network: i32) -> *mut FFIClientConfig;
+                }
+                dash_spv_ffi_config_new(999)
+            };
             // Should still create a config (defaults to Dash)
             assert!(!config.is_null());
             dash_spv_ffi_config_destroy(config);

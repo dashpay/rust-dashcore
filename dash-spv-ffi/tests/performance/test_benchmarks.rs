@@ -25,7 +25,7 @@ mod tests {
             let total_time = times.iter().sum();
             let min_time = *times.iter().min().unwrap();
             let max_time = *times.iter().max().unwrap();
-            let avg_time = total_time / iterations as u32;
+            let avg_time = Duration::from_nanos((total_time.as_nanos() / iterations as u128) as u64);
             let ops_per_second = iterations as f64 / total_time.as_secs_f64();
             
             BenchmarkResult {

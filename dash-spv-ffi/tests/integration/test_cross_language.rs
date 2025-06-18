@@ -59,12 +59,13 @@ mod tests {
     fn test_string_encoding_compatibility() {
         unsafe {
             // Test various string encodings that might come from C
+            let long_string = "Very long string ".repeat(1000);
             let test_strings = vec![
                 "Simple ASCII string",
                 "UTF-8 with émojis 🎉",
                 "Special chars: \n\r\t",
                 "Null in middle: before\0after", // Will be truncated at null
-                "Very long string ".repeat(1000).as_str(),
+                long_string.as_str(),
             ];
             
             for test_str in &test_strings {
@@ -254,7 +255,8 @@ mod tests {
     fn test_platform_specific_types() {
         // Verify sizes of C types across platforms
         assert_eq!(std::mem::size_of::<c_char>(), 1);
-        assert_eq!(std::mem::size_of::<c_void>(), 1);
+        // c_void is a zero-sized type in Rust (it's an opaque type)
+        assert_eq!(std::mem::size_of::<c_void>(), 0);
         
         // Verify pointer sizes (platform-dependent)
         let ptr_size = std::mem::size_of::<*mut c_void>();

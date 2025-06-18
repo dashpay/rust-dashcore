@@ -46,7 +46,7 @@ fn create_test_config(network: Network, data_dir: Option<TempDir>) -> ClientConf
 #[tokio::test]
 #[ignore] // Requires network access
 async fn test_multi_peer_connection() {
-    env_logger::init();
+    let _ = env_logger::builder().is_test(true).try_init();
 
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(Network::Testnet, Some(temp_dir));
@@ -79,7 +79,7 @@ async fn test_multi_peer_connection() {
 #[tokio::test]
 #[ignore] // Requires network access
 async fn test_peer_persistence() {
-    env_logger::init();
+    let _ = env_logger::builder().is_test(true).try_init();
 
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path().to_path_buf();
@@ -124,7 +124,7 @@ async fn test_peer_persistence() {
 
 #[tokio::test]
 async fn test_peer_disconnection() {
-    env_logger::init();
+    let _ = env_logger::builder().is_test(true).try_init();
 
     let temp_dir = TempDir::new().unwrap();
     let mut config = create_test_config(Network::Regtest, Some(temp_dir));
@@ -149,17 +149,20 @@ async fn test_peer_disconnection() {
 async fn test_max_peer_limit() {
     use dash_spv::network::constants::MAX_PEERS;
 
-    env_logger::init();
+    let _ = env_logger::builder().is_test(true).try_init();
 
     let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(Network::Testnet, Some(temp_dir));
+    let mut config = create_test_config(Network::Testnet, Some(temp_dir));
+
+    // Add at least one peer to avoid "No peers specified" error
+    config.peers = vec!["127.0.0.1:19999".parse().unwrap()];
 
     let _client = DashSpvClient::new(config).await.unwrap();
 
     // The client should never connect to more than MAX_PEERS
     // This is enforced in the ConnectionPool
     println!("Maximum peer limit is set to: {}", MAX_PEERS);
-    assert_eq!(MAX_PEERS, 8, "Default max peers should be 8");
+    assert_eq!(MAX_PEERS, 5, "Default max peers should be 5");
 }
 
 #[cfg(test)]

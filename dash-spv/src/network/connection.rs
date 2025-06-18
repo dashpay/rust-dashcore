@@ -98,6 +98,11 @@ impl TcpConnection {
         // Don't set socket timeouts - we handle timeouts at the application level
         // and socket timeouts can interfere with async operations
 
+        // Disable Nagle's algorithm for lower latency
+        stream.set_nodelay(true).map_err(|e| {
+            NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
+        })?;
+
         // Set non-blocking mode to prevent blocking reads/writes
         stream.set_nonblocking(true).map_err(|e| {
             NetworkError::ConnectionFailed(format!("Failed to set non-blocking: {}", e))

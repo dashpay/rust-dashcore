@@ -1,16 +1,19 @@
 # Makefile for Dash SPV FFI C tests
 
+# Build profile (can be overridden: make PROFILE=release)
+PROFILE ?= debug
+
 CC = gcc
 CFLAGS = -Wall -Wextra -Werror -std=c99 -I../.. -g -O0
-LDFLAGS = -L../../target/debug -ldash_spv_ffi -lpthread -ldl -lm
+LDFLAGS = -L../../target/$(PROFILE) -ldash_spv_ffi -lpthread -ldl -lm
 
 # Platform-specific settings
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
-    LDFLAGS += -Wl,-rpath,../../target/debug
+    LDFLAGS += -Wl,-rpath,../../target/$(PROFILE)
 endif
 ifeq ($(UNAME_S),Darwin)
-    LDFLAGS += -Wl,-rpath,@loader_path/../../target/debug
+    LDFLAGS += -Wl,-rpath,@loader_path/../../target/$(PROFILE)
 endif
 
 # Test programs
@@ -50,7 +53,11 @@ header:
 
 # Build Rust library first
 rust-lib:
+ifeq ($(PROFILE),release)
+	cd ../.. && cargo build --release
+else
 	cd ../.. && cargo build
+endif
 
 # Full build: Rust library, header, then tests
 full: rust-lib header all

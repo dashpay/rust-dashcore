@@ -54,12 +54,13 @@ async fn test_reverse_index_disk_storage() {
             assert_eq!(height, Some(i as u32), "Height mismatch for header {}", i);
         }
 
-        // Force save to disk by storing many more headers to trigger the save
-        let mut more_headers = Vec::new();
-        for i in 10..1000 {
-            more_headers.push(create_test_header(i));
+        // Add a small delay to ensure background worker processes save commands
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Explicitly shutdown to ensure all data is saved
+        if let Some(disk_storage) = storage.as_any_mut().downcast_mut::<DiskStorageManager>() {
+            disk_storage.shutdown().await.unwrap();
         }
-        storage.store_headers(&more_headers).await.unwrap();
     }
 
     // Test persistence - reload storage and verify index still works

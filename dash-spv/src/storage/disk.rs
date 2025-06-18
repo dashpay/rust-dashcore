@@ -252,9 +252,11 @@ impl DiskStorageManager {
     async fn load_segment_metadata(&mut self) -> StorageResult<()> {
         // Load header index if it exists
         let index_path = self.base_path.join("headers/index.dat");
+        let mut index_loaded = false;
         if index_path.exists() {
             if let Ok(index) = self.load_index_from_file(&index_path).await {
                 *self.header_hash_index.write().await = index;
+                index_loaded = true;
             }
         }
 
@@ -263,16 +265,46 @@ impl DiskStorageManager {
         if let Ok(entries) = fs::read_dir(&headers_dir) {
             let mut max_segment_id = None;
             let mut max_filter_segment_id = None;
+            let mut all_segment_ids = Vec::new();
 
             for entry in entries.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
                     if name.starts_with("segment_") && name.ends_with(".dat") {
                         if let Ok(id) = name[8..12].parse::<u32>() {
+                            all_segment_ids.push(id);
                             max_segment_id =
                                 Some(max_segment_id.map_or(id, |max: u32| max.max(id)));
                         }
                     }
                 }
+            }
+
+            // If index wasn't loaded but we have segments, rebuild it
+            if !index_loaded && !all_segment_ids.is_empty() {
+                tracing::info!("Index file not found, rebuilding from segments...");
+                let mut new_index = HashMap::new();
+
+                // Sort segment IDs to process in order
+                all_segment_ids.sort();
+
+                for segment_id in all_segment_ids {
+                    let segment_path =
+                        self.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
+                    if let Ok(headers) = self.load_headers_from_file(&segment_path).await {
+                        let start_height = segment_id * HEADERS_PER_SEGMENT;
+                        for (offset, header) in headers.iter().enumerate() {
+                            let height = start_height + offset as u32;
+                            let hash = header.block_hash();
+                            new_index.insert(hash, height);
+                        }
+                    }
+                }
+
+                *self.header_hash_index.write().await = new_index;
+                tracing::info!(
+                    "Index rebuilt with {} entries",
+                    self.header_hash_index.read().await.len()
+                );
             }
 
             // Also check the filters directory for filter segments
@@ -373,21 +405,27 @@ impl DiskStorageManager {
         &self,
         segments: &mut HashMap<u32, SegmentCache>,
     ) -> StorageResult<()> {
-        if let Some((oldest_id, oldest_segment)) =
-            segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, s)| (*id, s.clone()))
+        if let Some(oldest_id) =
+            segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(id, _)| *id)
         {
-            // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
-            if oldest_segment.state != SegmentState::Clean {
-                tracing::debug!(
-                    "Synchronously saving segment {} before eviction (state: {:?})",
-                    oldest_segment.segment_id,
-                    oldest_segment.state
-                );
-                let segment_path = self
-                    .base_path
-                    .join(format!("headers/segment_{:04}.dat", oldest_segment.segment_id));
-                save_segment_to_disk(&segment_path, &oldest_segment.headers).await?;
-                tracing::debug!("Successfully saved segment {} to disk", oldest_segment.segment_id);
+            // Get the segment to check if it needs saving
+            if let Some(oldest_segment) = segments.get(&oldest_id) {
+                // Save if dirty or saving before evicting - do it synchronously to ensure data consistency
+                if oldest_segment.state != SegmentState::Clean {
+                    tracing::debug!(
+                        "Synchronously saving segment {} before eviction (state: {:?})",
+                        oldest_segment.segment_id,
+                        oldest_segment.state
+                    );
+                    let segment_path = self
+                        .base_path
+                        .join(format!("headers/segment_{:04}.dat", oldest_segment.segment_id));
+                    save_segment_to_disk(&segment_path, &oldest_segment.headers).await?;
+                    tracing::debug!(
+                        "Successfully saved segment {} to disk",
+                        oldest_segment.segment_id
+                    );
+                }
             }
 
             segments.remove(&oldest_id);

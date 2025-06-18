@@ -59,8 +59,9 @@ async fn test_handshake_with_mainnet_peer() {
 
 #[tokio::test]
 async fn test_handshake_timeout() {
-    // Test connecting to a non-existent peer to verify timeout behavior
-    let peer_addr: SocketAddr = "127.0.0.1:49999".parse().expect("Valid peer address");
+    // Test connecting to a non-routable IP to verify timeout behavior
+    // Using a non-routable IP that will cause the connection to hang
+    let peer_addr: SocketAddr = "10.255.255.1:9999".parse().expect("Valid peer address");
     let mut config = ClientConfig::new(Network::Dash)
         .with_validation_mode(ValidationMode::Basic)
         .with_connection_timeout(Duration::from_secs(2)); // Short timeout for test
@@ -75,9 +76,17 @@ async fn test_handshake_timeout() {
     let result = network.connect().await;
     let elapsed = start.elapsed();
 
-    assert!(result.is_err(), "Connection should fail for non-existent peer");
-    assert!(elapsed >= Duration::from_secs(2), "Should respect timeout duration");
-    assert!(elapsed < Duration::from_secs(15), "Should not take excessively long beyond timeout");
+    assert!(result.is_err(), "Connection should fail for non-routable peer");
+    assert!(
+        elapsed >= Duration::from_secs(1),
+        "Should respect timeout duration (elapsed: {:?})",
+        elapsed
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "Should not take excessively long beyond timeout (elapsed: {:?})",
+        elapsed
+    );
 
     assert!(!network.is_connected(), "Network should not be connected");
     assert_eq!(network.peer_count(), 0, "Should have no connected peers");

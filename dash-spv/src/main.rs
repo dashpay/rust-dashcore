@@ -264,7 +264,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Ok(valid_addr) = addr.require_network(network) {
                         // For the example mainnet address (Crowdnode), set earliest height to 1,000,000
                         let watch_item = if network == dashcore::Network::Dash
-                            && addr_str == "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2"
+                            && addr_str == "Xesjop7V9xLndFMgZoCrckJ5ZPgJdJFbA3"
                         {
                             dash_spv::WatchItem::address_from_height(valid_addr, 200_000)
                         } else {
@@ -275,7 +275,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             tracing::error!("Failed to add example address '{}': {}", addr_str, e);
                         } else {
                             let height_info = if network == dashcore::Network::Dash
-                                && addr_str == "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2"
+                                && addr_str == "Xesjop7V9xLndFMgZoCrckJ5ZPgJdJFbA3"
                             {
                                 " (from height 1,000,000)"
                             } else {

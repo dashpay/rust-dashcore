@@ -49,11 +49,11 @@ void test_wallet_operations() {
     }
     
     // Test getting UTXOs
-    FFIArray* utxos = dash_spv_ffi_client_get_address_utxos(client, test_addresses[0]);
-    if (utxos != NULL) {
+    FFIArray utxos = dash_spv_ffi_client_get_address_utxos(client, test_addresses[0]);
+    if (utxos.data != NULL) {
         // New wallet should have no UTXOs
-        TEST_ASSERT(utxos->len == 0);
-        dash_spv_ffi_array_destroy(*utxos);
+        TEST_ASSERT(utxos.len == 0);
+        dash_spv_ffi_array_destroy(&utxos);
     }
     
     // Test unwatching address

@@ -173,24 +173,70 @@ impl StorageManager for MemoryStorageManager {
     async fn stats(&self) -> StorageResult<StorageStats> {
         let mut component_sizes = HashMap::new();
 
+        // Calculate sizes for all storage components
         let header_size = self.headers.len() * std::mem::size_of::<BlockHeader>();
         let filter_header_size = self.filter_headers.len() * std::mem::size_of::<FilterHeader>();
         let filter_size: usize = self.filters.values().map(|f| f.len()).sum();
         let metadata_size: usize = self.metadata.values().map(|v| v.len()).sum();
 
+        // Calculate size of masternode_state (approximate)
+        let masternode_state_size = if self.masternode_state.is_some() {
+            std::mem::size_of::<MasternodeState>()
+        } else {
+            0
+        };
+
+        // Calculate size of chain_state (approximate)
+        let chain_state_size = if self.chain_state.is_some() {
+            std::mem::size_of::<ChainState>()
+        } else {
+            0
+        };
+
+        // Calculate size of header_hash_index
+        let header_hash_index_size = self.header_hash_index.len()
+            * (std::mem::size_of::<BlockHash>() + std::mem::size_of::<u32>());
+
+        // Calculate size of utxos
+        let utxo_size =
+            self.utxos.len() * (std::mem::size_of::<OutPoint>() + std::mem::size_of::<Utxo>());
+
+        // Calculate size of utxo_address_index
+        let utxo_address_index_size: usize = self
+            .utxo_address_index
+            .iter()
+            .map(|(addr, outpoints)| {
+                std::mem::size_of::<Address>() + outpoints.len() * std::mem::size_of::<OutPoint>()
+            })
+            .sum();
+
+        // Insert all component sizes
         component_sizes.insert("headers".to_string(), header_size as u64);
         component_sizes.insert("filter_headers".to_string(), filter_header_size as u64);
         component_sizes.insert("filters".to_string(), filter_size as u64);
         component_sizes.insert("metadata".to_string(), metadata_size as u64);
+        component_sizes.insert("masternode_state".to_string(), masternode_state_size as u64);
+        component_sizes.insert("chain_state".to_string(), chain_state_size as u64);
+        component_sizes.insert("header_hash_index".to_string(), header_hash_index_size as u64);
+        component_sizes.insert("utxos".to_string(), utxo_size as u64);
+        component_sizes.insert("utxo_address_index".to_string(), utxo_address_index_size as u64);
+
+        // Calculate total size
+        let total_size = header_size as u64
+            + filter_header_size as u64
+            + filter_size as u64
+            + metadata_size as u64
+            + masternode_state_size as u64
+            + chain_state_size as u64
+            + header_hash_index_size as u64
+            + utxo_size as u64
+            + utxo_address_index_size as u64;
 
         Ok(StorageStats {
             header_count: self.headers.len() as u64,
             filter_header_count: self.filter_headers.len() as u64,
             filter_count: self.filters.len() as u64,
-            total_size: header_size as u64
-                + filter_header_size as u64
-                + filter_size as u64
-                + metadata_size as u64,
+            total_size,
             component_sizes,
         })
     }

@@ -25,8 +25,17 @@ impl WatchManager {
         item: WatchItem,
         storage: &mut dyn StorageManager,
     ) -> Result<()> {
-        let mut watch_items_guard = watch_items.write().await;
-        let is_new = watch_items_guard.insert(item.clone());
+        // Check if the item is new and collect the watch list in a limited scope
+        let (is_new, watch_list) = {
+            let mut watch_items_guard = watch_items.write().await;
+            let is_new = watch_items_guard.insert(item.clone());
+            let watch_list = if is_new {
+                Some(watch_items_guard.iter().cloned().collect::<Vec<_>>())
+            } else {
+                None
+            };
+            (is_new, watch_list)
+        };
 
         if is_new {
             tracing::info!("Added watch item: {:?}", item);
@@ -45,7 +54,7 @@ impl WatchManager {
             }
 
             // Store in persistent storage
-            let watch_list: Vec<WatchItem> = watch_items_guard.iter().cloned().collect();
+            let watch_list = watch_list.unwrap();
             let serialized = serde_json::to_vec(&watch_list)
                 .map_err(|e| SpvError::Config(format!("Failed to serialize watch items: {}", e)))?;
 
@@ -73,8 +82,17 @@ impl WatchManager {
         item: &WatchItem,
         storage: &mut dyn StorageManager,
     ) -> Result<bool> {
-        let mut watch_items_guard = watch_items.write().await;
-        let removed = watch_items_guard.remove(item);
+        // Remove the item and collect the watch list in a limited scope
+        let (removed, watch_list) = {
+            let mut watch_items_guard = watch_items.write().await;
+            let removed = watch_items_guard.remove(item);
+            let watch_list = if removed {
+                Some(watch_items_guard.iter().cloned().collect::<Vec<_>>())
+            } else {
+                None
+            };
+            (removed, watch_list)
+        };
 
         if removed {
             tracing::info!("Removed watch item: {:?}", item);
@@ -93,7 +111,7 @@ impl WatchManager {
             }
 
             // Update persistent storage
-            let watch_list: Vec<WatchItem> = watch_items_guard.iter().cloned().collect();
+            let watch_list = watch_list.unwrap();
             let serialized = serde_json::to_vec(&watch_list)
                 .map_err(|e| SpvError::Config(format!("Failed to serialize watch items: {}", e)))?;
 
@@ -126,15 +144,15 @@ impl WatchManager {
                 SpvError::Config(format!("Failed to deserialize watch items: {}", e))
             })?;
 
-            let mut watch_items_guard = watch_items.write().await;
             let mut addresses_synced = 0;
 
-            for item in watch_list {
+            // Process each item without holding the write lock
+            for item in &watch_list {
                 // Sync address watch items with the wallet
                 if let WatchItem::Address {
                     address,
                     ..
-                } = &item
+                } = item
                 {
                     let wallet_guard = wallet.read().await;
                     if let Err(e) = wallet_guard.add_watched_address(address.clone()).await {
@@ -147,15 +165,21 @@ impl WatchManager {
                         addresses_synced += 1;
                     }
                 }
-
-                watch_items_guard.insert(item);
             }
 
-            tracing::info!(
-                "Loaded {} watch items from storage ({} addresses synced with wallet)",
-                watch_items_guard.len(),
-                addresses_synced
-            );
+            // Now insert all items into the watch_items set
+            {
+                let mut watch_items_guard = watch_items.write().await;
+                for item in watch_list {
+                    watch_items_guard.insert(item);
+                }
+
+                tracing::info!(
+                    "Loaded {} watch items from storage ({} addresses synced with wallet)",
+                    watch_items_guard.len(),
+                    addresses_synced
+                );
+            }
         }
 
         Ok(())

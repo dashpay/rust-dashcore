@@ -32,7 +32,7 @@ impl WalletUtils {
 
     /// Safely add a UTXO to the wallet with comprehensive error handling.
     pub async fn safe_add_utxo(&self, utxo: crate::wallet::Utxo) -> Result<()> {
-        let wallet = self.wallet.read().await;
+        let wallet = self.wallet.write().await;
 
         match wallet.add_utxo(utxo.clone()).await {
             Ok(_) => {
@@ -71,7 +71,7 @@ impl WalletUtils {
         &self,
         outpoint: &dashcore::OutPoint,
     ) -> Result<Option<crate::wallet::Utxo>> {
-        let wallet = self.wallet.read().await;
+        let wallet = self.wallet.write().await;
 
         match wallet.remove_utxo(outpoint).await {
             Ok(removed_utxo) => {
@@ -170,7 +170,7 @@ impl WalletUtils {
 
     /// Update wallet UTXO confirmation statuses based on current blockchain height.
     pub async fn update_wallet_confirmations(&self) -> Result<()> {
-        let wallet = self.wallet.read().await;
+        let wallet = self.wallet.write().await;
         wallet.update_confirmation_status().await.map_err(|e| {
             SpvError::Storage(crate::error::StorageError::ReadFailed(format!(
                 "Wallet error: {}",
@@ -193,7 +193,7 @@ impl WalletUtils {
                 ..
             } = item
             {
-                let wallet = self.wallet.read().await;
+                let wallet = self.wallet.write().await;
                 if let Err(e) = wallet.add_watched_address(address.clone()).await {
                     tracing::warn!("Failed to sync address {} with wallet: {}", address, e);
                 } else {

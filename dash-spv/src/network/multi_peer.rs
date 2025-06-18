@@ -402,10 +402,9 @@ impl MultiPeerNetworkManager {
             while !shutdown.load(Ordering::Relaxed) {
                 // Clean up disconnected peers
                 pool.cleanup_disconnected().await;
-                
+
                 let count = pool.connection_count().await;
                 log::debug!("Connected peers: {}", count);
-                
                 if exclusive_mode {
                     // In exclusive mode, only reconnect to originally specified peers
                     for addr in initial_peers.iter() {
@@ -425,12 +424,12 @@ impl MultiPeerNetworkManager {
                         }
                         let search_time = search_started.unwrap();
                         drop(search_started);
-                        
+
                         // Try known addresses first
                         let known = addrv2_handler.get_known_addresses().await;
                         let needed = TARGET_PEERS.saturating_sub(count);
                         let mut attempted = 0;
-                        
+
                         for addr in known.into_iter().take(needed * 2) { // Try more to account for failures
                             if !pool.is_connected(&addr).await && !pool.is_connecting(&addr).await {
                                 connect_fn(addr).await;
@@ -440,7 +439,7 @@ impl MultiPeerNetworkManager {
                                 }
                             }
                         }
-                        
+
                         // If still need more, check if we can use DNS (after 10 second delay)
                         let count = pool.connection_count().await;
                         if count < MIN_PEERS {
@@ -471,7 +470,7 @@ impl MultiPeerNetworkManager {
                         }
                     }
                 }
-                
+
                 // Send ping to all peers if needed
                 for (addr, conn) in pool.get_all_connections().await {
                     let mut conn_guard = conn.write().await;
@@ -482,7 +481,7 @@ impl MultiPeerNetworkManager {
                     }
                     conn_guard.cleanup_old_pings();
                 }
-                
+
                 // Only save known peers if not in exclusive mode
                 if !exclusive_mode {
                     let addresses = addrv2_handler.get_addresses_for_peer(MAX_ADDR_TO_STORE).await;
@@ -492,7 +491,7 @@ impl MultiPeerNetworkManager {
                         }
                     }
                 }
-                
+
                 time::sleep(MAINTENANCE_INTERVAL).await;
             }
         });
@@ -715,7 +714,8 @@ impl NetworkManager for MultiPeerNetworkManager {
         match &message {
             NetworkMessage::GetHeaders(_)
             | NetworkMessage::GetCFHeaders(_)
-            | NetworkMessage::GetCFilters(_) => self.send_to_single_peer(message).await,
+            | NetworkMessage::GetCFilters(_)
+            | NetworkMessage::GetData(_) => self.send_to_single_peer(message).await,
             _ => {
                 // For other messages, broadcast to all peers
                 let results = self.broadcast(message).await;

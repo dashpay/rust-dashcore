@@ -2,56 +2,12 @@
 mod tests {
     use crate::*;
     use serial_test::serial;
-    use std::collections::HashMap;
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_void};
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
-    };
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
     use tempfile::TempDir;
-
-    // Mock allocator to track memory allocations
-    struct _MemoryTracker {
-        allocations: Arc<Mutex<HashMap<usize, usize>>>,
-        total_allocated: Arc<AtomicUsize>,
-        total_freed: Arc<AtomicUsize>,
-    }
-
-    impl _MemoryTracker {
-        fn _new() -> Self {
-            _MemoryTracker {
-                allocations: Arc::new(Mutex::new(HashMap::new())),
-                total_allocated: Arc::new(AtomicUsize::new(0)),
-                total_freed: Arc::new(AtomicUsize::new(0)),
-            }
-        }
-
-        fn _track_allocation(&self, ptr: usize, size: usize) {
-            self.allocations.lock().unwrap().insert(ptr, size);
-            self.total_allocated.fetch_add(size, Ordering::SeqCst);
-        }
-
-        fn _track_deallocation(&self, ptr: usize) {
-            if let Some(size) = self.allocations.lock().unwrap().remove(&ptr) {
-                self.total_freed.fetch_add(size, Ordering::SeqCst);
-            }
-        }
-
-        fn _get_live_allocations(&self) -> usize {
-            self.allocations.lock().unwrap().len()
-        }
-
-        fn _get_total_allocated(&self) -> usize {
-            self.total_allocated.load(Ordering::SeqCst)
-        }
-
-        fn _get_total_freed(&self) -> usize {
-            self.total_freed.load(Ordering::SeqCst)
-        }
-    }
 
     #[test]
     #[serial]

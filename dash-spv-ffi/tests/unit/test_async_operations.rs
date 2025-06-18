@@ -58,11 +58,15 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         unsafe {
             let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
+            assert!(!config.is_null(), "Failed to create config");
+
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
             dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
             dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
 
             let client = dash_spv_ffi_client_new(config);
+            assert!(!client.is_null(), "Failed to create client");
+
             (client, config, temp_dir)
         }
     }

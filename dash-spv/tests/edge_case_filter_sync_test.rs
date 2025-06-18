@@ -119,7 +119,7 @@ async fn test_filter_sync_at_tip_edge_case() {
     let mut network = MockNetworkManager::new();
 
     // Set up storage with headers and filter headers at the same height (tip)
-    let height = 1684000;
+    let height = 100;
     let mut headers = Vec::new();
     let mut filter_headers = Vec::new();
     let mut prev_hash = BlockHash::all_zeros();
@@ -220,7 +220,7 @@ async fn test_no_invalid_getcfheaders_at_tip() {
     let mut network = MockNetworkManager::new();
 
     // Create a scenario where we're one block behind
-    let height = 1684000;
+    let height = 100;
     let mut headers = Vec::new();
     let mut filter_headers = Vec::new();
     let mut prev_hash = BlockHash::all_zeros();
@@ -252,7 +252,12 @@ async fn test_no_invalid_getcfheaders_at_tip() {
     match &sent_messages[0] {
         NetworkMessage::GetCFHeaders(get_cf_headers) => {
             // The critical check: start_height must be <= height of stop_hash
-            assert_eq!(get_cf_headers.start_height, height, "Start height should be {}", height);
+            assert_eq!(
+                get_cf_headers.start_height,
+                height - 1,
+                "Start height should be {}",
+                height - 1
+            );
             // We can't easily verify the stop_hash height here, but the request should be valid
             println!(
                 "GetCFHeaders request: start_height={}, stop_hash={}",

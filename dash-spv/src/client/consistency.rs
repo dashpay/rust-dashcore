@@ -68,8 +68,10 @@ impl<'a> ConsistencyManager<'a> {
         };
 
         // Validate UTXO consistency between wallet and storage
-        let wallet = self.wallet.read().await;
-        let wallet_utxos = wallet.get_utxos().await;
+        let wallet_utxos = {
+            let wallet = self.wallet.read().await;
+            wallet.get_utxos().await
+        };
         let storage_utxos = self.storage.get_all_utxos().await.map_err(|e| SpvError::Storage(e))?;
 
         // Check for UTXOs in wallet but not in storage
@@ -96,7 +98,10 @@ impl<'a> ConsistencyManager<'a> {
 
         // Validate address consistency between WatchItems and wallet
         let watch_items = self.watch_items.read().await;
-        let wallet_addresses = wallet.get_watched_addresses().await;
+        let wallet_addresses = {
+            let wallet = self.wallet.read().await;
+            wallet.get_watched_addresses().await
+        };
 
         // Collect addresses from watch items
         let watch_addresses: std::collections::HashSet<_> = watch_items
@@ -169,15 +174,17 @@ impl<'a> ConsistencyManager<'a> {
             return Ok(recovery);
         }
 
-        let wallet = self.wallet.read().await;
-
         // Sync UTXOs from storage to wallet
         let storage_utxos = self.storage.get_all_utxos().await.map_err(|e| SpvError::Storage(e))?;
-        let wallet_utxos = wallet.get_utxos().await;
+        let wallet_utxos = {
+            let wallet = self.wallet.read().await;
+            wallet.get_utxos().await
+        };
 
         // Add missing UTXOs to wallet
         for (outpoint, storage_utxo) in &storage_utxos {
             if !wallet_utxos.iter().any(|wu| &wu.outpoint == outpoint) {
+                let wallet = self.wallet.read().await;
                 if let Err(e) = wallet.add_utxo(storage_utxo.clone()).await {
                     tracing::error!("Failed to sync UTXO {} to wallet: {}", outpoint, e);
                     recovery.success = false;
@@ -190,6 +197,7 @@ impl<'a> ConsistencyManager<'a> {
         // Remove UTXOs from wallet that aren't in storage
         for wallet_utxo in &wallet_utxos {
             if !storage_utxos.contains_key(&wallet_utxo.outpoint) {
+                let wallet = self.wallet.read().await;
                 if let Err(e) = wallet.remove_utxo(&wallet_utxo.outpoint).await {
                     tracing::error!(
                         "Failed to remove UTXO {} from wallet: {}",

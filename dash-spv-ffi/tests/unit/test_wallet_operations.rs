@@ -182,12 +182,12 @@ mod tests {
 
             // Test getting UTXOs for address
             let addr = CString::new("XjSgy6PaVCB3V4KhCiCDkaVbx9ewxe9R1E").unwrap();
-            let utxos = dash_spv_ffi_client_get_address_utxos(client, addr.as_ptr());
+            let mut utxos = dash_spv_ffi_client_get_address_utxos(client, addr.as_ptr());
 
             // New wallet should have no UTXOs
             assert_eq!(utxos.len, 0);
             if !utxos.data.is_null() {
-                dash_spv_ffi_array_destroy(Box::into_raw(Box::new(utxos)));
+                dash_spv_ffi_array_destroy(&mut utxos as *mut FFIArray);
             }
 
             // Test with invalid address
@@ -209,12 +209,12 @@ mod tests {
 
             // Test getting history for address
             let addr = CString::new("XjSgy6PaVCB3V4KhCiCDkaVbx9ewxe9R1E").unwrap();
-            let history = dash_spv_ffi_client_get_address_history(client, addr.as_ptr());
+            let mut history = dash_spv_ffi_client_get_address_history(client, addr.as_ptr());
 
             // New wallet should have no history
             assert_eq!(history.len, 0);
             if !history.data.is_null() {
-                dash_spv_ffi_array_destroy(Box::into_raw(Box::new(history)));
+                dash_spv_ffi_array_destroy(&mut history as *mut FFIArray);
             }
 
             dash_spv_ffi_client_destroy(client);
@@ -313,9 +313,9 @@ mod tests {
                     }
 
                     // Get UTXOs
-                    let utxos = dash_spv_ffi_client_get_address_utxos(client, c_addr.as_ptr());
+                    let mut utxos = dash_spv_ffi_client_get_address_utxos(client, c_addr.as_ptr());
                     if !utxos.data.is_null() {
-                        dash_spv_ffi_array_destroy(Box::into_raw(Box::new(utxos)));
+                        dash_spv_ffi_array_destroy(&mut utxos as *mut FFIArray);
                     }
                 });
                 handles.push(handle);
@@ -377,17 +377,17 @@ mod tests {
             assert!(!client.is_null());
 
             // Test getting watched addresses (should be empty)
-            let addresses = dash_spv_ffi_client_get_watched_addresses(client);
+            let mut addresses = dash_spv_ffi_client_get_watched_addresses(client);
             assert_eq!(addresses.len, 0);
             if !addresses.data.is_null() {
-                dash_spv_ffi_array_destroy(Box::into_raw(Box::new(addresses)));
+                dash_spv_ffi_array_destroy(&mut addresses as *mut FFIArray);
             }
 
             // Test getting watched scripts (should be empty)
-            let scripts = dash_spv_ffi_client_get_watched_scripts(client);
+            let mut scripts = dash_spv_ffi_client_get_watched_scripts(client);
             assert_eq!(scripts.len, 0);
             if !scripts.data.is_null() {
-                dash_spv_ffi_array_destroy(Box::into_raw(Box::new(scripts)));
+                dash_spv_ffi_array_destroy(&mut scripts as *mut FFIArray);
             }
 
             // Test total balance (should be zero)
@@ -499,10 +499,10 @@ mod tests {
                 assert!(!client.is_null());
 
                 // Check if watched addresses were persisted
-                let addresses = dash_spv_ffi_client_get_watched_addresses(client);
+                let mut addresses = dash_spv_ffi_client_get_watched_addresses(client);
                 // Depending on implementation, addresses may or may not persist
                 if !addresses.data.is_null() {
-                    dash_spv_ffi_array_destroy(Box::into_raw(Box::new(addresses)));
+                    dash_spv_ffi_array_destroy(&mut addresses as *mut FFIArray);
                 }
 
                 dash_spv_ffi_client_destroy(client);

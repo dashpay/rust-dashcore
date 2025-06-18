@@ -11,10 +11,51 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
+/// Validate a script hex string and convert it to ScriptBuf
+unsafe fn validate_script_hex(script_hex: *const c_char) -> Result<ScriptBuf, i32> {
+    let script_str = match CStr::from_ptr(script_hex).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in script: {}", e));
+            return Err(FFIErrorCode::InvalidArgument as i32);
+        }
+    };
+
+    // Check for odd-length hex string
+    if script_str.len() % 2 != 0 {
+        set_last_error("Hex string must have even length");
+        return Err(FFIErrorCode::InvalidArgument as i32);
+    }
+
+    let script_bytes = match hex::decode(script_str) {
+        Ok(b) => b,
+        Err(e) => {
+            set_last_error(&format!("Invalid hex in script: {}", e));
+            return Err(FFIErrorCode::InvalidArgument as i32);
+        }
+    };
+
+    // Check for empty script
+    if script_bytes.is_empty() {
+        set_last_error("Script cannot be empty");
+        return Err(FFIErrorCode::InvalidArgument as i32);
+    }
+
+    // Check for minimum script length (scripts should be at least 1 byte)
+    // But very short scripts (like 2 bytes) might not be meaningful
+    if script_bytes.len() < 3 {
+        set_last_error("Script too short to be meaningful");
+        return Err(FFIErrorCode::InvalidArgument as i32);
+    }
+
+    Ok(ScriptBuf::from(script_bytes))
+}
+
 pub struct FFIDashSpvClient {
     inner: Arc<Mutex<Option<DashSpvClient>>>,
     runtime: Arc<Runtime>,
     event_callbacks: Arc<Mutex<FFIEventCallbacks>>,
+    active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
 }
 
 #[no_mangle]
@@ -41,6 +82,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
                 inner: Arc::new(Mutex::new(Some(client))),
                 runtime,
                 event_callbacks: Arc::new(Mutex::new(FFIEventCallbacks::default())),
+                active_threads: Arc::new(Mutex::new(Vec::new())),
             };
             Box::into_raw(Box::new(ffi_client))
         }
@@ -116,7 +158,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
     let inner = client.inner.clone();
     let runtime = client.runtime.clone();
 
-    std::thread::spawn(move || {
+    // Spawn a thread for async sync operation
+    // TODO: Currently this thread is not tracked for cleanup. Consider implementing
+    // a mechanism to join threads on client destruction or provide a sync status API.
+    let _handle = std::thread::spawn(move || {
         let result = runtime.block_on(async {
             let mut guard = inner.lock().unwrap();
             if let Some(ref mut spv_client) = *guard {
@@ -615,42 +660,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_watch_script(
     null_check!(client);
     null_check!(script_hex);
 
-    let script_str = match CStr::from_ptr(script_hex).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in script: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
+    let _script = match validate_script_hex(script_hex) {
+        Ok(script) => script,
+        Err(error_code) => return error_code,
     };
-
-    // Check for odd-length hex string
-    if script_str.len() % 2 != 0 {
-        set_last_error("Hex string must have even length");
-        return FFIErrorCode::InvalidArgument as i32;
-    }
-
-    let script_bytes = match hex::decode(script_str) {
-        Ok(b) => b,
-        Err(e) => {
-            set_last_error(&format!("Invalid hex in script: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-
-    // Check for empty script
-    if script_bytes.is_empty() {
-        set_last_error("Script cannot be empty");
-        return FFIErrorCode::InvalidArgument as i32;
-    }
-
-    // Check for minimum script length (scripts should be at least 1 byte)
-    // But very short scripts (like 2 bytes) might not be meaningful
-    if script_bytes.len() < 3 {
-        set_last_error("Script too short to be meaningful");
-        return FFIErrorCode::InvalidArgument as i32;
-    }
-
-    let _script = ScriptBuf::from(script_bytes);
 
     let client = &(*client);
     let inner = client.inner.clone();
@@ -684,42 +697,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_unwatch_script(
     null_check!(client);
     null_check!(script_hex);
 
-    let script_str = match CStr::from_ptr(script_hex).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("Invalid UTF-8 in script: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
+    let _script = match validate_script_hex(script_hex) {
+        Ok(script) => script,
+        Err(error_code) => return error_code,
     };
-
-    // Check for odd-length hex string
-    if script_str.len() % 2 != 0 {
-        set_last_error("Hex string must have even length");
-        return FFIErrorCode::InvalidArgument as i32;
-    }
-
-    let script_bytes = match hex::decode(script_str) {
-        Ok(b) => b,
-        Err(e) => {
-            set_last_error(&format!("Invalid hex in script: {}", e));
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-
-    // Check for empty script
-    if script_bytes.is_empty() {
-        set_last_error("Script cannot be empty");
-        return FFIErrorCode::InvalidArgument as i32;
-    }
-
-    // Check for minimum script length (scripts should be at least 1 byte)
-    // But very short scripts (like 2 bytes) might not be meaningful
-    if script_bytes.len() < 3 {
-        set_last_error("Script too short to be meaningful");
-        return FFIErrorCode::InvalidArgument as i32;
-    }
-
-    let _script = ScriptBuf::from(script_bytes);
 
     let client = &(*client);
     let inner = client.inner.clone();

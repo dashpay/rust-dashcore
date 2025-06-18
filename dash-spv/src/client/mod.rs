@@ -1093,7 +1093,7 @@ impl DashSpvClient {
                 for (vin, input) in transaction.input.iter().enumerate() {
                     // Check if this input spends a UTXO from our watched addresses
                     if let Ok(Some(spent_utxo)) =
-                        self.wallet.read().await.remove_utxo(&input.previous_output).await
+                        self.wallet.write().await.remove_utxo(&input.previous_output).await
                     {
                         transaction_relevant = true;
                         let amount = spent_utxo.value();
@@ -1164,7 +1164,7 @@ impl DashSpvClient {
                                 is_coinbase,
                             );
 
-                            if let Err(e) = self.wallet.read().await.add_utxo(utxo).await {
+                            if let Err(e) = self.wallet.write().await.add_utxo(utxo).await {
                                 tracing::error!("Failed to store UTXO {}: {}", outpoint, e);
                             } else {
                                 tracing::debug!(

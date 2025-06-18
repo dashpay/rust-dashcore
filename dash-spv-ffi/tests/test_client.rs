@@ -113,10 +113,13 @@ mod tests {
             let item = dash_spv_ffi_watch_item_address(addr.as_ptr());
 
             let result = dash_spv_ffi_client_add_watch_item(client, item);
-            // May fail if client not started, but should handle gracefully
+            // Client is not started, so we expect either Success (queued), NetworkError, or InvalidArgument
             assert!(
                 result == FFIErrorCode::Success as i32
-                    || result != FFIErrorCode::NullPointer as i32
+                    || result == FFIErrorCode::NetworkError as i32
+                    || result == FFIErrorCode::InvalidArgument as i32,
+                "Expected Success, NetworkError, or InvalidArgument, got error code: {}",
+                result
             );
 
             dash_spv_ffi_watch_item_destroy(item);

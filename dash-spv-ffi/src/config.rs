@@ -130,11 +130,12 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_user_agent(
     null_check!(config);
     null_check!(user_agent);
 
-    let _config = &mut (*config).inner;
+    // Validate the user_agent string
     match CStr::from_ptr(user_agent).to_str() {
         Ok(_agent_str) => {
-            // user_agent not directly settable in current ClientConfig
-            FFIErrorCode::Success as i32
+            // user_agent is not directly settable in current ClientConfig
+            set_last_error("Setting user agent is not supported in current implementation");
+            FFIErrorCode::ConfigError as i32
         }
         Err(e) => {
             set_last_error(&format!("Invalid UTF-8 in user agent: {}", e));

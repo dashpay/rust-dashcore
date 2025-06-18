@@ -23,7 +23,9 @@ mod tests {
     #[serial]
     fn test_watch_item_script() {
         unsafe {
-            let script_hex = CString::new("76a91488ac").unwrap();
+            // Valid P2PKH script: OP_DUP OP_HASH160 <push 20 bytes> <20-byte pubkey hash> OP_EQUALVERIFY OP_CHECKSIG
+            let script_hex =
+                CString::new("76a914b7c94b7c365c71dd476329c9e5205a0a39cf8e2c88ac").unwrap();
             let item = dash_spv_ffi_watch_item_script(script_hex.as_ptr());
             assert!(!item.is_null());
 
