@@ -1,0 +1,4 @@
+module DashSPVFFI {
+    header "dash_spv_ffi.h"
+    export *
+}
