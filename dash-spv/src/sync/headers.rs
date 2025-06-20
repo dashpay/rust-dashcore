@@ -146,7 +146,7 @@ impl HeaderSyncManager {
             // More aggressive timeout when no peers
             std::time::Duration::from_secs(5)
         } else {
-            std::time::Duration::from_secs(4)
+            std::time::Duration::from_millis(500)
         };
 
         if self.last_sync_progress.elapsed() > timeout_duration {
