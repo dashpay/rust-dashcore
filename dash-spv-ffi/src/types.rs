@@ -1,4 +1,5 @@
 use dash_spv::{ChainState, PeerInfo, SpvStats, SyncProgress};
+use dash_spv::types::{DetailedSyncProgress, SyncStage};
 use dashcore::Network;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
@@ -65,6 +66,7 @@ pub struct FFISyncProgress {
     pub headers_synced: bool,
     pub filter_headers_synced: bool,
     pub masternodes_synced: bool,
+    pub filter_sync_available: bool,
     pub filters_downloaded: u32,
     pub last_synced_filter_height: u32,
 }
@@ -79,8 +81,86 @@ impl From<SyncProgress> for FFISyncProgress {
             headers_synced: progress.headers_synced,
             filter_headers_synced: progress.filter_headers_synced,
             masternodes_synced: progress.masternodes_synced,
+            filter_sync_available: progress.filter_sync_available,
             filters_downloaded: progress.filters_downloaded as u32,
             last_synced_filter_height: progress.last_synced_filter_height.unwrap_or(0),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub enum FFISyncStage {
+    Connecting = 0,
+    QueryingHeight = 1,
+    Downloading = 2,
+    Validating = 3,
+    Storing = 4,
+    Complete = 5,
+    Failed = 6,
+}
+
+impl From<SyncStage> for FFISyncStage {
+    fn from(stage: SyncStage) -> Self {
+        match stage {
+            SyncStage::Connecting => FFISyncStage::Connecting,
+            SyncStage::QueryingPeerHeight => FFISyncStage::QueryingHeight,
+            SyncStage::DownloadingHeaders { .. } => FFISyncStage::Downloading,
+            SyncStage::ValidatingHeaders { .. } => FFISyncStage::Validating,
+            SyncStage::StoringHeaders { .. } => FFISyncStage::Storing,
+            SyncStage::Complete => FFISyncStage::Complete,
+            SyncStage::Failed(_) => FFISyncStage::Failed,
+        }
+    }
+}
+
+#[repr(C)]
+pub struct FFIDetailedSyncProgress {
+    pub current_height: u32,
+    pub total_height: u32,
+    pub percentage: f64,
+    pub headers_per_second: f64,
+    pub estimated_seconds_remaining: i64, // -1 if unknown
+    pub stage: FFISyncStage,
+    pub stage_message: FFIString,
+    pub connected_peers: u32,
+    pub total_headers: u64,
+    pub sync_start_timestamp: i64,
+}
+
+impl From<DetailedSyncProgress> for FFIDetailedSyncProgress {
+    fn from(progress: DetailedSyncProgress) -> Self {
+        use std::time::UNIX_EPOCH;
+        
+        let stage_message = match &progress.sync_stage {
+            SyncStage::Connecting => "Connecting to peers".to_string(),
+            SyncStage::QueryingPeerHeight => "Querying blockchain height".to_string(),
+            SyncStage::DownloadingHeaders { start, end } => 
+                format!("Downloading headers {} to {}", start, end),
+            SyncStage::ValidatingHeaders { batch_size } => 
+                format!("Validating {} headers", batch_size),
+            SyncStage::StoringHeaders { batch_size } => 
+                format!("Storing {} headers", batch_size),
+            SyncStage::Complete => "Synchronization complete".to_string(),
+            SyncStage::Failed(err) => err.clone(),
+        };
+        
+        FFIDetailedSyncProgress {
+            current_height: progress.current_height,
+            total_height: progress.peer_best_height,
+            percentage: progress.percentage,
+            headers_per_second: progress.headers_per_second,
+            estimated_seconds_remaining: progress.estimated_time_remaining
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(-1),
+            stage: progress.sync_stage.into(),
+            stage_message: FFIString::new(&stage_message),
+            connected_peers: progress.connected_peers as u32,
+            total_headers: progress.total_headers_processed,
+            sync_start_timestamp: progress.sync_start_time
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
         }
     }
 }

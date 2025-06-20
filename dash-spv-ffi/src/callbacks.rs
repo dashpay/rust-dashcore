@@ -79,16 +79,16 @@ impl FFICallbacks {
     }
 }
 
-pub type BlockCallback = extern "C" fn(height: u32, hash: *const c_char, user_data: *mut c_void);
+pub type BlockCallback = Option<extern "C" fn(height: u32, hash: *const c_char, user_data: *mut c_void)>;
 pub type TransactionCallback =
-    extern "C" fn(txid: *const c_char, confirmed: bool, user_data: *mut c_void);
-pub type BalanceCallback = extern "C" fn(confirmed: u64, unconfirmed: u64, user_data: *mut c_void);
+    Option<extern "C" fn(txid: *const c_char, confirmed: bool, user_data: *mut c_void)>;
+pub type BalanceCallback = Option<extern "C" fn(confirmed: u64, unconfirmed: u64, user_data: *mut c_void)>;
 
 #[repr(C)]
 pub struct FFIEventCallbacks {
-    pub on_block: Option<BlockCallback>,
-    pub on_transaction: Option<TransactionCallback>,
-    pub on_balance_update: Option<BalanceCallback>,
+    pub on_block: BlockCallback,
+    pub on_transaction: TransactionCallback,
+    pub on_balance_update: BalanceCallback,
     pub user_data: *mut c_void,
 }
 

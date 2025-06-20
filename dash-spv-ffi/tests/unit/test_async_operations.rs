@@ -79,15 +79,8 @@ mod tests {
             assert!(!client.is_null());
 
             // Test with null callbacks
-            let callbacks = FFICallbacks {
-                on_progress: None,
-                on_completion: None,
-                on_data: None,
-                user_data: std::ptr::null_mut(),
-            };
-
             // Should handle null callbacks gracefully
-            let result = dash_spv_ffi_client_sync_to_tip(client, callbacks);
+            let result = dash_spv_ffi_client_sync_to_tip(client, None, None, std::ptr::null_mut());
             assert_eq!(result, FFIErrorCode::Success as i32);
 
             dash_spv_ffi_client_destroy(client);
@@ -111,14 +104,7 @@ mod tests {
                 assert!(progress >= 0.0 && progress <= 100.0);
             }
 
-            let callbacks = FFICallbacks {
-                on_progress: Some(null_data_progress),
-                on_completion: None,
-                on_data: None,
-                user_data: std::ptr::null_mut(),
-            };
-
-            let result = dash_spv_ffi_client_sync_to_tip(client, callbacks);
+            let result = dash_spv_ffi_client_sync_to_tip(client, Some(null_data_progress), None, std::ptr::null_mut());
             assert_eq!(result, FFIErrorCode::Success as i32);
 
             dash_spv_ffi_client_destroy(client);
@@ -141,14 +127,7 @@ mod tests {
                 data_received: Arc::new(Mutex::new(Vec::new())),
             };
 
-            let callbacks = FFICallbacks {
-                on_progress: Some(test_progress_callback),
-                on_completion: Some(test_completion_callback),
-                on_data: None,
-                user_data: &test_data as *const _ as *mut c_void,
-            };
-
-            dash_spv_ffi_client_sync_to_tip(client, callbacks);
+            dash_spv_ffi_client_sync_to_tip(client, Some(test_progress_callback), Some(test_completion_callback), &test_data as *const _ as *mut c_void);
 
             // Give time for callbacks
             thread::sleep(Duration::from_millis(100));
@@ -177,17 +156,10 @@ mod tests {
                 data_received: Arc::new(Mutex::new(Vec::new())),
             };
 
-            let callbacks = FFICallbacks {
-                on_progress: None,
-                on_completion: Some(test_completion_callback),
-                on_data: None,
-                user_data: &test_data as *const _ as *mut c_void,
-            };
-
             // Stop client first to ensure sync fails
             dash_spv_ffi_client_stop(client);
 
-            dash_spv_ffi_client_sync_to_tip(client, callbacks);
+            dash_spv_ffi_client_sync_to_tip(client, None, Some(test_completion_callback), &test_data as *const _ as *mut c_void);
 
             // Wait for completion
             let start = Instant::now();
@@ -270,14 +242,7 @@ mod tests {
                 }
             }
 
-            let callbacks = FFICallbacks {
-                on_progress: Some(reentrant_callback),
-                on_completion: None,
-                on_data: None,
-                user_data: &reentrant_data as *const _ as *mut c_void,
-            };
-
-            dash_spv_ffi_client_sync_to_tip(client, callbacks);
+            dash_spv_ffi_client_sync_to_tip(client, Some(reentrant_callback), None, &reentrant_data as *const _ as *mut c_void);
 
             thread::sleep(Duration::from_millis(100));
 

@@ -91,15 +91,8 @@ mod tests {
             assert!(!client.is_null());
 
             // Start a sync operation in background
-            let callbacks = FFICallbacks {
-                on_progress: None,
-                on_completion: None,
-                on_data: None,
-                user_data: std::ptr::null_mut(),
-            };
-
             // Start sync (non-blocking)
-            dash_spv_ffi_client_sync_to_tip(client, callbacks);
+            dash_spv_ffi_client_sync_to_tip(client, None, None, std::ptr::null_mut());
 
             // Immediately destroy client (should handle pending operations)
             dash_spv_ffi_client_destroy(client);
@@ -234,9 +227,8 @@ mod tests {
                 FFIErrorCode::NullPointer as i32
             );
 
-            let callbacks = FFICallbacks::default();
             assert_eq!(
-                dash_spv_ffi_client_sync_to_tip(std::ptr::null_mut(), callbacks),
+                dash_spv_ffi_client_sync_to_tip(std::ptr::null_mut(), None, None, std::ptr::null_mut()),
                 FFIErrorCode::NullPointer as i32
             );
 
