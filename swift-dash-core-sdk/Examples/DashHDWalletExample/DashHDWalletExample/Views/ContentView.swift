@@ -87,6 +87,8 @@ struct WalletListView: View {
     let onCreateWallet: () -> Void
     let onImportWallet: () -> Void
     
+    @State private var showingSettings = false
+    
     var body: some View {
         #if os(iOS)
         List {
@@ -132,6 +134,18 @@ struct WalletListView: View {
         }
         .navigationTitle("Dash HD Wallets")
         .listStyle(.insetGrouped)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+            }
+        }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
+        }
         #else
         List(selection: $selectedWallet) {
             Section("Wallets") {

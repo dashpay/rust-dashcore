@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import SwiftDashCoreSDK
 
 struct WalletDetailView: View {
     @EnvironmentObject private var walletService: WalletService
@@ -10,6 +11,9 @@ struct WalletDetailView: View {
     @State private var showCreateAccount = false
     @State private var showSyncProgress = false
     @State private var isConnecting = false
+    @State private var useEnhancedSync = true  // Feature flag for enhanced sync UI
+    @State private var syncWasCompleted = false  // Track if sync finished
+    @State private var lastSyncProgress: SyncProgress?  // Store last sync state
     
     var body: some View {
         #if os(iOS)
@@ -38,9 +42,20 @@ struct WalletDetailView: View {
                     isSyncing: walletService.isSyncing
                 )
                 
-                // Sync Button
+                // Sync and View Results Buttons
                 if walletService.isConnected && walletService.activeWallet == wallet {
-                    Button(action: { showSyncProgress = true }) {
+                    // View Sync Results Button (shown when sync was completed)
+                    if syncWasCompleted && !walletService.isSyncing {
+                        Button(action: { showSyncProgress = true }) {
+                            Label("View Last Sync", systemImage: "clock.arrow.circlepath")
+                        }
+                    }
+                    
+                    // Main Sync Button
+                    Button(action: { 
+                        syncWasCompleted = false  // Reset on new sync
+                        showSyncProgress = true 
+                    }) {
                         Label("Sync", systemImage: "arrow.triangle.2.circlepath")
                     }
                     .disabled(walletService.isSyncing)
@@ -58,7 +73,11 @@ struct WalletDetailView: View {
             }
         }
         .sheet(isPresented: $showSyncProgress) {
-            SyncProgressView()
+            if useEnhancedSync {
+                EnhancedSyncProgressView()
+            } else {
+                SyncProgressView()
+            }
         }
         .onAppear {
             if selectedAccount == nil {
@@ -92,9 +111,20 @@ struct WalletDetailView: View {
                     isSyncing: walletService.isSyncing
                 )
                 
-                // Sync Button
+                // Sync and View Results Buttons
                 if walletService.isConnected && walletService.activeWallet == wallet {
-                    Button(action: { showSyncProgress = true }) {
+                    // View Sync Results Button (shown when sync was completed)
+                    if syncWasCompleted && !walletService.isSyncing {
+                        Button(action: { showSyncProgress = true }) {
+                            Label("View Last Sync", systemImage: "clock.arrow.circlepath")
+                        }
+                    }
+                    
+                    // Main Sync Button
+                    Button(action: { 
+                        syncWasCompleted = false  // Reset on new sync
+                        showSyncProgress = true 
+                    }) {
                         Label("Sync", systemImage: "arrow.triangle.2.circlepath")
                     }
                     .disabled(walletService.isSyncing)
@@ -112,11 +142,34 @@ struct WalletDetailView: View {
             }
         }
         .sheet(isPresented: $showSyncProgress) {
-            SyncProgressView()
+            if useEnhancedSync {
+                EnhancedSyncProgressView()
+            } else {
+                SyncProgressView()
+            }
         }
         .onAppear {
             if selectedAccount == nil {
                 selectedAccount = wallet.accounts.first
+            }
+        }
+        .onChange(of: walletService.syncProgress) { oldValue, newValue in
+            // Monitor sync completion
+            if let progress = newValue {
+                lastSyncProgress = progress
+                
+                // Check if sync just completed
+                if progress.status == .synced && oldValue?.status != .synced {
+                    syncWasCompleted = true
+                }
+            }
+        }
+        .onChange(of: walletService.detailedSyncProgress) { oldValue, newValue in
+            // Also monitor detailed sync progress for completion
+            if let progress = newValue, progress.stage == .complete {
+                if oldValue?.stage != .complete {
+                    syncWasCompleted = true
+                }
             }
         }
         #endif

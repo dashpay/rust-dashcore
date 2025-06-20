@@ -23,6 +23,14 @@ struct PlatformColor {
         #endif
     }
     
+    static var secondarySystemBackground: Color {
+        #if os(iOS)
+        return Color(UIColor.secondarySystemBackground)
+        #elseif os(macOS)
+        return Color(NSColor.controlBackgroundColor)
+        #endif
+    }
+    
     static var secondaryLabel: Color {
         #if os(iOS)
         return Color(UIColor.secondaryLabel)
@@ -68,6 +76,14 @@ struct PlatformColor {
         return Color(UIColor.systemOrange)
         #elseif os(macOS)
         return Color(NSColor.systemOrange)
+        #endif
+    }
+    
+    static var tertiarySystemBackground: Color {
+        #if os(iOS)
+        return Color(UIColor.tertiarySystemBackground)
+        #elseif os(macOS)
+        return Color(NSColor.windowBackgroundColor)
         #endif
     }
 }
