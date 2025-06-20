@@ -10,6 +10,7 @@ class WalletService: ObservableObject {
     @Published var activeWallet: HDWallet?
     @Published var activeAccount: HDAccount?
     @Published var syncProgress: SyncProgress?
+    @Published var detailedSyncProgress: DetailedSyncProgress?
     @Published var isConnected: Bool = false
     @Published var isSyncing: Bool = false
     
@@ -17,6 +18,14 @@ class WalletService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var syncTask: Task<Void, Never>?
     var modelContext: ModelContext?
+    
+    // Computed property for sync statistics
+    var syncStatistics: [String: String] {
+        guard let progress = detailedSyncProgress else {
+            return [:]
+        }
+        return progress.statistics
+    }
     
     private init() {}
     
@@ -99,6 +108,64 @@ class WalletService: ObservableObject {
         
         account.wallet = wallet
         
+        // Generate initial addresses (5 receive, 1 change)
+        let initialReceiveCount = 5
+        let initialChangeCount = 1
+        
+        // Generate receive addresses
+        for i in 0..<initialReceiveCount {
+            let address = HDWalletService.deriveAddress(
+                xpub: xpub,
+                network: wallet.network,
+                change: false,
+                index: UInt32(i)
+            )
+            
+            let path = BIP44.derivationPath(
+                network: wallet.network,
+                account: index,
+                change: false,
+                index: UInt32(i)
+            )
+            
+            let watchedAddress = HDWatchedAddress(
+                address: address,
+                index: UInt32(i),
+                isChange: false,
+                derivationPath: path,
+                label: "Receive"
+            )
+            watchedAddress.account = account
+            account.addresses.append(watchedAddress)
+        }
+        
+        // Generate change address
+        for i in 0..<initialChangeCount {
+            let address = HDWalletService.deriveAddress(
+                xpub: xpub,
+                network: wallet.network,
+                change: true,
+                index: UInt32(i)
+            )
+            
+            let path = BIP44.derivationPath(
+                network: wallet.network,
+                account: index,
+                change: true,
+                index: UInt32(i)
+            )
+            
+            let watchedAddress = HDWatchedAddress(
+                address: address,
+                index: UInt32(i),
+                isChange: true,
+                derivationPath: path,
+                label: "Change"
+            )
+            watchedAddress.account = account
+            account.addresses.append(watchedAddress)
+        }
+        
         return account
     }
     
@@ -136,6 +203,34 @@ class WalletService: ObservableObject {
         config.network = wallet.network
         config.validationMode = ValidationMode.full
         
+        // Using local network for testing - comment out to use public peers
+        if wallet.network == .mainnet {
+            config.additionalPeers = [
+                "192.168.1.163:9999"  // Local mainnet node
+            ]
+        } else if wallet.network == .testnet {
+            config.additionalPeers = [
+                "192.168.1.163:19999"  // Local testnet node
+            ]
+        }
+        
+        // Original public peers (commented out for testing)
+        /*
+        if wallet.network == .mainnet {
+            config.additionalPeers = [
+                "65.109.114.212:9999",
+                "8.222.135.69:9999",
+                "188.40.180.135:9999"
+            ]
+        } else if wallet.network == .testnet {
+            config.additionalPeers = [
+                "43.229.77.46:19999",
+                "45.77.167.247:19999",
+                "178.62.203.249:19999"
+            ]
+        }
+        */
+        
         print("📡 Initializing DashSDK...")
         // Initialize SDK on MainActor since DashSDK init is marked @MainActor
         sdk = try await MainActor.run {
@@ -170,6 +265,7 @@ class WalletService: ObservableObject {
         isConnected = false
         isSyncing = false
         syncProgress = nil
+        detailedSyncProgress = nil
         sdk = nil
     }
     
@@ -183,26 +279,41 @@ class WalletService: ObservableObject {
         
         syncTask = Task {
             do {
-                print("📡 Calling sdk.syncToTip()...")
+                print("📡 Starting enhanced sync with detailed progress...")
                 var lastLogTime = Date()
                 
-                for try await progress in try await sdk.syncToTip() {
+                // Use the new sync progress stream
+                for await progress in sdk.syncProgressStream() {
                     if Task.isCancelled { break }
                     
-                    self.syncProgress = progress
+                    self.detailedSyncProgress = progress
+                    
+                    // Convert to legacy SyncProgress for compatibility
+                    self.syncProgress = SyncProgress(
+                        currentHeight: progress.currentHeight,
+                        totalHeight: progress.totalHeight,
+                        progress: progress.percentage / 100.0,
+                        status: mapSyncStageToStatus(progress.stage),
+                        estimatedTimeRemaining: progress.estimatedSecondsRemaining > 0 ? TimeInterval(progress.estimatedSecondsRemaining) : nil,
+                        message: progress.stageMessage
+                    )
                     
                     // Log progress every second to avoid spam
                     if Date().timeIntervalSince(lastLogTime) > 1.0 {
-                        print("📊 Sync: \(progress.status) - \(String(format: "%.1f%%", progress.percentageComplete)) - Blocks: \(progress.currentHeight)/\(progress.totalHeight)")
-                        if let eta = progress.estimatedTimeRemaining {
-                            print("   ETA: \(eta)s")
-                        }
+                        print("\(progress.stage.icon) \(progress.statusMessage)")
+                        print("   Speed: \(progress.formattedSpeed) | ETA: \(progress.formattedTimeRemaining)")
+                        print("   Peers: \(progress.connectedPeers) | Headers: \(progress.totalHeadersProcessed)")
                         lastLogTime = Date()
                     }
                     
                     // Update sync state in storage
                     if let wallet = activeWallet {
-                        await self.updateSyncState(walletId: wallet.id, progress: progress)
+                        await self.updateSyncState(walletId: wallet.id, progress: self.syncProgress!)
+                    }
+                    
+                    // Check if sync is complete
+                    if progress.isComplete {
+                        break
                     }
                 }
                 
@@ -216,14 +327,79 @@ class WalletService: ObservableObject {
                 
             } catch {
                 self.isSyncing = false
+                self.detailedSyncProgress = nil
                 print("❌ Sync error: \(error)")
             }
+        }
+    }
+    
+    // Helper to map sync stage to legacy status
+    private func mapSyncStageToStatus(_ stage: SyncStage) -> SyncStatus {
+        switch stage {
+        case .connecting:
+            return .connecting
+        case .queryingHeight:
+            return .connecting
+        case .downloading, .validating, .storing:
+            return .downloadingHeaders
+        case .complete:
+            return .synced
+        case .failed:
+            return .error
         }
     }
     
     func stopSync() {
         syncTask?.cancel()
         isSyncing = false
+        
+        // Note: cancelSync would need to be exposed on DashSDK if we want to cancel at the SPVClient level
+    }
+    
+    // Alternative sync method using callbacks for real-time updates
+    func startSyncWithCallbacks() async throws {
+        guard let sdk = sdk, isConnected else {
+            throw WalletError.notConnected
+        }
+        
+        print("🔄 Starting callback-based sync for wallet: \(activeWallet?.name ?? "Unknown")")
+        isSyncing = true
+        
+        try await sdk.syncToTipWithProgress(
+            progressCallback: { [weak self] progress in
+                Task { @MainActor in
+                    self?.detailedSyncProgress = progress
+                    
+                    // Convert to legacy SyncProgress
+                    self?.syncProgress = SyncProgress(
+                        currentHeight: progress.currentHeight,
+                        totalHeight: progress.totalHeight,
+                        progress: progress.percentage / 100.0,
+                        status: self?.mapSyncStageToStatus(progress.stage) ?? .connecting,
+                        estimatedTimeRemaining: progress.estimatedSecondsRemaining > 0 ? TimeInterval(progress.estimatedSecondsRemaining) : nil,
+                        message: progress.stageMessage
+                    )
+                    
+                    print("\(progress.stage.icon) \(progress.statusMessage)")
+                }
+            },
+            completionCallback: { [weak self] success, error in
+                Task { @MainActor in
+                    self?.isSyncing = false
+                    
+                    if success {
+                        print("✅ Sync completed successfully!")
+                        if let wallet = self?.activeWallet {
+                            wallet.lastSynced = Date()
+                            try? self?.modelContext?.save()
+                        }
+                    } else {
+                        print("❌ Sync failed: \(error ?? "Unknown error")")
+                        self?.detailedSyncProgress = nil
+                    }
+                }
+            }
+        )
     }
     
     // MARK: - Address Management

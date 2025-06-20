@@ -1,0 +1,9 @@
+prefix=/Users/quantum/src/rust-dashcore/swift-dash-core-sdk/Examples/DashHDWalletExample
+libdir=${prefix}
+includedir=/Users/quantum/src/rust-dashcore/swift-dash-core-sdk/Sources/DashSPVFFI/include
+
+Name: dash_spv_ffi
+Description: Dash SPV FFI library
+Version: 0.1.0
+Libs: -L${libdir} -ldash_spv_ffi
+Cflags: -I${includedir}

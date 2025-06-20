@@ -11,28 +11,7 @@ struct DashHDWalletApp: App {
     
     init() {
         do {
-            let schema = Schema([
-                HDWallet.self,
-                HDAccount.self,
-                HDWatchedAddress.self,
-                Transaction.self,
-                UTXO.self,
-                Balance.self,
-                SyncState.self
-            ])
-            
-            let modelConfiguration = ModelConfiguration(
-                schema: schema,
-                isStoredInMemoryOnly: false,
-                groupContainer: .automatic,
-                cloudKitDatabase: .none
-            )
-            
-            modelContainer = try ModelContainer(
-                for: schema,
-                configurations: [modelConfiguration]
-            )
-            
+            modelContainer = try ModelContainerHelper.createContainer()
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }

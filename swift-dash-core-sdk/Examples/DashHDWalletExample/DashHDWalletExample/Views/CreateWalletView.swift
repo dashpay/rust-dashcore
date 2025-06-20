@@ -5,13 +5,13 @@ struct CreateWalletView: View {
     @EnvironmentObject private var walletService: WalletService
     @Environment(\.dismiss) private var dismiss
     
-    @State private var walletName = ""
+    @State private var walletName = "Dev Wallet \(Int.random(in: 1000...9999))"
     @State private var selectedNetwork: DashNetwork = .testnet
-    @State private var password = ""
-    @State private var confirmPassword = ""
+    @State private var password = "password123"
+    @State private var confirmPassword = "password123"
     @State private var mnemonic: [String] = []
-    @State private var showMnemonic = false
-    @State private var mnemonicConfirmed = false
+    @State private var showMnemonic = true
+    @State private var mnemonicConfirmed = true
     @State private var isCreating = false
     @State private var errorMessage = ""
     
@@ -200,6 +200,12 @@ struct CreateWalletView: View {
         #if os(macOS)
         .frame(width: 600, height: 600)
         #endif
+        .onAppear {
+            // Auto-generate mnemonic for development
+            if mnemonic.isEmpty {
+                generateMnemonic()
+            }
+        }
     }
     
     private func generateMnemonic() {
