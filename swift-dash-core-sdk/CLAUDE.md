@@ -1,0 +1,179 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+SwiftDashCoreSDK is a pure Swift SDK that provides SPV (Simplified Payment Verification) functionality for Dash cryptocurrency. It wraps the rust-dashcore FFI libraries (dash-spv-ffi and key-wallet-ffi) to provide a native Swift API with modern features like async/await, SwiftData persistence, and SwiftUI support.
+
+**Key Features:**
+- Native Swift interface with async/await and Combine support
+- SwiftData integration for persistent wallet storage
+- HD wallet support (BIP32/BIP39/BIP44)
+- Real-time blockchain synchronization with detailed progress tracking
+- InstantSend and ChainLock support
+- Multi-platform: iOS 17+, macOS 14+, tvOS 17+, watchOS 10+
+
+## Architecture
+
+### Core Components
+
+**DashSDK** - Main entry point providing high-level API
+- Manages SPVClient lifecycle
+- Provides async/await interfaces
+- Handles wallet persistence
+
+**SPVClient** - Wrapper around dash-spv-ffi
+- Network operations and blockchain synchronization
+- Transaction broadcasting and validation
+- Address watching and balance tracking
+
+**FFIBridge** - C-Swift interop layer
+- Type conversions between C and Swift
+- Memory management for FFI calls
+- Error handling across language boundaries
+
+**AsyncBridge** - Callback to async/await conversion
+- Converts C callbacks to Swift AsyncSequence
+- Provides Combine publishers for events
+- Thread-safe progress tracking
+
+### Storage Layer
+
+**StorageManager** - SwiftData integration
+- Persistent storage for transactions and UTXOs
+- Automatic schema migrations
+- Query optimization for large datasets
+
+**PersistentWalletManager** - Wallet data persistence
+- Encrypted seed storage
+- Account and address management
+- Transaction history
+
+## Build Commands
+
+### Prerequisites
+```bash
+# Install Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Add iOS targets
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+```
+
+### Building FFI Libraries
+```bash
+# Build dash-spv-ffi (from parent directory)
+cd ../dash-spv-ffi
+cargo build --release
+
+# Build iOS libraries
+cd ../swift-dash-core-sdk
+./build-ios.sh
+```
+
+### Building Swift SDK
+```bash
+# Build with Xcode (recommended for SwiftData support)
+./build.sh xcode
+
+# Or open in Xcode directly
+open Package.swift
+
+# Command line build (limited SwiftData support)
+swift build
+```
+
+## Test Commands
+
+```bash
+# Run all tests
+swift test
+
+# Run specific test
+swift test --filter SPVClientTests
+
+# Run tests in Xcode (recommended)
+# Open Package.swift and press Cmd+U
+```
+
+## Development Workflow
+
+### Making Changes to Rust FFI
+1. Edit rust code in `../dash-spv-ffi/`
+2. Rebuild: `cargo build --release`
+3. Run Swift tests to verify integration
+4. Test in example app
+
+### Testing in Example App
+```bash
+cd Examples/DashHDWalletExample
+open DashHDWalletExample.xcodeproj
+# Run with Cmd+R
+```
+
+### Adding New FFI Functions
+1. Add function to `dash_spv_ffi.h`
+2. Implement in Rust with `#[no_mangle] extern "C"`
+3. Add Swift wrapper in `FFIBridge.swift`
+4. Create async wrapper in `AsyncBridge.swift` if needed
+
+## Key Implementation Details
+
+### Sync Progress Enhancement
+The SDK implements detailed sync progress tracking beyond the basic FFI interface:
+- Real-time headers/second calculation
+- ETA estimation
+- Stage-based progress (Connecting, Downloading, Validating, etc.)
+- Streaming updates via AsyncSequence
+
+### Memory Management
+- Swift ARC handles most memory automatically
+- Manual cleanup required for FFI pointers
+- Use `defer` blocks for FFI resource cleanup
+- Follow RAII pattern for FFI wrappers
+
+### Error Handling
+- FFI errors converted to Swift errors via `DashSDKError`
+- Use `Result` types at FFI boundary
+- Provide meaningful error messages
+- Log FFI errors before converting
+
+### Thread Safety
+- SPVClient operations are thread-safe
+- Use actors for state management
+- Callbacks from C may arrive on any thread
+- UI updates must be dispatched to main thread
+
+## Current Development Focus
+
+The project is actively developing enhanced synchronization features:
+- Streaming sync API with continuous progress updates
+- Visual progress indicators with animations
+- Real-time statistics (headers/sec, peer count)
+- Improved error recovery and retry logic
+
+## Platform-Specific Notes
+
+### iOS
+- Requires iOS 17.0+ for SwiftData
+- Background sync supported via background tasks
+- Keychain integration for secure storage
+
+### macOS
+- Universal binary support (Intel + Apple Silicon)
+- Menu bar integration examples available
+- File-based wallet storage in app container
+
+### SwiftData Limitations
+- Command line builds have limited SwiftData support
+- Use Xcode for full SwiftData functionality
+- Some features require @available checks
+
+## Integration with Parent Project
+
+This SDK is part of the larger rust-dashcore project:
+- Depends on `dash-spv-ffi` for core functionality
+- Uses `key-wallet-ffi` for HD wallet features
+- Follows same versioning scheme
+- Shares git history and CI/CD pipeline
