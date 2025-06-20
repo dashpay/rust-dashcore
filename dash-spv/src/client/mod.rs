@@ -10,7 +10,7 @@ pub mod wallet_utils;
 pub mod watch_manager;
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{mpsc, RwLock};
 
 use std::collections::HashSet;
@@ -22,7 +22,7 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::filters::FilterNotificationSender;
 use crate::sync::SyncManager;
-use crate::types::{AddressBalance, ChainState, SpvStats, SyncProgress, WatchItem};
+use crate::types::{AddressBalance, ChainState, DetailedSyncProgress, SpvStats, SyncProgress, WatchItem};
 use crate::validation::ValidationManager;
 use dashcore::network::constants::NetworkExt;
 
@@ -51,9 +51,23 @@ pub struct DashSpvClient {
     filter_processor: Option<FilterNotificationSender>,
     watch_item_updater: Option<WatchItemUpdateSender>,
     block_processor_tx: mpsc::UnboundedSender<BlockProcessingTask>,
+    progress_sender: Option<mpsc::UnboundedSender<DetailedSyncProgress>>,
+    progress_receiver: Option<mpsc::UnboundedReceiver<DetailedSyncProgress>>,
 }
 
 impl DashSpvClient {
+    /// Take the progress receiver for external consumption.
+    pub fn take_progress_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<DetailedSyncProgress>> {
+        self.progress_receiver.take()
+    }
+    
+    /// Emit a progress update.
+    fn emit_progress(&self, progress: DetailedSyncProgress) {
+        if let Some(ref sender) = self.progress_sender {
+            let _ = sender.send(progress);
+        }
+    }
+    
     /// Helper to create a StatusDisplay instance.
     async fn create_status_display(&self) -> StatusDisplay {
         StatusDisplay::new(
@@ -243,6 +257,9 @@ impl DashSpvClient {
         ));
         let wallet = Arc::new(RwLock::new(crate::wallet::Wallet::new(placeholder_storage)));
 
+        // Create progress channels
+        let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
+
         Ok(Self {
             config,
             state,
@@ -258,6 +275,8 @@ impl DashSpvClient {
             filter_processor: None,
             watch_item_updater: None,
             block_processor_tx,
+            progress_sender: Some(progress_sender),
+            progress_receiver: Some(progress_receiver),
         })
     }
 
@@ -382,6 +401,11 @@ impl DashSpvClient {
         self.config.network
     }
 
+    /// Check if filter sync is available (any peer supports compact filters).
+    pub async fn is_filter_sync_available(&self) -> bool {
+        self.network.has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS).await
+    }
+
     /// Stop the SPV client.
     pub async fn stop(&mut self) -> Result<()> {
         let mut running = self.running.write().await;
@@ -467,7 +491,7 @@ impl DashSpvClient {
 
         // Timer for periodic status updates
         let mut last_status_update = Instant::now();
-        let status_update_interval = std::time::Duration::from_secs(5);
+        let status_update_interval = std::time::Duration::from_millis(500);
 
         // Timer for request timeout checking
         let mut last_timeout_check = Instant::now();
@@ -481,6 +505,13 @@ impl DashSpvClient {
         let mut last_filter_gap_check = Instant::now();
         let filter_gap_check_interval =
             std::time::Duration::from_secs(self.config.cfheader_gap_check_interval_secs);
+        
+        // Progress tracking variables
+        let sync_start_time = SystemTime::now();
+        let mut last_height = 0u32;
+        let mut headers_this_second = 0u32;
+        let mut last_rate_calc = Instant::now();
+        let mut total_bytes_downloaded = 0u64;
 
         loop {
             // Check if we should stop
@@ -645,6 +676,63 @@ impl DashSpvClient {
                 // Also update wallet confirmation statuses periodically
                 if let Err(e) = self.update_wallet_confirmations().await {
                     tracing::warn!("Failed to update wallet confirmations: {}", e);
+                }
+                
+                // Emit detailed progress update
+                if last_rate_calc.elapsed() >= Duration::from_secs(1) {
+                    let current_height = self.storage.get_tip_height().await.ok().flatten().unwrap_or(0);
+                    let peer_best = self.network.get_peer_best_height().await.ok().flatten().unwrap_or(current_height);
+                    
+                    // Calculate headers downloaded this second
+                    if current_height > last_height {
+                        headers_this_second = current_height - last_height;
+                        last_height = current_height;
+                    }
+                    
+                    let headers_per_second = headers_this_second as f64;
+                    
+                    // Determine sync stage
+                    let sync_stage = if self.network.peer_count() == 0 {
+                        crate::types::SyncStage::Connecting
+                    } else if current_height == 0 {
+                        crate::types::SyncStage::QueryingPeerHeight
+                    } else if current_height < peer_best {
+                        crate::types::SyncStage::DownloadingHeaders { 
+                            start: current_height, 
+                            end: peer_best 
+                        }
+                    } else {
+                        crate::types::SyncStage::Complete
+                    };
+                    
+                    let progress = crate::types::DetailedSyncProgress {
+                        current_height,
+                        peer_best_height: peer_best,
+                        percentage: if peer_best > 0 {
+                            (current_height as f64 / peer_best as f64 * 100.0).min(100.0)
+                        } else {
+                            0.0
+                        },
+                        headers_per_second,
+                        bytes_per_second: 0, // TODO: Track actual bytes
+                        estimated_time_remaining: if headers_per_second > 0.0 && peer_best > current_height {
+                            let remaining = peer_best - current_height;
+                            Some(Duration::from_secs_f64(remaining as f64 / headers_per_second))
+                        } else {
+                            None
+                        },
+                        sync_stage,
+                        connected_peers: self.network.peer_count(),
+                        total_headers_processed: current_height as u64,
+                        total_bytes_downloaded,
+                        sync_start_time,
+                        last_update_time: SystemTime::now(),
+                    };
+                    
+                    self.emit_progress(progress);
+                    
+                    headers_this_second = 0;
+                    last_rate_calc = Instant::now();
                 }
 
                 last_status_update = Instant::now();
@@ -1732,7 +1820,9 @@ impl DashSpvClient {
         let genesis_headers = vec![genesis_header];
         self.storage.store_headers(&genesis_headers).await.map_err(|e| SpvError::Storage(e))?;
 
-        tracing::info!("✅ Genesis block initialized at height 0");
+        // Verify it was stored correctly
+        let stored_height = self.storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?;
+        tracing::info!("✅ Genesis block initialized at height 0, storage reports tip height: {:?}", stored_height);
 
         Ok(())
     }

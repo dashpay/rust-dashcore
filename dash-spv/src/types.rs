@@ -1,6 +1,6 @@
 //! Common type definitions for the Dash SPV client.
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use dashcore::{
     block::Header as BlockHeader, hash_types::FilterHeader, network::constants::NetworkExt,
@@ -31,6 +31,9 @@ pub struct SyncProgress {
 
     /// Whether masternode list is synced.
     pub masternodes_synced: bool,
+    
+    /// Whether filter sync is available (peers support it).
+    pub filter_sync_available: bool,
 
     /// Number of compact filters downloaded.
     pub filters_downloaded: u64,
@@ -56,11 +59,71 @@ impl Default for SyncProgress {
             headers_synced: false,
             filter_headers_synced: false,
             masternodes_synced: false,
+            filter_sync_available: false,
             filters_downloaded: 0,
             last_synced_filter_height: None,
             sync_start: now,
             last_update: now,
         }
+    }
+}
+
+/// Detailed sync progress with performance metrics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetailedSyncProgress {
+    /// Current state
+    pub current_height: u32,
+    pub peer_best_height: u32,
+    pub percentage: f64,
+    
+    /// Performance metrics
+    pub headers_per_second: f64,
+    pub bytes_per_second: u64,
+    pub estimated_time_remaining: Option<Duration>,
+    
+    /// Detailed status
+    pub sync_stage: SyncStage,
+    pub connected_peers: usize,
+    pub total_headers_processed: u64,
+    pub total_bytes_downloaded: u64,
+    
+    /// Timing
+    pub sync_start_time: SystemTime,
+    pub last_update_time: SystemTime,
+}
+
+/// Sync stage for detailed progress tracking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SyncStage {
+    Connecting,
+    QueryingPeerHeight,
+    DownloadingHeaders { start: u32, end: u32 },
+    ValidatingHeaders { batch_size: usize },
+    StoringHeaders { batch_size: usize },
+    Complete,
+    Failed(String),
+}
+
+impl DetailedSyncProgress {
+    pub fn calculate_percentage(&self) -> f64 {
+        if self.peer_best_height == 0 {
+            return 0.0;
+        }
+        ((self.current_height as f64 / self.peer_best_height as f64) * 100.0).min(100.0)
+    }
+    
+    pub fn calculate_eta(&self) -> Option<Duration> {
+        if self.headers_per_second <= 0.0 {
+            return None;
+        }
+        
+        let remaining = self.peer_best_height.saturating_sub(self.current_height);
+        if remaining == 0 {
+            return Some(Duration::from_secs(0));
+        }
+        
+        let seconds = remaining as f64 / self.headers_per_second;
+        Some(Duration::from_secs_f64(seconds))
     }
 }
 
@@ -207,6 +270,17 @@ pub struct PeerInfo {
 
     /// Best height reported by peer.
     pub best_height: Option<i32>,
+}
+
+impl PeerInfo {
+    /// Check if peer supports compact filters (BIP 157/158).
+    pub fn supports_compact_filters(&self) -> bool {
+        use dashcore::network::constants::ServiceFlags;
+        
+        self.services
+            .map(|s| ServiceFlags::from(s).has(ServiceFlags::COMPACT_FILTERS))
+            .unwrap_or(false)
+    }
 }
 
 /// Filter match result.
