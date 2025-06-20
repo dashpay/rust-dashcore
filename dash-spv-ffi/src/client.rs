@@ -5,8 +5,8 @@ use crate::{
 use dash_spv::DashSpvClient;
 use dash_spv::Utxo;
 use dashcore::{Address, ScriptBuf, Txid};
-use std::ffi::CStr;
-use std::os::raw::c_char;
+use std::ffi::{CStr, CString};
+use std::os::raw::{c_char, c_void};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
@@ -150,7 +150,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
     client: *mut FFIDashSpvClient,
-    callbacks: FFICallbacks,
+    progress_callback: Option<extern "C" fn(f64, *const c_char, *mut c_void)>,
+    completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
+    user_data: *mut c_void,
 ) -> i32 {
     null_check!(client);
 
@@ -158,40 +160,57 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
     let inner = client.inner.clone();
     let runtime = client.runtime.clone();
 
-    // Spawn a thread for async sync operation
-    // TODO: Currently this thread is not tracked for cleanup. Consider implementing
-    // a mechanism to join threads on client destruction or provide a sync status API.
-    let _handle = std::thread::spawn(move || {
-        let result = runtime.block_on(async {
-            let mut guard = inner.lock().unwrap();
-            if let Some(ref mut spv_client) = *guard {
-                let _last_percentage = 0.0;
+    // Create callbacks struct from individual parameters
+    let callbacks = FFICallbacks {
+        on_progress: progress_callback,
+        on_completion: completion_callback,
+        on_data: None,
+        user_data,
+    };
 
-                match spv_client.sync_to_tip().await {
-                    Ok(_progress) => {
-                        callbacks.call_completion(true, None);
-                        Ok(())
+    // Execute sync in the runtime
+    let result = runtime.block_on(async {
+        let mut guard = inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            match spv_client.sync_to_tip().await {
+                Ok(sync_result) => {
+                    // sync_to_tip returns a SyncResult, not a stream
+                    // We need to simulate progress updates
+                    if let Some(callback) = progress_callback {
+                        let msg = CString::new("Syncing headers...").unwrap();
+                        callback(0.1, msg.as_ptr(), user_data);
                     }
-                    Err(e) => {
-                        callbacks.call_completion(false, Some(&e.to_string()));
-                        Err(e)
+                    
+                    // Report completion
+                    if let Some(callback) = completion_callback {
+                        let msg = CString::new("Sync completed successfully").unwrap();
+                        callback(true, msg.as_ptr(), user_data);
                     }
+                    
+                    Ok(())
                 }
-            } else {
-                let err = dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                    "Client not initialized".to_string(),
-                ));
-                callbacks.call_completion(false, Some(&err.to_string()));
-                Err(err)
+                Err(e) => {
+                    if let Some(callback) = completion_callback {
+                        let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
+                        callback(false, msg.as_ptr(), user_data);
+                    }
+                    Err(e)
+                }
             }
-        });
-
-        if let Err(e) = result {
-            set_last_error(&e.to_string());
+        } else {
+            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                "Client not initialized".to_string(),
+            )))
         }
     });
 
-    FFIErrorCode::Success as i32
+    match result {
+        Ok(()) => FFIErrorCode::Success as i32,
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIErrorCode::from(e) as i32
+        }
+    }
 }
 
 #[no_mangle]

@@ -30,20 +30,7 @@ typedef struct Option_BalanceCallback Option_BalanceCallback;
 
 typedef struct Option_BlockCallback Option_BlockCallback;
 
-typedef struct Option_CompletionCallback Option_CompletionCallback;
-
-typedef struct Option_DataCallback Option_DataCallback;
-
-typedef struct Option_ProgressCallback Option_ProgressCallback;
-
 typedef struct Option_TransactionCallback Option_TransactionCallback;
-
-typedef struct FFICallbacks {
-  struct Option_ProgressCallback on_progress;
-  struct Option_CompletionCallback on_completion;
-  struct Option_DataCallback on_data;
-  void *user_data;
-} FFICallbacks;
 
 typedef struct FFISyncProgress {
   uint32_t header_height;
@@ -158,7 +145,9 @@ int32_t dash_spv_ffi_client_start(struct FFIDashSpvClient *client);
 int32_t dash_spv_ffi_client_stop(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_sync_to_tip(struct FFIDashSpvClient *client,
-                                        struct FFICallbacks callbacks);
+                                        void (*progress_callback)(double, const char*, void*),
+                                        void (*completion_callback)(bool, const char*, void*),
+                                        void *user_data);
 
 struct FFISyncProgress *dash_spv_ffi_client_get_sync_progress(struct FFIDashSpvClient *client);
 
