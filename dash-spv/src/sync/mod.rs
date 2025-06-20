@@ -349,11 +349,15 @@ impl SyncManager {
             })?
             .unwrap_or(0);
 
+        // Check filter sync availability
+        let filter_sync_available = self.filter_sync.is_filter_sync_available(network).await;
+        
         Ok(SyncProgress {
             header_height: final_header_height,
             filter_header_height: final_filter_height,
             headers_synced: !header_sync_started, // If sync didn't start, we're already up to date
             filter_headers_synced: !filter_sync_started, // If sync didn't start, we're already up to date
+            filter_sync_available,
             ..SyncProgress::default()
         })
     }
@@ -385,9 +389,12 @@ impl SyncManager {
                 })?
                 .unwrap_or(0);
 
+            let filter_sync_available = self.filter_sync.is_filter_sync_available(network).await;
+            
             return Ok(SyncProgress {
                 filter_header_height: final_filter_height,
                 filter_headers_synced: true,
+                filter_sync_available,
                 ..SyncProgress::default()
             });
         }
@@ -405,9 +412,12 @@ impl SyncManager {
             .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e)))?
             .unwrap_or(0);
 
+        let filter_sync_available = self.filter_sync.is_filter_sync_available(network).await;
+        
         Ok(SyncProgress {
             filter_header_height: final_filter_height,
             filter_headers_synced: false, // Sync is in progress, will complete asynchronously
+            filter_sync_available,
             ..SyncProgress::default()
         })
     }

@@ -56,6 +56,7 @@ impl<'a> StatusDisplay<'a> {
             headers_synced: false,        // TODO: Implement
             filter_headers_synced: false, // TODO: Implement
             masternodes_synced: false,    // TODO: Implement
+            filter_sync_available: false, // TODO: Get from network manager
             filters_downloaded: stats.filters_received,
             last_synced_filter_height,
             sync_start: std::time::SystemTime::now(), // TODO: Track properly

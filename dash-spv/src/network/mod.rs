@@ -69,6 +69,15 @@ pub trait NetworkManager: Send + Sync {
 
     /// Get a message sender channel for sending messages from other components.
     fn get_message_sender(&self) -> mpsc::Sender<NetworkMessage>;
+    
+    /// Get the best block height reported by connected peers.
+    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>>;
+    
+    /// Check if any connected peer supports a specific service.
+    async fn has_peer_with_service(&self, service_flags: dashcore::network::constants::ServiceFlags) -> bool;
+    
+    /// Get peers that support a specific service.
+    async fn get_peers_with_service(&self, service_flags: dashcore::network::constants::ServiceFlags) -> Vec<crate::types::PeerInfo>;
 }
 
 /// TCP-based network manager implementation.
@@ -208,5 +217,43 @@ impl NetworkManager for TcpNetworkManager {
 
     fn get_message_sender(&self) -> mpsc::Sender<NetworkMessage> {
         self.message_sender.clone()
+    }
+    
+    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
+        if let Some(connection) = &self.connection {
+            // For single peer connection, return the peer's best height
+            match connection.peer_info().best_height {
+                Some(height) if height > 0 => Ok(Some(height as u32)),
+                _ => Ok(None),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+    
+    async fn has_peer_with_service(&self, service_flags: dashcore::network::constants::ServiceFlags) -> bool {
+        if let Some(connection) = &self.connection {
+            let peer_info = connection.peer_info();
+            peer_info.services
+                .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    }
+    
+    async fn get_peers_with_service(&self, service_flags: dashcore::network::constants::ServiceFlags) -> Vec<crate::types::PeerInfo> {
+        if let Some(connection) = &self.connection {
+            let peer_info = connection.peer_info();
+            if peer_info.services
+                .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))
+                .unwrap_or(false) {
+                vec![peer_info]
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        }
     }
 }

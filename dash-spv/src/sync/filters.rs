@@ -169,6 +169,11 @@ impl FilterSyncManager {
             max_gap_restart_attempts: config.max_cfheader_gap_restart_attempts,
         }
     }
+    
+    /// Check if filter sync is available (any peer supports compact filters).
+    pub async fn is_filter_sync_available(&self, network: &dyn NetworkManager) -> bool {
+        network.has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS).await
+    }
 
     /// Handle a CFHeaders message during filter header synchronization.
     /// Returns true if the message was processed and sync should continue, false if sync is complete.
@@ -521,6 +526,13 @@ impl FilterSyncManager {
     ) -> SyncResult<bool> {
         if self.syncing_filter_headers {
             return Err(SyncError::SyncInProgress);
+        }
+
+        // Check if any connected peer supports compact filters
+        if !network.has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS).await {
+            tracing::warn!("⚠️  No connected peers support compact filters (BIP 157/158). Skipping filter synchronization.");
+            tracing::warn!("⚠️  To enable filter sync, connect to peers that advertise NODE_COMPACT_FILTERS service bit.");
+            return Ok(false); // No sync started
         }
 
         tracing::info!("🚀 Starting filter header synchronization");
