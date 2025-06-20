@@ -7,8 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		0EA60EAB2E03663C00FEF2E0 /* SwiftDashCoreSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 0EA60EAA2E03663C00FEF2E0 /* SwiftDashCoreSDK */; };
-		0EA60EBF2E0368C400FEF2E0 /* KeyWalletFFISwift in Frameworks */ = {isa = PBXBuildFile; productRef = 0EA60EBE2E0368C400FEF2E0 /* KeyWalletFFISwift */; };
+		0E3256092E04BFA100586020 /* KeyWalletFFISwift in Frameworks */ = {isa = PBXBuildFile; productRef = 0E3256082E04BFA100586020 /* KeyWalletFFISwift */; };
+		0E32560B2E04BFA100586020 /* SwiftDashCoreSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 0E32560A2E04BFA100586020 /* SwiftDashCoreSDK */; };
+		0E32560E2E04C19300586020 /* libdash_spv_ffi_sim.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0E3255FF2E04B2F700586020 /* libdash_spv_ffi_sim.a */; };
+		0E32560F2E04C19300586020 /* libkey_wallet_ffi_sim.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0E3256002E04B2F700586020 /* libkey_wallet_ffi_sim.a */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -29,6 +31,19 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		0E3255FA2E04B28300586020 /* libdash_spv_ffi.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libdash_spv_ffi.a; path = ../../libdash_spv_ffi.a; sourceTree = "<group>"; };
+		0E3255FD2E04B2B200586020 /* libkey_wallet_ffi.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libkey_wallet_ffi.a; path = ../../libkey_wallet_ffi.a; sourceTree = "<group>"; };
+		0E3255FF2E04B2F700586020 /* libdash_spv_ffi_sim.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libdash_spv_ffi_sim.a; sourceTree = "<group>"; };
+		0E3256002E04B2F700586020 /* libkey_wallet_ffi_sim.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libkey_wallet_ffi_sim.a; sourceTree = "<group>"; };
+		0E4BCCC92E045ED900A500C7 /* libdash_spv_ffi.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libdash_spv_ffi.a; path = "../../../target/aarch64-apple-ios-sim/release/libdash_spv_ffi.a"; sourceTree = "<group>"; };
+		0E4BCCCB2E045EEE00A500C7 /* libkey_wallet_ffi.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libkey_wallet_ffi.dylib; path = "../../../target/aarch64-apple-ios-sim/release/libkey_wallet_ffi.dylib"; sourceTree = "<group>"; };
+		0E4BCCCC2E045EEE00A500C7 /* libkey_wallet_ffi.d */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.dtrace; name = libkey_wallet_ffi.d; path = "../../../target/aarch64-apple-ios-sim/release/libkey_wallet_ffi.d"; sourceTree = "<group>"; };
+		0E4BCCCD2E045EEE00A500C7 /* libdash_spv_ffi.d */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.dtrace; name = libdash_spv_ffi.d; path = "../../../target/aarch64-apple-ios-sim/release/libdash_spv_ffi.d"; sourceTree = "<group>"; };
+		0E4BCCCE2E045EEE00A500C7 /* libdash_spv_ffi.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libdash_spv_ffi.dylib; path = "../../../target/aarch64-apple-ios-sim/release/libdash_spv_ffi.dylib"; sourceTree = "<group>"; };
+		0E4BCCCF2E045EEE00A500C7 /* libkey_wallet_ffi.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libkey_wallet_ffi.a; path = "../../../target/aarch64-apple-ios-sim/release/libkey_wallet_ffi.a"; sourceTree = "<group>"; };
+		0E4BCCD02E045EEE00A500C7 /* libdash_spv_ffi.rlib */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libdash_spv_ffi.rlib; path = "../../../target/aarch64-apple-ios-sim/release/libdash_spv_ffi.rlib"; sourceTree = "<group>"; };
+		0E4BCCD12E045EEE00A500C7 /* libkey_wallet_ffi.rlib */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libkey_wallet_ffi.rlib; path = "../../../target/aarch64-apple-ios-sim/release/libkey_wallet_ffi.rlib"; sourceTree = "<group>"; };
+		0E4BCCD32E045F3000A500C7 /* libdash_spv_ffi.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libdash_spv_ffi.a; sourceTree = "<group>"; };
 		0EA60EAD2E03673B00FEF2E0 /* libdash_spv_ffi.d */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.dtrace; name = libdash_spv_ffi.d; path = "../../../target/aarch64-apple-ios/release/libdash_spv_ffi.d"; sourceTree = "<group>"; };
 		0EA60EAE2E03673B00FEF2E0 /* libdash_spv_ffi.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libdash_spv_ffi.dylib; path = "../../../target/aarch64-apple-ios/release/libdash_spv_ffi.dylib"; sourceTree = "<group>"; };
 		0EA60EAF2E03673B00FEF2E0 /* libkey_wallet_ffi.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libkey_wallet_ffi.a; path = "../../../target/aarch64-apple-ios/release/libkey_wallet_ffi.a"; sourceTree = "<group>"; };
@@ -65,8 +80,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				0EA60EAB2E03663C00FEF2E0 /* SwiftDashCoreSDK in Frameworks */,
-				0EA60EBF2E0368C400FEF2E0 /* KeyWalletFFISwift in Frameworks */,
+				0E32560B2E04BFA100586020 /* SwiftDashCoreSDK in Frameworks */,
+				0E32560E2E04C19300586020 /* libdash_spv_ffi_sim.a in Frameworks */,
+				0E32560F2E04C19300586020 /* libkey_wallet_ffi_sim.a in Frameworks */,
+				0E3256092E04BFA100586020 /* KeyWalletFFISwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -90,7 +107,20 @@
 		0EA60EAC2E03673B00FEF2E0 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				0E3255FF2E04B2F700586020 /* libdash_spv_ffi_sim.a */,
+				0E3256002E04B2F700586020 /* libkey_wallet_ffi_sim.a */,
+				0E3255FD2E04B2B200586020 /* libkey_wallet_ffi.a */,
+				0E4BCCD32E045F3000A500C7 /* libdash_spv_ffi.a */,
+				0E3255FA2E04B28300586020 /* libdash_spv_ffi.a */,
+				0E4BCCCD2E045EEE00A500C7 /* libdash_spv_ffi.d */,
+				0E4BCCCE2E045EEE00A500C7 /* libdash_spv_ffi.dylib */,
+				0E4BCCD02E045EEE00A500C7 /* libdash_spv_ffi.rlib */,
+				0E4BCCCF2E045EEE00A500C7 /* libkey_wallet_ffi.a */,
+				0E4BCCCC2E045EEE00A500C7 /* libkey_wallet_ffi.d */,
+				0E4BCCCB2E045EEE00A500C7 /* libkey_wallet_ffi.dylib */,
+				0E4BCCD12E045EEE00A500C7 /* libkey_wallet_ffi.rlib */,
 				0EA60EB32E03673B00FEF2E0 /* libdash_spv_ffi.a */,
+				0E4BCCC92E045ED900A500C7 /* libdash_spv_ffi.a */,
 				0EA60EAD2E03673B00FEF2E0 /* libdash_spv_ffi.d */,
 				0EA60EAE2E03673B00FEF2E0 /* libdash_spv_ffi.dylib */,
 				0EA60EB22E03673B00FEF2E0 /* libdash_spv_ffi.rlib */,
@@ -144,7 +174,8 @@
 			name = DashHDWalletExample;
 			packageProductDependencies = (
 				0EA60EAA2E03663C00FEF2E0 /* SwiftDashCoreSDK */,
-				0EA60EBE2E0368C400FEF2E0 /* KeyWalletFFISwift */,
+				0E3256082E04BFA100586020 /* KeyWalletFFISwift */,
+				0E32560A2E04BFA100586020 /* SwiftDashCoreSDK */,
 			);
 			productName = DashHDWalletExample;
 			productReference = 0EC7BDE22E035CC5004C4AEE /* DashHDWalletExample.app */;
@@ -229,7 +260,7 @@
 			mainGroup = 0EC7BDD92E035CC5004C4AEE;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				0EA60EA92E03663C00FEF2E0 /* XCLocalSwiftPackageReference "../../../swift-dash-core-sdk" */,
+				0E3256072E04BFA100586020 /* XCLocalSwiftPackageReference "../../../swift-dash-core-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 0EC7BDE32E035CC5004C4AEE /* Products */;
@@ -429,8 +460,11 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -445,6 +479,7 @@
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/DashHDWalletExample",
+					"$(PROJECT_DIR)",
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = org.dash.DashHDWalletExample;
@@ -460,8 +495,11 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -476,6 +514,7 @@
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/DashHDWalletExample",
+					"$(PROJECT_DIR)",
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = org.dash.DashHDWalletExample;
@@ -490,8 +529,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
 				MARKETING_VERSION = 1.0;
@@ -508,8 +550,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
 				MARKETING_VERSION = 1.0;
@@ -525,8 +570,11 @@
 		0EC7BE0A2E035CC6004C4AEE /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = org.dash.DashHDWalletExampleUITests;
@@ -541,8 +589,11 @@
 		0EC7BE0B2E035CC6004C4AEE /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = org.dash.DashHDWalletExampleUITests;
@@ -596,21 +647,24 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		0EA60EA92E03663C00FEF2E0 /* XCLocalSwiftPackageReference "../../../swift-dash-core-sdk" */ = {
+		0E3256072E04BFA100586020 /* XCLocalSwiftPackageReference "../../../swift-dash-core-sdk" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "../../../swift-dash-core-sdk";
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		0EA60EAA2E03663C00FEF2E0 /* SwiftDashCoreSDK */ = {
+		0E3256082E04BFA100586020 /* KeyWalletFFISwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KeyWalletFFISwift;
+		};
+		0E32560A2E04BFA100586020 /* SwiftDashCoreSDK */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftDashCoreSDK;
 		};
-		0EA60EBE2E0368C400FEF2E0 /* KeyWalletFFISwift */ = {
+		0EA60EAA2E03663C00FEF2E0 /* SwiftDashCoreSDK */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 0EA60EA92E03663C00FEF2E0 /* XCLocalSwiftPackageReference "../../../swift-dash-core-sdk" */;
-			productName = KeyWalletFFISwift;
+			productName = SwiftDashCoreSDK;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

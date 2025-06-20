@@ -121,8 +121,8 @@ final class HDWatchedAddress {
     var createdAt: Date
     var lastActive: Date?
     @Relationship var balance: Balance?
-    var transactions: [Transaction]
-    var utxos: [UTXO]
+    @Relationship(deleteRule: .cascade) var transactions: [Transaction]
+    @Relationship(deleteRule: .cascade) var utxos: [UTXO]
     
     // HD specific properties
     var index: UInt32

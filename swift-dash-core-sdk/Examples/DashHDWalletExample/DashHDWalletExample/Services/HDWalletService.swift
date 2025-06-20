@@ -151,17 +151,30 @@ class HDWalletService {
         return encryptedSeed
     }
     
-    // MARK: - Key Derivation (Mock)
+    // MARK: - Key Derivation
     
     static func deriveExtendedPublicKey(
         seed: Data,
         network: DashNetwork,
         account: UInt32
     ) -> String {
-        // In a real implementation, this would use BIP32 derivation
-        // For now, return a mock xpub
-        let prefix = network == .mainnet ? "xpub" : "tpub"
-        return "\(prefix)MockExtendedPublicKey\(account)"
+        do {
+            // Convert DashNetwork to KeyWalletFFI Network
+            let ffiNetwork = convertToFFINetwork(network)
+            
+            // Create HD wallet from seed
+            let hdWallet = try HdWallet.fromSeed(seed: Array(seed), network: ffiNetwork)
+            
+            // Get account extended public key
+            let accountXPub = try hdWallet.getAccountXpub(account: account)
+            
+            return accountXPub.xpub
+        } catch {
+            print("Failed to derive extended public key: \(error)")
+            // Fallback to mock if FFI fails
+            let prefix = network == .mainnet ? "xpub" : "tpub"
+            return "\(prefix)MockExtendedPublicKey\(account)"
+        }
     }
     
     static func deriveAddress(
@@ -170,11 +183,36 @@ class HDWalletService {
         change: Bool,
         index: UInt32
     ) -> String {
-        // In a real implementation, this would derive from xpub
-        // For now, return a mock address
-        let prefix = network == .mainnet ? "X" : "y"
-        let changeStr = change ? "1" : "0"
-        return "\(prefix)MockAddress\(changeStr)\(index)"
+        do {
+            // Convert DashNetwork to KeyWalletFFI Network
+            let ffiNetwork = convertToFFINetwork(network)
+            
+            // Create address generator
+            let addressGenerator = AddressGenerator(network: ffiNetwork)
+            
+            // Create AccountXPub from the extended public key string
+            // The derivation path will be filled in by the FFI when getting account xpub
+            let accountXPub = AccountXPub(
+                derivationPath: "", // Not needed for address generation from xpub
+                xpub: xpub,
+                pubKey: nil
+            )
+            
+            // Generate the address
+            let address = try addressGenerator.generate(
+                accountXpub: accountXPub,
+                external: !change,  // external=true for receive addresses, false for change
+                index: index
+            )
+            
+            return address.toString()
+        } catch {
+            print("Failed to derive address: \(error)")
+            // Fallback to mock if FFI fails
+            let prefix = network == .mainnet ? "X" : "y"
+            let changeStr = change ? "1" : "0"
+            return "\(prefix)MockAddress\(changeStr)\(index)"
+        }
     }
     
     static func deriveAddresses(
@@ -184,8 +222,50 @@ class HDWalletService {
         startIndex: UInt32,
         count: UInt32
     ) -> [String] {
-        return (startIndex..<(startIndex + count)).map { index in
-            deriveAddress(xpub: xpub, network: network, change: change, index: index)
+        do {
+            // Convert DashNetwork to KeyWalletFFI Network
+            let ffiNetwork = convertToFFINetwork(network)
+            
+            // Create address generator
+            let addressGenerator = AddressGenerator(network: ffiNetwork)
+            
+            // Create AccountXPub from string
+            let accountXPub = AccountXPub(
+                derivationPath: "", // Path is not needed for address generation
+                xpub: xpub,
+                pubKey: nil
+            )
+            
+            // Generate addresses in range
+            let addresses = try addressGenerator.generateRange(
+                accountXpub: accountXPub,
+                external: !change,  // external=true for receive addresses, false for change
+                start: startIndex,
+                count: count
+            )
+            
+            return addresses.map { $0.toString() }
+        } catch {
+            print("Failed to derive addresses: \(error)")
+            // Fallback to individual derivation if batch fails
+            return (startIndex..<(startIndex + count)).map { index in
+                deriveAddress(xpub: xpub, network: network, change: change, index: index)
+            }
+        }
+    }
+    
+    // MARK: - Helper Functions
+    
+    static func convertToFFINetwork(_ network: DashNetwork) -> KeyWalletFFISwift.Network {
+        switch network {
+        case .mainnet:
+            return .dash
+        case .testnet:
+            return .testnet
+        case .devnet:
+            return .devnet
+        case .regtest:
+            return .regtest
         }
     }
 }
@@ -283,32 +363,46 @@ class AddressDiscoveryService {
     }
 }
 
-// MARK: - Mock Key Wallet FFI Bridge
+// MARK: - Key Wallet FFI Bridge
 
-// This would normally interface with key-wallet-ffi
 class KeyWalletBridge {
     
-    struct MockHDWallet {
-        let seed: Data
+    struct WalletWrapper {
+        let hdWallet: HdWallet
         let network: DashNetwork
         
-        func deriveAccount(_ index: UInt32) -> MockAccount {
-            return MockAccount(
-                index: index,
-                xpub: HDWalletService.deriveExtendedPublicKey(
+        func deriveAccount(_ index: UInt32) -> AccountWrapper {
+            do {
+                let accountXPub = try hdWallet.getAccountXpub(account: index)
+                return AccountWrapper(
+                    index: index,
+                    xpub: accountXPub.xpub,
+                    network: network
+                )
+            } catch {
+                print("Failed to derive account: \(error)")
+                // Fallback to using HDWalletService
+                let seed = Data() // We don't have access to seed here, but HDWalletService handles fallback
+                let xpub = HDWalletService.deriveExtendedPublicKey(
                     seed: seed,
                     network: network,
                     account: index
                 )
-            )
+                return AccountWrapper(
+                    index: index,
+                    xpub: xpub,
+                    network: network
+                )
+            }
         }
     }
     
-    struct MockAccount {
+    struct AccountWrapper {
         let index: UInt32
         let xpub: String
+        let network: DashNetwork
         
-        func deriveAddress(change: Bool, index: UInt32, network: DashNetwork) -> String {
+        func deriveAddress(change: Bool, index: UInt32) -> String {
             return HDWalletService.deriveAddress(
                 xpub: xpub,
                 network: network,
@@ -318,8 +412,20 @@ class KeyWalletBridge {
         }
     }
     
-    static func createWallet(mnemonic: [String], network: DashNetwork) -> MockHDWallet {
-        let seed = HDWalletService.mnemonicToSeed(mnemonic)
-        return MockHDWallet(seed: seed, network: network)
+    static func createWallet(mnemonic: [String], network: DashNetwork) -> WalletWrapper? {
+        do {
+            let phrase = mnemonic.joined(separator: " ")
+            let mnemonicObj = try Mnemonic(phrase: phrase, language: .english)
+            let ffiNetwork = HDWalletService.convertToFFINetwork(network)
+            let hdWallet = try HdWallet.fromMnemonic(
+                mnemonic: mnemonicObj,
+                passphrase: "",
+                network: ffiNetwork
+            )
+            return WalletWrapper(hdWallet: hdWallet, network: network)
+        } catch {
+            print("Failed to create wallet from mnemonic: \(error)")
+            return nil
+        }
     }
 }

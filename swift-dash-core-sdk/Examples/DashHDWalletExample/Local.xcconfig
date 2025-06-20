@@ -1,4 +1,4 @@
 // Local.xcconfig - Local development configuration
-LIBRARY_SEARCH_PATHS = $(inherited) /Users/quantum/src/rust-dashcore/target/release
-OTHER_LDFLAGS = $(inherited) -L/Users/quantum/src/rust-dashcore/target/release -ldash_spv_ffi
+LIBRARY_SEARCH_PATHS = $(inherited) $(PROJECT_DIR)/DashHDWalletExample
+OTHER_LDFLAGS = $(inherited) -L$(PROJECT_DIR)/DashHDWalletExample -ldash_spv_ffi
 SWIFT_INCLUDE_PATHS = $(inherited) /Users/quantum/src/rust-dashcore/swift-dash-core-sdk/Sources/DashSPVFFI/include

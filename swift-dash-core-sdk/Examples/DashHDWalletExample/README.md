@@ -24,8 +24,21 @@ A comprehensive iOS and macOS example application demonstrating HD (Hierarchical
 
 ### Blockchain Synchronization
 - **SPV Sync**: Lightweight blockchain synchronization
-- **Progress Tracking**: Real-time sync progress with block height and percentage
-- **Time Estimation**: ETA calculation for sync completion
+- **Enhanced Progress Tracking**: Detailed sync progress with stage information
+  - Connection establishment
+  - Peer height discovery
+  - Header downloading with batch details
+  - Header validation progress
+  - Storage operation tracking
+- **Real-time Statistics**:
+  - Headers per second download rate
+  - Time remaining estimation
+  - Total headers processed
+  - Connected peer count
+- **Sync Methods**: 
+  - Streaming API for continuous updates
+  - Callback-based API for event-driven updates
+- **Visual Progress**: Circular progress indicator with stage-based animations
 - **Network Stats**: Connected peers, data transfer, and uptime
 
 ### Transaction Features
@@ -76,7 +89,12 @@ A comprehensive iOS and macOS example application demonstrating HD (Hierarchical
 1. Select a wallet from the list
 2. Click "Connect" in the toolbar
 3. Click "Sync" to start blockchain synchronization
-4. Monitor progress in the sync dialog
+4. Monitor progress in the enhanced sync dialog:
+   - View current sync stage (Connecting, Downloading, Validating, etc.)
+   - See real-time download speed in headers per second
+   - Check estimated time remaining
+   - Toggle between streaming and callback sync methods
+   - View detailed statistics including total headers processed
 
 ### Receiving Dash
 
@@ -148,14 +166,42 @@ In a production app, integrate with:
 - macOS 14.0 or later
 - Native macOS UI with sidebar navigation
 
+### Building with Xcode (Recommended)
+
+For the best development experience, use Xcode:
+
+```bash
+open DashHDWalletExample.xcodeproj
+```
+
+**Important**: See [IOS_APP_SETUP_GUIDE.md](IOS_APP_SETUP_GUIDE.md) for detailed setup instructions, including how to properly link the FFI libraries to avoid "undefined symbols" errors.
+
+### Building with Swift Package Manager
+
+Due to Swift Package Manager limitations with prebuilt libraries, use the provided build scripts:
+
+```bash
+# Build the project
+./build-spm.sh
+
+# Run the project
+./run-spm.sh
+
+# Or manually with linker flags
+swift build -Xlinker -L$(pwd) -Xlinker -ldash_spv_ffi
+swift run -Xlinker -L$(pwd) -Xlinker -ldash_spv_ffi
+```
+
+For more details on the linking issue and solutions, see [SPM_LINKING_SOLUTION.md](SPM_LINKING_SOLUTION.md).
+
 ### Building for iOS
 ```bash
-# Build the example app for iOS
-swift build --product DashHDWalletExample
+# Build the example app for iOS with library linking
+./build-spm.sh --sdk iphoneos
 
 # Or build from the main SDK directory
 cd ../..
-swift build --product DashHDWalletExample
+swift build --product DashHDWalletExample -Xlinker -L$(pwd)/Examples/DashHDWalletExample -Xlinker -ldash_spv_ffi
 ```
 
 ### Building for macOS
