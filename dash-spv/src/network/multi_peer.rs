@@ -139,7 +139,7 @@ impl MultiPeerNetworkManager {
         tasks.spawn(async move {
             log::debug!("Attempting to connect to {}", addr);
 
-            match TcpConnection::connect(addr, CONNECTION_TIMEOUT.as_secs()).await {
+            match TcpConnection::connect(addr, CONNECTION_TIMEOUT.as_secs(), network).await {
                 Ok(mut conn) => {
                     // Perform handshake
                     let mut handshake_manager = HandshakeManager::new(network);
@@ -194,7 +194,6 @@ impl MultiPeerNetworkManager {
 
             while !shutdown.load(Ordering::Relaxed) {
                 loop_iteration += 1;
-                log::trace!("Peer reader loop iteration {} for {}", loop_iteration, addr);
 
                 // Check shutdown signal first with detailed logging
                 if shutdown.load(Ordering::Relaxed) {
@@ -229,7 +228,8 @@ impl MultiPeerNetworkManager {
 
                 match msg_result {
                     Ok(Some(msg)) => {
-                        log::trace!("Received {:?} from {}", msg.cmd(), addr);
+                        // Log all received messages at debug level to help troubleshoot
+                        log::debug!("Received {:?} from {}", msg.cmd(), addr);
 
                         // Handle some messages directly
                         match &msg {
@@ -289,6 +289,11 @@ impl MultiPeerNetworkManager {
                                 log::trace!("Received legacy addr message from {}", addr);
                                 continue;
                             }
+                            NetworkMessage::Headers(headers) => {
+                                // Log headers messages specifically
+                                log::info!("📨 Received Headers message from {} with {} headers!", addr, headers.len());
+                                // Forward to client
+                            }
                             _ => {
                                 // Forward other messages to client
                                 log::trace!("Forwarding {:?} from {} to client", msg.cmd(), addr);
@@ -302,8 +307,9 @@ impl MultiPeerNetworkManager {
                         }
                     }
                     Ok(None) => {
-                        // No message available, brief pause to avoid aggressive polling but stay responsive
-                        time::sleep(MESSAGE_POLL_INTERVAL).await;
+                        // No message available, continue immediately
+                        // The socket read timeout already provides necessary delay
+                        continue;
                     }
                     Err(e) => {
                         match e {
@@ -505,32 +511,67 @@ impl MultiPeerNetworkManager {
             return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
         }
 
-        // Try to use the current sync peer if it's still connected
-        let mut current_sync_peer = self.current_sync_peer.lock().await;
-        let selected_peer = if let Some(current_addr) = *current_sync_peer {
-            // Check if current sync peer is still connected
-            if connections.iter().any(|(addr, _)| *addr == current_addr) {
-                // Keep using the same peer for sync consistency
-                current_addr
-            } else {
-                // Current sync peer disconnected, pick a new one
-                let new_addr = connections[0].0;
-                log::info!(
-                    "Sync peer switched from {} to {} (previous peer disconnected)",
-                    current_addr,
-                    new_addr
-                );
-                *current_sync_peer = Some(new_addr);
-                new_addr
+        // For filter-related messages, we need a peer that supports compact filters
+        let requires_compact_filters = matches!(
+            &message,
+            NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_)
+        );
+
+        let selected_peer = if requires_compact_filters {
+            // Find a peer that supports compact filters
+            let mut filter_peer = None;
+            for (addr, conn) in &connections {
+                let conn_guard = conn.read().await;
+                let peer_info = conn_guard.peer_info();
+                drop(conn_guard);
+                
+                if peer_info.supports_compact_filters() {
+                    filter_peer = Some(*addr);
+                    break;
+                }
+            }
+            
+            match filter_peer {
+                Some(addr) => {
+                    log::debug!("Selected peer {} for compact filter request", addr);
+                    addr
+                }
+                None => {
+                    log::warn!("No peers support compact filters, cannot send {}", message.cmd());
+                    return Err(NetworkError::ProtocolError(
+                        "No peers support compact filters".to_string()
+                    ));
+                }
             }
         } else {
-            // No current sync peer, pick the first available
-            let new_addr = connections[0].0;
-            log::info!("Sync peer selected: {}", new_addr);
-            *current_sync_peer = Some(new_addr);
-            new_addr
+            // For non-filter messages, use the sticky sync peer
+            let mut current_sync_peer = self.current_sync_peer.lock().await;
+            let selected = if let Some(current_addr) = *current_sync_peer {
+                // Check if current sync peer is still connected
+                if connections.iter().any(|(addr, _)| *addr == current_addr) {
+                    // Keep using the same peer for sync consistency
+                    current_addr
+                } else {
+                    // Current sync peer disconnected, pick a new one
+                    let new_addr = connections[0].0;
+                    log::info!(
+                        "Sync peer switched from {} to {} (previous peer disconnected)",
+                        current_addr,
+                        new_addr
+                    );
+                    *current_sync_peer = Some(new_addr);
+                    new_addr
+                }
+            } else {
+                // No current sync peer, pick the first available
+                let new_addr = connections[0].0;
+                log::info!("Sync peer selected: {}", new_addr);
+                *current_sync_peer = Some(new_addr);
+                new_addr
+            };
+            drop(current_sync_peer);
+            selected
         };
-        drop(current_sync_peer);
 
         // Find the connection for the selected peer
         let (addr, conn) = connections
@@ -860,5 +901,74 @@ impl NetworkManager for MultiPeerNetworkManager {
         });
 
         tx
+    }
+    
+    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
+        let connections = self.pool.get_all_connections().await;
+        
+        if connections.is_empty() {
+            log::debug!("get_peer_best_height: No connections available");
+            return Ok(None);
+        }
+        
+        let mut best_height = 0u32;
+        let mut peer_count = 0;
+        
+        for (addr, conn) in connections.iter() {
+            let conn_guard = conn.read().await;
+            let peer_info = conn_guard.peer_info();
+            peer_count += 1;
+            
+            log::debug!("get_peer_best_height: Peer {} - best_height: {:?}, version: {:?}, connected: {}", 
+                       addr, peer_info.best_height, peer_info.version, peer_info.connected);
+            
+            if let Some(peer_height) = peer_info.best_height {
+                if peer_height > 0 {
+                    best_height = best_height.max(peer_height as u32);
+                    log::debug!("get_peer_best_height: Updated best_height to {} from peer {}", best_height, addr);
+                }
+            }
+        }
+        
+        log::debug!("get_peer_best_height: Checked {} peers, best_height: {}", peer_count, best_height);
+        
+        if best_height > 0 {
+            Ok(Some(best_height))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    async fn has_peer_with_service(&self, service_flags: dashcore::network::constants::ServiceFlags) -> bool {
+        let connections = self.pool.get_all_connections().await;
+        
+        for (_, conn) in connections.iter() {
+            let conn_guard = conn.read().await;
+            let peer_info = conn_guard.peer_info();
+            if peer_info.services
+                .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))
+                .unwrap_or(false) {
+                return true;
+            }
+        }
+        
+        false
+    }
+    
+    async fn get_peers_with_service(&self, service_flags: dashcore::network::constants::ServiceFlags) -> Vec<PeerInfo> {
+        let connections = self.pool.get_all_connections().await;
+        let mut matching_peers = Vec::new();
+        
+        for (_, conn) in connections.iter() {
+            let conn_guard = conn.read().await;
+            let peer_info = conn_guard.peer_info();
+            if peer_info.services
+                .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))
+                .unwrap_or(false) {
+                matching_peers.push(peer_info);
+            }
+        }
+        
+        matching_peers
     }
 }
