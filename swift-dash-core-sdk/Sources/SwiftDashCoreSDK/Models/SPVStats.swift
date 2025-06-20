@@ -1,4 +1,7 @@
 import Foundation
+import DashSPVFFI
+
+// FFI types are imported directly from the C header
 
 public struct SPVStats: Sendable {
     public let connectedPeers: UInt32
@@ -40,15 +43,15 @@ public struct SPVStats: Sendable {
     }
     
     internal init(ffiStats: FFISpvStats) {
-        self.connectedPeers = ffiStats.connected_peers
-        self.totalPeers = ffiStats.total_peers
-        self.headerHeight = ffiStats.header_height
-        self.filterHeight = ffiStats.filter_height
-        self.scannedHeight = ffiStats.scanned_height
-        self.totalHeaders = ffiStats.total_headers
-        self.totalFilters = ffiStats.total_filters
-        self.totalTransactions = ffiStats.total_transactions
-        self.startTime = Date(timeIntervalSince1970: TimeInterval(ffiStats.start_time))
+        self.connectedPeers = 0 // Not provided by FFISpvStats
+        self.totalPeers = 0 // Not provided by FFISpvStats
+        self.headerHeight = 0 // Not provided by FFISpvStats
+        self.filterHeight = 0 // Not provided by FFISpvStats
+        self.scannedHeight = 0 // Not provided by FFISpvStats
+        self.totalHeaders = ffiStats.headers_downloaded
+        self.totalFilters = ffiStats.filters_downloaded
+        self.totalTransactions = ffiStats.blocks_processed // Use blocks_processed
+        self.startTime = Date.now.addingTimeInterval(-TimeInterval(ffiStats.uptime))
         self.bytesReceived = ffiStats.bytes_received
         self.bytesSent = ffiStats.bytes_sent
     }

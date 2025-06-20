@@ -1,19 +1,19 @@
 import Foundation
 import DashSPVFFI
 
+// FFI types are imported directly from the C header
+
 internal enum FFIBridge {
     
     // MARK: - String Conversions
     
     static func toString(_ ffiString: FFIString?) -> String? {
-        guard var ffiString = ffiString,
-              let ptr = ffiString.data else {
+        guard let ffiString = ffiString,
+              let ptr = ffiString.ptr else {
             return nil
         }
         
-        let string = String(cString: ptr)
-        dash_spv_ffi_string_destroy(&ffiString)
-        return string
+        return String(cString: ptr)
     }
     
     static func fromString(_ string: String) -> UnsafePointer<CChar> {
@@ -23,7 +23,7 @@ internal enum FFIBridge {
     // MARK: - Array Conversions
     
     static func toArray<T>(_ ffiArray: FFIArray?) -> [T]? {
-        guard var ffiArray = ffiArray,
+        guard let ffiArray = ffiArray,
               let data = ffiArray.data else {
             return nil
         }
@@ -32,12 +32,12 @@ internal enum FFIBridge {
         let buffer = data.bindMemory(to: T.self, capacity: count)
         let array = Array(UnsafeBufferPointer(start: buffer, count: count))
         
-        dash_spv_ffi_array_destroy(&ffiArray)
+        // Note: Caller is responsible for calling dash_spv_ffi_array_destroy
         return array
     }
     
     static func toDataArray(_ ffiArray: FFIArray?) -> [Data]? {
-        guard var ffiArray = ffiArray,
+        guard let ffiArray = ffiArray,
               let data = ffiArray.data else {
             return nil
         }
@@ -51,15 +51,14 @@ internal enum FFIBridge {
             result.append(Data(bytes: ptr, count: len))
         }
         
-        dash_spv_ffi_array_destroy(&ffiArray)
+        // Note: Caller is responsible for calling dash_spv_ffi_array_destroy
         return result
     }
     
     // MARK: - Error Handling
     
-    static func checkError(_ code: FFIErrorCode) throws {
+    static func checkError(_ code: Int32) throws {
         guard code == 0 else {
-            let error = FFIError(code: code)
             let message = getLastError() ?? "Unknown error"
             throw DashSDKError.ffiError(code: code, message: message)
         }
@@ -147,28 +146,27 @@ internal enum FFIBridge {
     static func convertWatchItemType(_ type: WatchItemType) -> FFIWatchItemType {
         switch type {
         case .address:
-            return 0
+            return FFIWatchItemType(rawValue: 0)
         case .script:
-            return 1
+            return FFIWatchItemType(rawValue: 1)
         case .outpoint:
-            return 2
+            return FFIWatchItemType(rawValue: 2)
         }
     }
     
-    static func createFFIWatchItem(type: WatchItemType, data: Data) -> FFIWatchItem {
-        return withData(data) { ptr, len in
-            FFIWatchItem(
-                item_type: convertWatchItemType(type),
-                data: ptr,
-                data_len: len
-            )
-        }
+    static func createFFIWatchItem(type: WatchItemType, data: String) -> FFIWatchItem {
+        let cString = (data as NSString).utf8String!
+        let ffiString = FFIString(ptr: UnsafeMutablePointer(mutating: cString))
+        return FFIWatchItem(
+            item_type: convertWatchItemType(type),
+            data: ffiString
+        )
     }
 }
 
 // MARK: - Watch Item Type
 
-internal enum WatchItemType {
+public enum WatchItemType {
     case address
     case script
     case outpoint

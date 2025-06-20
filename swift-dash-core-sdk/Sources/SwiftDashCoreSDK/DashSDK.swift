@@ -42,6 +42,10 @@ public final class DashSDK {
     
     public func connect() async throws {
         try await client.start()
+        
+        // Re-sync persisted addresses with SPV client
+        await syncPersistedAddresses()
+        
         wallet.startPeriodicSync()
     }
     
@@ -58,6 +62,22 @@ public final class DashSDK {
     
     public func rescanBlockchain(from height: UInt32 = 0) async throws {
         try await client.rescanBlockchain(from: height)
+    }
+    
+    // MARK: - Enhanced Sync Operations
+    
+    public func syncToTipWithProgress(
+        progressCallback: (@Sendable (DetailedSyncProgress) -> Void)? = nil,
+        completionCallback: (@Sendable (Bool, String?) -> Void)? = nil
+    ) async throws {
+        try await client.syncToTipWithProgress(
+            progressCallback: progressCallback,
+            completionCallback: completionCallback
+        )
+    }
+    
+    public func syncProgressStream() -> SyncProgressStream {
+        return client.syncProgressStream()
     }
     
     // MARK: - Wallet Operations
@@ -111,9 +131,11 @@ public final class DashSDK {
         )
         
         // Broadcast transaction
-        let txid = try await client.broadcastTransaction(txData)
+        let txHex = txData.map { String(format: "%02x", $0) }.joined()
+        try await client.broadcastTransaction(txHex)
         
-        return txid
+        // For now, return a placeholder - the actual txid should come from parsing the transaction
+        return "transaction_sent"
     }
     
     public func estimateFee(
@@ -171,6 +193,10 @@ public final class DashSDK {
     
     // MARK: - Network Information
     
+    public func isFilterSyncAvailable() async -> Bool {
+        return await client.isFilterSyncAvailable()
+    }
+    
     public func validateAddress(_ address: String) -> Bool {
         // Basic validation - would call FFI function
         return address.starts(with: "X") || address.starts(with: "y")
@@ -183,6 +209,14 @@ public final class DashSDK {
             connectedPeers: client.stats?.connectedPeers ?? 0,
             blockHeight: client.stats?.headerHeight ?? 0
         )
+    }
+    
+    // MARK: - Private Helpers
+    
+    private func syncPersistedAddresses() async {
+        // This triggers the PersistentWalletManager to reload addresses
+        // and re-watch them in the SPV client
+        await wallet.syncAllData()
     }
 }
 

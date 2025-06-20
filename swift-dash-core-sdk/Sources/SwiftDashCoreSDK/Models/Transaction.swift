@@ -1,5 +1,8 @@
 import Foundation
 import SwiftData
+import DashSPVFFI
+
+// FFI types are imported directly from the C header
 
 @Model
 public final class Transaction {
@@ -39,19 +42,17 @@ public final class Transaction {
     }
     
     internal convenience init(ffiTransaction: FFITransaction) {
-        let timestamp = Date(timeIntervalSince1970: TimeInterval(ffiTransaction.timestamp))
-        
         self.init(
-            txid: String(cString: ffiTransaction.txid),
-            height: ffiTransaction.height == UInt32.max ? nil : ffiTransaction.height,
-            timestamp: timestamp,
-            amount: Int64(bitPattern: ffiTransaction.amount),
-            fee: ffiTransaction.fee,
-            confirmations: ffiTransaction.confirmations,
-            isInstantLocked: ffiTransaction.is_instant_locked,
-            raw: Data(bytes: ffiTransaction.raw_tx, count: Int(ffiTransaction.raw_tx_len)),
+            txid: String(cString: ffiTransaction.txid.ptr),
+            height: nil, // Not provided by FFITransaction
+            timestamp: Date(), // Not provided by FFITransaction
+            amount: 0, // Not provided by FFITransaction
+            fee: 0, // Not provided by FFITransaction
+            confirmations: 0, // Not provided by FFITransaction
+            isInstantLocked: false, // Not provided by FFITransaction
+            raw: Data(), // Not provided by FFITransaction
             size: ffiTransaction.size,
-            version: ffiTransaction.version
+            version: UInt32(ffiTransaction.version)
         )
     }
     

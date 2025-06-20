@@ -1,4 +1,7 @@
 import Foundation
+import DashSPVFFI
+
+// FFI types are imported directly from the C header
 
 public struct SyncProgress: Sendable {
     public let currentHeight: UInt32
@@ -7,6 +10,7 @@ public struct SyncProgress: Sendable {
     public let status: SyncStatus
     public let estimatedTimeRemaining: TimeInterval?
     public let message: String?
+    public let filterSyncAvailable: Bool
     
     public init(
         currentHeight: UInt32,
@@ -14,7 +18,8 @@ public struct SyncProgress: Sendable {
         progress: Double,
         status: SyncStatus,
         estimatedTimeRemaining: TimeInterval? = nil,
-        message: String? = nil
+        message: String? = nil,
+        filterSyncAvailable: Bool = false
     ) {
         self.currentHeight = currentHeight
         self.totalHeight = totalHeight
@@ -22,15 +27,17 @@ public struct SyncProgress: Sendable {
         self.status = status
         self.estimatedTimeRemaining = estimatedTimeRemaining
         self.message = message
+        self.filterSyncAvailable = filterSyncAvailable
     }
     
     internal init(ffiProgress: FFISyncProgress) {
-        self.currentHeight = ffiProgress.current_height
-        self.totalHeight = ffiProgress.total_height
-        self.progress = ffiProgress.progress
-        self.status = SyncStatus(ffiStatus: ffiProgress.status) ?? .idle
-        self.estimatedTimeRemaining = ffiProgress.eta > 0 ? TimeInterval(ffiProgress.eta) : nil
-        self.message = ffiProgress.message.flatMap { FFIBridge.toString($0.pointee) }
+        self.currentHeight = ffiProgress.header_height
+        self.totalHeight = 0 // FFISyncProgress doesn't provide total height
+        self.progress = ffiProgress.headers_synced ? 1.0 : 0.0
+        self.status = ffiProgress.headers_synced ? .synced : .downloadingHeaders
+        self.estimatedTimeRemaining = nil
+        self.message = nil
+        self.filterSyncAvailable = ffiProgress.filter_sync_available
     }
     
     public var blocksRemaining: UInt32 {
