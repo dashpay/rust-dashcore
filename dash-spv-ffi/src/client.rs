@@ -1,7 +1,8 @@
 use crate::{
-    null_check, set_last_error, FFIArray, FFIBalance, FFICallbacks, FFIClientConfig, FFIErrorCode,
-    FFIEventCallbacks, FFISpvStats, FFISyncProgress, FFITransaction, FFIUtxo, FFIWatchItem,
+    null_check, set_last_error, FFIArray, FFIBalance, FFICallbacks, FFIClientConfig, FFIDetailedSyncProgress,
+    FFIErrorCode, FFIEventCallbacks, FFISpvStats, FFISyncProgress, FFITransaction, FFIUtxo, FFIWatchItem,
 };
+use dash_spv::types::SyncStage;
 use dash_spv::DashSpvClient;
 use dash_spv::Utxo;
 use dashcore::{Address, ScriptBuf, Txid};
@@ -9,6 +10,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::runtime::Runtime;
 
 /// Validate a script hex string and convert it to ScriptBuf
@@ -56,6 +58,10 @@ pub struct FFIDashSpvClient {
     runtime: Arc<Runtime>,
     event_callbacks: Arc<Mutex<FFIEventCallbacks>>,
     active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
+    // Sync-specific callbacks
+    sync_progress_callback: Arc<Mutex<Option<extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void)>>>,
+    sync_completion_callback: Arc<Mutex<Option<extern "C" fn(bool, *const c_char, *mut c_void)>>>,
+    sync_user_data: Arc<Mutex<*mut c_void>>,
 }
 
 #[no_mangle]
@@ -83,6 +89,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
                 runtime,
                 event_callbacks: Arc::new(Mutex::new(FFIEventCallbacks::default())),
                 active_threads: Arc::new(Mutex::new(Vec::new())),
+                sync_progress_callback: Arc::new(Mutex::new(None)),
+                sync_completion_callback: Arc::new(Mutex::new(None)),
+                sync_user_data: Arc::new(Mutex::new(std::ptr::null_mut())),
             };
             Box::into_raw(Box::new(ffi_client))
         }
@@ -214,6 +223,211 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(
+    client: *mut FFIDashSpvClient,
+) -> i32 {
+    null_check!(client);
+    
+    let client = &(*client);
+    let result = client.runtime.block_on(async {
+        let mut guard = client.inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            println!("Starting test sync...");
+            
+            // Get initial height
+            let start_height = match spv_client.sync_progress().await {
+                Ok(progress) => progress.header_height,
+                Err(e) => {
+                    eprintln!("Failed to get initial height: {}", e);
+                    return Err(e);
+                }
+            };
+            println!("Initial height: {}", start_height);
+            
+            // Start sync
+            match spv_client.sync_to_tip().await {
+                Ok(_) => println!("Sync started successfully"),
+                Err(e) => {
+                    eprintln!("Failed to start sync: {}", e);
+                    return Err(e);
+                }
+            }
+            
+            // Wait a bit for headers to download
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            
+            // Check if headers increased
+            let end_height = match spv_client.sync_progress().await {
+                Ok(progress) => progress.header_height,
+                Err(e) => {
+                    eprintln!("Failed to get final height: {}", e);
+                    return Err(e);
+                }
+            };
+            println!("Final height: {}", end_height);
+            
+            if end_height > start_height {
+                println!("✅ Sync working! Downloaded {} headers", end_height - start_height);
+                Ok(())
+            } else {
+                let msg = "No headers downloaded".to_string();
+                eprintln!("❌ {}", msg);
+                Err(dash_spv::SpvError::Sync(dash_spv::SyncError::SyncFailed(msg)))
+            }
+        } else {
+            Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
+        }
+    });
+    
+    match result {
+        Ok(_) => FFIErrorCode::Success as i32,
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIErrorCode::from(e) as i32
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
+    client: *mut FFIDashSpvClient,
+    progress_callback: extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void),
+    completion_callback: extern "C" fn(bool, *const c_char, *mut c_void),
+    user_data: *mut c_void,
+) -> i32 {
+    null_check!(client);
+    
+    let client = &(*client);
+    
+    // Store callbacks
+    *client.sync_progress_callback.lock().unwrap() = Some(progress_callback);
+    *client.sync_completion_callback.lock().unwrap() = Some(completion_callback);
+    *client.sync_user_data.lock().unwrap() = user_data;
+    
+    let inner = client.inner.clone();
+    let runtime = client.runtime.clone();
+    let progress_cb = client.sync_progress_callback.clone();
+    let completion_cb = client.sync_completion_callback.clone();
+    let user_data_ptr = client.sync_user_data.clone();
+    
+    // Take progress receiver from client
+    let mut progress_receiver = {
+        let mut guard = inner.lock().unwrap();
+        guard.as_mut().and_then(|c| c.take_progress_receiver())
+    };
+    
+    // Setup progress monitoring - convert raw pointer to usize for thread safety
+    if let Some(mut receiver) = progress_receiver {
+        let runtime_handle = runtime.handle().clone();
+        
+        // Get user data as usize to make it Send
+        let user_data_usize = {
+            let guard = user_data_ptr.lock().unwrap();
+            *guard as usize
+        };
+        
+        let handle = std::thread::spawn(move || {
+            runtime_handle.block_on(async move {
+                while let Some(progress) = receiver.recv().await {
+                    // Handle callback in a thread-safe way
+                    let should_stop = matches!(progress.sync_stage, SyncStage::Complete);
+                    
+                    // Create FFI progress
+                    let ffi_progress = Box::new(FFIDetailedSyncProgress::from(progress));
+                    
+                    // Call the callback with proper synchronization
+                    {
+                        let cb_guard = progress_cb.lock().unwrap();
+                        
+                        if let Some(callback) = *cb_guard {
+                            // Convert usize back to raw pointer
+                            let user_data = user_data_usize as *mut c_void;
+                            callback(ffi_progress.as_ref(), user_data);
+                        }
+                    }
+                    
+                    if should_stop {
+                        break;
+                    }
+                }
+            });
+        });
+        
+        // Store thread handle
+        client.active_threads.lock().unwrap().push(handle);
+    }
+    
+    // Get user data as usize for main sync task too
+    let completion_user_data_usize = {
+        let guard = user_data_ptr.lock().unwrap();
+        *guard as usize
+    };
+    
+    // Spawn sync task in a separate thread to avoid Send issues
+    let runtime_handle = runtime.handle().clone();
+    std::thread::spawn(move || {
+        // Run monitoring loop
+        let monitor_result = runtime_handle.block_on(async move {
+            let mut guard = inner.lock().unwrap();
+            if let Some(ref mut spv_client) = *guard {
+                spv_client.monitor_network().await
+            } else {
+                Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
+            }
+        });
+        
+        // Send completion
+        if let Some(callback) = *completion_cb.lock().unwrap() {
+            let user_data = completion_user_data_usize as *mut c_void;
+            match monitor_result {
+                Ok(_) => {
+                    let msg = CString::new("Sync completed successfully").unwrap();
+                    callback(true, msg.as_ptr(), user_data);
+                    std::mem::forget(msg); // Prevent deallocation since callback owns it now
+                }
+                Err(e) => {
+                    let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
+                    callback(false, msg.as_ptr(), user_data);
+                    std::mem::forget(msg); // Prevent deallocation since callback owns it now
+                }
+            }
+        }
+    });
+    
+    FFIErrorCode::Success as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpvClient) -> i32 {
+    null_check!(client);
+    
+    let client = &(*client);
+    
+    // Clear callbacks to stop progress updates
+    *client.sync_progress_callback.lock().unwrap() = None;
+    *client.sync_completion_callback.lock().unwrap() = None;
+    
+    // TODO: Add actual sync cancellation by stopping the client
+    let inner = client.inner.clone();
+    let result = client.runtime.block_on(async {
+        let mut guard = inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            spv_client.stop().await
+        } else {
+            Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
+        }
+    });
+    
+    match result {
+        Ok(_) => FFIErrorCode::Success as i32,
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIErrorCode::from(e) as i32
+        }
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_get_sync_progress(
     client: *mut FFIDashSpvClient,
 ) -> *mut FFISyncProgress {
@@ -269,6 +483,25 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_stats(
             std::ptr::null_mut()
         }
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_is_filter_sync_available(
+    client: *mut FFIDashSpvClient,
+) -> bool {
+    null_check!(client, false);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    client.runtime.block_on(async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            spv_client.is_filter_sync_available().await
+        } else {
+            false
+        }
+    })
 }
 
 #[no_mangle]
