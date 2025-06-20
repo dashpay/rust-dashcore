@@ -1,0 +1,5 @@
+module DashSPVFFI {
+    header "/Users/quantum/src/rust-dashcore/swift-dash-core-sdk/Sources/DashSPVFFI/include/dash_spv_ffi.h"
+    link "dash_spv_ffi"
+    export *
+}
