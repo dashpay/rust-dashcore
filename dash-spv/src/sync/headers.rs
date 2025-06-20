@@ -146,7 +146,7 @@ impl HeaderSyncManager {
             // More aggressive timeout when no peers
             std::time::Duration::from_secs(5)
         } else {
-            std::time::Duration::from_secs(10)
+            std::time::Duration::from_secs(4)
         };
 
         if self.last_sync_progress.elapsed() > timeout_duration {
@@ -214,13 +214,19 @@ impl HeaderSyncManager {
             .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
 
         let base_hash = match current_tip_height {
-            None => None, // Start from genesis
+            None => {
+                tracing::info!("No tip height found, will start from genesis");
+                None // Start from genesis
+            }
             Some(height) => {
+                tracing::info!("Current tip height: {}", height);
                 // Get the current tip hash
                 let tip_header = storage.get_header(height).await.map_err(|e| {
                     SyncError::SyncFailed(format!("Failed to get tip header: {}", e))
                 })?;
-                tip_header.map(|h| h.block_hash())
+                let hash = tip_header.map(|h| h.block_hash());
+                tracing::info!("Current tip hash: {:?}", hash);
+                hash
             }
         };
 
@@ -287,8 +293,15 @@ impl HeaderSyncManager {
 
         // Build block locator - use slices where possible to reduce allocations
         let block_locator = match base_hash {
-            Some(hash) => vec![hash], // Need vec here for GetHeadersMessage
-            None => Vec::new(),       // Empty locator to request headers from genesis
+            Some(hash) => {
+                log::info!("📍 Requesting headers starting from hash: {}", hash);
+                vec![hash] // Need vec here for GetHeadersMessage
+            }
+            None => {
+                // Empty locator for initial sync - some peers expect this
+                log::info!("📍 Requesting headers from genesis with empty locator");
+                Vec::new()
+            }
         };
 
         // No specific stop hash (all zeros means sync to tip)
