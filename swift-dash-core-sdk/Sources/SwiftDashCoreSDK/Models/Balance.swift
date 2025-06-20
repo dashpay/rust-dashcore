@@ -1,5 +1,8 @@
 import Foundation
 import SwiftData
+import DashSPVFFI
+
+// FFI types are imported directly from the C header
 
 @Model
 public final class Balance {
@@ -27,7 +30,7 @@ public final class Balance {
         self.init(
             confirmed: ffiBalance.confirmed,
             pending: ffiBalance.pending,
-            instantLocked: ffiBalance.instant_locked,
+            instantLocked: ffiBalance.instantlocked,
             total: ffiBalance.total,
             lastUpdated: .now
         )

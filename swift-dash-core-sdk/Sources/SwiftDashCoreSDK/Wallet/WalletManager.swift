@@ -4,11 +4,7 @@ import DashSPVFFI
 
 @Observable
 public class WalletManager {
-    private let client: SPVClient
-    private var ffiClient: FFIClient? {
-        // This would need to be exposed by SPVClient or passed in
-        return nil
-    }
+    internal let client: SPVClient
     
     public internal(set) var watchedAddresses: Set<String> = []
     public internal(set) var totalBalance: Balance = Balance()
@@ -29,9 +25,8 @@ public class WalletManager {
         
         try validateAddress(address)
         
-        // Note: We need access to the FFI client pointer from SPVClient
-        // This is a design consideration - SPVClient might need to expose
-        // a method to perform FFI operations or pass the client pointer
+        // Add address to SPV client watch list
+        try await client.addWatchItem(type: .address, data: address)
         
         watchedAddresses.insert(address)
         
@@ -44,6 +39,9 @@ public class WalletManager {
             throw DashSDKError.notConnected
         }
         
+        // Remove address from SPV client watch list
+        try await client.removeWatchItem(type: .address, data: address)
+        
         watchedAddresses.remove(address)
         await updateTotalBalance()
     }
@@ -53,7 +51,11 @@ public class WalletManager {
             throw DashSDKError.notConnected
         }
         
-        // Implementation would call FFI watch script function
+        // Convert script data to hex string
+        let scriptHex = script.map { String(format: "%02x", $0) }.joined()
+        
+        // Add script to SPV client watch list
+        try await client.addWatchItem(type: .script, data: scriptHex)
     }
     
     // MARK: - Balance Queries
@@ -165,7 +167,7 @@ public class WalletManager {
         switch event {
         case .balanceUpdated(let balance):
             self.totalBalance = balance
-        case .transactionReceived(let txid, let confirmed):
+        case .transactionReceived(_, _):
             // Refresh transactions for affected addresses
             await updateTotalBalance()
         default:
@@ -174,8 +176,8 @@ public class WalletManager {
     }
     
     private func updateBalance(for address: String) async throws {
-        let balance = try await getBalance(for: address)
-        // Update stored balance
+        let _ = try await getBalance(for: address)
+        // TODO: Update stored balance when we have storage integration
     }
     
     internal func updateTotalBalance() async {

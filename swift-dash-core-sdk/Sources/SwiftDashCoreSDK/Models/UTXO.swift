@@ -1,5 +1,8 @@
 import Foundation
 import SwiftData
+import DashSPVFFI
+
+// FFI types are imported directly from the C header
 
 @Model
 public final class UTXO {
@@ -39,19 +42,21 @@ public final class UTXO {
     }
     
     internal convenience init(ffiUtxo: FFIUtxo) {
-        let outpoint = "\(String(cString: ffiUtxo.txid)):\(ffiUtxo.vout)"
+        let txidStr = String(cString: ffiUtxo.txid.ptr)
+        let outpoint = "\(txidStr):\(ffiUtxo.vout)"
+        let scriptData = Data(bytes: ffiUtxo.script_pubkey.ptr, count: strlen(ffiUtxo.script_pubkey.ptr))
         
         self.init(
             outpoint: outpoint,
-            txid: String(cString: ffiUtxo.txid),
+            txid: txidStr,
             vout: ffiUtxo.vout,
-            address: String(cString: ffiUtxo.address),
-            script: Data(bytes: ffiUtxo.script, count: Int(ffiUtxo.script_len)),
-            value: ffiUtxo.value,
+            address: String(cString: ffiUtxo.address.ptr),
+            script: scriptData,
+            value: ffiUtxo.amount,
             height: ffiUtxo.height,
             isSpent: false,
-            confirmations: ffiUtxo.confirmations,
-            isInstantLocked: ffiUtxo.is_instant_locked
+            confirmations: ffiUtxo.is_confirmed ? 1 : 0,
+            isInstantLocked: ffiUtxo.is_instantlocked
         )
     }
     

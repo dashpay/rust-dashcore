@@ -1,4 +1,5 @@
 import Foundation
+import DashSPVFFI
 
 public enum DashNetwork: String, Codable, CaseIterable, Sendable {
     case mainnet = "mainnet"

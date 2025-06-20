@@ -107,6 +107,13 @@ public final class PersistentWalletManager: WalletManager {
             let addresses = try storage.fetchWatchedAddresses()
             watchedAddresses = Set(addresses.map { $0.address })
             
+            // Re-watch addresses in SPV client if connected
+            if client.isConnected {
+                for address in addresses {
+                    try? await client.addWatchItem(type: .address, data: address.address)
+                }
+            }
+            
             // Load total balance
             var totalConfirmed: UInt64 = 0
             var totalPending: UInt64 = 0
