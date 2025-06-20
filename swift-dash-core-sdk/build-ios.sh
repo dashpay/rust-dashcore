@@ -62,12 +62,26 @@ cd swift-dash-core-sdk
 echo -e "${GREEN}Copying libraries to example directory...${NC}"
 cp ../target/ios-simulator-universal/release/libdash_spv_ffi.a Examples/DashHDWalletExample/libdash_spv_ffi_sim.a
 cp ../target/ios/release/libdash_spv_ffi.a Examples/DashHDWalletExample/libdash_spv_ffi_ios.a
+cp ../target/ios-simulator-universal/release/libkey_wallet_ffi.a Examples/DashHDWalletExample/libkey_wallet_ffi_sim.a
+cp ../target/ios/release/libkey_wallet_ffi.a Examples/DashHDWalletExample/libkey_wallet_ffi_ios.a
+
+# Create symlinks for Xcode (defaults to simulator for development)
+echo -e "${GREEN}Creating symlinks for Xcode...${NC}"
+cd Examples/DashHDWalletExample
+ln -sf libdash_spv_ffi_sim.a libdash_spv_ffi.a
+ln -sf libkey_wallet_ffi_sim.a libkey_wallet_ffi.a
+cd ../..
 
 echo -e "${GREEN}iOS build complete!${NC}"
 echo ""
-echo "Libraries built:"
-echo "  - iOS Simulator: Examples/DashHDWalletExample/libdash_spv_ffi_sim.a"
-echo "  - iOS Device: Examples/DashHDWalletExample/libdash_spv_ffi_ios.a"
+echo "Libraries built and copied to Examples/DashHDWalletExample/:"
+echo "  - dash_spv_ffi (simulator): libdash_spv_ffi_sim.a"
+echo "  - dash_spv_ffi (device): libdash_spv_ffi_ios.a"
+echo "  - key_wallet_ffi (simulator): libkey_wallet_ffi_sim.a"
+echo "  - key_wallet_ffi (device): libkey_wallet_ffi_ios.a"
 echo ""
-echo "You can now build the iOS app with:"
-echo "  swift build --product DashHDWalletExample"
+echo "Symlinks created for Xcode:"
+echo "  - libdash_spv_ffi.a -> libdash_spv_ffi_sim.a"
+echo "  - libkey_wallet_ffi.a -> libkey_wallet_ffi_sim.a"
+echo ""
+echo "You can now open DashHDWalletExample.xcodeproj in Xcode and build!"
