@@ -15,6 +15,7 @@ public enum DashSDKError: LocalizedError {
     case insufficientFunds(required: UInt64, available: UInt64)
     case transactionBuildError(String)
     case persistenceError(String)
+    case invalidArgument(String)
     case unknownError(String)
     
     public var errorDescription: String? {
@@ -49,6 +50,8 @@ public enum DashSDKError: LocalizedError {
             return "Failed to build transaction: \(message)"
         case .persistenceError(let message):
             return "Persistence error: \(message)"
+        case .invalidArgument(let message):
+            return "Invalid argument: \(message)"
         case .unknownError(let message):
             return "Unknown error: \(message)"
         }
@@ -84,6 +87,8 @@ public enum DashSDKError: LocalizedError {
             return "Check transaction inputs and outputs"
         case .persistenceError:
             return "Try clearing app data and resyncing"
+        case .invalidArgument:
+            return "Check the provided arguments"
         case .unknownError:
             return "Try again or contact support"
         }

@@ -1,0 +1,5 @@
+module DashSPVFFIC {
+    header "dash_spv_ffi.h"
+    export *
+}
+EOF < /dev/null

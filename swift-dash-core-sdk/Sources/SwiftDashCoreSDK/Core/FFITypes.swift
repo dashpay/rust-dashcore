@@ -1,22 +1,11 @@
 import Foundation
 import DashSPVFFI
 
-typealias FFINetwork = UInt32
-typealias FFIValidationMode = UInt32
 typealias FFIErrorCode = Int32
 typealias FFIClientConfig = UnsafeMutableRawPointer
 typealias FFIClient = UnsafeMutableRawPointer
-typealias FFIString = dash_spv_ffi_string
-typealias FFIArray = dash_spv_ffi_array
-typealias FFIBalance = dash_spv_ffi_balance
-typealias FFIUtxo = dash_spv_ffi_utxo
-typealias FFITransaction = dash_spv_ffi_transaction
-typealias FFITransactionResult = dash_spv_ffi_transaction_result
-typealias FFISyncProgress = dash_spv_ffi_sync_progress
-typealias FFISpvStats = dash_spv_ffi_spv_stats
-typealias FFIWatchItem = dash_spv_ffi_watch_item
-typealias FFIWatchItemType = UInt32
-typealias FFIAddressStats = dash_spv_ffi_address_stats
+// These types come directly from the C header via DashSPVFFI module
+// No need for redundant typealias - use directly as FFIString, FFIDetailedSyncProgress, etc.
 
 enum FFIError: Error {
     case success

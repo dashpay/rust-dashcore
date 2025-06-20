@@ -6,7 +6,7 @@ public final class SPVClientConfiguration {
     public var network: DashNetwork = .mainnet
     public var dataDirectory: URL?
     public var validationMode: ValidationMode = .basic
-    public var maxPeers: UInt32 = 8
+    public var maxPeers: UInt32 = 12
     public var additionalPeers: [String] = []
     public var userAgent: String = "SwiftDashCoreSDK/1.0"
     public var enableFilterLoad: Bool = true
@@ -86,7 +86,7 @@ public final class SPVClientConfiguration {
             try FFIBridge.checkError(result)
         }
         
-        return config
+        return UnsafeMutableRawPointer(config)
     }
 }
 

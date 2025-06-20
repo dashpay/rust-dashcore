@@ -2,8 +2,3 @@
 // The actual FFI implementation is provided by the linked Rust library (libdash_spv_ffi.a).
 
 import Foundation
-
-// Empty enum to provide a namespace
-public enum DashSPVFFI {
-    // The actual FFI functions are exposed through the module map
-}
