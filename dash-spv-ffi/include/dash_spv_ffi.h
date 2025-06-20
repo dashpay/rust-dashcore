@@ -10,6 +10,16 @@ typedef enum FFINetwork {
   Devnet = 3,
 } FFINetwork;
 
+typedef enum FFISyncStage {
+  Connecting = 0,
+  QueryingHeight = 1,
+  Downloading = 2,
+  Validating = 3,
+  Storing = 4,
+  Complete = 5,
+  Failed = 6,
+} FFISyncStage;
+
 typedef enum FFIValidationMode {
   None = 0,
   Basic = 1,
@@ -26,11 +36,22 @@ typedef struct FFIClientConfig FFIClientConfig;
 
 typedef struct FFIDashSpvClient FFIDashSpvClient;
 
-typedef struct Option_BalanceCallback Option_BalanceCallback;
+typedef struct FFIString {
+  char *ptr;
+} FFIString;
 
-typedef struct Option_BlockCallback Option_BlockCallback;
-
-typedef struct Option_TransactionCallback Option_TransactionCallback;
+typedef struct FFIDetailedSyncProgress {
+  uint32_t current_height;
+  uint32_t total_height;
+  double percentage;
+  double headers_per_second;
+  int64_t estimated_seconds_remaining;
+  enum FFISyncStage stage;
+  struct FFIString stage_message;
+  uint32_t connected_peers;
+  uint64_t total_headers;
+  int64_t sync_start_timestamp;
+} FFIDetailedSyncProgress;
 
 typedef struct FFISyncProgress {
   uint32_t header_height;
@@ -40,6 +61,7 @@ typedef struct FFISyncProgress {
   bool headers_synced;
   bool filter_headers_synced;
   bool masternodes_synced;
+  bool filter_sync_available;
   uint32_t filters_downloaded;
   uint32_t last_synced_filter_height;
 } FFISyncProgress;
@@ -54,10 +76,6 @@ typedef struct FFISpvStats {
   uint64_t bytes_sent;
   uint64_t uptime;
 } FFISpvStats;
-
-typedef struct FFIString {
-  char *ptr;
-} FFIString;
 
 typedef struct FFIWatchItem {
   enum FFIWatchItemType item_type;
@@ -77,10 +95,16 @@ typedef struct FFIArray {
   uintptr_t capacity;
 } FFIArray;
 
+typedef void (*BlockCallback)(uint32_t height, const char *hash, void *user_data);
+
+typedef void (*TransactionCallback)(const char *txid, bool confirmed, void *user_data);
+
+typedef void (*BalanceCallback)(uint64_t confirmed, uint64_t unconfirmed, void *user_data);
+
 typedef struct FFIEventCallbacks {
-  struct Option_BlockCallback on_block;
-  struct Option_TransactionCallback on_transaction;
-  struct Option_BalanceCallback on_balance_update;
+  BlockCallback on_block;
+  TransactionCallback on_transaction;
+  BalanceCallback on_balance_update;
   void *user_data;
 } FFIEventCallbacks;
 
@@ -149,9 +173,23 @@ int32_t dash_spv_ffi_client_sync_to_tip(struct FFIDashSpvClient *client,
                                         void (*completion_callback)(bool, const char*, void*),
                                         void *user_data);
 
+int32_t dash_spv_ffi_client_test_sync(struct FFIDashSpvClient *client);
+
+int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *client,
+                                                      void (*progress_callback)(const struct FFIDetailedSyncProgress*,
+                                                                                void*),
+                                                      void (*completion_callback)(bool,
+                                                                                  const char*,
+                                                                                  void*),
+                                                      void *user_data);
+
+int32_t dash_spv_ffi_client_cancel_sync(struct FFIDashSpvClient *client);
+
 struct FFISyncProgress *dash_spv_ffi_client_get_sync_progress(struct FFIDashSpvClient *client);
 
 struct FFISpvStats *dash_spv_ffi_client_get_stats(struct FFIDashSpvClient *client);
+
+bool dash_spv_ffi_client_is_filter_sync_available(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_add_watch_item(struct FFIDashSpvClient *client,
                                            const struct FFIWatchItem *item);
