@@ -70,6 +70,13 @@ pub use wallet::{
 // Re-export commonly used dashcore types
 pub use dashcore::{Address, BlockHash, Network, OutPoint, ScriptBuf};
 
+// Re-export MasternodeListEngine and related types
+pub use dashcore::sml::masternode_list_engine::{
+    MasternodeListEngine,
+    MasternodeListEngineBlockContainer,
+    MasternodeListEngineBTreeMapBlockContainer,
+};
+
 /// Current version of the dash-spv library.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

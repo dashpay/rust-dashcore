@@ -21,6 +21,7 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::SyncProgress;
 use dashcore::network::constants::NetworkExt;
+use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 
 pub use filters::FilterSyncManager;
 pub use headers::HeaderSyncManager;
@@ -190,6 +191,11 @@ impl SyncManager {
         let _ = self.filter_sync.check_filter_request_timeouts(network, storage).await;
 
         Ok(())
+    }
+
+    /// Get a reference to the masternode list engine.
+    pub fn masternode_list_engine(&self) -> Option<&MasternodeListEngine> {
+        self.masternode_sync.engine()
     }
 
     /// Synchronize all components to the tip.

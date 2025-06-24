@@ -25,6 +25,7 @@ use crate::sync::SyncManager;
 use crate::types::{AddressBalance, ChainState, SpvStats, SyncProgress, WatchItem};
 use crate::validation::ValidationManager;
 use dashcore::network::constants::NetworkExt;
+use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 
 pub use block_processor::{BlockProcessingTask, BlockProcessor};
 pub use config::ClientConfig;
@@ -1609,6 +1610,12 @@ impl DashSpvClient {
     /// Get the number of connected peers.
     pub async fn get_peer_count(&self) -> usize {
         self.network.peer_count()
+    }
+
+    /// Get a reference to the masternode list engine.
+    /// Returns None if masternode sync is not enabled in config.
+    pub fn masternode_list_engine(&self) -> Option<&MasternodeListEngine> {
+        self.sync_manager.masternode_list_engine()
     }
 
     /// Sync compact filters for recent blocks and check for matches.
