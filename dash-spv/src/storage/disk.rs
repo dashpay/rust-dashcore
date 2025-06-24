@@ -15,13 +15,13 @@ use dashcore::{
     consensus::{encode, Decodable, Encodable},
     hash_types::FilterHeader,
     pow::CompactTarget,
-    Address, BlockHash, OutPoint,
+    Address, BlockHash, OutPoint, Txid,
 };
 use dashcore_hashes::Hash;
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::{MasternodeState, StorageManager, StorageStats};
-use crate::types::ChainState;
+use crate::storage::{MasternodeState, StorageManager, StorageStats, StoredTerminalBlock};
+use crate::types::{ChainState, UnconfirmedTransaction, MempoolState};
 use crate::wallet::Utxo;
 
 /// Number of headers per segment file
@@ -119,6 +119,10 @@ pub struct DiskStorageManager {
     utxo_cache: Arc<RwLock<HashMap<OutPoint, Utxo>>>,
     utxo_address_index: Arc<RwLock<HashMap<Address, Vec<OutPoint>>>>,
     utxo_cache_dirty: Arc<RwLock<bool>>,
+    
+    // Mempool storage
+    mempool_transactions: Arc<RwLock<HashMap<Txid, UnconfirmedTransaction>>>,
+    mempool_state: Arc<RwLock<Option<MempoolState>>>,
 }
 
 impl DiskStorageManager {
@@ -237,6 +241,8 @@ impl DiskStorageManager {
             utxo_cache: Arc::new(RwLock::new(HashMap::new())),
             utxo_address_index: Arc::new(RwLock::new(HashMap::new())),
             utxo_cache_dirty: Arc::new(RwLock::new(false)),
+            mempool_transactions: Arc::new(RwLock::new(HashMap::new())),
+            mempool_state: Arc::new(RwLock::new(None)),
         };
 
         // Load segment metadata and rebuild index
@@ -375,11 +381,27 @@ impl DiskStorageManager {
 
         // Load segment from disk
         let segment_path = self.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
-        let headers = if segment_path.exists() {
+        let mut headers = if segment_path.exists() {
             self.load_headers_from_file(&segment_path).await?
         } else {
             Vec::new()
         };
+
+        // Ensure the segment has space for all possible headers in this segment
+        // This is crucial for proper indexing
+        let expected_size = HEADERS_PER_SEGMENT as usize;
+        if headers.len() < expected_size {
+            // Pad with default headers to ensure proper indexing
+            let default_header = BlockHeader {
+                version: Version::from_consensus(0),
+                prev_blockhash: BlockHash::all_zeros(),
+                merkle_root: dashcore::hashes::sha256d::Hash::all_zeros().into(),
+                time: 0,
+                bits: CompactTarget::from_consensus(0),
+                nonce: 0,
+            };
+            headers.resize(expected_size, default_header);
+        }
 
         // Evict old segments if needed
         if segments.len() >= MAX_ACTIVE_SEGMENTS {
@@ -869,7 +891,12 @@ async fn save_segment_to_disk(path: &Path, headers: &[BlockHeader]) -> StorageRe
             let file = OpenOptions::new().create(true).write(true).truncate(true).open(&path)?;
             let mut writer = BufWriter::new(file);
 
+            // Only save actual headers, not padding/default headers
             for header in headers {
+                // Skip default/padding headers
+                if header.time == 0 && header.nonce == 0 && header.prev_blockhash == BlockHash::all_zeros() {
+                    continue;
+                }
                 header.consensus_encode(&mut writer).map_err(|e| {
                     StorageError::WriteFailed(format!("Failed to encode header: {}", e))
                 })?;
@@ -970,6 +997,15 @@ impl StorageManager for DiskStorageManager {
             Some(tip) => tip + 1,
             None => 0, // Start at height 0 if no headers stored yet
         };
+        
+        let initial_height = next_height;
+        
+        // Use trace for single headers, debug for small batches, info for large batches
+        match headers.len() {
+            1 => tracing::trace!("DiskStorage: storing 1 header at height {}", initial_height),
+            2..=10 => tracing::debug!("DiskStorage: storing {} headers starting at height {}", headers.len(), initial_height),
+            _ => tracing::info!("DiskStorage: storing {} headers starting at height {}", headers.len(), initial_height),
+        }
 
         for header in headers {
             let segment_id = Self::get_segment_id(next_height);
@@ -1010,6 +1046,21 @@ impl StorageManager for DiskStorageManager {
 
         // Update cached tip height atomically with reverse index
         *cached_tip = Some(next_height - 1);
+        
+        let final_height = next_height - 1;
+        
+        // Use appropriate log level based on batch size
+        match headers.len() {
+            1 => tracing::trace!("DiskStorage: stored header at height {}", final_height),
+            2..=10 => tracing::debug!("DiskStorage: stored {} headers. Height: {} -> {}", 
+                headers.len(),
+                if initial_height > 0 { initial_height - 1 } else { 0 }, 
+                final_height),
+            _ => tracing::info!("DiskStorage: stored {} headers. Height: {} -> {}", 
+                headers.len(),
+                if initial_height > 0 { initial_height - 1 } else { 0 }, 
+                final_height),
+        }
 
         // Release locks before saving (to avoid deadlocks during background saves)
         drop(reverse_index);
@@ -1059,13 +1110,47 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
+        // First check if this height is within our known range
+        let tip_height = self.cached_tip_height.read().await;
+        if let Some(tip) = *tip_height {
+            if height > tip {
+                tracing::trace!("Requested header at height {} is beyond tip height {}", height, tip);
+                return Ok(None);
+            }
+        } else {
+            tracing::trace!("No headers stored yet, returning None for height {}", height);
+            return Ok(None);
+        }
+
         let segment_id = Self::get_segment_id(height);
         let offset = Self::get_segment_offset(height);
 
         self.ensure_segment_loaded(segment_id).await?;
 
         let segments = self.active_segments.read().await;
-        Ok(segments.get(&segment_id).and_then(|segment| segment.headers.get(offset)).copied())
+        let header = segments.get(&segment_id).and_then(|segment| {
+            // Check if this is a valid header (not a default/padding header)
+            segment.headers.get(offset).and_then(|h| {
+                // Check if this is an actual header or just padding
+                if h.time == 0 && h.nonce == 0 && h.prev_blockhash == BlockHash::all_zeros() {
+                    // This is a default header used for padding, not a real header
+                    None
+                } else {
+                    Some(*h)
+                }
+            })
+        });
+        
+        if header.is_none() {
+            tracing::debug!(
+                "Header not found at height {} (segment: {}, offset: {})",
+                height,
+                segment_id,
+                offset
+            );
+        }
+        
+        Ok(header)
     }
 
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
@@ -1294,6 +1379,10 @@ impl StorageManager for DiskStorageManager {
         self.utxo_cache.write().await.clear();
         self.utxo_address_index.write().await.clear();
         *self.utxo_cache_dirty.write().await = false;
+        
+        // Clear mempool
+        self.mempool_transactions.write().await.clear();
+        *self.mempool_state.write().await = None;
 
         // Remove all files
         if self.base_path.exists() {
@@ -1428,5 +1517,277 @@ impl StorageManager for DiskStorageManager {
         // Return a clone of the in-memory cache
         let cache = self.utxo_cache.read().await;
         Ok(cache.clone())
+    }
+
+    async fn store_sync_state(&mut self, state: &crate::storage::PersistentSyncState) -> StorageResult<()> {
+        let path = self.base_path.join("sync_state.json");
+        
+        // Serialize to JSON for human readability and easy debugging
+        let json = serde_json::to_string_pretty(state)
+            .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize sync state: {}", e)))?;
+        
+        // Write to a temporary file first for atomicity
+        let temp_path = path.with_extension("tmp");
+        tokio::fs::write(&temp_path, json.as_bytes()).await?;
+        
+        // Atomically rename to final path
+        tokio::fs::rename(&temp_path, &path).await?;
+        
+        tracing::debug!("Saved sync state at height {}", state.chain_tip.height);
+        Ok(())
+    }
+
+    async fn load_sync_state(&self) -> StorageResult<Option<crate::storage::PersistentSyncState>> {
+        let path = self.base_path.join("sync_state.json");
+        
+        if !path.exists() {
+            tracing::debug!("No sync state file found");
+            return Ok(None);
+        }
+        
+        let json = tokio::fs::read_to_string(&path).await?;
+        let state: crate::storage::PersistentSyncState = serde_json::from_str(&json)
+            .map_err(|e| StorageError::ReadFailed(format!("Failed to deserialize sync state: {}", e)))?;
+        
+        tracing::debug!("Loaded sync state from height {}", state.chain_tip.height);
+        Ok(Some(state))
+    }
+
+    async fn clear_sync_state(&mut self) -> StorageResult<()> {
+        let path = self.base_path.join("sync_state.json");
+        if path.exists() {
+            tokio::fs::remove_file(&path).await?;
+            tracing::debug!("Cleared sync state");
+        }
+        Ok(())
+    }
+
+    async fn store_sync_checkpoint(&mut self, height: u32, checkpoint: &crate::storage::sync_state::SyncCheckpoint) -> StorageResult<()> {
+        let checkpoints_dir = self.base_path.join("checkpoints");
+        tokio::fs::create_dir_all(&checkpoints_dir).await?;
+        
+        let path = checkpoints_dir.join(format!("checkpoint_{:08}.json", height));
+        let json = serde_json::to_string(checkpoint)
+            .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize checkpoint: {}", e)))?;
+        
+        tokio::fs::write(&path, json.as_bytes()).await?;
+        tracing::debug!("Stored checkpoint at height {}", height);
+        Ok(())
+    }
+
+    async fn get_sync_checkpoints(&self, start_height: u32, end_height: u32) -> StorageResult<Vec<crate::storage::sync_state::SyncCheckpoint>> {
+        let checkpoints_dir = self.base_path.join("checkpoints");
+        
+        if !checkpoints_dir.exists() {
+            return Ok(Vec::new());
+        }
+        
+        let mut checkpoints: Vec<super::sync_state::SyncCheckpoint> = Vec::new();
+        let mut entries = tokio::fs::read_dir(&checkpoints_dir).await?;
+        
+        while let Some(entry) = entries.next_entry().await? {
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+            
+            // Parse height from filename
+            if let Some(height_str) = file_name_str.strip_prefix("checkpoint_").and_then(|s| s.strip_suffix(".json")) {
+                if let Ok(height) = height_str.parse::<u32>() {
+                    if height >= start_height && height <= end_height {
+                        let path = entry.path();
+                        let json = tokio::fs::read_to_string(&path).await?;
+                        if let Ok(checkpoint) = serde_json::from_str::<super::sync_state::SyncCheckpoint>(&json) {
+                            checkpoints.push(checkpoint);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Sort by height
+        checkpoints.sort_by_key(|c| c.height);
+        Ok(checkpoints)
+    }
+
+    async fn store_chain_lock(&mut self, height: u32, chain_lock: &dashcore::ChainLock) -> StorageResult<()> {
+        let chainlocks_dir = self.base_path.join("chainlocks");
+        tokio::fs::create_dir_all(&chainlocks_dir).await?;
+        
+        let path = chainlocks_dir.join(format!("chainlock_{:08}.bin", height));
+        let data = bincode::serialize(chain_lock)
+            .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize chain lock: {}", e)))?;
+        
+        tokio::fs::write(&path, &data).await?;
+        tracing::debug!("Stored chain lock at height {}", height);
+        Ok(())
+    }
+
+    async fn load_chain_lock(&self, height: u32) -> StorageResult<Option<dashcore::ChainLock>> {
+        let path = self.base_path.join("chainlocks").join(format!("chainlock_{:08}.bin", height));
+        
+        if !path.exists() {
+            return Ok(None);
+        }
+        
+        let data = tokio::fs::read(&path).await?;
+        let chain_lock = bincode::deserialize(&data)
+            .map_err(|e| StorageError::ReadFailed(format!("Failed to deserialize chain lock: {}", e)))?;
+        
+        Ok(Some(chain_lock))
+    }
+
+    async fn get_chain_locks(&self, start_height: u32, end_height: u32) -> StorageResult<Vec<(u32, dashcore::ChainLock)>> {
+        let chainlocks_dir = self.base_path.join("chainlocks");
+        
+        if !chainlocks_dir.exists() {
+            return Ok(Vec::new());
+        }
+        
+        let mut chain_locks = Vec::new();
+        let mut entries = tokio::fs::read_dir(&chainlocks_dir).await?;
+        
+        while let Some(entry) = entries.next_entry().await? {
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+            
+            // Parse height from filename
+            if let Some(height_str) = file_name_str.strip_prefix("chainlock_").and_then(|s| s.strip_suffix(".bin")) {
+                if let Ok(height) = height_str.parse::<u32>() {
+                    if height >= start_height && height <= end_height {
+                        let path = entry.path();
+                        let data = tokio::fs::read(&path).await?;
+                        if let Ok(chain_lock) = bincode::deserialize(&data) {
+                            chain_locks.push((height, chain_lock));
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Sort by height
+        chain_locks.sort_by_key(|(h, _)| *h);
+        Ok(chain_locks)
+    }
+
+    async fn store_instant_lock(&mut self, txid: dashcore::Txid, instant_lock: &dashcore::InstantLock) -> StorageResult<()> {
+        let islocks_dir = self.base_path.join("islocks");
+        tokio::fs::create_dir_all(&islocks_dir).await?;
+        
+        let path = islocks_dir.join(format!("islock_{}.bin", txid));
+        let data = bincode::serialize(instant_lock)
+            .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize instant lock: {}", e)))?;
+        
+        tokio::fs::write(&path, &data).await?;
+        tracing::debug!("Stored instant lock for txid {}", txid);
+        Ok(())
+    }
+
+    async fn load_instant_lock(&self, txid: dashcore::Txid) -> StorageResult<Option<dashcore::InstantLock>> {
+        let path = self.base_path.join("islocks").join(format!("islock_{}.bin", txid));
+        
+        if !path.exists() {
+            return Ok(None);
+        }
+        
+        let data = tokio::fs::read(&path).await?;
+        let instant_lock = bincode::deserialize(&data)
+            .map_err(|e| StorageError::ReadFailed(format!("Failed to deserialize instant lock: {}", e)))?;
+        
+        Ok(Some(instant_lock))
+    }
+
+    async fn store_terminal_block(&mut self, block: &StoredTerminalBlock) -> StorageResult<()> {
+        let terminal_blocks_dir = self.base_path.join("terminal_blocks");
+        tokio::fs::create_dir_all(&terminal_blocks_dir).await?;
+        
+        let path = terminal_blocks_dir.join(format!("terminal_block_{}.bin", block.height));
+        let data = bincode::serialize(block)
+            .map_err(|e| StorageError::WriteFailed(format!("Failed to serialize terminal block: {}", e)))?;
+        
+        tokio::fs::write(&path, data).await?;
+        Ok(())
+    }
+
+    async fn load_terminal_block(&self, height: u32) -> StorageResult<Option<StoredTerminalBlock>> {
+        let path = self.base_path.join(format!("terminal_blocks/terminal_block_{}.bin", height));
+        
+        if !path.exists() {
+            return Ok(None);
+        }
+        
+        let data = tokio::fs::read(&path).await?;
+        let block = bincode::deserialize(&data)
+            .map_err(|e| StorageError::ReadFailed(format!("Failed to deserialize terminal block: {}", e)))?;
+        
+        Ok(Some(block))
+    }
+
+    async fn get_all_terminal_blocks(&self) -> StorageResult<Vec<StoredTerminalBlock>> {
+        let terminal_blocks_dir = self.base_path.join("terminal_blocks");
+        
+        if !terminal_blocks_dir.exists() {
+            return Ok(Vec::new());
+        }
+        
+        let mut terminal_blocks: Vec<StoredTerminalBlock> = Vec::new();
+        let mut entries = tokio::fs::read_dir(&terminal_blocks_dir).await?;
+        
+        while let Some(entry) = entries.next_entry().await? {
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+            
+            // Parse height from filename
+            if let Some(height_str) = file_name_str.strip_prefix("terminal_block_").and_then(|s| s.strip_suffix(".bin")) {
+                if let Ok(_height) = height_str.parse::<u32>() {
+                    let path = entry.path();
+                    let data = tokio::fs::read(&path).await?;
+                    if let Ok(block) = bincode::deserialize(&data) {
+                        terminal_blocks.push(block);
+                    }
+                }
+            }
+        }
+        
+        // Sort by height
+        terminal_blocks.sort_by_key(|b| b.height);
+        Ok(terminal_blocks)
+    }
+
+    async fn has_terminal_block(&self, height: u32) -> StorageResult<bool> {
+        let path = self.base_path.join(format!("terminal_blocks/terminal_block_{}.bin", height));
+        Ok(path.exists())
+    }
+
+    // Mempool storage methods
+    async fn store_mempool_transaction(&mut self, txid: &Txid, tx: &UnconfirmedTransaction) -> StorageResult<()> {
+        self.mempool_transactions.write().await.insert(*txid, tx.clone());
+        Ok(())
+    }
+
+    async fn remove_mempool_transaction(&mut self, txid: &Txid) -> StorageResult<()> {
+        self.mempool_transactions.write().await.remove(txid);
+        Ok(())
+    }
+
+    async fn get_mempool_transaction(&self, txid: &Txid) -> StorageResult<Option<UnconfirmedTransaction>> {
+        Ok(self.mempool_transactions.read().await.get(txid).cloned())
+    }
+
+    async fn get_all_mempool_transactions(&self) -> StorageResult<HashMap<Txid, UnconfirmedTransaction>> {
+        Ok(self.mempool_transactions.read().await.clone())
+    }
+
+    async fn store_mempool_state(&mut self, state: &MempoolState) -> StorageResult<()> {
+        *self.mempool_state.write().await = Some(state.clone());
+        Ok(())
+    }
+
+    async fn load_mempool_state(&self) -> StorageResult<Option<MempoolState>> {
+        Ok(self.mempool_state.read().await.clone())
+    }
+
+    async fn clear_mempool(&mut self) -> StorageResult<()> {
+        self.mempool_transactions.write().await.clear();
+        *self.mempool_state.write().await = None;
+        Ok(())
     }
 }

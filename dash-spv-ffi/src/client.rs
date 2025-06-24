@@ -1,6 +1,7 @@
 use crate::{
     null_check, set_last_error, FFIArray, FFIBalance, FFICallbacks, FFIClientConfig, FFIDetailedSyncProgress,
-    FFIErrorCode, FFIEventCallbacks, FFISpvStats, FFISyncProgress, FFITransaction, FFIUtxo, FFIWatchItem,
+    FFIErrorCode, FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFISyncProgress, 
+    FFITransaction, FFIUtxo, FFIWatchItem,
 };
 use dash_spv::types::SyncStage;
 use dash_spv::DashSpvClient;
@@ -102,6 +103,86 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
     }
 }
 
+impl FFIDashSpvClient {
+    /// Start the event listener task to handle events from the SPV client.
+    fn start_event_listener(&self) {
+        let inner = self.inner.clone();
+        let event_callbacks = self.event_callbacks.clone();
+        let runtime = self.runtime.clone();
+        
+        let handle = std::thread::spawn(move || {
+            runtime.block_on(async {
+                let event_rx = {
+                    let mut guard = inner.lock().unwrap();
+                    if let Some(ref mut client) = *guard {
+                        client.take_event_receiver()
+                    } else {
+                        None
+                    }
+                };
+                
+                if let Some(mut rx) = event_rx {
+                    tracing::info!("🎧 FFI event listener started successfully");
+                    while let Some(event) = rx.recv().await {
+                        tracing::info!("🎧 FFI received event: {:?}", event);
+                        let callbacks = event_callbacks.lock().unwrap();
+                        
+                        match event {
+                            dash_spv::types::SpvEvent::BalanceUpdate { confirmed, unconfirmed, total } => {
+                                tracing::info!("💰 Balance update event: confirmed={}, unconfirmed={}, total={}", 
+                                             confirmed, unconfirmed, total);
+                                callbacks.call_balance_update(confirmed, unconfirmed);
+                            }
+                            dash_spv::types::SpvEvent::TransactionDetected { ref txid, confirmed, ref addresses, amount, block_height, .. } => {
+                                tracing::info!("💸 Transaction detected: txid={}, confirmed={}, amount={}, addresses={:?}, height={:?}", 
+                                             txid, confirmed, amount, addresses, block_height);
+                                callbacks.call_transaction(txid, confirmed, amount as i64, addresses, block_height);
+                            }
+                            dash_spv::types::SpvEvent::BlockProcessed { height, ref hash, transactions_count, relevant_transactions } => {
+                                tracing::info!("📦 Block processed: height={}, hash={}, total_tx={}, relevant_tx={}", 
+                                             height, hash, transactions_count, relevant_transactions);
+                                callbacks.call_block(height, hash);
+                            }
+                            dash_spv::types::SpvEvent::SyncProgress { .. } => {
+                                // Sync progress is handled via existing progress callback
+                                tracing::debug!("📊 Sync progress event (handled separately)");
+                            }
+                            dash_spv::types::SpvEvent::ChainLockReceived { height, hash } => {
+                                // ChainLock events can be handled here
+                                tracing::info!("🔒 ChainLock received for height {} hash {}", height, hash);
+                            }
+                            dash_spv::types::SpvEvent::MempoolTransactionAdded { ref txid, transaction: _, amount, ref addresses, is_instant_send } => {
+                                tracing::info!("➕ Mempool transaction added: txid={}, amount={}, addresses={:?}, instant_send={}", 
+                                             txid, amount, addresses, is_instant_send);
+                                // For now, treat mempool transactions as unconfirmed transactions
+                                callbacks.call_transaction(&txid.to_string(), false, amount, addresses, None);
+                            }
+                            dash_spv::types::SpvEvent::MempoolTransactionConfirmed { ref txid, block_height, ref block_hash } => {
+                                tracing::info!("✅ Mempool transaction confirmed: txid={}, height={}, hash={}", 
+                                             txid, block_height, block_hash);
+                                // Notify about the confirmation - we don't have addresses here, so pass empty vec
+                                callbacks.call_transaction(&txid.to_string(), true, 0, &Vec::new(), Some(block_height));
+                            }
+                            dash_spv::types::SpvEvent::MempoolTransactionRemoved { ref txid, ref reason } => {
+                                tracing::info!("❌ Mempool transaction removed: txid={}, reason={:?}", 
+                                             txid, reason);
+                                // Currently no specific callback for removed transactions
+                                // Could add a new callback type if needed
+                            }
+                        }
+                    }
+                    tracing::info!("🎧 FFI event listener stopped");
+                } else {
+                    tracing::error!("❌ Failed to get event receiver from SPV client");
+                }
+            });
+        });
+        
+        // Store thread handle
+        self.active_threads.lock().unwrap().push(handle);
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient) -> i32 {
     null_check!(client);
@@ -121,7 +202,11 @@ pub unsafe extern "C" fn dash_spv_ffi_client_start(client: *mut FFIDashSpvClient
     });
 
     match result {
-        Ok(()) => FFIErrorCode::Success as i32,
+        Ok(()) => {
+            // Start event listener after successful start
+            client.start_event_listener();
+            FFIErrorCode::Success as i32
+        }
         Err(e) => {
             set_last_error(&e.to_string());
             FFIErrorCode::from(e) as i32
@@ -170,7 +255,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
     let runtime = client.runtime.clone();
 
     // Create callbacks struct from individual parameters
-    let callbacks = FFICallbacks {
+    let _callbacks = FFICallbacks {
         on_progress: progress_callback,
         on_completion: completion_callback,
         on_data: None,
@@ -182,7 +267,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
         let mut guard = inner.lock().unwrap();
         if let Some(ref mut spv_client) = *guard {
             match spv_client.sync_to_tip().await {
-                Ok(sync_result) => {
+                Ok(_sync_result) => {
                     // sync_to_tip returns a SyncResult, not a stream
                     // We need to simulate progress updates
                     if let Some(callback) = progress_callback {
@@ -311,7 +396,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     let user_data_ptr = client.sync_user_data.clone();
     
     // Take progress receiver from client
-    let mut progress_receiver = {
+    let progress_receiver = {
         let mut guard = inner.lock().unwrap();
         guard.as_mut().and_then(|c| c.take_progress_receiver())
     };
@@ -623,16 +708,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_address_balance(
     });
 
     match result {
-        Ok(balance) => {
-            // Convert AddressBalance to FFIBalance
-            let ffi_balance = FFIBalance {
-                confirmed: balance.confirmed.to_sat(),
-                pending: balance.unconfirmed.to_sat(),
-                instantlocked: 0, // AddressBalance doesn't have instantlocked
-                total: balance.total().to_sat(),
-            };
-            Box::into_raw(Box::new(ffi_balance))
-        }
+        Ok(balance) => Box::into_raw(Box::new(FFIBalance::from(balance))),
         Err(e) => {
             set_last_error(&e.to_string());
             std::ptr::null_mut()
@@ -773,9 +849,26 @@ pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
     null_check!(client);
 
     let client = &(*client);
+    
+    tracing::info!("🔧 Setting event callbacks on FFI client");
+    tracing::info!("   Block callback: {}", callbacks.on_block.is_some());
+    tracing::info!("   Transaction callback: {}", callbacks.on_transaction.is_some());
+    tracing::info!("   Balance update callback: {}", callbacks.on_balance_update.is_some());
+    
     let mut event_callbacks = client.event_callbacks.lock().unwrap();
     *event_callbacks = callbacks;
+    
+    // Check if we need to start the event listener
+    // This ensures callbacks work even if set after client.start()
+    let inner = client.inner.lock().unwrap();
+    if inner.is_some() {
+        drop(inner); // Release lock before starting listener
+        tracing::info!("🚀 Client already started, ensuring event listener is running");
+        // The event listener should already be running from start()
+        // but we log this for debugging
+    }
 
+    tracing::info!("✅ Event callbacks set successfully");
     FFIErrorCode::Success as i32
 }
 
@@ -1167,18 +1260,43 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_total_balance(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result: Result<dash_spv::types::AddressBalance, dash_spv::SpvError> =
-        client.runtime.block_on(async {
-            let guard = inner.lock().unwrap();
-            if let Some(ref _spv_client) = *guard {
-                // TODO: get_balance not yet implemented in dash-spv
-                Err(dash_spv::SpvError::Config("Not implemented".to_string()))
-            } else {
-                Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                    "Client not initialized".to_string(),
-                )))
+    let result = client.runtime.block_on(async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            // Get all watched addresses
+            let watch_items = spv_client.get_watch_items().await;
+            let mut total_confirmed = 0u64;
+            let mut total_unconfirmed = 0u64;
+            
+            // Sum up balances for all watched addresses
+            for item in watch_items {
+                if let dash_spv::types::WatchItem::Address { address, .. } = item {
+                    match spv_client.get_address_balance(&address).await {
+                        Ok(balance) => {
+                            total_confirmed += balance.confirmed.to_sat();
+                            total_unconfirmed += balance.unconfirmed.to_sat();
+                            tracing::debug!("Address {} balance: confirmed={}, unconfirmed={}", 
+                                         address, balance.confirmed, balance.unconfirmed);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to get balance for address {}: {}", address, e);
+                        }
+                    }
+                }
             }
-        });
+            
+            Ok(dash_spv::types::AddressBalance {
+                confirmed: dashcore::Amount::from_sat(total_confirmed),
+                unconfirmed: dashcore::Amount::from_sat(total_unconfirmed),
+                pending: dashcore::Amount::from_sat(0),
+                pending_instant: dashcore::Amount::from_sat(0),
+            })
+        } else {
+            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                "Client not initialized".to_string(),
+            )))
+        }
+    });
 
     match result {
         Ok(balance) => Box::into_raw(Box::new(FFIBalance::from(balance))),
@@ -1258,4 +1376,142 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_address_utxos(
     address: *const c_char,
 ) -> FFIArray {
     crate::client::dash_spv_ffi_client_get_utxos_for_address(client, address)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_enable_mempool_tracking(
+    client: *mut FFIDashSpvClient,
+    strategy: FFIMempoolStrategy,
+) -> i32 {
+    null_check!(client);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+    
+    let mempool_strategy = strategy.into();
+
+    let result = client.runtime.block_on(async {
+        let mut guard = inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            spv_client.enable_mempool_tracking(mempool_strategy).await
+        } else {
+            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                "Client not initialized".to_string(),
+            )))
+        }
+    });
+
+    match result {
+        Ok(()) => FFIErrorCode::Success as i32,
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIErrorCode::from(e) as i32
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_get_balance_with_mempool(
+    client: *mut FFIDashSpvClient,
+) -> *mut FFIBalance {
+    null_check!(client, std::ptr::null_mut());
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result = client.runtime.block_on(async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            spv_client.get_wallet_balance_with_mempool().await
+        } else {
+            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                "Client not initialized".to_string(),
+            )))
+        }
+    });
+
+    match result {
+        Ok(balance) => Box::into_raw(Box::new(FFIBalance::from(balance))),
+        Err(e) => {
+            set_last_error(&e.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_get_mempool_transaction_count(
+    client: *mut FFIDashSpvClient,
+) -> i32 {
+    null_check!(client, -1);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result = client.runtime.block_on(async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            Ok(spv_client.get_mempool_transaction_count().await as i32)
+        } else {
+            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                "Client not initialized".to_string(),
+            )))
+        }
+    });
+
+    match result {
+        Ok(count) => count,
+        Err(e) => {
+            set_last_error(&e.to_string());
+            -1
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
+    client: *mut FFIDashSpvClient,
+    txid: *const c_char,
+) -> i32 {
+    null_check!(client);
+    null_check!(txid);
+
+    let txid_str = match CStr::from_ptr(txid).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in txid: {}", e));
+            return FFIErrorCode::InvalidArgument as i32;
+        }
+    };
+
+    let txid = match Txid::from_str(txid_str) {
+        Ok(t) => t,
+        Err(e) => {
+            set_last_error(&format!("Invalid txid: {}", e));
+            return FFIErrorCode::InvalidArgument as i32;
+        }
+    };
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result = client.runtime.block_on(async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            spv_client.record_transaction_send(txid).await;
+            Ok(())
+        } else {
+            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                "Client not initialized".to_string(),
+            )))
+        }
+    });
+
+    match result {
+        Ok(()) => FFIErrorCode::Success as i32,
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIErrorCode::from(e) as i32
+        }
+    }
 }
