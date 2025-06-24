@@ -149,6 +149,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Network: {:?}", network);
     tracing::info!("Data directory: {}", config.storage_path.as_ref().unwrap().display());
     tracing::info!("Validation mode: {:?}", validation_mode);
+    tracing::info!("Sync strategy: Sequential");
 
     // Check if terminal UI should be enabled
     let enable_terminal_ui = !matches.get_flag("no-terminal-ui");
@@ -385,11 +386,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         _ = signal::ctrl_c() => {
-            tracing::info!("Received shutdown signal");
+            tracing::info!("Received shutdown signal (Ctrl-C)");
+            
+            // Stop the client immediately
+            tracing::info!("Stopping SPV client...");
+            if let Err(e) = client.stop().await {
+                tracing::error!("Error stopping client: {}", e);
+            } else {
+                tracing::info!("SPV client stopped successfully");
+            }
+            return Ok(());
         }
     }
 
-    // Stop the client
+    // Stop the client (if monitor_network exited normally)
     tracing::info!("Stopping SPV client...");
     if let Err(e) = client.stop().await {
         tracing::error!("Error stopping client: {}", e);

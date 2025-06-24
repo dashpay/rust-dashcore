@@ -6,7 +6,6 @@ use tokio::sync::RwLock;
 
 use crate::error::{Result, SpvError};
 use crate::storage::StorageManager;
-use crate::sync::filters::FilterNotificationSender;
 use crate::types::WatchItem;
 use crate::wallet::Wallet;
 
