@@ -11,6 +11,7 @@
 		0E32560B2E04BFA100586020 /* SwiftDashCoreSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 0E32560A2E04BFA100586020 /* SwiftDashCoreSDK */; };
 		0E32560E2E04C19300586020 /* libdash_spv_ffi_sim.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0E3255FF2E04B2F700586020 /* libdash_spv_ffi_sim.a */; };
 		0E32560F2E04C19300586020 /* libkey_wallet_ffi_sim.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0E3256002E04B2F700586020 /* libkey_wallet_ffi_sim.a */; };
+		0E60119C2E05A22900D9DC24 /* SwiftDashCoreSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 0EA60EAA2E03663C00FEF2E0 /* SwiftDashCoreSDK */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -80,6 +81,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0E60119C2E05A22900D9DC24 /* SwiftDashCoreSDK in Frameworks */,
 				0E32560B2E04BFA100586020 /* SwiftDashCoreSDK in Frameworks */,
 				0E32560E2E04C19300586020 /* libdash_spv_ffi_sim.a in Frameworks */,
 				0E32560F2E04C19300586020 /* libkey_wallet_ffi_sim.a in Frameworks */,

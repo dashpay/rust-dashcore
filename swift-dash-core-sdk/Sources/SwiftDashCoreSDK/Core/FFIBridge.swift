@@ -97,10 +97,18 @@ internal enum FFIBridge {
         callback(height, String(cString: hash))
     }
     
-    static let transactionCallbackWrapper: @convention(c) (UnsafePointer<CChar>?, Bool, UnsafeMutableRawPointer?) -> Void = { txid, confirmed, userData in
+    static let transactionCallbackWrapper: @convention(c) (UnsafePointer<CChar>?, Bool, Int64, UnsafePointer<CChar>?, UInt32, UnsafeMutableRawPointer?) -> Void = { txid, confirmed, amount, addresses, blockHeight, userData in
         guard let userData = userData, let txid = txid else { return }
-        let callback = Unmanaged<AnyObject>.fromOpaque(userData).takeUnretainedValue() as! (String, Bool) -> Void
-        callback(String(cString: txid), confirmed)
+        let callback = Unmanaged<AnyObject>.fromOpaque(userData).takeUnretainedValue() as! (String, Bool, Int64, [String], UInt32) -> Void
+        let txidString = String(cString: txid)
+        let addressArray: [String] = {
+            if let addresses = addresses {
+                let addressesString = String(cString: addresses)
+                return addressesString.split(separator: ",").map(String.init)
+            }
+            return []
+        }()
+        callback(txidString, confirmed, amount, addressArray, blockHeight)
     }
     
     static let balanceCallbackWrapper: @convention(c) (UInt64, UInt64, UnsafeMutableRawPointer?) -> Void = { confirmed, unconfirmed, userData in

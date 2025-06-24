@@ -68,7 +68,17 @@ final class HDAccount {
     @Relationship var wallet: HDWallet?
     @Relationship(deleteRule: .cascade) var balance: Balance?
     @Relationship(deleteRule: .cascade) var addresses: [HDWatchedAddress]
-    @Relationship(deleteRule: .cascade) var transactions: [Transaction]
+    // Transaction IDs associated with this account (stored as comma-separated string)
+    private var transactionIdsString: String = ""
+    
+    var transactionIds: [String] {
+        get {
+            transactionIdsString.isEmpty ? [] : transactionIdsString.split(separator: ",").map(String.init)
+        }
+        set {
+            transactionIdsString = newValue.joined(separator: ",")
+        }
+    }
     
     init(
         accountIndex: UInt32,
@@ -85,7 +95,6 @@ final class HDAccount {
         self.lastUsedInternalIndex = 0
         self.gapLimit = gapLimit
         self.addresses = []
-        self.transactions = []
     }
     
     var displayName: String {
@@ -108,7 +117,7 @@ final class HDAccount {
     
     var receiveAddress: HDWatchedAddress? {
         // Find the first unused address or the next one to generate
-        return externalAddresses.first { $0.transactions.isEmpty }
+        return externalAddresses.first { $0.transactionIds.isEmpty }
     }
 }
 
@@ -121,14 +130,34 @@ final class HDWatchedAddress {
     var createdAt: Date
     var lastActive: Date?
     @Relationship var balance: Balance?
-    @Relationship(deleteRule: .cascade) var transactions: [Transaction]
-    @Relationship(deleteRule: .cascade) var utxos: [UTXO]
+    // Transaction IDs associated with this address (stored as comma-separated string)
+    private var transactionIdsString: String = ""
+    // UTXO outpoints associated with this address (stored as comma-separated string)
+    private var utxoOutpointsString: String = ""
+    
+    var transactionIds: [String] {
+        get {
+            transactionIdsString.isEmpty ? [] : transactionIdsString.split(separator: ",").map(String.init)
+        }
+        set {
+            transactionIdsString = newValue.joined(separator: ",")
+        }
+    }
+    
+    var utxoOutpoints: [String] {
+        get {
+            utxoOutpointsString.isEmpty ? [] : utxoOutpointsString.split(separator: ",").map(String.init)
+        }
+        set {
+            utxoOutpointsString = newValue.joined(separator: ",")
+        }
+    }
     
     // HD specific properties
     var index: UInt32
     var isChange: Bool
     var derivationPath: String
-    @Relationship var account: HDAccount?
+    @Relationship(inverse: \HDAccount.addresses) var account: HDAccount?
     
     init(address: String, index: UInt32, isChange: Bool, derivationPath: String, label: String? = nil) {
         self.address = address
@@ -138,13 +167,30 @@ final class HDWatchedAddress {
         self.label = label
         self.createdAt = Date()
         self.balance = nil
-        self.transactions = []
-        self.utxos = []
     }
     
     var formattedBalance: String {
         guard let balance = balance else { return "0.00000000 DASH" }
         return balance.formattedTotal
+    }
+}
+
+// MARK: - Transaction Helper
+
+extension Transaction {
+    // Helper to create from SDK transaction
+    static func from(sdkTransaction: SwiftDashCoreSDK.Transaction) -> Transaction {
+        return Transaction(
+            txid: sdkTransaction.txid,
+            height: sdkTransaction.height,
+            timestamp: sdkTransaction.timestamp,
+            amount: sdkTransaction.amount,
+            fee: sdkTransaction.fee,
+            confirmations: sdkTransaction.confirmations,
+            isInstantLocked: sdkTransaction.isInstantLocked,
+            size: sdkTransaction.size,
+            version: sdkTransaction.version
+        )
     }
 }
 
