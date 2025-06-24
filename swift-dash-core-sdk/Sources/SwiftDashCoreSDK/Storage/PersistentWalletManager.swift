@@ -1,14 +1,17 @@
 import Foundation
 import Combine
 import SwiftData
+import os.log
 
 @Observable
 public final class PersistentWalletManager: WalletManager {
     private let storage: StorageManager
     private var syncTask: Task<Void, Never>?
+    private let logger = Logger(subsystem: "com.dash.sdk", category: "PersistentWalletManager")
     
     public init(client: SPVClient, storage: StorageManager) {
         self.storage = storage
+        
         super.init(client: client)
         
         Task {
@@ -79,24 +82,34 @@ public final class PersistentWalletManager: WalletManager {
     }
     
     public override func getTransactions(for address: String? = nil, limit: Int = 100) async throws -> [Transaction] {
-        // Get from storage
-        let cachedTransactions = try storage.fetchTransactions(for: address, limit: limit)
+        // First get from parent's in-memory storage (which has real-time data)
+        let currentTransactions = try await super.getTransactions(for: address, limit: limit)
         
-        // If we have data, return it (we'll sync in background)
-        if !cachedTransactions.isEmpty {
-            Task {
-                await syncTransactions(for: address)
+        // Save any new transactions to storage
+        for transaction in currentTransactions {
+            if try storage.fetchTransaction(by: transaction.txid) == nil {
+                try storage.saveTransaction(transaction)
             }
-            return cachedTransactions
         }
         
-        // Otherwise fetch fresh data
-        let transactions = try await super.getTransactions(for: address, limit: limit)
+        // Also get from storage to include any historical transactions
+        let cachedTransactions = try storage.fetchTransactions(for: address, limit: limit)
         
-        // Save to storage
-        try await storage.saveTransactions(transactions)
+        // Merge and deduplicate
+        var allTransactions = currentTransactions
+        for cached in cachedTransactions {
+            if !allTransactions.contains(where: { $0.txid == cached.txid }) {
+                allTransactions.append(cached)
+            }
+        }
         
-        return transactions
+        // Sort and limit
+        allTransactions.sort { $0.timestamp > $1.timestamp }
+        if allTransactions.count > limit {
+            allTransactions = Array(allTransactions.prefix(limit))
+        }
+        
+        return allTransactions
     }
     
     // MARK: - Persistence Methods
@@ -105,12 +118,26 @@ public final class PersistentWalletManager: WalletManager {
         do {
             // Load watched addresses
             let addresses = try storage.fetchWatchedAddresses()
+            
             watchedAddresses = Set(addresses.map { $0.address })
             
             // Re-watch addresses in SPV client if connected
             if client.isConnected {
+                var watchErrors: [Error] = []
+                
                 for address in addresses {
-                    try? await client.addWatchItem(type: .address, data: address.address)
+                    do {
+                        try await client.addWatchItem(type: .address, data: address.address)
+                        logger.debug("Re-watched address: \(address.address)")
+                    } catch {
+                        logger.error("Failed to re-watch address \(address.address): \(error)")
+                        watchErrors.append(error)
+                    }
+                }
+                
+                // If any addresses failed to watch, throw aggregate error
+                if !watchErrors.isEmpty {
+                    throw WalletManagerError.partialWatchFailure(addresses: addresses.count, failures: watchErrors.count)
                 }
             }
             
@@ -172,11 +199,19 @@ public final class PersistentWalletManager: WalletManager {
                     // Update existing transaction
                     existing.confirmations = transaction.confirmations
                     existing.isInstantLocked = transaction.isInstantLocked
+                    existing.height = transaction.height ?? existing.height
+                    existing.amount = transaction.amount
                     try storage.updateTransaction(existing)
                 } else {
                     // Save new transaction
                     try storage.saveTransaction(transaction)
                 }
+            }
+            
+            // Also save address-transaction associations if we have them
+            if let address = address {
+                // Store which transactions belong to which addresses
+                // This would require extending the storage model
             }
         } catch {
             print("Failed to sync transactions: \(error)")
@@ -396,5 +431,18 @@ public struct WalletExportData: Codable {
         }
         
         return "Unknown"
+    }
+}
+
+// MARK: - Wallet Manager Errors
+
+public enum WalletManagerError: LocalizedError {
+    case partialWatchFailure(addresses: Int, failures: Int)
+    
+    public var errorDescription: String? {
+        switch self {
+        case .partialWatchFailure(let addresses, let failures):
+            return "Failed to watch \(failures) out of \(addresses) addresses"
+        }
     }
 }
