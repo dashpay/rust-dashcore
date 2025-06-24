@@ -31,19 +31,25 @@ cargo build --release
 
 ### 2. Generate C Headers
 
-The C headers should already be generated, but if you need to regenerate them:
+The C headers are automatically generated when building dash-spv-ffi:
 
 ```bash
 cd ../dash-spv-ffi
-cargo build --features generate-headers
+cargo build --release
+# Headers are generated in dash-spv-ffi/include/dash_spv_ffi.h
 ```
 
 ### 3. Copy Headers to Swift Package
 
 ```bash
-# Copy the generated header
-cp target/dash_spv_ffi.h ../swift-dash-core-sdk/Sources/DashSPVFFI/include/
+# From swift-dash-core-sdk directory
+./sync-headers.sh
+
+# Or manually:
+cp ../dash-spv-ffi/include/dash_spv_ffi.h Sources/DashSPVFFI/include/
 ```
+
+Note: The `build-ios.sh` script automatically copies headers when building for iOS.
 
 ### 4. Build for iOS/macOS
 

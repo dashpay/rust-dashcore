@@ -23,6 +23,7 @@ This refactored SPV client extracts the monolithic `handshake.rs` example into a
 - **ChainLock/InstantLock Validation**: Dash-specific consensus features
 - **Watch Addresses/Scripts**: Monitor blockchain for relevant transactions
 - **Persistent Storage**: Save and restore state between runs
+- **Peer Reputation System**: Track peer behavior and protect against malicious nodes
 
 ### ✅ **Improved Maintainability** 
 
@@ -75,13 +76,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 dash-spv/
 ├── client/         # High-level client API and configuration
-├── network/        # TCP connections, handshake, message routing  
+├── network/        # TCP connections, handshake, message routing
+│   └── reputation/ # Peer reputation tracking and management
 ├── storage/        # Storage abstraction (memory/disk backends)
 ├── sync/           # Header, filter, and masternode synchronization
 ├── validation/     # Header, ChainLock, InstantLock validation
 ├── types.rs        # Common types and data structures
 └── error.rs        # Unified error handling
 ```
+
+## Peer Reputation System
+
+The SPV client includes a comprehensive peer reputation system that protects against malicious peers:
+
+- **Automatic Misbehavior Tracking**: Peers are scored based on their behavior
+- **Configurable Thresholds**: Different misbehaviors have different severity scores
+- **Automatic Banning**: Peers exceeding the threshold are temporarily banned
+- **Reputation Decay**: Scores improve over time, allowing recovery
+- **Persistent Storage**: Reputation data survives client restarts
+- **Smart Peer Selection**: Prioritizes well-behaved peers for connections
+
+See [docs/PEER_REPUTATION_SYSTEM.md](docs/PEER_REPUTATION_SYSTEM.md) for detailed documentation.
 
 ## Status
 
