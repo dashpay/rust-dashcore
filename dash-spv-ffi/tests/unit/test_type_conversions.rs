@@ -145,6 +145,7 @@ mod tests {
             headers_synced: true,
             filter_headers_synced: true,
             masternodes_synced: true,
+            filter_sync_available: true,
             filters_downloaded: u64::MAX,
             last_synced_filter_height: Some(u32::MAX),
             sync_start: std::time::SystemTime::now(),

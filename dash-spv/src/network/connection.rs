@@ -1,7 +1,7 @@
 //! TCP connection management.
 
 use std::collections::HashMap;
-use std::io::{BufReader, Write, Read, Cursor};
+use std::io::{BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, SystemTime};
 use std::sync::Arc;

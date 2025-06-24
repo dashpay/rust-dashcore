@@ -61,17 +61,22 @@ impl MessageHandler {
                 self.stats.masternode_diff_messages += 1;
                 MessageHandleResult::MasternodeDiff(diff)
             }
-            // Note: ChainLock and InstantLock may not be in NetworkMessage enum
-            // TODO: Handle these messages when they're available
             NetworkMessage::Inv(inv) => {
                 self.stats.inventory_messages += 1;
-                // TODO: Handle inventory messages properly
-                MessageHandleResult::Unhandled(NetworkMessage::Inv(inv))
+                MessageHandleResult::Inventory(inv)
             }
             NetworkMessage::GetData(getdata) => {
                 self.stats.getdata_messages += 1;
                 // TODO: Handle getdata messages properly
                 MessageHandleResult::Unhandled(NetworkMessage::GetData(getdata))
+            }
+            NetworkMessage::CLSig(chainlock) => {
+                self.stats.chainlock_messages += 1;
+                MessageHandleResult::ChainLock(chainlock)
+            }
+            NetworkMessage::ISLock(instantlock) => {
+                self.stats.instantlock_messages += 1;
+                MessageHandleResult::InstantLock(instantlock)
             }
             other => {
                 self.stats.other_messages += 1;

@@ -63,6 +63,18 @@ impl HeaderSyncManager {
                 return Ok(true);
             }
         }
+        
+        // Log the first and last header received
+        tracing::info!(
+            "📥 Processing headers: first={} last={}", 
+            headers[0].block_hash(),
+            headers.last().unwrap().block_hash()
+        );
+        
+        // Get the current tip before processing
+        let tip_before = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+        tracing::info!("📊 Current tip height before processing: {:?}", tip_before);
 
         if self.syncing_headers {
             self.last_sync_progress = std::time::Instant::now();
@@ -116,6 +128,20 @@ impl HeaderSyncManager {
             .store_headers(&validated_headers)
             .await
             .map_err(|e| SyncError::SyncFailed(format!("Failed to store headers: {}", e)))?;
+        
+        // Get the current tip after processing
+        let tip_after = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+        tracing::info!("📊 Current tip height after processing: {:?}", tip_after);
+        
+        // Log if headers were actually stored
+        if tip_before != tip_after {
+            tracing::info!("✅ Successfully stored {} headers, tip advanced from {:?} to {:?}", 
+                validated_headers.len(), tip_before, tip_after);
+        } else {
+            tracing::warn!("⚠️ Headers validated but tip height unchanged! Validated {} headers but tip remains at {:?}", 
+                validated_headers.len(), tip_before);
+        }
 
         if self.syncing_headers {
             // During sync mode - request next batch
@@ -308,7 +334,9 @@ impl HeaderSyncManager {
         let stop_hash = BlockHash::from_byte_array([0; 32]);
 
         // Create GetHeaders message
-        let getheaders_msg = GetHeadersMessage::new(block_locator, stop_hash);
+        let getheaders_msg = GetHeadersMessage::new(block_locator.clone(), stop_hash);
+        
+        tracing::info!("📤 Sending GetHeaders message");
 
         // Send the message
         network
@@ -356,11 +384,23 @@ impl HeaderSyncManager {
                 Some(headers[i - 1])
             };
 
+            // Check if this header already exists in storage
+            let already_exists = storage.get_header_height_by_hash(&header.block_hash()).await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to check header existence: {}", e)))?
+                .is_some();
+            
+            if already_exists {
+                tracing::info!("⚠️ Header {} already exists in storage, skipping", header.block_hash());
+                // Even though we skip validation and storage, we need to update prev_header
+                // for subsequent headers in the batch to validate correctly
+                continue;
+            }
+
             // Validate the header
-            // tracing::trace!("Validating header {} at index {}", header.block_hash(), i);
-            // if let Some(prev) = prev_header.as_ref() {
-            //     tracing::trace!("Previous header: {}", prev.block_hash());
-            // }
+            tracing::info!("Validating new header {} at index {}", header.block_hash(), i);
+            if let Some(prev) = prev_header.as_ref() {
+                tracing::debug!("Previous header: {}", prev.block_hash());
+            }
 
             self.validation.validate_header(header, prev_header.as_ref()).map_err(|e| {
                 SyncError::SyncFailed(format!(
@@ -416,13 +456,19 @@ impl HeaderSyncManager {
                 .known_genesis_block_hash()
                 .expect("unable to get genesis block hash")
         };
+        
+        tracing::info!("📍 Using tip at height {:?} as locator: {}", 
+            storage.get_tip_height().await.ok().flatten(), current_tip);
 
-        // Create GetHeaders message with specific stop hash
+        // Create GetHeaders message requesting headers up to and including the specific block
+        // The peer will send headers starting after our current tip up to the requested block
         let getheaders_msg = GetHeadersMessage {
             version: 70214, // Dash protocol version
             locator_hashes: vec![current_tip],
-            stop_hash: block_hash,
+            stop_hash: block_hash, // Request headers up to this specific block
         };
+        
+        tracing::info!("📤 Requesting headers from {} up to block {}", current_tip, block_hash);
 
         // Send the message
         network
@@ -447,5 +493,14 @@ impl HeaderSyncManager {
     /// Check if header sync is currently in progress.
     pub fn is_syncing(&self) -> bool {
         self.syncing_headers
+    }
+
+    /// Reset any pending requests after restart.
+    pub fn reset_pending_requests(&mut self) {
+        // Headers sync doesn't track individual pending requests
+        // Just reset the sync state
+        self.syncing_headers = false;
+        self.last_sync_progress = std::time::Instant::now();
+        tracing::debug!("Reset header sync pending requests");
     }
 }

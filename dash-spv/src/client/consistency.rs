@@ -72,7 +72,7 @@ impl<'a> ConsistencyManager<'a> {
             let wallet = self.wallet.read().await;
             wallet.get_utxos().await
         };
-        let storage_utxos = self.storage.get_all_utxos().await.map_err(|e| SpvError::Storage(e))?;
+        let storage_utxos = self.storage.get_all_utxos().await.map_err(SpvError::Storage)?;
 
         // Check for UTXOs in wallet but not in storage
         for wallet_utxo in &wallet_utxos {
@@ -175,7 +175,7 @@ impl<'a> ConsistencyManager<'a> {
         }
 
         // Sync UTXOs from storage to wallet
-        let storage_utxos = self.storage.get_all_utxos().await.map_err(|e| SpvError::Storage(e))?;
+        let storage_utxos = self.storage.get_all_utxos().await.map_err(SpvError::Storage)?;
         let wallet_utxos = {
             let wallet = self.wallet.read().await;
             wallet.get_utxos().await

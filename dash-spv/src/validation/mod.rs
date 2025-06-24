@@ -3,6 +3,7 @@
 pub mod chainlock;
 pub mod headers;
 pub mod instantlock;
+pub mod quorum;
 
 use dashcore::{block::Header as BlockHeader, ChainLock, InstantLock};
 
@@ -12,6 +13,7 @@ use crate::types::ValidationMode;
 pub use chainlock::ChainLockValidator;
 pub use headers::HeaderValidator;
 pub use instantlock::InstantLockValidator;
+pub use quorum::{QuorumManager, QuorumType, QuorumInfo};
 
 /// Manages all validation operations.
 pub struct ValidationManager {
