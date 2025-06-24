@@ -87,6 +87,7 @@ mod tests {
             filter_headers_synced: false,
             masternodes_synced: false,
             filters_downloaded: 50,
+            filter_sync_available: true,
             last_synced_filter_height: Some(45),
             sync_start: std::time::SystemTime::now(),
             last_update: std::time::SystemTime::now(),

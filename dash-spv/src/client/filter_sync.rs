@@ -67,7 +67,7 @@ impl<'a> FilterSyncCoordinator<'a> {
             .storage
             .get_filter_tip_height()
             .await
-            .map_err(|e| SpvError::Storage(e))?
+            .map_err(SpvError::Storage)?
             .unwrap_or(0);
 
         // Get current watch items to determine earliest height needed
@@ -117,7 +117,7 @@ impl<'a> FilterSyncCoordinator<'a> {
             .storage
             .get_filter_tip_height()
             .await
-            .map_err(|e| SpvError::Storage(e))?
+            .map_err(SpvError::Storage)?
             .unwrap_or(0);
 
         let start = start_height.unwrap_or(filter_tip_height.saturating_sub(99));
@@ -154,7 +154,7 @@ impl<'a> FilterSyncCoordinator<'a> {
                 Some(count),
             )
             .await
-            .map_err(|e| SpvError::Sync(e))?;
+            .map_err(SpvError::Sync)?;
 
         let (pending_count, active_count, flow_enabled) =
             self.sync_manager.filter_sync().get_flow_control_status();

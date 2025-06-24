@@ -70,6 +70,12 @@ pub enum StorageError {
 
     #[error("Serialization error: {0}")]
     Serialization(String),
+    
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+    
+    #[error("Inconsistent state: {0}")]
+    InconsistentState(String),
 }
 
 /// Validation-related errors.

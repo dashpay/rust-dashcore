@@ -13,6 +13,7 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::{MasternodeState, StorageManager};
+use crate::sync::terminal_blocks::TerminalBlockManager;
 
 /// Manages masternode list synchronization.
 pub struct MasternodeSyncManager {
@@ -21,6 +22,8 @@ pub struct MasternodeSyncManager {
     engine: Option<MasternodeListEngine>,
     /// Last time sync progress was made (for timeout detection)
     last_sync_progress: std::time::Instant,
+    /// Terminal block manager for optimized sync
+    terminal_block_manager: TerminalBlockManager,
 }
 
 impl MasternodeSyncManager {
@@ -42,6 +45,7 @@ impl MasternodeSyncManager {
             sync_in_progress: false,
             engine,
             last_sync_progress: std::time::Instant::now(),
+            terminal_block_manager: TerminalBlockManager::new(config.network),
         }
     }
 
@@ -198,8 +202,9 @@ impl MasternodeSyncManager {
         self.sync_in_progress = true;
         self.last_sync_progress = std::time::Instant::now();
 
-        // Try incremental diff first if we have previous state, fallback to genesis if needed
+        // Check if we can use a terminal block as a base for optimization
         let base_height = if last_masternode_height > 0 {
+            // We have a previous state, try incremental sync
             tracing::info!(
                 "Attempting incremental masternode diff from height {} to {}",
                 last_masternode_height,
@@ -207,11 +212,39 @@ impl MasternodeSyncManager {
             );
             last_masternode_height
         } else {
-            tracing::info!(
-                "No previous masternode state, requesting full diff from genesis to height {}",
-                current_height
-            );
-            0
+            // No previous state - check if we can start from a terminal block
+            if let Some(terminal_block) = self.terminal_block_manager.find_best_base_terminal_block(current_height) {
+                // Validate that this terminal block exists in our chain
+                if let Some(header) = storage.get_header(terminal_block.height).await.map_err(|e| {
+                    SyncError::SyncFailed(format!("Failed to get terminal block header: {}", e))
+                })? {
+                    if header.block_hash() == terminal_block.block_hash {
+                        tracing::info!(
+                            "Using terminal block at height {} as base for masternode sync",
+                            terminal_block.height
+                        );
+                        terminal_block.height
+                    } else {
+                        tracing::warn!(
+                            "Terminal block hash mismatch at height {} - falling back to genesis",
+                            terminal_block.height
+                        );
+                        0
+                    }
+                } else {
+                    tracing::info!(
+                        "Terminal block at height {} not yet synced - starting from genesis",
+                        terminal_block.height
+                    );
+                    0
+                }
+            } else {
+                tracing::info!(
+                    "No suitable terminal block found - requesting full diff from genesis to height {}",
+                    current_height
+                );
+                0
+            }
         };
 
         // Request masternode list diff
@@ -408,6 +441,7 @@ impl MasternodeSyncManager {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs(),
+                    terminal_block_hash: None,
                 };
 
                 storage.store_masternode_state(&masternode_state).await.map_err(|e| {
@@ -435,14 +469,42 @@ impl MasternodeSyncManager {
         tracing::info!("Successfully applied masternode list diff");
 
         // Find the height of the target block
-        // TODO: This is inefficient - we should maintain a hash->height mapping
-        let target_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
-            .unwrap_or(0);
+        let target_height = if let Some(height) = storage.get_header_height_by_hash(&target_block_hash).await.map_err(|e| {
+            SyncError::SyncFailed(format!("Failed to lookup target block height: {}", e))
+        })? {
+            height
+        } else {
+            // Fallback to tip height if we can't find the specific block
+            storage
+                .get_tip_height()
+                .await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+                .unwrap_or(0)
+        };
+
+        // Validate terminal block if this is one
+        if self.terminal_block_manager.is_terminal_block_height(target_height) {
+            let is_valid = self.terminal_block_manager
+                .validate_terminal_block(target_height, &target_block_hash, storage)
+                .await?;
+            
+            if !is_valid {
+                return Err(SyncError::SyncFailed(format!(
+                    "Terminal block validation failed at height {}",
+                    target_height
+                )));
+            }
+            
+            tracing::info!("✅ Terminal block validated at height {}", target_height);
+        }
 
         // Store the updated masternode state
+        let terminal_block_hash = if self.terminal_block_manager.is_terminal_block_height(target_height) {
+            Some(target_block_hash.to_byte_array())
+        } else {
+            None
+        };
+        
         let masternode_state = MasternodeState {
             last_height: target_height,
             engine_state: Vec::new(), // TODO: Serialize engine state
@@ -450,6 +512,7 @@ impl MasternodeSyncManager {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
+            terminal_block_hash,
         };
 
         storage.store_masternode_state(&masternode_state).await.map_err(|e| {
@@ -472,5 +535,25 @@ impl MasternodeSyncManager {
     /// Get a reference to the masternode engine for validation.
     pub fn engine(&self) -> Option<&MasternodeListEngine> {
         self.engine.as_ref()
+    }
+
+    /// Get a reference to the terminal block manager.
+    pub fn terminal_block_manager(&self) -> &TerminalBlockManager {
+        &self.terminal_block_manager
+    }
+
+    /// Get the next terminal block after the current masternode sync height.
+    pub async fn get_next_terminal_block(
+        &self,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<Option<&crate::sync::terminal_blocks::TerminalBlock>> {
+        let current_height = match storage.load_masternode_state().await.map_err(|e| {
+            SyncError::SyncFailed(format!("Failed to load masternode state: {}", e))
+        })? {
+            Some(state) => state.last_height,
+            None => 0,
+        };
+
+        Ok(self.terminal_block_manager.get_next_terminal_block(current_height))
     }
 }

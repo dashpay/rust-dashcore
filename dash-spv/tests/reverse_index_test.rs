@@ -1,6 +1,6 @@
 use dash_spv::storage::{DiskStorageManager, MemoryStorageManager, StorageManager};
 use dashcore::block::Header as BlockHeader;
-use dashcore::hashes::Hash;
+use dashcore_hashes::Hash;
 use std::path::PathBuf;
 
 #[tokio::test]
