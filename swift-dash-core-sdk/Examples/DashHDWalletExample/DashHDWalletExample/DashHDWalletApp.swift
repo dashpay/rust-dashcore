@@ -10,6 +10,13 @@ struct DashHDWalletApp: App {
     let modelContainer: ModelContainer
     
     init() {
+        // Force cleanup on first launch to handle model changes
+        if !UserDefaults.standard.bool(forKey: "ModelV2Migrated") {
+            print("Forcing model cleanup for v2 migration...")
+            ModelContainerHelper.cleanupCorruptStore()
+            UserDefaults.standard.set(true, forKey: "ModelV2Migrated")
+        }
+        
         do {
             modelContainer = try ModelContainerHelper.createContainer()
         } catch {

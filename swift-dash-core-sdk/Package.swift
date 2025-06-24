@@ -27,7 +27,8 @@ let package = Package(
             name: "DashSPVFFI",
             dependencies: [],
             path: "Sources/DashSPVFFI",
-            sources: ["DashSPVFFI.swift"],
+            exclude: ["DashSPVFFI.swift"],
+            sources: ["dummy.c"],
             publicHeadersPath: "include",
             cSettings: [
                 .headerSearchPath("include"),
@@ -35,12 +36,12 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("dash_spv_ffi"),
                 .unsafeFlags([
-                    "-L../target/aarch64-apple-ios-sim/release",
-                    "-L../target/x86_64-apple-ios/release",
-                    "-L../target/ios-simulator-universal/release",
-                    "-L../target/release",
-                    "-LExamples/DashHDWalletExample",
-                    "-L."
+                    "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk/Examples/DashHDWalletExample",
+                    "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk",
+                    "-L/Users/quantum/src/rust-dashcore/target/aarch64-apple-ios-sim/release",
+                    "-L/Users/quantum/src/rust-dashcore/target/x86_64-apple-ios/release",
+                    "-L/Users/quantum/src/rust-dashcore/target/ios-simulator-universal/release",
+                    "-L/Users/quantum/src/rust-dashcore/target/release"
                 ])
             ]
         ),
@@ -49,6 +50,7 @@ let package = Package(
             dependencies: [],
             path: "Sources/KeyWalletFFI",
             exclude: ["key_wallet_ffi.swift"],
+            sources: ["dummy.c"],
             publicHeadersPath: ".",
             cSettings: [
                 .headerSearchPath("."),
@@ -57,12 +59,12 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("key_wallet_ffi"),
                 .unsafeFlags([
-                    "-L../target/aarch64-apple-ios-sim/release",
-                    "-L../target/x86_64-apple-ios/release",
-                    "-L../target/ios-simulator-universal/release",
-                    "-L../target/release",
-                    "-LExamples/DashHDWalletExample",
-                    "-L."
+                    "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk/Examples/DashHDWalletExample",
+                    "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk",
+                    "-L/Users/quantum/src/rust-dashcore/target/aarch64-apple-ios-sim/release",
+                    "-L/Users/quantum/src/rust-dashcore/target/x86_64-apple-ios/release",
+                    "-L/Users/quantum/src/rust-dashcore/target/ios-simulator-universal/release",
+                    "-L/Users/quantum/src/rust-dashcore/target/release"
                 ])
             ]
         ),

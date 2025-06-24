@@ -58,6 +58,10 @@ cp target/aarch64-apple-ios/release/libkey_wallet_ffi.a target/ios/release/
 # Navigate back to swift directory
 cd swift-dash-core-sdk
 
+# Copy the generated header file
+echo -e "${GREEN}Copying generated header file...${NC}"
+cp ../dash-spv-ffi/include/dash_spv_ffi.h Sources/DashSPVFFI/include/
+
 # Copy libraries to example directory
 echo -e "${GREEN}Copying libraries to example directory...${NC}"
 cp ../target/ios-simulator-universal/release/libdash_spv_ffi.a Examples/DashHDWalletExample/libdash_spv_ffi_sim.a

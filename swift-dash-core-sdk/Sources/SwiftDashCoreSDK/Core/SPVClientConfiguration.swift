@@ -24,6 +24,7 @@ public final class SPVClientConfiguration {
     private func setupDefaultDataDirectory() {
         if let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
             self.dataDirectory = documentsPath.appendingPathComponent("DashSPV").appendingPathComponent(network.rawValue)
+            print("📁 SPV data directory set to: \(self.dataDirectory?.path ?? "nil")")
         }
     }
     
@@ -58,10 +59,19 @@ public final class SPVClientConfiguration {
         }
         
         if let dataDir = dataDirectory {
+            print("📂 Setting SPV data directory for persistence: \(dataDir.path)")
             let result = FFIBridge.withCString(dataDir.path) { path in
                 dash_spv_ffi_config_set_data_dir(config, path)
             }
             try FFIBridge.checkError(result)
+            
+            // Check if sync state already exists
+            let syncStateFile = dataDir.appendingPathComponent("sync_state.json")
+            if FileManager.default.fileExists(atPath: syncStateFile.path) {
+                print("✅ Found existing sync state at: \(syncStateFile.path)")
+            } else {
+                print("📝 No existing sync state found, will start fresh sync")
+            }
         }
         
         var result = dash_spv_ffi_config_set_validation_mode(config, validationMode.ffiValue)
