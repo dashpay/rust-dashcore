@@ -8,6 +8,8 @@ public class WalletManager {
     
     public internal(set) var watchedAddresses: Set<String> = []
     public internal(set) var totalBalance: Balance = Balance()
+    public internal(set) var transactions: [String: Transaction] = [:] // txid -> Transaction
+    public internal(set) var addressTransactions: [String: Set<String>] = [:] // address -> Set of txids
     
     private var cancellables = Set<AnyCancellable>()
     
@@ -65,9 +67,7 @@ public class WalletManager {
             throw DashSDKError.notConnected
         }
         
-        // This would call the FFI function to get balance
-        // For now, return a mock balance
-        return Balance()
+        return try await client.getAddressBalance(address)
     }
     
     public func getTotalBalance() async throws -> Balance {
@@ -75,8 +75,7 @@ public class WalletManager {
             throw DashSDKError.notConnected
         }
         
-        // This would call the FFI function to get total balance
-        return totalBalance
+        return try await client.getTotalBalance()
     }
     
     // MARK: - UTXO Management
@@ -104,8 +103,29 @@ public class WalletManager {
             throw DashSDKError.notConnected
         }
         
-        // This would call the FFI function to get transactions
-        return []
+        var result: [Transaction]
+        
+        // Filter by address if provided
+        if let address = address {
+            // Get transaction IDs for this address
+            let txids = addressTransactions[address] ?? Set<String>()
+            
+            // Get the actual transaction objects
+            result = txids.compactMap { transactions[$0] }
+        } else {
+            // Return all transactions
+            result = Array(transactions.values)
+        }
+        
+        // Sort by timestamp, newest first
+        result.sort { $0.timestamp > $1.timestamp }
+        
+        // Apply limit
+        if result.count > limit {
+            result = Array(result.prefix(limit))
+        }
+        
+        return result
     }
     
     public func getTransaction(txid: String) async throws -> Transaction? {
@@ -113,8 +133,8 @@ public class WalletManager {
             throw DashSDKError.notConnected
         }
         
-        // This would call the FFI function to get a specific transaction
-        return nil
+        // Return from local storage
+        return transactions[txid]
     }
     
     // MARK: - Transaction Building
@@ -167,25 +187,72 @@ public class WalletManager {
         switch event {
         case .balanceUpdated(let balance):
             self.totalBalance = balance
-        case .transactionReceived(_, _):
-            // Refresh transactions for affected addresses
-            await updateTotalBalance()
+        case .transactionReceived(let txid, let confirmed, let amount, let addresses, let blockHeight):
+            // Handle transaction with full details
+            await handleTransactionDetected(txid: txid, confirmed: confirmed, amount: amount, addresses: addresses, blockHeight: blockHeight)
         default:
             break
         }
     }
     
     private func updateBalance(for address: String) async throws {
-        let _ = try await getBalance(for: address)
-        // TODO: Update stored balance when we have storage integration
+        _ = try await getBalance(for: address)
+        // Update total balance after adding new address
+        await updateTotalBalance()
     }
     
     internal func updateTotalBalance() async {
         do {
             totalBalance = try await getTotalBalance()
         } catch {
-            // Handle error
+            print("Failed to update total balance: \(error)")
         }
+    }
+    
+    private func handleTransactionDetected(txid: String, confirmed: Bool, amount: Int64, addresses: [String], blockHeight: UInt32?) async {
+        // Check if we already have this transaction
+        if var existingTx = transactions[txid] {
+            // Update confirmation status if needed
+            if confirmed && existingTx.confirmations == 0 {
+                existingTx.confirmations = 1
+                existingTx.height = blockHeight
+                transactions[txid] = existingTx
+            }
+            return
+        }
+        
+        // Create transaction with real data
+        let transaction = Transaction(
+            txid: txid,
+            height: blockHeight,
+            timestamp: Date(),
+            amount: amount,
+            fee: 0, // Fee is not provided in the event
+            confirmations: confirmed ? 1 : 0,
+            isInstantLocked: false // Could be determined from confirmation speed
+        )
+        
+        // Store the transaction
+        transactions[txid] = transaction
+        
+        // Associate transaction with addresses
+        for address in addresses {
+            // Add to address-transaction mapping
+            if addressTransactions[address] == nil {
+                addressTransactions[address] = Set<String>()
+            }
+            addressTransactions[address]?.insert(txid)
+        }
+        
+        // Update balance
+        await updateTotalBalance()
+        
+        // Log for debugging
+        print("💸 New transaction detected: \(txid)")
+        print("   Amount: \(amount) satoshis (\(Double(amount) / 100_000_000) DASH)")
+        print("   Addresses: \(addresses.joined(separator: ", "))")
+        print("   Confirmed: \(confirmed), Height: \(blockHeight ?? 0)")
+        print("📊 Total transactions stored: \(transactions.count)")
     }
     
     private func validateAddress(_ address: String) throws {
