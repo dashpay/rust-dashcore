@@ -40,6 +40,16 @@ impl BLSPublicKey {
     pub fn is_zeroed(&self) -> bool {
         self.0 == [0; 48]
     }
+
+    /// Returns the compressed 48-byte representation of the BLS public key
+    pub fn to_compressed(&self) -> [u8; 48] {
+        self.0
+    }
+
+    /// Returns the compressed bytes of the BLS public key
+    pub fn to_bytes(&self) -> [u8; 48] {
+        self.0
+    }
 }
 
 impl_array_newtype!(BLSPublicKey, u8, 48);
