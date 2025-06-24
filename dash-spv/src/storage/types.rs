@@ -14,6 +14,28 @@ pub struct MasternodeState {
 
     /// Last update timestamp.
     pub last_update: u64,
+    
+    /// Terminal block hash if this state corresponds to a terminal block.
+    pub terminal_block_hash: Option<[u8; 32]>,
+}
+
+/// Terminal block storage record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredTerminalBlock {
+    /// Block height.
+    pub height: u32,
+    
+    /// Block hash.
+    pub block_hash: [u8; 32],
+    
+    /// Masternode list merkle root at this height.
+    pub masternode_list_merkle_root: Option<[u8; 32]>,
+    
+    /// Compressed masternode list state at this terminal block.
+    pub masternode_list_state: Option<Vec<u8>>,
+    
+    /// Timestamp when this terminal block was stored.
+    pub stored_timestamp: u64,
 }
 
 /// Storage statistics.

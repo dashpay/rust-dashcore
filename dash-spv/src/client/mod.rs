@@ -21,9 +21,11 @@ use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::filters::FilterNotificationSender;
-use crate::sync::SyncManager;
-use crate::types::{AddressBalance, ChainState, DetailedSyncProgress, SpvStats, SyncProgress, WatchItem};
+use crate::sync::sequential::SequentialSyncManager;
+use crate::types::{AddressBalance, ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats, SyncProgress, WatchItem};
 use crate::validation::ValidationManager;
+use crate::chain::ChainLockManager;
+use crate::mempool_filter::MempoolFilter;
 use dashcore::network::constants::NetworkExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 
@@ -36,6 +38,7 @@ pub use status_display::StatusDisplay;
 pub use wallet_utils::{WalletSummary, WalletUtils};
 pub use watch_manager::{WatchItemUpdateSender, WatchManager};
 
+
 /// Main Dash SPV client.
 pub struct DashSpvClient {
     config: ClientConfig,
@@ -44,8 +47,9 @@ pub struct DashSpvClient {
     network: Box<dyn NetworkManager>,
     storage: Box<dyn StorageManager>,
     wallet: Arc<RwLock<crate::wallet::Wallet>>,
-    sync_manager: SyncManager,
+    sync_manager: SequentialSyncManager,
     _validation: ValidationManager,
+    chainlock_manager: Arc<ChainLockManager>,
     running: Arc<RwLock<bool>>,
     watch_items: Arc<RwLock<HashSet<WatchItem>>>,
     terminal_ui: Option<Arc<TerminalUI>>,
@@ -54,6 +58,10 @@ pub struct DashSpvClient {
     block_processor_tx: mpsc::UnboundedSender<BlockProcessingTask>,
     progress_sender: Option<mpsc::UnboundedSender<DetailedSyncProgress>>,
     progress_receiver: Option<mpsc::UnboundedReceiver<DetailedSyncProgress>>,
+    event_tx: mpsc::UnboundedSender<SpvEvent>,
+    event_rx: Option<mpsc::UnboundedReceiver<SpvEvent>>,
+    mempool_state: Arc<RwLock<MempoolState>>,
+    mempool_filter: Option<Arc<MempoolFilter>>,
 }
 
 impl DashSpvClient {
@@ -69,6 +77,17 @@ impl DashSpvClient {
         }
     }
     
+    /// Take the event receiver for external consumption.
+    pub fn take_event_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<SpvEvent>> {
+        self.event_rx.take()
+    }
+    
+    /// Emit an event.
+    pub(crate) fn emit_event(&self, event: SpvEvent) {
+        tracing::debug!("Emitting event: {:?}", event);
+        let _ = self.event_tx.send(event);
+    }
+    
     /// Helper to create a StatusDisplay instance.
     async fn create_status_display(&self) -> StatusDisplay {
         StatusDisplay::new(
@@ -80,18 +99,6 @@ impl DashSpvClient {
         )
     }
 
-    /// Helper to create a MessageHandler instance.
-    fn create_message_handler(&mut self) -> MessageHandler {
-        MessageHandler::new(
-            &mut self.sync_manager,
-            &mut *self.storage,
-            &mut *self.network,
-            &self.config,
-            &self.stats,
-            &self.filter_processor,
-            &self.block_processor_tx,
-        )
-    }
 
     /// Helper to convert wallet errors to SpvError.
     fn wallet_to_spv_error(e: impl std::fmt::Display) -> SpvError {
@@ -242,12 +249,16 @@ impl DashSpvClient {
         // Create shared data structures
         let watch_items = Arc::new(RwLock::new(HashSet::new()));
 
-        // Create sync manager with shared filter heights
-        let sync_manager =
-            SyncManager::new(&config, stats.read().await.received_filter_heights.clone());
+        // Create sync manager
+        let received_filter_heights = stats.read().await.received_filter_heights.clone();
+        tracing::info!("Creating sequential sync manager");
+        let sync_manager = SequentialSyncManager::new(&config, received_filter_heights);
 
         // Create validation manager
         let validation = ValidationManager::new(config.validation_mode);
+
+        // Create ChainLock manager
+        let chainlock_manager = Arc::new(ChainLockManager::new(true));
 
         // Create block processing channel
         let (block_processor_tx, _block_processor_rx) = mpsc::unbounded_channel();
@@ -260,6 +271,12 @@ impl DashSpvClient {
 
         // Create progress channels
         let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
+        
+        // Create event channels
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+
+        // Create mempool state
+        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
 
         Ok(Self {
             config,
@@ -270,6 +287,7 @@ impl DashSpvClient {
             wallet,
             sync_manager,
             _validation: validation,
+            chainlock_manager,
             running: Arc::new(RwLock::new(false)),
             watch_items,
             terminal_ui: None,
@@ -278,6 +296,10 @@ impl DashSpvClient {
             block_processor_tx,
             progress_sender: Some(progress_sender),
             progress_receiver: Some(progress_receiver),
+            event_tx,
+            event_rx: Some(event_rx),
+            mempool_state,
+            mempool_filter: None,
         })
     }
 
@@ -295,6 +317,25 @@ impl DashSpvClient {
 
         // Load wallet data from storage
         self.load_wallet_data().await?;
+
+        // Initialize mempool filter if mempool tracking is enabled
+        if self.config.enable_mempool_tracking {
+            let watch_items = self.watch_items.read().await.iter().cloned().collect();
+            self.mempool_filter = Some(Arc::new(MempoolFilter::new(
+                self.config.mempool_strategy,
+                Duration::from_secs(self.config.recent_send_window_secs),
+                self.config.max_mempool_transactions,
+                self.mempool_state.clone(),
+                watch_items,
+            )));
+            
+            // Load mempool state from storage if persistence is enabled
+            if self.config.persist_mempool {
+                if let Some(state) = self.storage.load_mempool_state().await.map_err(SpvError::Storage)? {
+                    *self.mempool_state.write().await = state;
+                }
+            }
+        }
 
         // Validate and recover wallet consistency if needed
         match self.ensure_wallet_consistency().await {
@@ -321,6 +362,7 @@ impl DashSpvClient {
             self.wallet.clone(),
             self.watch_items.clone(),
             self.stats.clone(),
+            self.event_tx.clone(),
         );
 
         tokio::spawn(async move {
@@ -329,25 +371,30 @@ impl DashSpvClient {
             tracing::info!("🏭 Block processor worker task completed");
         });
 
-        // Always initialize filter processor if filters are enabled (regardless of watch items)
+        // For sequential sync, filter processor is handled internally
         if self.config.enable_filters && self.filter_processor.is_none() {
-            let watch_items = self.get_watch_items().await;
-            let network_message_sender = self.network.get_message_sender();
-            let processing_thread_requests =
-                self.sync_manager.filter_sync().processing_thread_requests.clone();
-            let (filter_processor, watch_item_updater) =
-                crate::sync::filters::FilterSyncManager::spawn_filter_processor(
-                    watch_items.clone(),
-                    network_message_sender,
-                    processing_thread_requests,
-                    self.stats.clone(),
-                );
-            self.filter_processor = Some(filter_processor);
-            self.watch_item_updater = Some(watch_item_updater);
-            tracing::info!(
-                "🔄 Filter processor initialized (filters enabled, {} initial watch items)",
-                watch_items.len()
-            );
+            tracing::info!("📊 Sequential sync mode: filter processing handled internally");
+        }
+
+        // Try to restore sync state from persistent storage
+        if self.config.enable_persistence {
+            match self.restore_sync_state().await {
+                Ok(restored) => {
+                    if restored {
+                        tracing::info!("✅ Successfully restored sync state from persistent storage");
+                    } else {
+                        tracing::info!("No previous sync state found, starting fresh sync");
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to restore sync state: {}", e);
+                    tracing::warn!("Starting fresh sync due to state restoration failure");
+                    // Clear any corrupted state
+                    if let Err(clear_err) = self.storage.clear_sync_state().await {
+                        tracing::error!("Failed to clear corrupted sync state: {}", clear_err);
+                    }
+                }
+            }
         }
 
         // Initialize genesis block if not already present
@@ -402,6 +449,75 @@ impl DashSpvClient {
         self.config.network
     }
 
+    /// Enable mempool tracking with the specified strategy.
+    pub async fn enable_mempool_tracking(&mut self, strategy: crate::client::config::MempoolStrategy) -> Result<()> {
+        // Update config
+        self.config.enable_mempool_tracking = true;
+        self.config.mempool_strategy = strategy;
+        
+        // Initialize mempool filter if not already done
+        if self.mempool_filter.is_none() {
+            let watch_items = self.watch_items.read().await.iter().cloned().collect();
+            self.mempool_filter = Some(Arc::new(crate::mempool_filter::MempoolFilter::new(
+                self.config.mempool_strategy,
+                Duration::from_secs(self.config.recent_send_window_secs),
+                self.config.max_mempool_transactions,
+                self.mempool_state.clone(),
+                watch_items,
+            )));
+        }
+        
+        Ok(())
+    }
+
+    /// Get mempool balance for an address.
+    pub async fn get_mempool_balance(&self, address: &dashcore::Address) -> Result<crate::types::MempoolBalance> {
+        let wallet = self.wallet.read().await;
+        let mempool_state = self.mempool_state.read().await;
+        
+        let mut pending = 0u64;
+        let mut pending_instant = 0u64;
+        
+        // Calculate pending balances from mempool transactions
+        for tx in mempool_state.transactions.values() {
+            // Check if this transaction affects the given address
+            let mut address_affected = false;
+            for addr in &tx.addresses {
+                if addr == address {
+                    address_affected = true;
+                    break;
+                }
+            }
+            
+            if address_affected {
+                let amount_sats = tx.net_amount.unsigned_abs() as u64;
+                if tx.is_instant_send {
+                    pending_instant += amount_sats;
+                } else {
+                    pending += amount_sats;
+                }
+            }
+        }
+        
+        Ok(crate::types::MempoolBalance {
+            pending: dashcore::Amount::from_sat(pending),
+            pending_instant: dashcore::Amount::from_sat(pending_instant),
+        })
+    }
+
+    /// Get mempool transaction count.
+    pub async fn get_mempool_transaction_count(&self) -> usize {
+        let mempool_state = self.mempool_state.read().await;
+        mempool_state.transactions.len()
+    }
+
+    /// Record a transaction send for mempool filtering.
+    pub async fn record_transaction_send(&self, txid: dashcore::Txid) {
+        if let Some(ref mempool_filter) = self.mempool_filter {
+            mempool_filter.record_send(txid).await;
+        }
+    }
+
     /// Check if filter sync is available (any peer supports compact filters).
     pub async fn is_filter_sync_available(&self) -> bool {
         self.network.has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS).await
@@ -409,9 +525,20 @@ impl DashSpvClient {
 
     /// Stop the SPV client.
     pub async fn stop(&mut self) -> Result<()> {
-        let mut running = self.running.write().await;
-        if !*running {
-            return Ok(());
+        // Check if already stopped
+        {
+            let running = self.running.read().await;
+            if !*running {
+                return Ok(());
+            }
+        }
+
+        // Save sync state before shutting down
+        if let Err(e) = self.save_sync_state().await {
+            tracing::error!("Failed to save sync state during shutdown: {}", e);
+            // Continue with shutdown even if state save fails
+        } else {
+            tracing::info!("Sync state saved successfully during shutdown");
         }
 
         // Disconnect from network
@@ -425,6 +552,8 @@ impl DashSpvClient {
             tracing::info!("Storage shutdown completed - all data persisted");
         }
 
+        // Mark as stopped
+        let mut running = self.running.write().await;
         *running = false;
 
         Ok(())
@@ -512,7 +641,7 @@ impl DashSpvClient {
         let mut last_height = 0u32;
         let mut headers_this_second = 0u32;
         let mut last_rate_calc = Instant::now();
-        let mut total_bytes_downloaded = 0u64;
+        let total_bytes_downloaded = 0u64;
 
         loop {
             // Check if we should stop
@@ -542,43 +671,18 @@ impl DashSpvClient {
             if !initial_sync_started && self.network.peer_count() > 0 {
                 tracing::info!("🚀 Peers connected, starting initial sync operations...");
 
-                // Check if sync is needed and send initial requests
-                if let Ok(base_hash) =
-                    self.sync_manager.header_sync_mut().prepare_sync(&mut *self.storage).await
-                {
-                    tracing::info!("📡 Sending initial header sync requests...");
-                    if let Err(e) = self
-                        .sync_manager
-                        .header_sync_mut()
-                        .request_headers(&mut *self.network, base_hash)
-                        .await
-                    {
-                        tracing::error!("Failed to send initial header requests: {}", e);
-                    }
-                }
-
-                // Also start filter header sync if filters are enabled and we have headers
-                if self.config.enable_filters {
-                    let header_tip =
-                        self.storage.get_tip_height().await.ok().flatten().unwrap_or(0);
-                    let filter_tip =
-                        self.storage.get_filter_tip_height().await.ok().flatten().unwrap_or(0);
-
-                    if header_tip > filter_tip {
-                        tracing::info!(
-                            "🚀 Starting filter header sync (headers: {}, filter headers: {})",
-                            header_tip,
-                            filter_tip
-                        );
-                        if let Err(e) = self
-                            .sync_manager
-                            .filter_sync_mut()
-                            .start_sync_headers(&mut *self.network, &mut *self.storage)
-                            .await
-                        {
-                            tracing::warn!("Failed to start filter header sync: {}", e);
-                            // Don't fail startup if filter header sync fails
+                // Start initial sync with sequential sync manager
+                match self.sync_manager.start_sync(&mut *self.network, &mut *self.storage).await {
+                    Ok(started) => {
+                        tracing::info!("✅ Sequential sync start_sync returned: {}", started);
+                        
+                        // Send initial requests after sync is prepared
+                        if let Err(e) = self.sync_manager.send_initial_requests(&mut *self.network, &mut *self.storage).await {
+                            tracing::error!("Failed to send initial sync requests: {}", e);
                         }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to start sequential sync: {}", e);
                     }
                 }
 
@@ -589,24 +693,9 @@ impl DashSpvClient {
             if last_status_update.elapsed() >= status_update_interval {
                 self.update_status_display().await;
 
-                // Report CFHeader gap information if enabled
-                if self.config.enable_filters {
-                    if let Ok((has_gap, block_height, filter_height, gap_size)) =
-                        self.sync_manager.filter_sync().check_cfheader_gap(&*self.storage).await
-                    {
-                        if has_gap && gap_size >= 100 {
-                            // Only log significant gaps
-                            tracing::info!(
-                                "📏 CFHeader Gap: {} block headers vs {} filter headers (gap: {})",
-                                block_height,
-                                filter_height,
-                                gap_size
-                            );
-                        }
-                    }
-                }
-
-                // Report enhanced filter sync progress if active
+                // Sequential sync handles filter gaps internally
+                
+                // Filter sync progress is handled by sequential sync manager internally
                 let (
                     filters_requested,
                     filters_received,
@@ -615,11 +704,10 @@ impl DashSpvClient {
                     total_missing,
                     actual_coverage,
                     missing_ranges,
-                ) = crate::sync::filters::FilterSyncManager::get_filter_sync_status_with_gaps(
-                    &self.stats,
-                    self.sync_manager.filter_sync(),
-                )
-                .await;
+                ) = {
+                    // For sequential sync, return default values
+                    (0, 0, 0.0, false, 0, 0.0, Vec::<(u32, u32)>::new())
+                };
 
                 if filters_requested > 0 {
                     // Check if sync is truly complete: both basic progress AND gap analysis must indicate completion
@@ -739,11 +827,24 @@ impl DashSpvClient {
                 last_status_update = Instant::now();
             }
 
+            // Save sync state periodically (every 30 seconds or after significant progress)
+            static LAST_SYNC_STATE_SAVE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+            let last_save = LAST_SYNC_STATE_SAVE.load(std::sync::atomic::Ordering::Relaxed);
+            
+            if current_time - last_save >= 30 {  // Save every 30 seconds
+                if let Err(e) = self.save_sync_state().await {
+                    tracing::warn!("Failed to save sync state: {}", e);
+                } else {
+                    LAST_SYNC_STATE_SAVE.store(current_time, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+
             // Check for sync timeouts and handle recovery (only periodically, not every loop)
             if last_timeout_check.elapsed() >= timeout_check_interval {
                 let _ = self
                     .sync_manager
-                    .check_sync_timeouts(&mut *self.storage, &mut *self.network)
+                    .check_timeout(&mut *self.network, &mut *self.storage)
                     .await;
             }
 
@@ -767,111 +868,21 @@ impl DashSpvClient {
             // Check for missing filters and retry periodically
             if last_filter_gap_check.elapsed() >= filter_gap_check_interval {
                 if self.config.enable_filters {
-                    if let Err(e) = self
-                        .sync_manager
-                        .filter_sync_mut()
-                        .check_and_retry_missing_filters(&mut *self.network, &*self.storage)
-                        .await
-                    {
-                        tracing::warn!("Failed to check and retry missing filters: {}", e);
-                    }
+                    // Sequential sync handles filter retries internally
 
-                    // Check for CFHeader gaps and auto-restart if needed
-                    if self.config.enable_cfheader_gap_restart {
-                        match self
-                            .sync_manager
-                            .filter_sync_mut()
-                            .maybe_restart_cfheader_sync_for_gap(
-                                &mut *self.network,
-                                &mut *self.storage,
-                            )
-                            .await
-                        {
-                            Ok(restarted) => {
-                                if restarted {
-                                    tracing::info!(
-                                        "🔄 Auto-restarted CFHeader sync due to detected gap"
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Failed to check/restart CFHeader sync for gap: {}",
-                                    e
-                                );
-                            }
-                        }
-                    }
+                    // Sequential sync handles CFHeader gap detection and recovery internally
 
-                    // Check for filter gaps and auto-restart if needed
-                    if self.config.enable_filter_gap_restart
-                        && !self.watch_items.read().await.is_empty()
-                    {
-                        // Get current sync progress
-                        let progress = self.sync_progress().await?;
-
-                        // Check if there's a gap between synced filters and filter headers
-                        match self
-                            .sync_manager
-                            .filter_sync()
-                            .check_filter_gap(&*self.storage, &progress)
-                            .await
-                        {
-                            Ok((has_gap, filter_header_height, last_synced_filter, gap_size)) => {
-                                if has_gap && gap_size >= self.config.min_filter_gap_size {
-                                    tracing::info!("🔍 Detected filter gap: filter headers at {}, last synced filter at {} (gap: {} blocks)",
-                                                  filter_header_height, last_synced_filter, gap_size);
-
-                                    // Check if we're not already syncing filters
-                                    if !self.sync_manager.filter_sync().is_syncing_filters() {
-                                        // Start filter sync for the missing range
-                                        let start_height = last_synced_filter + 1;
-
-                                        // Limit the sync size to avoid overwhelming the system
-                                        let max_sync_size = self.config.max_filter_gap_sync_size;
-                                        let sync_count = gap_size.min(max_sync_size);
-
-                                        if sync_count < gap_size {
-                                            tracing::info!("🔄 Auto-starting filter sync for gap from height {} ({} blocks of {} total gap)", 
-                                                          start_height, sync_count, gap_size);
-                                        } else {
-                                            tracing::info!("🔄 Auto-starting filter sync for gap from height {} ({} blocks)", 
-                                                          start_height, sync_count);
-                                        }
-
-                                        match self
-                                            .sync_filters_range(
-                                                Some(start_height),
-                                                Some(sync_count),
-                                            )
-                                            .await
-                                        {
-                                            Ok(_) => {
-                                                tracing::info!(
-                                                    "✅ Successfully started filter sync for gap"
-                                                );
-                                            }
-                                            Err(e) => {
-                                                tracing::warn!(
-                                                    "Failed to start filter sync for gap: {}",
-                                                    e
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tracing::debug!("Failed to check filter gap: {}", e);
-                            }
-                        }
-                    }
+                    // Sequential sync handles filter gap detection and recovery internally
                 }
                 last_filter_gap_check = Instant::now();
             }
 
-            // Handle network messages
-            match self.network.receive_message().await {
+            // Handle network messages with timeout for responsiveness
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(1000),
+                self.network.receive_message()
+            ).await {
+                Ok(msg_result) => match msg_result {
                 Ok(Some(message)) => {
                     // Wrap message handling in comprehensive error handling
                     match self.handle_network_message(message).await {
@@ -904,11 +915,11 @@ impl DashSpvClient {
                         }
                     }
                 }
-                Ok(None) => {
-                    // No message available, brief pause before continuing
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                }
-                Err(e) => {
+                    Ok(None) => {
+                        // No message available, brief pause before continuing
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    Err(e) => {
                     // Handle specific network error types
                     if let crate::error::NetworkError::ConnectionFailed(msg) = &e {
                         if msg.contains("No connected peers") || self.network.peer_count() == 0 {
@@ -935,8 +946,13 @@ impl DashSpvClient {
                         }
                     }
 
-                    tracing::error!("Network error during monitoring: {}", e);
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        tracing::error!("Network error during monitoring: {}", e);
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
+                }
+                Err(_) => {
+                    // Timeout occurred - this is expected and allows checking running state
+                    // Continue the loop to check if we should stop
                 }
             }
         }
@@ -949,90 +965,50 @@ impl DashSpvClient {
         &mut self,
         message: dashcore::network::message::NetworkMessage,
     ) -> Result<()> {
-        // Handle special messages that need access to client state
-        use dashcore::network::message::NetworkMessage;
+        // Create a MessageHandler instance with all required parameters
+        let mut handler = MessageHandler::new(
+            &mut self.sync_manager,
+            &mut *self.storage,
+            &mut *self.network,
+            &self.config,
+            &self.stats,
+            &self.filter_processor,
+            &self.block_processor_tx,
+            &self.wallet,
+            &self.mempool_filter,
+            &self.mempool_state,
+            &self.event_tx,
+        );
 
-        match &message {
-            NetworkMessage::CLSig(clsig) => {
-                tracing::info!("Received ChainLock for block {}", clsig.block_hash);
-                // Extract ChainLock from CLSig message and process
-                self.process_chainlock(clsig.clone()).await?;
-                return Ok(());
-            }
-            NetworkMessage::ISLock(islock_msg) => {
-                tracing::info!("Received InstantSendLock for tx {}", islock_msg.txid);
-                // Extract InstantLock from ISLock message and process
-                self.process_instantsendlock(islock_msg.clone()).await?;
-                return Ok(());
-            }
-            NetworkMessage::Tx(tx) => {
-                tracing::debug!("Received transaction: {}", tx.txid());
-                // Check if transaction affects watched addresses/scripts
-                self.process_transaction(tx.clone()).await?;
-                return Ok(());
-            }
-            NetworkMessage::CFHeaders(cfheaders) => {
-                tracing::info!(
-                    "📨 Client received CFHeaders message with {} filter headers",
-                    cfheaders.filter_hashes.len()
-                );
-                // Handle CFHeaders at client level to trigger auto-filter downloading
-                match self
-                    .sync_manager
-                    .handle_cfheaders_message(
-                        cfheaders.clone(),
-                        &mut *self.storage,
-                        &mut *self.network,
-                    )
-                    .await
-                {
-                    Ok(false) => {
-                        tracing::info!("🎯 Filter header sync completed (handle_cfheaders_message returned false)");
-                        // Properly finish the sync state
-                        self.sync_manager
-                            .sync_state_mut()
-                            .finish_sync(crate::sync::SyncComponent::FilterHeaders);
-
-                        // Auto-trigger filter downloading for watch items if we have any
-                        let watch_items = self.get_watch_items().await;
-                        if !watch_items.is_empty() {
-                            tracing::info!("🚀 Filter header sync complete, starting filter download for {} watch items", watch_items.len());
-
-                            // Start downloading filters for recent blocks
-                            if let Err(e) = self.sync_and_check_filters(Some(100)).await {
-                                tracing::error!("Failed to start filter sync after filter header completion: {}", e);
-                            }
-                        } else {
-                            tracing::info!("Filter header sync complete, but no watch items configured - skipping filter download");
-                        }
+        // Delegate message handling to the MessageHandler
+        match handler.handle_network_message(message.clone()).await {
+            Ok(_) => {
+                // Special handling for messages that need client-level processing
+                use dashcore::network::message::NetworkMessage;
+                match &message {
+                    NetworkMessage::CLSig(clsig) => {
+                        // Additional client-level ChainLock processing
+                        self.process_chainlock(clsig.clone()).await?;
                     }
-                    Ok(true) => {
-                        tracing::debug!("🔄 Filter header sync continuing (handle_cfheaders_message returned true)");
+                    NetworkMessage::ISLock(islock_msg) => {
+                        // Additional client-level InstantLock processing
+                        self.process_instantsendlock(islock_msg.clone()).await?;
                     }
-                    Err(e) => {
-                        tracing::error!("❌ Error handling CFHeaders: {:?}", e);
-                        // Don't fail the entire sync if filter header processing fails
-                    }
+                    _ => {}
                 }
-                return Ok(());
+                Ok(())
             }
-            _ => {
-                // For other messages, delegate to the message handler
-                let mut handler = self.create_message_handler();
-                handler.handle_network_message(message).await?;
-            }
+            Err(e) => Err(e),
         }
-
-        Ok(())
     }
 
-    /// Handle inventory messages - delegates to message handler.
+    /// Handle inventory messages - not implemented for sync adapter.
     async fn handle_inventory(
         &mut self,
-        inv: Vec<dashcore::network::message_blockdata::Inventory>,
+        _inv: Vec<dashcore::network::message_blockdata::Inventory>,
     ) -> Result<()> {
-        let mut handler = self.create_message_handler();
-        handler.handle_inventory(inv).await
+        // TODO: Implement inventory handling in sync adapter if needed
+        Ok(())
     }
 
     /// Process new headers received from the network.
@@ -1045,10 +1021,9 @@ impl DashSpvClient {
         let initial_height =
             self.storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0);
 
-        // Store the headers using the sync manager
-        // This will validate and store them properly
-        self.sync_manager
-            .sync_all(&mut *self.network, &mut *self.storage)
+        // For sequential sync, route headers through the message handler
+        let headers_msg = dashcore::network::message::NetworkMessage::Headers(headers);
+        self.sync_manager.handle_message(headers_msg, &mut *self.network, &mut *self.storage)
             .await
             .map_err(|e| SpvError::Sync(e))?;
 
@@ -1078,34 +1053,7 @@ impl DashSpvClient {
                             height
                         );
 
-                        // Request filter header for this block
-                        self.sync_manager
-                            .filter_sync_mut()
-                            .download_filter_header_for_block(
-                                block_hash,
-                                &mut *self.network,
-                                &mut *self.storage,
-                            )
-                            .await
-                            .map_err(|e| SpvError::Sync(e))?;
-
-                        // Also check if we have watch items and request the filter
-                        let watch_items = self.watch_items.read().await;
-                        if !watch_items.is_empty() {
-                            drop(watch_items); // Release the lock before async call
-
-                            let watch_items_vec: Vec<_> = self.get_watch_items().await;
-                            self.sync_manager
-                                .filter_sync_mut()
-                                .download_and_check_filter(
-                                    block_hash,
-                                    &watch_items_vec,
-                                    &mut *self.network,
-                                    &mut *self.storage,
-                                )
-                                .await
-                                .map_err(|e| SpvError::Sync(e))?;
-                        }
+                        // Sequential sync handles filter requests internally
                     }
                 }
 
@@ -1117,10 +1065,10 @@ impl DashSpvClient {
         Ok(())
     }
 
-    /// Process a new block hash detected from inventory - delegates to message handler.
-    async fn process_new_block_hash(&mut self, block_hash: dashcore::BlockHash) -> Result<()> {
-        let mut handler = self.create_message_handler();
-        handler.process_new_block_hash(block_hash).await
+    /// Process a new block hash detected from inventory.
+    async fn process_new_block_hash(&mut self, _block_hash: dashcore::BlockHash) -> Result<()> {
+        // TODO: Implement block hash processing in sync adapter if needed
+        Ok(())
     }
 
     /// Process received filter headers.
@@ -1137,10 +1085,9 @@ impl DashSpvClient {
             cfheaders.filter_hashes.len()
         );
 
-        // Store filter headers in storage via FilterSyncManager
-        self.sync_manager
-            .filter_sync_mut()
-            .store_filter_headers(cfheaders, &mut *self.storage)
+        // For sequential sync, route through the message handler
+        let cfheaders_msg = dashcore::network::message::NetworkMessage::CFHeaders(cfheaders);
+        self.sync_manager.handle_message(cfheaders_msg, &mut *self.network, &mut *self.storage)
             .await
             .map_err(|e| SpvError::Sync(e))?;
 
@@ -1153,10 +1100,27 @@ impl DashSpvClient {
         self.storage.get_header_height_by_hash(&block_hash).await.ok().flatten()
     }
 
-    /// Process a new block - delegates to message handler.
+    /// Process a new block.
     async fn process_new_block(&mut self, block: dashcore::Block) -> Result<()> {
-        let mut handler = self.create_message_handler();
-        handler.process_new_block(block).await
+        let block_hash = block.block_hash();
+        
+        tracing::info!("📦 Routing block {} to async block processor", block_hash);
+
+        // Send block to the background processor without waiting for completion
+        let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
+        let task = BlockProcessingTask::ProcessBlock {
+            block,
+            response_tx,
+        };
+
+        if let Err(e) = self.block_processor_tx.send(task) {
+            tracing::error!("Failed to send block to processor: {}", e);
+            return Err(SpvError::Config("Block processor channel closed".to_string()));
+        }
+
+        // Return immediately - processing happens asynchronously in the background
+        tracing::debug!("Block {} queued for background processing", block_hash);
+        Ok(())
     }
 
     /// Process transactions in a block to check for matches with watch items.
@@ -1372,7 +1336,16 @@ impl DashSpvClient {
         Ok(AddressBalance {
             confirmed: balance.confirmed + balance.instantlocked,
             unconfirmed: balance.pending,
+            pending: dashcore::Amount::from_sat(0),
+            pending_instant: dashcore::Amount::from_sat(0),
         })
+    }
+
+    /// Get the total wallet balance including mempool transactions.
+    pub async fn get_wallet_balance_with_mempool(&self) -> Result<crate::wallet::Balance> {
+        let wallet = self.wallet.read().await;
+        let mempool_state = self.mempool_state.read().await;
+        wallet.get_balance_with_mempool(&*mempool_state).await
     }
 
     /// Get balances for all watched addresses.
@@ -1426,7 +1399,7 @@ impl DashSpvClient {
     }
 
     /// Process and validate a ChainLock.
-    async fn process_chainlock(
+    pub async fn process_chainlock(
         &mut self,
         chainlock: dashcore::ephemerealdata::chain_lock::ChainLock,
     ) -> Result<()> {
@@ -1436,103 +1409,46 @@ impl DashSpvClient {
             chainlock.block_height
         );
 
-        // Verify ChainLock using the masternode engine
-        if let Some(engine) = self.sync_manager.masternode_engine() {
-            match engine.verify_chain_lock(&chainlock) {
-                Ok(_) => {
-                    tracing::info!(
-                        "✅ ChainLock signature verified successfully for block {} at height {}",
-                        chainlock.block_hash,
-                        chainlock.block_height
-                    );
+        // First perform basic validation and storage through ChainLockManager
+        let chain_state = self.state.read().await;
+        self.chainlock_manager
+            .process_chain_lock(chainlock.clone(), &*chain_state, &mut *self.storage)
+            .await
+            .map_err(|e| SpvError::Validation(e))?;
+        drop(chain_state);
 
-                    // Check if this ChainLock supersedes previous ones
-                    let mut state = self.state.write().await;
-                    if let Some(current_chainlock_height) = state.last_chainlock_height {
-                        if chainlock.block_height <= current_chainlock_height {
-                            tracing::debug!("ChainLock for height {} does not supersede current ChainLock at height {}",
-                                           chainlock.block_height, current_chainlock_height);
-                            return Ok(());
-                        }
-                    }
+        // Sequential sync handles masternode validation internally
+        tracing::info!(
+            "ChainLock stored, sequential sync will handle masternode validation internally"
+        );
 
-                    // Update our confirmed chain tip
-                    state.last_chainlock_height = Some(chainlock.block_height);
-                    state.last_chainlock_hash = Some(chainlock.block_hash);
-
-                    tracing::info!(
-                        "🔒 Updated confirmed chain tip to ChainLock at height {} ({})",
-                        chainlock.block_height,
-                        chainlock.block_hash
-                    );
-
-                    // Store ChainLock for future reference in storage
-                    drop(state); // Release the lock before storage operation
-
-                    // Create a metadata key for this ChainLock
-                    let chainlock_key = format!("chainlock_{}", chainlock.block_height);
-
-                    // Serialize the ChainLock
-                    let chainlock_bytes = serde_json::to_vec(&chainlock).map_err(|e| {
-                        SpvError::Storage(crate::error::StorageError::Serialization(format!(
-                            "Failed to serialize ChainLock: {}",
-                            e
-                        )))
-                    })?;
-
-                    // Store the ChainLock
-                    self.storage
-                        .store_metadata(&chainlock_key, &chainlock_bytes)
-                        .await
-                        .map_err(|e| SpvError::Storage(e))?;
-
-                    tracing::debug!(
-                        "Stored ChainLock for height {} in persistent storage",
-                        chainlock.block_height
-                    );
-
-                    // Also store the latest ChainLock height for quick lookup
-                    let latest_key = "latest_chainlock_height";
-                    let height_bytes = chainlock.block_height.to_le_bytes();
-                    self.storage
-                        .store_metadata(latest_key, &height_bytes)
-                        .await
-                        .map_err(|e| SpvError::Storage(e))?;
-
-                    // Save the updated chain state to persist ChainLock fields
-                    let updated_state = self.state.read().await;
-                    self.storage
-                        .store_chain_state(&*updated_state)
-                        .await
-                        .map_err(|e| SpvError::Storage(e))?;
-
-                    // Update status display after chainlock update
-                    self.update_status_display().await;
-                }
-                Err(e) => {
-                    tracing::error!("❌ ChainLock signature verification failed for block {} at height {}: {:?}",
-                                   chainlock.block_hash, chainlock.block_height, e);
-                    return Err(SpvError::Validation(
-                        crate::error::ValidationError::InvalidChainLock(format!(
-                            "Verification failed: {:?}",
-                            e
-                        )),
-                    ));
-                }
+        // Update chain state with the new ChainLock
+        let mut state = self.state.write().await;
+        if let Some(current_chainlock_height) = state.last_chainlock_height {
+            if chainlock.block_height <= current_chainlock_height {
+                tracing::debug!("ChainLock for height {} does not supersede current ChainLock at height {}",
+                               chainlock.block_height, current_chainlock_height);
+                return Ok(());
             }
-        } else {
-            tracing::warn!("⚠️  No masternode engine available - cannot verify ChainLock signature for block {} at height {}",
-                          chainlock.block_hash, chainlock.block_height);
-
-            // Still log the ChainLock details even if we can't verify
-            tracing::info!(
-                "ChainLock received: block_hash={}, height={}, signature={}...",
-                chainlock.block_hash,
-                chainlock.block_height,
-                chainlock.signature.to_string().chars().take(20).collect::<String>()
-            );
         }
 
+        // Update our confirmed chain tip
+        state.last_chainlock_height = Some(chainlock.block_height);
+        state.last_chainlock_hash = Some(chainlock.block_hash);
+
+        tracing::info!(
+            "🔒 Updated confirmed chain tip to ChainLock at height {} ({})",
+            chainlock.block_height,
+            chainlock.block_hash
+        );
+
+        // Emit ChainLock event
+        self.emit_event(SpvEvent::ChainLockReceived {
+            height: chainlock.block_height,
+            hash: chainlock.block_hash,
+        });
+
+        // No need for additional storage - ChainLockManager already handles it
         Ok(())
     }
 
@@ -1720,15 +1636,9 @@ impl DashSpvClient {
         &mut self,
         num_blocks: Option<u32>,
     ) -> Result<Vec<crate::types::FilterMatch>> {
-        let mut coordinator = FilterSyncCoordinator::new(
-            &mut self.sync_manager,
-            &mut *self.storage,
-            &mut *self.network,
-            &self.watch_items,
-            &self.stats,
-            &self.running,
-        );
-        coordinator.sync_and_check_filters(num_blocks).await
+        // Sequential sync handles filter sync internally
+        tracing::info!("Sequential sync mode: filter sync handled internally");
+        Ok(Vec::new())
     }
 
     /// Sync filters for a specific height range.
@@ -1737,15 +1647,271 @@ impl DashSpvClient {
         start_height: Option<u32>,
         count: Option<u32>,
     ) -> Result<()> {
-        let mut coordinator = FilterSyncCoordinator::new(
-            &mut self.sync_manager,
-            &mut *self.storage,
-            &mut *self.network,
-            &self.watch_items,
-            &self.stats,
-            &self.running,
+        // Sequential sync handles filter range sync internally
+        tracing::info!("Sequential sync mode: filter range sync handled internally");
+        Ok(())
+    }
+
+    /// Restore sync state from persistent storage.
+    /// Returns true if state was successfully restored, false if no state was found.
+    async fn restore_sync_state(&mut self) -> Result<bool> {
+        // Load sync state from storage
+        let sync_state = self.storage.load_sync_state().await.map_err(|e| SpvError::Storage(e))?;
+        
+        let Some(saved_state) = sync_state else {
+            return Ok(false);
+        };
+        
+        // Validate the sync state
+        let validation = saved_state.validate(self.config.network);
+        
+        if !validation.is_valid {
+            tracing::error!("Sync state validation failed:");
+            for error in &validation.errors {
+                tracing::error!("  - {}", error);
+            }
+            
+            // Handle recovery based on suggestion
+            if let Some(suggestion) = validation.recovery_suggestion {
+                match suggestion {
+                    crate::storage::RecoverySuggestion::StartFresh => {
+                        tracing::warn!("Recovery: Starting fresh sync");
+                        return Ok(false);
+                    }
+                    crate::storage::RecoverySuggestion::RollbackToHeight(height) => {
+                        tracing::warn!("Recovery: Rolling back to height {}", height);
+                        match self.rollback_to_height(height).await {
+                            Ok(_) => {
+                                tracing::info!("Successfully rolled back to height {}", height);
+                                return Ok(false); // Start fresh sync from rollback point
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to rollback to height {}: {}", height, e);
+                                return Ok(false); // Start fresh sync
+                            }
+                        }
+                    }
+                    crate::storage::RecoverySuggestion::UseCheckpoint(height) => {
+                        tracing::warn!("Recovery: Using checkpoint at height {}", height);
+                        match self.recover_from_checkpoint(height).await {
+                            Ok(_) => {
+                                tracing::info!("Successfully recovered from checkpoint at height {}", height);
+                                return Ok(true); // State restored from checkpoint
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to recover from checkpoint {}: {}", height, e);
+                                return Ok(false); // Start fresh sync
+                            }
+                        }
+                    }
+                    crate::storage::RecoverySuggestion::PartialRecovery => {
+                        tracing::warn!("Recovery: Attempting partial recovery");
+                        // For partial recovery, we keep headers but reset filter sync
+                        if let Err(e) = self.reset_filter_sync_state().await {
+                            tracing::error!("Failed to reset filter sync state: {}", e);
+                        }
+                        return Ok(true); // Continue with partial state
+                    }
+                }
+            }
+            
+            return Ok(false);
+        }
+        
+        // Log any warnings
+        for warning in &validation.warnings {
+            tracing::warn!("Sync state warning: {}", warning);
+        }
+        
+        tracing::info!(
+            "Restoring sync state from height {} (saved at {:?})",
+            saved_state.chain_tip.height,
+            saved_state.saved_at
         );
-        coordinator.sync_filters_range(start_height, count).await
+        
+        // Update sync progress in stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.headers_downloaded = saved_state.sync_progress.header_height as u64;
+            stats.filter_headers_downloaded = saved_state.sync_progress.filter_header_height as u64;
+            stats.filters_downloaded = saved_state.filter_sync.filters_downloaded;
+            stats.masternode_diffs_processed = saved_state.masternode_sync.last_diff_height.unwrap_or(0) as u64;
+        }
+        
+        // Restore masternode state if available
+        if let Some(last_mn_height) = saved_state.masternode_sync.last_synced_height {
+            tracing::info!("Restored masternode sync state at height {}", last_mn_height);
+            // The masternode engine state will be loaded from storage separately
+        }
+        
+        // Update sync manager state
+        // Sequential sync manager needs to determine which phase to resume
+        tracing::debug!("Sequential sync manager will resume from stored state");
+        
+        // Determine phase based on sync progress
+        if saved_state.sync_progress.headers_synced {
+            if saved_state.sync_progress.filter_headers_synced {
+                // Headers and filter headers done, we're in filter download phase
+                tracing::info!("Resuming sequential sync in filter download phase");
+            } else {
+                // Headers done, need filter headers
+                tracing::info!("Resuming sequential sync in filter header download phase");
+            }
+        } else {
+            // Still downloading headers
+            tracing::info!("Resuming sequential sync in header download phase");
+        }
+        
+        // Reset any in-flight requests
+        self.sync_manager.reset_pending_requests();
+        
+        tracing::info!(
+            "Sync state restored: headers={}, filter_headers={}, filters_downloaded={}",
+            saved_state.sync_progress.header_height,
+            saved_state.sync_progress.filter_header_height,
+            saved_state.filter_sync.filters_downloaded
+        );
+        
+        Ok(true)
+    }
+
+    /// Rollback chain state to a specific height.
+    async fn rollback_to_height(&mut self, target_height: u32) -> Result<()> {
+        tracing::info!("Rolling back chain state to height {}", target_height);
+        
+        // Get current height
+        let current_height = self.state.read().await.tip_height();
+        
+        if target_height >= current_height {
+            return Err(SpvError::Config(format!(
+                "Cannot rollback to height {} when current height is {}",
+                target_height, current_height
+            )));
+        }
+        
+        // Remove headers above target height
+        let mut state = self.state.write().await;
+        while state.tip_height() > target_height {
+            state.remove_tip();
+        }
+        drop(state);
+        
+        // Clear any cached data above the target height
+        // This would include filter headers, filters, etc.
+        
+        tracing::info!("Rolled back to height {}", target_height);
+        Ok(())
+    }
+    
+    /// Recover from a saved checkpoint.
+    async fn recover_from_checkpoint(&mut self, checkpoint_height: u32) -> Result<()> {
+        tracing::info!("Recovering from checkpoint at height {}", checkpoint_height);
+        
+        // Load checkpoints around the target height
+        let checkpoints = self.storage
+            .get_sync_checkpoints(checkpoint_height, checkpoint_height)
+            .await
+            .map_err(|e| SpvError::Storage(e))?;
+        
+        if checkpoints.is_empty() {
+            return Err(SpvError::Config(format!(
+                "No checkpoint found at height {}",
+                checkpoint_height
+            )));
+        }
+        
+        let checkpoint = &checkpoints[0];
+        
+        // Verify the checkpoint is validated
+        if !checkpoint.validated {
+            return Err(SpvError::Config(format!(
+                "Checkpoint at height {} is not validated",
+                checkpoint_height
+            )));
+        }
+        
+        // Rollback to checkpoint height
+        self.rollback_to_height(checkpoint_height).await?;
+        
+        tracing::info!("Successfully recovered from checkpoint at height {}", checkpoint_height);
+        Ok(())
+    }
+    
+    /// Reset filter sync state while keeping headers.
+    async fn reset_filter_sync_state(&mut self) -> Result<()> {
+        tracing::info!("Resetting filter sync state");
+        
+        // Reset filter-related stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.filter_headers_downloaded = 0;
+            stats.filters_downloaded = 0;
+            stats.filters_matched = 0;
+            stats.filters_requested = 0;
+            stats.filters_received = 0;
+        }
+        
+        // Clear filter headers from chain state
+        {
+            let mut state = self.state.write().await;
+            state.filter_headers.clear();
+            state.current_filter_tip = None;
+        }
+        
+        // Reset sync manager filter state
+        // Sequential sync manager handles filter state internally
+        tracing::debug!("Reset sequential filter sync state");
+        
+        tracing::info!("Filter sync state reset completed");
+        Ok(())
+    }
+
+    /// Save current sync state to persistent storage.
+    async fn save_sync_state(&mut self) -> Result<()> {
+        if !self.config.enable_persistence {
+            return Ok(());
+        }
+        
+        // Get current sync progress
+        let sync_progress = self.sync_progress().await?;
+        
+        // Get current chain state
+        let chain_state = self.state.read().await;
+        
+        // Create persistent sync state
+        let persistent_state = crate::storage::PersistentSyncState::from_chain_state(
+            &*chain_state,
+            &sync_progress,
+            self.config.network,
+        );
+        
+        if let Some(state) = persistent_state {
+            // Check if we should create a checkpoint
+            if state.should_checkpoint(state.chain_tip.height) {
+                if let Some(checkpoint) = state.checkpoints.last() {
+                    self.storage
+                        .store_sync_checkpoint(checkpoint.height, checkpoint)
+                        .await
+                        .map_err(|e| SpvError::Storage(e))?;
+                    tracing::info!("Created sync checkpoint at height {}", checkpoint.height);
+                }
+            }
+            
+            // Save the sync state
+            self.storage
+                .store_sync_state(&state)
+                .await
+                .map_err(|e| SpvError::Storage(e))?;
+            
+            tracing::debug!(
+                "Saved sync state: headers={}, filter_headers={}, filters={}",
+                state.sync_progress.header_height,
+                state.sync_progress.filter_header_height,
+                state.filter_sync.filters_downloaded
+            );
+        }
+        
+        Ok(())
     }
 
     /// Initialize genesis block if not already present in storage.
@@ -2167,28 +2333,8 @@ impl DashSpvClient {
         for header in headers {
             let block_hash = header.block_hash();
 
-            // Only request filter header for this new block
-            // The CFilter will be requested automatically when the CFHeader response arrives
-            // (this happens in the CFHeaders message handler)
-            if let Err(e) = self
-                .sync_manager
-                .filter_sync_mut()
-                .download_filter_header_for_block(
-                    block_hash,
-                    &mut *self.network,
-                    &mut *self.storage,
-                )
-                .await
-            {
-                tracing::error!(
-                    "Failed to request filter header for new block {}: {}",
-                    block_hash,
-                    e
-                );
-                continue;
-            }
-
-            tracing::debug!("Requested filter header for new block {} (filter will be requested when CFHeader arrives)", block_hash);
+            // Sequential sync handles filter headers internally
+            tracing::debug!("Sequential sync mode: filter headers handled internally for block {}", block_hash);
         }
 
         tracing::info!(

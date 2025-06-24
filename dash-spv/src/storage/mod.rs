@@ -2,6 +2,8 @@
 
 pub mod disk;
 pub mod memory;
+pub mod sync_state;
+pub mod sync_storage;
 pub mod types;
 
 use async_trait::async_trait;
@@ -9,15 +11,41 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::ops::Range;
 
-use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, Address, OutPoint};
+use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, Address, OutPoint, Txid};
 
 use crate::error::StorageResult;
-use crate::types::ChainState;
+use crate::types::{ChainState, UnconfirmedTransaction, MempoolState};
 use crate::wallet::Utxo;
 
 pub use disk::DiskStorageManager;
 pub use memory::MemoryStorageManager;
+pub use sync_state::{PersistentSyncState, SyncStateValidation, RecoverySuggestion};
+pub use sync_storage::MemoryStorage;
 pub use types::*;
+
+use dashcore::BlockHash;
+use crate::error::StorageError;
+
+/// Synchronous storage trait for chain operations
+pub trait ChainStorage: Send + Sync {
+    /// Get a header by its block hash
+    fn get_header(&self, hash: &BlockHash) -> Result<Option<BlockHeader>, StorageError>;
+    
+    /// Get a header by its height
+    fn get_header_by_height(&self, height: u32) -> Result<Option<BlockHeader>, StorageError>;
+    
+    /// Get the height of a block by its hash
+    fn get_header_height(&self, hash: &BlockHash) -> Result<Option<u32>, StorageError>;
+    
+    /// Store a header at a specific height
+    fn store_header(&self, header: &BlockHeader, height: u32) -> Result<(), StorageError>;
+    
+    /// Get transaction IDs in a block
+    fn get_block_transactions(&self, block_hash: &BlockHash) -> Result<Option<Vec<dashcore::Txid>>, StorageError>;
+    
+    /// Get a transaction by its ID
+    fn get_transaction(&self, txid: &dashcore::Txid) -> Result<Option<dashcore::Transaction>, StorageError>;
+}
 
 /// Storage manager trait for abstracting data persistence.
 #[async_trait]
@@ -103,6 +131,70 @@ pub trait StorageManager: Send + Sync {
 
     /// Get all UTXOs.
     async fn get_all_utxos(&self) -> StorageResult<HashMap<OutPoint, Utxo>>;
+
+    /// Store persistent sync state.
+    async fn store_sync_state(&mut self, state: &PersistentSyncState) -> StorageResult<()>;
+
+    /// Load persistent sync state.
+    async fn load_sync_state(&self) -> StorageResult<Option<PersistentSyncState>>;
+
+    /// Clear sync state (for recovery).
+    async fn clear_sync_state(&mut self) -> StorageResult<()>;
+
+    /// Store a sync checkpoint.
+    async fn store_sync_checkpoint(&mut self, height: u32, checkpoint: &sync_state::SyncCheckpoint) -> StorageResult<()>;
+
+    /// Get sync checkpoints in a height range.
+    async fn get_sync_checkpoints(&self, start_height: u32, end_height: u32) -> StorageResult<Vec<sync_state::SyncCheckpoint>>;
+
+    /// Store a chain lock.
+    async fn store_chain_lock(&mut self, height: u32, chain_lock: &dashcore::ChainLock) -> StorageResult<()>;
+
+    /// Load a chain lock by height.
+    async fn load_chain_lock(&self, height: u32) -> StorageResult<Option<dashcore::ChainLock>>;
+
+    /// Get chain locks in a height range.
+    async fn get_chain_locks(&self, start_height: u32, end_height: u32) -> StorageResult<Vec<(u32, dashcore::ChainLock)>>;
+
+    /// Store an instant lock.
+    async fn store_instant_lock(&mut self, txid: dashcore::Txid, instant_lock: &dashcore::InstantLock) -> StorageResult<()>;
+
+    /// Load an instant lock by transaction ID.
+    async fn load_instant_lock(&self, txid: dashcore::Txid) -> StorageResult<Option<dashcore::InstantLock>>;
+
+    /// Store a terminal block record.
+    async fn store_terminal_block(&mut self, block: &StoredTerminalBlock) -> StorageResult<()>;
+
+    /// Load a terminal block by height.
+    async fn load_terminal_block(&self, height: u32) -> StorageResult<Option<StoredTerminalBlock>>;
+
+    /// Get all stored terminal blocks.
+    async fn get_all_terminal_blocks(&self) -> StorageResult<Vec<StoredTerminalBlock>>;
+
+    /// Check if a terminal block is stored.
+    async fn has_terminal_block(&self, height: u32) -> StorageResult<bool>;
+
+    // Mempool storage methods
+    /// Store an unconfirmed transaction.
+    async fn store_mempool_transaction(&mut self, txid: &Txid, tx: &UnconfirmedTransaction) -> StorageResult<()>;
+
+    /// Remove a mempool transaction.
+    async fn remove_mempool_transaction(&mut self, txid: &Txid) -> StorageResult<()>;
+
+    /// Get a mempool transaction.
+    async fn get_mempool_transaction(&self, txid: &Txid) -> StorageResult<Option<UnconfirmedTransaction>>;
+
+    /// Get all mempool transactions.
+    async fn get_all_mempool_transactions(&self) -> StorageResult<HashMap<Txid, UnconfirmedTransaction>>;
+
+    /// Store the complete mempool state.
+    async fn store_mempool_state(&mut self, state: &MempoolState) -> StorageResult<()>;
+
+    /// Load the mempool state.
+    async fn load_mempool_state(&self) -> StorageResult<Option<MempoolState>>;
+
+    /// Clear all mempool data.
+    async fn clear_mempool(&mut self) -> StorageResult<()>;
 }
 
 /// Helper trait to provide as_any_mut for all StorageManager implementations

@@ -1,10 +1,11 @@
 //! Common type definitions for the Dash SPV client.
 
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use dashcore::{
     block::Header as BlockHeader, hash_types::FilterHeader, network::constants::NetworkExt,
-    sml::masternode_list_engine::MasternodeListEngine, BlockHash, Network,
+    sml::masternode_list_engine::MasternodeListEngine, Amount, BlockHash, Network, OutPoint,
+    Transaction, Txid,
 };
 use serde::{Deserialize, Serialize};
 
@@ -167,9 +168,36 @@ impl Default for ChainState {
 }
 
 impl ChainState {
+    /// Create a new empty chain state
+    pub fn new() -> Self {
+        Self::default()
+    }
+    
     /// Create a new chain state for the given network.
     pub fn new_for_network(network: Network) -> Self {
         let mut state = Self::default();
+
+        // Initialize with genesis block
+        let genesis_header = match network {
+            Network::Dash => {
+                // Use known genesis for mainnet
+                dashcore::blockdata::constants::genesis_block(network).header
+            }
+            Network::Testnet => {
+                // Use known genesis for testnet
+                dashcore::blockdata::constants::genesis_block(network).header
+            }
+            _ => {
+                // For other networks, use the existing genesis block function
+                dashcore::blockdata::constants::genesis_block(network).header
+            }
+        };
+        
+        // Add genesis header to the chain state
+        state.headers.push(genesis_header);
+        
+        tracing::debug!("Initialized ChainState with genesis block - network: {:?}, hash: {}, headers_count: {}", 
+            network, genesis_header.block_hash(), state.headers.len());
 
         // Initialize masternode engine for the network
         let mut engine = MasternodeListEngine::default_for_network(network);
@@ -212,6 +240,50 @@ impl ChainState {
             self.current_filter_tip = Some(*last);
         }
         self.filter_headers.extend(filter_headers);
+    }
+    
+    /// Get the tip header
+    pub fn get_tip_header(&self) -> Option<BlockHeader> {
+        self.headers.last().copied()
+    }
+    
+    /// Get the height
+    pub fn get_height(&self) -> u32 {
+        self.tip_height()
+    }
+    
+    /// Add a single header
+    pub fn add_header(&mut self, header: BlockHeader) {
+        self.headers.push(header);
+    }
+    
+    /// Remove the tip header (for reorgs)
+    pub fn remove_tip(&mut self) -> Option<BlockHeader> {
+        self.headers.pop()
+    }
+    
+    /// Update chain lock status
+    pub fn update_chain_lock(&mut self, height: u32, hash: BlockHash) {
+        // Only update if this is a newer chain lock
+        if self.last_chainlock_height.map_or(true, |h| height > h) {
+            self.last_chainlock_height = Some(height);
+            self.last_chainlock_hash = Some(hash);
+        }
+    }
+    
+    /// Check if a block at given height is chain-locked
+    pub fn is_height_chain_locked(&self, height: u32) -> bool {
+        self.last_chainlock_height.map_or(false, |locked_height| height <= locked_height)
+    }
+    
+    /// Check if we have a chain lock
+    pub fn has_chain_lock(&self) -> bool {
+        self.last_chainlock_height.is_some()
+    }
+    
+    /// Get the last chain-locked height
+    pub fn get_last_chainlock_height(&self) -> Option<u32> {
+        self.last_chainlock_height
     }
 }
 
@@ -438,9 +510,9 @@ impl<'de> Deserialize<'de> for WatchItem {
                                 serde::de::Error::custom(format!("Invalid address: {}", e))
                             })?
                             .assume_checked();
-                        Ok(WatchItem::Address {
-                            address: addr,
-                            earliest_height,
+                        Ok(match earliest_height {
+                            Some(height) => WatchItem::address_from_height(addr, height),
+                            None => WatchItem::address(addr),
                         })
                     }
                     "Script" => {
@@ -585,13 +657,34 @@ pub struct AddressBalance {
 
     /// Unconfirmed balance (less than 6 confirmations).
     pub unconfirmed: dashcore::Amount,
+    
+    /// Pending balance from mempool transactions (not InstantLocked).
+    pub pending: dashcore::Amount,
+    
+    /// Pending balance from InstantLocked mempool transactions.
+    pub pending_instant: dashcore::Amount,
 }
 
 impl AddressBalance {
-    /// Get the total balance (confirmed + unconfirmed).
+    /// Get the total balance (confirmed + unconfirmed + pending).
     pub fn total(&self) -> dashcore::Amount {
-        self.confirmed + self.unconfirmed
+        self.confirmed + self.unconfirmed + self.pending + self.pending_instant
     }
+    
+    /// Get the available balance (confirmed + pending_instant).
+    pub fn available(&self) -> dashcore::Amount {
+        self.confirmed + self.pending_instant
+    }
+}
+
+/// Mempool balance information.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MempoolBalance {
+    /// Pending balance from mempool transactions (not InstantLocked).
+    pub pending: dashcore::Amount,
+    
+    /// Pending balance from InstantLocked mempool transactions.
+    pub pending_instant: dashcore::Amount,
 }
 
 // Custom serialization for AddressBalance to handle Amount serialization
@@ -602,9 +695,11 @@ impl Serialize for AddressBalance {
     {
         use serde::ser::SerializeStruct;
 
-        let mut state = serializer.serialize_struct("AddressBalance", 2)?;
+        let mut state = serializer.serialize_struct("AddressBalance", 4)?;
         state.serialize_field("confirmed", &self.confirmed.to_sat())?;
         state.serialize_field("unconfirmed", &self.unconfirmed.to_sat())?;
+        state.serialize_field("pending", &self.pending.to_sat())?;
+        state.serialize_field("pending_instant", &self.pending_instant.to_sat())?;
         state.end()
     }
 }
@@ -632,6 +727,8 @@ impl<'de> Deserialize<'de> for AddressBalance {
             {
                 let mut confirmed: Option<u64> = None;
                 let mut unconfirmed: Option<u64> = None;
+                let mut pending: Option<u64> = None;
+                let mut pending_instant: Option<u64> = None;
 
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
@@ -647,6 +744,18 @@ impl<'de> Deserialize<'de> for AddressBalance {
                             }
                             unconfirmed = Some(map.next_value()?);
                         }
+                        "pending" => {
+                            if pending.is_some() {
+                                return Err(serde::de::Error::duplicate_field("pending"));
+                            }
+                            pending = Some(map.next_value()?);
+                        }
+                        "pending_instant" => {
+                            if pending_instant.is_some() {
+                                return Err(serde::de::Error::duplicate_field("pending_instant"));
+                            }
+                            pending_instant = Some(map.next_value()?);
+                        }
                         _ => {
                             let _: serde::de::IgnoredAny = map.next_value()?;
                         }
@@ -657,18 +766,276 @@ impl<'de> Deserialize<'de> for AddressBalance {
                     confirmed.ok_or_else(|| serde::de::Error::missing_field("confirmed"))?;
                 let unconfirmed =
                     unconfirmed.ok_or_else(|| serde::de::Error::missing_field("unconfirmed"))?;
+                // Default to 0 for backwards compatibility
+                let pending = pending.unwrap_or(0);
+                let pending_instant = pending_instant.unwrap_or(0);
 
                 Ok(AddressBalance {
                     confirmed: dashcore::Amount::from_sat(confirmed),
                     unconfirmed: dashcore::Amount::from_sat(unconfirmed),
+                    pending: dashcore::Amount::from_sat(pending),
+                    pending_instant: dashcore::Amount::from_sat(pending_instant),
                 })
             }
         }
 
         deserializer.deserialize_struct(
             "AddressBalance",
-            &["confirmed", "unconfirmed"],
+            &["confirmed", "unconfirmed", "pending", "pending_instant"],
             AddressBalanceVisitor,
         )
+    }
+}
+
+/// Events emitted by the SPV client.
+#[derive(Debug, Clone)]
+pub enum SpvEvent {
+    /// Balance has been updated.
+    BalanceUpdate {
+        /// Confirmed balance in satoshis.
+        confirmed: u64,
+        /// Unconfirmed balance in satoshis.
+        unconfirmed: u64,
+        /// Total balance in satoshis.
+        total: u64,
+    },
+    
+    /// New transaction detected.
+    TransactionDetected {
+        /// Transaction ID.
+        txid: String,
+        /// Whether the transaction is confirmed.
+        confirmed: bool,
+        /// Block height if confirmed.
+        block_height: Option<u32>,
+        /// Net amount change (positive for received, negative for sent).
+        amount: i64,
+        /// Addresses affected by this transaction.
+        addresses: Vec<String>,
+    },
+    
+    /// Block processed.
+    BlockProcessed {
+        /// Block height.
+        height: u32,
+        /// Block hash.
+        hash: String,
+        /// Total number of transactions in the block.
+        transactions_count: usize,
+        /// Number of relevant transactions.
+        relevant_transactions: usize,
+    },
+    
+    /// Sync progress update.
+    SyncProgress {
+        /// Current block height.
+        current_height: u32,
+        /// Target block height.
+        target_height: u32,
+        /// Progress percentage.
+        percentage: f64,
+    },
+    
+    /// ChainLock received and validated.
+    ChainLockReceived {
+        /// Block height of the ChainLock.
+        height: u32,
+        /// Block hash of the ChainLock.
+        hash: dashcore::BlockHash,
+    },
+    
+    /// Unconfirmed transaction added to mempool.
+    MempoolTransactionAdded {
+        /// Transaction ID.
+        txid: Txid,
+        /// Raw transaction data.
+        transaction: Transaction,
+        /// Net amount change (positive for received, negative for sent).
+        amount: i64,
+        /// Addresses affected by this transaction.
+        addresses: Vec<String>,
+        /// Whether this is an InstantSend transaction.
+        is_instant_send: bool,
+    },
+    
+    /// Transaction confirmed (moved from mempool to block).
+    MempoolTransactionConfirmed {
+        /// Transaction ID.
+        txid: Txid,
+        /// Block height where confirmed.
+        block_height: u32,
+        /// Block hash where confirmed.
+        block_hash: BlockHash,
+    },
+    
+    /// Transaction removed from mempool (expired, replaced, or double-spent).
+    MempoolTransactionRemoved {
+        /// Transaction ID.
+        txid: Txid,
+        /// Reason for removal.
+        reason: MempoolRemovalReason,
+    },
+}
+
+/// Reason for removing a transaction from mempool.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MempoolRemovalReason {
+    /// Transaction expired (exceeded timeout).
+    Expired,
+    /// Transaction was replaced by another transaction.
+    Replaced { by_txid: Txid },
+    /// Transaction was double-spent.
+    DoubleSpent { conflicting_txid: Txid },
+    /// Transaction was included in a block.
+    Confirmed,
+    /// Manual removal (e.g., user action).
+    Manual,
+}
+
+/// Unconfirmed transaction in mempool.
+#[derive(Debug, Clone)]
+pub struct UnconfirmedTransaction {
+    /// The transaction itself.
+    pub transaction: Transaction,
+    /// Time when first seen.
+    pub first_seen: Instant,
+    /// Fee paid by the transaction.
+    pub fee: Amount,
+    /// Size of transaction in bytes.
+    pub size: usize,
+    /// Whether this is an InstantSend transaction.
+    pub is_instant_send: bool,
+    /// Whether this transaction was sent by our wallet.
+    pub is_outgoing: bool,
+    /// Addresses involved (for quick filtering).
+    pub addresses: Vec<dashcore::Address>,
+    /// Net amount change for our wallet.
+    pub net_amount: i64,
+}
+
+impl UnconfirmedTransaction {
+    /// Create a new unconfirmed transaction.
+    pub fn new(
+        transaction: Transaction,
+        fee: Amount,
+        is_instant_send: bool,
+        is_outgoing: bool,
+        addresses: Vec<dashcore::Address>,
+        net_amount: i64,
+    ) -> Self {
+        let size = dashcore::consensus::encode::serialize(&transaction).len();
+        
+        Self {
+            transaction,
+            first_seen: Instant::now(),
+            fee,
+            size,
+            is_instant_send,
+            is_outgoing,
+            addresses,
+            net_amount,
+        }
+    }
+    
+    /// Get the transaction ID.
+    pub fn txid(&self) -> Txid {
+        self.transaction.txid()
+    }
+    
+    /// Check if transaction has expired.
+    pub fn is_expired(&self, timeout: Duration) -> bool {
+        self.first_seen.elapsed() > timeout
+    }
+    
+    /// Get fee rate in satoshis per byte.
+    pub fn fee_rate(&self) -> f64 {
+        if self.size == 0 {
+            return 0.0;
+        }
+        self.fee.to_sat() as f64 / self.size as f64
+    }
+}
+
+/// Mempool state tracking.
+#[derive(Debug, Clone, Default)]
+pub struct MempoolState {
+    /// Currently tracked unconfirmed transactions.
+    pub transactions: std::collections::HashMap<Txid, UnconfirmedTransaction>,
+    /// Recent sends (txid -> timestamp) for Selective strategy.
+    pub recent_sends: std::collections::HashMap<Txid, Instant>,
+    /// Total pending balance change.
+    pub pending_balance: i64,
+    /// Total pending InstantSend balance.
+    pub pending_instant_balance: i64,
+}
+
+impl MempoolState {
+    /// Add a transaction to mempool.
+    pub fn add_transaction(&mut self, tx: UnconfirmedTransaction) {
+        if tx.is_instant_send {
+            self.pending_instant_balance += tx.net_amount;
+        } else {
+            self.pending_balance += tx.net_amount;
+        }
+        
+        let txid = tx.txid();
+        self.transactions.insert(txid, tx);
+    }
+    
+    /// Remove a transaction from mempool.
+    pub fn remove_transaction(&mut self, txid: &Txid) -> Option<UnconfirmedTransaction> {
+        if let Some(tx) = self.transactions.remove(txid) {
+            if tx.is_instant_send {
+                self.pending_instant_balance -= tx.net_amount;
+            } else {
+                self.pending_balance -= tx.net_amount;
+            }
+            Some(tx)
+        } else {
+            None
+        }
+    }
+    
+    /// Prune expired transactions.
+    pub fn prune_expired(&mut self, timeout: Duration) -> Vec<Txid> {
+        let mut expired = Vec::new();
+        
+        self.transactions.retain(|txid, tx| {
+            if tx.is_expired(timeout) {
+                expired.push(*txid);
+                if tx.is_instant_send {
+                    self.pending_instant_balance -= tx.net_amount;
+                } else {
+                    self.pending_balance -= tx.net_amount;
+                }
+                false
+            } else {
+                true
+            }
+        });
+        
+        // Also prune old recent sends
+        let cutoff = Instant::now() - timeout;
+        self.recent_sends.retain(|_, &mut timestamp| timestamp > cutoff);
+        
+        expired
+    }
+    
+    /// Record a recent send.
+    pub fn record_send(&mut self, txid: Txid) {
+        self.recent_sends.insert(txid, Instant::now());
+    }
+    
+    /// Check if a transaction was recently sent.
+    pub fn is_recent_send(&self, txid: &Txid, window: Duration) -> bool {
+        self.recent_sends
+            .get(txid)
+            .map(|&timestamp| timestamp.elapsed() < window)
+            .unwrap_or(false)
+    }
+    
+    /// Get total pending balance (regular + InstantSend).
+    pub fn total_pending_balance(&self) -> i64 {
+        self.pending_balance + self.pending_instant_balance
     }
 }

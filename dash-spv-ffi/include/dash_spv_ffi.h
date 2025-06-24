@@ -3,6 +3,12 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+typedef enum FFIMempoolStrategy {
+  FetchAll = 0,
+  BloomFilter = 1,
+  Selective = 2,
+} FFIMempoolStrategy;
+
 typedef enum FFINetwork {
   Dash = 0,
   Testnet = 1,
@@ -86,6 +92,8 @@ typedef struct FFIBalance {
   uint64_t confirmed;
   uint64_t pending;
   uint64_t instantlocked;
+  uint64_t mempool;
+  uint64_t mempool_instant;
   uint64_t total;
 } FFIBalance;
 
@@ -97,14 +105,35 @@ typedef struct FFIArray {
 
 typedef void (*BlockCallback)(uint32_t height, const char *hash, void *user_data);
 
-typedef void (*TransactionCallback)(const char *txid, bool confirmed, void *user_data);
+typedef void (*TransactionCallback)(const char *txid,
+                                    bool confirmed,
+                                    int64_t amount,
+                                    const char *addresses,
+                                    uint32_t block_height,
+                                    void *user_data);
 
 typedef void (*BalanceCallback)(uint64_t confirmed, uint64_t unconfirmed, void *user_data);
+
+typedef void (*MempoolTransactionCallback)(const char *txid,
+                                           int64_t amount,
+                                           const char *addresses,
+                                           bool is_instant_send,
+                                           void *user_data);
+
+typedef void (*MempoolConfirmedCallback)(const char *txid,
+                                         uint32_t block_height,
+                                         const char *block_hash,
+                                         void *user_data);
+
+typedef void (*MempoolRemovedCallback)(const char *txid, uint8_t reason, void *user_data);
 
 typedef struct FFIEventCallbacks {
   BlockCallback on_block;
   TransactionCallback on_transaction;
   BalanceCallback on_balance_update;
+  MempoolTransactionCallback on_mempool_transaction_added;
+  MempoolConfirmedCallback on_mempool_transaction_confirmed;
+  MempoolRemovedCallback on_mempool_transaction_removed;
   void *user_data;
 } FFIEventCallbacks;
 
@@ -250,6 +279,15 @@ void dash_spv_ffi_transaction_destroy(struct FFITransaction *tx);
 
 struct FFIArray dash_spv_ffi_client_get_address_utxos(struct FFIDashSpvClient *client,
                                                       const char *address);
+
+int32_t dash_spv_ffi_client_enable_mempool_tracking(struct FFIDashSpvClient *client,
+                                                    enum FFIMempoolStrategy strategy);
+
+struct FFIBalance *dash_spv_ffi_client_get_balance_with_mempool(struct FFIDashSpvClient *client);
+
+int32_t dash_spv_ffi_client_get_mempool_transaction_count(struct FFIDashSpvClient *client);
+
+int32_t dash_spv_ffi_client_record_send(struct FFIDashSpvClient *client, const char *txid);
 
 struct FFIClientConfig *dash_spv_ffi_config_new(enum FFINetwork network);
 
