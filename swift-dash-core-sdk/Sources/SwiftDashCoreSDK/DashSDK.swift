@@ -104,6 +104,16 @@ public final class DashSDK {
         return try await wallet.getBalance(for: address)
     }
     
+    public func getBalanceWithMempool() async throws -> Balance {
+        return try await client.getBalanceWithMempool()
+    }
+    
+    public func getBalanceWithMempool(for address: String) async throws -> Balance {
+        // For now, get regular balance as mempool tracking may not be enabled
+        // TODO: Implement address-specific mempool balance
+        return try await wallet.getBalance(for: address)
+    }
+    
     public func getTransactions(limit: Int = 100) async throws -> [Transaction] {
         return try await wallet.getTransactions(limit: limit)
     }

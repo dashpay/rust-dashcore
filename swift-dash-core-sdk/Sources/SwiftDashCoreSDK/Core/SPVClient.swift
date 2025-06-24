@@ -373,16 +373,28 @@ private let eventBlockCallback: @convention(c) (UInt32, UnsafePointer<CChar>?, U
     client.eventSubject.send(event)
 }
 
-private let eventTransactionCallback: @convention(c) (UnsafePointer<CChar>?, Bool, UnsafeMutableRawPointer?) -> Void = { txid, confirmed, userData in
+private let eventTransactionCallback: @convention(c) (UnsafePointer<CChar>?, Bool, Int64, UnsafePointer<CChar>?, UInt32, UnsafeMutableRawPointer?) -> Void = { txid, confirmed, amount, addresses, blockHeight, userData in
     guard let userData = userData,
           let txid = txid else { return }
     
     let holder = Unmanaged<EventCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
     guard let client = holder.client else { return }
     
+    let txidString = String(cString: txid)
+    let addressArray: [String] = {
+        if let addresses = addresses {
+            let addressesString = String(cString: addresses)
+            return addressesString.split(separator: ",").map(String.init)
+        }
+        return []
+    }()
+    
     let event = SPVEvent.transactionReceived(
-        txid: String(cString: txid),
-        confirmed: confirmed
+        txid: txidString,
+        confirmed: confirmed,
+        amount: amount,
+        addresses: addressArray,
+        blockHeight: blockHeight > 0 ? blockHeight : nil
     )
     client.eventSubject.send(event)
 }
@@ -395,9 +407,81 @@ private let eventBalanceCallback: @convention(c) (UInt64, UInt64, UnsafeMutableR
     
     let balance = Balance(
         confirmed: confirmed,
-        pending: unconfirmed
+        pending: unconfirmed,
+        instantLocked: 0,  // InstantLocked amount not provided in callback
+        total: confirmed + unconfirmed
     )
     let event = SPVEvent.balanceUpdated(balance)
+    client.eventSubject.send(event)
+}
+
+// Mempool event callbacks
+private let eventMempoolTransactionAddedCallback: @convention(c) (UnsafePointer<CChar>?, Int64, UnsafePointer<CChar>?, Bool, UnsafeMutableRawPointer?) -> Void = { txid, amount, addresses, isInstantSend, userData in
+    guard let userData = userData,
+          let txid = txid else { return }
+    
+    let holder = Unmanaged<EventCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
+    guard let client = holder.client else { return }
+    
+    let txidString = String(cString: txid)
+    let addressArray: [String] = {
+        if let addresses = addresses {
+            let addressesString = String(cString: addresses)
+            return addressesString.split(separator: ",").map(String.init)
+        }
+        return []
+    }()
+    
+    let event = SPVEvent.mempoolTransactionAdded(
+        txid: txidString,
+        amount: amount,
+        addresses: addressArray
+    )
+    client.eventSubject.send(event)
+}
+
+private let eventMempoolTransactionConfirmedCallback: @convention(c) (UnsafePointer<CChar>?, UInt32, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void = { txid, blockHeight, blockHash, userData in
+    guard let userData = userData,
+          let txid = txid else { return }
+    
+    let holder = Unmanaged<EventCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
+    guard let client = holder.client else { return }
+    
+    let txidString = String(cString: txid)
+    // For now, we're using blockHeight as confirmations (1 confirmation when just confirmed)
+    let confirmations: UInt32 = 1
+    
+    let event = SPVEvent.mempoolTransactionConfirmed(
+        txid: txidString,
+        blockHeight: blockHeight,
+        confirmations: confirmations
+    )
+    client.eventSubject.send(event)
+}
+
+private let eventMempoolTransactionRemovedCallback: @convention(c) (UnsafePointer<CChar>?, UInt8, UnsafeMutableRawPointer?) -> Void = { txid, reason, userData in
+    guard let userData = userData,
+          let txid = txid else { return }
+    
+    let holder = Unmanaged<EventCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
+    guard let client = holder.client else { return }
+    
+    let txidString = String(cString: txid)
+    let removalReason: MempoolRemovalReason = {
+        switch reason {
+        case 0: return .confirmed
+        case 1: return .doubleSpent(conflictingTxid: nil)
+        case 2: return .expired
+        case 3: return .replaced(byTxid: nil)
+        case 4: return .manual
+        default: return .expired  // Default to expired for unknown reasons
+        }
+    }()
+    
+    let event = SPVEvent.mempoolTransactionRemoved(
+        txid: txidString,
+        reason: removalReason
+    )
     client.eventSubject.send(event)
 }
 
@@ -421,8 +505,8 @@ public final class SPVClient {
     public init(configuration: SPVClientConfiguration = .default) {
         self.configuration = configuration
         
-        // Initialize Rust logging to enable trace output
-        let _ = dash_spv_ffi_init_logging("trace")
+        // Initialize Rust logging to info level
+        let _ = dash_spv_ffi_init_logging("info")
     }
     
     deinit {
@@ -634,6 +718,114 @@ public final class SPVClient {
         try FFIBridge.checkError(result)
     }
     
+    // MARK: - Balance Operations
+    
+    public func getAddressBalance(_ address: String) async throws -> Balance {
+        guard isConnected, let client = client else {
+            throw DashSDKError.notConnected
+        }
+        
+        let balancePtr = FFIBridge.withCString(address) { addressCStr in
+            dash_spv_ffi_client_get_address_balance(client, addressCStr)
+        }
+        
+        guard let balancePtr = balancePtr else {
+            throw DashSDKError.ffiError(code: -1, message: FFIBridge.getLastError() ?? "Failed to get address balance")
+        }
+        
+        defer {
+            dash_spv_ffi_balance_destroy(balancePtr)
+        }
+        
+        let ffiBalance = balancePtr.pointee
+        return Balance(
+            confirmed: ffiBalance.confirmed,
+            pending: ffiBalance.pending,
+            instantLocked: ffiBalance.instantlocked,
+            total: ffiBalance.total
+        )
+    }
+    
+    public func getTotalBalance() async throws -> Balance {
+        guard isConnected, let client = client else {
+            throw DashSDKError.notConnected
+        }
+        
+        guard let balancePtr = dash_spv_ffi_client_get_total_balance(client) else {
+            throw DashSDKError.ffiError(code: -1, message: FFIBridge.getLastError() ?? "Failed to get total balance")
+        }
+        
+        defer {
+            dash_spv_ffi_balance_destroy(balancePtr)
+        }
+        
+        let ffiBalance = balancePtr.pointee
+        return Balance(
+            confirmed: ffiBalance.confirmed,
+            pending: ffiBalance.pending,
+            instantLocked: ffiBalance.instantlocked,
+            total: ffiBalance.total
+        )
+    }
+    
+    // MARK: - Mempool Operations
+    
+    public func enableMempoolTracking(strategy: MempoolStrategy) async throws {
+        guard isConnected, let client = client else {
+            throw DashSDKError.notConnected
+        }
+        
+        let result = dash_spv_ffi_client_enable_mempool_tracking(client, strategy.ffiValue)
+        try FFIBridge.checkError(result)
+    }
+    
+    public func getBalanceWithMempool() async throws -> Balance {
+        guard isConnected, let client = client else {
+            throw DashSDKError.notConnected
+        }
+        
+        guard let balancePtr = dash_spv_ffi_client_get_balance_with_mempool(client) else {
+            throw DashSDKError.ffiError(code: -1, message: FFIBridge.getLastError() ?? "Failed to get balance with mempool")
+        }
+        
+        defer {
+            dash_spv_ffi_balance_destroy(balancePtr)
+        }
+        
+        let ffiBalance = balancePtr.pointee
+        return Balance(
+            confirmed: ffiBalance.confirmed,
+            pending: ffiBalance.pending,
+            instantLocked: ffiBalance.instantlocked,
+            total: ffiBalance.total
+        )
+    }
+    
+    public func getMempoolTransactionCount() async throws -> Int {
+        guard isConnected, let client = client else {
+            throw DashSDKError.notConnected
+        }
+        
+        let count = dash_spv_ffi_client_get_mempool_transaction_count(client)
+        if count < 0 {
+            throw DashSDKError.ffiError(code: -1, message: FFIBridge.getLastError() ?? "Failed to get mempool transaction count")
+        }
+        
+        return Int(count)
+    }
+    
+    public func recordSend(txid: String) async throws {
+        guard isConnected, let client = client else {
+            throw DashSDKError.notConnected
+        }
+        
+        let result = FFIBridge.withCString(txid) { txidCStr in
+            dash_spv_ffi_client_record_send(client, txidCStr)
+        }
+        
+        try FFIBridge.checkError(result)
+    }
+    
     // MARK: - Network Operations
     
     public func broadcastTransaction(_ transactionHex: String) async throws {
@@ -679,6 +871,9 @@ public final class SPVClient {
             on_block: eventBlockCallback,
             on_transaction: eventTransactionCallback,
             on_balance_update: eventBalanceCallback,
+            on_mempool_transaction_added: eventMempoolTransactionAddedCallback,
+            on_mempool_transaction_confirmed: eventMempoolTransactionConfirmedCallback,
+            on_mempool_transaction_removed: eventMempoolTransactionRemovedCallback,
             user_data: userData
         )
         
@@ -691,15 +886,55 @@ public final class SPVClient {
     }
 }
 
+// MARK: - Mempool Types
+
+/// Strategy for handling mempool (unconfirmed) transactions
+public enum MempoolStrategy: CaseIterable, Sendable {
+    /// Fetch all announced transactions (poor privacy, high bandwidth)
+    case fetchAll
+    /// Use BIP37 bloom filters (moderate privacy, good efficiency)
+    case bloomFilter
+    /// Only fetch when recently sent or from known addresses (good privacy, default)
+    case selective
+    
+    internal var ffiValue: FFIMempoolStrategy {
+        switch self {
+        case .fetchAll:
+            return FFIMempoolStrategy(rawValue: 0)
+        case .bloomFilter:
+            return FFIMempoolStrategy(rawValue: 1)
+        case .selective:
+            return FFIMempoolStrategy(rawValue: 2)
+        }
+    }
+}
+
+/// Reason for removing a transaction from mempool
+public enum MempoolRemovalReason: Sendable {
+    /// Transaction expired (exceeded timeout)
+    case expired
+    /// Transaction was replaced by another transaction
+    case replaced(byTxid: String?)
+    /// Transaction was double-spent
+    case doubleSpent(conflictingTxid: String?)
+    /// Transaction was included in a block
+    case confirmed
+    /// Manual removal (e.g., user action)
+    case manual
+}
+
 // MARK: - SPV Events
 
 public enum SPVEvent {
     case blockReceived(height: UInt32, hash: String)
-    case transactionReceived(txid: String, confirmed: Bool)
+    case transactionReceived(txid: String, confirmed: Bool, amount: Int64, addresses: [String], blockHeight: UInt32?)
     case balanceUpdated(Balance)
     case syncProgressUpdated(SyncProgress)
     case connectionStatusChanged(Bool)
     case error(DashSDKError)
+    case mempoolTransactionAdded(txid: String, amount: Int64, addresses: [String])
+    case mempoolTransactionConfirmed(txid: String, blockHeight: UInt32, confirmations: UInt32)
+    case mempoolTransactionRemoved(txid: String, reason: MempoolRemovalReason)
 }
 
 // MARK: - Enhanced Sync Methods Extension

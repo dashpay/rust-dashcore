@@ -11,11 +11,20 @@ struct ModelContainerHelper {
             HDWallet.self,
             HDAccount.self,
             HDWatchedAddress.self,
-            Transaction.self,
-            UTXO.self,
-            Balance.self,
+            SwiftDashCoreSDK.Transaction.self,
+            SwiftDashCoreSDK.UTXO.self,
+            SwiftDashCoreSDK.Balance.self,
+            SwiftDashCoreSDK.WatchedAddress.self,
             SyncState.self
         ])
+        
+        // Check if we have migration issues by looking for specific error patterns
+        let shouldCleanup = UserDefaults.standard.bool(forKey: "ForceModelCleanup")
+        if shouldCleanup {
+            print("Force cleanup requested, removing all data...")
+            cleanupCorruptStore()
+            UserDefaults.standard.set(false, forKey: "ForceModelCleanup")
+        }
         
         do {
             // First attempt: try to create normally
@@ -23,6 +32,17 @@ struct ModelContainerHelper {
         } catch {
             print("Initial ModelContainer creation failed: \(error)")
             print("Detailed error: \(error.localizedDescription)")
+            
+            // Check if it's a migration error or model error
+            if error.localizedDescription.contains("migration") || 
+               error.localizedDescription.contains("relationship") ||
+               error.localizedDescription.contains("to-one") ||
+               error.localizedDescription.contains("to-many") ||
+               error.localizedDescription.contains("materialize") ||
+               error.localizedDescription.contains("Array") {
+                print("Model/Migration error detected, performing complete cleanup...")
+                UserDefaults.standard.set(true, forKey: "ForceModelCleanup")
+            }
             
             // Second attempt: clean up and retry
             cleanupCorruptStore()
@@ -66,17 +86,35 @@ struct ModelContainerHelper {
             in: .userDomainMask
         ).first
         
+        // Clean up all SQLite and SwiftData related files
+        let patternsToRemove = [
+            "default.store",
+            "default.store-shm",
+            "default.store-wal",
+            "SwiftData",
+            ".sqlite",
+            ".sqlite-shm",
+            ".sqlite-wal",
+            "ModelContainer",
+            ".db"
+        ]
+        
         // Clean up all files in Application Support that could be related to the store
         if let contents = try? FileManager.default.contentsOfDirectory(at: appSupportURL, includingPropertiesForKeys: nil) {
             for fileURL in contents {
-                if fileURL.lastPathComponent.contains("store") || 
-                   fileURL.lastPathComponent.hasPrefix("default") ||
-                   fileURL.lastPathComponent == "SwiftData" {
+                let filename = fileURL.lastPathComponent
+                
+                // Check if file matches any of our patterns
+                let shouldRemove = patternsToRemove.contains { pattern in
+                    filename.contains(pattern) || filename.hasPrefix("default")
+                }
+                
+                if shouldRemove {
                     do {
                         try FileManager.default.removeItem(at: fileURL)
-                        print("Removed: \(fileURL.lastPathComponent)")
+                        print("Removed: \(filename)")
                     } catch {
-                        print("Failed to remove \(fileURL.lastPathComponent): \(error)")
+                        print("Failed to remove \(filename): \(error)")
                     }
                 }
             }
@@ -86,14 +124,34 @@ struct ModelContainerHelper {
         if let documentsURL = documentsURL,
            let contents = try? FileManager.default.contentsOfDirectory(at: documentsURL, includingPropertiesForKeys: nil) {
             for fileURL in contents {
-                if fileURL.lastPathComponent.contains("store") || 
-                   fileURL.lastPathComponent.hasPrefix("default") {
+                let filename = fileURL.lastPathComponent
+                
+                // Check if file matches any of our patterns
+                let shouldRemove = patternsToRemove.contains { pattern in
+                    filename.contains(pattern) || filename.hasPrefix("default")
+                }
+                
+                if shouldRemove {
                     do {
                         try FileManager.default.removeItem(at: fileURL)
-                        print("Removed from Documents: \(fileURL.lastPathComponent)")
+                        print("Removed from Documents: \(filename)")
                     } catch {
-                        print("Failed to remove from Documents \(fileURL.lastPathComponent): \(error)")
+                        print("Failed to remove from Documents \(filename): \(error)")
                     }
+                }
+            }
+        }
+        
+        // Clear any cached SwiftData files
+        let cacheURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        if let cacheURL = cacheURL {
+            let swiftDataCache = cacheURL.appendingPathComponent("SwiftData")
+            if FileManager.default.fileExists(atPath: swiftDataCache.path) {
+                do {
+                    try FileManager.default.removeItem(at: swiftDataCache)
+                    print("Removed SwiftData cache")
+                } catch {
+                    print("Failed to remove SwiftData cache: \(error)")
                 }
             }
         }

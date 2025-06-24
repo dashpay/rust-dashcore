@@ -74,9 +74,10 @@ struct SettingsView: View {
             try modelContext.delete(model: HDWallet.self)
             try modelContext.delete(model: HDAccount.self)
             try modelContext.delete(model: HDWatchedAddress.self)
-            try modelContext.delete(model: Transaction.self)
-            try modelContext.delete(model: UTXO.self)
-            try modelContext.delete(model: Balance.self)
+            try modelContext.delete(model: SwiftDashCoreSDK.Transaction.self)
+            try modelContext.delete(model: SwiftDashCoreSDK.UTXO.self)
+            try modelContext.delete(model: SwiftDashCoreSDK.Balance.self)
+            try modelContext.delete(model: SwiftDashCoreSDK.WatchedAddress.self)
             try modelContext.delete(model: SyncState.self)
             
             // Save the context
@@ -100,9 +101,10 @@ struct SettingsView: View {
             HDWallet.self,
             HDAccount.self,
             HDWatchedAddress.self,
-            Transaction.self,
-            UTXO.self,
-            Balance.self,
+            SwiftDashCoreSDK.Transaction.self,
+            SwiftDashCoreSDK.UTXO.self,
+            SwiftDashCoreSDK.Balance.self,
+            SwiftDashCoreSDK.WatchedAddress.self,
             SyncState.self
         ])
 }

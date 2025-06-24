@@ -49,12 +49,12 @@ struct ReceiveAddressView: View {
                     
                     // Address Info
                     VStack(spacing: 8) {
-                        if address.transactions.isEmpty {
+                        if address.transactionIds.isEmpty {
                             Label("Unused address", systemImage: "checkmark.shield")
                                 .font(.caption)
                                 .foregroundColor(.green)
                         } else {
-                            Label("\(address.transactions.count) transactions", systemImage: "arrow.left.arrow.right")
+                            Label("\(address.transactionIds.count) transactions", systemImage: "arrow.left.arrow.right")
                                 .font(.caption)
                                 .foregroundColor(.orange)
                         }
@@ -72,7 +72,7 @@ struct ReceiveAddressView: View {
                     Button("Generate New Address") {
                         showNewAddressConfirm = true
                     }
-                    .disabled(address.transactions.isEmpty)
+                    .disabled(address.transactionIds.isEmpty)
                     
                 } else {
                     // No address available

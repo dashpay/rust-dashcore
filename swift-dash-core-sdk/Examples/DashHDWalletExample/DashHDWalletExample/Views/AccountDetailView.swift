@@ -58,6 +58,7 @@ struct AccountDetailView: View {
 // MARK: - Account Header View
 
 struct AccountHeaderView: View {
+    @EnvironmentObject private var walletService: WalletService
     let account: HDAccount
     let onReceive: () -> Void
     let onSend: () -> Void
@@ -79,6 +80,17 @@ struct AccountHeaderView: View {
             // Balance
             if let balance = account.balance {
                 BalanceView(balance: balance)
+            }
+            
+            // Watch Status
+            WatchStatusView(status: walletService.watchVerificationStatus)
+            
+            // Watch Errors
+            if !walletService.watchAddressErrors.isEmpty || walletService.pendingWatchCount > 0 {
+                WatchErrorsView(
+                    errors: walletService.watchAddressErrors,
+                    pendingCount: walletService.pendingWatchCount
+                )
             }
             
             // Action Buttons
@@ -165,20 +177,32 @@ struct BalanceComponent: View {
 struct TransactionsTabView: View {
     let account: HDAccount
     @State private var searchText = ""
+    @Environment(\.modelContext) private var modelContext
     
     var filteredTransactions: [SwiftDashCoreSDK.Transaction] {
+        // Fetch transactions by IDs
+        let txIds = account.transactionIds
+        let descriptor = FetchDescriptor<SwiftDashCoreSDK.Transaction>(
+            predicate: #Predicate { transaction in
+                txIds.contains(transaction.txid)
+            },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        
+        let allTransactions = (try? modelContext.fetch(descriptor)) ?? []
+        
         if searchText.isEmpty {
-            return account.transactions.sorted { $0.timestamp > $1.timestamp }
+            return allTransactions
         } else {
-            return account.transactions.filter { tx in
+            return allTransactions.filter { tx in
                 tx.txid.localizedCaseInsensitiveContains(searchText)
-            }.sorted { $0.timestamp > $1.timestamp }
+            }
         }
     }
     
     var body: some View {
         VStack {
-            if account.transactions.isEmpty {
+            if account.transactionIds.isEmpty {
                 EmptyStateView(
                     icon: "list.bullet.rectangle",
                     title: "No Transactions",
@@ -260,9 +284,20 @@ struct AddressesTabView: View {
 
 struct UTXOsTabView: View {
     let account: HDAccount
+    @Environment(\.modelContext) private var modelContext
     
     var utxos: [UTXO] {
-        account.addresses.flatMap { $0.utxos }.filter { !$0.isSpent }
+        // Collect all UTXO outpoints from addresses
+        let allOutpoints = account.addresses.flatMap { $0.utxoOutpoints }
+        
+        // Fetch UTXOs by outpoints
+        let descriptor = FetchDescriptor<SwiftDashCoreSDK.UTXO>(
+            predicate: #Predicate { utxo in
+                allOutpoints.contains(utxo.outpoint) && !utxo.isSpent
+            }
+        )
+        
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
     
     var totalValue: UInt64 {
@@ -405,8 +440,8 @@ struct AddressRowView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     
-                    if address.transactions.count > 0 {
-                        Text("(\(address.transactions.count) tx)")
+                    if address.transactionIds.count > 0 {
+                        Text("(\(address.transactionIds.count) tx)")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
