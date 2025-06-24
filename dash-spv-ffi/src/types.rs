@@ -1,5 +1,6 @@
 use dash_spv::{ChainState, PeerInfo, SpvStats, SyncProgress};
-use dash_spv::types::{DetailedSyncProgress, SyncStage};
+use dash_spv::types::{DetailedSyncProgress, SyncStage, MempoolRemovalReason};
+use dash_spv::client::config::MempoolStrategy;
 use dashcore::Network;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
@@ -302,3 +303,67 @@ pub struct FFITransaction {
     pub size: u32,
     pub weight: u32,
 }
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FFIMempoolStrategy {
+    FetchAll = 0,
+    BloomFilter = 1,
+    Selective = 2,
+}
+
+impl From<MempoolStrategy> for FFIMempoolStrategy {
+    fn from(strategy: MempoolStrategy) -> Self {
+        match strategy {
+            MempoolStrategy::FetchAll => FFIMempoolStrategy::FetchAll,
+            MempoolStrategy::BloomFilter => FFIMempoolStrategy::BloomFilter,
+            MempoolStrategy::Selective => FFIMempoolStrategy::Selective,
+        }
+    }
+}
+
+impl From<FFIMempoolStrategy> for MempoolStrategy {
+    fn from(strategy: FFIMempoolStrategy) -> Self {
+        match strategy {
+            FFIMempoolStrategy::FetchAll => MempoolStrategy::FetchAll,
+            FFIMempoolStrategy::BloomFilter => MempoolStrategy::BloomFilter,
+            FFIMempoolStrategy::Selective => MempoolStrategy::Selective,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FFIMempoolRemovalReason {
+    Expired = 0,
+    Replaced = 1,
+    DoubleSpent = 2,
+    Confirmed = 3,
+    Manual = 4,
+}
+
+impl From<MempoolRemovalReason> for FFIMempoolRemovalReason {
+    fn from(reason: MempoolRemovalReason) -> Self {
+        match reason {
+            MempoolRemovalReason::Expired => FFIMempoolRemovalReason::Expired,
+            MempoolRemovalReason::Replaced { .. } => FFIMempoolRemovalReason::Replaced,
+            MempoolRemovalReason::DoubleSpent { .. } => FFIMempoolRemovalReason::DoubleSpent,
+            MempoolRemovalReason::Confirmed => FFIMempoolRemovalReason::Confirmed,
+            MempoolRemovalReason::Manual => FFIMempoolRemovalReason::Manual,
+        }
+    }
+}
+
+#[repr(C)]
+pub struct FFIUnconfirmedTransaction {
+    pub txid: FFIString,
+    pub raw_tx: *mut u8,
+    pub raw_tx_len: usize,
+    pub amount: i64,
+    pub fee: u64,
+    pub is_instant_send: bool,
+    pub is_outgoing: bool,
+    pub addresses: *mut FFIString,
+    pub addresses_len: usize,
+}
+

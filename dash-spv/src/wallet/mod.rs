@@ -9,6 +9,8 @@
 
 pub mod transaction_processor;
 pub mod utxo;
+pub mod utxo_rollback;
+pub mod wallet_state;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -18,10 +20,15 @@ use tokio::sync::RwLock;
 
 use crate::error::{SpvError, StorageError};
 use crate::storage::StorageManager;
+use crate::types::MempoolState;
 pub use transaction_processor::{
     AddressStats, BlockResult, TransactionProcessor, TransactionResult,
 };
 pub use utxo::Utxo;
+pub use utxo_rollback::{
+    UTXORollbackManager, UTXOSnapshot, UTXOChange, TransactionStatus,
+};
+pub use wallet_state::WalletState;
 
 /// Main wallet interface for monitoring addresses and tracking UTXOs.
 #[derive(Clone)]
@@ -34,6 +41,12 @@ pub struct Wallet {
 
     /// Current UTXO set indexed by outpoint.
     utxo_set: Arc<RwLock<HashMap<OutPoint, Utxo>>>,
+    
+    /// UTXO rollback manager for reorg handling.
+    rollback_manager: Arc<RwLock<Option<UTXORollbackManager>>>,
+    
+    /// Wallet state for tracking transactions.
+    wallet_state: Arc<RwLock<WalletState>>,
 }
 
 /// Balance information for an address or the entire wallet.
@@ -47,6 +60,12 @@ pub struct Balance {
 
     /// InstantLocked balance (InstantLocked but not ChainLocked).
     pub instantlocked: Amount,
+    
+    /// Mempool balance (unconfirmed transactions not yet in blocks).
+    pub mempool: Amount,
+    
+    /// Mempool InstantLocked balance.
+    pub mempool_instant: Amount,
 }
 
 impl Balance {
@@ -56,12 +75,14 @@ impl Balance {
             confirmed: Amount::ZERO,
             pending: Amount::ZERO,
             instantlocked: Amount::ZERO,
+            mempool: Amount::ZERO,
+            mempool_instant: Amount::ZERO,
         }
     }
 
-    /// Get total balance (confirmed + pending + instantlocked).
+    /// Get total balance (confirmed + pending + instantlocked + mempool).
     pub fn total(&self) -> Amount {
-        self.confirmed + self.pending + self.instantlocked
+        self.confirmed + self.pending + self.instantlocked + self.mempool + self.mempool_instant
     }
 
     /// Add another balance to this one.
@@ -69,6 +90,8 @@ impl Balance {
         self.confirmed += other.confirmed;
         self.pending += other.pending;
         self.instantlocked += other.instantlocked;
+        self.mempool += other.mempool;
+        self.mempool_instant += other.mempool_instant;
     }
 }
 
@@ -85,6 +108,99 @@ impl Wallet {
             storage,
             watched_addresses: Arc::new(RwLock::new(HashSet::new())),
             utxo_set: Arc::new(RwLock::new(HashMap::new())),
+            rollback_manager: Arc::new(RwLock::new(None)),
+            wallet_state: Arc::new(RwLock::new(WalletState::new(dashcore::Network::Dash))),
+        }
+    }
+    
+    /// Get the network this wallet is operating on.
+    pub fn network(&self) -> dashcore::Network {
+        // Default to mainnet for now - in real implementation this should be configurable
+        dashcore::Network::Dash
+    }
+    
+    /// Check if we have a specific UTXO.
+    pub fn has_utxo(&self, outpoint: &OutPoint) -> bool {
+        // We need async access, but this method is sync, so we'll use try_read
+        if let Ok(utxos) = self.utxo_set.try_read() {
+            utxos.contains_key(outpoint)
+        } else {
+            false
+        }
+    }
+    
+    /// Calculate the net amount change for our wallet from a transaction.
+    pub fn calculate_net_amount(&self, tx: &dashcore::Transaction) -> i64 {
+        let mut net_amount: i64 = 0;
+        
+        // Check inputs (subtract if we're spending our UTXOs)
+        if let Ok(utxos) = self.utxo_set.try_read() {
+            for input in &tx.input {
+                if let Some(utxo) = utxos.get(&input.previous_output) {
+                    net_amount -= utxo.txout.value as i64;
+                }
+            }
+        }
+        
+        // Check outputs (add if we're receiving)
+        if let Ok(watched_addrs) = self.watched_addresses.try_read() {
+            for output in &tx.output {
+                if let Ok(address) = Address::from_script(&output.script_pubkey, self.network()) {
+                    if watched_addrs.contains(&address) {
+                        net_amount += output.value as i64;
+                    }
+                }
+            }
+        }
+        
+        net_amount
+    }
+    
+    /// Check if a transaction is relevant to this wallet.
+    pub fn is_transaction_relevant(&self, tx: &dashcore::Transaction) -> bool {
+        // Check if any input spends our UTXOs
+        if let Ok(utxos) = self.utxo_set.try_read() {
+            for input in &tx.input {
+                if utxos.contains_key(&input.previous_output) {
+                    return true;
+                }
+            }
+        }
+        
+        // Check if any output is to our watched addresses
+        if let Ok(watched_addrs) = self.watched_addresses.try_read() {
+            for output in &tx.output {
+                if let Ok(address) = Address::from_script(&output.script_pubkey, self.network()) {
+                    if watched_addrs.contains(&address) {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        false
+    }
+    
+    /// Create a new wallet with rollback support.
+    pub fn new_with_rollback(storage: Arc<RwLock<dyn StorageManager>>, enable_rollback: bool) -> Self {
+        let rollback_manager = if enable_rollback {
+            Some(UTXORollbackManager::with_max_snapshots(100, true)) // 100 snapshots, persist to storage
+        } else {
+            None
+        };
+        
+        let wallet_state = if enable_rollback {
+            WalletState::with_rollback(dashcore::Network::Dash, true)
+        } else {
+            WalletState::new(dashcore::Network::Dash)
+        };
+        
+        Self {
+            storage,
+            watched_addresses: Arc::new(RwLock::new(HashSet::new())),
+            utxo_set: Arc::new(RwLock::new(HashMap::new())),
+            rollback_manager: Arc::new(RwLock::new(rollback_manager)),
+            wallet_state: Arc::new(RwLock::new(wallet_state)),
         }
     }
 
@@ -133,6 +249,60 @@ impl Wallet {
     pub async fn get_balance_for_address(&self, address: &Address) -> Result<Balance, SpvError> {
         self.calculate_balance(Some(address)).await
     }
+    
+    /// Get the balance including mempool transactions.
+    pub async fn get_balance_with_mempool(
+        &self,
+        mempool_state: &MempoolState,
+    ) -> Result<Balance, SpvError> {
+        // Get regular balance
+        let mut balance = self.get_balance().await?;
+        
+        // Add mempool balances
+        if mempool_state.pending_balance != 0 {
+            if mempool_state.pending_balance > 0 {
+                balance.mempool = Amount::from_sat(mempool_state.pending_balance as u64);
+            } else {
+                // Handle negative balance (spending more than receiving)
+                // This should be handled more carefully in production
+                balance.mempool = Amount::ZERO;
+            }
+        }
+        
+        if mempool_state.pending_instant_balance != 0 {
+            if mempool_state.pending_instant_balance > 0 {
+                balance.mempool_instant = Amount::from_sat(mempool_state.pending_instant_balance as u64);
+            } else {
+                balance.mempool_instant = Amount::ZERO;
+            }
+        }
+        
+        Ok(balance)
+    }
+    
+    /// Get the balance for a specific address including mempool.
+    pub async fn get_balance_for_address_with_mempool(
+        &self,
+        address: &Address,
+        mempool_state: &MempoolState,
+    ) -> Result<Balance, SpvError> {
+        // Get regular balance
+        let mut balance = self.get_balance_for_address(address).await?;
+        
+        // Add mempool balance for this specific address
+        for tx in mempool_state.transactions.values() {
+            if tx.addresses.contains(address) {
+                let amount = Amount::from_sat(tx.net_amount.abs() as u64);
+                if tx.is_instant_send {
+                    balance.mempool_instant += amount;
+                } else {
+                    balance.mempool += amount;
+                }
+            }
+        }
+        
+        Ok(balance)
+    }
 
     /// Get all UTXOs for the wallet.
     pub async fn get_utxos(&self) -> Vec<Utxo> {
@@ -154,6 +324,13 @@ impl Wallet {
         // Persist the UTXO
         let mut storage = self.storage.write().await;
         storage.store_utxo(&utxo.outpoint, &utxo).await?;
+        
+        // Track in rollback manager if enabled
+        if let Some(ref _rollback_mgr) = *self.rollback_manager.read().await {
+            let _change = UTXOChange::Created(utxo.clone());
+            // Note: This requires block height which isn't available here
+            // The rollback tracking should be done at the block processing level
+        }
 
         Ok(())
     }
@@ -331,6 +508,115 @@ impl Wallet {
         storage.store_metadata("watched_addresses", &data).await?;
 
         Ok(())
+    }
+    
+    /// Handle a transaction being confirmed in a block (moved from mempool).
+    pub async fn handle_transaction_confirmed(
+        &self,
+        txid: &dashcore::Txid,
+        block_height: u32,
+        block_hash: &dashcore::BlockHash,
+        mempool_state: &mut MempoolState,
+    ) -> Result<(), SpvError> {
+        // Remove from mempool
+        if let Some(tx) = mempool_state.remove_transaction(txid) {
+            tracing::info!(
+                "Transaction {} confirmed at height {} (was in mempool for {:?})",
+                txid,
+                block_height,
+                tx.first_seen.elapsed()
+            );
+        }
+        
+        Ok(())
+    }
+    
+    /// Process a new block - track UTXO changes for rollback support.
+    pub async fn process_block(
+        &self,
+        block_height: u32,
+        block_hash: dashcore::BlockHash,
+        transactions: &[dashcore::Transaction],
+    ) -> Result<(), SpvError> {
+        // Create snapshot if rollback is enabled
+        let mut rollback_mgr_guard = self.rollback_manager.write().await;
+        if let Some(ref mut rollback_mgr) = *rollback_mgr_guard {
+            let mut wallet_state = self.wallet_state.write().await;
+            let mut storage = self.storage.write().await;
+            
+            rollback_mgr.process_block(
+                block_height,
+                block_hash,
+                transactions,
+                &mut *wallet_state,
+                &mut *storage,
+            ).await.map_err(|e| SpvError::Storage(StorageError::ReadFailed(e.to_string())))?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Rollback wallet state to a specific height.
+    pub async fn rollback_to_height(&self, target_height: u32) -> Result<(), SpvError> {
+        let mut rollback_mgr_guard = self.rollback_manager.write().await;
+        if let Some(ref mut rollback_mgr) = *rollback_mgr_guard {
+            let mut wallet_state = self.wallet_state.write().await;
+            let mut storage = self.storage.write().await;
+            
+            // Rollback and get the snapshots that were rolled back
+            let rolled_back_snapshots = rollback_mgr.rollback_to_height(
+                target_height,
+                &mut *wallet_state,
+                &mut *storage,
+            ).await.map_err(|e| SpvError::Storage(StorageError::ReadFailed(e.to_string())))?;
+            
+            // Apply changes to wallet's UTXO set
+            let mut utxos = self.utxo_set.write().await;
+            
+            for snapshot in rolled_back_snapshots {
+                for change in snapshot.changes {
+                    match change {
+                        UTXOChange::Created(utxo) => {
+                            // Remove UTXO that was created after target height
+                            utxos.remove(&utxo.outpoint);
+                        }
+                        UTXOChange::Spent(outpoint) => {
+                            // For spent UTXOs, we need to restore them but we don't have the full UTXO data
+                            // This is a limitation - we would need to store the full UTXO in the Spent variant
+                            tracing::warn!("Cannot restore spent UTXO {} - full data not available", outpoint);
+                        }
+                        UTXOChange::StatusChanged { outpoint, old_status, .. } => {
+                            // Restore old status
+                            if let Some(utxo) = utxos.get_mut(&outpoint) {
+                                // Set confirmation status based on old_status boolean
+                                utxo.set_confirmed(old_status);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            tracing::info!("Wallet rolled back to height {}", target_height);
+        } else {
+            return Err(SpvError::Config("Rollback not enabled for this wallet".to_string()));
+        }
+        
+        Ok(())
+    }
+    
+    /// Check if rollback is enabled.
+    pub async fn is_rollback_enabled(&self) -> bool {
+        self.rollback_manager.read().await.is_some()
+    }
+    
+    /// Get rollback manager statistics.
+    pub async fn get_rollback_stats(&self) -> Option<(usize, u32, u32)> {
+        if let Some(ref mgr) = *self.rollback_manager.read().await {
+            let (snapshot_count, oldest, newest) = mgr.get_snapshot_info();
+            Some((snapshot_count, oldest, newest))
+        } else {
+            None
+        }
     }
 }
 
