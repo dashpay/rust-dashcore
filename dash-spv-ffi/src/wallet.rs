@@ -33,10 +33,7 @@ impl FFIWatchItem {
                     dashcore::Address::<dashcore::address::NetworkUnchecked>::from_str(&data_str)
                         .map_err(|e| format!("Invalid address: {}", e))?
                         .assume_checked();
-                Ok(WatchItem::Address {
-                    address: addr,
-                    earliest_height: None,
-                })
+                Ok(WatchItem::address(addr))
             }
             FFIWatchItemType::Script => {
                 let script_bytes =
@@ -74,10 +71,7 @@ impl FFIWatchItem {
                     format!("Address {} is not valid for network {:?}", data_str, network)
                 })?;
 
-                Ok(WatchItem::Address {
-                    address: checked_addr,
-                    earliest_height: None,
-                })
+                Ok(WatchItem::address(checked_addr))
             }
             FFIWatchItemType::Script => {
                 let script_bytes =
@@ -99,6 +93,8 @@ pub struct FFIBalance {
     pub confirmed: u64,
     pub pending: u64,
     pub instantlocked: u64,
+    pub mempool: u64,
+    pub mempool_instant: u64,
     pub total: u64,
 }
 
@@ -108,6 +104,8 @@ impl From<Balance> for FFIBalance {
             confirmed: balance.confirmed.to_sat(),
             pending: balance.pending.to_sat(),
             instantlocked: balance.instantlocked.to_sat(),
+            mempool: balance.mempool.to_sat(),
+            mempool_instant: balance.mempool_instant.to_sat(),
             total: balance.total().to_sat(),
         }
     }
@@ -119,7 +117,9 @@ impl From<dash_spv::types::AddressBalance> for FFIBalance {
             confirmed: balance.confirmed.to_sat(),
             pending: balance.unconfirmed.to_sat(),
             instantlocked: 0, // AddressBalance doesn't have instantlocked
-            total: (balance.confirmed + balance.unconfirmed).to_sat(),
+            mempool: balance.pending.to_sat(),
+            mempool_instant: balance.pending_instant.to_sat(),
+            total: balance.total().to_sat(),
         }
     }
 }
