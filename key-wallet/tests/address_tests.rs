@@ -62,7 +62,7 @@ fn test_p2sh_address_creation() {
 fn test_address_parsing() {
     // Test mainnet P2PKH
     let addr_str = "XmnGSJav3CWVmzDv5U68k7XT9rRPqyavtE";
-    let address = Address::from_str(addr_str).unwrap();
+    let address = Address::from_string(addr_str).unwrap();
 
     assert_eq!(address.network, Network::Dash);
     assert_eq!(address.address_type, AddressType::P2PKH);
@@ -98,7 +98,7 @@ fn test_address_generator() {
     let wallet = HDWallet::from_seed(&seed, Network::Dash).unwrap();
 
     // Get account public key
-    let account = wallet.bip44_account(0).unwrap();
+    let _account = wallet.bip44_account(0).unwrap();
     let path = key_wallet::DerivationPath::from(vec![
         key_wallet::ChildNumber::from_hardened_idx(44).unwrap(),
         key_wallet::ChildNumber::from_hardened_idx(5).unwrap(),

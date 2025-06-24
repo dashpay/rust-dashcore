@@ -774,9 +774,9 @@ pub enum KeyDerivationType {
     BLS = 1,
 }
 
-impl Into<u32> for KeyDerivationType {
-    fn into(self) -> u32 {
-        match self {
+impl From<KeyDerivationType> for u32 {
+    fn from(val: KeyDerivationType) -> Self {
+        match val {
             KeyDerivationType::ECDSA => 0,
             KeyDerivationType::BLS => 1,
         }
@@ -985,7 +985,7 @@ impl IntoDerivationPath for String {
     }
 }
 
-impl<'a> IntoDerivationPath for &'a str {
+impl IntoDerivationPath for &str {
     fn into_derivation_path(self) -> Result<DerivationPath, Error> {
         self.parse()
     }
@@ -1443,10 +1443,7 @@ impl ExtendedPrivKey {
         let parent_fingerprint = data[5..9].try_into().expect("4 bytes for fingerprint");
 
         let hardening_byte = data[9];
-        let is_hardened = match hardening_byte {
-            0x00 => false,
-            _ => true,
-        };
+        let is_hardened = !matches!(hardening_byte, 0x00);
 
         let child_number_bytes = data[10..42].try_into().expect("32 bytes for child number");
         let child_number = if is_hardened {
@@ -1778,10 +1775,7 @@ impl ExtendedPubKey {
         let parent_fingerprint = data[5..9].try_into().expect("4 bytes for fingerprint");
 
         let hardening_byte = data[9];
-        let is_hardened = match hardening_byte {
-            0x00 => false,
-            _ => true,
-        };
+        let is_hardened = !matches!(hardening_byte, 0x00);
 
         let child_number_bytes = data[10..42].try_into().expect("32 bytes for child number");
         let child_number = if is_hardened {
