@@ -173,7 +173,9 @@ cargo doc --open
 ### Git Workflow
 - Current development branch: `v0.40-dev`
 - Main branch: `master`
-- Recent work focuses on Swift SDK and FFI improvements
+- Recent work:
+  - Removed interleaved sync logic from dash-spv (now uses sequential sync only)
+  - Swift SDK and FFI improvements
 
 ## Current Status
 
