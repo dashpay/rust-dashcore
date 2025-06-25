@@ -48,7 +48,7 @@ pub struct DashSpvClient {
     storage: Box<dyn StorageManager>,
     wallet: Arc<RwLock<crate::wallet::Wallet>>,
     sync_manager: SequentialSyncManager,
-    _validation: ValidationManager,
+    validation: ValidationManager,
     chainlock_manager: Arc<ChainLockManager>,
     running: Arc<RwLock<bool>>,
     watch_items: Arc<RwLock<HashSet<WatchItem>>>,
@@ -286,7 +286,7 @@ impl DashSpvClient {
             storage,
             wallet,
             sync_manager,
-            _validation: validation,
+            validation: validation,
             chainlock_manager,
             running: Arc::new(RwLock::new(false)),
             watch_items,
@@ -490,12 +490,17 @@ impl DashSpvClient {
             }
             
             if address_affected {
-                let amount_sats = tx.net_amount.unsigned_abs() as u64;
-                if tx.is_instant_send {
-                    pending_instant += amount_sats;
-                } else {
-                    pending += amount_sats;
+                // Only add positive amounts (incoming transactions) to the balance
+                if tx.net_amount > 0 {
+                    let amount_sats = tx.net_amount as u64;
+                    if tx.is_instant_send {
+                        pending_instant += amount_sats;
+                    } else {
+                        pending += amount_sats;
+                    }
                 }
+                // Negative amounts (outgoing) should not be added to pending balance
+                // as they reduce the confirmed/unconfirmed balance, not add to pending
             }
         }
         
@@ -852,15 +857,14 @@ impl DashSpvClient {
             }
 
             // Save sync state periodically (every 30 seconds or after significant progress)
-            static LAST_SYNC_STATE_SAVE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
-            let last_save = LAST_SYNC_STATE_SAVE.load(std::sync::atomic::Ordering::Relaxed);
+            let last_save = *self.last_sync_state_save.read().await;
             
             if current_time - last_save >= 30 {  // Save every 30 seconds
                 if let Err(e) = self.save_sync_state().await {
                     tracing::warn!("Failed to save sync state: {}", e);
                 } else {
-                    LAST_SYNC_STATE_SAVE.store(current_time, std::sync::atomic::Ordering::Relaxed);
+                    *self.last_sync_state_save.write().await = current_time;
                 }
             }
 
@@ -1796,8 +1800,18 @@ impl DashSpvClient {
                     return Ok(false); // Start fresh sync
                 }
                 
-                // Add headers to chain state
+                // Validate headers before adding to chain state
                 {
+                    // Validate the batch of headers
+                    if let Err(e) = self.validation.validate_header_chain(&headers, false) {
+                        tracing::error!(
+                            "Header validation failed for range {}..{}: {:?}",
+                            current_height, end_height + 1, e
+                        );
+                        return Ok(false); // Start fresh sync
+                    }
+                    
+                    // Add validated headers to chain state
                     let mut state = self.state.write().await;
                     for header in headers {
                         state.add_header(header);
