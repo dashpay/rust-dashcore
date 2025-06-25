@@ -202,4 +202,13 @@ impl NetworkManager for MockNetworkManager {
     async fn get_peers_with_service(&self, _service_flags: ServiceFlags) -> Vec<PeerInfo> {
         self.peer_info()
     }
+    
+    async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
+        // For mock, always return PeerId(1) when connected
+        if self.connected {
+            crate::types::PeerId(1)
+        } else {
+            crate::types::PeerId(0)
+        }
+    }
 }
