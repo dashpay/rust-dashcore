@@ -80,6 +80,7 @@ enum SegmentState {
 struct SegmentCache {
     segment_id: u32,
     headers: Vec<BlockHeader>,
+    valid_count: usize,  // Number of actual valid headers (excluding padding)
     state: SegmentState,
     last_saved: Instant,
     last_accessed: Instant,
@@ -387,20 +388,24 @@ impl DiskStorageManager {
             Vec::new()
         };
 
+        // Store the actual number of valid headers before padding
+        let valid_count = headers.len();
+        
         // Ensure the segment has space for all possible headers in this segment
         // This is crucial for proper indexing
         let expected_size = HEADERS_PER_SEGMENT as usize;
         if headers.len() < expected_size {
-            // Pad with default headers to ensure proper indexing
-            let default_header = BlockHeader {
-                version: Version::from_consensus(0),
-                prev_blockhash: BlockHash::all_zeros(),
-                merkle_root: dashcore::hashes::sha256d::Hash::all_zeros().into(),
-                time: 0,
-                bits: CompactTarget::from_consensus(0),
-                nonce: 0,
+            // Pad with sentinel headers that cannot be mistaken for valid blocks
+            // Use max values for version and nonce, and specific invalid patterns
+            let sentinel_header = BlockHeader {
+                version: Version::from_consensus(i32::MAX),  // Invalid version
+                prev_blockhash: BlockHash::from_byte_array([0xFF; 32]),  // All 0xFF pattern
+                merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
+                time: u32::MAX,  // Far future timestamp
+                bits: CompactTarget::from_consensus(0xFFFFFFFF),  // Invalid difficulty
+                nonce: u32::MAX,  // Max nonce value
             };
-            headers.resize(expected_size, default_header);
+            headers.resize(expected_size, sentinel_header);
         }
 
         // Evict old segments if needed
@@ -413,6 +418,7 @@ impl DiskStorageManager {
             SegmentCache {
                 segment_id,
                 headers,
+                valid_count,
                 state: SegmentState::Clean,
                 last_saved: Instant::now(),
                 last_accessed: Instant::now(),
@@ -891,10 +897,13 @@ async fn save_segment_to_disk(path: &Path, headers: &[BlockHeader]) -> StorageRe
             let file = OpenOptions::new().create(true).write(true).truncate(true).open(&path)?;
             let mut writer = BufWriter::new(file);
 
-            // Only save actual headers, not padding/default headers
+            // Only save actual headers, not sentinel headers
             for header in headers {
-                // Skip default/padding headers
-                if header.time == 0 && header.nonce == 0 && header.prev_blockhash == BlockHash::all_zeros() {
+                // Skip sentinel headers (used for padding)
+                if header.version.to_consensus() == i32::MAX 
+                    && header.time == u32::MAX 
+                    && header.nonce == u32::MAX
+                    && header.prev_blockhash == BlockHash::from_byte_array([0xFF; 32]) {
                     continue;
                 }
                 header.consensus_encode(&mut writer).map_err(|e| {
@@ -1020,18 +1029,20 @@ impl StorageManager for DiskStorageManager {
                 if let Some(segment) = segments.get_mut(&segment_id) {
                     // Ensure we have space in the segment
                     if offset >= segment.headers.len() {
-                        // Fill with default headers up to the offset
-                        let default_header = BlockHeader {
-                            version: Version::from_consensus(0),
-                            prev_blockhash: BlockHash::all_zeros(),
-                            merkle_root: dashcore::hashes::sha256d::Hash::all_zeros().into(),
-                            time: 0,
-                            bits: CompactTarget::from_consensus(0),
-                            nonce: 0,
+                        // Fill with sentinel headers up to the offset
+                        let sentinel_header = BlockHeader {
+                            version: Version::from_consensus(i32::MAX),  // Invalid version
+                            prev_blockhash: BlockHash::from_byte_array([0xFF; 32]),  // All 0xFF pattern
+                            merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
+                            time: u32::MAX,  // Far future timestamp
+                            bits: CompactTarget::from_consensus(0xFFFFFFFF),  // Invalid difficulty
+                            nonce: u32::MAX,  // Max nonce value
                         };
-                        segment.headers.resize(offset + 1, default_header);
+                        segment.headers.resize(offset + 1, sentinel_header);
                     }
                     segment.headers[offset] = *header;
+                    // Update valid_count to track the highest valid index + 1
+                    segment.valid_count = segment.valid_count.max(offset + 1);
                     // Transition to Dirty state (from Clean, Dirty, or Saving)
                     segment.state = SegmentState::Dirty;
                     segment.last_accessed = Instant::now();
@@ -1100,8 +1111,11 @@ impl StorageManager for DiskStorageManager {
                     segment.headers.len()
                 };
 
-                if start_idx < segment.headers.len() && end_idx <= segment.headers.len() {
-                    headers.extend_from_slice(&segment.headers[start_idx..end_idx]);
+                // Only include headers up to valid_count to avoid returning sentinel headers
+                let actual_end_idx = end_idx.min(segment.valid_count);
+                
+                if start_idx < segment.headers.len() && actual_end_idx <= segment.headers.len() && start_idx < actual_end_idx {
+                    headers.extend_from_slice(&segment.headers[start_idx..actual_end_idx]);
                 }
             }
         }
@@ -1129,16 +1143,13 @@ impl StorageManager for DiskStorageManager {
 
         let segments = self.active_segments.read().await;
         let header = segments.get(&segment_id).and_then(|segment| {
-            // Check if this is a valid header (not a default/padding header)
-            segment.headers.get(offset).and_then(|h| {
-                // Check if this is an actual header or just padding
-                if h.time == 0 && h.nonce == 0 && h.prev_blockhash == BlockHash::all_zeros() {
-                    // This is a default header used for padding, not a real header
-                    None
-                } else {
-                    Some(*h)
-                }
-            })
+            // Check if this offset is within the valid range
+            if offset < segment.valid_count {
+                segment.headers.get(offset).copied()
+            } else {
+                // This is beyond the valid headers in this segment
+                None
+            }
         });
         
         if header.is_none() {
@@ -1788,6 +1799,82 @@ impl StorageManager for DiskStorageManager {
     async fn clear_mempool(&mut self) -> StorageResult<()> {
         self.mempool_transactions.write().await.clear();
         *self.mempool_state.write().await = None;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_sentinel_headers_not_returned() -> Result<(), Box<dyn std::error::Error>> {
+        // Create a temporary directory for the test
+        let temp_dir = TempDir::new()?;
+        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
+
+        // Create a test header
+        let test_header = BlockHeader {
+            version: Version::from_consensus(1),
+            prev_blockhash: BlockHash::from_byte_array([1; 32]),
+            merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([2; 32]).into(),
+            time: 12345,
+            bits: CompactTarget::from_consensus(0x1d00ffff),
+            nonce: 67890,
+        };
+
+        // Store just one header
+        storage.store_headers(&[test_header]).await?;
+
+        // Load headers for a range that would include padding
+        let loaded_headers = storage.load_headers(0..10).await?;
+
+        // Should only get back the one header we stored, not the sentinel padding
+        assert_eq!(loaded_headers.len(), 1);
+        assert_eq!(loaded_headers[0], test_header);
+
+        // Try to get a header at index 5 (which would be a sentinel)
+        let header_at_5 = storage.get_header(5).await?;
+        assert!(header_at_5.is_none(), "Should not return sentinel headers");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_sentinel_headers_not_saved_to_disk() -> Result<(), Box<dyn std::error::Error>> {
+        // Create a temporary directory for the test
+        let temp_dir = TempDir::new()?;
+        let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
+
+        // Create test headers
+        let headers: Vec<BlockHeader> = (0..3).map(|i| {
+            BlockHeader {
+                version: Version::from_consensus(1),
+                prev_blockhash: BlockHash::from_byte_array([i as u8; 32]),
+                merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([(i + 1) as u8; 32]).into(),
+                time: 12345 + i,
+                bits: CompactTarget::from_consensus(0x1d00ffff),
+                nonce: 67890 + i,
+            }
+        }).collect();
+
+        // Store headers
+        storage.store_headers(&headers).await?;
+
+        // Force save to disk
+        storage.save_dirty_segments().await?;
+
+        // Wait a bit for background save
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Create a new storage instance to load from disk
+        let storage2 = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
+
+        // Load headers - should only get the 3 we stored
+        let loaded_headers = storage2.load_headers(0..HEADERS_PER_SEGMENT).await?;
+        assert_eq!(loaded_headers.len(), 3);
+
         Ok(())
     }
 }
