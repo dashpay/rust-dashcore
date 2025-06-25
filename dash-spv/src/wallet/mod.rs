@@ -18,6 +18,7 @@ use std::sync::Arc;
 use dashcore::{Address, Amount, OutPoint};
 use tokio::sync::RwLock;
 
+use crate::bloom::{BloomFilterManager, BloomFilterConfig};
 use crate::error::{SpvError, StorageError};
 use crate::storage::StorageManager;
 use crate::types::MempoolState;
@@ -47,15 +48,18 @@ pub struct Wallet {
     
     /// Wallet state for tracking transactions.
     wallet_state: Arc<RwLock<WalletState>>,
+    
+    /// Bloom filter manager for SPV filtering.
+    bloom_filter_manager: Option<Arc<BloomFilterManager>>,
 }
 
 /// Balance information for an address or the entire wallet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Balance {
-    /// Confirmed balance (6+ confirmations or ChainLocked).
+    /// Confirmed balance (1+ confirmations or ChainLocked).
     pub confirmed: Amount,
 
-    /// Pending balance (< 6 confirmations).
+    /// Pending balance (0 confirmations).
     pub pending: Amount,
 
     /// InstantLocked balance (InstantLocked but not ChainLocked).
@@ -110,6 +114,7 @@ impl Wallet {
             utxo_set: Arc::new(RwLock::new(HashMap::new())),
             rollback_manager: Arc::new(RwLock::new(None)),
             wallet_state: Arc::new(RwLock::new(WalletState::new(dashcore::Network::Dash))),
+            bloom_filter_manager: None,
         }
     }
     
@@ -201,16 +206,32 @@ impl Wallet {
             utxo_set: Arc::new(RwLock::new(HashMap::new())),
             rollback_manager: Arc::new(RwLock::new(rollback_manager)),
             wallet_state: Arc::new(RwLock::new(wallet_state)),
+            bloom_filter_manager: None,
         }
+    }
+
+    /// Enable bloom filter support for this wallet.
+    pub fn enable_bloom_filter(&mut self, config: BloomFilterConfig) {
+        self.bloom_filter_manager = Some(Arc::new(BloomFilterManager::new(config)));
+    }
+    
+    /// Get the bloom filter manager if enabled.
+    pub fn bloom_filter_manager(&self) -> Option<&Arc<BloomFilterManager>> {
+        self.bloom_filter_manager.as_ref()
     }
 
     /// Add an address to watch for transactions.
     pub async fn add_watched_address(&self, address: Address) -> Result<(), SpvError> {
         let mut watched = self.watched_addresses.write().await;
-        watched.insert(address);
+        watched.insert(address.clone());
 
         // Persist the updated watch list
         self.save_watched_addresses(&watched).await?;
+        
+        // Update bloom filter if enabled
+        if let Some(ref bloom_manager) = self.bloom_filter_manager {
+            bloom_manager.add_address(&address).await?;
+        }
 
         Ok(())
     }
@@ -309,6 +330,16 @@ impl Wallet {
         let utxos = self.utxo_set.read().await;
         utxos.values().cloned().collect()
     }
+    
+    /// Get all unspent outputs (alias for get_utxos).
+    pub async fn get_unspent_outputs(&self) -> Result<Vec<Utxo>, SpvError> {
+        Ok(self.get_utxos().await)
+    }
+    
+    /// Get all addresses (alias for get_watched_addresses).
+    pub async fn get_all_addresses(&self) -> Result<Vec<Address>, SpvError> {
+        Ok(self.get_watched_addresses().await)
+    }
 
     /// Get UTXOs for a specific address.
     pub async fn get_utxos_for_address(&self, address: &Address) -> Vec<Utxo> {
@@ -318,6 +349,14 @@ impl Wallet {
 
     /// Add a UTXO to the wallet.
     pub(crate) async fn add_utxo(&self, utxo: Utxo) -> Result<(), SpvError> {
+        tracing::info!(
+            "Adding UTXO: {} for address {} at height {} (is_confirmed={})",
+            utxo.outpoint,
+            utxo.address,
+            utxo.height,
+            utxo.is_confirmed
+        );
+        
         let mut utxos = self.utxo_set.write().await;
         utxos.insert(utxo.outpoint, utxo.clone());
 
@@ -394,6 +433,12 @@ impl Wallet {
     ) -> Result<Balance, SpvError> {
         let utxos = self.utxo_set.read().await;
         let mut balance = Balance::new();
+        
+        tracing::debug!(
+            "Calculating balance for address filter: {:?}, total UTXOs: {}", 
+            address_filter, 
+            utxos.len()
+        );
 
         // TODO: Get current tip height for confirmation calculation
         // For now, use a placeholder - in a real implementation, this would come from the sync manager
@@ -408,11 +453,21 @@ impl Wallet {
             }
 
             let amount = Amount::from_sat(utxo.txout.value);
+            
+            tracing::debug!(
+                "UTXO {}: amount={}, height={}, is_confirmed={}, is_instantlocked={}",
+                utxo.outpoint,
+                amount,
+                utxo.height,
+                utxo.is_confirmed,
+                utxo.is_instantlocked
+            );
 
             // Categorize UTXO based on confirmation and lock status
             if utxo.is_confirmed || self.is_chainlocked(utxo).await {
-                // Confirmed: 6+ confirmations OR ChainLocked
+                // Confirmed: marked as confirmed OR ChainLocked
                 balance.confirmed += amount;
+                tracing::debug!("  -> Added to confirmed balance");
             } else if utxo.is_instantlocked {
                 // InstantLocked but not ChainLocked
                 balance.instantlocked += amount;
@@ -424,13 +479,24 @@ impl Wallet {
                     0
                 };
 
-                if confirmations >= 6 {
+                tracing::debug!("  -> Confirmations: {}", confirmations);
+                if confirmations >= 1 {
                     balance.confirmed += amount;
+                    tracing::debug!("  -> Added to confirmed balance (1+ confirmations)");
                 } else {
                     balance.pending += amount;
+                    tracing::debug!("  -> Added to pending balance (0 confirmations)");
                 }
             }
         }
+        
+        tracing::debug!(
+            "Final balance: confirmed={}, pending={}, instantlocked={}, total={}",
+            balance.confirmed,
+            balance.pending,
+            balance.instantlocked,
+            balance.total()
+        );
 
         Ok(balance)
     }
@@ -479,9 +545,9 @@ impl Wallet {
                 0
             };
 
-            // Update confirmation status (6+ confirmations or ChainLocked)
+            // Update confirmation status (1+ confirmations or ChainLocked)
             let was_confirmed = utxo.is_confirmed;
-            utxo.is_confirmed = confirmations >= 6 || self.is_chainlocked(utxo).await;
+            utxo.is_confirmed = confirmations >= 1 || self.is_chainlocked(utxo).await;
 
             // If confirmation status changed, persist the update
             if was_confirmed != utxo.is_confirmed {

@@ -510,6 +510,19 @@ impl DashSpvClient {
         let mempool_state = self.mempool_state.read().await;
         mempool_state.transactions.len()
     }
+    
+    /// Update mempool filter with current watch items.
+    async fn update_mempool_filter(&mut self) {
+        let watch_items = self.watch_items.read().await.iter().cloned().collect();
+        self.mempool_filter = Some(Arc::new(MempoolFilter::new(
+            self.config.mempool_strategy,
+            Duration::from_secs(self.config.recent_send_window_secs),
+            self.config.max_mempool_transactions,
+            self.mempool_state.clone(),
+            watch_items,
+        )));
+        tracing::info!("Updated mempool filter with current watch items");
+    }
 
     /// Record a transaction send for mempool filtering.
     pub async fn record_transaction_send(&self, txid: dashcore::Txid) {
@@ -558,7 +571,18 @@ impl DashSpvClient {
 
         Ok(())
     }
+    
+    /// Shutdown the SPV client (alias for stop).
+    pub async fn shutdown(&mut self) -> Result<()> {
+        self.stop().await
+    }
 
+    /// Start synchronization (alias for sync_to_tip).
+    pub async fn start_sync(&mut self) -> Result<()> {
+        self.sync_to_tip().await?;
+        Ok(())
+    }
+    
     /// Synchronize to the tip of the blockchain.
     pub async fn sync_to_tip(&mut self) -> Result<SyncProgress> {
         let running = self.running.read().await;
@@ -1491,19 +1515,33 @@ impl DashSpvClient {
             item,
             &mut *self.storage,
         )
-        .await
+        .await?;
+        
+        // Update mempool filter with new watch items if mempool tracking is enabled
+        if self.config.enable_mempool_tracking {
+            self.update_mempool_filter().await;
+        }
+        
+        Ok(())
     }
 
     /// Remove a watch item.
     pub async fn remove_watch_item(&mut self, item: &WatchItem) -> Result<bool> {
-        WatchManager::remove_watch_item(
+        let removed = WatchManager::remove_watch_item(
             &self.watch_items,
             &self.wallet,
             &self.watch_item_updater,
             item,
             &mut *self.storage,
         )
-        .await
+        .await?;
+        
+        // Update mempool filter with new watch items if mempool tracking is enabled
+        if removed && self.config.enable_mempool_tracking {
+            self.update_mempool_filter().await;
+        }
+        
+        Ok(removed)
     }
 
     /// Get all watch items.
@@ -1729,6 +1767,105 @@ impl DashSpvClient {
             saved_state.saved_at
         );
         
+        // CRITICAL: Load headers from storage into ChainState
+        if saved_state.chain_tip.height > 0 {
+            tracing::info!("Loading headers from storage into ChainState...");
+            let start_time = std::time::Instant::now();
+            
+            // Load headers in batches to avoid memory spikes
+            const BATCH_SIZE: u32 = 10_000;
+            let mut loaded_count = 0u32;
+            let target_height = saved_state.chain_tip.height;
+            
+            // Start from height 1 (genesis is already in ChainState)
+            let mut current_height = 1u32;
+            
+            while current_height <= target_height {
+                let end_height = (current_height + BATCH_SIZE - 1).min(target_height);
+                
+                // Load batch of headers from storage
+                let headers = self.storage.load_headers(current_height..end_height + 1)
+                    .await
+                    .map_err(|e| SpvError::Storage(e))?;
+                
+                if headers.is_empty() {
+                    tracing::error!(
+                        "Failed to load headers for range {}..{} - storage may be corrupted",
+                        current_height, end_height + 1
+                    );
+                    return Ok(false); // Start fresh sync
+                }
+                
+                // Add headers to chain state
+                {
+                    let mut state = self.state.write().await;
+                    for header in headers {
+                        state.add_header(header);
+                        loaded_count += 1;
+                    }
+                }
+                
+                // Progress logging for large header counts
+                if loaded_count % 50_000 == 0 || loaded_count == target_height {
+                    let elapsed = start_time.elapsed();
+                    let headers_per_sec = loaded_count as f64 / elapsed.as_secs_f64();
+                    tracing::info!(
+                        "Loaded {}/{} headers ({:.0} headers/sec)",
+                        loaded_count, target_height, headers_per_sec
+                    );
+                }
+                
+                current_height = end_height + 1;
+            }
+            
+            let elapsed = start_time.elapsed();
+            tracing::info!(
+                "✅ Loaded {} headers into ChainState in {:.2}s ({:.0} headers/sec)",
+                loaded_count,
+                elapsed.as_secs_f64(),
+                loaded_count as f64 / elapsed.as_secs_f64()
+            );
+            
+            // Validate the loaded chain state
+            let state = self.state.read().await;
+            let actual_height = state.tip_height();
+            if actual_height != target_height {
+                tracing::error!(
+                    "Chain state height mismatch after loading: expected {}, got {}",
+                    target_height, actual_height
+                );
+                return Ok(false); // Start fresh sync
+            }
+            
+            // Verify tip hash matches
+            if let Some(tip_hash) = state.tip_hash() {
+                if tip_hash != saved_state.chain_tip.hash {
+                    tracing::error!(
+                        "Chain tip hash mismatch: expected {}, got {}",
+                        saved_state.chain_tip.hash, tip_hash
+                    );
+                    return Ok(false); // Start fresh sync
+                }
+            }
+        }
+        
+        // Load filter headers if they exist
+        if saved_state.sync_progress.filter_header_height > 0 {
+            tracing::info!("Loading filter headers from storage...");
+            let filter_headers = self.storage.load_filter_headers(0..saved_state.sync_progress.filter_header_height + 1)
+                .await
+                .map_err(|e| SpvError::Storage(e))?;
+            
+            if !filter_headers.is_empty() {
+                let mut state = self.state.write().await;
+                state.add_filter_headers(filter_headers);
+                tracing::info!(
+                    "✅ Loaded {} filter headers into ChainState",
+                    saved_state.sync_progress.filter_header_height + 1
+                );
+            }
+        }
+        
         // Update sync progress in stats
         {
             let mut stats = self.stats.write().await;
@@ -1764,6 +1901,20 @@ impl DashSpvClient {
         
         // Reset any in-flight requests
         self.sync_manager.reset_pending_requests();
+        
+        // CRITICAL: Load headers into the sync manager's chain state
+        if saved_state.chain_tip.height > 0 {
+            tracing::info!("Loading headers into sync manager...");
+            match self.sync_manager.load_headers_from_storage(&*self.storage).await {
+                Ok(loaded_count) => {
+                    tracing::info!("✅ Sync manager loaded {} headers from storage", loaded_count);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to load headers into sync manager: {}", e);
+                    return Ok(false); // Start fresh sync
+                }
+            }
+        }
         
         tracing::info!(
             "Sync state restored: headers={}, filter_headers={}, filters_downloaded={}",

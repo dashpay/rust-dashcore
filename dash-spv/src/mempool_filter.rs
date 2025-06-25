@@ -66,21 +66,29 @@ impl MempoolFilter {
 
     /// Check if a transaction is relevant to our watched items.
     pub fn is_transaction_relevant(&self, tx: &Transaction, wallet: &Wallet) -> bool {
+        let txid = tx.txid();
+        
         // Check if any input or output affects our watched addresses
         let mut addresses = HashSet::new();
         
         // Extract addresses from outputs
-        for output in &tx.output {
+        for (idx, output) in tx.output.iter().enumerate() {
             if let Ok(address) = Address::from_script(&output.script_pubkey, wallet.network()) {
-                addresses.insert(address);
+                addresses.insert(address.clone());
+                tracing::trace!("Transaction {} output {} has address: {}", txid, idx, address);
             }
         }
+        
+        tracing::debug!("Transaction {} has {} addresses from outputs, checking against {} watched items", 
+                       txid, addresses.len(), self.watch_items.len());
         
         // Check against watched items
         for item in &self.watch_items {
             match item {
                 WatchItem::Address { address, .. } => {
+                    tracing::trace!("Checking if transaction {} contains watched address: {}", txid, address);
                     if addresses.contains(address) {
+                        tracing::debug!("Transaction {} is relevant: contains watched address {}", txid, address);
                         return true;
                     }
                 }
@@ -88,6 +96,7 @@ impl MempoolFilter {
                     // Check if any output matches the script
                     for output in &tx.output {
                         if output.script_pubkey == *script {
+                            tracing::debug!("Transaction {} is relevant: matches watched script", txid);
                             return true;
                         }
                     }
@@ -96,6 +105,7 @@ impl MempoolFilter {
                     // Check if this outpoint is spent
                     for input in &tx.input {
                         if input.previous_output == *outpoint {
+                            tracing::debug!("Transaction {} is relevant: spends watched outpoint", txid);
                             return true;
                         }
                     }
@@ -104,7 +114,14 @@ impl MempoolFilter {
         }
         
         // Also check if this transaction spends any of our UTXOs
-        wallet.is_transaction_relevant(tx)
+        let wallet_relevant = wallet.is_transaction_relevant(tx);
+        if wallet_relevant {
+            tracing::debug!("Transaction {} is relevant: wallet considers it relevant", txid);
+        } else {
+            tracing::debug!("Transaction {} is not relevant to any watched items or wallet", txid);
+        }
+        
+        wallet_relevant
     }
 
     /// Process a new transaction for the mempool.
@@ -113,9 +130,21 @@ impl MempoolFilter {
         tx: Transaction,
         wallet: &Wallet,
     ) -> Option<UnconfirmedTransaction> {
-        // Check if transaction is relevant
-        if !self.is_transaction_relevant(&tx, wallet) {
-            return None;
+        let txid = tx.txid();
+        
+        // Check if transaction is relevant to our watched addresses
+        let is_relevant = self.is_transaction_relevant(&tx, wallet);
+        
+        tracing::debug!("Processing mempool transaction {}: strategy={:?}, is_relevant={}, watch_items_count={}", 
+                       txid, self.strategy, is_relevant, self.watch_items.len());
+        
+        // For FetchAll strategy, we fetch all transactions but only process relevant ones
+        if self.strategy != MempoolStrategy::FetchAll {
+            // For other strategies, return early if not relevant
+            if !is_relevant {
+                tracing::debug!("Transaction {} not relevant for strategy {:?}, skipping", txid, self.strategy);
+                return None;
+            }
         }
         
         // Calculate fee (this is simplified - in reality we'd need input values)
@@ -133,7 +162,8 @@ impl MempoolFilter {
         let mut addresses = Vec::new();
         for output in &tx.output {
             if let Ok(address) = Address::from_script(&output.script_pubkey, wallet.network()) {
-                if self.is_address_watched(&address) {
+                // For FetchAll strategy, include all addresses, not just watched ones
+                if self.strategy == MempoolStrategy::FetchAll || self.is_address_watched(&address) {
                     addresses.push(address);
                 }
             }
@@ -141,6 +171,12 @@ impl MempoolFilter {
         
         // Calculate net amount change for our wallet
         let net_amount = wallet.calculate_net_amount(&tx);
+        
+        // For FetchAll strategy, only return transaction if it's relevant
+        // This ensures callbacks are only triggered for watched addresses
+        if self.strategy == MempoolStrategy::FetchAll && !is_relevant {
+            return None;
+        }
         
         Some(UnconfirmedTransaction::new(
             tx,
