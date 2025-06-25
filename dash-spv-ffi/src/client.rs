@@ -236,14 +236,9 @@ impl FFIDashSpvClient {
                             dash_spv::types::SpvEvent::MempoolTransactionRemoved { ref txid, ref reason } => {
                                 tracing::info!("❌ Mempool transaction removed: txid={}, reason={:?}", 
                                              txid, reason);
-                                // Convert reason to u8 for FFI
-                                let reason_code = match reason {
-                                    dash_spv::types::MempoolRemovalReason::Expired => 0,
-                                    dash_spv::types::MempoolRemovalReason::Replaced { .. } => 1,
-                                    dash_spv::types::MempoolRemovalReason::DoubleSpent { .. } => 2,
-                                    dash_spv::types::MempoolRemovalReason::Confirmed => 3,
-                                    dash_spv::types::MempoolRemovalReason::Manual => 4,
-                                };
+                                // Convert reason to u8 for FFI using existing conversion
+                                let ffi_reason: crate::types::FFIMempoolRemovalReason = reason.clone().into();
+                                let reason_code = ffi_reason as u8;
                                 callbacks.call_mempool_transaction_removed(&txid.to_string(), reason_code);
                             }
                         }
