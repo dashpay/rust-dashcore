@@ -51,6 +51,10 @@ use crate::prelude::{String, ToOwned};
 use crate::{BlockHash, io};
 use dash_network::Network;
 
+// Re-export NODE_HEADERS_COMPRESSED for convenience
+pub use ServiceFlags as _;
+pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COMPRESSED;
+
 /// Version of the protocol as appearing in network message headers
 /// This constant is used to signal to other peers which features you support.
 /// Increasing it implies that your software also supports every feature prior to this version.
@@ -66,7 +70,7 @@ use dash_network::Network;
 /// 70001 - Support bloom filter messages `filterload`, `filterclear` `filteradd`, `merkleblock` and FILTERED_BLOCK inventory type
 /// 60002 - Support `mempool` message
 /// 60001 - Support `pong` message and nonce in `ping` message
-pub const PROTOCOL_VERSION: u32 = 70236;
+pub const PROTOCOL_VERSION: u32 = 70237;
 
 /// Extension trait for Network to add dash-specific methods
 pub trait NetworkExt {
@@ -167,6 +171,11 @@ impl ServiceFlags {
     /// See BIP159 for details on how this is implemented.
     pub const NETWORK_LIMITED: ServiceFlags = ServiceFlags(1 << 10);
 
+    /// NODE_HEADERS_COMPRESSED means the node supports compressed block headers as defined in DIP-0025.
+    /// This allows for more efficient header synchronization by compressing headers from 80 bytes
+    /// to as low as 37 bytes using stateful compression techniques.
+    pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags(1 << 11);
+
     // NOTE: When adding new flags, remember to update the Display impl accordingly.
 
     /// Add [ServiceFlags] together.
@@ -234,6 +243,7 @@ impl fmt::Display for ServiceFlags {
         write_flag!(WITNESS);
         write_flag!(COMPACT_FILTERS);
         write_flag!(NETWORK_LIMITED);
+        write_flag!(NODE_HEADERS_COMPRESSED);
         // If there are unknown flags left, we append them in hex.
         if flags != ServiceFlags::NONE {
             if !first {
@@ -341,6 +351,7 @@ mod tests {
             ServiceFlags::WITNESS,
             ServiceFlags::COMPACT_FILTERS,
             ServiceFlags::NETWORK_LIMITED,
+            ServiceFlags::NODE_HEADERS_COMPRESSED,
         ];
 
         let mut flags = ServiceFlags::NONE;
