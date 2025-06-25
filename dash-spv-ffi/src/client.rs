@@ -339,23 +339,23 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
                     if let Some(callback) = progress_callback {
                         // Access callback info from registry
                         let registry = CALLBACK_REGISTRY.lock().unwrap();
-                        if let Some(callback_info) = registry.get(callback_id) {
+                        if let Some(CallbackInfo::Simple { user_data, .. }) = registry.get(callback_id) {
                             let msg = CString::new("Syncing headers...").unwrap();
                             // SAFETY: The callback and user_data are safely stored in the registry
                             // The registry ensures proper lifetime management without raw pointer passing
-                            callback(0.1, msg.as_ptr(), callback_info.user_data);
+                            callback(0.1, msg.as_ptr(), *user_data);
                         }
                     }
                     
                     // Report completion and unregister callbacks
                     {
                         let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                        if let Some(callback_info) = registry.unregister(callback_id) {
-                            if let Some(callback) = callback_info.completion_callback {
+                        if let Some(CallbackInfo::Simple { completion_callback, user_data, .. }) = registry.unregister(callback_id) {
+                            if let Some(callback) = completion_callback {
                                 let msg = CString::new("Sync completed successfully").unwrap();
                                 // SAFETY: The callback and user_data are safely managed through the registry
                                 // The registry ensures proper lifetime management and thread safety
-                                callback(true, msg.as_ptr(), callback_info.user_data);
+                                callback(true, msg.as_ptr(), user_data);
                             }
                         }
                     }
@@ -366,12 +366,12 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
                     // Report error and unregister callbacks
                     {
                         let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                        if let Some(callback_info) = registry.unregister(callback_id) {
-                            if let Some(callback) = callback_info.completion_callback {
+                        if let Some(CallbackInfo::Simple { completion_callback, user_data, .. }) = registry.unregister(callback_id) {
+                            if let Some(callback) = completion_callback {
                                 let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
                                 // SAFETY: The callback and user_data are safely managed through the registry
                                 // The registry ensures proper lifetime management and thread safety
-                                callback(false, msg.as_ptr(), callback_info.user_data);
+                                callback(false, msg.as_ptr(), user_data);
                             }
                         }
                     }
