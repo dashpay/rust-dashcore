@@ -383,8 +383,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     client: *mut FFIDashSpvClient,
-    progress_callback: extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void),
-    completion_callback: extern "C" fn(bool, *const c_char, *mut c_void),
+    progress_callback: Option<extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void)>,
+    completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
     user_data: *mut c_void,
 ) -> i32 {
     null_check!(client);
@@ -392,8 +392,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     let client = &(*client);
     
     // Store callbacks
-    *client.sync_progress_callback.lock().unwrap() = Some(progress_callback);
-    *client.sync_completion_callback.lock().unwrap() = Some(completion_callback);
+    *client.sync_progress_callback.lock().unwrap() = progress_callback;
+    *client.sync_completion_callback.lock().unwrap() = completion_callback;
     *client.sync_user_data.lock().unwrap() = user_data;
     
     let inner = client.inner.clone();
