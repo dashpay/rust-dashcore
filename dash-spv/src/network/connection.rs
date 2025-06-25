@@ -69,7 +69,7 @@ impl TcpConnection {
     }
 
     /// Connect to a peer and return a connected instance.
-    pub async fn connect(address: SocketAddr, timeout_secs: u64, network: Network) -> NetworkResult<Self> {
+    pub async fn connect(address: SocketAddr, timeout_secs: u64, read_timeout: Duration, network: Network) -> NetworkResult<Self> {
         let timeout = Duration::from_secs(timeout_secs);
 
         let stream = TcpStream::connect_timeout(&address, timeout).map_err(|e| {
@@ -82,8 +82,8 @@ impl TcpConnection {
         
         // Set a read timeout instead of non-blocking mode
         // This allows us to return None when no data is available
-        // Using 15ms timeout for optimal balance of performance and reliability
-        stream.set_read_timeout(Some(Duration::from_millis(15))).map_err(|e| {
+        // Using configurable timeout for optimal balance of performance and reliability
+        stream.set_read_timeout(Some(read_timeout)).map_err(|e| {
             NetworkError::ConnectionFailed(format!("Failed to set read timeout: {}", e))
         })?;
 
@@ -228,6 +228,17 @@ impl TcpConnection {
                 self.address, version_msg.user_agent.len()
             );
             return;
+        }
+        
+        // Validate services - ensure they contain expected flags
+        let services = version_msg.services.as_u64();
+        const KNOWN_SERVICE_FLAGS: u64 = 0x0000_0000_0000_1FFF; // All known service flags up to bit 12
+        if services & !KNOWN_SERVICE_FLAGS != 0 {
+            tracing::warn!(
+                "Peer {} reported unknown service flags: 0x{:016x}, proceeding with caution",
+                self.address, services
+            );
+            // Note: We don't return here as unknown flags might be from newer versions
         }
         
         // All validations passed, update peer info
