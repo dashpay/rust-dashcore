@@ -14,6 +14,7 @@ use dashcore::{
     },
     bls_sig_utils::BLSPublicKey,
     hash_types::MerkleRootMasternodeList,
+    address::{Address, Payload},
     BlockHash, ProTxHash, PubkeyHash,
 };
 use dashcore_hashes::Hash;
@@ -334,9 +335,22 @@ impl MasternodeSyncManager {
                                     }
                                 };
                                 
-                                // Parse voting key hash (assuming it's a base58 address that needs to be converted to hash160)
-                                // For now, we'll use a zero hash as placeholder - this should be improved
-                                let key_id_voting = PubkeyHash::all_zeros();
+                                // Parse voting key hash from the voting address
+                                let key_id_voting = match Address::from_str(&stored_mn.voting_address) {
+                                    Ok(addr) => {
+                                        match addr.payload() {
+                                            Payload::PubkeyHash(hash) => *hash,
+                                            _ => {
+                                                tracing::warn!("Voting address is not a P2PKH address for masternode {}: {}", stored_mn.pro_tx_hash, stored_mn.voting_address);
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to parse voting address for masternode {}: {:?}", stored_mn.pro_tx_hash, e);
+                                        continue;
+                                    }
+                                };
                                 
                                 // Determine masternode type
                                 let mn_type = match stored_mn.n_type {
