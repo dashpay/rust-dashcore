@@ -54,17 +54,6 @@ unsafe fn validate_script_hex(script_hex: *const c_char) -> Result<ScriptBuf, i3
     Ok(ScriptBuf::from(script_bytes))
 }
 
-pub struct FFIDashSpvClient {
-    inner: Arc<Mutex<Option<DashSpvClient>>>,
-    runtime: Arc<Runtime>,
-    event_callbacks: Arc<Mutex<FFIEventCallbacks>>,
-    active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
-    // Sync-specific callbacks
-    sync_progress_callback: Arc<Mutex<Option<extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void)>>>,
-    sync_completion_callback: Arc<Mutex<Option<extern "C" fn(bool, *const c_char, *mut c_void)>>>,
-    sync_user_data: Arc<Mutex<*mut c_void>>,
-}
-
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_new(
     config: *const FFIClientConfig,
@@ -90,9 +79,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
                 runtime,
                 event_callbacks: Arc::new(Mutex::new(FFIEventCallbacks::default())),
                 active_threads: Arc::new(Mutex::new(Vec::new())),
-                sync_progress_callback: Arc::new(Mutex::new(None)),
-                sync_completion_callback: Arc::new(Mutex::new(None)),
-                sync_user_data: Arc::new(Mutex::new(std::ptr::null_mut())),
+                sync_callbacks: Arc::new(Mutex::new(None)),
             };
             Box::into_raw(Box::new(ffi_client))
         }
@@ -391,16 +378,18 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     
     let client = &(*client);
     
-    // Store callbacks
-    *client.sync_progress_callback.lock().unwrap() = progress_callback;
-    *client.sync_completion_callback.lock().unwrap() = completion_callback;
-    *client.sync_user_data.lock().unwrap() = user_data;
+    // Store callbacks in a safe wrapper
+    let callback_data = SyncCallbackData {
+        progress_callback,
+        completion_callback,
+        user_data,
+        _marker: std::marker::PhantomData,
+    };
+    *client.sync_callbacks.lock().unwrap() = Some(callback_data);
     
     let inner = client.inner.clone();
     let runtime = client.runtime.clone();
-    let progress_cb = client.sync_progress_callback.clone();
-    let completion_cb = client.sync_completion_callback.clone();
-    let user_data_ptr = client.sync_user_data.clone();
+    let sync_callbacks = client.sync_callbacks.clone();
     
     // Take progress receiver from client
     let progress_receiver = {
@@ -408,15 +397,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
         guard.as_mut().and_then(|c| c.take_progress_receiver())
     };
     
-    // Setup progress monitoring - convert raw pointer to usize for thread safety
+    // Setup progress monitoring with safe callback access
     if let Some(mut receiver) = progress_receiver {
         let runtime_handle = runtime.handle().clone();
-        
-        // Get user data as usize to make it Send
-        let user_data_usize = {
-            let guard = user_data_ptr.lock().unwrap();
-            *guard as usize
-        };
+        let sync_callbacks_clone = sync_callbacks.clone();
         
         let handle = std::thread::spawn(move || {
             runtime_handle.block_on(async move {
@@ -429,12 +413,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                     
                     // Call the callback with proper synchronization
                     {
-                        let cb_guard = progress_cb.lock().unwrap();
+                        let cb_guard = sync_callbacks_clone.lock().unwrap();
                         
-                        if let Some(callback) = *cb_guard {
-                            // Convert usize back to raw pointer
-                            let user_data = user_data_usize as *mut c_void;
-                            callback(ffi_progress.as_ref(), user_data);
+                        if let Some(ref callback_data) = *cb_guard {
+                            if let Some(callback) = callback_data.progress_callback {
+                                // SAFETY: The user_data pointer is valid for the duration of the sync
+                                // operation as guaranteed by the caller. The callback data is protected
+                                // by Arc<Mutex<>> ensuring thread-safe access.
+                                callback(ffi_progress.as_ref(), callback_data.user_data);
+                            }
                         }
                     }
                     
