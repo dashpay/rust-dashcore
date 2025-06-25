@@ -49,6 +49,54 @@ impl MasternodeSyncManager {
         }
     }
 
+    /// Validate a terminal block against the chain and return its height if valid.
+    /// Returns 0 if the block is not valid or not yet synced.
+    async fn validate_terminal_block(
+        &self,
+        storage: &dyn StorageManager,
+        terminal_height: u32,
+        expected_hash: BlockHash,
+        has_precalculated_data: bool,
+    ) -> SyncResult<u32> {
+        // Check if the terminal block exists in our chain
+        match storage.get_header(terminal_height).await {
+            Ok(Some(header)) => {
+                if header.block_hash() == expected_hash {
+                    if has_precalculated_data {
+                        tracing::info!(
+                            "Using terminal block at height {} with pre-calculated masternode data as base for sync",
+                            terminal_height
+                        );
+                    } else {
+                        tracing::info!(
+                            "Using terminal block at height {} as base for masternode sync (no pre-calculated data)",
+                            terminal_height
+                        );
+                    }
+                    Ok(terminal_height)
+                } else {
+                    let msg = if has_precalculated_data {
+                        "Terminal block hash mismatch at height {} (with pre-calculated data) - falling back to genesis"
+                    } else {
+                        "Terminal block hash mismatch at height {} (without pre-calculated data) - falling back to genesis"
+                    };
+                    tracing::warn!(msg, terminal_height);
+                    Ok(0)
+                }
+            },
+            Ok(None) => {
+                tracing::info!(
+                    "Terminal block at height {} not yet synced - starting from genesis",
+                    terminal_height
+                );
+                Ok(0)
+            },
+            Err(e) => {
+                Err(SyncError::SyncFailed(format!("Failed to get terminal block header: {}", e)))
+            }
+        }
+    }
+
     /// Handle an MnListDiff message during masternode synchronization.
     /// Returns true if the message was processed and sync should continue, false if sync is complete.
     pub async fn handle_mnlistdiff_message(
@@ -215,68 +263,38 @@ impl MasternodeSyncManager {
             // No previous state - check if we can start from a terminal block with pre-calculated data
             if let Some(terminal_data) = self.terminal_block_manager.find_best_terminal_block_with_data(current_height) {
                 // We have pre-calculated masternode data for this terminal block!
-                // Validate that this terminal block exists in our chain
-                if let Some(header) = storage.get_header(terminal_data.height).await.map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to get terminal block header: {}", e))
-                })? {
-                    if let Ok(terminal_block_hash) = terminal_data.get_block_hash() {
-                        if header.block_hash() == terminal_block_hash {
-                            tracing::info!(
-                                "Using terminal block at height {} with pre-calculated masternode data ({} masternodes) as base for sync",
-                                terminal_data.height,
-                                terminal_data.masternode_count
-                            );
-                            
-                            // TODO: Load the pre-calculated masternode list into the engine
-                            // For now, we still use the height for diff request
-                            terminal_data.height
-                        } else {
-                            tracing::warn!(
-                                "Terminal block hash mismatch at height {} - falling back to genesis",
-                                terminal_data.height
-                            );
-                            0
-                        }
-                    } else {
-                        tracing::warn!(
-                            "Terminal block hash mismatch at height {} - falling back to genesis",
-                            terminal_data.height
+                if let Ok(terminal_block_hash) = terminal_data.get_block_hash() {
+                    let validated_height = self.validate_terminal_block(
+                        storage,
+                        terminal_data.height,
+                        terminal_block_hash,
+                        true
+                    ).await?;
+                    
+                    if validated_height > 0 {
+                        tracing::info!(
+                            "Terminal block has {} masternodes in pre-calculated data",
+                            terminal_data.masternode_count
                         );
-                        0
+                        // TODO: Load the pre-calculated masternode list into the engine
+                        // For now, we still use the height for diff request
                     }
+                    validated_height
                 } else {
-                    tracing::info!(
-                        "Terminal block at height {} not yet synced - starting from genesis",
+                    tracing::warn!(
+                        "Failed to get terminal block hash at height {} - falling back to genesis",
                         terminal_data.height
                     );
                     0
                 }
             } else if let Some(terminal_block) = self.terminal_block_manager.find_best_base_terminal_block(current_height) {
                 // No pre-calculated data, but we have a terminal block reference
-                // Validate that this terminal block exists in our chain
-                if let Some(header) = storage.get_header(terminal_block.height).await.map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to get terminal block header: {}", e))
-                })? {
-                    if header.block_hash() == terminal_block.block_hash {
-                        tracing::info!(
-                            "Using terminal block at height {} as base for masternode sync (no pre-calculated data)",
-                            terminal_block.height
-                        );
-                        terminal_block.height
-                    } else {
-                        tracing::warn!(
-                            "Terminal block hash mismatch at height {} - falling back to genesis",
-                            terminal_block.height
-                        );
-                        0
-                    }
-                } else {
-                    tracing::info!(
-                        "Terminal block at height {} not yet synced - starting from genesis",
-                        terminal_block.height
-                    );
-                    0
-                }
+                self.validate_terminal_block(
+                    storage,
+                    terminal_block.height,
+                    terminal_block.block_hash,
+                    false
+                ).await?
             } else {
                 tracing::info!(
                     "No suitable terminal block found - requesting full diff from genesis to height {}",
