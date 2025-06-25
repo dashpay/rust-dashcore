@@ -463,21 +463,42 @@ impl SequentialSyncManager {
         Ok(())
     }
 
-    /// Get current sync progress
+    /// Get current sync progress template.
+    /// 
+    /// This method returns a `SyncProgress` struct with sync phase status flags populated
+    /// based on the current phase, but with placeholder values for heights and counts.
+    /// 
+    /// **Note**: The following fields are returned with placeholder values and must be
+    /// populated by the caller with actual data from storage and network:
+    /// - `header_height`: Should be queried from storage (e.g., `storage.get_tip_height()`)
+    /// - `filter_header_height`: Should be queried from storage (e.g., `storage.get_filter_tip_height()`)
+    /// - `masternode_height`: Should be queried from masternode state in storage
+    /// - `peer_count`: Should be queried from the network manager
+    /// - `filters_downloaded`: Should be calculated from storage
+    /// - `last_synced_filter_height`: Should be queried from storage
+    /// 
+    /// # Example
+    /// ```ignore
+    /// let mut progress = sync_manager.get_progress();
+    /// progress.header_height = storage.get_tip_height().await?.unwrap_or(0);
+    /// progress.filter_header_height = storage.get_filter_tip_height().await?.unwrap_or(0);
+    /// progress.peer_count = network.peer_count() as u32;
+    /// // ... populate other fields as needed
+    /// ```
     pub fn get_progress(&self) -> SyncProgress {
-        // Create a basic progress report
+        // Create a basic progress report template
         let _phase_progress = self.current_phase.progress();
         
         SyncProgress {
             headers_synced: matches!(self.current_phase, SyncPhase::DownloadingHeaders { .. } | SyncPhase::FullySynced { .. }),
-            header_height: 0, // Will be filled from storage
+            header_height: 0, // Placeholder - must be filled by caller from storage
             filter_headers_synced: matches!(self.current_phase, SyncPhase::DownloadingCFHeaders { .. } | SyncPhase::FullySynced { .. }),
-            filter_header_height: 0, // Will be filled from storage
+            filter_header_height: 0, // Placeholder - must be filled by caller from storage
             masternodes_synced: matches!(self.current_phase, SyncPhase::DownloadingMnList { .. } | SyncPhase::FullySynced { .. }),
-            masternode_height: 0, // Will be filled from storage
-            peer_count: 0, // Will be filled from network
-            filters_downloaded: 0, // Will be filled from storage
-            last_synced_filter_height: None, // Will be filled from storage
+            masternode_height: 0, // Placeholder - must be filled by caller from storage
+            peer_count: 0, // Placeholder - must be filled by caller from network
+            filters_downloaded: 0, // Placeholder - must be filled by caller from storage
+            last_synced_filter_height: None, // Placeholder - must be filled by caller from storage
             sync_start: std::time::SystemTime::now(),
             last_update: std::time::SystemTime::now(),
             filter_sync_available: self.config.enable_filters,
