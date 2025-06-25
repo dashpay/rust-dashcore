@@ -147,8 +147,32 @@ impl MempoolFilter {
             }
         }
         
-        // Calculate fee (this is simplified - in reality we'd need input values)
-        let fee = dashcore::Amount::from_sat(0); // TODO: Calculate actual fee
+        // Calculate fee by summing input values and subtracting output values
+        let mut total_input = 0u64;
+        let mut total_output = 0u64;
+        
+        // Get input values from wallet's UTXO set
+        if let Ok(utxos) = wallet.utxo_set.try_read() {
+            for input in &tx.input {
+                if let Some(utxo) = utxos.get(&input.previous_output) {
+                    total_input += utxo.txout.value;
+                }
+            }
+        }
+        
+        // Sum output values
+        for output in &tx.output {
+            total_output += output.value;
+        }
+        
+        // Calculate fee (inputs - outputs)
+        let fee = if total_input >= total_output {
+            dashcore::Amount::from_sat(total_input - total_output)
+        } else {
+            // This shouldn't happen for valid transactions, but handle gracefully
+            tracing::warn!("Transaction {} has outputs exceeding inputs", txid);
+            dashcore::Amount::from_sat(0)
+        };
         
         // Check if this is an InstantSend transaction
         // FIXME: InstantSend detection requires:
