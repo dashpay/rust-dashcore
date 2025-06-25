@@ -216,6 +216,7 @@ impl ProgressTracker {
     /// Estimate total sync time
     fn estimate_total_time(
         &self,
+        current_phase: &SyncPhase,
         current_progress: &PhaseProgress,
         completed: &[String],
         remaining: &[String],
@@ -226,10 +227,7 @@ impl ProgressTracker {
             return None;
         }
         
-        let current_phase_name = match self.get_current_phase_name_from_progress(current_progress) {
-            Some(name) => name,
-            None => return None,
-        };
+        let current_phase_name = current_phase.name();
         
         // Calculate total weight and completed weight
         let mut total_weight = 0.0;
@@ -244,7 +242,7 @@ impl ProgressTracker {
         }
         
         // Add current phase weight (partially completed)
-        if let Some(current_weight) = self.phase_weights.get(&current_phase_name) {
+        if let Some(current_weight) = self.phase_weights.get(current_phase_name) {
             total_weight += current_weight;
             completed_weight += current_weight * (current_progress.percentage / 100.0);
         }
