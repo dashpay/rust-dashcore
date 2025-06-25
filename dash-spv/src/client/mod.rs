@@ -1737,6 +1737,27 @@ impl DashSpvClient {
                     }
                     crate::storage::RecoverySuggestion::RollbackToHeight(height) => {
                         tracing::warn!("Recovery: Rolling back to height {}", height);
+                        
+                        // Validate the rollback height
+                        if height == 0 {
+                            tracing::error!("Cannot rollback to genesis block (height 0)");
+                            return Ok(false); // Start fresh sync
+                        }
+                        
+                        // Get current height from storage to validate against
+                        let current_height = self.storage.get_tip_height()
+                            .await
+                            .map_err(|e| SpvError::Storage(e))?
+                            .unwrap_or(0);
+                        
+                        if height > current_height {
+                            tracing::error!(
+                                "Cannot rollback to height {} which is greater than current height {}",
+                                height, current_height
+                            );
+                            return Ok(false); // Start fresh sync
+                        }
+                        
                         match self.rollback_to_height(height).await {
                             Ok(_) => {
                                 tracing::info!("Successfully rolled back to height {}", height);
@@ -1750,6 +1771,27 @@ impl DashSpvClient {
                     }
                     crate::storage::RecoverySuggestion::UseCheckpoint(height) => {
                         tracing::warn!("Recovery: Using checkpoint at height {}", height);
+                        
+                        // Validate the checkpoint height
+                        if height == 0 {
+                            tracing::error!("Cannot use checkpoint at genesis block (height 0)");
+                            return Ok(false); // Start fresh sync
+                        }
+                        
+                        // Check if checkpoint height is reasonable (not in the future)
+                        let current_height = self.storage.get_tip_height()
+                            .await
+                            .map_err(|e| SpvError::Storage(e))?
+                            .unwrap_or(0);
+                        
+                        if current_height > 0 && height > current_height {
+                            tracing::error!(
+                                "Cannot use checkpoint at height {} which is greater than current height {}",
+                                height, current_height
+                            );
+                            return Ok(false); // Start fresh sync
+                        }
+                        
                         match self.recover_from_checkpoint(height).await {
                             Ok(_) => {
                                 tracing::info!("Successfully recovered from checkpoint at height {}", height);
