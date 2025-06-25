@@ -4,10 +4,22 @@ use dashcore::{
     network::constants::NetworkExt,
     network::message::NetworkMessage,
     network::message_sml::{GetMnListDiff, MnListDiff},
-    sml::masternode_list_engine::MasternodeListEngine,
-    BlockHash,
+    sml::{
+        masternode_list_engine::MasternodeListEngine,
+        masternode_list::MasternodeList,
+        masternode_list_entry::{
+            EntryMasternodeType, MasternodeListEntry,
+            qualified_masternode_list_entry::QualifiedMasternodeListEntry,
+        },
+    },
+    bls_sig_utils::BLSPublicKey,
+    hash_types::MerkleRootMasternodeList,
+    BlockHash, ProTxHash, PubkeyHash,
 };
 use dashcore_hashes::Hash;
+use std::collections::BTreeMap;
+use std::net::SocketAddr;
+use std::str::FromStr;
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
@@ -276,8 +288,120 @@ impl MasternodeSyncManager {
                             "Terminal block has {} masternodes in pre-calculated data",
                             terminal_data.masternode_count
                         );
-                        // TODO: Load the pre-calculated masternode list into the engine
-                        // For now, we still use the height for diff request
+                        
+                        // Load the pre-calculated masternode list into the engine
+                        if let Some(engine) = &mut self.engine {
+                            // Convert stored masternode entries to MasternodeListEntry
+                            let mut masternodes = BTreeMap::new();
+                            
+                            for stored_mn in &terminal_data.masternode_list {
+                                // Parse ProTxHash
+                                let pro_tx_hash_bytes = match hex::decode(&stored_mn.pro_tx_hash) {
+                                    Ok(bytes) if bytes.len() == 32 => {
+                                        let mut arr = [0u8; 32];
+                                        arr.copy_from_slice(&bytes);
+                                        arr
+                                    }
+                                    _ => {
+                                        tracing::warn!("Invalid ProTxHash for masternode: {}", stored_mn.pro_tx_hash);
+                                        continue;
+                                    }
+                                };
+                                let pro_tx_hash = ProTxHash::from_byte_array(pro_tx_hash_bytes);
+                                
+                                // Parse service address
+                                let service_address = match SocketAddr::from_str(&stored_mn.service) {
+                                    Ok(addr) => addr,
+                                    Err(e) => {
+                                        tracing::warn!("Invalid service address for masternode {}: {}", stored_mn.pro_tx_hash, e);
+                                        continue;
+                                    }
+                                };
+                                
+                                // Parse BLS public key
+                                let operator_public_key_bytes = match hex::decode(&stored_mn.pub_key_operator) {
+                                    Ok(bytes) if bytes.len() == 48 => bytes,
+                                    _ => {
+                                        tracing::warn!("Invalid BLS public key for masternode: {}", stored_mn.pro_tx_hash);
+                                        continue;
+                                    }
+                                };
+                                let operator_public_key = match BLSPublicKey::try_from(operator_public_key_bytes.as_slice()) {
+                                    Ok(key) => key,
+                                    Err(e) => {
+                                        tracing::warn!("Failed to parse BLS public key for masternode {}: {:?}", stored_mn.pro_tx_hash, e);
+                                        continue;
+                                    }
+                                };
+                                
+                                // Parse voting key hash (assuming it's a base58 address that needs to be converted to hash160)
+                                // For now, we'll use a zero hash as placeholder - this should be improved
+                                let key_id_voting = PubkeyHash::all_zeros();
+                                
+                                // Determine masternode type
+                                let mn_type = match stored_mn.n_type {
+                                    0 => EntryMasternodeType::Regular,
+                                    1 => EntryMasternodeType::HighPerformance {
+                                        platform_http_port: 0, // Not available in stored data
+                                        platform_node_id: PubkeyHash::all_zeros(), // Not available in stored data
+                                    },
+                                    _ => {
+                                        tracing::warn!("Unknown masternode type {} for masternode: {}", stored_mn.n_type, stored_mn.pro_tx_hash);
+                                        continue;
+                                    }
+                                };
+                                
+                                // Create MasternodeListEntry
+                                let entry = MasternodeListEntry {
+                                    version: 2, // Latest version
+                                    pro_reg_tx_hash: pro_tx_hash,
+                                    confirmed_hash: None, // Not available in stored data
+                                    service_address,
+                                    operator_public_key,
+                                    key_id_voting,
+                                    is_valid: stored_mn.is_valid,
+                                    mn_type,
+                                };
+                                
+                                // Convert to qualified entry
+                                let qualified_entry = QualifiedMasternodeListEntry::from(entry);
+                                masternodes.insert(pro_tx_hash, qualified_entry);
+                            }
+                            
+                            // Parse merkle root
+                            let merkle_root_bytes = match hex::decode(&terminal_data.merkle_root_mn_list) {
+                                Ok(bytes) if bytes.len() == 32 => {
+                                    let mut arr = [0u8; 32];
+                                    arr.copy_from_slice(&bytes);
+                                    arr
+                                }
+                                _ => {
+                                    tracing::warn!("Invalid merkle root in terminal data");
+                                    [0u8; 32]
+                                }
+                            };
+                            let merkle_root = MerkleRootMasternodeList::from_byte_array(merkle_root_bytes);
+                            
+                            // Build masternode list
+                            let masternode_list = MasternodeList::build(
+                                masternodes,
+                                BTreeMap::new(), // No quorum data in terminal blocks
+                                terminal_block_hash,
+                                terminal_data.height,
+                            )
+                            .with_merkle_roots(merkle_root, None)
+                            .build();
+                            
+                            // Insert into engine
+                            engine.masternode_lists.insert(terminal_data.height, masternode_list);
+                            engine.feed_block_height(terminal_data.height, terminal_block_hash);
+                            
+                            tracing::info!(
+                                "Successfully loaded {} masternodes from terminal block at height {}",
+                                terminal_data.masternode_list.len(),
+                                terminal_data.height
+                            );
+                        }
                     }
                     validated_height
                 } else {
