@@ -155,12 +155,7 @@ impl MempoolFilter {
         });
         
         // Check if this is an InstantSend transaction
-        // FIXME: InstantSend detection requires:
-        // 1. The client to maintain a HashMap<Txid, InstantLock> for received InstantLocks
-        // 2. Check if tx.txid() exists in that map
-        // 3. Validate the InstantLock signature and quorum
-        // For now, we default to false until InstantLock tracking is implemented
-        let is_instant_send = false;
+        let is_instant_send = wallet.has_instant_lock(&txid).await;
         
         // Determine if this is outgoing (we're spending)
         let is_outgoing = tx.input.iter().any(|input| {
