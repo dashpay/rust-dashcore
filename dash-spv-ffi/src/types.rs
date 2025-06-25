@@ -160,7 +160,7 @@ impl From<DetailedSyncProgress> for FFIDetailedSyncProgress {
             total_headers: progress.total_headers_processed,
             sync_start_timestamp: progress.sync_start_time
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or(std::time::Duration::from_secs(0))
                 .as_secs() as i64,
         }
     }
@@ -238,7 +238,7 @@ impl From<PeerInfo> for FFIPeerInfo {
             } else {
                 0
             },
-            last_seen: info.last_seen.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            last_seen: info.last_seen.duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0)).as_secs(),
             version: info.version.unwrap_or(0),
             services: info.services.unwrap_or(0),
             user_agent: FFIString::new(&info.user_agent.as_deref().unwrap_or("")),
