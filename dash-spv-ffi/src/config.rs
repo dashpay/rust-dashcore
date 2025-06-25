@@ -1,6 +1,5 @@
 use crate::{null_check, set_last_error, FFIErrorCode, FFIMempoolStrategy, FFINetwork, FFIString};
 use dash_spv::{ClientConfig, ValidationMode};
-use dash_spv::client::config::MempoolStrategy;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
