@@ -84,6 +84,11 @@ impl<'a> MessageHandler<'a> {
                     tracing::info!("📋 Post-sync headers received, additional processing may be needed");
                 }
             }
+            NetworkMessage::Headers2(headers2) => {
+                // Headers2 messages are handled by the sequential sync manager
+                tracing::info!("📋 Received Headers2 message with {} compressed headers", headers2.headers.len());
+                // The sequential sync manager handles decompression and processing
+            }
             NetworkMessage::CFHeaders(cf_headers) => {
                 tracing::info!(
                     "📨 Client received CFHeaders message with {} filter headers",
@@ -117,7 +122,7 @@ impl<'a> MessageHandler<'a> {
                 self.handle_inventory(inv).await?;
             }
             NetworkMessage::Tx(tx) => {
-                tracing::debug!("Received transaction: {}", tx.txid());
+                tracing::info!("📨 Received transaction: {}", tx.txid());
                 
                 // Only process if mempool tracking is enabled
                 if let Some(filter) = self.mempool_filter {
@@ -154,7 +159,11 @@ impl<'a> MessageHandler<'a> {
                         let _ = self.event_tx.send(event);
                         
                         tracing::info!("💸 Added mempool transaction {} (amount: {})", txid, amount);
+                    } else {
+                        tracing::debug!("Transaction {} not relevant or at capacity, ignoring", tx.txid());
                     }
+                } else {
+                    tracing::warn!("⚠️ Received transaction {} but mempool tracking is disabled (enable_mempool_tracking=false)", tx.txid());
                 }
             }
             NetworkMessage::CLSig(chain_lock) => {
@@ -239,12 +248,21 @@ impl<'a> MessageHandler<'a> {
                     if let Some(filter) = self.mempool_filter {
                         if self.config.fetch_mempool_transactions && 
                            filter.should_fetch_transaction(&txid).await {
+                            tracing::info!("📥 Requesting transaction {}", txid);
                             // Request the transaction
                             let getdata = NetworkMessage::GetData(vec![item]);
                             if let Err(e) = self.network.send_message(getdata).await {
                                 tracing::error!("Failed to request transaction {}: {}", txid, e);
                             }
+                        } else {
+                            tracing::debug!("Not fetching transaction {} (fetch_mempool_transactions={}, should_fetch={})", 
+                                txid, 
+                                self.config.fetch_mempool_transactions,
+                                filter.should_fetch_transaction(&txid).await
+                            );
                         }
+                    } else {
+                        tracing::warn!("⚠️ Transaction {} announced but mempool tracking is disabled (enable_mempool_tracking=false)", txid);
                     }
                 }
                 _ => {

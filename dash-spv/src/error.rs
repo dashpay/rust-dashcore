@@ -23,6 +23,9 @@ pub enum SpvError {
 
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
+    
+    #[error("General error: {0}")]
+    General(String),
 }
 
 /// Network-related errors.

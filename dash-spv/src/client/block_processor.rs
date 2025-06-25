@@ -164,6 +164,11 @@ impl BlockProcessor {
         let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
         if !watch_items.is_empty() {
             self.process_block_transactions(&block, &watch_items).await?;
+            
+            // Update wallet confirmation statuses after processing block
+            if let Err(e) = self.wallet.write().await.update_confirmation_status().await {
+                tracing::warn!("Failed to update wallet confirmations after block: {}", e);
+            }
         }
 
         // Update chain state if needed
