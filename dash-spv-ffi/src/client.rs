@@ -461,14 +461,17 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                             // SAFETY: The user_data pointer is valid for the duration of the sync
                             // operation as guaranteed by the caller. The callback data is protected
                             // by Arc<Mutex<>> ensuring thread-safe access.
+                            // The string pointer is only valid for the duration of the callback.
                             callback(true, msg.as_ptr(), callback_data.user_data);
-                            std::mem::forget(msg); // Prevent deallocation since callback owns it now
+                            // CString is automatically dropped here, which is safe because the callback
+                            // should not store or use the pointer after it returns
                         }
                         Err(e) => {
                             let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
                             // SAFETY: Same as above
                             callback(false, msg.as_ptr(), callback_data.user_data);
-                            std::mem::forget(msg); // Prevent deallocation since callback owns it now
+                            // CString is automatically dropped here, which is safe because the callback
+                            // should not store or use the pointer after it returns
                         }
                     }
                 }
