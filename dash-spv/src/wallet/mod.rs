@@ -161,6 +161,43 @@ impl Wallet {
         net_amount
     }
     
+    /// Calculate transaction fee for a given transaction.
+    /// Returns the fee amount if we have all input UTXOs, otherwise returns None.
+    pub fn calculate_transaction_fee(&self, tx: &dashcore::Transaction) -> Option<dashcore::Amount> {
+        let mut total_input = 0u64;
+        let mut have_all_inputs = true;
+        
+        // Get input values from our UTXO set
+        if let Ok(utxos) = self.utxo_set.try_read() {
+            for input in &tx.input {
+                if let Some(utxo) = utxos.get(&input.previous_output) {
+                    total_input += utxo.txout.value;
+                } else {
+                    // We don't have this UTXO, so we can't calculate the full fee
+                    have_all_inputs = false;
+                }
+            }
+        } else {
+            return None; // Could not acquire lock
+        }
+        
+        // If we don't have all inputs, we can't calculate the fee accurately
+        if !have_all_inputs {
+            return None;
+        }
+        
+        // Sum output values
+        let total_output: u64 = tx.output.iter().map(|out| out.value).sum();
+        
+        // Calculate fee (inputs - outputs)
+        if total_input >= total_output {
+            Some(dashcore::Amount::from_sat(total_input - total_output))
+        } else {
+            // This shouldn't happen for valid transactions
+            None
+        }
+    }
+    
     /// Check if a transaction is relevant to this wallet.
     pub fn is_transaction_relevant(&self, tx: &dashcore::Transaction) -> bool {
         // Check if any input spends our UTXOs
