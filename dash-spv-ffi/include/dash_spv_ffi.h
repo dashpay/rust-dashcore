@@ -100,6 +100,17 @@ typedef struct FFIBalance {
   uint64_t total;
 } FFIBalance;
 
+/**
+ * FFI-safe array that transfers ownership of memory to the C caller.
+ *
+ * # Safety
+ *
+ * This struct represents memory that has been allocated by Rust but ownership
+ * has been transferred to the C caller. The caller is responsible for:
+ * - Not accessing the memory after it has been freed
+ * - Calling `dash_spv_ffi_array_destroy` to properly deallocate the memory
+ * - Ensuring the data, len, and capacity fields remain consistent
+ */
 typedef struct FFIArray {
   void *data;
   uintptr_t len;
