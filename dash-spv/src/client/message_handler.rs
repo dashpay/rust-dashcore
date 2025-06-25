@@ -69,18 +69,55 @@ impl<'a> MessageHandler<'a> {
 
         tracing::debug!("Client handling network message: {:?}", std::mem::discriminant(&message));
 
-        // Check if the sync manager needs to handle this message
-        let needs_sync_handling = match &message {
-            NetworkMessage::Headers(_) | 
-            NetworkMessage::Headers2(_) |
-            NetworkMessage::CFHeaders(_) |
-            NetworkMessage::CFilter(_) |
-            NetworkMessage::MnListDiff(_) |
-            NetworkMessage::Block(_) => true,
-            _ => false,
-        };
+        // First check if this is a message that ONLY the sync manager handles
+        // These messages can be moved to the sync manager without cloning
+        match message {
+            NetworkMessage::Headers2(ref headers2) => {
+                tracing::info!("📋 Received Headers2 message with {} compressed headers", headers2.headers.len());
+                // Move to sync manager without cloning
+                return self.sync_manager.handle_message(message, &mut *self.network, &mut *self.storage)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Sequential sync manager error handling message: {}", e);
+                        SpvError::Sync(e)
+                    });
+            }
+            NetworkMessage::MnListDiff(ref diff) => {
+                tracing::info!("📨 Received MnListDiff message: {} new masternodes, {} deleted masternodes, {} quorums", 
+                              diff.new_masternodes.len(), diff.deleted_masternodes.len(), diff.new_quorums.len());
+                // Move to sync manager without cloning
+                return self.sync_manager.handle_message(message, &mut *self.network, &mut *self.storage)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Sequential sync manager error handling message: {}", e);
+                        SpvError::Sync(e)
+                    });
+            }
+            NetworkMessage::CFHeaders(ref cf_headers) => {
+                tracing::info!(
+                    "📨 Client received CFHeaders message with {} filter headers",
+                    cf_headers.filter_hashes.len()
+                );
+                // Move to sync manager without cloning
+                return self.sync_manager.handle_message(message, &mut *self.network, &mut *self.storage)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Sequential sync manager error handling message: {}", e);
+                        SpvError::Sync(e)
+                    });
+            }
+            _ => {}
+        }
 
-        // Only clone and send to sync manager if it's a relevant message type
+        // For messages that need both sync manager and client processing,
+        // we need to clone to share ownership
+        let needs_sync_handling = matches!(
+            &message,
+            NetworkMessage::Headers(_) |
+            NetworkMessage::CFilter(_) |
+            NetworkMessage::Block(_)
+        );
+
         if needs_sync_handling {
             if let Err(e) = self.sync_manager.handle_message(message.clone(), &mut *self.network, &mut *self.storage).await {
                 tracing::error!("Sequential sync manager error handling message: {}", e);
@@ -95,23 +132,6 @@ impl<'a> MessageHandler<'a> {
                 if self.sync_manager.is_synced() && !headers.is_empty() {
                     tracing::info!("📋 Post-sync headers received, additional processing may be needed");
                 }
-            }
-            NetworkMessage::Headers2(headers2) => {
-                // Headers2 messages are handled by the sequential sync manager
-                tracing::info!("📋 Received Headers2 message with {} compressed headers", headers2.headers.len());
-                // The sequential sync manager handles decompression and processing
-            }
-            NetworkMessage::CFHeaders(cf_headers) => {
-                tracing::info!(
-                    "📨 Client received CFHeaders message with {} filter headers",
-                    cf_headers.filter_hashes.len()
-                );
-                // Sequential sync manager handles this internally
-            }
-            NetworkMessage::MnListDiff(diff) => {
-                tracing::info!("📨 Received MnListDiff message: {} new masternodes, {} deleted masternodes, {} quorums", 
-                              diff.new_masternodes.len(), diff.deleted_masternodes.len(), diff.new_quorums.len());
-                // Sequential sync manager handles this internally
             }
             NetworkMessage::Block(block) => {
                 let block_hash = block.header.block_hash();
