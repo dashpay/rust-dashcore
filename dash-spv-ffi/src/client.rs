@@ -1717,7 +1717,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_mempool_balance(
                 confirmed: 0, // No confirmed balance in mempool
                 pending: mempool_balance.pending.to_sat(),
                 instantlocked: 0, // No confirmed instantlocked in mempool
-                mempool: mempool_balance.pending.to_sat(),
+                mempool: mempool_balance.pending.to_sat() + mempool_balance.pending_instant.to_sat(),
                 mempool_instant: mempool_balance.pending_instant.to_sat(),
                 total: mempool_balance.pending.to_sat() + mempool_balance.pending_instant.to_sat(),
             };
