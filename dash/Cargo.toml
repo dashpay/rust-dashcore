@@ -70,6 +70,7 @@ blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "5f017aa1a0452
 ed25519-dalek = { version = "2.1", features = ["rand_core"], optional = true }
 blake3 = "1.8.1"
 thiserror = "2"
+bitvec = "1.0"
 # bls-signatures removed during migration to agora-blsful
 
 [dev-dependencies]
