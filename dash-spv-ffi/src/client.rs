@@ -154,20 +154,27 @@ impl FFIDashSpvClient {
                             dash_spv::types::SpvEvent::MempoolTransactionAdded { ref txid, transaction: _, amount, ref addresses, is_instant_send } => {
                                 tracing::info!("➕ Mempool transaction added: txid={}, amount={}, addresses={:?}, instant_send={}", 
                                              txid, amount, addresses, is_instant_send);
-                                // For now, treat mempool transactions as unconfirmed transactions
-                                callbacks.call_transaction(&txid.to_string(), false, amount, addresses, None);
+                                // Call the mempool-specific callback
+                                callbacks.call_mempool_transaction_added(&txid.to_string(), amount, addresses, is_instant_send);
                             }
                             dash_spv::types::SpvEvent::MempoolTransactionConfirmed { ref txid, block_height, ref block_hash } => {
                                 tracing::info!("✅ Mempool transaction confirmed: txid={}, height={}, hash={}", 
                                              txid, block_height, block_hash);
-                                // Notify about the confirmation - we don't have addresses here, so pass empty vec
-                                callbacks.call_transaction(&txid.to_string(), true, 0, &Vec::new(), Some(block_height));
+                                // Call the mempool confirmed callback
+                                callbacks.call_mempool_transaction_confirmed(&txid.to_string(), block_height, &block_hash.to_string());
                             }
                             dash_spv::types::SpvEvent::MempoolTransactionRemoved { ref txid, ref reason } => {
                                 tracing::info!("❌ Mempool transaction removed: txid={}, reason={:?}", 
                                              txid, reason);
-                                // Currently no specific callback for removed transactions
-                                // Could add a new callback type if needed
+                                // Convert reason to u8 for FFI
+                                let reason_code = match reason {
+                                    dash_spv::types::MempoolRemovalReason::Expired => 0,
+                                    dash_spv::types::MempoolRemovalReason::Replaced { .. } => 1,
+                                    dash_spv::types::MempoolRemovalReason::DoubleSpent { .. } => 2,
+                                    dash_spv::types::MempoolRemovalReason::Confirmed => 3,
+                                    dash_spv::types::MempoolRemovalReason::Manual => 4,
+                                };
+                                callbacks.call_mempool_transaction_removed(&txid.to_string(), reason_code);
                             }
                         }
                     }
@@ -1512,6 +1519,64 @@ pub unsafe extern "C" fn dash_spv_ffi_client_record_send(
         Err(e) => {
             set_last_error(&e.to_string());
             FFIErrorCode::from(e) as i32
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_client_get_mempool_balance(
+    client: *mut FFIDashSpvClient,
+    address: *const c_char,
+) -> *mut FFIBalance {
+    null_check!(client, std::ptr::null_mut());
+    null_check!(address, std::ptr::null_mut());
+
+    let addr_str = match CStr::from_ptr(address).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in address: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let addr = match Address::from_str(addr_str) {
+        Ok(a) => a.assume_checked(),
+        Err(e) => {
+            set_last_error(&format!("Invalid address: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result = client.runtime.block_on(async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            spv_client.get_mempool_balance(&addr).await
+        } else {
+            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                "Client not initialized".to_string(),
+            )))
+        }
+    });
+
+    match result {
+        Ok(mempool_balance) => {
+            // Convert MempoolBalance to FFIBalance
+            let balance = FFIBalance {
+                confirmed: 0, // No confirmed balance in mempool
+                pending: mempool_balance.pending.to_sat(),
+                instantlocked: 0, // No confirmed instantlocked in mempool
+                mempool: mempool_balance.pending.to_sat(),
+                mempool_instant: mempool_balance.pending_instant.to_sat(),
+                total: mempool_balance.pending.to_sat() + mempool_balance.pending_instant.to_sat(),
+            };
+            Box::into_raw(Box::new(balance))
+        }
+        Err(e) => {
+            set_last_error(&e.to_string());
+            std::ptr::null_mut()
         }
     }
 }
