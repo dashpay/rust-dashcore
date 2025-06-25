@@ -175,4 +175,58 @@ mod tests {
             assert!(works[i] < works[i + 1]);
         }
     }
+
+    #[test]
+    fn test_chain_work_from_target_precision() {
+        // Test that lower targets (harder to mine) produce more work
+        // Target with leading zeros (harder)
+        let mut harder_target_bytes = [0u8; 32];
+        harder_target_bytes[8] = 0xff;  // 00000000 00000000 ff...
+        let harder_target = Target::from_be_bytes(harder_target_bytes);
+        
+        // Target with fewer leading zeros (easier)
+        let mut easier_target_bytes = [0u8; 32];
+        easier_target_bytes[4] = 0xff;  // 00000000 ff...
+        let easier_target = Target::from_be_bytes(easier_target_bytes);
+        
+        let harder_work = ChainWork::from_target(harder_target);
+        let easier_work = ChainWork::from_target(easier_target);
+        
+        // Harder target should produce more work
+        assert!(harder_work > easier_work, 
+            "Harder target (lower value) should produce more work");
+        
+        // Test that work values are significantly different
+        // (not just by 1 byte as in the old implementation)
+        let diff_position = harder_work.work.iter()
+            .zip(easier_work.work.iter())
+            .position(|(a, b)| a != b)
+            .expect("Work values should differ");
+        
+        assert!(diff_position < 30, 
+            "Work values should differ in significant bytes, not just the least significant");
+    }
+
+    #[test]
+    fn test_chain_work_granularity() {
+        // Test that similar targets produce slightly different work values
+        let mut target1_bytes = [0u8; 32];
+        target1_bytes[10] = 0x10;
+        target1_bytes[11] = 0x00;
+        let target1 = Target::from_be_bytes(target1_bytes);
+        
+        let mut target2_bytes = [0u8; 32];
+        target2_bytes[10] = 0x10;
+        target2_bytes[11] = 0x01;  // Slightly different
+        let target2 = Target::from_be_bytes(target2_bytes);
+        
+        let work1 = ChainWork::from_target(target1);
+        let work2 = ChainWork::from_target(target2);
+        
+        // Works should be different
+        assert_ne!(work1, work2, "Similar targets should produce different work values");
+        
+        // Target2 is slightly higher (easier), so should have slightly less work
+        assert!(work1 > work2, "Lower target should produce more work");
+    }
 }
