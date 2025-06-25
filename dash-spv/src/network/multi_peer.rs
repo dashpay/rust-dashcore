@@ -58,6 +58,8 @@ pub struct MultiPeerNetworkManager {
     data_dir: PathBuf,
     /// Mempool strategy from config
     mempool_strategy: MempoolStrategy,
+    /// Last peer that sent us a message
+    last_message_peer: Arc<Mutex<Option<SocketAddr>>>,
 }
 
 impl MultiPeerNetworkManager {
@@ -93,6 +95,7 @@ impl MultiPeerNetworkManager {
             current_sync_peer: Arc::new(Mutex::new(None)),
             data_dir,
             mempool_strategy: config.mempool_strategy,
+            last_message_peer: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -810,6 +813,26 @@ impl MultiPeerNetworkManager {
             .collect()
     }
     
+    /// Get the last peer that sent us a message
+    pub async fn get_last_message_peer(&self) -> Option<SocketAddr> {
+        let last_peer = self.last_message_peer.lock().await;
+        *last_peer
+    }
+    
+    /// Get the last message peer as a PeerId
+    pub async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
+        if let Some(addr) = self.get_last_message_peer().await {
+            // Simple hash-based mapping from SocketAddr to PeerId
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            addr.hash(&mut hasher);
+            crate::types::PeerId(hasher.finish() as u64)
+        } else {
+            // Default to PeerId(0) if no peer available
+            crate::types::PeerId(0)
+        }
+    }
+    
     /// Ban a specific peer manually
     pub async fn ban_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
         log::info!("Manually banning peer {} - reason: {}", addr, reason);
@@ -885,6 +908,7 @@ impl Clone for MultiPeerNetworkManager {
             current_sync_peer: self.current_sync_peer.clone(),
             data_dir: self.data_dir.clone(),
             mempool_strategy: self.mempool_strategy,
+            last_message_peer: self.last_message_peer.clone(),
         }
     }
 }
@@ -939,6 +963,11 @@ impl NetworkManager for MultiPeerNetworkManager {
         // Use a timeout to prevent indefinite blocking when peers disconnect
         match tokio::time::timeout(MESSAGE_RECEIVE_TIMEOUT, rx.recv()).await {
             Ok(Some((addr, msg))) => {
+                // Store the last message peer
+                let mut last_peer = self.last_message_peer.lock().await;
+                *last_peer = Some(addr);
+                drop(last_peer);
+                
                 // Reduce verbosity for common sync messages
                 match &msg {
                     NetworkMessage::Headers(_) | NetworkMessage::CFilter(_) => {
@@ -1139,5 +1168,9 @@ impl NetworkManager for MultiPeerNetworkManager {
         }
         
         false
+    }
+    
+    async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
+        self.get_last_message_peer_id().await
     }
 }

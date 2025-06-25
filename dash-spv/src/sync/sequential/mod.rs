@@ -324,9 +324,8 @@ impl SequentialSyncManager {
             }
             
             (SyncPhase::DownloadingHeaders { .. }, NetworkMessage::Headers2(headers2)) => {
-                // We need a peer ID - for now use a default one
-                // TODO: Track peer IDs properly in the sequential sync manager
-                let peer_id = crate::types::PeerId(0);
+                // Get the actual peer ID from the network manager
+                let peer_id = network.get_last_message_peer_id().await;
                 self.handle_headers2_message(headers2, peer_id, network, storage).await?;
             }
 
@@ -349,7 +348,7 @@ impl SequentialSyncManager {
             
             // Handle compressed headers when fully synced
             (SyncPhase::FullySynced { .. }, NetworkMessage::Headers2(headers2)) => {
-                let peer_id = crate::types::PeerId(0); // TODO: Track peer IDs properly
+                let peer_id = network.get_last_message_peer_id().await;
                 self.handle_headers2_message(headers2, peer_id, network, storage).await?;
             }
             
