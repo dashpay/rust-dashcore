@@ -437,9 +437,10 @@ impl HeaderSyncManager {
                 .is_some();
             
             if already_exists {
-                tracing::info!("⚠️ Header {} already exists in storage, skipping", header.block_hash());
-                // Even though we skip validation and storage, we need to update prev_header
-                // for subsequent headers in the batch to validate correctly
+                tracing::info!("⚠️ Header {} already exists in storage, skipping validation", header.block_hash());
+                // Add the existing header to validated vector so subsequent headers
+                // can reference it correctly
+                validated.push(*header);
                 continue;
             }
 

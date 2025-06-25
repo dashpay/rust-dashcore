@@ -160,17 +160,7 @@ impl SequentialSyncManager {
                 // If header sync is already prepared, just send the request
                 if self.header_sync.is_syncing() {
                     // Get current tip from storage to determine base hash
-                    let current_tip_height = storage.get_tip_height().await
-                        .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
-                    
-                    let base_hash = match current_tip_height {
-                        None => None,
-                        Some(height) => {
-                            let tip_header = storage.get_header(height).await
-                                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?;
-                            tip_header.map(|h| h.block_hash())
-                        }
-                    };
+                    let base_hash = self.get_base_hash_from_storage(storage).await?;
                     
                     // Request headers starting from our current tip
                     self.header_sync.request_headers(network, base_hash).await?;
@@ -198,17 +188,7 @@ impl SequentialSyncManager {
                 // Don't call start_sync if already prepared - just send the request
                 if self.header_sync.is_syncing() {
                     // Already prepared, just send the initial request
-                    let current_tip_height = storage.get_tip_height().await
-                        .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
-                    
-                    let base_hash = match current_tip_height {
-                        None => None,
-                        Some(height) => {
-                            let tip_header = storage.get_header(height).await
-                                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?;
-                            tip_header.map(|h| h.block_hash())
-                        }
-                    };
+                    let base_hash = self.get_base_hash_from_storage(storage).await?;
                     
                     self.header_sync.request_headers(network, base_hash).await?;
                 } else {
@@ -1104,6 +1084,26 @@ impl SequentialSyncManager {
         true
     }
 
+    /// Helper method to get base hash from storage
+    async fn get_base_hash_from_storage(
+        &self,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<Option<BlockHash>> {
+        let current_tip_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+        
+        let base_hash = match current_tip_height {
+            None => None,
+            Some(height) => {
+                let tip_header = storage.get_header(height).await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?;
+                tip_header.map(|h| h.block_hash())
+            }
+        };
+        
+        Ok(base_hash)
+    }
+
     /// Handle inventory messages for sequential sync
     pub async fn handle_inventory(
         &mut self,
@@ -1138,14 +1138,57 @@ impl SequentialSyncManager {
                                          height, tip_header.block_hash());
                             vec![tip_header.block_hash()]
                         } else {
-                            // No header at the tip height
-                            tracing::info!("📍 No header found at height {}, using empty locator", height);
-                            Vec::new()
+                            // No header at the exact tip height, try to find the highest available header
+                            tracing::info!("📍 No header found at height {}, searching for highest available", height);
+                            
+                            // Search backwards from tip height to find a valid header
+                            let mut search_height = height;
+                            let mut found_header = None;
+                            
+                            while search_height > 0 {
+                                if let Some(header) = storage.get_header(search_height).await
+                                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get header at height {}: {}", search_height, e)))? {
+                                    found_header = Some((search_height, header));
+                                    break;
+                                }
+                                search_height -= 1;
+                            }
+                            
+                            if let Some((found_height, header)) = found_header {
+                                tracing::info!("📍 Found header at height {} as locator: {}", 
+                                             found_height, header.block_hash());
+                                vec![header.block_hash()]
+                            } else {
+                                // No headers found at all - this is unexpected but use empty locator as fallback
+                                tracing::warn!("📍 No headers found in storage, using empty locator");
+                                Vec::new()
+                            }
                         }
                     } else {
-                        // No headers stored - use empty locator
-                        tracing::info!("📍 No headers stored, using empty locator");
-                        Vec::new()
+                        // No tip height stored - try to get any available header
+                        tracing::info!("📍 No tip height stored, searching for any available header");
+                        
+                        // Try common starting heights (this could be improved with a storage method)
+                        let search_heights = vec![100000, 50000, 10000, 1000, 100, 10, 1];
+                        let mut found_header = None;
+                        
+                        for height in search_heights {
+                            if let Some(header) = storage.get_header(height).await
+                                .map_err(|e| SyncError::SyncFailed(format!("Failed to get header at height {}: {}", height, e)))? {
+                                found_header = Some((height, header));
+                                break;
+                            }
+                        }
+                        
+                        if let Some((found_height, header)) = found_header {
+                            tracing::info!("📍 Found header at height {} as locator: {}", 
+                                         found_height, header.block_hash());
+                            vec![header.block_hash()]
+                        } else {
+                            // No headers found - use empty locator as last resort
+                            tracing::info!("📍 No headers found in storage, using empty locator");
+                            Vec::new()
+                        }
                     };
                     
                     // Request headers starting from our tip
