@@ -126,6 +126,20 @@ public final class DashSDK {
         return try await wallet.getUTXOs()
     }
     
+    // MARK: - Mempool Operations
+    
+    public func enableMempoolTracking(strategy: MempoolStrategy) async throws {
+        try await client.enableMempoolTracking(strategy: strategy)
+    }
+    
+    public func getMempoolBalance(for address: String) async throws -> MempoolBalance {
+        return try await client.getMempoolBalance(for: address)
+    }
+    
+    public func getMempoolTransactionCount() async throws -> Int {
+        return try await client.getMempoolTransactionCount()
+    }
+    
     // MARK: - Transaction Management
     
     public func sendTransaction(

@@ -256,6 +256,13 @@ class WalletService: ObservableObject {
         config.network = wallet.network
         config.validationMode = ValidationMode.full
         
+        // Enable trace logging for detailed debugging
+        config.logLevel = "trace"
+        
+        // Enable mempool tracking with FetchAll strategy for testing
+        // This allows the wallet to see all network transactions
+        config.mempoolConfig = .fetchAll(maxTransactions: 5000)
+        
         // Using local network for testing - comment out to use public peers
         if wallet.network == .mainnet {
             config.additionalPeers = [
@@ -295,6 +302,11 @@ class WalletService: ObservableObject {
         try await sdk?.connect()
         isConnected = true
         print("✅ Connected successfully!")
+        
+        // Enable mempool tracking after connection
+        print("🔄 Enabling mempool tracking...")
+        try await sdk?.enableMempoolTracking(strategy: .fetchAll)
+        print("✅ Mempool tracking enabled with FetchAll strategy")
         
         activeWallet = wallet
         activeAccount = account
@@ -614,8 +626,20 @@ class WalletService: ObservableObject {
                     // Transaction already exists, skip
                     continue
                 } else {
-                    // Use the SDK transaction directly
-                    context.insert(sdkTx)
+                    // Create a new transaction instance for this context
+                    let newTransaction = SwiftDashCoreSDK.Transaction(
+                        txid: sdkTx.txid,
+                        height: sdkTx.height,
+                        timestamp: sdkTx.timestamp,
+                        amount: sdkTx.amount,
+                        fee: sdkTx.fee,
+                        confirmations: sdkTx.confirmations,
+                        isInstantLocked: sdkTx.isInstantLocked,
+                        raw: sdkTx.raw,
+                        size: sdkTx.size,
+                        version: sdkTx.version
+                    )
+                    context.insert(newTransaction)
                     
                     // Add transaction ID to account and address
                     if !account.transactionIds.contains(sdkTx.txid) {

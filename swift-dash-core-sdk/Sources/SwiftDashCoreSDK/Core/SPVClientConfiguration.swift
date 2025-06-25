@@ -12,6 +12,8 @@ public final class SPVClientConfiguration {
     public var enableFilterLoad: Bool = true
     public var initialBlockFilter: Bool = true
     public var dustRelayFee: UInt64 = 3000
+    public var mempoolConfig: MempoolConfig = .disabled
+    public var logLevel: String = "info"  // Options: "error", "warn", "info", "debug", "trace"
     
     public init() {
         setupDefaultDataDirectory()
@@ -93,6 +95,27 @@ public final class SPVClientConfiguration {
             result = FFIBridge.withCString(peer) { peerStr in
                 dash_spv_ffi_config_add_peer(config, peerStr)
             }
+            try FFIBridge.checkError(result)
+        }
+        
+        // Configure mempool settings
+        result = dash_spv_ffi_config_set_mempool_tracking(config, mempoolConfig.enabled)
+        try FFIBridge.checkError(result)
+        
+        if mempoolConfig.enabled {
+            result = dash_spv_ffi_config_set_mempool_strategy(config, FFIMempoolStrategy(rawValue: mempoolConfig.strategy.rawValue))
+            try FFIBridge.checkError(result)
+            
+            result = dash_spv_ffi_config_set_max_mempool_transactions(config, mempoolConfig.maxTransactions)
+            try FFIBridge.checkError(result)
+            
+            result = dash_spv_ffi_config_set_mempool_timeout(config, mempoolConfig.timeoutSeconds)
+            try FFIBridge.checkError(result)
+            
+            result = dash_spv_ffi_config_set_fetch_mempool_transactions(config, mempoolConfig.fetchTransactions)
+            try FFIBridge.checkError(result)
+            
+            result = dash_spv_ffi_config_set_persist_mempool(config, mempoolConfig.persistMempool)
             try FFIBridge.checkError(result)
         }
         
