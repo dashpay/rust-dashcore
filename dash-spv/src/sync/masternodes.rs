@@ -447,7 +447,7 @@ impl MasternodeSyncManager {
             self.config
                 .network
                 .known_genesis_block_hash()
-                .ok_or_else(|| SyncError::SyncFailed("No genesis hash for network".to_string()))?
+                .ok_or_else(|| SyncError::Network("No genesis hash for network".to_string()))?
         } else {
             storage
                 .get_header(base_height)
