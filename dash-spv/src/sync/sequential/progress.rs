@@ -3,6 +3,10 @@
 use std::time::Duration;
 
 use super::phases::{PhaseProgress, PhaseTransition, SyncPhase};
+use super::request_control::{
+    PHASE_DOWNLOADING_HEADERS, PHASE_DOWNLOADING_MNLIST, PHASE_DOWNLOADING_CFHEADERS,
+    PHASE_DOWNLOADING_FILTERS, PHASE_DOWNLOADING_BLOCKS,
+};
 
 /// Overall sync progress across all phases
 #[derive(Debug, Clone)]
@@ -47,11 +51,11 @@ impl ProgressTracker {
         let mut phase_weights = std::collections::HashMap::new();
         
         // Assign weights based on typical time/importance
-        phase_weights.insert("Downloading Headers".to_string(), 0.4);
-        phase_weights.insert("Downloading Masternode Lists".to_string(), 0.1);
-        phase_weights.insert("Downloading Filter Headers".to_string(), 0.2);
-        phase_weights.insert("Downloading Filters".to_string(), 0.2);
-        phase_weights.insert("Downloading Blocks".to_string(), 0.1);
+        phase_weights.insert(PHASE_DOWNLOADING_HEADERS.to_string(), 0.4);
+        phase_weights.insert(PHASE_DOWNLOADING_MNLIST.to_string(), 0.1);
+        phase_weights.insert(PHASE_DOWNLOADING_CFHEADERS.to_string(), 0.2);
+        phase_weights.insert(PHASE_DOWNLOADING_FILTERS.to_string(), 0.2);
+        phase_weights.insert(PHASE_DOWNLOADING_BLOCKS.to_string(), 0.1);
         
         Self {
             sync_start: None,
@@ -130,36 +134,36 @@ impl ProgressTracker {
         
         match current_phase {
             SyncPhase::Idle => {
-                remaining.push("Downloading Headers".to_string());
+                remaining.push(PHASE_DOWNLOADING_HEADERS.to_string());
                 if features.masternodes {
-                    remaining.push("Downloading Masternode Lists".to_string());
+                    remaining.push(PHASE_DOWNLOADING_MNLIST.to_string());
                 }
                 if features.filters {
-                    remaining.push("Downloading Filter Headers".to_string());
-                    remaining.push("Downloading Filters".to_string());
+                    remaining.push(PHASE_DOWNLOADING_CFHEADERS.to_string());
+                    remaining.push(PHASE_DOWNLOADING_FILTERS.to_string());
                 }
                 // Blocks phase is dynamic based on filter matches
             }
             
             SyncPhase::DownloadingHeaders { .. } => {
                 if features.masternodes {
-                    remaining.push("Downloading Masternode Lists".to_string());
+                    remaining.push(PHASE_DOWNLOADING_MNLIST.to_string());
                 }
                 if features.filters {
-                    remaining.push("Downloading Filter Headers".to_string());
-                    remaining.push("Downloading Filters".to_string());
+                    remaining.push(PHASE_DOWNLOADING_CFHEADERS.to_string());
+                    remaining.push(PHASE_DOWNLOADING_FILTERS.to_string());
                 }
             }
             
             SyncPhase::DownloadingMnList { .. } => {
                 if features.filters {
-                    remaining.push("Downloading Filter Headers".to_string());
-                    remaining.push("Downloading Filters".to_string());
+                    remaining.push(PHASE_DOWNLOADING_CFHEADERS.to_string());
+                    remaining.push(PHASE_DOWNLOADING_FILTERS.to_string());
                 }
             }
             
             SyncPhase::DownloadingCFHeaders { .. } => {
-                remaining.push("Downloading Filters".to_string());
+                remaining.push(PHASE_DOWNLOADING_FILTERS.to_string());
             }
             
             SyncPhase::DownloadingFilters { .. } => {

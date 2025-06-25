@@ -3,14 +3,24 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
+use dashcore::network::constants::NetworkExt;
 use dashcore::network::message::NetworkMessage;
+use dashcore::network::message_blockdata::Inventory;
 use dashcore::BlockHash;
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
+use crate::storage::StorageManager;
 
 use super::phases::SyncPhase;
+
+// Phase name constants - must match the phase names from SyncPhase::name()
+pub const PHASE_DOWNLOADING_HEADERS: &str = "Downloading Headers";
+pub const PHASE_DOWNLOADING_MNLIST: &str = "Downloading Masternode Lists";
+pub const PHASE_DOWNLOADING_CFHEADERS: &str = "Downloading Filter Headers";
+pub const PHASE_DOWNLOADING_FILTERS: &str = "Downloading Filters";
+pub const PHASE_DOWNLOADING_BLOCKS: &str = "Downloading Blocks";
 
 /// Types of sync requests
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -62,18 +72,18 @@ impl RequestController {
     /// Create a new request controller
     pub fn new(config: &ClientConfig) -> Self {
         let mut max_concurrent_requests = HashMap::new();
-        max_concurrent_requests.insert("Downloading Headers".to_string(), 1);
-        max_concurrent_requests.insert("Downloading Masternode Lists".to_string(), 1);
-        max_concurrent_requests.insert("Downloading Filter Headers".to_string(), 1);
-        max_concurrent_requests.insert("Downloading Filters".to_string(), 10);
-        max_concurrent_requests.insert("Downloading Blocks".to_string(), 5);
+        max_concurrent_requests.insert(PHASE_DOWNLOADING_HEADERS.to_string(), config.max_concurrent_headers_requests.unwrap_or(1));
+        max_concurrent_requests.insert(PHASE_DOWNLOADING_MNLIST.to_string(), config.max_concurrent_mnlist_requests.unwrap_or(1));
+        max_concurrent_requests.insert(PHASE_DOWNLOADING_CFHEADERS.to_string(), config.max_concurrent_cfheaders_requests.unwrap_or(1));
+        max_concurrent_requests.insert(PHASE_DOWNLOADING_FILTERS.to_string(), config.max_concurrent_filter_requests);
+        max_concurrent_requests.insert(PHASE_DOWNLOADING_BLOCKS.to_string(), config.max_concurrent_block_requests.unwrap_or(5));
 
         let mut rate_limits = HashMap::new();
-        rate_limits.insert("Downloading Headers".to_string(), 10.0);
-        rate_limits.insert("Downloading Masternode Lists".to_string(), 5.0);
-        rate_limits.insert("Downloading Filter Headers".to_string(), 10.0);
-        rate_limits.insert("Downloading Filters".to_string(), 50.0);
-        rate_limits.insert("Downloading Blocks".to_string(), 10.0);
+        rate_limits.insert(PHASE_DOWNLOADING_HEADERS.to_string(), config.headers_request_rate_limit.unwrap_or(10.0));
+        rate_limits.insert(PHASE_DOWNLOADING_MNLIST.to_string(), config.mnlist_request_rate_limit.unwrap_or(5.0));
+        rate_limits.insert(PHASE_DOWNLOADING_CFHEADERS.to_string(), config.cfheaders_request_rate_limit.unwrap_or(10.0));
+        rate_limits.insert(PHASE_DOWNLOADING_FILTERS.to_string(), config.filters_request_rate_limit.unwrap_or(50.0));
+        rate_limits.insert(PHASE_DOWNLOADING_BLOCKS.to_string(), config.blocks_request_rate_limit.unwrap_or(10.0));
 
         Self {
             config: config.clone(),
@@ -125,6 +135,7 @@ impl RequestController {
         &mut self,
         phase: &SyncPhase,
         network: &mut dyn NetworkManager,
+        storage: &dyn StorageManager,
     ) -> SyncResult<()> {
         let phase_name = phase.name().to_string();
         let max_concurrent = self
@@ -155,7 +166,7 @@ impl RequestController {
                 }
 
                 // Send the request
-                self.send_request(request, network).await?;
+                self.send_request(request, network, storage).await?;
             }
         }
 
@@ -167,6 +178,7 @@ impl RequestController {
         &mut self,
         request: NetworkRequest,
         network: &mut dyn NetworkManager,
+        storage: &dyn StorageManager,
     ) -> SyncResult<()> {
         let message = match &request.request_type {
             RequestType::GetHeaders(locator) => {
@@ -178,10 +190,44 @@ impl RequestController {
                 NetworkMessage::GetHeaders(getheaders)
             }
 
-            RequestType::GetMnListDiff(_height) => {
+            RequestType::GetMnListDiff(height) => {
+                // Get the base block hash - either genesis or from a terminal block
+                let base_block_hash = if *height == 0 {
+                    // Genesis block
+                    self.config
+                        .network
+                        .known_genesis_block_hash()
+                        .ok_or_else(|| SyncError::Network("No genesis hash for network".to_string()))?
+                } else {
+                    // For non-genesis, we need to determine the base height
+                    // This logic should match what the masternode sync manager does
+                    let base_height = 0; // For now, always use genesis as base
+                    if base_height == 0 {
+                        self.config
+                            .network
+                            .known_genesis_block_hash()
+                            .ok_or_else(|| SyncError::Network("No genesis hash for network".to_string()))?
+                    } else {
+                        storage
+                            .get_header(base_height)
+                            .await
+                            .map_err(|e| SyncError::SyncFailed(format!("Failed to get base header: {}", e)))?
+                            .ok_or_else(|| SyncError::SyncFailed("Base header not found".to_string()))?
+                            .block_hash()
+                    }
+                };
+
+                // Get the target block hash at the requested height
+                let block_hash = storage
+                    .get_header(*height)
+                    .await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get header at height {}: {}", height, e)))?
+                    .ok_or_else(|| SyncError::SyncFailed(format!("Header not found at height {}", height)))?
+                    .block_hash();
+
                 let getmnlistdiff = dashcore::network::message_sml::GetMnListDiff {
-                    base_block_hash: BlockHash::from([0; 32]), // Will be filled properly
-                    block_hash: BlockHash::from([0; 32]),      // Will be filled properly
+                    base_block_hash,
+                    block_hash,
                 };
                 NetworkMessage::GetMnListD(getmnlistdiff)
             }
@@ -250,11 +296,11 @@ impl RequestController {
     /// Get the phase name for a request type
     fn request_phase(&self, request_type: &RequestType) -> String {
         match request_type {
-            RequestType::GetHeaders(_) => "Downloading Headers",
-            RequestType::GetMnListDiff(_) => "Downloading Masternode Lists",
-            RequestType::GetCFHeaders(_, _) => "Downloading Filter Headers",
-            RequestType::GetCFilters(_, _) => "Downloading Filters",
-            RequestType::GetBlock(_) => "Downloading Blocks",
+            RequestType::GetHeaders(_) => PHASE_DOWNLOADING_HEADERS,
+            RequestType::GetMnListDiff(_) => PHASE_DOWNLOADING_MNLIST,
+            RequestType::GetCFHeaders(_, _) => PHASE_DOWNLOADING_CFHEADERS,
+            RequestType::GetCFilters(_, _) => PHASE_DOWNLOADING_FILTERS,
+            RequestType::GetBlock(_) => PHASE_DOWNLOADING_BLOCKS,
         }
         .to_string()
     }
