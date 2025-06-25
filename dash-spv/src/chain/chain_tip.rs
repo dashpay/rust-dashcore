@@ -88,11 +88,20 @@ impl ChainTipManager {
             is_active: false,
         };
         
-        // Remove old tip and add new one
-        self.tips.remove(tip_hash);
-        self.add_tip(new_tip)?;
+        // Store the old tip temporarily in case we need to restore it
+        let old_tip = self.tips.remove(tip_hash);
         
-        Ok(())
+        // Attempt to add the new tip
+        match self.add_tip(new_tip) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Restore the old tip if adding the new one failed
+                if let Some(tip) = old_tip {
+                    self.tips.insert(tip_hash.clone(), tip);
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Get the current active (best) chain tip
@@ -240,5 +249,30 @@ mod tests {
         // The tip with work=5 should have been evicted
         let tips = manager.get_all_tips();
         assert!(tips.iter().all(|t| t.chain_work.as_bytes()[31] >= 7));
+    }
+    
+    #[test]
+    fn test_extend_tip_atomic() {
+        let mut manager = ChainTipManager::new(2);
+        
+        // Add two tips to fill capacity
+        let tip1 = create_test_tip(1, 5);
+        let tip1_hash = tip1.hash;
+        manager.add_tip(tip1).unwrap();
+        
+        let tip2 = create_test_tip(2, 10);
+        manager.add_tip(tip2).unwrap();
+        
+        // Try to extend tip1 - this should fail because adding the new tip
+        // would require eviction, but we can't evict the active tip
+        let new_header = create_test_tip(3, 6).header;
+        let new_work = ChainWork::from_bytes([0u8; 32]);
+        
+        // The extend operation should fail and the original tip should remain
+        let result = manager.extend_tip(&tip1_hash, new_header, new_work);
+        
+        // Even if it fails, the original tip should still be there
+        assert!(manager.get_tip(&tip1_hash).is_some());
+        assert_eq!(manager.tip_count(), 2);
     }
 }
