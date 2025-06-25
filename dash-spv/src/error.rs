@@ -76,6 +76,9 @@ pub enum StorageError {
     
     #[error("Inconsistent state: {0}")]
     InconsistentState(String),
+    
+    #[error("Lock poisoned: {0}")]
+    LockPoisoned(String),
 }
 
 /// Validation-related errors.
