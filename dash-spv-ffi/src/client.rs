@@ -39,7 +39,6 @@ enum CallbackInfo {
     },
     /// Simple progress callbacks (used by sync_to_tip)
     Simple {
-        progress_callback: Option<extern "C" fn(f64, *const c_char, *mut c_void)>,
         completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
         user_data: *mut c_void,
     },
@@ -333,7 +332,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
     client: *mut FFIDashSpvClient,
-    progress_callback: Option<extern "C" fn(f64, *const c_char, *mut c_void)>,
     completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
     user_data: *mut c_void,
 ) -> i32 {
@@ -345,7 +343,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
 
     // Register callbacks in the global registry for safe lifetime management
     let callback_info = CallbackInfo::Simple {
-        progress_callback,
         completion_callback,
         user_data,
     };
@@ -363,7 +360,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
                     // Report completion and unregister callbacks
                     {
                         let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                        if let Some(CallbackInfo::Simple { completion_callback, user_data, .. }) = registry.unregister(callback_id) {
+                        if let Some(CallbackInfo::Simple { completion_callback, user_data }) = registry.unregister(callback_id) {
                             if let Some(callback) = completion_callback {
                                 let msg = CString::new("Sync completed successfully").unwrap();
                                 // SAFETY: The callback and user_data are safely managed through the registry
@@ -379,7 +376,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
                     // Report error and unregister callbacks
                     {
                         let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                        if let Some(CallbackInfo::Simple { completion_callback, user_data, .. }) = registry.unregister(callback_id) {
+                        if let Some(CallbackInfo::Simple { completion_callback, user_data }) = registry.unregister(callback_id) {
                             if let Some(callback) = completion_callback {
                                 let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
                                 // SAFETY: The callback and user_data are safely managed through the registry
