@@ -335,17 +335,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
             match spv_client.sync_to_tip().await {
                 Ok(_sync_result) => {
                     // sync_to_tip returns a SyncResult, not a stream
-                    // We need to simulate progress updates
-                    if let Some(callback) = progress_callback {
-                        // Access callback info from registry
-                        let registry = CALLBACK_REGISTRY.lock().unwrap();
-                        if let Some(CallbackInfo::Simple { user_data, .. }) = registry.get(callback_id) {
-                            let msg = CString::new("Syncing headers...").unwrap();
-                            // SAFETY: The callback and user_data are safely stored in the registry
-                            // The registry ensures proper lifetime management without raw pointer passing
-                            callback(0.1, msg.as_ptr(), *user_data);
-                        }
-                    }
+                    // Progress callbacks removed as sync_to_tip doesn't provide real progress updates
                     
                     // Report completion and unregister callbacks
                     {
