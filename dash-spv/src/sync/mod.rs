@@ -18,7 +18,6 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::SyncProgress;
-use dashcore::network::constants::NetworkExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 
 pub use filters::FilterSyncManager;

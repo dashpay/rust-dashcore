@@ -2,11 +2,10 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use dashcore::bloom::{BloomFilter, BloomFlags, BloomError};
+use dashcore::bloom::{BloomFilter, BloomFlags};
 use dashcore::network::message_bloom::{FilterLoad, FilterAdd};
 use dashcore::address::Address;
 use dashcore::transaction::Transaction;
-use dashcore::script::Script;
 use dashcore::OutPoint;
 use crate::error::SpvError;
 use super::utils::{extract_pubkey_hash, outpoint_to_bytes};
