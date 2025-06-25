@@ -366,12 +366,12 @@ impl UTXORollbackManager {
     async fn persist_to_storage(&self, storage: &mut dyn StorageManager) -> Result<()> {
         // Serialize and store snapshots
         let snapshot_data = bincode::serialize(&self.snapshots)
-            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            .map_err(|e| StorageError::Serialization(e.to_string()))?;
         storage.store_metadata("utxo_snapshots", &snapshot_data).await?;
 
         // Serialize and store transaction statuses
         let status_data = bincode::serialize(&self.tx_statuses)
-            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            .map_err(|e| StorageError::Serialization(e.to_string()))?;
         storage.store_metadata("tx_statuses", &status_data).await?;
 
         Ok(())
