@@ -247,6 +247,15 @@ impl From<PeerInfo> for FFIPeerInfo {
     }
 }
 
+/// FFI-safe array that transfers ownership of memory to the C caller.
+/// 
+/// # Safety
+/// 
+/// This struct represents memory that has been allocated by Rust but ownership
+/// has been transferred to the C caller. The caller is responsible for:
+/// - Not accessing the memory after it has been freed
+/// - Calling `dash_spv_ffi_array_destroy` to properly deallocate the memory
+/// - Ensuring the data, len, and capacity fields remain consistent
 #[repr(C)]
 pub struct FFIArray {
     pub data: *mut c_void,
@@ -255,6 +264,13 @@ pub struct FFIArray {
 }
 
 impl FFIArray {
+    /// Creates a new FFIArray from a Vec, transferring ownership of the memory to the caller.
+    /// 
+    /// # Safety
+    /// 
+    /// This function uses `std::mem::forget` to prevent Rust from deallocating the Vec's memory.
+    /// The caller becomes responsible for freeing this memory by calling `dash_spv_ffi_array_destroy`.
+    /// Failure to call the destroy function will result in a memory leak.
     pub fn new<T>(vec: Vec<T>) -> Self {
         let mut vec = vec;
         let data = vec.as_mut_ptr() as *mut c_void;
