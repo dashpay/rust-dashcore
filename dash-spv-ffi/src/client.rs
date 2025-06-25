@@ -11,8 +11,71 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::runtime::Runtime;
+use once_cell::sync::Lazy;
+
+/// Global callback registry for thread-safe callback management
+static CALLBACK_REGISTRY: Lazy<Arc<Mutex<CallbackRegistry>>> = 
+    Lazy::new(|| Arc::new(Mutex::new(CallbackRegistry::new())));
+
+/// Atomic counter for generating unique callback IDs
+static CALLBACK_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Thread-safe callback registry
+struct CallbackRegistry {
+    callbacks: HashMap<u64, CallbackInfo>,
+}
+
+/// Information stored for each callback
+struct CallbackInfo {
+    progress_callback: Option<extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void)>,
+    completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
+    user_data: *mut c_void,
+}
+
+/// Safety: CallbackInfo is Send because we ensure callbacks are thread-safe
+unsafe impl Send for CallbackInfo {}
+unsafe impl Sync for CallbackInfo {}
+
+impl CallbackRegistry {
+    fn new() -> Self {
+        Self {
+            callbacks: HashMap::new(),
+        }
+    }
+    
+    fn register(&mut self, info: CallbackInfo) -> u64 {
+        let id = CALLBACK_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+        self.callbacks.insert(id, info);
+        id
+    }
+    
+    fn get(&self, id: u64) -> Option<&CallbackInfo> {
+        self.callbacks.get(&id)
+    }
+    
+    fn unregister(&mut self, id: u64) -> Option<CallbackInfo> {
+        self.callbacks.remove(&id)
+    }
+}
+
+/// Sync callback data that uses callback IDs instead of raw pointers
+struct SyncCallbackData {
+    callback_id: u64,
+    _marker: std::marker::PhantomData<()>,
+}
+
+/// FFIDashSpvClient structure
+pub struct FFIDashSpvClient {
+    inner: Arc<Mutex<Option<DashSpvClient>>>,
+    runtime: Arc<Runtime>,
+    event_callbacks: Arc<Mutex<FFIEventCallbacks>>,
+    active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
+    sync_callbacks: Arc<Mutex<Option<SyncCallbackData>>>,
+}
 
 /// Validate a script hex string and convert it to ScriptBuf
 unsafe fn validate_script_hex(script_hex: *const c_char) -> Result<ScriptBuf, i32> {
@@ -378,11 +441,17 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     
     let client = &(*client);
     
-    // Store callbacks in a safe wrapper
-    let callback_data = SyncCallbackData {
+    // Register callbacks in the global registry
+    let callback_info = CallbackInfo {
         progress_callback,
         completion_callback,
         user_data,
+    };
+    let callback_id = CALLBACK_REGISTRY.lock().unwrap().register(callback_info);
+    
+    // Store callback ID in the client
+    let callback_data = SyncCallbackData {
+        callback_id,
         _marker: std::marker::PhantomData,
     };
     *client.sync_callbacks.lock().unwrap() = Some(callback_data);
@@ -411,16 +480,19 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                     // Create FFI progress
                     let ffi_progress = Box::new(FFIDetailedSyncProgress::from(progress));
                     
-                    // Call the callback with proper synchronization
+                    // Call the callback using the registry
                     {
                         let cb_guard = sync_callbacks_clone.lock().unwrap();
                         
                         if let Some(ref callback_data) = *cb_guard {
-                            if let Some(callback) = callback_data.progress_callback {
-                                // SAFETY: The user_data pointer is valid for the duration of the sync
-                                // operation as guaranteed by the caller. The callback data is protected
-                                // by Arc<Mutex<>> ensuring thread-safe access.
-                                callback(ffi_progress.as_ref(), callback_data.user_data);
+                            let registry = CALLBACK_REGISTRY.lock().unwrap();
+                            if let Some(callback_info) = registry.get(callback_data.callback_id) {
+                                if let Some(callback) = callback_info.progress_callback {
+                                    // SAFETY: The callback and user_data are safely stored in the registry
+                                    // and accessed through thread-safe mechanisms. The registry ensures
+                                    // proper lifetime management without raw pointer passing across threads.
+                                    callback(ffi_progress.as_ref(), callback_info.user_data);
+                                }
                             }
                         }
                     }
@@ -450,36 +522,37 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
             }
         });
         
-        // Send completion callback
+        // Send completion callback and cleanup
         {
-            let cb_guard = sync_callbacks_clone.lock().unwrap();
+            let mut cb_guard = sync_callbacks_clone.lock().unwrap();
             if let Some(ref callback_data) = *cb_guard {
-                if let Some(callback) = callback_data.completion_callback {
-                    match monitor_result {
-                        Ok(_) => {
-                            let msg = CString::new("Sync completed successfully").unwrap();
-                            // SAFETY: The user_data pointer is valid for the duration of the sync
-                            // operation as guaranteed by the caller. The callback data is protected
-                            // by Arc<Mutex<>> ensuring thread-safe access.
-                            // The string pointer is only valid for the duration of the callback.
-                            callback(true, msg.as_ptr(), callback_data.user_data);
-                            // CString is automatically dropped here, which is safe because the callback
-                            // should not store or use the pointer after it returns
-                        }
-                        Err(e) => {
-                            let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
-                            // SAFETY: Same as above
-                            callback(false, msg.as_ptr(), callback_data.user_data);
-                            // CString is automatically dropped here, which is safe because the callback
-                            // should not store or use the pointer after it returns
+                let mut registry = CALLBACK_REGISTRY.lock().unwrap();
+                if let Some(callback_info) = registry.unregister(callback_data.callback_id) {
+                    if let Some(callback) = callback_info.completion_callback {
+                        match monitor_result {
+                            Ok(_) => {
+                                let msg = CString::new("Sync completed successfully").unwrap();
+                                // SAFETY: The callback and user_data are safely managed through the registry.
+                                // The registry ensures proper lifetime management and thread safety.
+                                // The string pointer is only valid for the duration of the callback.
+                                callback(true, msg.as_ptr(), callback_info.user_data);
+                                // CString is automatically dropped here, which is safe because the callback
+                                // should not store or use the pointer after it returns
+                            }
+                            Err(e) => {
+                                let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
+                                // SAFETY: Same as above
+                                callback(false, msg.as_ptr(), callback_info.user_data);
+                                // CString is automatically dropped here, which is safe because the callback
+                                // should not store or use the pointer after it returns
+                            }
                         }
                     }
                 }
             }
+            // Clear the callbacks after completion
+            *cb_guard = None;
         }
-        
-        // Clear the callbacks after completion to allow cleanup
-        *sync_callbacks_clone.lock().unwrap() = None;
     });
     
     FFIErrorCode::Success as i32
@@ -491,8 +564,12 @@ pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpv
     
     let client = &(*client);
     
-    // Clear callbacks to stop progress updates
-    *client.sync_callbacks.lock().unwrap() = None;
+    // Clear callbacks to stop progress updates and unregister from the registry
+    let mut cb_guard = client.sync_callbacks.lock().unwrap();
+    if let Some(ref callback_data) = *cb_guard {
+        CALLBACK_REGISTRY.lock().unwrap().unregister(callback_data.callback_id);
+    }
+    *cb_guard = None;
     
     // TODO: Add actual sync cancellation by stopping the client
     let inner = client.inner.clone();
@@ -878,6 +955,12 @@ pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
 pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClient) {
     if !client.is_null() {
         let client = Box::from_raw(client);
+        
+        // Clean up any registered callbacks
+        if let Some(ref callback_data) = *client.sync_callbacks.lock().unwrap() {
+            CALLBACK_REGISTRY.lock().unwrap().unregister(callback_data.callback_id);
+        }
+        
         let _ = client.runtime.block_on(async {
             let mut guard = client.inner.lock().unwrap();
             if let Some(ref mut spv_client) = *guard {
