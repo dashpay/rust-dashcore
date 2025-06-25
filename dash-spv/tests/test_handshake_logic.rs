@@ -1,11 +1,12 @@
 //! Unit tests for handshake logic
 
 use dash_spv::network::{HandshakeManager, HandshakeState};
+use dash_spv::client::config::MempoolStrategy;
 use dashcore::Network;
 
 #[test]
 fn test_handshake_state_transitions() {
-    let mut handshake = HandshakeManager::new(Network::Dash);
+    let mut handshake = HandshakeManager::new(Network::Dash, MempoolStrategy::Selective);
     
     // Initial state should be Init
     assert_eq!(*handshake.state(), HandshakeState::Init);
