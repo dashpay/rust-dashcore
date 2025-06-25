@@ -29,8 +29,8 @@ use crate::io;
 use crate::merkle_tree::MerkleBlock;
 use crate::network::address::{AddrV2Message, Address};
 use crate::network::{
-    message_blockdata, message_bloom, message_compact_blocks, message_filter, message_network,
-    message_qrinfo, message_sml,
+    message_blockdata, message_bloom, message_compact_blocks, message_filter, message_headers2,
+    message_network, message_qrinfo, message_sml,
 };
 use crate::prelude::*;
 use crate::{ChainLock, InstantLock};
@@ -203,6 +203,12 @@ pub enum NetworkMessage {
     Headers(Vec<block::Header>),
     /// `sendheaders`
     SendHeaders,
+    /// `getheaders2`
+    GetHeaders2(message_blockdata::GetHeadersMessage),
+    /// `sendheaders2`
+    SendHeaders2,
+    /// `headers2`
+    Headers2(message_headers2::Headers2Message),
     /// `getaddr`
     GetAddr,
     // TODO: checkorder,
@@ -296,6 +302,9 @@ impl NetworkMessage {
             NetworkMessage::Block(_) => "block",
             NetworkMessage::Headers(_) => "headers",
             NetworkMessage::SendHeaders => "sendheaders",
+            NetworkMessage::GetHeaders2(_) => "getheaders2",
+            NetworkMessage::SendHeaders2 => "sendheaders2",
+            NetworkMessage::Headers2(_) => "headers2",
             NetworkMessage::GetAddr => "getaddr",
             NetworkMessage::Ping(_) => "ping",
             NetworkMessage::Pong(_) => "pong",
@@ -391,6 +400,8 @@ impl Encodable for RawNetworkMessage {
             NetworkMessage::Tx(ref dat) => serialize(dat),
             NetworkMessage::Block(ref dat) => serialize(dat),
             NetworkMessage::Headers(ref dat) => serialize(&HeaderSerializationWrapper(dat)),
+            NetworkMessage::GetHeaders2(ref dat) => serialize(dat),
+            NetworkMessage::Headers2(ref dat) => serialize(dat),
             NetworkMessage::Ping(ref dat) => serialize(dat),
             NetworkMessage::Pong(ref dat) => serialize(dat),
             NetworkMessage::MerkleBlock(ref dat) => serialize(dat),
@@ -412,6 +423,7 @@ impl Encodable for RawNetworkMessage {
             NetworkMessage::AddrV2(ref dat) => serialize(dat),
             NetworkMessage::Verack
             | NetworkMessage::SendHeaders
+            | NetworkMessage::SendHeaders2
             | NetworkMessage::MemPool
             | NetworkMessage::GetAddr
             | NetworkMessage::WtxidRelay
@@ -525,6 +537,13 @@ impl Decodable for RawNetworkMessage {
                 HeaderDeserializationWrapper::consensus_decode_from_finite_reader(&mut mem_d)?.0,
             ),
             "sendheaders" => NetworkMessage::SendHeaders,
+            "getheaders2" => NetworkMessage::GetHeaders2(
+                Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
+            ),
+            "sendheaders2" => NetworkMessage::SendHeaders2,
+            "headers2" => NetworkMessage::Headers2(
+                Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
+            ),
             "getaddr" => NetworkMessage::GetAddr,
             "ping" => {
                 NetworkMessage::Ping(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)

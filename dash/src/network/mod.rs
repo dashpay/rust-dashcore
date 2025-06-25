@@ -44,6 +44,8 @@ pub mod message_compact_blocks;
 #[cfg(feature = "std")]
 pub mod message_filter;
 #[cfg(feature = "std")]
+pub mod message_headers2;
+#[cfg(feature = "std")]
 pub mod message_network;
 #[cfg(feature = "std")]
 pub mod message_qrinfo;
