@@ -1147,67 +1147,18 @@ impl SequentialSyncManager {
                 Inventory::Block(block_hash) => {
                     tracing::info!("📨 New block announced: {}", block_hash);
                     
-                    // Get our current tip to use as locator
-                    let tip_height = storage.get_tip_height().await
-                        .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+                    // Get our current tip to use as locator - use the helper method
+                    let base_hash = self.get_base_hash_from_storage(storage).await?;
                     
-                    // Use single hash locator like the header sync does
-                    let locator_hashes = if let Some(height) = tip_height {
-                        if let Some(tip_header) = storage.get_header(height).await
-                            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))? {
-                            tracing::info!("📍 Using tip at height {} as locator: {}", 
-                                         height, tip_header.block_hash());
-                            vec![tip_header.block_hash()]
-                        } else {
-                            // No header at the exact tip height, try to find the highest available header
-                            tracing::info!("📍 No header found at height {}, searching for highest available", height);
-                            
-                            // Search backwards from tip height to find a valid header
-                            let mut search_height = height;
-                            let mut found_header = None;
-                            
-                            while search_height > 0 {
-                                if let Some(header) = storage.get_header(search_height).await
-                                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get header at height {}: {}", search_height, e)))? {
-                                    found_header = Some((search_height, header));
-                                    break;
-                                }
-                                search_height -= 1;
-                            }
-                            
-                            if let Some((found_height, header)) = found_header {
-                                tracing::info!("📍 Found header at height {} as locator: {}", 
-                                             found_height, header.block_hash());
-                                vec![header.block_hash()]
-                            } else {
-                                // No headers found at all - this is unexpected but use empty locator as fallback
-                                tracing::warn!("📍 No headers found in storage, using empty locator");
-                                Vec::new()
-                            }
+                    // Build locator hashes based on base hash
+                    let locator_hashes = match base_hash {
+                        Some(hash) => {
+                            tracing::info!("📍 Using tip hash as locator: {}", hash);
+                            vec![hash]
                         }
-                    } else {
-                        // No tip height stored - try to get any available header
-                        tracing::info!("📍 No tip height stored, searching for any available header");
-                        
-                        // Try common starting heights (this could be improved with a storage method)
-                        let search_heights = vec![100000, 50000, 10000, 1000, 100, 10, 1];
-                        let mut found_header = None;
-                        
-                        for height in search_heights {
-                            if let Some(header) = storage.get_header(height).await
-                                .map_err(|e| SyncError::SyncFailed(format!("Failed to get header at height {}: {}", height, e)))? {
-                                found_header = Some((height, header));
-                                break;
-                            }
-                        }
-                        
-                        if let Some((found_height, header)) = found_header {
-                            tracing::info!("📍 Found header at height {} as locator: {}", 
-                                         found_height, header.block_hash());
-                            vec![header.block_hash()]
-                        } else {
-                            // No headers found - use empty locator as last resort
-                            tracing::info!("📍 No headers found in storage, using empty locator");
+                        None => {
+                            // No headers found - this should only happen on initial sync
+                            tracing::info!("📍 No headers found in storage, using empty locator for initial sync");
                             Vec::new()
                         }
                     };
