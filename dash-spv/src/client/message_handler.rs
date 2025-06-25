@@ -69,11 +69,23 @@ impl<'a> MessageHandler<'a> {
 
         tracing::debug!("Client handling network message: {:?}", std::mem::discriminant(&message));
 
-        // First, route the message through the sequential sync manager
-        // It will handle all sync-related messages appropriately
-        if let Err(e) = self.sync_manager.handle_message(message.clone(), &mut *self.network, &mut *self.storage).await {
-            tracing::error!("Sequential sync manager error handling message: {}", e);
-            // Don't return error immediately - some messages might need additional processing
+        // Check if the sync manager needs to handle this message
+        let needs_sync_handling = match &message {
+            NetworkMessage::Headers(_) | 
+            NetworkMessage::Headers2(_) |
+            NetworkMessage::CFHeaders(_) |
+            NetworkMessage::CFilter(_) |
+            NetworkMessage::MnListDiff(_) |
+            NetworkMessage::Block(_) => true,
+            _ => false,
+        };
+
+        // Only clone and send to sync manager if it's a relevant message type
+        if needs_sync_handling {
+            if let Err(e) = self.sync_manager.handle_message(message.clone(), &mut *self.network, &mut *self.storage).await {
+                tracing::error!("Sequential sync manager error handling message: {}", e);
+                // Don't return error immediately - some messages might need additional processing
+            }
         }
 
         // Then handle client-specific message processing
