@@ -11,7 +11,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -84,6 +84,7 @@ pub struct FFIDashSpvClient {
     event_callbacks: Arc<Mutex<FFIEventCallbacks>>,
     active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     sync_callbacks: Arc<Mutex<Option<SyncCallbackData>>>,
+    shutdown_signal: Arc<AtomicBool>,
 }
 
 /// Validate a script hex string and convert it to ScriptBuf
@@ -152,6 +153,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
                 event_callbacks: Arc::new(Mutex::new(FFIEventCallbacks::default())),
                 active_threads: Arc::new(Mutex::new(Vec::new())),
                 sync_callbacks: Arc::new(Mutex::new(None)),
+                shutdown_signal: Arc::new(AtomicBool::new(false)),
             };
             Box::into_raw(Box::new(ffi_client))
         }
@@ -168,6 +170,7 @@ impl FFIDashSpvClient {
         let inner = self.inner.clone();
         let event_callbacks = self.event_callbacks.clone();
         let runtime = self.runtime.clone();
+        let shutdown_signal = self.shutdown_signal.clone();
         
         let handle = std::thread::spawn(move || {
             runtime.block_on(async {
@@ -182,9 +185,18 @@ impl FFIDashSpvClient {
                 
                 if let Some(mut rx) = event_rx {
                     tracing::info!("🎧 FFI event listener started successfully");
-                    while let Some(event) = rx.recv().await {
-                        tracing::info!("🎧 FFI received event: {:?}", event);
-                        let callbacks = event_callbacks.lock().unwrap();
+                    loop {
+                        // Check shutdown signal
+                        if shutdown_signal.load(Ordering::Relaxed) {
+                            tracing::info!("🛑 FFI event listener received shutdown signal");
+                            break;
+                        }
+                        
+                        // Use recv with timeout to periodically check shutdown signal
+                        match tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
+                            Ok(Some(event)) => {
+                                tracing::info!("🎧 FFI received event: {:?}", event);
+                                let callbacks = event_callbacks.lock().unwrap();
                         
                         match event {
                             dash_spv::types::SpvEvent::BalanceUpdate { confirmed, unconfirmed, total } => {
@@ -234,6 +246,17 @@ impl FFIDashSpvClient {
                                     dash_spv::types::MempoolRemovalReason::Manual => 4,
                                 };
                                 callbacks.call_mempool_transaction_removed(&txid.to_string(), reason_code);
+                            }
+                        }
+                            }
+                            Ok(None) => {
+                                // Channel closed, exit loop
+                                tracing::info!("🎧 FFI event channel closed");
+                                break;
+                            }
+                            Err(_) => {
+                                // Timeout, continue to check shutdown signal
+                                continue;
                             }
                         }
                     }
@@ -529,7 +552,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     // Spawn sync task in a separate thread with safe callback access
     let runtime_handle = runtime.handle().clone();
     let sync_callbacks_clone = sync_callbacks.clone();
-    std::thread::spawn(move || {
+    let shutdown_signal_clone = client.shutdown_signal.clone();
+    let sync_handle = std::thread::spawn(move || {
         // Run monitoring loop
         let monitor_result = runtime_handle.block_on(async move {
             let mut guard = inner.lock().unwrap();
@@ -570,6 +594,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
             *cb_guard = None;
         }
     });
+    
+    // Store thread handle
+    client.active_threads.lock().unwrap().push(sync_handle);
     
     FFIErrorCode::Success as i32
 }
@@ -985,17 +1012,35 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
     if !client.is_null() {
         let client = Box::from_raw(client);
         
+        // Set shutdown signal to stop all threads
+        client.shutdown_signal.store(true, Ordering::Relaxed);
+        
         // Clean up any registered callbacks
         if let Some(ref callback_data) = *client.sync_callbacks.lock().unwrap() {
             CALLBACK_REGISTRY.lock().unwrap().unregister(callback_data.callback_id);
         }
         
+        // Stop the SPV client
         let _ = client.runtime.block_on(async {
             let mut guard = client.inner.lock().unwrap();
             if let Some(ref mut spv_client) = *guard {
                 let _ = spv_client.stop().await;
             }
         });
+        
+        // Join all active threads to ensure clean shutdown
+        let threads = {
+            let mut threads_guard = client.active_threads.lock().unwrap();
+            std::mem::take(&mut *threads_guard)
+        };
+        
+        for handle in threads {
+            if let Err(e) = handle.join() {
+                tracing::error!("Failed to join thread during cleanup: {:?}", e);
+            }
+        }
+        
+        tracing::info!("✅ FFI client destroyed and all threads cleaned up");
     }
 }
 
