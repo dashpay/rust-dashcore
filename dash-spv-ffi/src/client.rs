@@ -30,10 +30,19 @@ struct CallbackRegistry {
 }
 
 /// Information stored for each callback
-struct CallbackInfo {
-    progress_callback: Option<extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void)>,
-    completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
-    user_data: *mut c_void,
+enum CallbackInfo {
+    /// Detailed progress callbacks (used by sync_to_tip_with_progress)
+    Detailed {
+        progress_callback: Option<extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void)>,
+        completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
+        user_data: *mut c_void,
+    },
+    /// Simple progress callbacks (used by sync_to_tip)
+    Simple {
+        progress_callback: Option<extern "C" fn(f64, *const c_char, *mut c_void)>,
+        completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>,
+        user_data: *mut c_void,
+    },
 }
 
 /// Safety: CallbackInfo is Send because we ensure callbacks are thread-safe
@@ -346,17 +355,14 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
                 Ok(_sync_result) => {
                     // sync_to_tip returns a SyncResult, not a stream
                     // We need to simulate progress updates
-                    if progress_callback.is_some() {
+                    if let Some(callback) = progress_callback {
                         // Access callback info from registry
                         let registry = CALLBACK_REGISTRY.lock().unwrap();
                         if let Some(callback_info) = registry.get(callback_id) {
-                            // For the simple callback interface, we'll call it directly with safe access
-                            if let Some(callback) = progress_callback {
-                                let msg = CString::new("Syncing headers...").unwrap();
-                                // SAFETY: The callback and user_data are safely stored in the registry
-                                // The registry ensures proper lifetime management without raw pointer passing
-                                callback(0.1, msg.as_ptr(), callback_info.user_data);
-                            }
+                            let msg = CString::new("Syncing headers...").unwrap();
+                            // SAFETY: The callback and user_data are safely stored in the registry
+                            // The registry ensures proper lifetime management without raw pointer passing
+                            callback(0.1, msg.as_ptr(), callback_info.user_data);
                         }
                     }
                     
