@@ -492,17 +492,25 @@ impl DashSpvClient {
             }
             
             if address_affected {
-                // Only add positive amounts (incoming transactions) to the balance
+                // Handle both incoming (positive) and outgoing (negative) transactions
+                // For incoming transactions, add to balance; for outgoing, subtract from balance
                 if tx.net_amount > 0 {
+                    // Incoming transaction - add to pending balance
                     let amount_sats = tx.net_amount as u64;
                     if tx.is_instant_send {
                         pending_instant += amount_sats;
                     } else {
                         pending += amount_sats;
                     }
+                } else if tx.net_amount < 0 {
+                    // Outgoing transaction - subtract from pending balance
+                    let amount_sats = (-tx.net_amount) as u64;
+                    if tx.is_instant_send {
+                        pending_instant = pending_instant.saturating_sub(amount_sats);
+                    } else {
+                        pending = pending.saturating_sub(amount_sats);
+                    }
                 }
-                // Negative amounts (outgoing) should not be added to pending balance
-                // as they reduce the confirmed/unconfirmed balance, not add to pending
             }
         }
         
