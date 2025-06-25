@@ -289,6 +289,9 @@ int32_t dash_spv_ffi_client_get_mempool_transaction_count(struct FFIDashSpvClien
 
 int32_t dash_spv_ffi_client_record_send(struct FFIDashSpvClient *client, const char *txid);
 
+struct FFIBalance *dash_spv_ffi_client_get_mempool_balance(struct FFIDashSpvClient *client,
+                                                           const char *address);
+
 struct FFIClientConfig *dash_spv_ffi_config_new(enum FFINetwork network);
 
 struct FFIClientConfig *dash_spv_ffi_config_mainnet(void);
@@ -315,6 +318,26 @@ enum FFINetwork dash_spv_ffi_config_get_network(const struct FFIClientConfig *co
 struct FFIString dash_spv_ffi_config_get_data_dir(const struct FFIClientConfig *config);
 
 void dash_spv_ffi_config_destroy(struct FFIClientConfig *config);
+
+int32_t dash_spv_ffi_config_set_mempool_tracking(struct FFIClientConfig *config, bool enable);
+
+int32_t dash_spv_ffi_config_set_mempool_strategy(struct FFIClientConfig *config,
+                                                 enum FFIMempoolStrategy strategy);
+
+int32_t dash_spv_ffi_config_set_max_mempool_transactions(struct FFIClientConfig *config,
+                                                         uint32_t max_transactions);
+
+int32_t dash_spv_ffi_config_set_mempool_timeout(struct FFIClientConfig *config,
+                                                uint64_t timeout_secs);
+
+int32_t dash_spv_ffi_config_set_fetch_mempool_transactions(struct FFIClientConfig *config,
+                                                           bool fetch);
+
+int32_t dash_spv_ffi_config_set_persist_mempool(struct FFIClientConfig *config, bool persist);
+
+bool dash_spv_ffi_config_get_mempool_tracking(const struct FFIClientConfig *config);
+
+enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const struct FFIClientConfig *config);
 
 const char *dash_spv_ffi_get_last_error(void);
 

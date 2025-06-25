@@ -17,6 +17,9 @@ public final class Transaction {
     public var size: UInt32
     public var version: UInt32
     
+    // Inverse relationship to WatchedAddress
+    @Relationship(inverse: \WatchedAddress.transactions) public var watchedAddress: WatchedAddress?
+    
     public init(
         txid: String,
         height: UInt32? = nil,
@@ -27,7 +30,8 @@ public final class Transaction {
         isInstantLocked: Bool = false,
         raw: Data = Data(),
         size: UInt32 = 0,
-        version: UInt32 = 1
+        version: UInt32 = 1,
+        watchedAddress: WatchedAddress? = nil
     ) {
         self.txid = txid
         self.height = height
@@ -39,6 +43,7 @@ public final class Transaction {
         self.raw = raw
         self.size = size
         self.version = version
+        self.watchedAddress = watchedAddress
     }
     
     internal convenience init(ffiTransaction: FFITransaction) {
