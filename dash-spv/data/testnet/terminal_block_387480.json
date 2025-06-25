@@ -1,0 +1,2705 @@
+{
+  "height": 387480,
+  "block_hash": "0000000b26a7fa75393716e0f037533dc6a5ca59680e703b819867454e6cfd39",
+  "merkle_root_mn_list": "e3c0b318ad34f9a291b458825f717dbe84f48183285c459f11f73ca83c581fae",
+  "masternode_list": [
+    {
+      "pro_tx_hash": "5557273f5922d9925e2327908ddb128bcf8e055a04d86e23431809bedd077060",
+      "service": "95.222.25.60:19997",
+      "pub_key_operator": "08b66151b81bd6a08bad2e68810ea07014012d6d804859219958a7fbc293689aa902bd0cd6db7a4699c9e88a4ae8c2c0",
+      "voting_address": "yZRteAQ51BoeD3sJL1iGdt6HJLgkWGurw5",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "85412e8586e7e2015db1d2e9b4dd380e89251ed812e40bf8d5e220ee40bc18a0",
+      "service": "167.71.223.212:19998",
+      "pub_key_operator": "80b7defb6341399f9e9b4ed7c2d627fc828d0eff9c168165b75b24e5fc6c3f5bc8a9eeaee2bc655fdaa58c0d2f3b1b94",
+      "voting_address": "yTCALGQTFNsA4pMPLTKAWdaLRmxfGpbujY",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7a46d4cbb10b3834c9bbde18829db32c206d8b123c27604a139034597102dd60",
+      "service": "34.240.43.8:26021",
+      "pub_key_operator": "1503175cf5df6348af9f6f9c397aed76bd1bc1a1486ae5440721db5a8a6e802f45d8a2aaa2fa30960d1402df7802809b",
+      "voting_address": "ycemHo8hrgkQEuKgJbYDfVw5CvvWcgAwzK",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "34f19e4ac7e1b2abbded7fe0d19991cde34eb7797d8e81fe01d6e73db2097180",
+      "service": "3.20.70.18:10003",
+      "pub_key_operator": "0fb7164d86058e2b22c4a6f6917714dfa4a2cb4d54bebbf3c9300ebfe1759b33d15b0b68e32999aae19bf0dd92341e40",
+      "voting_address": "yP2swcUzQ7MHtaubyg3uKrRcM7oWER3X9Q",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "ab51b2ba4dca27658e13fea81c0764167c1466aa2d92050c67e4490ce7623da0",
+      "service": "167.99.164.60:19999",
+      "pub_key_operator": "8072ac9a55d1cf5bf9c4262d49e2ef1ffcd716b8983ffdc62b940fec6cb4179d6275f8b68316f29c6c2ad540db329258",
+      "voting_address": "yVpKfQgjkRkezFS5SpZvAEVFsbv9zJedf4",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "79e51449f47f3501d7dd466ebfa0fd3d686d75f672f2eb5cbb321db92f67d200",
+      "service": "34.240.43.8:26080",
+      "pub_key_operator": "8a20e40690e9f804806d7685b84f16d3ac312fc50e5730fb5b7b234b4992f59f3e05fbc4f58dd5fdd82bc934b6f982e0",
+      "voting_address": "yh4LrSGw7taLrTLsbYKyzx2Sgru5kYR8Ci",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "5cd86ed16f87819dca7b6e4e3d24947b1a6328ed8cc4c9aec7af35fa2b162220",
+      "service": "68.183.167.16:19999",
+      "pub_key_operator": "18af4d035eed23d30eb02808af0c133d9879c0fb82c72329ab2ed208ebc1631641ca42bbf462239d151f4e84d8dcde7b",
+      "voting_address": "yLvTNLDLHa3pDMbFDRBX5mVMjCshzrDD1X",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "9b2e4d4a2fd4dad4b5a5b7d38b0af9a09f71c680822fa88bbc2cb086e5ffd300",
+      "service": "3.213.168.240:19999",
+      "pub_key_operator": "1301934c2416b61edcf2c37a4b09fe6916aa77b79d2d41e532e9e02dbfde8ce492110de4e762c0a78f70194a435d199c",
+      "voting_address": "yZJbXf7fVjKyarvYwyD7wmehS3tdSUo2SY",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "39a1339d9bf26de701345beecc5de75a690bc9533741a3dbe90f2fd88b8ed461",
+      "service": "198.199.74.241:19999",
+      "pub_key_operator": "0efda51589f86e30cc2305e7388c01ce0309c19a182cf37bced97c7da72236f660c0a395e765e6e06962ecff5a69d7de",
+      "voting_address": "yRCunhZVjbMxDr1C6fD6Pf37sTwH6wG7Uu",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c6eee81fd38e6db24cb5e847794cefca7f3f8f95a066028bb8dfd6f36fb92921",
+      "service": "104.248.242.126:19999",
+      "pub_key_operator": "050f3a743867bf78d2e9a3906d15d8400d8d58255771d12828922386e8685f8aeccb8d9d81153f9c2d7da0436a71fe55",
+      "voting_address": "yRRwW957BJwL6SVVh3s8ASQYa2qXnduyfx",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0569ce8b1a5fddf85850b5415b0435c46e198a8f146b1344bd618c8fc6e9e541",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yUYKo97qTRw25frwj8FmYdQE53hbCM7MhG",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "19eca6afa8467e8ff25054473a7e97a0f9198c0209e9b97f32984a536a1b6d81",
+      "service": "54.194.151.206:26092",
+      "pub_key_operator": "0d0c8bd6f610d824f206ba7b89f6759bc046c64b45935001f0ff2de957fa27a9f57a82ad48eb1c1537a84c8600cbda1f",
+      "voting_address": "yYF9NYF9jrEZXURuDUFnZ5vERWj7P21PPj",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c95f78ad5dab4ceaa98ff2d9d60d6d69e741f554b3ff876998dd832b2255a5c1",
+      "service": "45.32.86.231:19999",
+      "pub_key_operator": "128e20333b8b51fb8c72c2d5acafa049758b53279bf78f10a1f32995bd05d4f6313b2bd67fbc48379455d89ef869fa6e",
+      "voting_address": "yVbDZi6bank9eBLRr1X7JXybSNKnziiPfM",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "df337c675939dcef69332161ef1d90a7b6f75f42d70fa017b3d6dbc1b85611e1",
+      "service": "34.240.43.8:26016",
+      "pub_key_operator": "16f66304e30d61cb86427d9f0d3387c6221afb5fa94cabe0f5c3479bcf184a6193a95cd271210d68d435fe4b0c1cf95b",
+      "voting_address": "yPUdNBzsPaBugQwx5i9VcXUFNcafTzBk1A",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "9fe2f8d43c11c61b5a545f451d5f9ffb89bed5bd91f43988eb97ce9a33692281",
+      "service": "78.46.161.22:19999",
+      "pub_key_operator": "80174252e0f66a71b7e53f8b32dea5f97a6b39dfc1479c6e355daa415b1ff7733a4bea6bbe3fdf412fed0fb60e5b71d7",
+      "voting_address": "yXshqW8dY2BirzasuA7paj6pCS7xd6oR7A",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0d5c9fd099033cc89b3d0c93e71b9bb703c7d5ae7b14cd23cd82c38cf2e25b21",
+      "service": "34.240.43.8:26093",
+      "pub_key_operator": "94e6a117d2af7958dac4cf005999078bff9cb2ea8c946ccbca04a9be3ba0e4969ab7f90020a7e271a4e06a9d05c73d3e",
+      "voting_address": "yT7uzfZEhfY9SRZrQVn94msh4kQroyosQA",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b4ba4ab73c3757ba9cc6b6fb98020b854228be7de4704ceb7da02e7c6a2ad741",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yRwm9ZgrJ5YMY2aQhhK7R5HZqptpd5KwUb",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f129a2035414a54881224bb0926390bef90b8bfcc63fd2757ae95f07fc9cb381",
+      "service": "167.71.223.212:19999",
+      "pub_key_operator": "84657bff1dbf81b2aa50e385d01549f9c3683994ab0b16d5b7e3ede8efe95992bb621ec221c5003d2f9f26fa190ffb2a",
+      "voting_address": "ygw2ahuKPBhCH8tRZQ9ShEe826vT6Re8Fd",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e558c21609f13196f38a0e135c8a56ee4632ea1681a9dedd5d65ae8031b34be1",
+      "service": "34.240.43.8:26006",
+      "pub_key_operator": "005d1f334fabccd08847756effff3116eece973c077e3acd1aa936f4e51293fa8753de661dc7a03edde24714eb7acdcd",
+      "voting_address": "yNbb9wQzp14iidj6JgCzfGmRmFXv4fRNUo",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "fef106ff6420f9c6638c9676988a8fc655750caafb506c98cb5ff3d4fea99a41",
+      "service": "45.48.168.16:19999",
+      "pub_key_operator": "842476e8d82327adfb9b617a7ac3f62868946c0c4b6b0e365747cfb8825b8b79ba0eb1fa62e8583ae7102f59bf70c7c7",
+      "voting_address": "yf7QHemCfbmKEncwZxroTj8JtShXsC28V6",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "86b8061fb7fe866b492b84e85aa0548f68ff376c4cbc5893e46ae361a5e57241",
+      "service": "109.235.71.56:19999",
+      "pub_key_operator": "8d1412ff39045ef39c2e19a75cb3ad986afc14c3139ed0a3392b41d471558676029a8137f95b0ba0e7315bf11c497f0f",
+      "voting_address": "yeZknaGXQ3Sf7o22MxByRzeYdbRK2JKPDu",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "1345ef115b88dcfe8f6735b26c1aec1faa85474004fe1dcc8263ded2393bf062",
+      "service": "54.194.151.206:26057",
+      "pub_key_operator": "0eec71c1fdfdda9e5c31a27cb459d548284f805bb5f0fb97004e5310f86b97badc1b20a617aa379f7082d65f31e6e3aa",
+      "voting_address": "yaghiw5rzx7cDNKAWz277n7WL597M15Z3x",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "188b4f3700c029d93de43a0e865b3e2e800c3bc67718f8d213dd111a9e401cc2",
+      "service": "118.31.35.13:20001",
+      "pub_key_operator": "831193814d5cddb0268d276281ff7356b9cbe560bbcb6c9c55f12a53b0dfdb60ed5570c9c4bdd39d8a0728dfb2b0596f",
+      "voting_address": "ybatJBzsLivsAiRJTcNHd6bGuz7wX9xRDC",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f735ca801b3ed2a87a0fe2838a38a56d72239fd0c4e3877e80cc280090c6f8e2",
+      "service": "34.218.129.98:19999",
+      "pub_key_operator": "8cf9b3235f77637f144728584ca13d1d3fd47450ad392a510beb2425e0d88f6a3354f0cbdd26d4e6152d38899c025aa3",
+      "voting_address": "yVa8ezmKKG1RdGCH6cnYhbmi59fegKf32t",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "302ba9134d9d734e0a76599c9cddfdd1ea2231ff6c152fd5a95c9ec38aa66d02",
+      "service": "165.227.63.223:19999",
+      "pub_key_operator": "083997ad0a7d12c5038242eb54f0aa3952ede09814c57b7392adc4db58f4070dc0b44431c20be0636a21ec238436fafb",
+      "voting_address": "yfA2kapYFt41mB3UvgjtEis3Jj8i8Nst4R",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c286807d463b06c7aba3b9a60acf64c1fc03da8c1422005cd9b4293f08cf0562",
+      "service": "54.194.151.206:26044",
+      "pub_key_operator": "06abc1c890c9da4e513d52f20da1882228bfa2db4bb29cbd064e1b2a61d9dcdadcf0784fd1371338c8ad1bf323d87ae6",
+      "voting_address": "yX4nvGZnMuF7ZMmoop6nyPeCzVJTs11U9x",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7880f9f018c3d9f13503d2830a1c62387f4fb00230fee33bd0badc5228cc89c2",
+      "service": "34.240.43.8:26083",
+      "pub_key_operator": "95f73c3aafca2a25b27a8e9c3dc8578f1387ee77b9d31de706573d610131554c33d6ed17ab19afb3a8e4d03f1d971a78",
+      "voting_address": "yeJqijWBvFWrQLJ4gCZFCvMTXG6HKEiCMd",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f5ff9fbf1daf5db3539c7e307d9d50b12bb58a491b2f684c123256fd8193aa22",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yUh6buQPiHPnGbUEkKH8mM8hBuVRS1miGb",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "3fe25a5d51edc1942b3e68170fd693bf8068968ca6e1be3a1721bfe5ac841642",
+      "service": "134.209.90.112:19999",
+      "pub_key_operator": "91386d3acee0bf9044cce40a07515289589b68fc9b8c8e5d184471ed7982106b1e11587af4c9e983883baec00b67e473",
+      "voting_address": "yfvsooGJYKa4gx3N2VJ6YtawZ64Q4skAUE",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "bac184b9f1e4eb098d1f8df0b07af6af8919c60c1f60e31ba29c2f39f395ff22",
+      "service": "3.221.29.23:19999",
+      "pub_key_operator": "8bf25d66d63197e3144f6fa17ad92ae38cc11b143027fb91dcf5c20fde6e52bde7f46f2789e6fa84573197d8085389dd",
+      "voting_address": "yU5R4bX8G2h9rzn2e4CMFJQXXCFP977HDV",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "17013c34733cdafc4feb7f317587cbb891b1027ded099e2dc2e8e1da05ad0f42",
+      "service": "34.240.43.8:26042",
+      "pub_key_operator": "836747d419d09200e404aa3500fc5d51f044fc01fd1a9f452324c8c14ab90ccd75887b6bae1599cdd458e738a53587f2",
+      "voting_address": "yUmWuj82pCJpccWwAowyK7tp9R1r8yyhaP",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "be8d0533c692cf23e3d3eeb3957422b5a98acd82aadbf7baef255edb2f491b82",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yZbriMPqB9YLPbqemLWkaybUuLNYHGoSpX",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "fbb1a1aa283faeb8082a7331c5010f13272f7ce6cb24845b3d1f260f7cb75423",
+      "service": "173.61.30.231:19012",
+      "pub_key_operator": "96a9d730b5800ad10d2fb52b0067b5145d763b227fccb90f37f14f94afd9a9927776f9af8cfcd271f9ce9d06b97af01a",
+      "voting_address": "yc8Ji5CgQujxfxcP8eCqu82WoBD16tcGnt",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b037d52073d1e445bc2fd41e35be1c52426e00152e49ffa55b6fc20f33b28483",
+      "service": "[::]:0",
+      "pub_key_operator": "09a5e37e3b9e556a7d7fe7cda1b54682351d4d1f6ecd331d98816db0696a5389c4a09bfc57f66f0a27120302ceadb078",
+      "voting_address": "ydneMgTtTgkt7HbFNBomGkaey2FQ3JNJxq",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e60be9b19bee9ec1f8246128d0caf27d064b8eaf690005cb3d22789f20d65d03",
+      "service": "34.240.43.8:26037",
+      "pub_key_operator": "004b447b181a990584c38462629f212d8f753a8b9051daf1fafad468cbdbc2dda04c93418ef6726b7994b664b28e544a",
+      "voting_address": "yNta5cjuBfHYM8Jg9VhDTyxv2FeJA1AteV",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0867e1018f1de184690af3586fc3b4e17cf61614cd926532cc13f9ecf1244523",
+      "service": "165.22.213.149:19999",
+      "pub_key_operator": "881cec3eab18eaeb916d3f234fae24363b68faa705f51a6efb06f83adef70f73fe28ee70bf4c8300ec4f77f017dbf7f0",
+      "voting_address": "yWLY85qvzXnwWqtfWk1BiSyYC1j1CW6mpU",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "4636ed7acbacbc76aba60aa7a1011688fe9ad5fd701d0bf8fc42a502ea3e6543",
+      "service": "134.209.5.148:19999",
+      "pub_key_operator": "83a6548569b0c410d7e1dec3f4f5a18a0790723a991d3b9477a9e062c660959bdbe5b3c1d231195801b9072ae9427966",
+      "voting_address": "ybeRrDqpAvcy1zv8xLizjgKGRWUPLmtA77",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7551fe264f2ccc4e714195d2ffb79eea7ebd47517a7164c69653569b10f51fc3",
+      "service": "161.189.67.25:19999",
+      "pub_key_operator": "0becd48c0d44ca6fbff3825f55c35a6f70024f2b8f4f939260d40b5b51c11cdfff85f7d0444a1a9cb8fc45bacd237b31",
+      "voting_address": "ybziaDozC5ZVSR4aQPgz1qixqXGSorVUzq",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "1124b37d6b4f90ccc8280c85e6e5978fabf9b5e6116c42c493aa7a462737d1a3",
+      "service": "3.222.94.210:19999",
+      "pub_key_operator": "0b27835d169ae7e229770b0eed8115b23c0aec942443c97bfd4fd56fd445fc6ef0eed60e694990bebb59a2adf4fa537b",
+      "voting_address": "yTP5pwZLjBCRoqRJ5nsP7ss8drpGrDxBbe",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b4f9de65ae676b63f84f2865317b8b512a12516c4459f2f59ca2626c71f7dda3",
+      "service": "1.1.1.1:19999",
+      "pub_key_operator": "016a16472319f62f71bb60e38038aa8cb93a301ff6c3727f75f4d770428d71d032fdbd27c5d03dc56ef1d658fefe7954",
+      "voting_address": "yVvctToMgz3GNkgCFh4SqXmFzEZNfmXANX",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "1f1443d9f38273f6437fe37eb34c30033fcd51c7e7f563504c8809906e711de3",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yTNJXd6fEk1ZbxiDPk4Qfa4S5ZBHWCkFUv",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "3a6f022ad2829da589046ab87db1d157b143693214af06bf9e22e0fdfce2f5e3",
+      "service": "34.240.43.8:26061",
+      "pub_key_operator": "0ccca2500463fe0b8be9d97a31dc51d7b774d1733b322bf4802ad1f2f1255726ab0f5099c4726e7634614c43f9285180",
+      "voting_address": "yMnZNjY9eKCf3pkbLQcrv5JK2SQAuBNQEp",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b00179bd307619645399361abddcb07287ecd406301fdf405d9a82c8e333aa03",
+      "service": "195.141.143.49:19999",
+      "pub_key_operator": "878386a8d07cf79e1dc6963d4cdcd7a4af6ef7e350cad3e1373e45fb86fdd9390a77366ccffda6ebe1470c45b0f75910",
+      "voting_address": "yQjrj7ksc6Yyv1Ppmuxc9GDReFC1eRVjfe",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "3a80d01eee0c4b79f9de8393f0260fe859677b6bda207a21fc3217a9ae4b5a03",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yh6o2qtskpuhSwhBz66tULaj2UXgennDQA",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "682b3e58e283081c51f2e8e7a7de5c7312a2e8074affaf389fafcc39c4805404",
+      "service": "64.193.62.206:19999",
+      "pub_key_operator": "05f2269374676476f00068b7cb168d124b7b780a92e8564e18edf45d77497abd9debf186ee98001a0c9a6dfccbab7a0a",
+      "voting_address": "yid7uAsVJzvSLrEekHuGNuY3KWCqJopyJ8",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7abe11022a30fb9e614725880e035fb48a8438d3885a3762cc53b2c3cffa3824",
+      "service": "18.136.145.165:19998",
+      "pub_key_operator": "8edd5cbdd7b381c92ac7de638440bb1ad417af0e82fece69432f36930a6defd3faa0d53d79bc3347ef684eb1e470abbc",
+      "voting_address": "yfv472J2XNVZAN28vYkCS7naWmBxA2Woyc",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "d3a0e645c1830de00ca370761d0db7a75a408b9322ca571fe26b7f8cc5a0ecc4",
+      "service": "[::]:0",
+      "pub_key_operator": "05b7d7aee629c25efc5604104a3a9af1e23663464e0505a057e68cf12317834160597fcf80287a94e98f171a8c79a2a9",
+      "voting_address": "yP6tX7mBmuJsXyUW1oYDN846hom4k5gREx",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f02c8e9a3deaad566c707a23c4ecdd77c9615cf4934c27d43d1a46315fe28d24",
+      "service": "34.240.43.8:26069",
+      "pub_key_operator": "0eba486a0e6448ca193584c77f6a3b8b8774470e27c67a364034de794b97db9c1fbe8b617625d37861195cd54dddf41b",
+      "voting_address": "yawUPMQE12RyRuCKU71gUtbxvnz7145mYa",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7f771a55bf8d18d1ec8c60e61494546e5b9ea1d0639369aa5d09cb3ec7d53144",
+      "service": "47.75.68.154:19999",
+      "pub_key_operator": "842b8e5b5cc0841de193f440d5fa3e0b4a34df7fffa798fb8c3df46fa31187162cc3b3ecf929689ae35e04cbac6e069f",
+      "voting_address": "yiFsin3TXNE6acmvChCAbjHaNTZ5jsmppf",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "eeb8cb773673c77f664501bc68b813206e9cd0920a11cb74cc918897804bee24",
+      "service": "3.13.34.147:10001",
+      "pub_key_operator": "04cab5bc1d73f5f8299feeecc0bee2d76f27c3b2a56a7e2fc1f927e495ac9b2a0560b7d82fd06fa8fce4af69d0fcb10b",
+      "voting_address": "yYhrMPHjoQ5QXJVmbbvBDwQgiKoC1XjYkk",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e3735f9bb5a8886a070ca9c6fff68961a4481fcad5eb6be35e564816cde94244",
+      "service": "54.194.151.206:26030",
+      "pub_key_operator": "8ff934db7c40ff9dfc1e707f92fa20f0a39ac60f88c928ce1de99519c85c4589852a9a8dc5decdc05c379771628ef8f3",
+      "voting_address": "yasBevczzYB3etihrspkYU5REbnwjCknTK",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7cbb7c6b65f9360c3ef908ccf93ef438a449938acf05c743b7b92647ab3ad264",
+      "service": "104.248.92.98:19999",
+      "pub_key_operator": "136de56a265eb21c006bd312a0353c7c3eed46f4f63c301c348fb5d5de8f965c9b60ac6a4ae805d0d241e4942821ed9a",
+      "voting_address": "yibp4BpABm6Cy4u29cV9ErxidYDoe5tCsd",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "4da18e72d162548eeb79781d97a2629cdf02a004cf90287378dc5c7ab8ae3504",
+      "service": "34.240.43.8:26052",
+      "pub_key_operator": "05256adc53a9a55a82d4d91cccadc5ed706899dcadf4f1bbf964abac55d37e6d358c1bf3856ee5bff6a72b1cb68a89f6",
+      "voting_address": "yVH8CDTRsDnqG8RfEEj2rvjSP1Vcnt1c7z",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "344ca8af7d689645fa041a707750b206f58dc5dbb9da72cd46b0b9fd319e5104",
+      "service": "54.194.151.206:26071",
+      "pub_key_operator": "1040609a801ddb9ff262789df007e7274f99bad2499beecc17a1256439dff7cf8850127e14497b5c072a0bcc1cd809af",
+      "voting_address": "yQRPBC3cy39AaLqeERqn56XzkC4qiPzyem",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "d746303dd230f9c5ac57b663da6eb7766e3f983da03fc433fc2f1ac6a5f39485",
+      "service": "34.240.43.8:26002",
+      "pub_key_operator": "15625a4f150d7c749597a586cab4f035e0ec3052a6e3d2fc0525c3572c049798eaa2063f01fe96076cf3cf81c9cf750e",
+      "voting_address": "yR24tSEXsDHdpEVHFrNSw7re9F9DbWwM8J",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "766c3edf3c134fc0b5ede4fb57b15564819caad310b1929cb5b57251114d64e5",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yZRpazSYy42d2VSKSA1YnhRcHAZvU8sijR",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b5d5c145d244a98b81cc9b5fa2f841cb6689e7cab76566fdc66ba16a82db95a5",
+      "service": "51.107.4.38:19999",
+      "pub_key_operator": "8f4fed7576bd1e31d45225788c1c96836dbc85b3ece3b77fbe4ede0f5f784f138ef6b32884e3345915a758364d1e5823",
+      "voting_address": "yQX6bNQmmkGQ7xnUbLuCSGtJJ8GmGtRHMT",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "de57b4825d55ff101e6b4924b0724b04a3d0b8da9c913ba9987ee76eb11555e5",
+      "service": "54.194.151.206:26087",
+      "pub_key_operator": "81ba5be7b11bc6f248187a33782ccaf3b0245d1fec38f1ae2d0a2d845041652f371a7a4c365173a0958929161e7c33ae",
+      "voting_address": "yMzt3QUgng1k1zEPgWfzUv63xkUX49U5T1",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "85d82a069e7c89a1da85a0043ef7bf06c32ad0dc1dd3c9518e997b66da222705",
+      "service": "34.240.43.8:26010",
+      "pub_key_operator": "8273d35e1f33d76b384cba83a58aa7bc82eef781012b144f2bcb287627541c6dc713ff1cf730e9dd7d14edf914bbf331",
+      "voting_address": "yj4jPPFwp4t1m7oeQoW7j4f3XV2xHAc5rL",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "300715758c4dd712ab80899630ff0963d4ce8e824778fafae02c82272a420725",
+      "service": "173.61.30.231:19017",
+      "pub_key_operator": "8bb67827af87431673e737c49312c5a16fd284daf1c4050e530b604ec4f85f217080503f978a6bec89d1ad4bca089c32",
+      "voting_address": "yPjodPW2v1VMJBteJedW38qtdbeUamfCyr",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c26cc8b3a3b6b08e5fac0f234f3bf5d98bdc447780360ba4763652fec5b9e725",
+      "service": "54.194.151.206:26005",
+      "pub_key_operator": "00a7f8ed313583f6085d77d0ab2f9d425ac62246ed28e2f8f095caa61ff0651087e65cc15494dfe8806cb26b03040407",
+      "voting_address": "yWbGH4iUhbUSNQnwKQp4yR7QThKRGJewqR",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7320ef8a6733a02e5621d460be2e1880c1081f948e301c35e8b9c3039710ac86",
+      "service": "34.240.43.8:26049",
+      "pub_key_operator": "932139b3b5b6ee65d18d75a24c639b83ed1ac8fe05138251b422044484d161694fe31a7f41a065d5f52cb5e456368bf5",
+      "voting_address": "yPiC2TtJ2n4eZ99436xqTRuvX5FRRUfE45",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "a565c913052a586db0d5a000007ff981ff3b59982e662e02ac6d45e37bf8f0e6",
+      "service": "145.239.235.16:19999",
+      "pub_key_operator": "01e584b5723fec78495744b68b971fd654f16b016d676ffdbac01b2c64f319675eda577f5eaa5cf5379e95418c61ab10",
+      "voting_address": "yfXCHmtQ7S4TN4rEBusxfEJThAzoZaAtE9",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "69f156c10220991da1f4e8d692a582ea686a028d532b037f29684610fdb60d26",
+      "service": "34.240.43.8:26086",
+      "pub_key_operator": "8e72ce4ecb7e37c0ba5376c77ec364606b796eccd05d80583a36da42d57421c21d3ccc3b3105ab18f87901e03ce09a00",
+      "voting_address": "yX8gWHmevBaseFpeVRk6HWxRRSyoeZNurv",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "2b17e66d746cfdd146c8e14042143ef1525bc68df95cffc5d7e3100edfe3d1e6",
+      "service": "95.183.53.17:10006",
+      "pub_key_operator": "0dee44e338280a8e534c9e8bea9cb9d73163070d90d511e5c83859c384790e12da189e791404126eb2fe080593ad9a73",
+      "voting_address": "yi9GtcFVyD2GbXYKW2GMgtNCxiaJcCTPzB",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "ce4311bda3ac4ebeae085f82eca70cbb8115b5aede3e3efed7bcd413c73ff246",
+      "service": "54.194.151.206:26017",
+      "pub_key_operator": "1689af166e3b2008425588df6b90de2c5c17848028ff4c54338a884ce442074ea8656e18cfac939b78c12a731f5237b9",
+      "voting_address": "ySa2vCfBVqpdQMgtmbuZpzUpTtb2xEA5DZ",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7161d8618826c76aad36d8b59bc4c1fabb1d8299115f8314e74d7854fc3ef666",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "ya323cSJ9oFeNEPfBo13FkFP6ocknw2MGD",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b3c65139e739ac5664f1c835e215fe48eb3e9b3c5dea336465fd1c4bb6159286",
+      "service": "34.240.43.8:26098",
+      "pub_key_operator": "0f835d7e21c94878c4f8a9ff8add97ec686a26c4c7f6bc6cefd6a0117a7c0d3bf0200c733b96e189760c774003ee5703",
+      "voting_address": "ydm48vHQ9KJBXKwoiQYrvJJPiatsgtPYxV",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c5ac594a4d00199db59c178104effff54bcd082d9be4e7625196817719730426",
+      "service": "185.50.195.156:20004",
+      "pub_key_operator": "82b97953757c5674467c5d85115dbbcb55e4670f69b3279c6e9b6e8f10d28c571473a2fa3b97e8f78859c31cd9dccc71",
+      "voting_address": "ybFjFRMuGB4KG4svcUhio1e9TiZffiXKpa",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "5670b9b6afbec79192133e01ec9dcd16fb9e90bb6f0afc7ae92ee35bb3a94c26",
+      "service": "34.240.43.8:26027",
+      "pub_key_operator": "920e2db8d3f6a448ce77125ec7bef179d52019c6d50c3cf5a044bce83d518b676f20e2d6d9a887a1138d306e4c574166",
+      "voting_address": "yXQ5UZRRHBMQtbCXLss9aRQ1Avdc176t9d",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "39ec834a6c7ac5ebf5fd885a271e2149099e87e89a9ea30f573b4b699b9399c6",
+      "service": "134.209.2.128:19999",
+      "pub_key_operator": "0617fffba2681e4712782d97b84cb41b722d56089c3f3b3978b8724cb02baf0f67a57e8d1e2f8227d21700f7b10230c4",
+      "voting_address": "yZxXNKWM5D2GnSceh68gPfdywb561j1kMJ",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0b53cea62f79dbd8b43ef803b9eb1d47a1dec3611f460dba83ba9dc32483f9c6",
+      "service": "95.179.251.182:19999",
+      "pub_key_operator": "90403255a5c2aef92a899cf01080a78446f07e0a25fe391a81791c37eddba6e82aee9b8b86b7aa4f44129637146221c9",
+      "voting_address": "yhiD4tNFgaCkXuRsxJzjC66UuuDq4QWi4H",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "9be1c90d8bfe3b8e02da278855c6091451df5045f57a42b8ba8015770d3c9087",
+      "service": "34.240.43.8:26066",
+      "pub_key_operator": "19e6d1dc06c14b711a4ecd5aeee0208df5b06ad6f012f6ead59bc57e32b2f77f83a56bd42080145de0bdebcfc6d4ec44",
+      "voting_address": "yQBhH23RytM1EsdX4eLscxELdkTum6RX8u",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "88ce5bbf28b3bcf5c3cba3bada3b76ffceafe4e93d1303674b4555dcb2a09d27",
+      "service": "34.240.43.8:26088",
+      "pub_key_operator": "0bbc35d75b9cf82398781cb1b7b45abb8bc0d50b1a39d55d8961405c9b602d6cf4fd2fa7ec1cad5bcb0a5378f10ec1d7",
+      "voting_address": "ydNp7KgVDjPb27ZkKsozQNaVaazKy8H1D8",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0fbea7792604319890cf39e6afed9e0866f33c38bb56424cba1cc27ff462f947",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "ygXqVGMMwdvc4hQW8n2S2dXgmSAfcR1uKm",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "444d4d1e9850cf19adcf3aa6e01e8a198779eecc8d55fe8bc9715726efc58987",
+      "service": "207.154.242.157:19999",
+      "pub_key_operator": "958adbe9f954ec23983c4be5788e86e0df30fed1d6852136376b49c1a24e0fe1da1178b23dec4ea098b9e355aba8de0b",
+      "voting_address": "yRrhnfBVp6wdkMfnx6tokRbBXqoTMeVA8B",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "5592cf425cc40337e733be4acc48cef4d5a39e9148967b8ac094336923eac1e7",
+      "service": "34.240.43.8:26026",
+      "pub_key_operator": "07b3deeab02edd452fbed7d745a73d4860159659f8fd92752e59e9f02054b794b0b371a8960cd77bc7edcd6eece14136",
+      "voting_address": "ycJ6TwoqXDdBfMd8b9DLz1ntVM89GbpGrs",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "dfab7fd7e6f141d1ad7ff9fcaf8dafaf85b05dafc9058b376a33c6f4ee1da607",
+      "service": "145.239.235.18:19999",
+      "pub_key_operator": "0b4282cdfe1cd639e60b6c58b2f210bfe6b57f8f247cc5b55673d188ef458270c7314f7128b286a3326b9ab6109bd2ff",
+      "voting_address": "yTJHgkiEMAev8eycCXQ1nQemwx2McAxaGu",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "8ba8c6867b46bb40408022696bab30719990806d6e5eeebebe8e5377228b3ac7",
+      "service": "34.210.246.185:19999",
+      "pub_key_operator": "8b5d53516c0c7134efabc77f5f7d19b6e289b5e8befc35ca5d77626a252e659888fdd09a7c9bb286dd9fc4d73025bcd7",
+      "voting_address": "ycdU6EyVggw4RaW3EKPHCMBeT6vzRDXgbJ",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "05f876be752ae6461ff137383280810a4f2f1a6c28c70316b4723d1db0ea3367",
+      "service": "173.61.30.231:19024",
+      "pub_key_operator": "02bc82de6e1c7ba14576b504d412b2bd06f7e3cec15da7a94fc8df136c13d581e0e9973ca62106e67fe7a22ca816ac55",
+      "voting_address": "ySBU7oXuuTSJqtmUArMRFsKefJPtEDkESG",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "2707b054eb4d005cc4c6c8e91408e705a3afac1cd13324a1c494180d40ae93c7",
+      "service": "[::]:0",
+      "pub_key_operator": "089bb561944d0a8d5f6150a54733f81dc7110c0b8cb0a4c847a800caf9c4a347959fcf2d813e0ca8a81b3dc0cbceb9d2",
+      "voting_address": "yLoEXN2fev6GmRjJuMfA6TeH2wy2Mitt8q",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "bf574b70af705880fc8aaba47f3285ac998456f3885d7a559ed8c256810b0427",
+      "service": "149.28.127.8:22999",
+      "pub_key_operator": "14cd442dc85a0037b86dea18e05cd909d8ec06fa7390b32ad2f0341ceb69a45c69f40d526865de790d34cd66d4e65ec6",
+      "voting_address": "yW8GyYsFDkuTpDbCoz5N1BSPcP4d2x8FN2",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "83886e9f5d20ae160d94ac66ee73f522684c7aa8de5a9746ffe5cdd2257c8427",
+      "service": "95.183.51.146:29999",
+      "pub_key_operator": "9426621a0df5cd8a4432c4050f39163a76ab39b2682aa3ea2064993265d66324be3d45ab22d5f9910c8ad09b96bbc952",
+      "voting_address": "yg5fiNeT9MLoKpHNnxxpHL6Uaxs5pLzQYh",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "71cf5017c4c5f69db5c17a8cfb4c28ffc14ad1715dba2a83f0c30e534291f828",
+      "service": "95.183.53.17:10007",
+      "pub_key_operator": "10d647e3107b77440e2e9957092aeadbba86d02eb95ec23e490c023936bbd4eda6cf8850f98d01bddf4db0a405bc6a37",
+      "voting_address": "yS7M1mbiyT7jk2aTUwMcBA8hHd1jDSjgUh",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "886b718447cf6f73b942a24a924211bcbafb3fad6fb9237302db0371a0a1e948",
+      "service": "34.240.43.8:26028",
+      "pub_key_operator": "99a5d0292eb120db363bc9f133afa72ea08af66664bfc55b9bc831905480413e655ae61d72a717d5d3e7d184cc8b7298",
+      "voting_address": "yTM4MNUjnZYNEh5JNq6cWkGiD9F8wkFuq5",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "998840732beb3f2fe63563eab8986785134428b74aee4c00217610ec79fd7568",
+      "service": "34.240.43.8:26050",
+      "pub_key_operator": "0e55ea95825e6bea050b9a8bc97616fcc81e6ad8762c00fd39d3098acd58b650ec763af29ba7849b0b97a3ac5d23e80c",
+      "voting_address": "yiN8QQL4XmH7wMVaGA4x9nJ4tMAW7CYxFg",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "68fa216e06d6eded3afecfe2c4b1320a20652972a006f85bc024d8f46dbe8d88",
+      "service": "159.69.72.12:19999",
+      "pub_key_operator": "039715a9bc06634ab10b432e3a9d446d436b4584f65c19aef93c69d07802690df0b51d81da6ff9a8de1542c40edb0b1a",
+      "voting_address": "yiEzt1onJsFBwBxwcN9vibquPpajQHuRRD",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "15d1b166ff3603d1a583f028e9a0b5334a48db7f3272ea2e4d101306e353f748",
+      "service": "54.194.151.206:26022",
+      "pub_key_operator": "18e4c1013002f690ead979628cecef981034bf9277813035637c376ce9dd04b1b379c4abd45bc5ea969a894fa0d0ebc2",
+      "voting_address": "yW7hvWCYfD8DNPRRAepgU3dtSP5BeVuzvn",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b9eeb35f00d10ebde45a23db94875bed007b94eb03cd0317ff721e24dd5363c8",
+      "service": "157.230.40.102:19996",
+      "pub_key_operator": "8f420a082c56b30c9bd8492394d83066a8d03628a7c8e3eac27486377e2648bdb3cebcc4fdd16cb4cab1341e480fa439",
+      "voting_address": "ygE5WkubdrrYafFUvPNz3xQuJT5XF9jxry",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "a4d877cee62f82868034fb678436d87afbb13330d2b66a24ae1d357f0de55c68",
+      "service": "83.80.229.213:19999",
+      "pub_key_operator": "16415af54406658be9ea44d82b6b502bb90d93e32997484533a8a71a4ed98d12cea3709d84a5835b6ad8ed48d3101633",
+      "voting_address": "yfKNLE5v4QTnMvj7y3JVoWEfQanD4qHWGk",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c2a54c1ad133acbf3366aba2534ed6c1f01728553a7e877ac2a22c98be085c68",
+      "service": "157.230.110.86:19999",
+      "pub_key_operator": "85f01c97f8e6d601ed269d4fd1d33b456c5c940aecc45b084c0f8d9ddac26d6fb7c5cc1eb817a41bca401e5c9c4ff856",
+      "voting_address": "yM2BrdCajmovvGsox55mkZHemnECwBeRxC",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0d20e20e6a7ed1999b25f2dee0a53893a462e92170bc13a8b321f25c87d99728",
+      "service": "159.65.69.245:19999",
+      "pub_key_operator": "14bf71456476fa02cfe3de9735eaa10513e943db4576667128051f34692ce042c90cbb9dbb268d3ebf89205e5c8e2afc",
+      "voting_address": "yS1MkoYQqSdeH16AXuZoAk2snvMX6xsHM3",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e2c750039cd378dd87853062fc93ceb9cbb14338c8679bc03cfe79550f7c6328",
+      "service": "185.213.37.2:19999",
+      "pub_key_operator": "868ad323ed59996a80a6bc8365d2a0939c40f29688d619edb7fd4ab63e4788dea07b31bb3e04a848ea75ad3c827e6209",
+      "voting_address": "yd6MJ6ohWCcAKPKawafuKv7qdVYSuvWQ4Y",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f311a4630250c2c2fe0f6121d7214b1e962d2e7385e78cdc3ff694c9cfc0cbe8",
+      "service": "106.51.78.70:19998",
+      "pub_key_operator": "01841a16adc73f0224e6544d0cc57057ee2508c906706307ef8561908bd476594ff1e825798faac54c8f8a66583a3dba",
+      "voting_address": "yULZpTMc3fcGRtMc9EdhftZP4c5Y4khPKm",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e6218b98482d5533f37cb384b9403ad482163bc76c783ac290d78a5fb54573e8",
+      "service": "173.61.30.231:19020",
+      "pub_key_operator": "8a0ede82d78a0a8f4c2332d431c7be496c3aa09349ed3b2db30f7eb7dcc7b6e580a9d71f7d76bdaca1b3670e0cf4cd3c",
+      "voting_address": "ySBU7oXuuTSJqtmUArMRFsKefJPtEDkESG",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "ec6e4e052c3b28d77c13ccc5072b5f5c185e1a53a6ffaedbb1de9739c0d31489",
+      "service": "195.128.102.75:19999",
+      "pub_key_operator": "1926b68942b544b4e17347c5e0d28ba91453984294c7679965f3a1d3cdcd9f5bf80f2c28a48b503f301bada544798968",
+      "voting_address": "yfAZHJ52VWG82Cupk5RuQFaAg6vX62N1yW",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f7f3a36e13bd406d5b9c9a19b6c67c5051f7a29e6596c1413326b98c00cad909",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yZvrn7it42q6MVGhJRbNSANjZB2QBBhWDW",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "3f960fd8d414906a260cd07db16f743f65306823355b61b5d3ad4bdcf9184549",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yP2bVNryY5q8x8CcXyzjRUp8wWha2kJfgT",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "446395517d8dc7a2fe06ffc2dcb5300c248a324b9bd5bd91532acd77eabb5d69",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yW52P2j5UE1S6L5h3jBczbWMPB1njNoFjH",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "5f0407d926660f7688f5a22f6ea17b39ae4d2df36aeac42099ed173bc7b48a09",
+      "service": "54.194.151.206:26045",
+      "pub_key_operator": "0b235e789d9895d6c0fccd31c8e93109cb92633b16ec21e5f8fcca9cd562cf07ee1e5c75446dd32843cfe2676dd5f9b9",
+      "voting_address": "ydsBcVJpfE4b9g2PX82jCJ7a6gtsKH5Swn",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "3dbb7de94e219e8f7eaea4f3c01cf97d77372e10152734c1959f17302369aa49",
+      "service": "52.36.64.148:19999",
+      "pub_key_operator": "139b654f0b1c031e1cf2b934c2d895178875cfe7c6a4f6758f02bc66eea7fc292d0040701acbe31f5e14a911cb061a2f",
+      "voting_address": "yWEZQmGADmdSk6xCai7TPcmiSZuY65hBmo",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "3a541549d161a0e134f54db0afaee615530bb6d84e353b82afc9af76a9a39329",
+      "service": "139.59.35.20:19999",
+      "pub_key_operator": "0a97f109f81f15cc0b6af0a57ec93cf9f201789fd28494baf1840594d4bb233cb790f4ba434c49ecb6a1ebba61beec03",
+      "voting_address": "yQ2xMRbx1nz7hGNsh1hZdeYCCDjXq6W5MM",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "eaaf0220c44e4e049b5899f162e7adf2da1e7946a2272489f304fe3df5247349",
+      "service": "159.203.34.99:19999",
+      "pub_key_operator": "0452f32ac367f352d6ef53f984667db9ad658bf940292eae2440024e5af9445f7a7a618d536c4743c9de4c3e07b6a5f9",
+      "voting_address": "yNPto4mNDk6CkwcWeqYzq5dKnBWLkgq5XD",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c6b291a26712b3f789a6f9379d55029d78f895fe3372c701dd5ef0a597be3b69",
+      "service": "46.101.243.84:19999",
+      "pub_key_operator": "83152e6489f210094f5dd558373a1ce9abf36bb8001d4f35b3dea74f7ae74baf859abd22238c682ac94cab82eeb58aab",
+      "voting_address": "yUoKYVFD6P18FywDN1QYnnyxjbCwW4EWyQ",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f0567069d4f2a2e536e46173a097b318daf03edef989f6875ca06f5c4d49abc9",
+      "service": "95.183.53.17:10009",
+      "pub_key_operator": "865d6f26ed3f5309e4aed19583cf179bc779e21c967485f355b214ffb6ba461a01b575a9c62b3a02d08a37d01817af83",
+      "voting_address": "yQYRfZvQxaQnjR28AkCtmvHFHP22p2PLKR",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "ee870538e2c265e7c53af7f94934fdef16cc8016c2f36a1f266541cba96a1049",
+      "service": "43.229.77.46:19999",
+      "pub_key_operator": "8de69524dd60930aacf252a19e34e5928dbb20144d1f336a45dd4248acdcbcafa929619913980156defa1113d1481139",
+      "voting_address": "yUVxd8VafRftExWmz12oHUxrfB1kmZuaMe",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7e1d6bdfbe135910f32160c96a38469c52e0c8c3af6c489dfbbca6b187e97849",
+      "service": "45.77.176.16:19999",
+      "pub_key_operator": "0d5a850d41302b179b9009a4969537c5cbf7f0145c94de4306a4e09115ec00248cb1aa76cf04249e2a5104b5cfa86879",
+      "voting_address": "yPS1XeEPzHY5rcvPVzQetfTF3X5q5TycyC",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e341b4207f799d7b216593303c5705c97825331805f32cf54188dd05a7e9940a",
+      "service": "54.157.8.145:19999",
+      "pub_key_operator": "029d0298b3ab58f541f566ba5ddd40e8e1e711dca26b1757fd1b707baea16ce77aaf8a836232809a5e1d301a36f20458",
+      "voting_address": "yahTCc45Gu6M51s2qiUNZHpXuqSVSnfDCC",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "485c145d2cd83c298bdd692bd7b8b944c6664a409d85babf1934f4a9cbe3702a",
+      "service": "149.28.127.8:24999",
+      "pub_key_operator": "951a2e2db5451c398d6e22330dc786cb647e33e6c3eb878d1d9c1f3b8e5cd1dd11d1dde10ad7cd27fdb073fe7ba06ef6",
+      "voting_address": "yjKL1dEcj2NfiAGmYsMyTT5brKQVSjMyX2",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "999d7bdf3c9247c61681148dafe7406c8407f0d07c4d699a1f501adc075248ca",
+      "service": "173.61.30.231:19016",
+      "pub_key_operator": "101d302d6c69d9ecb9e13e755947f3af22f63ed4ecbf466ff64bd35c3d86bf2e4d8455ab736715d8f064c8c8e4d3c585",
+      "voting_address": "ycyDoK4GK4GR2qdNZ5UXjjS17VnJbQ8wm1",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "3ecdbedf3d9a13822f437a1f0c5ea44f290ab90f7c3bb42c1b5fd785b5f9596a",
+      "service": "108.61.192.47:19999",
+      "pub_key_operator": "0634f8b926631cb2b14c81720c6130b3f6f5429da1c9dc9c33918b2474b7ffff239caa9b59c7b1a782565052232d052a",
+      "voting_address": "yNr4BzdbZy5kGGeuhoFThj2XjhaVyFQTxS",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "037db07b953e2196d659075376e7ba9d85baebed5c49577a898c0ace2515c1ca",
+      "service": "128.199.99.191:19999",
+      "pub_key_operator": "8f3afb0dbbfec8610efdb4089f1b163e7f55325f6c0503470e8d49ecf439c848ff9448749e0a383980824994aa5dc50d",
+      "voting_address": "yZR51hLrxHBpx3riRoUZt84RPCYBiUqwcj",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0d862fc048631f81cabda9446c5f94c8c9a559d2107db383379697381816d66a",
+      "service": "116.203.204.120:19999",
+      "pub_key_operator": "028f3d9ff027351da67047d78254333d5430c022f800ce5530835d1f048721a82d87bfe959b74aa447908e3c3cacb63a",
+      "voting_address": "ybfmFeetvfZHqRuFfpucdqTeSPRDyDrzZM",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e157a38e02aad5da99fa7792d07eb8b773ccfef9084d892580b5a920741d72ea",
+      "service": "173.61.30.231:19014",
+      "pub_key_operator": "983ca9ab507b3eb4e7b0d31ccef3f4553493ee5334116a3f79689f9b808a201ead332a26f7052fd17123cf142f96d85f",
+      "voting_address": "yeLNezEUhMaBEp4Y3qiGwhphJbz244UQsT",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "9adf02049b965817cf6fb5b675c17dbc00df7e2fbf68cf3377adfe30e3ed0bca",
+      "service": "78.46.185.94:19999",
+      "pub_key_operator": "0df074095e5498c6f1b76508c3ae700484d8b0d5cd12a990f3dd54e35b47d6fc943af4223d390ddaf8989d883c84b284",
+      "voting_address": "ybbHMUmNCPg3F4GWxi1HksFgRNgXG3k1ye",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "bc36e6c0d0c69173ea0c8a9a821548468e7713ab9bf748c117d5404b4450f86b",
+      "service": "95.183.53.128:10001",
+      "pub_key_operator": "0077eb37d4559f880e21dbc3840a1a8ec8c32787fab07bd12e7fde1ad5f94ae95d6e4694f3533799d14e18c683249742",
+      "voting_address": "yZQf2eCE9mRL9Fi4ADof7PfkjazVQu1nSU",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "a2ff1f7f998cf0b6745973d4c450a083cd3b17b78814bea849761d109546f8ab",
+      "service": "3.220.176.35:19999",
+      "pub_key_operator": "86b437535c51f06dc3064937acb7d49cbf79fa5c628ff7cbc784717de1fb3fd121fab0e2c0b2888053bb0a6b76444805",
+      "voting_address": "yUoUuJxUdiHsMX1NPhcb841GtgSbqLygFz",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "85541d4fb839cd1019d8f074d130ea6e2fb17dc556250ee7ba509309bfaf60eb",
+      "service": "54.194.151.206:26043",
+      "pub_key_operator": "8d08326b410021f9fa896cf73b5d8dba5b05d630aa9c9cb6ac1ec8c7bdde32a67a3a6418d30afa05e6e6d95b15629de5",
+      "voting_address": "ygH8LxcbTyT5vGkgtFWH292V57SmaNgaVn",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e9d5e03a9c68ca226ba4b11c81e38e44bfec6df0b9f9ca19866e479a2558f9cb",
+      "service": "54.194.151.206:26058",
+      "pub_key_operator": "86f774a0cc60b899182e96855a9798d447031b70f7ee1753daa45a00cb0252e058c93c9c6292f71e3935ede70af6e2ac",
+      "voting_address": "yRFBUW4hvb8LSEdhQH5F5u6Fm8ZkiyFjak",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "48eb1b545d87e712edb1382d8bee300aa0bae80bfd0c347920f4afcd0ea34b0b",
+      "service": "35.168.78.191:19999",
+      "pub_key_operator": "051b1a638ba22cba300ba0836304586ba5572a525622c4dd49e7178214985277eebad66a371253163e35e93d3b44081b",
+      "voting_address": "yPwCX1AfjYmfeDY2m4oDMRwE4XjkSqtcCa",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "a19202b42318e5b2ae7057cf045a29cc2f10e2cd3906e487c4946d5e501fe32b",
+      "service": "54.194.151.206:26073",
+      "pub_key_operator": "01ac0e55cb271408d6304b41b1d0dff84ee957829d3c8f7385e76dbbc1b67ba91b70b04dca50d3d7f515c6cacc8bb908",
+      "voting_address": "yWNu2uwY3YgethASL8fGgi4xNRdtEo1G2u",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "78c43475cc270d075a38bf9959c590492dc8682a6feb46157444d29de4a13b8b",
+      "service": "173.61.30.231:19008",
+      "pub_key_operator": "1828028671209b5196d2204d5bc3ce3ecd554dee9ff231883f04e67bea856fcae19d7a6154039140e9e3a6c6cf3fad4d",
+      "voting_address": "yS3ybhnzXDryoVqqxcK7YXfLyGy1pSctYr",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f39722e1e9d02ddb49512b16674868a865bae2a912401bb6b006b09a74186beb",
+      "service": "3.13.34.147:10007",
+      "pub_key_operator": "96395d8ca159e5ca66eae7685beb6766a6c0ae50b4569809c4ecca3e101a1f210bc35637473b5afd5e71bfbbc976277d",
+      "voting_address": "ydWdu2QwsmGBzkrozcrp7GcEkiJ4GxZ6ek",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f8293d83dfb38fa7a6c34928e9171fe6a112d5a5b1d07592d59f37a23ed0a00c",
+      "service": "52.52.139.186:20001",
+      "pub_key_operator": "803d3e3a2593dfd56111203f3f7c562d1df639d57376d1994aff17260cfbfa576bfed870eedf234bec169e2f8e6c44da",
+      "voting_address": "yZHnhkJQn5gQTgi8ED41qDMT67S7yhYPmR",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "8d0099a82609e4c9c0ae42c5c98aefa8bed3393cf9e25d138d14141fddf50c4c",
+      "service": "54.194.151.206:26029",
+      "pub_key_operator": "8a596212592302df7247e9b29031a6f1ae4555e6b177b7c5810c9221d1cb7ee84fb3d2d6b604e0af1c59676efe784766",
+      "voting_address": "yRE2ruPswgXQSXdMq9MLk1rm7K7gSM5uSZ",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "ad9ae35caf7548cf3df6343dede0e585702eb5cf80306e76b65db2c603baa0ac",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yYvFHSBwpv6WzKwVK95wP5euS8wUaejxS8",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "48c29275ad2ba66954b3ed4d58a29c799da0abcfbbd38da9646079e94610c8cc",
+      "service": "136.244.89.226:19999",
+      "pub_key_operator": "90dfa669abbc6504966bf8cc2b4971db18a5052b70475fdd5e6f427349635ccd6b9c7869b52ff3133c5661412ea5ec13",
+      "voting_address": "ySHx2HYftzNkcsYv3BGgbUBBNB3wTvXMLB",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "84bb939170f4714be54d6217cffa5a3818a1c521115d45141b4df642b1dbc5ac",
+      "service": "109.97.214.43:19999",
+      "pub_key_operator": "0f4002936319c495d9557ac1bd514bc760cb8db72dd99d5d20af93dd5a7570974d75e5761fc494de28127ae02413819c",
+      "voting_address": "ygVha4ZHSZExvWXaKQxhycdp7aQzYMJWJj",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "84cb17f8193558315fbb5acb6b285f80c3727489f3f167380189c73751ee99ec",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "ya8DyA7Xpo37rXAnk1DLjUvgs6bGXbhEQQ",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "ed8575335b7e0b420b09b4b8c530711b98aa472504d91bbca9745873a106cb0c",
+      "service": "139.59.81.170:19999",
+      "pub_key_operator": "8dd3b8d006c8ea260bc6158daf0680c5cc7cf4936458024b51ea2036a800ec6563d75135004055d94743b8341b701358",
+      "voting_address": "yasGgaGhf4UKwhnZHuJjb5hVWW6Wu1DfzV",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "2695fed97527f712995a207d278a1cb7fea614effd3f6d3cacf58052af020b8c",
+      "service": "34.240.43.8:26018",
+      "pub_key_operator": "91c5a9a2513c46543acad374e11f69e63df9583e74e511e619355f2cb7c1b9cd7b4c1ddf3f33c28a8c046658958c3a10",
+      "voting_address": "ye7n6CRqa28tBJLRqbseDiKW76xrgUaDYh",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "a5acd6561beac5bf61f9d6c084a288ed763f8fa891ac4c762ca3983203d14bcc",
+      "service": "34.240.43.8:26047",
+      "pub_key_operator": "9969c5e9e10673d15a23bce8cd61f83321570f8d5e95f79a640e4f2cccfe0e81d80c9a5a3c6f3cc2e7b9b68e83d6d8a2",
+      "voting_address": "yYqtxWz7CF6SLvMprS95owMt7HD7MEH7EG",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "9767a4cafa9d1057b48de795ea834a15664b58a79d75a4f826299ce1ba11842c",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yPmhSriYQKX1cD815hC5gNK1LXnzv5Udnf",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "306c038de5c583febcb09b55f527eaffe177acd9d118e8076f61349a305e902c",
+      "service": "34.240.43.8:26008",
+      "pub_key_operator": "052abb8468545b0593010c326d358cec47a3079a36c6f5002b2c36fb45aeaa6ef00746d0e73697fef01704d51d870494",
+      "voting_address": "yXF7nWfRxi8pyZeCbz42gv6V9HALZYNYrU",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "d304e1e869e1a9aee1952f06bfd8dd43f8a4d12231c5d43641a31f89a53eca2c",
+      "service": "144.76.66.20:19999",
+      "pub_key_operator": "09591bf26ea6f179457440d73ebc70c44310ea56dad7539a93be903e28788cac013b646e3ed4198ca74a8325d8a721c2",
+      "voting_address": "yWTZFfywm6HB5RtbZxV7xaqVT5W7hB9WcS",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "714874684cfabe0cca907ff0e61bde28c2fc1a8840c485fa14ba5660bfad5e2c",
+      "service": "182.50.125.85:19999",
+      "pub_key_operator": "11b8a3cdbf872f868b08b211878ef11a0f6f7a7ebd55533864aa98e53e194faa159ae2d13a7625384a3fd1572f68deb4",
+      "voting_address": "yS5ZfPiQ2hHd8LtwcKK7wjjkZxWSyZUZdo",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "672830015f3330a96d5aa74d43b6dd2f6896821d8caed7fdad6427c74b7a7e2c",
+      "service": "34.240.43.8:26099",
+      "pub_key_operator": "151436dee05a55afb36dfcc21afcd193ec0852d2f2b27d86f3ce8c05e7e4d4af4e0023d0089b0ef3d41bcdaf4556b1fe",
+      "voting_address": "yMkQeRpNkwA431mgrmvzFjoFVE6M571D68",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "cfcddb737317b86698faef84734e9e655fcc2899ee449d13ff70b014419b6c4d",
+      "service": "52.21.8.124:19999",
+      "pub_key_operator": "009a876325699d6979757ac10d6b37eb7f6690a40447f6473779eb9130975998d3a9fd6e9ada19559730bc017843ce12",
+      "voting_address": "yZ33XKzMFKpFgtbjuWisRRCxQPZTB4f5ry",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "31a74f4cfe217fd8504e6b210fcdf12243828a67191448b649b648f7397da08d",
+      "service": "139.59.249.65:19999",
+      "pub_key_operator": "82f48df5b39fac4fe299c0741cdf675eb53aa0b936ea147d4883b650596887142e4fecf91087799de85312aa47c6d601",
+      "voting_address": "yeHoJW4Pu8xMGhe4wKAmZEzdWR7aPRwXKZ",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "cf774e2a4bcab3c7e7d2d934cd2977b090fc1e414d26dce53e16cf2cc5971ccd",
+      "service": "159.65.105.41:19999",
+      "pub_key_operator": "002decf89a99afc7bfddbac08c6c25a028e58f0c7863b7fa6811ff84afcefb933b510b78df6551f844eb2221b0c0bb53",
+      "voting_address": "yfSaH3f2Aybz6GnTJPHbt6rHjbz2vrAdMD",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "87c5a82f46522a809f60943985bdbbe6ab131f49bc4b35602c0b2ed34dab354d",
+      "service": "157.230.40.102:19997",
+      "pub_key_operator": "84fb8f4119d367a2336982fecdcf326c56b7c09c0911994720ebe2a657d5d95252be1871889b13f81cdd16d49e15a7d3",
+      "voting_address": "yQyDLSJ5EsZhpeAEDZHnrH2EEx7cJdJwgT",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "ffd0d1e2a321312a66de9eec7107ddf6df24db56366d9e5095c20996ee54196d",
+      "service": "34.240.43.8:26036",
+      "pub_key_operator": "0267a4b0aa2305e081e19b8efd65de037862b305f0c5c9871c56ea46145e125a77db6323155ca8c37abb147641806fac",
+      "voting_address": "yLte1V24YadioUp83Rm5KJtj8kumTneBqF",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "75adf981e3a77630507882a9a41d551ee1e5b8ed570e61a855008ca293e615ad",
+      "service": "167.99.110.59:19999",
+      "pub_key_operator": "0fd87b62bf91162008451c1f00a1d7bd65ef581e88c153d105970ab30e451378966b6e4141e68024b3976461605e8402",
+      "voting_address": "yYBa2QWVSPp4jDCLDP4caVNtA3EFdVDFMq",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0022afbe93054ca11ce9b67892661af4558597bacff0ab82bff05a2b4a89ca2d",
+      "service": "173.61.30.231:19015",
+      "pub_key_operator": "94b7723262031b6cd2e79b07f36a794d3e684c538a6f2418fff01c027fab1ca4663ab0b92670ee1797fa71d8676362a0",
+      "voting_address": "yhyMruXFX6waubpxGZx37FBF5r5DRb1QAZ",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0631c61e2ebf3d2f3b5022022b304492e935dfa25f9f52d13a45b448a61dea4d",
+      "service": "116.203.197.7:19999",
+      "pub_key_operator": "186053ffd90c84db8fb369e1178492b3a0a3941d33c43cd84b839d92668203b6501c786486083eff2b229cec3e0a190d",
+      "voting_address": "yRSrEfHrzgzDfABrZ4AsAXagrJkvipfwdT",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "2cc0a073e9fadb5cea5cc3303b8f85ed603dc6de043f0ec06edab72d886c57cd",
+      "service": "95.216.174.152:19999",
+      "pub_key_operator": "8dd3ff4dfb358ca5c5c58f5c163d73482caf44427b62751b18255a456b8edb175f887db87b3b214753045f631db58475",
+      "voting_address": "yeKsmtKwGhSaYmSUexnLsbGkt3q9SNPJqx",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "274ae6ab38ea0f3b8fe726b3e52d998443ba0d77e85d88c20d179d4fecd0b96e",
+      "service": "134.209.231.79:19999",
+      "pub_key_operator": "0db6da5d8ee9fb8925f0818df7553062bf35ec9d62114144bc395980c29fcd06b738beca63faf265d7480106fc6cceea",
+      "voting_address": "yXuFGzX412qTAYopYkge6RQgjtXsc6c61o",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c60e7942e3ddacea393c597f56632b90936ba1411a0666eae5913d2f4ca575ee",
+      "service": "34.240.43.8:26096",
+      "pub_key_operator": "07785a51a1061d596e135cd585e221269ab19b24d1a14f3ed9c2910eef5eb91b1676c8e5a1b02fe9abffb9cb13e85e0b",
+      "voting_address": "yUb3oNMM9SRd3CMVKJj8AwwXapj2mYpVSg",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "438a51e16b84584f2328da338ce87277991fa6b83cb8d39919dc08049f128a2e",
+      "service": "34.240.43.8:26019",
+      "pub_key_operator": "8df88c3300207f57363057baf4b5a09d13605608d7a621575148d6ff21609fdbb0e10096bf66c11a39adc0f30d4eb655",
+      "voting_address": "yiQNdUMdi9CeYGL1djDg8br8RswTzmV5SH",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "8eecbc2ec317e3f05bc6daa16f800a20f9c6a311b9c5e870848a4e418a294aae",
+      "service": "95.183.51.146:49999",
+      "pub_key_operator": "92f5e861ac88ddd95e3829afc45f9358ea0973e19da8e42eabbfe8f2d9e5fa32204e7f1de5e20c7e45ee51ab262cf7dd",
+      "voting_address": "yWYP75RuRAQ37BGzUKASxcLHDP4b8AGxHY",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "6802ed5074a42b84a99b5fb6da29d04c2c80e6c9dc437203acd698ade36c6eee",
+      "service": "34.224.152.100:19999",
+      "pub_key_operator": "8d6bea256f36d8b92071b66fa64f4023737cbd1b5dac7c1c9bf514cae400c332a1091df0ba8cd007d641a92507d9cbbf",
+      "voting_address": "yMSs73kBNfVceVQWxQYerbDNdBpmWAkdti",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "d5e56587681a42c22b0f9d0c3599e0482f44a1fe774990e6e48446a6dc9647ae",
+      "service": "149.28.127.8:23999",
+      "pub_key_operator": "191d269ab03adbd6c74c4784b0edee94af4c37396a1fa525e21cfd8ff2818fc7e3548a493ffbae3d409e434bdd004811",
+      "voting_address": "yVhmKQPDjQMeZzvnjDZLzQU6jUEySVsEMd",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0df89123845c267278fa7db47a8350181575fb6d388c0718b398845f29bd4f4e",
+      "service": "54.194.151.206:26014",
+      "pub_key_operator": "0018772d45be3b36be43727f549ca2b3e5abcceecb207ac538d5ac318054d801f9d81f25ee4e127fe408bd79872428b3",
+      "voting_address": "yYeR67HLZVujP52GiTgMzrLmYQU6c5wQuF",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "ccc3668156451b3e10ac5c97d60e2c20fadf88c6266e3b2a9afb0e33e658734e",
+      "service": "155.138.226.83:19999",
+      "pub_key_operator": "057b3b0190261b1ded22b9c58550f7bf17a150de6a755a5478988b58e32bb7a53e7e6f9981bdbf416324e75ddd9853b8",
+      "voting_address": "yfPx6hHX4CzRTfdfTGDimHWUnK7fYpyUWH",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "712c0edad9b39de087a2422aae59cbee77b63aef06de6db44b2b8287303620ef",
+      "service": "201.16.2.5:1998",
+      "pub_key_operator": "0ec57774146e447ac6cf131a40fb37664ed5f9ff45b59d22cc68f2aa9f4659cef42235b63c3f2c3ed36f8b2344399d2f",
+      "voting_address": "yUK263HAwotnvFMhCVyozcQAZJmTuTKNS5",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c48a44a9493eae641bea36992bc8c27eaaa33adb1884960f55cd259608d26d2f",
+      "service": "173.61.30.231:19013",
+      "pub_key_operator": "8700add55a28ef22ec042a2f28e25fb4ef04b3024a7c56ad7eed4aebc736f312d18f355370dfb6a5fec9258f464b227e",
+      "voting_address": "yTMDce5yEpiPqmgPrPmTj7yAmQPJERUSVy",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e0ef260e49c9f2139825cc98504c536397595e05813cc1de5dff2eb793aeb5ef",
+      "service": "142.93.163.66:19999",
+      "pub_key_operator": "0dda9adbc22cdf89c04e8ee714da7d80dd5620c1d14e30780668d3b782b2f0acac9f00a556be1548733c1ad1abdd96ff",
+      "voting_address": "yUpPpuLw6KTqzRJhuu7cS75khDgHyBgrMR",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "1659e06c825212c9b11325760a18f6ea06194ec4efd603f03d8704f23d818a6f",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yUTy9Fb2ULXdgyqYtMMbuUWpFLaDgUqT3f",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7893b72d36e71a7b83a1fff61e4fbbe1400b11f12bfb349923397a2df3a9ff4f",
+      "service": "54.236.214.8:19999",
+      "pub_key_operator": "92427cdb8c9694e0c6ba086ed7c00dd9f52ca18e335f65de8a839a378b1e040b279c05e3822e7c2fbd57fa8852d04cf4",
+      "voting_address": "ySTEAjUkZcv3N2MeieGcHPPKSXBw5a84pa",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "52716cf4f2abfd9068500ddb6dde92c95a16d23be90d57e74a7efde13ecb6f6f",
+      "service": "34.240.43.8:26003",
+      "pub_key_operator": "0e1071aab685e8e41128eacd9d189c04b6c1f8827784c9bcebb34f43ac2f82fc6514552fc8085958784be4fbe57b8699",
+      "voting_address": "yh8uygxVWDBcUF6BTc6coY7Tnxrnv8yAas",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "1a3b5e4d4e06cc89b26ef6e4b962831ede8e3e6c7ceb0ea5de58f6c392aff3cf",
+      "service": "173.61.30.231:19022",
+      "pub_key_operator": "0d7a51dc63be4cc12a7307e8505b6a737d2bca66af51faec6c448d2588aa347e90ac4deb3a4af294614093ece40a5fc7",
+      "voting_address": "ySBU7oXuuTSJqtmUArMRFsKefJPtEDkESG",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "4008a18371798ba28da7c9a581daf0aa92c4ac0b980c3438936823274f64dfef",
+      "service": "165.227.10.68:19999",
+      "pub_key_operator": "121af4d4c49a65e1439a27ce0f39a2eca5ff751e9998c0fea7a3c2b13731cfa47fc6a56a313a38b448f3792fb60dc117",
+      "voting_address": "ySioPN6smXqGc2d9vrTV3TkXTgtdrFevbG",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "2a0a24107934da0bb8fbe78d776724753bc8e8eb2ead3ec2c51cbe07392a8a0f",
+      "service": "149.28.127.8:19999",
+      "pub_key_operator": "111c6da658f21af129c37abea6777df93c768fd3e5aff681de06f78ac01f24803e286d5b754ba1122db32ae29e0ea401",
+      "voting_address": "yS6yCeyT6nKg5CHC2m1GW1UPJq5DbuLvX5",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f2c73787f74e58aa7857f9872f7602fa20c1c50e465d2ce7d433525f7fb6460f",
+      "service": "54.194.151.206:26078",
+      "pub_key_operator": "10a2ed4c4111c5b10cf207af3f924e8401db776498f08768e75e0d412f73a79d45d771c1eb2f00cc9f6c90be02cfee72",
+      "voting_address": "yeEYPuTC2x8QbCMTfQ8HbLSNmgxgDTVZE6",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "74f428a70f701afc33b26dd89dba3e25a3ad42168284e64c79572cdc69b7bbaf",
+      "service": "173.61.30.231:19009",
+      "pub_key_operator": "925d20af1a6d0ccd3890f0aead4a05a59be22e005b6d732f855311915b351a9153b2c83d84611b2c9958f806c93f7b5f",
+      "voting_address": "ybc3AmPjvoGD2b2gfd6iEsZiv4h4KAtS8S",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "67e84c0e7dfc04e2e996c0953a74bc5d61fed1faa7a3e3b6d377c3926749bfaf",
+      "service": "34.240.43.8:26024",
+      "pub_key_operator": "96fb79395865f2c2210608b388dea41c88d35952485d34c8e566f706193a6080d36e0c645027917e8491c5ae35c65b29",
+      "voting_address": "ye3LZSdK8iAKvSWfXDUh4euBpNaH8fgtCi",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "77fcca4a0e43f6e0b96687a87b4272eb8523315c8f2a176d0a2df549a869f3af",
+      "service": "139.159.206.76:19999",
+      "pub_key_operator": "914aa95d1c7d7c39e0a3b213b6497f5c8624d4f476b8043b22c4f30cd05bc037c80d02b42625d743c6a18d0562aeb579",
+      "voting_address": "yiTNq8NMuYdDKgzfuY6JCZUT3DLjqJ8taK",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e220b3b30879a4e489a99f265f00aeafaab0fbedd0ec3fa194befc03fe93ac30",
+      "service": "149.28.127.8:20999",
+      "pub_key_operator": "127147f0cd5bc3ec7c8c5704924e855d46dac21de72e2de112f7dee7c9c3f9c40d4474c0d9ae36a56b800659af62c16d",
+      "voting_address": "yPwDJdyhYViy3MybjC3kbDvK23krs2i4RT",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "a3b3e4b3d98c934f056a2e76ec8ff07ef8473b87f559295ece2254b3820e54f0",
+      "service": "210.90.210.90:19199",
+      "pub_key_operator": "81bc001c31c71b0d4d4f9ecfb205e914fd9cdaab4e7dbaf0b320d40f0bd5b193d1be809ca34eb4979d661f487b21124b",
+      "voting_address": "yfrLG1VEHeBgCMnLsxwnhs7U7qsTHov8yG",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "94044c070f9ce6bdd05c2b655ad2383c8402a74c10e0a9a3099d759b33cb7630",
+      "service": "108.61.189.144:19999",
+      "pub_key_operator": "996f5888a81b9668c16a12c87134536e3616c929a7b67b37aa06d3eb7d7e405e3d3148ce7a072128c9063e1a8042eccd",
+      "voting_address": "ySytGYbYw7rhmuNTvDapSCaFgMxAuKZRXn",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "a671f057d9937b97c9d256e4eca70318cf51f7259fed49b9ab441f13cc1b12d0",
+      "service": "104.248.218.23:19999",
+      "pub_key_operator": "898839eeb51c078a7785efeed45b73db7e97138eb950b84302f2f13d6b33e6f8e58eb14e52c4a9c168edf50f35d0a4cc",
+      "voting_address": "yVAgnd9R6zDigtxURRc2YLbgiNtnkggvtk",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "4b29fd3f568db741930c47f3cbdc1502cdd98f8bd84fd654a369ef2af9993b50",
+      "service": "54.194.151.206:26074",
+      "pub_key_operator": "8d23e61e3d839113300bcce34319e5d766a0877ebbd3f9785da2b5c755b74662040b2c80f6aa02e0fd2b0907adc45aa9",
+      "voting_address": "yLqFbiMseHELxJvjfVN6G5cKuaLmVDaSBS",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "d2148afa283037e255d65a3acc82428d6a712215003963a60c6e015aaaa4bff0",
+      "service": "3.20.14.143:10002",
+      "pub_key_operator": "8de1a5d67b291f75e87e20eb4b9fa7246dff5bcf4030ae26c321b1845609d50d04b240cc51862b4a7b3dc9be4aff050f",
+      "voting_address": "yTUYhXxt9F8YWV5MWWYEaSNxbi6D4vRhd9",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "77e85d6d4d7d4bd4183968b61ef0d5b3a7d15df9b249a11da6776188754f5590",
+      "service": "34.240.43.8:26089",
+      "pub_key_operator": "0fea9a101cd0ada9f5002c531a7578eb3dcf550fb6715f70a572955565fb7e6e4fc7e99062323dabd1ff5fa963d9041d",
+      "voting_address": "yWvkJMQcAzg1L2cJDKSaBrjb7jBFSGc5ow",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0bb4178501da3646c2ac908c25dc6d890bcee788bde6b8391ccde7c648607590",
+      "service": "116.202.68.142:19999",
+      "pub_key_operator": "8ef072018a444bc1f30885a199087d2e2200ea31acc4659eb0c05cca30f83e4bd940ed27873458fb605c92556883933b",
+      "voting_address": "ySCpVr9PC3TG5Tr9pbd6CsgUpUxnXuQbwR",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "25d0e1d65de8604437fa2fa7ac530258c86e7019aea8366f72ff9cfc8e7e9b10",
+      "service": "34.240.43.8:26012",
+      "pub_key_operator": "87589365c1690252507c01b234e7af371cbf96b3ab661a48bd5ba9b7a082f0299746f9244047cb799d5a4086fd25470e",
+      "voting_address": "yXZQFeUp8ykWEkGWn9svqbPXBNJUxj3dfK",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "11df45fae69d6ab445e87f787f1e90f3aca14d3c624ad0713f4e9938dc98bb10",
+      "service": "185.50.195.156:20003",
+      "pub_key_operator": "0e8d315e57e559d5239fb15cc3f2d167a57fad2a23c5d90f20e40798f6690b783e1c525cb1ecdbd1261e3938f3d805cb",
+      "voting_address": "yN3DoZ8QDedfPzR82MYivpyMZ1Waz4RYKq",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "422456a81d1601f5aab4494d935919058905ffe2dff342e8be1345f5e5b46c51",
+      "service": "155.138.239.217:19999",
+      "pub_key_operator": "14f9192c3986e589f919f428c43770c3eca5c4ff3722d967d8f0d4b69ec3ec02fd876737fb06880a54566f5639389972",
+      "voting_address": "yRvp52x7q6c1aqn4C3FDDToASaSVnhPDfy",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b2d240e9669e8a31a13bd3d51087f2b52c8f7b5e0561f9a595c64cc454e268b1",
+      "service": "34.240.43.8:26046",
+      "pub_key_operator": "0e2f9d4a400a2a6995fcbcc5e5d651575518a2f92aaec556b0a0fe8699133ba527dee3e1a17a5576027a5378cbb96649",
+      "voting_address": "yMNRfb43JomUWWCRLmPraBYUTfqEyjwvqT",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "d2467a06e67cfe57ce8723f565c296f97abb663380ce87bb8d5e72989e3301d1",
+      "service": "104.238.156.109:19999",
+      "pub_key_operator": "145a212f37b991a6c050cfaaad7e83f1347486984174e8f446e59fa6c225691ea679f70613d829f536bb1a311d812cb8",
+      "voting_address": "yUqFFFHVwuMW51u1VAwmWynhk7ABP3P1nj",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "a690051e69de6e36eeba664bff34e017f973d27ce91c1f2247120e8ce586b1f1",
+      "service": "149.248.55.77:19999",
+      "pub_key_operator": "8b165f653a3970a17f432f6c3abb8b681c71a3775f998fff322341d2994767c167c8a43b1b4661b9c01ef637763d4d81",
+      "voting_address": "yTMbtGvG722zFbkpAnBrQvJ8WXH2g2kosL",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7ad29bc543761bfa9ee6a8be1f32bf5bbbc4f979d036676835b4717f8abb9211",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yPSonWf7LPBGKtJf1VJ2PEG8n6ekmpZomU",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "5fb5d9a4d16ead76d127e6829423c9e3d12f4d3c49f7ef6b3387886f3244ca71",
+      "service": "34.240.43.8:26090",
+      "pub_key_operator": "032dc187d6097df361f4d0ea7825d02e1bf38636c4883156d08032d0afc010c737bbc6eb59977774a2691681c77c97e2",
+      "voting_address": "yfBpEhxNCDwropPqkytUtexb3L21tnVoau",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "11eabc1e72394af02bbe86815975d054816fe69006fdc64c6d7a06b585e5c311",
+      "service": "95.183.53.17:10004",
+      "pub_key_operator": "14926e7ba179612df5cb1cc4ebbe311cfa9679e41f14ed7b35d12cc33d419073f013bf751be85f2b50e28910df332463",
+      "voting_address": "yT2owpXECuYHnZ8HuHuHWD9anynSQrfcDL",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c36584a1242574644c1a1620703c55200cc0158de276dc388ffa9815ec328c31",
+      "service": "35.163.226.32:19999",
+      "pub_key_operator": "08b4c1a8b9c1402ea84afe7c47f7e98d657df873b9747a0e4a497120ec62c81f314ad91a6f3384648e7e60f2734554f7",
+      "voting_address": "yidavU3B2BUNzaUv3gW6nmV4ojLNwPeazt",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "dd64a93eed7d3bec470466e8bcd0f107c8137ff7342d878dd04c0d6427ff9c31",
+      "service": "54.194.151.206:26053",
+      "pub_key_operator": "8a8f81687d1e01de856cddda83db3b3f9adb0a269583ed1a32bd7979c61fa1662f4e66821b28f406e3f1ba4e4a4ee0a0",
+      "voting_address": "yRy9wiGXJK9RH9foyjsSTaVPZRyfuzrQVC",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "72a6a2a5c2fb260fe3d41913ae019feb1d2489867e85f57cd1fa994bbe3458f1",
+      "service": "95.183.51.146:19999",
+      "pub_key_operator": "987d8b49e8aca918aead0d50b28fd0f61ed166f28b6365acef6a9aaee144a692f5b3cce00a40719917a042d16d1849b8",
+      "voting_address": "yMr6eatVutuPXxqBM5c2N8F2r1GKcfoe17",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "3aa33cbad1659ba0bdf6530b5ba543592e2f30c5a35cd89fac77604317cff0f1",
+      "service": "116.203.200.139:19999",
+      "pub_key_operator": "8130957c5939cc5aa59a9d7ebb88a03c8e60175230f87927f9485d452f6c844454148d8efdeb9e3216600b7f6645ecb8",
+      "voting_address": "yhFqQoH3mPX4vEcP7rqUPFMxxaJ6qiR5i6",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "8bf18698fd403d18f976fc5f89d79db263fb354a63781a512e2d48faa17190f1",
+      "service": "23.240.232.195:19999",
+      "pub_key_operator": "8041404bfd1cd4b71416116af92b7a17f42c47bf3dbc2294369fe1691eccb9ba851183a0e85a4fd728c946a582d006a7",
+      "voting_address": "yLm93fnYyxrBWupEhctkeU1zgvs5zU8ZTV",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "87fb91d219ad0ad8f972f6f6e2b434bcd34d375dc23679b4f3800863140790f1",
+      "service": "54.194.151.206:26085",
+      "pub_key_operator": "8f0b832b114fd402c7f49b6d7c590ee0744df4544d2fc6f4479af01792f761d275611a4ba0b770ffd2bd7e32d353a5c4",
+      "voting_address": "yf9BsxRrHDQFAVSSzfjMhnPLBmprpeaS7d",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "4e1769c46b15671930aa28aac75993a266e9592083c7a0090d8bc4dec9809d11",
+      "service": "54.194.151.206:26007",
+      "pub_key_operator": "0e18aee6d97e6a4f316265b770c8901d7eafd89e0acf1ae85a4e19d410c9fcad60389915deef181e804cc6b5c269c228",
+      "voting_address": "yWLxxC1khfy839GzwoVcgR8FrFho9hhANN",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f175c7de73165d9fd47d4e2c038d68ef6a4e509937bf05400e87aa00f565b511",
+      "service": "34.240.43.8:26079",
+      "pub_key_operator": "1866424b4f2d994d0ba5cc693a502446f923a174ae5553cd0c00236c5b0247f0bbddedefa7a303af064185ca44b26806",
+      "voting_address": "yRCXnJ2BnRGLXQBSUXMn9u9yEq476raNyQ",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "9212f5312730c7881b882b9fb7864dc686fa5a585b7a93253ccf1ce87ee59331",
+      "service": "100.24.239.64:19999",
+      "pub_key_operator": "1931bdfa94f15b64ed9d09d210db9998dfa068332fee19d8e1ba4872c0acc3efc723e2fd04a64ef2da473caa4471c69e",
+      "voting_address": "yZyqhSGtwMBxWh4how7UwWBmyXii1CrCKD",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c32e9e14c81665699b121e886146c2fa4b3b933ff3b71a534755a3431634af31",
+      "service": "95.183.53.17:10002",
+      "pub_key_operator": "09f87f98c0ad49811131a31e94d875bb6c88f64226727a508094ea8e5f25f8f6cba8d2fb27f0f7e662233c565c1cf114",
+      "voting_address": "yhmDRodXKq7kHLokEdCYfnGYvuuiBL9rGc",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "fe480695451d3b256cadfcce5796555d03ed0e023b00cb543003652391b94052",
+      "service": "185.62.150.195:19999",
+      "pub_key_operator": "926fe5fb0d2c6685a10d9cbbdfd6529baa54f808903efbb9336bd01e3e576d831a225cd2031cfa9448fd9c130bb68c25",
+      "voting_address": "ygnM34NrSQKX4XGiim2K2i3Npckm68LQ2d",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b8fb421ad179d37d016672fb87f41dc17858897a3559d8670571486a0c701d32",
+      "service": "51.68.175.79:29999",
+      "pub_key_operator": "10726246bf4c72608bf9ea74b191abfbcc2d2fcde41e05efb6fc747acfba02251c8bb8117841c860559011c09ae23921",
+      "voting_address": "yPN2DpMQ5Mcvdz9nm94ArCdWm1qK9zf1W7",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "cbd2cf7555b23d719bfe1346bbb29f893ff8fc90bd5ded2950c8ad89b8c48d72",
+      "service": "54.194.151.206:26001",
+      "pub_key_operator": "078d81aa6da6215eed09f2c9830668ce263bfa3e863cafebd256ba3947291c50c5eeb03729cb4ce0552922fba197b5cc",
+      "voting_address": "yVXn5rcyTLYaXrka6aRYHcqNv6yZmrV4y2",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "89a6dc42063e4a792ec225db64dd9426742a5d1738e8821625d2ab920a6187b2",
+      "service": "173.61.30.231:19011",
+      "pub_key_operator": "07ffa44583c9908f4aaca8dd97990c56043e475723f90940ef5fd7d493152540f25f58fb8c965ee5e1be4f850a661476",
+      "voting_address": "ydyWnUXrJAUEW3sr56yX8zvpV7xPWexMf7",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f2382c75e2009f5ce32df63933aa700a05239dde4f2df94a40ba2234b8e777f2",
+      "service": "52.42.213.147:19999",
+      "pub_key_operator": "16d49c42cf506d5687c4035fc8ea37c2bc293761412b8c28a73f674df9d3983581f53a8eeb7f1c7b6382bb0485df3814",
+      "voting_address": "yeARCinqiurM9oni3VQ2Grm3Z6tXYxfKAR",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "fac81f18b3a968f5f881324d8eb38983f3f892c4999c2f46809c4de620b784d2",
+      "service": "178.62.203.249:19999",
+      "pub_key_operator": "905caab51ff07a2f8d69972fd6ec09f6f9893cf6dfc49775f5a2db2ea7a8a525bbaf4e7e369d06590f6f2e8e4658d4dc",
+      "voting_address": "yN5GKRn9zTKgaVTo1uJxihub6sbD6bFMG6",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f620edd6e3eec8afbd13959e52b38474a5268520b033d9c618d2fbf69caf84d2",
+      "service": "34.240.43.8:26048",
+      "pub_key_operator": "90c5efbc90b1257da43f9388d6e2bd386ed0e3317729ba94c27c98cee11efb15566c9fc7da288c7233478b5b5c82ffc5",
+      "voting_address": "yhXpBVesXNiez6ZHUJyuz5pMr6HeG81VDd",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e6595f88f935fef934a6d51dc0a1fd43e65de1adfacc2c99851a69d80cd26493",
+      "service": "54.194.151.206:26072",
+      "pub_key_operator": "8f72e69ac2373a62f14b7b1d99fb24eafdc87b74247af42a591aef0989c9a3e152197736dbc266b2535c4b4b53d8ec4a",
+      "voting_address": "yenp91Y6Xce31AFTELJHiG1kSxZRL4xLVZ",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e6986bb24b729ab531ba778bc7292a0a8abbf66b5996f45ca6a1dcbd5e46e0b3",
+      "service": "173.61.30.231:19021",
+      "pub_key_operator": "88afefbabbc35d16594697bdde87717229aa8946dc781baec59e9ece3855ee31ddad469386b23a7e61805785ec827f50",
+      "voting_address": "ySBU7oXuuTSJqtmUArMRFsKefJPtEDkESG",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "93ae9471fd9d4b487c487de920d73c595d388e136c52f576298c7fab7a6f5933",
+      "service": "54.194.151.206:26076",
+      "pub_key_operator": "16a4c1768bcd40a254b1097ecc93f24149f96fc0e291927dfa446e3fcf90c54850b2e773ff8e03b6928b99621b689d8b",
+      "voting_address": "yjTJxd9XCzxc2CW5RjJPCY59W2uhexe9qH",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "2356f75f3f35322a81e5b8a37bf6ec59388408f8faa6468075ee5f4026ee0f93",
+      "service": "35.172.52.88:19999",
+      "pub_key_operator": "05d35fb7ea96c707d0bb6a9185f575596285d3578af73d43d2940e6ba7a39a60ad5d3a6f5df16449e4f5ba1cbd8306f6",
+      "voting_address": "yh4FmWKA6KyT3aX4KtNx8EQFshQdXjKMTY",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b09c47d39537078986e4639420ce87b32039b17d80ff4eb88238c27fcfa1abd3",
+      "service": "35.169.113.136:19999",
+      "pub_key_operator": "1848a0024f4a1b85e18552105a7d397714bb9d16a392a29b5d6d18bba91fc880a6b20be09f1400dfe58de3ea87f919ba",
+      "voting_address": "ygREfRit6M5PtGzU4J12CnupR47KAD9XZs",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0ae71d42a6b2956f22a11d20e12dbe309a20fec575aa6023b983fe1b8976ac53",
+      "service": "13.59.231.197:10005",
+      "pub_key_operator": "1438959163472114ebd0f4e72e984527894a871063cefbc8cc492593a7afbf4214538c0618ff8477590f40a3b2155aee",
+      "voting_address": "ycRxtkXT6qtMv3yZfWeauhKFW6Fj3tYwRo",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "5d40e68f65e7263d91e114b644ff7f8c9c376db63550d5ef9bc4228870c4f053",
+      "service": "173.61.30.231:19002",
+      "pub_key_operator": "98b26368c5f73198500cae0d7e1108833489e7f8bc5d7fa507014fdd0ad2b6a082012883a8acdbcf688423419bff7e24",
+      "voting_address": "yecoEzHhCDtFmqFx6UTbAk8kTWZDGxmXBb",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "8b79f76bfc55f978fbc011757b32050209116f5046b73fe111f07491a403ec54",
+      "service": "54.194.151.206:26041",
+      "pub_key_operator": "0c13e65f580d9784f3e11210b6f32253d1528610e945a4f36995033957aa99a7e43ddc0859b819ee2150f6cf0178eebd",
+      "voting_address": "yWwTse3VniDujMUAFx3qQAnrHz7toYg3Tp",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e60bbbf832ad14b0635ff4a9e0a21d1f1567fa435e92ca754399088afb20e154",
+      "service": "34.240.43.8:26040",
+      "pub_key_operator": "1235b2d950a3938a352c6649f8049e80a38f7123ae63829eb255896447e04ca57fb8f1b73fe2cbfece02b7cd98bad4f1",
+      "voting_address": "yZvXiPjfdCnQN6hGFdpfoqeyc1hY6aESdt",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c4090fa171f9ffd59c8a808a34eba9b9b5e94ca179bb7c71a0e44f565f076194",
+      "service": "54.194.151.206:26033",
+      "pub_key_operator": "09829901b1670826d6bf9746c0ae974b05a1ac4e7efc0388c21d261858b3f31516ee394aa1c2cb3d25a8e2aab44fde3f",
+      "voting_address": "yU9dgM8W39QehqCYbMgh5x4NoJ1a9hq37y",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0b73d89eea3f90572ccdb26585f3ac32b70e3b4ab0784966e35df736ac6d0214",
+      "service": "54.194.151.206:26067",
+      "pub_key_operator": "10b58493e7596034ede84fc3b769327e7be3334d4339bcf3b64481309fb2d58341430f7ea121aa7e581f062957081bd3",
+      "voting_address": "ygZ3PxTS3mwbqh3NBtegp9EuNzbkhsaYVr",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f7e9a302a452ba42559ea3a9193737aa18884ea7137b9dfe4ee89242cb80e2f4",
+      "service": "54.194.151.206:26011",
+      "pub_key_operator": "0f6baddad80e0985cdb3a583270424b87ed71b499c0ef0ed6c030f61ba829361e66f47f485e2af1934e21ca60362f875",
+      "voting_address": "ycggDjAUdgdf7FTsrRLvypzPEc9tZCziqx",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "14f2f481ca295a5bdb3e3d7f50ff87f205230609c53989da809420b874a17f34",
+      "service": "159.89.137.143:19999",
+      "pub_key_operator": "0871c91beabf5c3b98cdb1009763d03f62550e676d20b54c3fde7e50ba97e54b1cd7bf83909932697fba7627a8e583e5",
+      "voting_address": "yb9p11CpZCzVi8LwDQUuunR4xRy6E5iGmj",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "393936246926976b4135b6dca4295f45dcf95c875422b70be451f2d51293c7d4",
+      "service": "95.179.164.87:19999",
+      "pub_key_operator": "847383710ac1786f020769809abad8f93018338eb855c103f5239d75dc2767770eb45709c895c99c0c86d375ddbe478d",
+      "voting_address": "yhYKgmkhdxvZcaiLh2FhwX2gFxEihP4jub",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f5d2276a70a9a4c7f0e9de32e533ce15602ae1ba3d60d3f6eb67e52c7c488074",
+      "service": "95.183.51.146:59999",
+      "pub_key_operator": "95d5badff945693fd24158932b41e311e6fb3cca1e1e551eeed72cddba2e3b04abe86547a265fb7ee958875f9c33134d",
+      "voting_address": "ycanojRxMxeW3R9kVN9Tck4NGsSNusrQBo",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "385499428f83b0ef164b8b21d631301aa67a4338f6861ec9f8de8d54cf8d5074",
+      "service": "34.240.43.8:26068",
+      "pub_key_operator": "927ee1530d566bf541d2cd52d0ff60520ca6bdf27af0dfc783692e613d2281e5014f70a4927d6c0f550e04da03186205",
+      "voting_address": "ybpRp5oYYrYzYDzTMxyQj5HxoCVnh9rKMZ",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f773def21e01af33f508b4e978631b99405fd1ad3947984d3bbca5b41b221175",
+      "service": "35.185.202.219:19999",
+      "pub_key_operator": "04f1a3407bf953809815243d539d316d2b055a57ff6c5412f31d98f0d5ea84f54511fa9f02ddd6d7f8751505c560eaec",
+      "voting_address": "yYuTtXsaTD69dyxtVLVCYw4LExXn2ma753",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "fa3b3b0d3522becb02ddd15dd075f3d6ecc6a5a50b43c6c9f6d4703a9a8509d5",
+      "service": "173.61.30.231:19010",
+      "pub_key_operator": "89e308c9d2d8a3cb35f9d7bb7220b1eca82c952b82111119670dacae18a509628c775287e4e796128cd6379b80dffd7d",
+      "voting_address": "yZC4fLDV1enraYJeXbPGskMfgHVSAADPyg",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "5dbd3e1adcef3a9e61ea1c8d0d3bed643ab3a36872ad78905b009cd6dbde6df5",
+      "service": "34.240.43.8:26023",
+      "pub_key_operator": "119d599048331efb5bd38ea0506ac51765eaddf396114dcf14fbbbab70b7a929c9227f8ec980851ad79f502d2fd1750a",
+      "voting_address": "yfLiU6Y2xZoRro6PzyGBfQgZyt7pYik7vs",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "76cdee4c76afa2b79041284fcdb4f7b1f55279c00cd538bf49515728ee052ed5",
+      "service": "34.240.43.8:26013",
+      "pub_key_operator": "8686945cd3325cf5ce0903782d5135128baf2417dfa1c2d0926994df657c0e4772d567b5bcdfe9c413a773afebdc17e6",
+      "voting_address": "yfRgjjeuqmd41WffqfYT2sizjxSM1B8Y8R",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f443dd87ec7981e8630ae957f295d9d226d4bd3895f59dbd80b30137a92b3735",
+      "service": "95.183.53.17:10008",
+      "pub_key_operator": "9809c680a8b7852279f00438526b2d940e65a0e746725adf2bf00ffc054ad2601b9011cf1edbd391426afd1b204d696f",
+      "voting_address": "yWtU7dWwTo6G5DTZxY1rorAbNjoycYARnT",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f94177aabacd11c12c92b1d5ec28b8ee9f1c07b220ab783cbf8a1a21cf6a5f55",
+      "service": "157.230.247.219:19999",
+      "pub_key_operator": "9993c900fc49b020d4050981a45281cc71274196c57c9405f7ea8d82823b2cb36c04a2aa363111d74e383bdf9fdfe254",
+      "voting_address": "yRGqkX9VanksXQCtGNAyx7e4RrBGiij8Lh",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "486b68e49ba8508a5b9a725a885a51f01c23320abe9f45c9c8d5c3521b2e2bf5",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yPLT4e6L5wVMhG1egoJ3W9MyYYccSdvqdA",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "541b6f00e629e52310a87f88a2cfc31529ea3eac3b4c357eea5894ee3b8a9775",
+      "service": "34.240.43.8:26095",
+      "pub_key_operator": "0bbb5f1771615f2dad2b3bace289c25a6491d321b8e5feb58aeb0c5e0c55bc4e15fae818ab71aa9e88875b2edc4d4ff5",
+      "voting_address": "yU3ZwoVKgGmUC81pkdscZJLLfNDTbZhBNT",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0e920042fd29aed13e2b60bdc2a254c00f2ba4a7be7f2d1a9cfc52fb4569a775",
+      "service": "185.50.195.156:20005",
+      "pub_key_operator": "8325cd0990a4f3fe11ac2d3ca245773a01424ff2a2f23456ba3fdc57964f605ccc08e32978e4d5679f6ab730de75ad43",
+      "voting_address": "yLdyqrzbq2BVdbDNuv2mKHUN6w1MUCGH8V",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "63115def57591ee9abad23b796cff8cf63b7c1e9878ab77ce8e354c388035016",
+      "service": "45.77.176.16:20000",
+      "pub_key_operator": "02ede7bba4f6330aa85b22f2d20167cb529ac1334125ec439f873c0cd7d54e7c07b65bca725799f8292564af4296f060",
+      "voting_address": "yXRUcK8Xqhygg8wWjhvB29q1t43t32Ksni",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "ced895c3027330288a0081b29f6a180230c25380fb57b4ec019159e12c369836",
+      "service": "34.240.43.8:26064",
+      "pub_key_operator": "92a27c1c66e4614049109b43a26dcf486748a7e1f558d269663c39524314147319e07b504b244d013c1233c2b62378e3",
+      "voting_address": "ydGa6gSBRdNosRWTGBkWcx8ZMYzL7ujrED",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "71d1eee72379edada11d464bcee475b37371e4d907db5848c3f50e0bed00a456",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yUVi8VFcoYZXqnDuRHQtgrn3mtei4owTVJ",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "27a6ff2f188c6190d44b657f54bd831f57228f918cbb7fd6026f5cf5c443d496",
+      "service": "173.61.30.231:19003",
+      "pub_key_operator": "110bdff9037c3e3926082ff9e9e9de9cd0a0dd416ac6d60a61781f1b3832a4bd068e92343be400fc31db6eb4404d0701",
+      "voting_address": "yjW7bQrKBsMV8Wh19LgT8Z1uLkWY8P2EBd",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b5706630cf1c631b5f95edf39d0fa1fcdaba9d34459b0b392e3f28eb59ae90f6",
+      "service": "157.230.19.127:19999",
+      "pub_key_operator": "874b17058e37c39f770188dfe8e699959654d723e62e28b2760900e5284f63f6b70e077a6ea9803714bdf62d083b1d9e",
+      "voting_address": "yfQM6j2bPK9oPJQjkCT9yYPn3cq7SzmXM8",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "46dbd118b9d9b138a5be20446ae3448e8c41acc8c28411848fc85f563090b196",
+      "service": "165.22.233.59:19999",
+      "pub_key_operator": "97adf3867ae5155b18345e44e277ab26b9a497c7d0cf9b53bdc42362dff3642c922d1d10e277ce6bd407f48bfabac68b",
+      "voting_address": "yh5bCo62e45TxCx2AQSaCewMzTvT9H5txe",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0cb486a3f478e2baccb3bc755f87b241e9ffe05dd693ba92e4777dd2175b5a16",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yWiEmf2vwG1yD6xUf4T2XZ5P1wBwYLWNxc",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "16dbc9ed051c6cb601af553affc6d3bd9de229e4f56ee936ea5ef3a0cd5612b6",
+      "service": "34.240.43.8:26051",
+      "pub_key_operator": "1515e397da32f0d63f0730bf751fb1ce4a2cfb57d3a26bfd547033c0e502ed86c29985bd42b110bd9cf0010b664a6654",
+      "voting_address": "ySycDAguLUCTGPjBy9UaJ3KWP4SYnCf5YP",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "87d21608895b8148fdb2c846d5401158720c3721dc07c4fa0981f2bb25ae52d6",
+      "service": "68.183.165.54:10004",
+      "pub_key_operator": "974b7b4e608007f22ece8fb933fc18d66cf35cc0e5a7977279a092976b501786d4ab9108c7fda681e23978bf54b7709a",
+      "voting_address": "ySJCghqoc9muzubw6XDa7pzgC2xXQr8upz",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "37f38ca1a8881828a70ee052493565882a551a48e413afb57861356b925c0356",
+      "service": "149.28.127.8:21999",
+      "pub_key_operator": "838e54677f3393ed4378377ad723cc8ac15b54b1441ef5edf5f97d4fff3ebe15bbacece2aba8103de48e2b5e16ac850c",
+      "voting_address": "yfBLbt3xc32CjmArrhEVxtWadc7BTQ7mYh",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "36c99a74a4cfec77b2a7438558a8ec53ee09c11833597c1b601c5b00c93e37d6",
+      "service": "35.175.62.106:19999",
+      "pub_key_operator": "8f2caf4cf1e01130aa6bcf27784bb36a2b4daea4ada3be553c9b709afcc752d0f34a0c35e3301e8f6a2fb3ca44656be2",
+      "voting_address": "yWzHk3cgMS6f7Hjh7wwRRoTk7wKuL8jPsU",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c7a1e0341bb079e2402eb8955b720c93cf90ce65cdf20856220cd52bb7478116",
+      "service": "95.183.53.17:10011",
+      "pub_key_operator": "802913fa3cc02a35fb8e1b26b644f8a2395078818f9bb3be8ad08fc8cb175f16c43e2b0aa2fc12a7f8dda3914946f702",
+      "voting_address": "yf7n6338bCMiQXm1gfCSkQM9qLRajEvB9K",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "ebcac87f687f834ac9f17c408bec456a36345ca276cd7f9d699d7518efd06d16",
+      "service": "54.194.151.206:26059",
+      "pub_key_operator": "8f97da757051c9d15ae50df6cb0471ca3756e2ae527d823d1033670f2f1b3423026b8e130a4416ee1c11cdc0adbb9b75",
+      "voting_address": "yMoq4Lp6x8v6YA5amQhSr1S27wpoh5GPBf",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "fcc330b0afdf27d07997b93277a3942e28f7cf4fd043b7ee64b6b5c16173c936",
+      "service": "3.129.25.142:19999",
+      "pub_key_operator": "89aaf743d70a26ecd18aae71d8e2ff0bfc98a51511f83c8acda856e3f5d7c61c21ff4e19a56f02ecfb6ee014097945e3",
+      "voting_address": "yWiEmf2vwG1yD6xUf4T2XZ5P1wBwYLWNxc",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "8d4d1bfc7e6667a370e072079dc70b3e3268f71a32a54371487339429aa47536",
+      "service": "45.63.104.104:19999",
+      "pub_key_operator": "05e588704a6f6d703617081d8328c006b1173d60aa26cfe44b954f1279a1ba9a042bddc5b3a00cbc8180676d12060d62",
+      "voting_address": "yUG1j9KMztBz5JkL9P1R5nxwqPfvZXPLwz",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "aea2c0ad3c65b374731f81c1c3b9d08ada064798f788cd8346315eab076f6057",
+      "service": "116.203.87.12:19999",
+      "pub_key_operator": "95234e6e7d476318b4811f1daaa7e887fad24b1499b3472a3a7decdd88e8bdd14551b7b67b22ab896adb298600aee96f",
+      "voting_address": "yb37kTs4ct6JPCYVfWwviJGLoZ3dUepLR7",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "77788d49e5e03f7611805181678d1041bbfaa37c887d798a04d37d49ff9a45b7",
+      "service": "54.194.151.206:26055",
+      "pub_key_operator": "87e5f16add346cca4d02770f67168e486e980e89c30e44d5eeb7ed709edebee947c02769862b4065a99aeccff77689c2",
+      "voting_address": "yLej5wqGYCFPmJRnBJbETkkCEmkxb1NtrB",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "accec7a4773ff470c1f3d592f35b0a2a0ff9ed77b0559351ab0481a67a77f657",
+      "service": "34.240.43.8:26035",
+      "pub_key_operator": "088407dfe6ec87795ea9386ac3f52ff183ca41e8c05b95af0b0f763d413445870022850dd7b59735b59fbbdda099d6d9",
+      "voting_address": "yMj6vmtc87ph5Q7Ljwiozs2rnuGZHerGSo",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "371e682d3b93d8459db0e58d1e260bed60fea4e5edff230e83a61cc37253b677",
+      "service": "54.194.151.206:26065",
+      "pub_key_operator": "99ea7b2960131f06fe48e47d02ce4dfa85c088e457c754ffdb4fec897879dfa8c0fb9210b45bb31e3310186026b2dd0d",
+      "voting_address": "yQDmDDSD6awsUvMLiopgQPYJBV9dEAcgfw",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0c807e5e4c96d56008c2e3de266027c7232d070710868e6751c2ff907a4dba97",
+      "service": "107.150.121.217:19999",
+      "pub_key_operator": "088f0bea4590c29e0a8657faea9d5f2e0f79cbe8f1cae3cf9111e84ecace1443ed8dfe136c539019684d9511d1bba807",
+      "voting_address": "yMbGA7fswtM2gchMvRFHSPG9agNeZkAqmV",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "4f4cdd55a71a68183cd6ceb8da6e95c9526e259ce0d243e297ecbeaae0f93ef7",
+      "service": "178.62.93.226:19999",
+      "pub_key_operator": "93a5eb4a6fb84c13bba4d597a6f9d37f565048a384c94d3b81630c6965a023eb3748b6fed0ebc224f051eb23f50d9ff3",
+      "voting_address": "ygp36RFYTnVHY2xRTeFqcNkHPKXMvRDQEB",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c865b48a09801c61dce5804f28fe994c72577254ea1859cf1c37fe92b428e757",
+      "service": "54.194.151.206:26009",
+      "pub_key_operator": "0a3f1d06fbd8e7664a628c679296f29d20b1907719a487148d856374b3ec4903e47a1a65295188981e46d0978bd24378",
+      "voting_address": "yhJ1ewzV64KUYWbkVFjidDa5do5QqVEa8N",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7504ff244e65de04c91640380c0c996f1f5b09073a8eb387ceba1a3c1ba18ff7",
+      "service": "173.61.30.231:19004",
+      "pub_key_operator": "1249d9527e8ccf8d237e828500cf7f8946963d45264460586ffd8fb1b76e16a541c54695089fbcf4b1b8e1ec79e93a70",
+      "voting_address": "yYaSqRGYcWdkv2UCBAE4W4wV4rTFTmwz7p",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "d1ce9c61c04501fdade45632d83ba14b76b8cd89de369e7ba9594731e21a8c97",
+      "service": "68.183.196.93:19999",
+      "pub_key_operator": "0c49037992160cb8d7f6ad7e13d778fbbfb5d10230b456bb3aca1c044e79fb15c3b1fcef7efac59899eccbd190bdc40e",
+      "voting_address": "yPTkskWwjg7UkXdUregmfbNnPkTCfNRNaa",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "76476a2678d5c1e9ea4951cdd00babd50f6c53f91427ba8dc8fe49f5dc1f5c97",
+      "service": "52.220.61.88:19999",
+      "pub_key_operator": "10142d44041c90621d111283fe46fd8b2450d4b9bebad194290fce09ba080679c748b1ba70e3959623f127af0d2bc9c4",
+      "voting_address": "yWLN8dwGS8SxndBEW7Hwvn2yAD7hULTojP",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "a1e5ad1ad55d663a413b69bf9c879fc2b0c78219ea8d44f3f4f4e3943dd1e897",
+      "service": "54.194.151.206:26070",
+      "pub_key_operator": "99f59fdb3a093e6254637c97056489f438e696f3a229e0fa041cd624cf0e21ff7e89bea17ab07b8d48618a9df7c05266",
+      "voting_address": "yQpZRkoz1K8VeAQGxVJ5vHN3vSQWG7gxkC",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "4d13a8912d3119f1a9eea95d70a546bc449307af3521dd532c0ecb1ee5a494d7",
+      "service": "54.200.200.228:19999",
+      "pub_key_operator": "09ca23af93ce00a95bfefe790ffca791e093a8c0e79675b103b2a4d06f930433b3f6b15c83f4e2c4b5118fe0c27ca13a",
+      "voting_address": "yhVunEPt1uPX6Xg7CmDH3nuUe9fXfK2QUK",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c24aea30305d539887223fd923df775644b1d86db0aac8c654026e823b549cd7",
+      "service": "95.183.53.17:10001",
+      "pub_key_operator": "845e9bf2879d98ece4aa8b78ca074e32f968bd93bac973a1abafd61f900b70e7178b6352d830d0fecc2653d0f04a9151",
+      "voting_address": "yYrZkUYznVBbTsRPZ6yvaisT7Vv6EthwKM",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "904132db5c8718123233252283268bd908f1585a7a8db92f997c03694914f0d7",
+      "service": "34.240.43.8:26081",
+      "pub_key_operator": "962c65927aa1616e3783ae7cdf8c3d19b4c26b477686a9f146cd9ae40eb7c0e01a1580d5df8c32d1f4c43a52f62ff5e0",
+      "voting_address": "yWSEqnFncdvieSWzt35uqG5DzdyajRphXd",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "71e6b3fc43cbb7a04eac2799d8f98f76f3b0ac867a8b8c82caf876cd0737ac98",
+      "service": "34.240.43.8:26097",
+      "pub_key_operator": "975c482384c7bd4cfd5930fabac11646121d420e31883673dfb6e6e3bfa273da73a2a91b4b69cc108eff9619fdbb4cf4",
+      "voting_address": "yM6TrvNTXVFPqyR4DWi1kHkoviVbVukWZt",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "d01146e83d8037c01eef6e790d0ae86459f9457663463019e02ab1cd26eff938",
+      "service": "54.194.151.206:26091",
+      "pub_key_operator": "11a2bc871712d5b4eba48e75525b5b4067288773c26e2cddec1bd90b0ede995a5da66c0c4d8310e8b7c16b61c7e7f260",
+      "voting_address": "yNKjayHNuEJtGufWrduPS191d4eT14rARP",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f487b2b02c554816bb44cfc35fed083951ff94a3ecb5ccacb578986615cbfdd8",
+      "service": "173.61.30.231:19007",
+      "pub_key_operator": "07f818e5c2330ac4e7f0ef820f337addf8ab28b07c9d451304d807feda1d764c7074bccbbd941284b0d0276a96cf5e7f",
+      "voting_address": "ySXL8BpEMVjFR6sNEbR1LGPuHfCbaWYmBJ",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "84d181ca2e1afd3fb416c71f62c2f5370a1e7f54c3400faadde30563e62f7318",
+      "service": "142.93.40.79:19999",
+      "pub_key_operator": "05b69b964d581a7659f5fcf2cf4a50a75e9cacccebc4e18d27364225eb3f9886de5472cfffbf9cf029f81b49037e27a2",
+      "voting_address": "ybMGwdeScTbxL28qxKAsxknzB27nrrFfVm",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b149c50e97a1411b76b2e26ca20b9a6a317d0afe19df2b78b967f0b94aef1f38",
+      "service": "52.35.83.81:19999",
+      "pub_key_operator": "8f60f80538f335ba0f9f5452f02d7f5527652671da80c3d1c10e31e040f9b901a53b476a9ce02b507958bc8a65acd7b0",
+      "voting_address": "yQE4NXok7VTyPaBjNhKHefxsGLwYJaTgTn",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "6fc2e949a1bb5bff22ac494c3434d2db20a61bc91c9f8a3e57048292abd33f78",
+      "service": "194.16.2.5:1998",
+      "pub_key_operator": "032bfab78f78c968f4a1e7fb87d9b3bd75dd2a49e18b7592e4274322660c27f213b898442eb41f5db42291a2172508b6",
+      "voting_address": "yecMRvQ7g8yfUzvnmrCF14hTn3xG5Df7iv",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "54ba308edee77a4dec9f9cf4c589144cb49b44e7b475816fa8e3617aa9573f98",
+      "service": "54.194.151.206:26082",
+      "pub_key_operator": "143f4a617b40aba6192800c4022f132a7cc805142ddc731d3832b8f44001e5c88e56e536f825f97ea5998941ceb6f87d",
+      "voting_address": "yV3chHipkovWZPvsQMgt6WRah3KAZf3T9E",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c81c26dda720ccca323cca9a675257c9ea50c4aaf40cb1a4c2e931435f160fb8",
+      "service": "54.190.173.23:19999",
+      "pub_key_operator": "10d9901c0aa8f9b3e789a1413e731ff07b9b58d4f53925f53a1502f00e6ccf056dc86ffa5595a1ca5c02cbdfb38b1cb8",
+      "voting_address": "yhJ1GR5xSeL4NDdq1genQYczFeUuCh5apG",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "2c2e638a830ed2844997569b6173632d5bc28f3c9d96402e73374248d5420ff8",
+      "service": "54.194.151.206:26015",
+      "pub_key_operator": "18c08d1799441888955f7abd005e1e5cc91ee59e4359cb01232900537fc90bdb2dbc8123806d5cc5260bde93543ead69",
+      "voting_address": "yQNPLGqfp9VQf7QSqx2g7CR7g68ZsWJHA8",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "261d21be8fd7ac4883ba89d9f65ca5e2827cec249b81443f6ec02ef41c63f119",
+      "service": "35.161.101.35:19999",
+      "pub_key_operator": "8b10b741296213c9220adbc6f061c1e3f4ee3c3e692f003ac5a3dc56c4433066d3c9b8e8f1883f7fc928bd059cd78c49",
+      "voting_address": "yUC1HZyDczQ7MwqDjnEuvJh6cfJJB65qtf",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "500bde7398a2ef46b93994f34d3607875321076ee3ef975d5477c3d06b0c1659",
+      "service": "167.99.183.55:19999",
+      "pub_key_operator": "822967c827427a4ea722459a6a5d007c5a14e1da4b6fd52417914cdac7dfbc9233dd046cda0c2980d1936cfa8b229200",
+      "voting_address": "yR97bk92FrDQc87ohE5GkeF4uxnScVbvGN",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "5aa7b0778c53e048abacecf9e63558fea80ea270ffb13ed12cb71f9b5ea08739",
+      "service": "95.183.53.17:10003",
+      "pub_key_operator": "940c2271fbfbe83cd9dadaf03da32e840466cd4eb0e358749d5f22da2ca22610c6cdcb664b1c082b84cd4516d73ce5d5",
+      "voting_address": "yW9zeJrPv5yJf71qvNfyPrJg8Me9UdaDP3",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f2b2cda32fe9ab9a29ad463e878bc4061e3fd74bd30508c53a214333f8b58839",
+      "service": "34.209.211.134:19999",
+      "pub_key_operator": "195b44e1d553d160abfcf70b8ccfaf24480ad34fa7917fb87675f712f0795a23dd0107f5f3e39c07474697e95b15170d",
+      "voting_address": "ydKVa83W3hffWLKnRVggx1aBGxqefS317r",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "6721137dd75158b749d24db954a79809129fecb605cabe9d3303073c03e81439",
+      "service": "54.194.151.206:26077",
+      "pub_key_operator": "0a5f192c6a67f027d6a90a9eaf142bd4c44f08f9cbe9416622ad76663a5b76c60efabc7db4317cb8968e2e655c6f376f",
+      "voting_address": "yLpVwkPxiChGPa39ZQ6AxyKSeCTFyc6Evi",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "2d3394ece5ebfb9e2f369fae0c663b01b978f946dfa06fe938f2c292661c9499",
+      "service": "80.240.23.199:19999",
+      "pub_key_operator": "1260b9b40d6a39c14c5f52763ef6e98094a6d41ed35660ba24334c50b60cbf18a524aec8bd4d0203c3257e70e193fd30",
+      "voting_address": "yZ7fp3FCN7mkoFCYvSN1egT5NLbNWaHssc",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "41fb85bb67981f4e1fe41e0f7d520bf6df2167c9ced5e51fae33343f98d9cc99",
+      "service": "1.159.143.235:19999",
+      "pub_key_operator": "8e53b8ab39fcc259aa22b93d1ab4e333353e6d56b9bd4d194985a59e0de5060c1225588a256569848ea421725223711b",
+      "voting_address": "yM3P8YfvczXWotVeXW8xQawodtzLwjTEvH",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "869b6700423da629920dc2101ec88e894f450f66aa751879dce0468945e04179",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yLRHza4VBgV8LEBbyWqq7EEtZg9iPWr5YL",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "113f86cd2940e9638cf59e9e06e9a73aa132b73c78b8b39c28ae2544ab765979",
+      "service": "18.231.111.219:19999",
+      "pub_key_operator": "9273016bb92b9101798bdbaf656bb14f47120241ff9c76d2650da9e399edb4f7bde8238b260a3bd935609e15e2a7c479",
+      "voting_address": "yeoi2KgiCdkbqJXXm7yyRrg6pL1omfpB8Y",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "67491f0cb0874d179d8ece6f3ff25f721b2eb016ab5768bfabdc5e6ca614aaf9",
+      "service": "91.190.125.133:6667",
+      "pub_key_operator": "91e633b72726091f58e3bd1ede3a21de66abb2456c2f669be8bdcf76f3ab76aa2d75f7d03cf2f7d5761ab15e62e00613",
+      "voting_address": "ygbXcRv8sqYJ3DcEkyRwTmZuFaKwmHTTEo",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "8d2f4505922cb82f7ec601deeba318ca7ed2f47b89274792dc9001ab62112ef9",
+      "service": "95.183.53.17:10010",
+      "pub_key_operator": "8c01a1351c0f42892d6b68c106ba584f91dcc2869f384830c968688d09becfd0f7468e7ac7f02983724a6e95a887a148",
+      "voting_address": "yRsuGQ1q9Cw6PbYuHx9GdLV89e5qMXDYnM",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "2da32791d877b4dd542825055418cf7e70f08e6e32a6921f4164066a8d8bc359",
+      "service": "173.61.30.231:19019",
+      "pub_key_operator": "932f6fc90c9dcaacdf9d836a2a7e60d090fe5e55b0b02f5a4f608a4b8235ba5aa7abc4e05f9387d1d942adc57c87f5b7",
+      "voting_address": "yejV1vWQXEwYwH9gT9hXqAAg81opUvqe88",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "5a5b3a5da96d5ee8ec30e9cfe76cf0c407ef040836d2dcedd94c4315c9f07b59",
+      "service": "18.222.111.70:19999",
+      "pub_key_operator": "80f8dfef131ac329d428504e7cb89974f188f07caef0668df1daa4ca8fc5f50f6c5945f020271292dc220ce313c00f16",
+      "voting_address": "yiGZiy9oCfq4zNpAzNt9C8nB5XxefeoQCb",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "66392f74233df2c8ce7c022d8ff992b925f0a32852a28c8b95da560cb860b41a",
+      "service": "34.240.43.8:26084",
+      "pub_key_operator": "0bcc3cb60387ff0a646cfac70b5c727ac553e360e519f7598afc72e73bf4a63d48ec8a1651a715c3bf454bea0963b656",
+      "voting_address": "yUKdbDrdejZkD9QroRFGpM7GSXyd3so3qx",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "2ab9d8594ed6b96aad7e0d89e739e15f43540da076265f22f1f2be892b9af9ba",
+      "service": "58.218.60.42:20001",
+      "pub_key_operator": "04eda2a8c31489e17463ea27c0c39473afe2c9153641028de360eee8ce213d36a14ef8f8b4f85fb2cd70815a9c1f56db",
+      "voting_address": "yXKJuKaExdoc5r771Dwqp7Xfo6C6ojbUPQ",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "be32ec53dbbfb64e5ba29e25e3716f6f4024291914ce4c858cd69f0b4e371dda",
+      "service": "173.61.30.231:19025",
+      "pub_key_operator": "86ce02e551a46f1ca9a734104b4e387984d733ba99930eb677aae126fa142f201049842422ab2f105e3c9805f1bd54e8",
+      "voting_address": "ySBU7oXuuTSJqtmUArMRFsKefJPtEDkESG",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f8b10b1d14931a44c0e7b65d531db89b62d7789a09f0a88c7c07a48552fe9eba",
+      "service": "54.194.151.206:26020",
+      "pub_key_operator": "05ed065bdd0a7745aa1165e7a00f05e11108235d6cbb4cb7f1c751df8aa117707b686800c7c63f526c431659f2f2b5f2",
+      "voting_address": "yXvKDpQvD9WuMJRN9zirfcGEZTreLWynrT",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "db3158d303d9634fc0a4772452707e4f6154aabedcce40d60e7932137ca52efa",
+      "service": "34.240.43.8:26032",
+      "pub_key_operator": "989f584df6e5a359bc469a4975baccda2bc6a3fc3e89721c639f5567db7abef79f31ddeb4832b95418d49322419d3eb0",
+      "voting_address": "yiUhmN59P6ht4GdTFW1EjRaZiRRo1Tg4go",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "9c95baca0dd01e44752732b425cc57e0d40b8f926bb41c6e04d260900ce9433a",
+      "service": "34.240.43.8:26060",
+      "pub_key_operator": "11de7db9ca698de02848b9bbdae959be3ad4c1e5b3e12be8d2350a68d5d2213f9e0c88410c4ede8f9e0c0678f2e94c3d",
+      "voting_address": "yMCL9xz69ZfECrQsEHT5zCiTdHgEz7mKLg",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "4a0e85206a1359af84a75f4b210eadf62455bb18a5be99260f0ad97c5b307f7a",
+      "service": "195.201.37.255:19999",
+      "pub_key_operator": "870cbb1e25299c79046e99f6a47ab87ffcc97f92eddeb83e93e11b5c483268e781062243daa14a20ef1f2c78a4e5ffa8",
+      "voting_address": "yZvpoUTwyoF2pFyWDUjszNLtx2dKaMamQB",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "ab0d65e0f36ab63ed4c93a4bb25ceb2847f8b3796fd5a6b8b8fcf532c75f7bfa",
+      "service": "34.240.43.8:26004",
+      "pub_key_operator": "94f54a21c9348d0cd1ad3d14953b2b633b7a1b9035985da4d7c583babbaf214c1c602c96811fb2b66b821e3da63a7512",
+      "voting_address": "yhMEPxuRfdXoCJeECvhoMd7RAnSwWpe4cj",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "6d6eb7a108fef471947d245e9189e47284d9a720f95aab0127adb9bc6459557a",
+      "service": "95.217.26.135:18888",
+      "pub_key_operator": "955368e9fb5cce100a0ce6df64bcf624355222e19032cff0c80cbc75140173c2eb47863b189d2423b64af6544226bb50",
+      "voting_address": "yRU6YMBo8jyiQReCcBSwuuTzkyamchW1wc",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f02741ae9716d858719beb673e81353a94964043d170d83501f85fe3b3fbf17a",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "ybqnRicfu7NtYvTh8aMEhmg9CTHkGrti2Z",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "400c7f8990e6f8a3993b7d5900ea0b58e18bf86ba9b147bdefcd0df4cda1887b",
+      "service": "89.17.41.106:19999",
+      "pub_key_operator": "848bfbe1bf50debe1322e14c9115adb3b96e5b8a3ae96beb7e2161281d9e56c30e43478d6f39835e3533a1c54377258b",
+      "voting_address": "yWjnrJQzvgfVPPQJkRu4NUPue2CiKe8kSD",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "6fbe7935a362d6c08e5d10af09398ac4ebd2edcd1f5d657816c4f0982da6999b",
+      "service": "165.227.20.111:19999",
+      "pub_key_operator": "0dc936ac5a2e0e0e81a682afbf1d5a4b6c761d265c944b7065cde7c0009b103b6e163441eab78460b0aa6951477123a0",
+      "voting_address": "yMiN8ESAhQTm6uBd14vgxhM5c6Nu7AaBJ7",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e626083b8b4fc5007fdd06001a3e73cef8428da97177363be739cec0a9d17ddb",
+      "service": "54.194.151.206:26062",
+      "pub_key_operator": "050b7589e6e7a2320fed065cc89483d5f913a07f5381ef56b7f47103a5cdd1249820fbbdef8f4fce898e894d6807b3dc",
+      "voting_address": "ydRaCRcpeJCTR8rDvgoPypEuWq5oB1hmUM",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "585674740dac63692bbb0ea4ee899c575f9883e91fb5ba5ebf26b5b2fb66f21b",
+      "service": "52.220.133.88:19999",
+      "pub_key_operator": "93dac0f5d028eeddeaf4257919511991872523675ab24d1d971af3ab1900f27fc617d1d53a846c32abe1ef52a2cb26ee",
+      "voting_address": "yMbYh5KUeFrePfCcEhce4GGXPF21vs6YW4",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "3667fe83d6c334eae930252ca9bdd22d3eed1aee1c3b5b40d7244b98bea2c77b",
+      "service": "173.61.30.231:19006",
+      "pub_key_operator": "8b6159beec3c3c1ba223fa988b5806a02edebcd16869a2e053b41b7db3e28f12136636974f5333317fc67a22d2b9b3db",
+      "voting_address": "yYmWHHP4i812Lyj8PWT6FsuL6yikkH7hYC",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c0dc1876eca746f08e401c7873260e277baf0096a0b19e519e6298b649dd23bb",
+      "service": "178.128.87.111:19999",
+      "pub_key_operator": "03f959fdcb3eefebe409ee7044748f71ec8cba18a7a73df9d55d118e170d7ec2540d5c08a4cadc4bdeff3f7886265ac1",
+      "voting_address": "yjYPS6w8S6KrAMu3bj5haPvHKSKQvAhRoi",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "5346dd62f6d0d846ca8b37cad7e4438d1effa1a61a63f8d55ba93069f560949b",
+      "service": "52.52.139.186:19999",
+      "pub_key_operator": "847178ed08f0f5728dfe39ba9e3a43555b4c5e8100d825d91bf452bb7dad7bce7e8224fb665abc59cfc74d3bd1e040e1",
+      "voting_address": "yVuX3X4i4pZhXZkqcDGWkxRuW3RbpaQZev",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c98c6303af03f7f3b2673ceece962134088e5dcc3c69a0977069c6201b26dc9b",
+      "service": "95.183.53.17:10005",
+      "pub_key_operator": "8a209b5083c2b601ea18a04f0e92ee5befecf765486deb9643dc3b3fd193080c2659bba166f3873364964d5e8f7e4b93",
+      "voting_address": "ySaqwxVfdvWnw8yMPBqoHaRQZc9YHvBk2c",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "94228ffa91da894b9a3a9e1db307aa48794d9bb84bc58ce3850c10f7efac1afb",
+      "service": "54.194.151.206:26075",
+      "pub_key_operator": "0d37f37c85b5d2a0e3727710d30eb88fa1344bdc9a6b4eb60499406dfdeb3958e952dc1bc13aa669bc47e1b061c24d28",
+      "voting_address": "yjQ9DCRzgpfbDWLvvJf7qaCa9vZbE8eA2h",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "abdbc34bf06c8e29cc84a5f827b4e90d9b49e10ac872ed1a55a84a761f5d46fb",
+      "service": "54.194.151.206:26031",
+      "pub_key_operator": "93a4daa7a44e7ccba28f407742ef9627a982d19590bd261ae5f0f8b44cd66e6aff524ca5713e184109fdcca30b1c2a5e",
+      "voting_address": "yTC8Qv1DfCEtkM1kbhyDwSnPxHddqKsBh4",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "995d7facdd36d2db5a0e3621ea50678ce494149b4d2dece73d4a7fa2e095ac1c",
+      "service": "207.246.97.105:19999",
+      "pub_key_operator": "8c26812d38faf159f811a09c1462e07e40d6b44881114358cb5390b65778ee437018c5879fbf935fd78955899b67633e",
+      "voting_address": "yRMZ6Fa84AewYEmWpGvoqEUTgWerfHrn8a",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "41e41c6b6e1b1c43e73c7644ea36eb622bee149ab05693ea487e784614e524fc",
+      "service": "149.248.51.30:19999",
+      "pub_key_operator": "99567cfb20c6bed5d20638c31e7e512aedda02649e82f2b955ecd3e34f73c2229b350069f6e74a4304acedddd87997fe",
+      "voting_address": "yXturAgedijBdGt33CNMAa4pdQybvgdC4E",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "cfa6f7b58c78f827c15e8f1b6a5a2a3a92140101719006d8226a363e2c0c8e5c",
+      "service": "138.68.45.118:19999",
+      "pub_key_operator": "8ff05fb385c08528b762683c2ab6864ab1ac031146d9be0df597961625c9538e0bb03ae6a759d66e1717e879ebaad41c",
+      "voting_address": "yhks7vBpE2Q7AAF6SoQXjNE3ToAphAiV1q",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "d811a1902c29708fee81311dba76418fa86a69fb09aa4784734e410cb223badc",
+      "service": "178.151.192.107:19999",
+      "pub_key_operator": "08118ce26460c9e0bfe6e80cc36c276f7caab9cfedf9f55d72be064eec0ad6ec2ac3502d972818ff5364276de8cd7ed1",
+      "voting_address": "yaKMAfyXXFE33L7BDo6n5Kga57eiM51Aiz",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "90404962077baf0b00d2179045a800decdbe426df82e0e43253f19261d92cefc",
+      "service": "144.217.86.47:19999",
+      "pub_key_operator": "85724b1fc76643c3e8329b3a02ea60a32a1ebb0e5557f5ee29fb0f9ccc98730084e5a19498d2464e53b57b6287aeeca4",
+      "voting_address": "yaDnFUDdwKqFuko5gTXPc6CbdN3vQzvWYF",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "4106bef7acd1243652495260325ec3baf5bba47bb6e5d934c67b96bb24e3af1c",
+      "service": "195.201.19.40:19999",
+      "pub_key_operator": "98e7dca1b8dbcfdc54faff65b94f81f2e3fce6440bb10848d434a96ebe30ccbb33aa586a2d0ddce112e38cb09bbf13c7",
+      "voting_address": "yQwe5Y5Xgsgtuz2ahHkP634BATFrsjb5Mz",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "95e048c6e09dd0367006df0dfe9737d69800526869590dc8acbc96fb94332c9c",
+      "service": "173.61.30.231:19005",
+      "pub_key_operator": "182ece65d7aef6b0d0a92c0e3451609607717f9cdb6d11cc6e31a2d625c7f40a8cace522b036481daf4e4425c41880a5",
+      "voting_address": "ySfnordUG2758rcRfMz1328rmvzSUStEbe",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f57414829fed903bbe928ca2ab17450ac3ac9ccd6a9c7b5de86e549f9e6fdc9c",
+      "service": "185.213.37.1:19999",
+      "pub_key_operator": "90e39ea01f37a796795ca51a0d583defe2db3c8d7b1ce97b73776caaf31d8546232a831ce458b4ff9599f05da49a8724",
+      "voting_address": "yRspEa8kVZtAy5Z32RFDa9B3JFTJQnLhAP",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "30eded4041e2c494c3e5ae391331b4ea1dc464d50a34d76178d20fe9904d041d",
+      "service": "167.71.223.212:1999",
+      "pub_key_operator": "0d731903ca090050801af45465c96d1248532819959a5a97eacb1ce518dcd5c5a21f20676d7c893f81ba672fcfb0f805",
+      "voting_address": "yc1Sk81GBaLh3gH9pjpRwHqgP1t3jGbeAG",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "9d3664f872028a8ac0fe867129f4027e96ee9747a4690a29cae3d6e84311b47d",
+      "service": "173.61.30.231:19018",
+      "pub_key_operator": "862599b105fae8d252fef9707d02988e9f302ce6ffa7d1566908979816af6752e1470dab2f6bbed45ca65e64e4b74a3f",
+      "voting_address": "yhrgd6foTdjHsmWeg9bQKghS9xUYXchz5E",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "9f4f9f83ecbcd5739d7f1479ee14b508f2414d044a717acba0960566c4e6091d",
+      "service": "45.32.211.155:19999",
+      "pub_key_operator": "08e37b3fcba972fe0c2c0ea15f8285c8bfb262ad4d8a6741a530154f1abc4edd367a22abd0cb1934647f033913cca58a",
+      "voting_address": "ybAZoZ6iybhEwoCfb6utGfU753R1wcQSZT",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b9e4c7189d01f8da6eb8bb5f4b8f8c2a0a24293d0f6e900aa0371bc32ec6021d",
+      "service": "139.59.86.146:19999",
+      "pub_key_operator": "98bae0f71cbb77fff1560f45680ada9492ec4c9f779df777754b54bfb3474729c269399bd3cdfc736866364d3fb011d1",
+      "voting_address": "yjLeYNhxvH5exLJJcMyFgqW3Adp47QoVjr",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "accd3915d6756cd44d0334a6f753082cd62e723408f02c52ecd7b74280cd3fbd",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yU4Qrh2Vpfzd199kgzrLJ3YDJp8gk9ZcAX",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "9998fa60315f3130aec798d922b3f81702329d1214c05e4a7c9d002f3e71dffd",
+      "service": "34.240.43.8:26034",
+      "pub_key_operator": "050c44ccabc5fe859e89dc52a52220d85e8117964f6720ec39fb965b65d340126bfab0b95b573c3052052e77ff506b40",
+      "voting_address": "yaXTGpWrjwJjw3hAmNuBgwfRXZ2upJLNon",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "dcbcf8311e414aaafac3650f3f61326dce386eee3d1a53da86e4c9925af48d9d",
+      "service": "178.62.68.10:19999",
+      "pub_key_operator": "89277d2620e48dcf8456cc8815aa18ad3587bbf40cf0d1718696bd126e19791bb600b22f1063d4e5e8efe85fab8f90c8",
+      "voting_address": "yg7qyMQrdRYTzo5hj6bVdD3tcY6QSLn1bx",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "7228951470758be7eecda8126c7a23fe8ad019e67f3fdd5507003bf0d2d4159d",
+      "service": "63.238.229.186:9998",
+      "pub_key_operator": "88d719278eef605d9c19037366910b59bc28d437de4a8db4d76fda6d6985dbdf10404fb9bb5cd0e8c22f4a914a6c5566",
+      "voting_address": "yV3WubWTpyuQUvucZ22apW8Gh14v4nCPic",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "5fc5f8808c9c0ca9ccf9615e3cc29fc4cf25d98e65c6288f11d1c42c4fa4503e",
+      "service": "54.194.151.206:26000",
+      "pub_key_operator": "0ae60c37954708db5c220727682e74489c5c5a1d623c3987ad698f26758000c218d7b9e27a1082e7b48c8ef6964d5f31",
+      "voting_address": "yWeYx3JUXRHdD7FyjXRzJ6pVPw3RXZN6h7",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "50a5733b8430461139765ed886b998258bcca5a9df528e069d313e289df6a05e",
+      "service": "173.61.30.231:19001",
+      "pub_key_operator": "0418bfc9d8225bae5a889f1f74d47d539e9e7a8d441cb2b743b176e9d3a7ea4915fb40844cdb53a6faebdb4e826f9f78",
+      "voting_address": "yPJh4D1sLdbXZG6Qu1X66FdNsu2qoBQ7Mz",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "6068b9cad85e9b3b23c88328801a02fbcabf338dbc327481769e06a82776c89e",
+      "service": "54.194.151.206:26056",
+      "pub_key_operator": "8335456428142ced12628374716c2dd9c4d3b89fc2dadc549ca4b682ee4760cdab3f24705801f0f4f81ae62fed9ea71e",
+      "voting_address": "ybuCgKrNZL8d2MRP21FiAWffy6pKuWvc3g",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "e9126eafb8f62f5a4e8b4d4f2419f4377a8dd14635fc749f9ca2636ffa93815e",
+      "service": "54.149.207.193:19999",
+      "pub_key_operator": "8ad9500ef26ae510e0dd8cf0568b2a89d1234697873db2fcdd11674a73caba91cd416f9ac701f4f7807d8db102bc4a39",
+      "voting_address": "ycdU6EyVggw4RaW3EKPHCMBeT6vzRDXgbJ",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "6f0bdd7034ce8d3a6976a15e4b4442c274b5c1739fb63fc0a50f01425580e17e",
+      "service": "173.61.30.231:19023",
+      "pub_key_operator": "963692dfe42c25fc6ba4f3ec7f11181d1d8e97910eb6349b20dc9f79cc3cfa6adbd402a1a808898c4086690fc029d27e",
+      "voting_address": "ySBU7oXuuTSJqtmUArMRFsKefJPtEDkESG",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "563743fc0e5109dade1f4ccd2f997c9821dcdac58414ae3877ae5bbf901041be",
+      "service": "34.240.43.8:26039",
+      "pub_key_operator": "98022f5042c242d5789f5ab73f713f2e34d211b47960d23e8a34a65e225a117a60cd6f6251cfe7b189b65a7cb81a9e5e",
+      "voting_address": "yjQ6rZoi85csmJr3dQHTTn2Dfo5tjJNhwB",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "0b4b33aadb8095af383a8c9c5e63750b8ef4abb5d9c091360d788cf18267fe9e",
+      "service": "145.239.235.17:19999",
+      "pub_key_operator": "11d05fff5f406fd207bc8984188894b6bbd32098e58244136519a51c183c70db3d713a33c9a55f8d6993f644fb34ff2d",
+      "voting_address": "yajR2F8Qqv59dMpLny63xKeCSJHJKY6ZKr",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "6e84dcf6f2ddcf4444bec6dc070d9cbc52c3ef6681a14238b2e1390a77a6435e",
+      "service": "23.91.97.211:19999",
+      "pub_key_operator": "0064583f3f5dbb756708aa405572d2eaf3349ec2d9048c93f21a2d1e5a0da7ae1675d27d626035ce0754de1898d5cc30",
+      "voting_address": "yZDi6dkNKHYxqjMfbvrwgvf5HFas9vE2WX",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b9b63c1edfe991b4f45bce60de002807d2179f55eec8892ad23b838e4385d3fe",
+      "service": "34.240.43.8:26038",
+      "pub_key_operator": "029fb155b6b5beae540545516c660e72a1fc4297d012b17b5df6fe016aa0ae36b253aff7dba4780182259559d1726185",
+      "voting_address": "yU4AkmhKBFPq3iFkyKaCNSJnfVmGFawHU6",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "1f1b266459465c15ac66e646f115f7a9a851f65655b458e1128657bbbfbee41f",
+      "service": "54.194.151.206:26054",
+      "pub_key_operator": "09d302e2437e5724c8eaa006664e1ac6a7f595515186763bed95f17d12c99e221609da3c09f5d6550a7dec35c3f099c4",
+      "voting_address": "yQtSC4e4t9RpxzqoFyFAk1NR75vEcEL2bU",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "4ac3d41c3b2fb88c4e4c33b465ec1150b43522985fe221f18c4b91b5f7b43cdf",
+      "service": "185.62.150.195:10001",
+      "pub_key_operator": "8ebffc014c8b97d9da8841464d3c7cd09b9f679471a068666c217ec13524ad7ccafa50eb18126c99edcb43fb74e290b9",
+      "voting_address": "yPHa8A915DsehQmKK7MRQQedVEwjHZwnDL",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "87c23375674218932c768502d4ed00794fa327b0a95f3fd07e3366021284a8ff",
+      "service": "3.83.240.220:1998",
+      "pub_key_operator": "8074793934715bde7630f4f267a9647955ac45400792369bd3e5f88e2b9d6c809251b79428e3a8ec07bdbb7364e3c299",
+      "voting_address": "yiSiKosaJxTEZ9JFSvUg8XhMLxFAHp34cy",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "c940d40d2849fe70baeffa8e343024d01dc80380f38b2a015798f503cba26d3f",
+      "service": "207.154.250.175:19999",
+      "pub_key_operator": "069dd3113d6320397e9674ba3595f46dacd562e013e9e80a2e7d1095525f35134d4a8c19f4cd4a19d3886edf60328755",
+      "voting_address": "yZSNyTWZNydmZUkFAVty3FUZbydAof8NQN",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "32e5ad5cf9a06eb13e0f65cb7ecde1a93ef24995d07355fac2ff05ebd5b9ddbf",
+      "service": "95.183.51.146:39999",
+      "pub_key_operator": "1326ddac1044e0219dba7dccf6b43d1deed3e897717ca06757243b02516cfa67e24026f7a317cf575b40c10e7f6bf7f0",
+      "voting_address": "yYhmQPak2w5L8KSwVw9R5wpqzPbAJ1fK7v",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "92b5bbdfcd2d46938c23f5d48ac6dbc2fb041172766455fbd8863cf81e8bc9df",
+      "service": "106.12.73.74:19999",
+      "pub_key_operator": "07cff9e4c50da82722bf41fa5da01ca4bdb238d8d53fef085a56c34a432f6994c79e5bf754898499ec4dbe91eec0d00a",
+      "voting_address": "ydRRskBneJ6sY4eP9DEc2FhvEAa7xRFJdA",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b5c0d248eac5f19d665159412f357073359d0d643930adee1d071f02e9ad0a1f",
+      "service": "[::]:0",
+      "pub_key_operator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "voting_address": "yYpaVuojgzDNiMnBNHH87E9NTT3BpFDgMT",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "2ab90c655fce7462791fd57049fd3477460cf45aec3483dd8f92ac76cbb5b65f",
+      "service": "159.203.21.20:19999",
+      "pub_key_operator": "06b2e598c2a16e7394cff63bb9939e8bec49849f2520f97d8de70ed9336625ea0582889be68007e93663685d03d6996b",
+      "voting_address": "yZp9BeBaGwnQEZMbe327hvsKfi64x4h5Ko",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "5a6d674367f4fad9883595d74d6eb628c59495a3af0732d24db983359cb7127f",
+      "service": "185.195.19.212:19999",
+      "pub_key_operator": "8f53fb19c3be85ce00e96d634221f20a06a3a50942998193004264075a70422a3305f57c0c478a70ad69f1112e2f9993",
+      "voting_address": "ybXEeMPyU81hzu2c6bv2VZY3xMbZgjQkgz",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "a3e1edc6bd352eeaf0ae58e30781ef4b127854241a3fe7fddf36d5b7e1dc2b3f",
+      "service": "34.240.43.8:26094",
+      "pub_key_operator": "04d748ba0efeb7a8f8548e0c22b4c188c293a19837a1c5440649279ba73ead0c62ac1e840050a10a35e0ae05659d2a8d",
+      "voting_address": "yMfroSZRBxVeU7owng1YRv1jePMzYxiVji",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "24882d9422a58849ab7c37617aeaddaa163ed5f600ab5e26db177947ef51779f",
+      "service": "54.194.151.206:26025",
+      "pub_key_operator": "98ab084c5aec382215721f37dc4c8a3f2ba450e8d4cd85aabd8b751b96f0cc9a45454c1e3319bbfa1d0853e098f60f19",
+      "voting_address": "yhhYuCyawTbyVnmCgsDueWUrWrXug5Pt9z",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b0aee43d5964ae06a7ce63c03332d9f1af46386b91738cbbfdf42f67db488c5f",
+      "service": "34.233.155.236:19999",
+      "pub_key_operator": "90ea99287802a44836309be934ed63933b423580626adeb428026acde6bdb283f370ff19bb37f81b0e4775187ad006a3",
+      "voting_address": "yNTh6hhKDn1D8d5C3q4t81vuRnBZA6Fi9A",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "77b259c1e3c2d6ff06a764b88e2050f1362dafe0b8c8e2a5c27addffcaedcc5f",
+      "service": "34.240.43.8:26063",
+      "pub_key_operator": "8da90866fdd35d834783a7fffe0036085d3c0908d3a9326b358f5b2192b4b3bad0ed02736597f8c603ecdd13adcc0f6b",
+      "voting_address": "ycSxYNPfrncJcGDKudU6yqurLXbmRWtybE",
+      "is_valid": true,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "f718902044925ab8ba5089667a4c2a1e45b855eb4388d21c1b14e1d05bc1991f",
+      "service": "46.101.52.138:19999",
+      "pub_key_operator": "0d2be4cbd0faf7a27695a4f11690ba772a32c9df368f0558998681d697e60888b7127314dfa8495096050638d8507c92",
+      "voting_address": "ybZWBtGJGQkRR1F32XmCJu7MgzJq6t1ona",
+      "is_valid": false,
+      "n_type": 0
+    },
+    {
+      "pro_tx_hash": "b43dadbd485e4d1e1d202ea5180f0ad4e8e7f05e97a7e566a764ed714356bd1f",
+      "service": "47.111.181.207:20001",
+      "pub_key_operator": "90c0e9ec9dc5f08b1d4d0211920fe5d96a225c555a4ba7dd7f6cb14e271c925f2fc72316a01282973f9ad9cf1e39e038",
+      "voting_address": "yQ8oETtF1pRQfBP4iake2e5zyCCm85CAET",
+      "is_valid": false,
+      "n_type": 0
+    }
+  ],
+  "masternode_count": 337,
+  "fetched_at": 1750794493
+}
