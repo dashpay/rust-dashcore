@@ -574,6 +574,18 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     FFIErrorCode::Success as i32
 }
 
+/// Cancels the sync operation.
+///
+/// **Note**: This function currently only stops the SPV client and clears sync callbacks,
+/// but does not fully abort the ongoing sync process. The sync operation may continue
+/// running in the background until it completes naturally. Full sync cancellation with
+/// proper task abortion is not yet implemented.
+///
+/// # Safety
+/// The client pointer must be valid and non-null.
+///
+/// # Returns
+/// Returns 0 on success, or an error code on failure.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpvClient) -> i32 {
     null_check!(client);
@@ -587,7 +599,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpv
     }
     *cb_guard = None;
     
-    // TODO: Add actual sync cancellation by stopping the client
+    // TODO: Implement proper sync task cancellation using cancellation tokens or abort handles.
+    // Currently, this only stops the client, but the sync task may continue running in the background.
     let inner = client.inner.clone();
     let result = client.runtime.block_on(async {
         let mut guard = inner.lock().unwrap();
