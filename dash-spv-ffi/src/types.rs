@@ -354,6 +354,25 @@ impl From<MempoolRemovalReason> for FFIMempoolRemovalReason {
     }
 }
 
+/// FFI-safe representation of an unconfirmed transaction
+/// 
+/// # Safety
+/// 
+/// This struct contains raw pointers that must be properly managed:
+/// 
+/// - `raw_tx`: A pointer to the raw transaction bytes. The caller is responsible for:
+///   - Allocating this memory before passing it to Rust
+///   - Ensuring the pointer remains valid for the lifetime of this struct
+///   - Freeing the memory after use with `dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx`
+/// 
+/// - `addresses`: A pointer to an array of FFIString objects. The caller is responsible for:
+///   - Allocating this array before passing it to Rust
+///   - Ensuring the pointer remains valid for the lifetime of this struct
+///   - Freeing each FFIString in the array with `dash_spv_ffi_string_destroy`
+///   - Freeing the array itself after use with `dash_spv_ffi_unconfirmed_transaction_destroy_addresses`
+/// 
+/// Use `dash_spv_ffi_unconfirmed_transaction_destroy` to safely clean up all resources
+/// associated with this struct.
 #[repr(C)]
 pub struct FFIUnconfirmedTransaction {
     pub txid: FFIString,
@@ -365,5 +384,83 @@ pub struct FFIUnconfirmedTransaction {
     pub is_outgoing: bool,
     pub addresses: *mut FFIString,
     pub addresses_len: usize,
+}
+
+/// Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction
+/// 
+/// # Safety
+/// 
+/// - `raw_tx` must be a valid pointer to memory allocated by the caller
+/// - `raw_tx_len` must be the correct length of the allocated memory
+/// - The pointer must not be used after this function is called
+/// - This function should only be called once per allocation
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx(
+    raw_tx: *mut u8,
+    raw_tx_len: usize,
+) {
+    if !raw_tx.is_null() && raw_tx_len > 0 {
+        // Reconstruct the Vec to properly deallocate the memory
+        let _ = Vec::from_raw_parts(raw_tx, raw_tx_len, raw_tx_len);
+    }
+}
+
+/// Destroys the addresses array allocated for an FFIUnconfirmedTransaction
+/// 
+/// # Safety
+/// 
+/// - `addresses` must be a valid pointer to an array of FFIString objects
+/// - `addresses_len` must be the correct length of the array
+/// - Each FFIString in the array must be destroyed separately using `dash_spv_ffi_string_destroy`
+/// - The pointer must not be used after this function is called
+/// - This function should only be called once per allocation
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_unconfirmed_transaction_destroy_addresses(
+    addresses: *mut FFIString,
+    addresses_len: usize,
+) {
+    if !addresses.is_null() && addresses_len > 0 {
+        // Reconstruct the Vec to properly deallocate the memory
+        let _ = Vec::from_raw_parts(addresses, addresses_len, addresses_len);
+    }
+}
+
+/// Destroys an FFIUnconfirmedTransaction and all its associated resources
+/// 
+/// # Safety
+/// 
+/// - `tx` must be a valid pointer to an FFIUnconfirmedTransaction
+/// - All resources (raw_tx, addresses array, and individual FFIStrings) will be freed
+/// - The pointer must not be used after this function is called
+/// - This function should only be called once per FFIUnconfirmedTransaction
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_unconfirmed_transaction_destroy(
+    tx: *mut FFIUnconfirmedTransaction,
+) {
+    if !tx.is_null() {
+        let tx = Box::from_raw(tx);
+        
+        // Destroy the txid FFIString
+        dash_spv_ffi_string_destroy(tx.txid);
+        
+        // Destroy the raw_tx bytes
+        if !tx.raw_tx.is_null() && tx.raw_tx_len > 0 {
+            dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx(tx.raw_tx, tx.raw_tx_len);
+        }
+        
+        // Destroy each FFIString in the addresses array
+        if !tx.addresses.is_null() && tx.addresses_len > 0 {
+            // We need to read the addresses and destroy them one by one
+            for i in 0..tx.addresses_len {
+                let address_ptr = tx.addresses.add(i);
+                let address = std::ptr::read(address_ptr);
+                dash_spv_ffi_string_destroy(address);
+            }
+            // Destroy the addresses array itself
+            dash_spv_ffi_unconfirmed_transaction_destroy_addresses(tx.addresses, tx.addresses_len);
+        }
+        
+        // The Box will be dropped here, freeing the FFIUnconfirmedTransaction itself
+    }
 }
 
