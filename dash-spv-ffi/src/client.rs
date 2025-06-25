@@ -449,14 +449,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
         client.active_threads.lock().unwrap().push(handle);
     }
     
-    // Get user data as usize for main sync task too
-    let completion_user_data_usize = {
-        let guard = user_data_ptr.lock().unwrap();
-        *guard as usize
-    };
-    
-    // Spawn sync task in a separate thread to avoid Send issues
+    // Spawn sync task in a separate thread with safe callback access
     let runtime_handle = runtime.handle().clone();
+    let sync_callbacks_clone = sync_callbacks.clone();
     std::thread::spawn(move || {
         // Run monitoring loop
         let monitor_result = runtime_handle.block_on(async move {
@@ -468,22 +463,33 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
             }
         });
         
-        // Send completion
-        if let Some(callback) = *completion_cb.lock().unwrap() {
-            let user_data = completion_user_data_usize as *mut c_void;
-            match monitor_result {
-                Ok(_) => {
-                    let msg = CString::new("Sync completed successfully").unwrap();
-                    callback(true, msg.as_ptr(), user_data);
-                    std::mem::forget(msg); // Prevent deallocation since callback owns it now
-                }
-                Err(e) => {
-                    let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
-                    callback(false, msg.as_ptr(), user_data);
-                    std::mem::forget(msg); // Prevent deallocation since callback owns it now
+        // Send completion callback
+        {
+            let cb_guard = sync_callbacks_clone.lock().unwrap();
+            if let Some(ref callback_data) = *cb_guard {
+                if let Some(callback) = callback_data.completion_callback {
+                    match monitor_result {
+                        Ok(_) => {
+                            let msg = CString::new("Sync completed successfully").unwrap();
+                            // SAFETY: The user_data pointer is valid for the duration of the sync
+                            // operation as guaranteed by the caller. The callback data is protected
+                            // by Arc<Mutex<>> ensuring thread-safe access.
+                            callback(true, msg.as_ptr(), callback_data.user_data);
+                            std::mem::forget(msg); // Prevent deallocation since callback owns it now
+                        }
+                        Err(e) => {
+                            let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
+                            // SAFETY: Same as above
+                            callback(false, msg.as_ptr(), callback_data.user_data);
+                            std::mem::forget(msg); // Prevent deallocation since callback owns it now
+                        }
+                    }
                 }
             }
         }
+        
+        // Clear the callbacks after completion to allow cleanup
+        *sync_callbacks_clone.lock().unwrap() = None;
     });
     
     FFIErrorCode::Success as i32
@@ -496,8 +502,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpv
     let client = &(*client);
     
     // Clear callbacks to stop progress updates
-    *client.sync_progress_callback.lock().unwrap() = None;
-    *client.sync_completion_callback.lock().unwrap() = None;
+    *client.sync_callbacks.lock().unwrap() = None;
     
     // TODO: Add actual sync cancellation by stopping the client
     let inner = client.inner.clone();
