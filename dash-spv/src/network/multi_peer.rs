@@ -60,6 +60,8 @@ pub struct MultiPeerNetworkManager {
     mempool_strategy: MempoolStrategy,
     /// Last peer that sent us a message
     last_message_peer: Arc<Mutex<Option<SocketAddr>>>,
+    /// Read timeout for TCP connections
+    read_timeout: Duration,
 }
 
 impl MultiPeerNetworkManager {
@@ -106,6 +108,7 @@ impl MultiPeerNetworkManager {
             data_dir,
             mempool_strategy: config.mempool_strategy,
             last_message_peer: Arc::new(Mutex::new(None)),
+            read_timeout: config.read_timeout,
         })
     }
 
@@ -177,13 +180,14 @@ impl MultiPeerNetworkManager {
         let shutdown = self.shutdown.clone();
         let reputation_manager = self.reputation_manager.clone();
         let mempool_strategy = self.mempool_strategy;
+        let read_timeout = self.read_timeout;
 
         // Spawn connection task
         let mut tasks = self.tasks.lock().await;
         tasks.spawn(async move {
             log::debug!("Attempting to connect to {}", addr);
 
-            match TcpConnection::connect(addr, CONNECTION_TIMEOUT.as_secs(), network).await {
+            match TcpConnection::connect(addr, CONNECTION_TIMEOUT.as_secs(), read_timeout, network).await {
                 Ok(mut conn) => {
                     // Perform handshake
                     let mut handshake_manager = HandshakeManager::new(network, mempool_strategy);
@@ -919,6 +923,7 @@ impl Clone for MultiPeerNetworkManager {
             data_dir: self.data_dir.clone(),
             mempool_strategy: self.mempool_strategy,
             last_message_peer: self.last_message_peer.clone(),
+            read_timeout: self.read_timeout,
         }
     }
 }
