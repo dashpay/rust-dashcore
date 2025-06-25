@@ -708,6 +708,10 @@ impl DashSpvClient {
                         // Send initial requests after sync is prepared
                         if let Err(e) = self.sync_manager.send_initial_requests(&mut *self.network, &mut *self.storage).await {
                             tracing::error!("Failed to send initial sync requests: {}", e);
+                            
+                            // Reset sync manager state to prevent inconsistent state
+                            self.sync_manager.reset_pending_requests();
+                            tracing::warn!("Reset sync manager state after send_initial_requests failure");
                         }
                     }
                     Err(e) => {
@@ -1954,17 +1958,42 @@ impl DashSpvClient {
             )));
         }
         
-        // Remove headers above target height
+        // Remove headers above target height from in-memory state
         let mut state = self.state.write().await;
         while state.tip_height() > target_height {
             state.remove_tip();
         }
+        
+        // Also remove filter headers above target height
+        // Keep only filter headers up to and including target_height
+        if state.filter_headers.len() > (target_height + 1) as usize {
+            state.filter_headers.truncate((target_height + 1) as usize);
+            // Update current filter tip if we have filter headers
+            state.current_filter_tip = state.filter_headers.last().copied();
+        }
+        
+        // Clear chain lock if it's above the target height
+        if let Some(chainlock_height) = state.last_chainlock_height {
+            if chainlock_height > target_height {
+                state.last_chainlock_height = None;
+                state.last_chainlock_hash = None;
+            }
+        }
+        
+        // Clone the updated state for storage
+        let updated_state = state.clone();
         drop(state);
         
-        // Clear any cached data above the target height
-        // This would include filter headers, filters, etc.
+        // Update persistent storage to reflect the rollback
+        // Store the updated chain state
+        self.storage.store_chain_state(&updated_state).await
+            .map_err(|e| SpvError::Storage(e))?;
         
-        tracing::info!("Rolled back to height {}", target_height);
+        // Clear any cached filter data above the target height
+        // Note: Since we can't directly remove individual filters from storage,
+        // the next sync will overwrite them as needed
+        
+        tracing::info!("Rolled back to height {} and updated persistent storage", target_height);
         Ok(())
     }
     
