@@ -862,13 +862,14 @@ impl DashSpvClient {
 
             // Save sync state periodically (every 30 seconds or after significant progress)
             let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
-            let last_save = *self.last_sync_state_save.read().await;
+            let last_sync_state_save = self.last_sync_state_save.clone();
+            let last_save = *last_sync_state_save.read().await;
             
             if current_time - last_save >= 30 {  // Save every 30 seconds
                 if let Err(e) = self.save_sync_state().await {
                     tracing::warn!("Failed to save sync state: {}", e);
                 } else {
-                    *self.last_sync_state_save.write().await = current_time;
+                    *last_sync_state_save.write().await = current_time;
                 }
             }
 
