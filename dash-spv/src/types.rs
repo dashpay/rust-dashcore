@@ -9,6 +9,16 @@ use dashcore::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Unique identifier for a peer connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PeerId(pub u64);
+
+impl std::fmt::Display for PeerId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "peer_{}", self.0)
+    }
+}
+
 /// Sync progress information.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncProgress {
@@ -351,6 +361,15 @@ impl PeerInfo {
         
         self.services
             .map(|s| ServiceFlags::from(s).has(ServiceFlags::COMPACT_FILTERS))
+            .unwrap_or(false)
+    }
+    
+    /// Check if peer supports headers2 compression (DIP-0025).
+    pub fn supports_headers2(&self) -> bool {
+        use dashcore::network::constants::{ServiceFlags, NODE_HEADERS_COMPRESSED};
+        
+        self.services
+            .map(|s| ServiceFlags::from(s).has(NODE_HEADERS_COMPRESSED))
             .unwrap_or(false)
     }
 }
