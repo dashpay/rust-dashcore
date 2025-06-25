@@ -333,7 +333,8 @@ impl RecoveryManager {
             }
             
             _ => {
-                tracing::warn!("⚠️ Checkpoint restart not implemented for phase {}", phase.name());
+                // Idle and FullySynced phases don't need checkpoint restart
+                tracing::debug!("Phase {} does not require checkpoint restart", phase.name());
             }
         }
         
