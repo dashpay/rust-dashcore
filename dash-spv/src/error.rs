@@ -104,6 +104,9 @@ pub enum ValidationError {
 
     #[error("Masternode verification failed: {0}")]
     MasternodeVerification(String),
+
+    #[error("Storage error: {0}")]
+    StorageError(#[from] StorageError),
 }
 
 /// Synchronization-related errors.

@@ -4,7 +4,7 @@
 //! providing protection against 51% attacks and securing InstantSend transactions.
 
 use dashcore::{BlockHash, ChainLock};
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::sync::{Arc, RwLock};
 use tracing::{debug, info, warn, error};
 
@@ -28,10 +28,10 @@ pub struct ChainLockEntry {
 pub struct ChainLockManager {
     /// Chain lock validator
     validator: ChainLockValidator,
-    /// In-memory cache of chain locks by height
-    chain_locks_by_height: Arc<RwLock<HashMap<u32, ChainLockEntry>>>,
+    /// In-memory cache of chain locks by height (maintains insertion order)
+    chain_locks_by_height: Arc<RwLock<IndexMap<u32, ChainLockEntry>>>,
     /// In-memory cache of chain locks by block hash
-    chain_locks_by_hash: Arc<RwLock<HashMap<BlockHash, ChainLockEntry>>>,
+    chain_locks_by_hash: Arc<RwLock<IndexMap<BlockHash, ChainLockEntry>>>,
     /// Maximum number of chain locks to keep in memory
     max_cache_size: usize,
     /// Whether to enforce chain locks (can be disabled for testing)
@@ -43,8 +43,8 @@ impl ChainLockManager {
     pub fn new(enforce_chain_locks: bool) -> Self {
         Self {
             validator: ChainLockValidator::new(),
-            chain_locks_by_height: Arc::new(RwLock::new(HashMap::new())),
-            chain_locks_by_hash: Arc::new(RwLock::new(HashMap::new())),
+            chain_locks_by_height: Arc::new(RwLock::new(IndexMap::new())),
+            chain_locks_by_hash: Arc::new(RwLock::new(IndexMap::new())),
             max_cache_size: 1000,
             enforce_chain_locks,
         }
@@ -108,8 +108,7 @@ impl ChainLockManager {
         // Call validate_chain_lock_with_quorum when quorum info is available
 
         // Store the chain lock
-        self.store_chain_lock(chain_lock.clone(), storage).await
-            .map_err(|e| ValidationError::InvalidChainLock(format!("Failed to store chain lock: {:?}", e)))?;
+        self.store_chain_lock(chain_lock.clone(), storage).await?;
 
         // Update chain state
         self.update_chain_state_with_lock(&chain_lock, chain_state);
@@ -144,14 +143,20 @@ impl ChainLockManager {
 
             // Enforce cache size limit
             if by_height.len() > self.max_cache_size {
-                // Remove oldest entries
-                let mut heights: Vec<_> = by_height.keys().cloned().collect();
-                heights.sort();
+                // Calculate how many entries to remove
+                let entries_to_remove = by_height.len() - self.max_cache_size;
                 
-                for height in heights.iter().take(by_height.len() - self.max_cache_size) {
-                    if let Some(removed) = by_height.remove(height) {
-                        by_hash.remove(&removed.chain_lock.block_hash);
-                    }
+                // Collect keys to remove (oldest entries are at the beginning)
+                let keys_to_remove: Vec<(u32, BlockHash)> = by_height
+                    .iter()
+                    .take(entries_to_remove)
+                    .map(|(height, entry)| (*height, entry.chain_lock.block_hash))
+                    .collect();
+                
+                // Batch remove from both maps
+                for (height, block_hash) in keys_to_remove {
+                    by_height.shift_remove(&height);
+                    by_hash.shift_remove(&block_hash);
                 }
             }
         }
