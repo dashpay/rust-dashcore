@@ -82,6 +82,11 @@ struct AccountHeaderView: View {
                 BalanceView(balance: balance)
             }
             
+            // Mempool Status
+            if walletService.mempoolTransactionCount > 0 {
+                MempoolStatusView(count: walletService.mempoolTransactionCount)
+            }
+            
             // Watch Status
             WatchStatusView(status: walletService.watchVerificationStatus)
             
@@ -142,6 +147,14 @@ struct BalanceView: View {
                         label: "InstantSend",
                         amount: formatDash(balance.instantLocked),
                         color: .blue
+                    )
+                }
+                
+                if balance.mempool > 0 {
+                    BalanceComponent(
+                        label: "Mempool",
+                        amount: formatDash(balance.mempool),
+                        color: .purple
                     )
                 }
             }
@@ -519,5 +532,26 @@ struct UTXORowView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Mempool Status View
+
+struct MempoolStatusView: View {
+    let count: Int
+    
+    var body: some View {
+        HStack {
+            Image(systemName: "clock.arrow.circlepath")
+                .foregroundColor(.purple)
+            
+            Text("\(count) unconfirmed transaction\(count == 1 ? "" : "s") in mempool")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.purple.opacity(0.1))
+        .cornerRadius(8)
     }
 }

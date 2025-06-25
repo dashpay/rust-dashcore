@@ -8,8 +8,10 @@ public class WalletManager {
     
     public internal(set) var watchedAddresses: Set<String> = []
     public internal(set) var totalBalance: Balance = Balance()
+    public internal(set) var totalMempoolBalance: MempoolBalance = MempoolBalance(pending: 0, pendingInstant: 0)
     public internal(set) var transactions: [String: Transaction] = [:] // txid -> Transaction
     public internal(set) var addressTransactions: [String: Set<String>] = [:] // address -> Set of txids
+    public internal(set) var mempoolTransactions: Set<String> = [] // txids of mempool transactions
     
     private var cancellables = Set<AnyCancellable>()
     
@@ -76,6 +78,48 @@ public class WalletManager {
         }
         
         return try await client.getTotalBalance()
+    }
+    
+    public func getBalanceWithMempool() async throws -> Balance {
+        guard client.isConnected else {
+            throw DashSDKError.notConnected
+        }
+        
+        return try await client.getBalanceWithMempool()
+    }
+    
+    public func getMempoolBalance(for address: String) async throws -> MempoolBalance {
+        guard client.isConnected else {
+            throw DashSDKError.notConnected
+        }
+        
+        return try await client.getMempoolBalance(for: address)
+    }
+    
+    public func getTotalMempoolBalance() async throws -> MempoolBalance {
+        guard client.isConnected else {
+            throw DashSDKError.notConnected
+        }
+        
+        var totalPending: UInt64 = 0
+        var totalPendingInstant: UInt64 = 0
+        
+        for address in watchedAddresses {
+            let mempoolBalance = try await getMempoolBalance(for: address)
+            totalPending += mempoolBalance.pending
+            totalPendingInstant += mempoolBalance.pendingInstant
+        }
+        
+        return MempoolBalance(pending: totalPending, pendingInstant: totalPendingInstant)
+    }
+    
+    /// Combined balance including confirmed and mempool
+    public func getCombinedBalance() async throws -> (confirmed: Balance, mempool: MempoolBalance, total: UInt64) {
+        let confirmedBalance = try await getTotalBalance()
+        let mempoolBalance = try await getTotalMempoolBalance()
+        let total = confirmedBalance.total + mempoolBalance.total
+        
+        return (confirmed: confirmedBalance, mempool: mempoolBalance, total: total)
     }
     
     // MARK: - UTXO Management
@@ -190,6 +234,15 @@ public class WalletManager {
         case .transactionReceived(let txid, let confirmed, let amount, let addresses, let blockHeight):
             // Handle transaction with full details
             await handleTransactionDetected(txid: txid, confirmed: confirmed, amount: amount, addresses: addresses, blockHeight: blockHeight)
+        case .mempoolTransactionAdded(let txid, let amount, let addresses):
+            // Handle new mempool transaction
+            await handleMempoolTransactionAdded(txid: txid, amount: amount, addresses: addresses)
+        case .mempoolTransactionConfirmed(let txid, let blockHeight, let confirmations):
+            // Handle confirmed mempool transaction
+            await handleMempoolTransactionConfirmed(txid: txid, blockHeight: blockHeight, confirmations: confirmations)
+        case .mempoolTransactionRemoved(let txid, let reason):
+            // Handle removed mempool transaction
+            await handleMempoolTransactionRemoved(txid: txid, reason: reason)
         default:
             break
         }
@@ -253,6 +306,88 @@ public class WalletManager {
         print("   Addresses: \(addresses.joined(separator: ", "))")
         print("   Confirmed: \(confirmed), Height: \(blockHeight ?? 0)")
         print("📊 Total transactions stored: \(transactions.count)")
+    }
+    
+    private func handleMempoolTransactionAdded(txid: String, amount: Int64, addresses: [String]) async {
+        // Add to mempool transactions set
+        mempoolTransactions.insert(txid)
+        
+        // Create unconfirmed transaction
+        let transaction = Transaction(
+            txid: txid,
+            height: nil,
+            timestamp: Date(),
+            amount: amount,
+            fee: 0, // Fee not provided in event
+            confirmations: 0,
+            isInstantLocked: false
+        )
+        
+        // Store the transaction
+        transactions[txid] = transaction
+        
+        // Associate with addresses
+        for address in addresses {
+            if addressTransactions[address] == nil {
+                addressTransactions[address] = Set<String>()
+            }
+            addressTransactions[address]?.insert(txid)
+        }
+        
+        // Update mempool balance
+        await updateMempoolBalance()
+        
+        print("🔄 New mempool transaction: \(txid)")
+        print("   Amount: \(amount) satoshis")
+        print("   Addresses: \(addresses.joined(separator: ", "))")
+    }
+    
+    private func handleMempoolTransactionConfirmed(txid: String, blockHeight: UInt32, confirmations: UInt32) async {
+        // Remove from mempool set
+        mempoolTransactions.remove(txid)
+        
+        // Update transaction status
+        if var transaction = transactions[txid] {
+            transaction.height = blockHeight
+            transaction.confirmations = confirmations
+            transactions[txid] = transaction
+            
+            print("✅ Mempool transaction confirmed: \(txid) at height \(blockHeight)")
+        }
+        
+        // Update balances
+        await updateTotalBalance()
+        await updateMempoolBalance()
+    }
+    
+    private func handleMempoolTransactionRemoved(txid: String, reason: MempoolRemovalReason) async {
+        // Remove from mempool set
+        mempoolTransactions.remove(txid)
+        
+        // Remove transaction if it wasn't confirmed
+        if reason != MempoolRemovalReason.confirmed {
+            transactions.removeValue(forKey: txid)
+            
+            // Remove from address mappings
+            for (address, var txids) in addressTransactions {
+                if txids.remove(txid) != nil {
+                    addressTransactions[address] = txids.isEmpty ? nil : txids
+                }
+            }
+        }
+        
+        // Update mempool balance
+        await updateMempoolBalance()
+        
+        print("❌ Mempool transaction removed: \(txid), reason: \(reason)")
+    }
+    
+    private func updateMempoolBalance() async {
+        do {
+            totalMempoolBalance = try await getTotalMempoolBalance()
+        } catch {
+            print("Failed to update mempool balance: \(error)")
+        }
     }
     
     private func validateAddress(_ address: String) throws {
