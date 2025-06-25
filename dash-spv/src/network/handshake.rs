@@ -171,17 +171,8 @@ impl HandshakeManager {
                         "Handshake complete - both version and verack exchanged!"
                     );
                     
-                    // Check if both peers support headers2
-                    if let Some(peer_services) = self.peer_services {
-                        if peer_services.has(NODE_HEADERS_COMPRESSED) {
-                            tracing::info!("Peer supports headers2 - sending SendHeaders2");
-                            connection.send_message(NetworkMessage::SendHeaders2).await?;
-                        }
-                    }
-                    
-                    // Also send SendHeaders to request headers be pushed to us
-                    tracing::info!("Sending SendHeaders to request headers be pushed");
-                    connection.send_message(NetworkMessage::SendHeaders).await?;
+                    // Negotiate headers2 support
+                    self.negotiate_headers2(connection).await?;
                     
                     return Ok(Some(HandshakeState::Complete));
                 }
@@ -201,17 +192,8 @@ impl HandshakeManager {
                 if self.version_received && self.verack_received {
                     tracing::info!("Handshake complete - both version and verack exchanged!");
                     
-                    // Check if both peers support headers2
-                    if let Some(peer_services) = self.peer_services {
-                        if peer_services.has(NODE_HEADERS_COMPRESSED) {
-                            tracing::info!("Peer supports headers2 - sending SendHeaders2");
-                            connection.send_message(NetworkMessage::SendHeaders2).await?;
-                        }
-                    }
-                    
-                    // Also send SendHeaders to request headers be pushed to us
-                    tracing::info!("Sending SendHeaders to request headers be pushed");
-                    connection.send_message(NetworkMessage::SendHeaders).await?;
+                    // Negotiate headers2 support
+                    self.negotiate_headers2(connection).await?;
                     
                     return Ok(Some(HandshakeState::Complete));
                 } else {
@@ -292,5 +274,22 @@ impl HandshakeManager {
         self.peer_services
             .map(|services| services.has(NODE_HEADERS_COMPRESSED))
             .unwrap_or(false)
+    }
+
+    /// Negotiate headers2 support with the peer after handshake completion.
+    async fn negotiate_headers2(&self, connection: &mut TcpConnection) -> NetworkResult<()> {
+        // Check if both peers support headers2
+        if let Some(peer_services) = self.peer_services {
+            if peer_services.has(NODE_HEADERS_COMPRESSED) {
+                tracing::info!("Peer supports headers2 - sending SendHeaders2");
+                connection.send_message(NetworkMessage::SendHeaders2).await?;
+            }
+        }
+        
+        // Also send SendHeaders to request headers be pushed to us
+        tracing::info!("Sending SendHeaders to request headers be pushed");
+        connection.send_message(NetworkMessage::SendHeaders).await?;
+        
+        Ok(())
     }
 }
