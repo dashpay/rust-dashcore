@@ -4,7 +4,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use dashcore::{
     block::Header as BlockHeader, hash_types::FilterHeader, network::constants::NetworkExt,
-    sml::masternode_list_engine::MasternodeListEngine, Amount, BlockHash, Network, OutPoint,
+    sml::masternode_list_engine::MasternodeListEngine, Amount, BlockHash, Network,
     Transaction, Txid,
 };
 use serde::{Deserialize, Serialize};

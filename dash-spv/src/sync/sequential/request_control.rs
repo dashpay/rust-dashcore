@@ -5,7 +5,6 @@ use std::time::Instant;
 
 use dashcore::network::constants::NetworkExt;
 use dashcore::network::message::NetworkMessage;
-use dashcore::network::message_blockdata::Inventory;
 use dashcore::BlockHash;
 
 use crate::client::ClientConfig;

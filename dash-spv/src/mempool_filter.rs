@@ -2,9 +2,9 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use dashcore::{Address, OutPoint, Transaction, Txid};
+use dashcore::{Address, Transaction, Txid};
 use tokio::sync::RwLock;
 
 use crate::client::config::MempoolStrategy;

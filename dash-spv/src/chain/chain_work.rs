@@ -3,7 +3,7 @@
 //! This module handles the calculation of cumulative proof of work,
 //! which is used to determine the chain with the most work (best chain).
 
-use dashcore::{Header as BlockHeader, Target, Work};
+use dashcore::{Header as BlockHeader, Target};
 use std::cmp::Ordering;
 use std::ops::Add;
 
