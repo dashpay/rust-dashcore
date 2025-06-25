@@ -49,6 +49,9 @@ pub struct ClientConfig {
 
     /// Sync timeout.
     pub sync_timeout: Duration,
+    
+    /// Read timeout for TCP socket operations.
+    pub read_timeout: Duration,
 
     /// Items to watch on the blockchain.
     pub watch_items: Vec<WatchItem>,
@@ -170,6 +173,7 @@ impl Default for ClientConfig {
             connection_timeout: Duration::from_secs(30),
             message_timeout: Duration::from_secs(60),
             sync_timeout: Duration::from_secs(300),
+            read_timeout: Duration::from_millis(15),
             watch_items: vec![],
             enable_filters: true,
             enable_masternodes: true,
@@ -282,6 +286,12 @@ impl ClientConfig {
     /// Set connection timeout.
     pub fn with_connection_timeout(mut self, timeout: Duration) -> Self {
         self.connection_timeout = timeout;
+        self
+    }
+    
+    /// Set read timeout for TCP socket operations.
+    pub fn with_read_timeout(mut self, timeout: Duration) -> Self {
+        self.read_timeout = timeout;
         self
     }
 
