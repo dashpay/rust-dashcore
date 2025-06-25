@@ -1,5 +1,6 @@
 //! Bloom filter performance statistics and monitoring
 
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 /// Detailed statistics for bloom filter performance
@@ -78,7 +79,7 @@ pub struct BloomStatsTracker {
     /// Last filter recreation time
     last_recreation: Option<Instant>,
     /// Query timing accumulator
-    query_times: Vec<Duration>,
+    query_times: VecDeque<Duration>,
 }
 
 impl BloomStatsTracker {
@@ -92,7 +93,7 @@ impl BloomStatsTracker {
                 network_impact: NetworkImpact::default(),
             },
             last_recreation: None,
-            query_times: Vec::with_capacity(1000),
+            query_times: VecDeque::with_capacity(1000),
         }
     }
 
@@ -118,9 +119,9 @@ impl BloomStatsTracker {
 
         // Keep last 1000 query times for moving average
         if self.query_times.len() >= 1000 {
-            self.query_times.remove(0);
+            self.query_times.pop_front();
         }
-        self.query_times.push(duration);
+        self.query_times.push_back(duration);
         
         // Update average
         let total_micros: u64 = self.query_times.iter()

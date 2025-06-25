@@ -39,6 +39,7 @@ tracing-subscriber = "0.3"
 # Utilities
 rand = "0.8"
 hex = "0.4"
+indexmap = "2.0"
 
 # Terminal UI
 crossterm = "0.27"
