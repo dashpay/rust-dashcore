@@ -472,7 +472,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     let client = &(*client);
     
     // Register callbacks in the global registry
-    let callback_info = CallbackInfo {
+    let callback_info = CallbackInfo::Detailed {
         progress_callback,
         completion_callback,
         user_data,
@@ -516,13 +516,11 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                         
                         if let Some(ref callback_data) = *cb_guard {
                             let registry = CALLBACK_REGISTRY.lock().unwrap();
-                            if let Some(callback_info) = registry.get(callback_data.callback_id) {
-                                if let Some(callback) = callback_info.progress_callback {
-                                    // SAFETY: The callback and user_data are safely stored in the registry
-                                    // and accessed through thread-safe mechanisms. The registry ensures
-                                    // proper lifetime management without raw pointer passing across threads.
-                                    callback(ffi_progress.as_ref(), callback_info.user_data);
-                                }
+                            if let Some(CallbackInfo::Detailed { progress_callback: Some(callback), user_data, .. }) = registry.get(callback_data.callback_id) {
+                                // SAFETY: The callback and user_data are safely stored in the registry
+                                // and accessed through thread-safe mechanisms. The registry ensures
+                                // proper lifetime management without raw pointer passing across threads.
+                                callback(ffi_progress.as_ref(), *user_data);
                             }
                         }
                     }
@@ -557,25 +555,23 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
             let mut cb_guard = sync_callbacks_clone.lock().unwrap();
             if let Some(ref callback_data) = *cb_guard {
                 let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                if let Some(callback_info) = registry.unregister(callback_data.callback_id) {
-                    if let Some(callback) = callback_info.completion_callback {
-                        match monitor_result {
-                            Ok(_) => {
-                                let msg = CString::new("Sync completed successfully").unwrap();
-                                // SAFETY: The callback and user_data are safely managed through the registry.
-                                // The registry ensures proper lifetime management and thread safety.
-                                // The string pointer is only valid for the duration of the callback.
-                                callback(true, msg.as_ptr(), callback_info.user_data);
-                                // CString is automatically dropped here, which is safe because the callback
-                                // should not store or use the pointer after it returns
-                            }
-                            Err(e) => {
-                                let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
-                                // SAFETY: Same as above
-                                callback(false, msg.as_ptr(), callback_info.user_data);
-                                // CString is automatically dropped here, which is safe because the callback
-                                // should not store or use the pointer after it returns
-                            }
+                if let Some(CallbackInfo::Detailed { completion_callback: Some(callback), user_data, .. }) = registry.unregister(callback_data.callback_id) {
+                    match monitor_result {
+                        Ok(_) => {
+                            let msg = CString::new("Sync completed successfully").unwrap();
+                            // SAFETY: The callback and user_data are safely managed through the registry.
+                            // The registry ensures proper lifetime management and thread safety.
+                            // The string pointer is only valid for the duration of the callback.
+                            callback(true, msg.as_ptr(), user_data);
+                            // CString is automatically dropped here, which is safe because the callback
+                            // should not store or use the pointer after it returns
+                        }
+                        Err(e) => {
+                            let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
+                            // SAFETY: Same as above
+                            callback(false, msg.as_ptr(), user_data);
+                            // CString is automatically dropped here, which is safe because the callback
+                            // should not store or use the pointer after it returns
                         }
                     }
                 }
