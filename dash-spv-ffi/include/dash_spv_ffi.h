@@ -40,6 +40,9 @@ typedef enum FFIWatchItemType {
 
 typedef struct FFIClientConfig FFIClientConfig;
 
+/**
+ * FFIDashSpvClient structure
+ */
 typedef struct FFIDashSpvClient FFIDashSpvClient;
 
 typedef struct FFIString {
@@ -144,6 +147,39 @@ typedef struct FFITransaction {
   uint32_t size;
   uint32_t weight;
 } FFITransaction;
+
+/**
+ * FFI-safe representation of an unconfirmed transaction
+ *
+ * # Safety
+ *
+ * This struct contains raw pointers that must be properly managed:
+ *
+ * - `raw_tx`: A pointer to the raw transaction bytes. The caller is responsible for:
+ *   - Allocating this memory before passing it to Rust
+ *   - Ensuring the pointer remains valid for the lifetime of this struct
+ *   - Freeing the memory after use with `dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx`
+ *
+ * - `addresses`: A pointer to an array of FFIString objects. The caller is responsible for:
+ *   - Allocating this array before passing it to Rust
+ *   - Ensuring the pointer remains valid for the lifetime of this struct
+ *   - Freeing each FFIString in the array with `dash_spv_ffi_string_destroy`
+ *   - Freeing the array itself after use with `dash_spv_ffi_unconfirmed_transaction_destroy_addresses`
+ *
+ * Use `dash_spv_ffi_unconfirmed_transaction_destroy` to safely clean up all resources
+ * associated with this struct.
+ */
+typedef struct FFIUnconfirmedTransaction {
+  struct FFIString txid;
+  uint8_t *raw_tx;
+  uintptr_t raw_tx_len;
+  int64_t amount;
+  uint64_t fee;
+  bool is_instant_send;
+  bool is_outgoing;
+  struct FFIString *addresses;
+  uintptr_t addresses_len;
+} FFIUnconfirmedTransaction;
 
 typedef struct FFIUtxo {
   struct FFIString txid;
@@ -346,6 +382,44 @@ void dash_spv_ffi_clear_error(void);
 void dash_spv_ffi_string_destroy(struct FFIString s);
 
 void dash_spv_ffi_array_destroy(struct FFIArray *arr);
+
+/**
+ * Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction
+ *
+ * # Safety
+ *
+ * - `raw_tx` must be a valid pointer to memory allocated by the caller
+ * - `raw_tx_len` must be the correct length of the allocated memory
+ * - The pointer must not be used after this function is called
+ * - This function should only be called once per allocation
+ */
+void dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx(uint8_t *raw_tx, uintptr_t raw_tx_len);
+
+/**
+ * Destroys the addresses array allocated for an FFIUnconfirmedTransaction
+ *
+ * # Safety
+ *
+ * - `addresses` must be a valid pointer to an array of FFIString objects
+ * - `addresses_len` must be the correct length of the array
+ * - Each FFIString in the array must be destroyed separately using `dash_spv_ffi_string_destroy`
+ * - The pointer must not be used after this function is called
+ * - This function should only be called once per allocation
+ */
+void dash_spv_ffi_unconfirmed_transaction_destroy_addresses(struct FFIString *addresses,
+                                                            uintptr_t addresses_len);
+
+/**
+ * Destroys an FFIUnconfirmedTransaction and all its associated resources
+ *
+ * # Safety
+ *
+ * - `tx` must be a valid pointer to an FFIUnconfirmedTransaction
+ * - All resources (raw_tx, addresses array, and individual FFIStrings) will be freed
+ * - The pointer must not be used after this function is called
+ * - This function should only be called once per FFIUnconfirmedTransaction
+ */
+void dash_spv_ffi_unconfirmed_transaction_destroy(struct FFIUnconfirmedTransaction *tx);
 
 int32_t dash_spv_ffi_init_logging(const char *level);
 
