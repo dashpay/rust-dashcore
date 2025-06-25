@@ -123,6 +123,47 @@ pub enum SyncError {
 
     #[error("Missing dependency: {0}")]
     MissingDependency(String),
+    
+    // Explicit error category variants
+    #[error("Timeout error: {0}")]
+    Timeout(String),
+    
+    #[error("Network error: {0}")]
+    Network(String),
+    
+    #[error("Validation error: {0}")]
+    Validation(String),
+    
+    #[error("Storage error: {0}")]
+    Storage(String),
+}
+
+impl SyncError {
+    /// Returns a static string representing the error category based on the variant
+    pub fn category(&self) -> &'static str {
+        match self {
+            SyncError::SyncInProgress => "state",
+            SyncError::SyncTimeout | SyncError::Timeout(_) => "timeout",
+            SyncError::InvalidState(_) | SyncError::Validation(_) => "validation",
+            SyncError::MissingDependency(_) => "dependency",
+            SyncError::Network(_) => "network",
+            SyncError::Storage(_) => "storage",
+            SyncError::SyncFailed(msg) => {
+                // Fallback to string matching for legacy SyncFailed errors
+                if msg.contains("timeout") || msg.contains("timed out") {
+                    "timeout"
+                } else if msg.contains("network") || msg.contains("connection") {
+                    "network"
+                } else if msg.contains("validation") || msg.contains("invalid") {
+                    "validation"
+                } else if msg.contains("storage") || msg.contains("disk") {
+                    "storage"
+                } else {
+                    "unknown"
+                }
+            }
+        }
+    }
 }
 
 /// Type alias for Result with SpvError.
