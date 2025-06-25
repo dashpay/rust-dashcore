@@ -75,6 +75,16 @@ impl MultiPeerNetworkManager {
         
         // Load reputation data if available
         let reputation_path = data_dir.join("peer_reputation.json");
+        
+        // Ensure the directory exists before attempting to load
+        if let Some(parent_dir) = reputation_path.parent() {
+            if !parent_dir.exists() {
+                if let Err(e) = std::fs::create_dir_all(parent_dir) {
+                    log::warn!("Failed to create directory for reputation data: {}", e);
+                }
+            }
+        }
+        
         if let Err(e) = reputation_manager.load_from_storage(&reputation_path).await {
             log::warn!("Failed to load peer reputation data: {}", e);
         }
