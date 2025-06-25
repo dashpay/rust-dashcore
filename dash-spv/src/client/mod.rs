@@ -48,7 +48,7 @@ pub struct DashSpvClient {
     storage: Box<dyn StorageManager>,
     wallet: Arc<RwLock<crate::wallet::Wallet>>,
     sync_manager: SequentialSyncManager,
-    validation: ValidationManager,
+    _validation: ValidationManager,
     chainlock_manager: Arc<ChainLockManager>,
     running: Arc<RwLock<bool>>,
     watch_items: Arc<RwLock<HashSet<WatchItem>>>,
@@ -62,6 +62,7 @@ pub struct DashSpvClient {
     event_rx: Option<mpsc::UnboundedReceiver<SpvEvent>>,
     mempool_state: Arc<RwLock<MempoolState>>,
     mempool_filter: Option<Arc<MempoolFilter>>,
+    last_sync_state_save: Arc<RwLock<u64>>,
 }
 
 impl DashSpvClient {
@@ -300,6 +301,7 @@ impl DashSpvClient {
             event_rx: Some(event_rx),
             mempool_state,
             mempool_filter: None,
+            last_sync_state_save: Arc::new(RwLock::new(0)),
         })
     }
 
