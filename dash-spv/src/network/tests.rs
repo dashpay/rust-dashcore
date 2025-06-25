@@ -21,6 +21,7 @@ mod multi_peer_tests {
             connection_timeout: Duration::from_secs(5),
             message_timeout: Duration::from_secs(30),
             sync_timeout: Duration::from_secs(60),
+            read_timeout: Duration::from_millis(15),
             watch_items: vec![],
             enable_filters: false,
             enable_masternodes: false,
@@ -40,6 +41,24 @@ mod multi_peer_tests {
             filter_gap_restart_cooldown_secs: 30,
             max_filter_gap_restart_attempts: 5,
             max_filter_gap_sync_size: 50000,
+            // Mempool fields
+            enable_mempool_tracking: false,
+            mempool_strategy: crate::client::config::MempoolStrategy::Selective,
+            max_mempool_transactions: 1000,
+            mempool_timeout_secs: 3600,
+            recent_send_window_secs: 300,
+            fetch_mempool_transactions: true,
+            persist_mempool: false,
+            // Request control fields
+            max_concurrent_headers_requests: None,
+            max_concurrent_mnlist_requests: None,
+            max_concurrent_cfheaders_requests: None,
+            max_concurrent_block_requests: None,
+            headers_request_rate_limit: None,
+            mnlist_request_rate_limit: None,
+            cfheaders_request_rate_limit: None,
+            filters_request_rate_limit: None,
+            blocks_request_rate_limit: None,
         }
     }
 

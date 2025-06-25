@@ -321,27 +321,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
     let runtime = client.runtime.clone();
 
     // Register callbacks in the global registry for safe lifetime management
-    // We need to adapt the simple callbacks to the detailed progress type used by the registry
-    let callback_info = CallbackInfo {
-        progress_callback: progress_callback.map(|cb| {
-            // Create a wrapper that adapts the simple callback to the detailed progress type
-            extern "C" fn wrapper(_progress: *const FFIDetailedSyncProgress, user_data: *mut c_void) {
-                // Access the original callback from the registry using the user data
-                // This is safe because we control the lifetime through the registry
-                let registry = CALLBACK_REGISTRY.lock().unwrap();
-                // Find our callback by comparing user_data pointers
-                for (_, info) in registry.callbacks.iter() {
-                    if info.user_data == user_data {
-                        // This is a bit hacky but necessary to access the original simple callback
-                        // In a real implementation, we'd store both callback types in CallbackInfo
-                        let msg = CString::new("Syncing headers...").unwrap();
-                        // We can't call the original callback here directly, so we'll handle it differently
-                        break;
-                    }
-                }
-            }
-            wrapper
-        }),
+    let callback_info = CallbackInfo::Simple {
+        progress_callback,
         completion_callback,
         user_data,
     };
