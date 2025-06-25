@@ -198,6 +198,15 @@ impl Wallet {
         }
     }
     
+    /// Check if a transaction has an InstantLock.
+    pub async fn has_instant_lock(&self, txid: &dashcore::Txid) -> bool {
+        let storage = self.storage.read().await;
+        match storage.load_instant_lock(*txid).await {
+            Ok(Some(_)) => true,
+            _ => false,
+        }
+    }
+    
     /// Check if a transaction is relevant to this wallet.
     pub fn is_transaction_relevant(&self, tx: &dashcore::Transaction) -> bool {
         // Check if any input spends our UTXOs
