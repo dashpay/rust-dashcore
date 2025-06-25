@@ -180,3 +180,30 @@ pub type ValidationResult<T> = std::result::Result<T, ValidationError>;
 
 /// Type alias for sync operation results.
 pub type SyncResult<T> = std::result::Result<T, SyncError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sync_error_category() {
+        // Test explicit variant categories
+        assert_eq!(SyncError::Timeout("test".to_string()).category(), "timeout");
+        assert_eq!(SyncError::Network("test".to_string()).category(), "network");
+        assert_eq!(SyncError::Validation("test".to_string()).category(), "validation");
+        assert_eq!(SyncError::Storage("test".to_string()).category(), "storage");
+        
+        // Test existing variant categories
+        assert_eq!(SyncError::SyncInProgress.category(), "state");
+        assert_eq!(SyncError::SyncTimeout.category(), "timeout");
+        assert_eq!(SyncError::InvalidState("test".to_string()).category(), "validation");
+        assert_eq!(SyncError::MissingDependency("test".to_string()).category(), "dependency");
+        
+        // Test SyncFailed fallback categorization
+        assert_eq!(SyncError::SyncFailed("connection timeout".to_string()).category(), "timeout");
+        assert_eq!(SyncError::SyncFailed("network error".to_string()).category(), "network");
+        assert_eq!(SyncError::SyncFailed("validation failed".to_string()).category(), "validation");
+        assert_eq!(SyncError::SyncFailed("disk full".to_string()).category(), "storage");
+        assert_eq!(SyncError::SyncFailed("something else".to_string()).category(), "unknown");
+    }
+}
