@@ -295,6 +295,34 @@ impl ChainState {
     pub fn get_last_chainlock_height(&self) -> Option<u32> {
         self.last_chainlock_height
     }
+    
+    /// Get filter matched heights (placeholder for now)
+    /// In a real implementation, this would track heights where filters matched wallet transactions
+    pub fn get_filter_matched_heights(&self) -> Option<Vec<u32>> {
+        // For now, return an empty vector as we don't track this yet
+        // This would typically be populated during filter sync when matches are found
+        Some(Vec::new())
+    }
+    
+    /// Calculate the total chain work up to the tip
+    pub fn calculate_chain_work(&self) -> Option<crate::chain::chain_work::ChainWork> {
+        use crate::chain::chain_work::ChainWork;
+        
+        // If we have no headers, return None
+        if self.headers.is_empty() {
+            return None;
+        }
+        
+        // Start with zero work
+        let mut total_work = ChainWork::zero();
+        
+        // Add work from each header
+        for header in &self.headers {
+            total_work = total_work.add_header(header);
+        }
+        
+        Some(total_work)
+    }
 }
 
 impl std::fmt::Debug for ChainState {
