@@ -48,7 +48,7 @@ pub struct DashSpvClient {
     storage: Box<dyn StorageManager>,
     wallet: Arc<RwLock<crate::wallet::Wallet>>,
     sync_manager: SequentialSyncManager,
-    _validation: ValidationManager,
+    validation: ValidationManager,
     chainlock_manager: Arc<ChainLockManager>,
     running: Arc<RwLock<bool>>,
     watch_items: Arc<RwLock<HashSet<WatchItem>>>,
@@ -1701,8 +1701,8 @@ impl DashSpvClient {
     /// Sync filters for a specific height range.
     pub async fn sync_filters_range(
         &mut self,
-        start_height: Option<u32>,
-        count: Option<u32>,
+        _start_height: Option<u32>,
+        _count: Option<u32>,
     ) -> Result<()> {
         // Sequential sync handles filter range sync internally
         tracing::info!("Sequential sync mode: filter range sync handled internally");
