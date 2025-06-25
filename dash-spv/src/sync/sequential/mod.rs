@@ -1403,4 +1403,21 @@ impl SequentialSyncManager {
         
         tracing::debug!("Reset sequential sync manager pending requests");
     }
+    
+    /// Fully reset the sync manager state to idle, used when sync initialization fails
+    pub fn reset_to_idle(&mut self) {
+        // First reset all pending requests
+        self.reset_pending_requests();
+        
+        // Reset phase to idle
+        self.current_phase = SyncPhase::Idle;
+        
+        // Clear sync start time
+        self.sync_start_time = None;
+        
+        // Clear phase history
+        self.phase_history.clear();
+        
+        tracing::info!("Reset sequential sync manager to idle state");
+    }
 }
