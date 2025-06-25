@@ -162,7 +162,10 @@ impl PeerReputation {
         // Apply decay for each interval that has passed
         let intervals = elapsed.as_secs() / DECAY_INTERVAL.as_secs();
         if intervals > 0 {
-            let decay = (intervals as i32) * DECAY_AMOUNT;
+            // Use saturating conversion to prevent overflow
+            // Cap at a reasonable maximum to avoid excessive decay
+            let intervals_i32 = intervals.min(i32::MAX as u64) as i32;
+            let decay = intervals_i32.saturating_mul(DECAY_AMOUNT);
             self.score = (self.score - decay).max(MIN_SCORE);
             self.last_update = now;
         }
@@ -408,16 +411,59 @@ impl PeerReputationManager {
         let data: Vec<(SocketAddr, SerializedPeerReputation)> = serde_json::from_str(&json)?;
         
         let mut reputations = self.reputations.write().await;
+        let mut loaded_count = 0;
+        let mut skipped_count = 0;
+        
         for (addr, serialized) in data {
+            // Validate score is within expected range
+            let score = if serialized.score < MIN_SCORE {
+                log::warn!("Peer {} has invalid score {} (below minimum), clamping to {}", 
+                    addr, serialized.score, MIN_SCORE);
+                MIN_SCORE
+            } else if serialized.score > MAX_MISBEHAVIOR_SCORE {
+                log::warn!("Peer {} has invalid score {} (above maximum), clamping to {}", 
+                    addr, serialized.score, MAX_MISBEHAVIOR_SCORE);
+                MAX_MISBEHAVIOR_SCORE
+            } else {
+                serialized.score
+            };
+            
+            // Validate ban count is reasonable (max 1000 bans)
+            const MAX_BAN_COUNT: u32 = 1000;
+            let ban_count = if serialized.ban_count > MAX_BAN_COUNT {
+                log::warn!("Peer {} has excessive ban count {}, clamping to {}", 
+                    addr, serialized.ban_count, MAX_BAN_COUNT);
+                MAX_BAN_COUNT
+            } else {
+                serialized.ban_count
+            };
+            
+            // Validate action counts are reasonable (max 1 million actions)
+            const MAX_ACTION_COUNT: u64 = 1_000_000;
+            let positive_actions = serialized.positive_actions.min(MAX_ACTION_COUNT);
+            let negative_actions = serialized.negative_actions.min(MAX_ACTION_COUNT);
+            let connection_attempts = serialized.connection_attempts.min(MAX_ACTION_COUNT);
+            let successful_connections = serialized.successful_connections.min(MAX_ACTION_COUNT);
+            
+            // Validate successful connections don't exceed attempts
+            let successful_connections = successful_connections.min(connection_attempts);
+            
+            // Skip entry if data appears corrupted
+            if positive_actions == MAX_ACTION_COUNT || negative_actions == MAX_ACTION_COUNT {
+                log::warn!("Skipping peer {} with potentially corrupted action counts", addr);
+                skipped_count += 1;
+                continue;
+            }
+            
             let rep = PeerReputation {
-                score: serialized.score,
-                ban_count: serialized.ban_count,
+                score,
+                ban_count,
                 banned_until: None,
                 last_update: Instant::now(),
-                positive_actions: serialized.positive_actions,
-                negative_actions: serialized.negative_actions,
-                connection_attempts: serialized.connection_attempts,
-                successful_connections: serialized.successful_connections,
+                positive_actions,
+                negative_actions,
+                connection_attempts,
+                successful_connections,
                 last_connection: None,
             };
             
@@ -428,9 +474,11 @@ impl PeerReputationManager {
             }
             
             reputations.insert(addr, rep);
+            loaded_count += 1;
         }
         
-        log::info!("Loaded reputation data for {} peers", reputations.len());
+        log::info!("Loaded reputation data for {} peers (skipped {} corrupted entries)", 
+            loaded_count, skipped_count);
         Ok(())
     }
 }
