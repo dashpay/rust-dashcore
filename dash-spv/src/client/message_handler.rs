@@ -109,19 +109,30 @@ impl<'a> MessageHandler<'a> {
             _ => {}
         }
 
-        // For messages that need both sync manager and client processing,
-        // we need to clone to share ownership
-        let needs_sync_handling = matches!(
-            &message,
-            NetworkMessage::Headers(_) |
-            NetworkMessage::CFilter(_) |
-            NetworkMessage::Block(_)
-        );
-
-        if needs_sync_handling {
-            if let Err(e) = self.sync_manager.handle_message(message.clone(), &mut *self.network, &mut *self.storage).await {
-                tracing::error!("Sequential sync manager error handling message: {}", e);
-                // Don't return error immediately - some messages might need additional processing
+        // Handle messages that may need sync manager processing
+        // We optimize to avoid cloning expensive messages like blocks
+        match &message {
+            NetworkMessage::Headers(_) | NetworkMessage::CFilter(_) => {
+                // Headers and CFilters are relatively small, cloning is acceptable
+                if let Err(e) = self.sync_manager.handle_message(message.clone(), &mut *self.network, &mut *self.storage).await {
+                    tracing::error!("Sequential sync manager error handling message: {}", e);
+                }
+            }
+            NetworkMessage::Block(_) => {
+                // Blocks can be large - avoid cloning unless necessary
+                // Check if sync manager actually needs to process this block
+                if self.sync_manager.is_in_downloading_blocks_phase() {
+                    // Only clone if we're in the downloading blocks phase
+                    if let Err(e) = self.sync_manager.handle_message(message.clone(), &mut *self.network, &mut *self.storage).await {
+                        tracing::error!("Sequential sync manager error handling block message: {}", e);
+                    }
+                } else {
+                    // Sync manager will just log and return, no need to send it
+                    tracing::debug!("Block received outside of DownloadingBlocks phase - skipping sync manager processing");
+                }
+            }
+            _ => {
+                // Other messages don't need sync manager processing in this context
             }
         }
 
