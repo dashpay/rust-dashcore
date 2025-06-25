@@ -4,12 +4,12 @@
 
 use dashcore::{
     block::Header as BlockHeader, network::message::NetworkMessage,
-    network::message_blockdata::GetHeadersMessage, network::message_headers2::Headers2Message,
+    network::message_blockdata::GetHeadersMessage,
     network::constants::NetworkExt, BlockHash,
 };
 use dashcore_hashes::Hash;
 
-use crate::chain::{ForkDetector, ForkDetectionResult, ReorgManager, ChainTip, ChainTipManager, ChainWork};
+use crate::chain::{ForkDetector, ForkDetectionResult, ReorgManager, ChainTipManager, ChainWork};
 use crate::chain::checkpoints::{CheckpointManager, mainnet_checkpoints, testnet_checkpoints};
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};

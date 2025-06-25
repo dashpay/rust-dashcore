@@ -7,9 +7,8 @@
 pub mod testnet;
 pub mod mainnet;
 
-use dashcore::{BlockHash, ProTxHash};
+use dashcore::BlockHash;
 use dashcore_hashes::Hash;
-use dashcore::consensus::encode::serialize_hex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
