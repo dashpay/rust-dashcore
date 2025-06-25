@@ -147,12 +147,29 @@ impl MempoolFilter {
             }
         }
         
-        // Calculate fee using wallet's method
-        let fee = wallet.calculate_transaction_fee(&tx).unwrap_or_else(|| {
-            // If we can't calculate the fee (e.g., missing input UTXOs), use 0 as fallback
-            tracing::debug!("Unable to calculate fee for transaction {}, using 0", txid);
-            dashcore::Amount::from_sat(0)
-        });
+        // Calculate fee using wallet's method, falling back to partial calculation if needed
+        let fee = wallet.calculate_transaction_fee(&tx)
+            .or_else(|| {
+                // Try partial fee calculation if full calculation fails
+                let partial_fee = wallet.calculate_partial_transaction_fee(&tx);
+                if let Some(fee) = partial_fee {
+                    tracing::debug!(
+                        "Transaction {}: using partial fee calculation: {} sats",
+                        txid, fee.to_sat()
+                    );
+                } else {
+                    tracing::debug!(
+                        "Transaction {}: unable to calculate fee (no available input UTXOs)",
+                        txid
+                    );
+                }
+                partial_fee
+            })
+            .unwrap_or_else(|| {
+                // If both full and partial calculations fail, use 0 as last resort
+                tracing::debug!("Transaction {}: defaulting to 0 fee", txid);
+                dashcore::Amount::from_sat(0)
+            });
         
         // Check if this is an InstantSend transaction
         let is_instant_send = wallet.has_instant_lock(&txid).await;

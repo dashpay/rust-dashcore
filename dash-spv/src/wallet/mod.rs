@@ -198,6 +198,43 @@ impl Wallet {
         }
     }
     
+    /// Calculate transaction fee for a given transaction using partial inputs.
+    /// This method attempts to calculate a minimum fee based on available input UTXOs.
+    /// Returns Some(fee) if at least one input UTXO is available and the calculation is valid,
+    /// otherwise returns None.
+    pub fn calculate_partial_transaction_fee(&self, tx: &dashcore::Transaction) -> Option<dashcore::Amount> {
+        let mut partial_input_value = 0u64;
+        let mut inputs_found = 0;
+        
+        // Get input values from our UTXO set
+        if let Ok(utxos) = self.utxo_set.try_read() {
+            for input in &tx.input {
+                if let Some(utxo) = utxos.get(&input.previous_output) {
+                    partial_input_value += utxo.txout.value;
+                    inputs_found += 1;
+                }
+            }
+        } else {
+            return None; // Could not acquire lock
+        }
+        
+        // If we have no inputs, we can't calculate any fee
+        if inputs_found == 0 {
+            return None;
+        }
+        
+        // Sum output values
+        let total_output: u64 = tx.output.iter().map(|out| out.value).sum();
+        
+        // Calculate minimum fee (actual fee might be higher if we're missing inputs)
+        if partial_input_value >= total_output {
+            Some(dashcore::Amount::from_sat(partial_input_value - total_output))
+        } else {
+            // This means we don't have enough input information to calculate a positive fee
+            None
+        }
+    }
+    
     /// Check if a transaction has an InstantLock.
     pub async fn has_instant_lock(&self, txid: &dashcore::Txid) -> bool {
         let storage = self.storage.read().await;
