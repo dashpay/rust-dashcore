@@ -314,7 +314,7 @@ mod tests {
                 assert!(!hash.is_null());
             }
 
-            extern "C" fn on_tx(txid: *const c_char, _confirmed: bool, user_data: *mut c_void) {
+            extern "C" fn on_tx(txid: *const c_char, _confirmed: bool, _amount: i64, _addresses: *const c_char, _block_height: u32, user_data: *mut c_void) {
                 let data = unsafe { &*(user_data as *const EventData) };
                 data.tx.store(true, Ordering::SeqCst);
                 assert!(!txid.is_null());
@@ -329,6 +329,9 @@ mod tests {
                 on_block: Some(on_block),
                 on_transaction: Some(on_tx),
                 on_balance_update: Some(on_balance),
+                on_mempool_transaction_added: None,
+                on_mempool_transaction_confirmed: None,
+                on_mempool_transaction_removed: None,
                 user_data: &event_data as *const _ as *mut c_void,
             };
 
