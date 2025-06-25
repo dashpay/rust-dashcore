@@ -5,11 +5,13 @@
 
 pub mod filters;
 pub mod headers;
+pub mod headers2_state;
 pub mod headers_with_reorg;
 pub mod masternodes;
 pub mod sequential;
 pub mod state;
 pub mod terminal_blocks;
+pub mod terminal_block_data;
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};

@@ -2,7 +2,8 @@
 
 use dashcore::{
     block::Header as BlockHeader, network::constants::NetworkExt, network::message::NetworkMessage,
-    network::message_blockdata::GetHeadersMessage, BlockHash,
+    network::message_blockdata::GetHeadersMessage, network::message_headers2::Headers2Message,
+    BlockHash,
 };
 use dashcore_hashes::Hash;
 
@@ -10,12 +11,14 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+use crate::sync::headers2_state::Headers2StateManager;
 use crate::validation::ValidationManager;
 
 /// Manages header synchronization.
 pub struct HeaderSyncManager {
     config: ClientConfig,
     validation: ValidationManager,
+    headers2_state: Headers2StateManager,
     total_headers_synced: u32,
     last_progress_log: Option<std::time::Instant>,
     /// Whether header sync is currently in progress
@@ -30,6 +33,7 @@ impl HeaderSyncManager {
         Self {
             config: config.clone(),
             validation: ValidationManager::new(config.validation_mode),
+            headers2_state: Headers2StateManager::new(),
             total_headers_synced: 0,
             last_progress_log: None,
             syncing_headers: false,
@@ -156,6 +160,38 @@ impl HeaderSyncManager {
         }
 
         Ok(true)
+    }
+    
+    /// Handle a Headers2 message with compressed headers.
+    /// Returns true if the message was processed and sync should continue, false if sync is complete.
+    pub async fn handle_headers2_message(
+        &mut self,
+        headers2: Headers2Message,
+        peer_id: crate::types::PeerId,
+        storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<bool> {
+        tracing::info!(
+            "🔍 Handle headers2 message called with {} compressed headers from peer {}",
+            headers2.headers.len(),
+            peer_id
+        );
+        
+        // Decompress headers using the peer's compression state
+        let headers = self.headers2_state
+            .process_headers(peer_id, headers2.headers)
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to decompress headers: {}", e)))?;
+        
+        // Log compression statistics
+        let stats = self.headers2_state.get_stats();
+        tracing::info!(
+            "📊 Headers2 compression stats: {:.1}% bandwidth saved, {:.1}% compression ratio",
+            stats.bandwidth_savings,
+            stats.compression_ratio * 100.0
+        );
+        
+        // Process decompressed headers through the normal flow
+        self.handle_headers_message(headers, storage, network).await
     }
 
     /// Check if a sync timeout has occurred and handle recovery.
@@ -336,13 +372,24 @@ impl HeaderSyncManager {
         // Create GetHeaders message
         let getheaders_msg = GetHeadersMessage::new(block_locator.clone(), stop_hash);
         
-        tracing::info!("📤 Sending GetHeaders message");
-
-        // Send the message
-        network
-            .send_message(NetworkMessage::GetHeaders(getheaders_msg))
-            .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+        // Check if we have a peer that supports headers2
+        let use_headers2 = network.has_headers2_peer().await;
+        
+        if use_headers2 {
+            tracing::info!("📤 Sending GetHeaders2 message (compressed headers)");
+            // Send GetHeaders2 message for compressed headers
+            network
+                .send_message(NetworkMessage::GetHeaders2(getheaders_msg))
+                .await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders2: {}", e)))?;
+        } else {
+            tracing::info!("📤 Sending GetHeaders message (uncompressed headers)");
+            // Send regular GetHeaders message
+            network
+                .send_message(NetworkMessage::GetHeaders(getheaders_msg))
+                .await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+        }
 
         // Headers request sent successfully
 
@@ -502,5 +549,15 @@ impl HeaderSyncManager {
         self.syncing_headers = false;
         self.last_sync_progress = std::time::Instant::now();
         tracing::debug!("Reset header sync pending requests");
+    }
+    
+    /// Get headers2 compression statistics.
+    pub fn headers2_stats(&self) -> crate::sync::headers2_state::Headers2Stats {
+        self.headers2_state.get_stats()
+    }
+    
+    /// Reset headers2 state for a peer (e.g., on disconnect).
+    pub fn reset_headers2_peer(&mut self, peer_id: crate::types::PeerId) {
+        self.headers2_state.reset_peer(peer_id);
     }
 }
