@@ -245,7 +245,6 @@ int32_t dash_spv_ffi_client_start(struct FFIDashSpvClient *client);
 int32_t dash_spv_ffi_client_stop(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_sync_to_tip(struct FFIDashSpvClient *client,
-                                        void (*progress_callback)(double, const char*, void*),
                                         void (*completion_callback)(bool, const char*, void*),
                                         void *user_data);
 
@@ -259,6 +258,20 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
                                                                                   void*),
                                                       void *user_data);
 
+/**
+ * Cancels the sync operation.
+ *
+ * **Note**: This function currently only stops the SPV client and clears sync callbacks,
+ * but does not fully abort the ongoing sync process. The sync operation may continue
+ * running in the background until it completes naturally. Full sync cancellation with
+ * proper task abortion is not yet implemented.
+ *
+ * # Safety
+ * The client pointer must be valid and non-null.
+ *
+ * # Returns
+ * Returns 0 on success, or an error code on failure.
+ */
 int32_t dash_spv_ffi_client_cancel_sync(struct FFIDashSpvClient *client);
 
 struct FFISyncProgress *dash_spv_ffi_client_get_sync_progress(struct FFIDashSpvClient *client);

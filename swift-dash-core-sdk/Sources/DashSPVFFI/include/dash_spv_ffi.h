@@ -198,7 +198,6 @@ int32_t dash_spv_ffi_client_start(struct FFIDashSpvClient *client);
 int32_t dash_spv_ffi_client_stop(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_sync_to_tip(struct FFIDashSpvClient *client,
-                                        void (*progress_callback)(double, const char*, void*),
                                         void (*completion_callback)(bool, const char*, void*),
                                         void *user_data);
 
