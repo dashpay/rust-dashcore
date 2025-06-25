@@ -510,6 +510,11 @@ impl SequentialSyncManager {
         matches!(self.current_phase, SyncPhase::FullySynced { .. })
     }
 
+    /// Check if currently in the downloading blocks phase
+    pub fn is_in_downloading_blocks_phase(&self) -> bool {
+        matches!(self.current_phase, SyncPhase::DownloadingBlocks { .. })
+    }
+
     /// Get phase history
     pub fn phase_history(&self) -> &[PhaseTransition] {
         &self.phase_history
