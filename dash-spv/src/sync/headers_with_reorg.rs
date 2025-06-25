@@ -9,7 +9,7 @@ use dashcore::{
 };
 use dashcore_hashes::Hash;
 
-use crate::chain::{ForkDetector, ForkDetectionResult, ReorgManager, ChainTipManager, ChainWork};
+use crate::chain::{ForkDetector, ForkDetectionResult, ReorgManager, ChainTip, ChainTipManager, ChainWork};
 use crate::chain::checkpoints::{CheckpointManager, mainnet_checkpoints, testnet_checkpoints};
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
@@ -301,7 +301,7 @@ impl HeaderSyncManagerWithReorg {
     ) -> SyncResult<()> {
         if let Some(strongest_fork) = self.fork_detector.get_strongest_fork() {
             if let Some(current_tip) = self.tip_manager.get_active_tip() {
-                // Check if reorganization is needed
+                // First phase: Check if reorganization is needed (read-only)
                 let should_reorg = {
                     let sync_storage = SyncStorageAdapter::new(storage);
                     self.reorg_manager.should_reorganize(current_tip, strongest_fork, &sync_storage)
@@ -309,32 +309,62 @@ impl HeaderSyncManagerWithReorg {
                 };
                 
                 if should_reorg {
-                    // Clone the tip hash before reorganization
+                    // Clone necessary data before reorganization to avoid borrow conflicts
                     let fork_tip_hash = strongest_fork.tip_hash;
+                    let fork_clone = strongest_fork.clone();
                     
-                    // TODO: Fix reorganization - needs to resolve borrow conflict between ChainStorage and StorageManager
-                    // For now, skip actual reorganization to allow compilation
-                    tracing::warn!("⚠️ Reorganization detected but skipped due to borrow conflict - needs implementation fix");
-                    
-                    // Placeholder event
-                    let event = crate::chain::reorg::ReorgEvent {
-                        common_ancestor: strongest_fork.fork_point,
-                        common_height: strongest_fork.fork_height,
-                        disconnected_headers: Vec::new(),
-                        connected_headers: Vec::new(),
-                        affected_transactions: Vec::new(),
-                    };
-                    
-                    tracing::warn!(
-                        "🔄 Reorganization complete - common ancestor: {}, depth: {}",
-                        event.common_ancestor,
-                        event.disconnected_headers.len()
+                    tracing::info!(
+                        "⚠️ Reorganization needed: fork at height {} (work: {:?}) > main chain at height {} (work: {:?})",
+                        fork_clone.tip_height,
+                        fork_clone.chain_work,
+                        current_tip.height,
+                        current_tip.chain_work
                     );
+                    
+                    // Second phase: Perform reorganization (requires mutable access)
+                    // Create a temporary ChainStorage adapter for the reorganization
+                    let sync_storage = SyncStorageAdapter::new(storage);
+                    
+                    // Perform the reorganization
+                    let event = self.reorg_manager
+                        .reorganize(
+                            &mut self.chain_state,
+                            &mut self.wallet_state,
+                            &fork_clone,
+                            &sync_storage,
+                            storage,
+                        )
+                        .await
+                        .map_err(|e| SyncError::SyncFailed(format!("Reorganization failed: {}", e)))?;
+                    
+                    tracing::info!(
+                        "🔄 Reorganization complete - common ancestor: {} at height {}, disconnected: {} blocks, connected: {} blocks",
+                        event.common_ancestor,
+                        event.common_height,
+                        event.disconnected_headers.len(),
+                        event.connected_headers.len()
+                    );
+                    
+                    // Update tip manager with new chain tip
+                    if let Some(new_tip_header) = fork_clone.headers.last() {
+                        let new_tip = ChainTip::new(
+                            *new_tip_header,
+                            fork_clone.tip_height,
+                            fork_clone.chain_work.clone(),
+                        );
+                        let _ = self.tip_manager.add_tip(new_tip);
+                    }
                     
                     // Remove the processed fork
                     self.fork_detector.remove_fork(&fork_tip_hash);
                     
-                    // TODO: Notify wallet and other components about the reorg
+                    // Notify about affected transactions
+                    if !event.affected_transactions.is_empty() {
+                        tracing::info!(
+                            "📝 {} transactions affected by reorganization",
+                            event.affected_transactions.len()
+                        );
+                    }
                 }
             }
         }
