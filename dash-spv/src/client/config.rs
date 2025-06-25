@@ -128,6 +128,34 @@ pub struct ClientConfig {
 
     /// Whether to persist mempool transactions.
     pub persist_mempool: bool,
+
+    // Request control configuration
+    /// Maximum concurrent header requests (default: 1).
+    pub max_concurrent_headers_requests: Option<usize>,
+
+    /// Maximum concurrent masternode list requests (default: 1).
+    pub max_concurrent_mnlist_requests: Option<usize>,
+
+    /// Maximum concurrent CF header requests (default: 1).
+    pub max_concurrent_cfheaders_requests: Option<usize>,
+
+    /// Maximum concurrent block requests (default: 5).
+    pub max_concurrent_block_requests: Option<usize>,
+
+    /// Rate limit for header requests per second (default: 10.0).
+    pub headers_request_rate_limit: Option<f64>,
+
+    /// Rate limit for masternode list requests per second (default: 5.0).
+    pub mnlist_request_rate_limit: Option<f64>,
+
+    /// Rate limit for CF header requests per second (default: 10.0).
+    pub cfheaders_request_rate_limit: Option<f64>,
+
+    /// Rate limit for filter requests per second (default: 50.0).
+    pub filters_request_rate_limit: Option<f64>,
+
+    /// Rate limit for block requests per second (default: 10.0).
+    pub blocks_request_rate_limit: Option<f64>,
 }
 
 impl Default for ClientConfig {
@@ -169,6 +197,16 @@ impl Default for ClientConfig {
             recent_send_window_secs: 300, // 5 minutes
             fetch_mempool_transactions: true,
             persist_mempool: false,
+            // Request control defaults
+            max_concurrent_headers_requests: None,
+            max_concurrent_mnlist_requests: None,
+            max_concurrent_cfheaders_requests: None,
+            max_concurrent_block_requests: None,
+            headers_request_rate_limit: None,
+            mnlist_request_rate_limit: None,
+            cfheaders_request_rate_limit: None,
+            filters_request_rate_limit: None,
+            blocks_request_rate_limit: None,
         }
     }
 }
