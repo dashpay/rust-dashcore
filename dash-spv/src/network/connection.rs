@@ -41,6 +41,8 @@ pub struct TcpConnection {
     peer_user_agent: Option<String>,
     peer_best_height: Option<i32>,
     peer_relay: Option<bool>,
+    peer_prefers_headers2: bool,
+    peer_sent_sendheaders2: bool,
 }
 
 impl TcpConnection {
@@ -61,6 +63,8 @@ impl TcpConnection {
             peer_user_agent: None,
             peer_best_height: None,
             peer_relay: None,
+            peer_prefers_headers2: false,
+            peer_sent_sendheaders2: false,
         }
     }
 
@@ -108,6 +112,8 @@ impl TcpConnection {
             peer_user_agent: None,
             peer_best_height: None,
             peer_relay: None,
+            peer_prefers_headers2: false,
+            peer_sent_sendheaders2: false,
         })
     }
 
@@ -278,6 +284,15 @@ impl TcpConnection {
                         self.address
                     );
                 }
+                
+                // Log Headers2 messages for debugging
+                if let NetworkMessage::Headers2(ref headers2) = raw_message.payload {
+                    tracing::info!(
+                        "Successfully decoded Headers2 message from {} with {} compressed headers",
+                        self.address,
+                        headers2.headers.len()
+                    );
+                }
 
                 Ok(Some(raw_message.payload))
             }
@@ -319,6 +334,11 @@ impl TcpConnection {
             }
             Err(e) => {
                 tracing::error!("Failed to decode message from {}: {}", self.address, e);
+                
+                // Log more details about what we were trying to decode
+                if let encode::Error::Io(ref io_err) = e {
+                    tracing::error!("IO error details: {:?}", io_err);
+                }
 
                 // Check if this is the specific "unknown special transaction type" error
                 let error_msg = e.to_string();
@@ -520,5 +540,45 @@ impl TcpConnection {
     /// Get ping/pong statistics.
     pub fn ping_stats(&self) -> (Option<SystemTime>, Option<SystemTime>, usize) {
         (self.last_ping_sent, self.last_pong_received, self.pending_pings.len())
+    }
+    
+    /// Set that peer prefers headers2.
+    pub fn set_prefers_headers2(&mut self, prefers: bool) {
+        self.peer_prefers_headers2 = prefers;
+        if prefers {
+            tracing::info!("Peer {} prefers headers2 compression", self.address);
+        }
+    }
+    
+    /// Check if peer prefers headers2.
+    pub fn prefers_headers2(&self) -> bool {
+        self.peer_prefers_headers2
+    }
+    
+    /// Set that peer sent us SendHeaders2.
+    pub fn set_peer_sent_sendheaders2(&mut self, sent: bool) {
+        self.peer_sent_sendheaders2 = sent;
+        if sent {
+            tracing::info!("Peer {} sent SendHeaders2 - they will send compressed headers", self.address);
+        }
+    }
+    
+    /// Check if peer sent us SendHeaders2.
+    pub fn peer_sent_sendheaders2(&self) -> bool {
+        self.peer_sent_sendheaders2
+    }
+    
+    /// Check if we can request headers2 from this peer.
+    pub fn can_request_headers2(&self) -> bool {
+        // We can request headers2 if:
+        // 1. Peer has the service flag for headers2 support
+        // 2. Peer has sent us SendHeaders2 to indicate they're ready
+        if let Some(services) = self.peer_services {
+            let has_flag = dashcore::network::constants::ServiceFlags::from(services)
+                .has(dashcore::network::constants::NODE_HEADERS_COMPRESSED);
+            has_flag && self.peer_sent_sendheaders2
+        } else {
+            false
+        }
     }
 }

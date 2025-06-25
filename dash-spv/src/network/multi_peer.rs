@@ -16,6 +16,7 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::Network;
 
 use crate::client::ClientConfig;
+use crate::client::config::MempoolStrategy;
 use crate::error::{NetworkError, NetworkResult, SpvError as Error};
 use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
@@ -55,6 +56,8 @@ pub struct MultiPeerNetworkManager {
     current_sync_peer: Arc<Mutex<Option<SocketAddr>>>,
     /// Data directory for storage
     data_dir: PathBuf,
+    /// Mempool strategy from config
+    mempool_strategy: MempoolStrategy,
 }
 
 impl MultiPeerNetworkManager {
@@ -89,6 +92,7 @@ impl MultiPeerNetworkManager {
             peer_search_started: Arc::new(Mutex::new(None)),
             current_sync_peer: Arc::new(Mutex::new(None)),
             data_dir,
+            mempool_strategy: config.mempool_strategy,
         })
     }
 
@@ -159,6 +163,7 @@ impl MultiPeerNetworkManager {
         let addrv2_handler = self.addrv2_handler.clone();
         let shutdown = self.shutdown.clone();
         let reputation_manager = self.reputation_manager.clone();
+        let mempool_strategy = self.mempool_strategy;
 
         // Spawn connection task
         let mut tasks = self.tasks.lock().await;
@@ -168,7 +173,7 @@ impl MultiPeerNetworkManager {
             match TcpConnection::connect(addr, CONNECTION_TIMEOUT.as_secs(), network).await {
                 Ok(mut conn) => {
                     // Perform handshake
-                    let mut handshake_manager = HandshakeManager::new(network);
+                    let mut handshake_manager = HandshakeManager::new(network, mempool_strategy);
                     match handshake_manager.perform_handshake(&mut conn).await {
                         Ok(_) => {
                             log::info!("Successfully connected to {}", addr);
@@ -280,6 +285,14 @@ impl MultiPeerNetworkManager {
                                 addrv2_handler.handle_sendaddrv2(addr).await;
                                 continue; // Don't forward to client
                             }
+                            NetworkMessage::SendHeaders2 => {
+                                // Peer is indicating they will send us compressed headers
+                                log::info!("Peer {} sent SendHeaders2 - they will send compressed headers", addr);
+                                let mut conn_guard = conn.write().await;
+                                conn_guard.set_peer_sent_sendheaders2(true);
+                                drop(conn_guard);
+                                continue; // Don't forward to client
+                            }
                             NetworkMessage::AddrV2(addresses) => {
                                 addrv2_handler.handle_addrv2(addresses.clone()).await;
                                 continue; // Don't forward to client
@@ -336,6 +349,27 @@ impl MultiPeerNetworkManager {
                                 // Log headers messages specifically
                                 log::info!("📨 Received Headers message from {} with {} headers!", addr, headers.len());
                                 // Forward to client
+                            }
+                            NetworkMessage::Headers2(headers2) => {
+                                // Log compressed headers messages specifically
+                                log::info!("📨 Received Headers2 message from {} with {} compressed headers!", addr, headers2.headers.len());
+                                // Forward to client (decompression handled by sync manager)
+                            }
+                            NetworkMessage::GetHeaders(_) => {
+                                // SPV clients don't serve headers to peers
+                                log::debug!("Received GetHeaders from {} - ignoring (SPV client)", addr);
+                                continue; // Don't forward to client
+                            }
+                            NetworkMessage::GetHeaders2(_) => {
+                                // SPV clients don't serve compressed headers to peers
+                                log::debug!("Received GetHeaders2 from {} - ignoring (SPV client)", addr);
+                                continue; // Don't forward to client
+                            }
+                            NetworkMessage::Unknown { command, payload } => {
+                                // Log unknown messages with more detail
+                                log::warn!("Received unknown message from {}: command='{}', payload_len={}", 
+                                         addr, command, payload.len());
+                                // Still forward to client
                             }
                             _ => {
                                 // Forward other messages to client
@@ -850,6 +884,7 @@ impl Clone for MultiPeerNetworkManager {
             peer_search_started: self.peer_search_started.clone(),
             current_sync_peer: self.current_sync_peer.clone(),
             data_dir: self.data_dir.clone(),
+            mempool_strategy: self.mempool_strategy,
         }
     }
 }
@@ -1090,5 +1125,19 @@ impl NetworkManager for MultiPeerNetworkManager {
         }
         
         matching_peers
+    }
+    
+    async fn has_headers2_peer(&self) -> bool {
+        let connections = self.pool.get_all_connections().await;
+        
+        for (_, conn) in connections.iter() {
+            let conn_guard = conn.read().await;
+            // Check if this peer can send us headers2
+            if conn_guard.can_request_headers2() {
+                return true;
+            }
+        }
+        
+        false
     }
 }

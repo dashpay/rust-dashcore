@@ -15,6 +15,9 @@ pub mod reputation;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub mod mock;
+
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
@@ -79,6 +82,11 @@ pub trait NetworkManager: Send + Sync {
     
     /// Get peers that support a specific service.
     async fn get_peers_with_service(&self, service_flags: dashcore::network::constants::ServiceFlags) -> Vec<crate::types::PeerInfo>;
+    
+    /// Check if any connected peer supports headers2 compression.
+    async fn has_headers2_peer(&self) -> bool {
+        self.has_peer_with_service(dashcore::network::constants::NODE_HEADERS_COMPRESSED).await
+    }
 }
 
 /// TCP-based network manager implementation.
@@ -99,7 +107,7 @@ impl TcpNetworkManager {
         Ok(Self {
             config: config.clone(),
             connection: None,
-            handshake: HandshakeManager::new(config.network),
+            handshake: HandshakeManager::new(config.network, config.mempool_strategy),
             _message_handler: MessageHandler::new(),
             message_sender,
             message_receiver,
