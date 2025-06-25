@@ -1,0 +1,9 @@
+//! Bloom filter support for SPV clients
+
+pub mod builder;
+pub mod manager;
+pub mod stats;
+
+pub use builder::BloomFilterBuilder;
+pub use manager::{BloomFilterManager, BloomFilterConfig};
+pub use stats::{BloomStatsTracker, DetailedBloomStats, BloomFilterStats};
