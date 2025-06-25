@@ -562,3 +562,99 @@ impl HeaderSyncManager {
         self.headers2_state.reset_peer(peer_id);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        client::ClientConfig,
+        storage::MemoryStorageManager,
+        types::ValidationMode,
+    };
+    use dashcore::{block::Header as BlockHeader, block::Version, Network};
+    use dashcore_hashes::Hash;
+
+    fn create_test_header(height: u32, prev_hash: BlockHash) -> BlockHeader {
+        BlockHeader {
+            version: Version::from_consensus(1),
+            prev_blockhash: prev_hash,
+            merkle_root: dashcore::TxMerkleNode::from_byte_array([height as u8; 32]),
+            time: 1234567890 + height,
+            bits: dashcore::CompactTarget::from_consensus(0x1d00ffff),
+            nonce: height,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_validate_headers_includes_existing_headers() {
+        // Create storage with some existing headers
+        let mut storage = MemoryStorageManager::new().await.unwrap();
+        
+        // Store the genesis header
+        let genesis = create_test_header(0, BlockHash::all_zeros());
+        storage.store_headers(&[genesis]).await.unwrap();
+        
+        // Store header at height 1
+        let header1 = create_test_header(1, genesis.block_hash());
+        storage.store_headers(&[header1]).await.unwrap();
+        
+        // Create a config and sync manager
+        let config = ClientConfig::new(Network::Dash)
+            .with_validation_mode(ValidationMode::Basic);
+        let sync_manager = HeaderSyncManager::new(&config);
+        
+        // Create a batch of headers where the first two already exist
+        let headers = vec![
+            genesis,  // Already exists
+            header1,  // Already exists
+            create_test_header(2, header1.block_hash()),  // New
+            create_test_header(3, create_test_header(2, header1.block_hash()).block_hash()),  // New
+        ];
+        
+        // Validate headers
+        let validated = sync_manager.validate_headers(&headers, &storage).await.unwrap();
+        
+        // All headers should be in the validated vector, including existing ones
+        assert_eq!(validated.len(), 4, "All headers should be included in validated vector");
+        
+        // Verify the headers are in correct order
+        assert_eq!(validated[0].block_hash(), genesis.block_hash());
+        assert_eq!(validated[1].block_hash(), header1.block_hash());
+        assert_eq!(validated[2].prev_blockhash, header1.block_hash());
+        assert_eq!(validated[3].prev_blockhash, validated[2].block_hash());
+    }
+
+    #[tokio::test]
+    async fn test_validate_headers_with_gaps() {
+        // Create storage with a header at height 0
+        let mut storage = MemoryStorageManager::new().await.unwrap();
+        let genesis = create_test_header(0, BlockHash::all_zeros());
+        storage.store_headers(&[genesis]).await.unwrap();
+        
+        // Create config and sync manager
+        let config = ClientConfig::new(Network::Dash)
+            .with_validation_mode(ValidationMode::Basic);
+        let sync_manager = HeaderSyncManager::new(&config);
+        
+        // Create headers with a gap - header at height 2 is missing from storage
+        let header1 = create_test_header(1, genesis.block_hash());
+        let header2 = create_test_header(2, header1.block_hash());
+        let header3 = create_test_header(3, header2.block_hash());
+        
+        // Store only header1, skip header2
+        storage.store_headers(&[header1]).await.unwrap();
+        
+        // Try to validate a batch that includes the existing header1, new header2, and new header3
+        let headers = vec![header1, header2, header3];
+        
+        let validated = sync_manager.validate_headers(&headers, &storage).await.unwrap();
+        
+        // All headers should be validated successfully
+        assert_eq!(validated.len(), 3, "All headers should be validated");
+        
+        // The existing header1 should be included so header2 can reference it
+        assert_eq!(validated[0].block_hash(), header1.block_hash());
+        assert_eq!(validated[1].prev_blockhash, header1.block_hash());
+        assert_eq!(validated[2].prev_blockhash, header2.block_hash());
+    }
+}
