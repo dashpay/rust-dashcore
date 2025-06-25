@@ -3,7 +3,7 @@
 //! This module handles the calculation of cumulative proof of work,
 //! which is used to determine the chain with the most work (best chain).
 
-use dashcore::{Header as BlockHeader, Target};
+use dashcore::{Header as BlockHeader, Target, Work};
 use std::cmp::Ordering;
 use std::ops::Add;
 
@@ -28,53 +28,27 @@ impl ChainWork {
 
     /// Calculate work from a target
     pub fn from_target(target: Target) -> Self {
+        // Use the proper work calculation from dashcore
         // Work = 2^256 / (target + 1)
-        // This is a simplified calculation that avoids big integer arithmetic
-        // by using the fact that work ≈ 2^256 / target for our purposes
-        
-        let target_bytes = target.to_be_bytes();
-        let mut work = [0u8; 32];
-        
-        // Find first non-zero byte in target
-        let mut first_nonzero = 0;
-        for (i, &byte) in target_bytes.iter().enumerate() {
-            if byte != 0 {
-                first_nonzero = i;
-                break;
-            }
+        let work = target.to_work();
+        Self {
+            work: work.to_be_bytes(),
         }
-        
-        // Approximate work calculation
-        // Higher targets (easier) = less work
-        // Lower targets (harder) = more work
-        if first_nonzero < 32 {
-            work[31 - first_nonzero] = 255 / target_bytes[first_nonzero].max(1);
-        }
-        
-        Self { work }
     }
 
     /// Create ChainWork from accumulated work at a given height plus a new header
-    pub fn from_height_and_header(height: u32, header: &BlockHeader) -> Self {
-        // Approximate total work based on height and current difficulty
-        let header_work = Self::from_header(header);
-        let mut total_work = header_work.work;
-        
-        // Add approximate work for all previous blocks
-        // This is simplified - in production, we'd track exact cumulative work
-        if height > 0 {
-            let height_bytes = height.to_be_bytes();
-            for i in 0..4 {
-                let idx = 31 - i;
-                let (sum, overflow) = total_work[idx].overflowing_add(height_bytes[3 - i]);
-                total_work[idx] = sum;
-                if overflow && idx > 0 {
-                    total_work[idx - 1] = total_work[idx - 1].saturating_add(1);
-                }
-            }
-        }
-        
-        Self { work: total_work }
+    /// 
+    /// IMPORTANT: This is a temporary approximation that returns only the work from
+    /// the current header. For accurate cumulative work calculation, callers should
+    /// track the actual cumulative work by summing individual block work values.
+    /// 
+    /// TODO: This function should be refactored to accept the previous cumulative work
+    /// as a parameter, or callers should maintain cumulative work separately.
+    pub fn from_height_and_header(_height: u32, header: &BlockHeader) -> Self {
+        // Currently returns only the work from the current header
+        // This is incorrect for cumulative work but better than adding height bytes
+        // which has no relation to proof-of-work
+        Self::from_header(header)
     }
 
     /// Add the work from a header to this cumulative work
