@@ -172,18 +172,24 @@ impl PersistentSyncState {
                     None
                 },
                 is_synced: sync_progress.masternodes_synced,
-                masternode_count: 0, // TODO: Get from masternode engine
+                masternode_count: chain_state.masternode_engine
+                    .as_ref()
+                    .and_then(|engine| engine.latest_masternode_list())
+                    .map(|list| list.masternodes.len())
+                    .unwrap_or(0),
                 last_diff_height: chain_state.last_masternode_diff_height,
             },
             filter_sync: FilterSyncState {
                 filter_header_height: sync_progress.filter_header_height,
                 filter_height: sync_progress.last_synced_filter_height.unwrap_or(0),
                 filters_downloaded: sync_progress.filters_downloaded,
-                matched_heights: Vec::new(), // TODO: Track matched heights
+                matched_heights: chain_state.get_filter_matched_heights().unwrap_or_default(),
                 filter_sync_available: sync_progress.filter_sync_available,
             },
             saved_at: SystemTime::now(),
-            chain_work: String::new(), // TODO: Calculate chain work
+            chain_work: chain_state.calculate_chain_work()
+                .map(|work| format!("{:?}", work))
+                .unwrap_or_else(|| String::from("0")),
         })
     }
     
