@@ -173,6 +173,64 @@ impl TcpConnection {
 
     /// Update peer information from a received Version message
     pub fn update_peer_info(&mut self, version_msg: &dashcore::network::message_network::VersionMessage) {
+        // Define validation constants
+        const MIN_PROTOCOL_VERSION: u32 = 60001; // Minimum version that supports ping/pong
+        const MAX_PROTOCOL_VERSION: u32 = 100000; // Reasonable upper bound for protocol version
+        const MAX_USER_AGENT_LENGTH: usize = 256; // Maximum reasonable user agent length
+        const MAX_START_HEIGHT: i32 = 10_000_000; // Reasonable upper bound for block height
+        
+        // Validate protocol version
+        if version_msg.version < MIN_PROTOCOL_VERSION {
+            tracing::warn!(
+                "Peer {} reported protocol version {} below minimum {}, skipping update",
+                self.address, version_msg.version, MIN_PROTOCOL_VERSION
+            );
+            return;
+        }
+        
+        if version_msg.version > MAX_PROTOCOL_VERSION {
+            tracing::warn!(
+                "Peer {} reported suspiciously high protocol version {}, skipping update",
+                self.address, version_msg.version
+            );
+            return;
+        }
+        
+        // Validate start height
+        if version_msg.start_height < 0 {
+            tracing::warn!(
+                "Peer {} reported negative start height {}, skipping update",
+                self.address, version_msg.start_height
+            );
+            return;
+        }
+        
+        if version_msg.start_height > MAX_START_HEIGHT {
+            tracing::warn!(
+                "Peer {} reported suspiciously high start height {}, skipping update",
+                self.address, version_msg.start_height
+            );
+            return;
+        }
+        
+        // Validate user agent
+        if version_msg.user_agent.is_empty() {
+            tracing::warn!(
+                "Peer {} provided empty user agent, skipping update",
+                self.address
+            );
+            return;
+        }
+        
+        if version_msg.user_agent.len() > MAX_USER_AGENT_LENGTH {
+            tracing::warn!(
+                "Peer {} provided excessively long user agent ({} bytes), skipping update",
+                self.address, version_msg.user_agent.len()
+            );
+            return;
+        }
+        
+        // All validations passed, update peer info
         self.peer_version = Some(version_msg.version);
         self.peer_services = Some(version_msg.services.as_u64());
         self.peer_user_agent = Some(version_msg.user_agent.clone());
