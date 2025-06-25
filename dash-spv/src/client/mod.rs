@@ -1701,8 +1701,8 @@ impl DashSpvClient {
     /// Sync filters for a specific height range.
     pub async fn sync_filters_range(
         &mut self,
-        _start_height: Option<u32>,
-        _count: Option<u32>,
+        start_height: Option<u32>,
+        count: Option<u32>,
     ) -> Result<()> {
         // Sequential sync handles filter range sync internally
         tracing::info!("Sequential sync mode: filter range sync handled internally");
