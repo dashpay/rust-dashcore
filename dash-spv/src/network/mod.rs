@@ -87,6 +87,12 @@ pub trait NetworkManager: Send + Sync {
     async fn has_headers2_peer(&self) -> bool {
         self.has_peer_with_service(dashcore::network::constants::NODE_HEADERS_COMPRESSED).await
     }
+    
+    /// Get the peer ID of the last peer that sent us a message.
+    /// Returns PeerId(0) if no message has been received yet.
+    async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
+        crate::types::PeerId(0) // Default implementation
+    }
 }
 
 /// TCP-based network manager implementation.
@@ -263,6 +269,15 @@ impl NetworkManager for TcpNetworkManager {
             }
         } else {
             vec![]
+        }
+    }
+    
+    async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
+        // For single peer connection, always return PeerId(1) when connected
+        if self.connection.is_some() {
+            crate::types::PeerId(1)
+        } else {
+            crate::types::PeerId(0)
         }
     }
 }
