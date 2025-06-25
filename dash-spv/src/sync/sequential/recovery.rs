@@ -257,6 +257,81 @@ impl RecoveryManager {
                 }
             }
             
+            SyncPhase::DownloadingMnList { current_height, diffs_processed, .. } => {
+                if let Some(restart_height) = checkpoint.restart_height {
+                    tracing::info!(
+                        "📍 Restarting masternode lists from height {} (was at {})",
+                        restart_height,
+                        current_height
+                    );
+                    *current_height = restart_height;
+                    *diffs_processed = 0; // Reset diffs processed counter
+                    phase.update_progress();
+                }
+            }
+            
+            SyncPhase::DownloadingFilters { 
+                requested_ranges,
+                completed_heights,
+                batches_processed,
+                ..
+            } => {
+                // For filters, we can preserve completed heights from the checkpoint
+                if let PreservedProgress::Filters { completed_heights: preserved } = checkpoint.preserved_progress {
+                    tracing::info!(
+                        "📍 Restarting filters phase, preserving {} completed heights",
+                        preserved.len()
+                    );
+                    requested_ranges.clear(); // Clear pending requests
+                    completed_heights.clear();
+                    completed_heights.extend(preserved); // Restore completed heights
+                    *batches_processed = 0; // Reset batch counter
+                    phase.update_progress();
+                } else if let Some(restart_height) = checkpoint.restart_height {
+                    // Fallback: clear all progress up to restart height
+                    tracing::info!(
+                        "📍 Restarting filters from height {}, clearing {} completed heights",
+                        restart_height,
+                        completed_heights.len()
+                    );
+                    requested_ranges.clear();
+                    completed_heights.retain(|&h| h < restart_height);
+                    *batches_processed = 0;
+                    phase.update_progress();
+                }
+            }
+            
+            SyncPhase::DownloadingBlocks {
+                pending_blocks,
+                downloading,
+                completed,
+                ..
+            } => {
+                // For blocks, we can preserve completed downloads from the checkpoint
+                if let PreservedProgress::Blocks { downloaded_hashes } = checkpoint.preserved_progress {
+                    tracing::info!(
+                        "📍 Restarting blocks phase, preserving {} completed downloads",
+                        downloaded_hashes.len()
+                    );
+                    downloading.clear(); // Clear in-progress downloads
+                    completed.clear();
+                    completed.extend(downloaded_hashes); // Restore completed blocks
+                    // Remove completed blocks from pending
+                    pending_blocks.retain(|(hash, _)| !completed.contains(hash));
+                    phase.update_progress();
+                } else if let Some(restart_height) = checkpoint.restart_height {
+                    // Fallback: clear downloads above restart height
+                    tracing::info!(
+                        "📍 Restarting blocks from height {}, clearing downloads",
+                        restart_height
+                    );
+                    downloading.clear();
+                    pending_blocks.retain(|(_, height)| *height >= restart_height);
+                    completed.clear();
+                    phase.update_progress();
+                }
+            }
+            
             _ => {
                 tracing::warn!("⚠️ Checkpoint restart not implemented for phase {}", phase.name());
             }
@@ -280,7 +355,7 @@ impl RecoveryManager {
             }
             
             if start.elapsed() > timeout {
-                return Err(SyncError::SyncFailed("Network timeout".to_string()));
+                return Err(SyncError::Timeout("Network timeout".to_string()));
             }
             
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -289,25 +364,7 @@ impl RecoveryManager {
     
     /// Classify error type for recovery strategy
     fn classify_error(&self, error: &SyncError) -> String {
-        match error {
-            SyncError::SyncFailed(msg) => {
-                if msg.contains("timeout") || msg.contains("timed out") {
-                    "timeout".to_string()
-                } else if msg.contains("network") || msg.contains("connection") {
-                    "network".to_string()
-                } else if msg.contains("validation") || msg.contains("invalid") {
-                    "validation".to_string()
-                } else if msg.contains("storage") || msg.contains("disk") {
-                    "storage".to_string()
-                } else {
-                    "unknown".to_string()
-                }
-            }
-            SyncError::SyncInProgress => "state".to_string(),
-            SyncError::SyncTimeout => "timeout".to_string(),
-            SyncError::InvalidState(_) => "validation".to_string(),
-            SyncError::MissingDependency(_) => "dependency".to_string(),
-        }
+        error.category().to_string()
     }
     
     /// Get retry count for error type

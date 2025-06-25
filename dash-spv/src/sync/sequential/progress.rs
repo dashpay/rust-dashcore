@@ -87,6 +87,7 @@ impl ProgressTracker {
         );
         
         let estimated_total_time = self.estimate_total_time(
+            current_phase,
             &phase_progress,
             &phases_completed,
             &phases_remaining,
@@ -220,19 +221,44 @@ impl ProgressTracker {
         remaining: &[String],
         elapsed: Duration,
     ) -> Option<Duration> {
-        // Simple estimation based on current progress
-        if elapsed.as_secs() == 0 {
+        // Return None for zero or sub-second durations
+        if elapsed.as_secs_f64() < 1.0 {
             return None;
         }
         
-        let completed_count = completed.len() as f64;
-        let total_phases = completed_count + 1.0 + remaining.len() as f64;
+        let current_phase_name = match self.get_current_phase_name_from_progress(current_progress) {
+            Some(name) => name,
+            None => return None,
+        };
         
-        // Weight current phase progress
-        let effective_completed = completed_count + (current_progress.percentage / 100.0);
+        // Calculate total weight and completed weight
+        let mut total_weight = 0.0;
+        let mut completed_weight = 0.0;
         
-        if effective_completed > 0.0 {
-            let estimated_total_secs = (elapsed.as_secs_f64() / effective_completed) * total_phases;
+        // Add completed phases weight
+        for phase in completed {
+            if let Some(weight) = self.phase_weights.get(phase) {
+                total_weight += weight;
+                completed_weight += weight;
+            }
+        }
+        
+        // Add current phase weight (partially completed)
+        if let Some(current_weight) = self.phase_weights.get(&current_phase_name) {
+            total_weight += current_weight;
+            completed_weight += current_weight * (current_progress.percentage / 100.0);
+        }
+        
+        // Add remaining phases weight
+        for phase in remaining {
+            if let Some(weight) = self.phase_weights.get(phase) {
+                total_weight += weight;
+            }
+        }
+        
+        // Calculate estimated total time based on weights
+        if completed_weight > 0.0 && total_weight > 0.0 {
+            let estimated_total_secs = (elapsed.as_secs_f64() / completed_weight) * total_weight;
             Some(Duration::from_secs_f64(estimated_total_secs))
         } else {
             None
