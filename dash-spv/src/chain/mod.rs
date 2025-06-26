@@ -15,6 +15,9 @@ pub mod checkpoints;
 pub mod chainlock_manager;
 pub mod orphan_pool;
 
+#[cfg(test)]
+mod reorg_test;
+
 pub use fork_detector::{ForkDetector, ForkDetectionResult};
 pub use reorg::{ReorgManager, ReorgEvent};
 pub use chain_work::ChainWork;
