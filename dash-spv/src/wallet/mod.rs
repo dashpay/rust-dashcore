@@ -15,7 +15,7 @@ pub mod wallet_state;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use dashcore::{Address, Amount, OutPoint};
+use dashcore::{Address, Amount, OutPoint, Txid};
 use tokio::sync::RwLock;
 
 use crate::bloom::{BloomFilterManager, BloomFilterConfig};
@@ -431,7 +431,13 @@ impl Wallet {
     }
 
     /// Add a UTXO to the wallet.
-    pub(crate) async fn add_utxo(&self, utxo: Utxo) -> Result<(), SpvError> {
+    /// NOTE: This is pub for integration tests but should not be used directly in production.
+    pub async fn add_utxo(&self, utxo: Utxo) -> Result<(), SpvError> {
+        self.add_utxo_internal(utxo).await
+    }
+    
+    /// Internal implementation for adding a UTXO.
+    async fn add_utxo_internal(&self, utxo: Utxo) -> Result<(), SpvError> {
         tracing::info!(
             "Adding UTXO: {} for address {} at height {} (is_confirmed={})",
             utxo.outpoint,
@@ -458,7 +464,17 @@ impl Wallet {
     }
 
     /// Remove a UTXO from the wallet (when it's spent).
+    #[cfg(test)]
+    pub async fn remove_utxo(&self, outpoint: &OutPoint) -> Result<Option<Utxo>, SpvError> {
+        self.remove_utxo_internal(outpoint).await
+    }
+    
+    #[cfg(not(test))]
     pub(crate) async fn remove_utxo(&self, outpoint: &OutPoint) -> Result<Option<Utxo>, SpvError> {
+        self.remove_utxo_internal(outpoint).await
+    }
+    
+    async fn remove_utxo_internal(&self, outpoint: &OutPoint) -> Result<Option<Utxo>, SpvError> {
         let mut utxos = self.utxo_set.write().await;
         let removed = utxos.remove(outpoint);
 
@@ -555,20 +571,26 @@ impl Wallet {
                 // InstantLocked but not ChainLocked
                 balance.instantlocked += amount;
             } else {
-                // Check if we have enough confirmations (6+)
-                let confirmations = if current_height >= utxo.height {
-                    current_height - utxo.height + 1
-                } else {
-                    0
-                };
-
-                tracing::debug!("  -> Confirmations: {}", confirmations);
-                if confirmations >= 1 {
-                    balance.confirmed += amount;
-                    tracing::debug!("  -> Added to confirmed balance (1+ confirmations)");
-                } else {
+                // Check if we have enough confirmations
+                // Mempool transactions (height = 0) should always be pending
+                if utxo.height == 0 {
                     balance.pending += amount;
-                    tracing::debug!("  -> Added to pending balance (0 confirmations)");
+                    tracing::debug!("  -> Added to pending balance (mempool transaction)");
+                } else {
+                    let confirmations = if current_height > utxo.height {
+                        current_height - utxo.height
+                    } else {
+                        0
+                    };
+
+                    tracing::debug!("  -> Confirmations: {}", confirmations);
+                    if confirmations >= 1 {
+                        balance.confirmed += amount;
+                        tracing::debug!("  -> Added to confirmed balance (1+ confirmations)");
+                    } else {
+                        balance.pending += amount;
+                        tracing::debug!("  -> Added to pending balance (0 confirmations)");
+                    }
                 }
             }
         }
@@ -622,8 +644,8 @@ impl Wallet {
         let mut utxos = self.utxo_set.write().await;
 
         for utxo in utxos.values_mut() {
-            let confirmations = if current_height >= utxo.height {
-                current_height - utxo.height + 1
+            let confirmations = if current_height > utxo.height {
+                current_height - utxo.height
             } else {
                 0
             };
@@ -767,6 +789,37 @@ impl Wallet {
             None
         }
     }
+    
+    /// Process a verified InstantLock.
+    /// NOTE: This is pub for integration tests. In production, InstantLocks should be processed
+    /// through the proper transaction processing pipeline.
+    pub async fn process_verified_instantlock(&self, txid: Txid) -> Result<bool, SpvError> {
+        let mut utxos = self.utxo_set.write().await;
+        let mut updated = false;
+        let mut updates_to_store = Vec::new();
+        
+        // Find all UTXOs from this transaction and mark them as instant-locked
+        for utxo in utxos.values_mut() {
+            if utxo.outpoint.txid == txid && !utxo.is_instantlocked {
+                utxo.set_instantlocked(true);
+                updated = true;
+                updates_to_store.push((utxo.outpoint, utxo.clone()));
+            }
+        }
+        
+        // Release the UTXO lock before acquiring storage lock
+        drop(utxos);
+        
+        // Update storage if needed
+        if !updates_to_store.is_empty() {
+            let mut storage = self.storage.write().await;
+            for (outpoint, utxo) in updates_to_store {
+                storage.store_utxo(&outpoint, &utxo).await?;
+            }
+        }
+        
+        Ok(updated)
+    }
 }
 
 #[cfg(test)]
@@ -856,12 +909,16 @@ mod tests {
             confirmed: Amount::from_sat(1000),
             pending: Amount::from_sat(500),
             instantlocked: Amount::from_sat(200),
+            mempool: Amount::ZERO,
+            mempool_instant: Amount::ZERO,
         };
 
         let balance2 = Balance {
             confirmed: Amount::from_sat(2000),
             pending: Amount::from_sat(300),
             instantlocked: Amount::from_sat(100),
+            mempool: Amount::ZERO,
+            mempool_instant: Amount::ZERO,
         };
 
         balance1.add(&balance2);
@@ -1114,7 +1171,7 @@ mod tests {
                 script_pubkey: address.script_pubkey(),
             },
             address.clone(),
-            999998, // High height to ensure it's pending with our mock current height
+            1000000, // Same as current height = 0 confirmations = pending
             false,
         );
 
