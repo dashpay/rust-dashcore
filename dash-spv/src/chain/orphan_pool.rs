@@ -248,11 +248,11 @@ mod tests {
 
     fn create_test_header(prev: BlockHash, nonce: u32) -> BlockHeader {
         BlockHeader {
-            version: 1,
+            version: dashcore::block::Version::from_consensus(1),
             prev_blockhash: prev,
-            merkle_root: BlockHash::all_zeros(),
+            merkle_root: dashcore::TxMerkleNode::all_zeros(),
             time: 0,
-            bits: 0,
+            bits: dashcore::CompactTarget::from_consensus(0),
             nonce,
         }
     }
