@@ -1,6 +1,6 @@
 //! Multi-peer network manager for SPV client
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -64,6 +64,8 @@ pub struct MultiPeerNetworkManager {
     last_message_peer: Arc<Mutex<Option<SocketAddr>>>,
     /// Read timeout for TCP connections
     read_timeout: Duration,
+    /// Track which peers have sent us Headers2 messages
+    peers_sent_headers2: Arc<Mutex<HashSet<SocketAddr>>>,
 }
 
 impl MultiPeerNetworkManager {
@@ -111,6 +113,7 @@ impl MultiPeerNetworkManager {
             mempool_strategy: config.mempool_strategy,
             last_message_peer: Arc::new(Mutex::new(None)),
             read_timeout: config.read_timeout,
+            peers_sent_headers2: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 
@@ -376,10 +379,20 @@ impl MultiPeerNetworkManager {
                             NetworkMessage::Headers(headers) => {
                                 // Log headers messages specifically
                                 log::info!(
-                                    "📨 Received Headers message from {} with {} headers!",
+                                    "📨 Received Headers message from {} with {} headers! (regular uncompressed)",
                                     addr,
                                     headers.len()
                                 );
+                                // Check if peer supports headers2
+                                let conn_guard = conn.read().await;
+                                if conn_guard.peer_info().services.map(|s| {
+                                    dashcore::network::constants::ServiceFlags::from(s).has(
+                                        dashcore::network::constants::ServiceFlags::from(2048u64)
+                                    )
+                                }).unwrap_or(false) {
+                                    log::warn!("⚠️  Peer {} supports headers2 but sent regular headers - possible protocol issue", addr);
+                                }
+                                drop(conn_guard);
                                 // Forward to client
                             }
                             NetworkMessage::Headers2(headers2) => {
@@ -743,6 +756,18 @@ impl MultiPeerNetworkManager {
             | NetworkMessage::GetCFHeaders(_) => {
                 log::debug!("Sending {} to {}", message.cmd(), addr);
             }
+            NetworkMessage::GetHeaders2(gh2) => {
+                log::info!("📤 Sending GetHeaders2 to {} - version: {}, locator_count: {}, locator: {:?}, stop: {}", 
+                    addr, 
+                    gh2.version,
+                    gh2.locator_hashes.len(),
+                    gh2.locator_hashes.iter().take(2).collect::<Vec<_>>(), 
+                    gh2.stop_hash
+                );
+            }
+            NetworkMessage::SendHeaders2 => {
+                log::info!("🤝 Sending SendHeaders2 to {} - requesting compressed headers", addr);
+            }
             _ => {
                 log::trace!("Sending {:?} to {}", message.cmd(), addr);
             }
@@ -948,6 +973,7 @@ impl Clone for MultiPeerNetworkManager {
             mempool_strategy: self.mempool_strategy,
             last_message_peer: self.last_message_peer.clone(),
             read_timeout: self.read_timeout,
+            peers_sent_headers2: self.peers_sent_headers2.clone(),
         }
     }
 }
@@ -1258,5 +1284,26 @@ impl NetworkManager for MultiPeerNetworkManager {
         }
         
         Ok(())
+    }
+    
+    async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
+        // Get the last peer that sent us a message
+        let last_msg_peer = self.last_message_peer.lock().await;
+        if let Some(addr) = &*last_msg_peer {
+            let mut peers_sent_headers2 = self.peers_sent_headers2.lock().await;
+            peers_sent_headers2.insert(*addr);
+            tracing::info!("Marked peer {} as having sent Headers2", addr);
+        }
+        Ok(())
+    }
+    
+    async fn peer_has_sent_headers2(&self) -> bool {
+        // Check if the current sync peer has sent us Headers2
+        let current_peer = self.current_sync_peer.lock().await;
+        if let Some(peer_addr) = &*current_peer {
+            let peers_sent_headers2 = self.peers_sent_headers2.lock().await;
+            return peers_sent_headers2.contains(peer_addr);
+        }
+        false
     }
 }

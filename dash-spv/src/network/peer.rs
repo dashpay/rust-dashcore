@@ -36,6 +36,7 @@ impl PeerManager {
             user_agent: None,
             best_height: None,
             wants_dsq_messages: None,
+            has_sent_headers2: false,
         };
 
         self.peers.insert(address, peer_info);
