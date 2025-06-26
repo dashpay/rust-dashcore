@@ -80,14 +80,25 @@ impl TerminalBlockManager {
                 // Mainnet terminal blocks
                 // These are blocks where masternode lists are known to be accurate
                 vec![
-                    // Latest terminal block only
+                    // DIP3 activation (block 1088640)
+                    (1088640, "00000000000000112c41b144f542e82648e5f72f960e1c2477a88b0ab7a29adb"),
+                    // Additional checkpoints for masternode list sync
+                    (1250000, "000000000000001b92397b6f7e70c1e3b35e95ff4b4f295c6ac6f97f4791a476"),
+                    (1300000, "00000000000000066e19361c19bc30f24e83ad6c03b51cc12dcdb9b487f7f5d9"),
+                    (1500000, "00000000000000105cfae44a995332d8ec256850ea33a1f7b700474e3dad82bc"),
+                    (1750000, "0000000000000001342be6b8bdf33a92d68059d746db2681cf3f24117dd50089"),
+                    // Latest terminal block
                     (2000000, "0000000000000021f7b88e014325c323dc41d20aec211e5cc5a81eeef2f91de2"),
                 ]
             }
             Network::Testnet => {
                 // Testnet terminal blocks
                 vec![
-                    // Latest terminal block only
+                    // DIP3 activation on testnet (block 387480)
+                    (387480, "000000a876f1d66e48e4b992e1701ca62c88cf7e3c4139f368e8bab89dc2eb6a"),
+                    // Additional checkpoints
+                    (760000, "000000cea02761fee136d16f5be1d71ef1ce7e064c17ecb04f12919fef13b3f5"),
+                    // Latest terminal block
                     (900000, "0000011764a05571e0b3963b1422a8f3771e4c0d5b72e9b8e0799aabf07d28ef"),
                 ]
             }
@@ -231,10 +242,12 @@ impl TerminalBlockManager {
         start_height: u32,
         end_height: u32,
     ) -> Vec<&TerminalBlock> {
-        self.terminal_blocks
+        let mut blocks: Vec<&TerminalBlock> = self.terminal_blocks
             .values()
             .filter(|block| block.height >= start_height && block.height <= end_height)
-            .collect()
+            .collect();
+        blocks.sort_by_key(|b| b.height);
+        blocks
     }
 
     /// Update terminal blocks from storage (for dynamic terminal blocks).
