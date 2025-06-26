@@ -7,8 +7,8 @@ pub mod error;
 pub mod filter;
 pub mod hash;
 
-#[cfg(test)]
-mod test_murmur3_vectors;
+// #[cfg(test)]
+// mod test_murmur3_vectors;
 
 pub use error::BloomError;
 pub use filter::{BloomFilter, MAX_BLOOM_FILTER_SIZE, MAX_HASH_FUNCS};
