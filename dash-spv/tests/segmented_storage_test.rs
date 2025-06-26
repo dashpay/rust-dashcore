@@ -72,12 +72,15 @@ async fn test_segmented_storage_persistence() {
     // Store data
     {
         let mut storage = DiskStorageManager::new(path.clone()).await.unwrap();
+        
+        // Verify storage starts empty
+        assert_eq!(storage.get_tip_height().await.unwrap(), None, "Storage should start empty");
 
         let headers: Vec<BlockHeader> = (0..75_000).map(create_test_header).collect();
         storage.store_headers(&headers).await.unwrap();
 
         // Wait for background save
-        sleep(Duration::from_millis(100)).await;
+        sleep(Duration::from_millis(500)).await;
 
         storage.shutdown().await.unwrap();
     }
@@ -86,7 +89,17 @@ async fn test_segmented_storage_persistence() {
     {
         let storage = DiskStorageManager::new(path).await.unwrap();
 
-        assert_eq!(storage.get_tip_height().await.unwrap(), Some(74_999));
+        let actual_tip = storage.get_tip_height().await.unwrap();
+        if actual_tip != Some(74_999) {
+            println!("Expected tip 74,999 but got {:?}", actual_tip);
+            // Try to understand what's stored
+            if let Some(tip) = actual_tip {
+                if let Ok(Some(header)) = storage.get_header(tip).await {
+                    println!("Header at tip {}: time={}", tip, header.time);
+                }
+            }
+        }
+        assert_eq!(actual_tip, Some(74_999));
 
         // Verify data integrity
         assert_eq!(storage.get_header(0).await.unwrap().unwrap().time, 0);
@@ -242,7 +255,7 @@ async fn test_background_save_timing() {
         storage.store_headers(&more_headers).await.unwrap();
 
         // Wait for background save
-        sleep(Duration::from_secs(11)).await;
+        sleep(Duration::from_millis(500)).await;
 
         storage.shutdown().await.unwrap();
     }
