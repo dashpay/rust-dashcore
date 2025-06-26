@@ -52,8 +52,8 @@ impl BloomFilter {
         }
 
         // Calculate optimal filter size and hash count
-        let ln2_squared = 0.4804530139182014_f64; // ln(2)^2
-        let ln2 = 0.6931471805599453_f64; // ln(2)
+        let ln2 = std::f64::consts::LN_2;
+        let ln2_squared = ln2 * ln2;
 
         let filter_size = (-1.0 * elements as f64 * false_positive_rate.ln() / ln2_squared).ceil() as usize;
         let filter_size = cmp::max(1, cmp::min(filter_size, MAX_BLOOM_FILTER_SIZE * 8));
