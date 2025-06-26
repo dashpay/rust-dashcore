@@ -312,6 +312,8 @@ impl ReorgManager {
     ) -> Result<(BlockHash, u32), String> {
         // Start from the fork point and walk back until we find a block in our chain
         let mut current_hash = *fork_point;
+        let mut iterations = 0;
+        const MAX_ITERATIONS: u32 = 1_000_000; // Reasonable limit for chain traversal
         
         loop {
             if let Ok(Some(height)) = storage.get_header_height(&current_hash) {
@@ -326,6 +328,12 @@ impl ReorgManager {
                 // Safety check: don't go back too far
                 if current_hash == BlockHash::all_zeros() {
                     return Err("Reached genesis without finding common ancestor".to_string());
+                }
+                
+                // Prevent infinite loops in case of corrupted chain
+                iterations += 1;
+                if iterations > MAX_ITERATIONS {
+                    return Err(format!("Exceeded maximum iterations ({}) while searching for common ancestor - possible corrupted chain", MAX_ITERATIONS));
                 }
             } else {
                 return Err("Failed to find common ancestor".to_string());
