@@ -250,17 +250,18 @@ int32_t dash_spv_ffi_client_sync_to_tip(struct FFIDashSpvClient *client,
                                         void *user_data);
 
 /**
- * Performs a test synchronization of the SPV client.
- *
- * This function executes a test sync operation that retrieves the initial height,
- * performs synchronization, and validates the sync progress. It is primarily used
- * for testing and debugging purposes.
+ * Performs a test synchronization of the SPV client
  *
  * # Parameters
- * - `client`: A pointer to the FFIDashSpvClient instance.
+ * - `client`: Pointer to an FFIDashSpvClient instance
  *
  * # Returns
- * Returns 0 on successful test sync completion, or a negative error code on failure.
+ * - `0` on success
+ * - Negative error code on failure
+ *
+ * # Safety
+ * This function is unsafe because it dereferences a raw pointer.
+ * The caller must ensure that the client pointer is valid.
  */
 int32_t dash_spv_ffi_client_test_sync(struct FFIDashSpvClient *client);
 

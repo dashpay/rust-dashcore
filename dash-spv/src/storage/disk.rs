@@ -126,6 +126,19 @@ pub struct DiskStorageManager {
     mempool_state: Arc<RwLock<Option<MempoolState>>>,
 }
 
+/// Creates a sentinel header used for padding segments.
+/// This header has invalid values that cannot be mistaken for valid blocks.
+fn create_sentinel_header() -> BlockHeader {
+    BlockHeader {
+        version: Version::from_consensus(i32::MAX),  // Invalid version
+        prev_blockhash: BlockHash::from_byte_array([0xFF; 32]),  // All 0xFF pattern
+        merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
+        time: u32::MAX,  // Far future timestamp
+        bits: CompactTarget::from_consensus(0xFFFFFFFF),  // Invalid difficulty
+        nonce: u32::MAX,  // Max nonce value
+    }
+}
+
 impl DiskStorageManager {
     /// Create a new disk storage manager with segmented storage.
     pub async fn new(base_path: PathBuf) -> StorageResult<Self> {
@@ -397,14 +410,7 @@ impl DiskStorageManager {
         if headers.len() < expected_size {
             // Pad with sentinel headers that cannot be mistaken for valid blocks
             // Use max values for version and nonce, and specific invalid patterns
-            let sentinel_header = BlockHeader {
-                version: Version::from_consensus(i32::MAX), // Invalid version
-                prev_blockhash: BlockHash::from_byte_array([0xFF; 32]), // All 0xFF pattern
-                merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
-                time: u32::MAX, // Far future timestamp
-                bits: CompactTarget::from_consensus(0xFFFFFFFF), // Invalid difficulty
-                nonce: u32::MAX, // Max nonce value
-            };
+            let sentinel_header = create_sentinel_header();
             headers.resize(expected_size, sentinel_header);
         }
 
@@ -1039,17 +1045,7 @@ impl StorageManager for DiskStorageManager {
                     // Ensure we have space in the segment
                     if offset >= segment.headers.len() {
                         // Fill with sentinel headers up to the offset
-                        let sentinel_header = BlockHeader {
-                            version: Version::from_consensus(i32::MAX), // Invalid version
-                            prev_blockhash: BlockHash::from_byte_array([0xFF; 32]), // All 0xFF pattern
-                            merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array(
-                                [0xFF; 32],
-                            )
-                            .into(),
-                            time: u32::MAX, // Far future timestamp
-                            bits: CompactTarget::from_consensus(0xFFFFFFFF), // Invalid difficulty
-                            nonce: u32::MAX, // Max nonce value
-                        };
+                        let sentinel_header = create_sentinel_header();
                         segment.headers.resize(offset + 1, sentinel_header);
                     }
                     segment.headers[offset] = *header;
