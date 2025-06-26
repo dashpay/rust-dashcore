@@ -162,7 +162,7 @@ impl NetworkManager for MockNetworkManager {
                 version: Some(70015),
                 services: Some(1),
                 user_agent: Some("/MockPeer:1.0.0/".to_string()),
-                best_height: Some(self.headers_chain.len() as i32),
+                best_height: Some(self.headers_chain.len() as u32),
             }]
         } else {
             vec![]

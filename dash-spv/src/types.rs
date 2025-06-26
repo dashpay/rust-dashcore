@@ -379,7 +379,7 @@ pub struct PeerInfo {
     pub user_agent: Option<String>,
 
     /// Best height reported by peer.
-    pub best_height: Option<i32>,
+    pub best_height: Option<u32>,
 }
 
 impl PeerInfo {

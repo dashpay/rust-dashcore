@@ -39,7 +39,7 @@ pub struct TcpConnection {
     peer_version: Option<u32>,
     peer_services: Option<u64>,
     peer_user_agent: Option<String>,
-    peer_best_height: Option<i32>,
+    peer_best_height: Option<u32>,
     peer_relay: Option<bool>,
     peer_prefers_headers2: bool,
     peer_sent_sendheaders2: bool,
@@ -245,7 +245,7 @@ impl TcpConnection {
         self.peer_version = Some(version_msg.version);
         self.peer_services = Some(version_msg.services.as_u64());
         self.peer_user_agent = Some(version_msg.user_agent.clone());
-        self.peer_best_height = Some(version_msg.start_height);
+        self.peer_best_height = Some(version_msg.start_height as u32);
         self.peer_relay = Some(version_msg.relay);
         
         tracing::info!("Updated peer info for {}: height={}, version={}, services={:?}", 
