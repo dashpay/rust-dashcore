@@ -101,7 +101,18 @@ pub struct FFIEventCallbacks {
     pub user_data: *mut c_void,
 }
 
+// SAFETY: FFIEventCallbacks is safe to send between threads because:
+// 1. All callback function pointers are extern "C" functions which have no captured state
+// 2. The user_data raw pointer is treated as opaque data that must be managed by the caller
+// 3. The caller is responsible for ensuring that user_data points to thread-safe memory
+// 4. All callback invocations happen through the FFI boundary where the caller manages synchronization
 unsafe impl Send for FFIEventCallbacks {}
+
+// SAFETY: FFIEventCallbacks is safe to share between threads because:
+// 1. The struct is immutable after construction (all fields are read-only from Rust's perspective)
+// 2. Function pointers themselves are inherently thread-safe as they don't contain mutable state
+// 3. The user_data pointer is never dereferenced by Rust code, only passed through to callbacks
+// 4. Thread safety of the data pointed to by user_data is the responsibility of the FFI caller
 unsafe impl Sync for FFIEventCallbacks {}
 
 impl Default for FFIEventCallbacks {
