@@ -75,6 +75,8 @@ mod tests {
             confirmed: dashcore::Amount::from_sat(100000),
             pending: dashcore::Amount::from_sat(50000),
             instantlocked: dashcore::Amount::from_sat(25000),
+            mempool: dashcore::Amount::from_sat(0),
+            mempool_instant: dashcore::Amount::from_sat(0),
         };
 
         let ffi_balance = FFIBalance::from(balance);

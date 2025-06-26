@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
+    use crate::types::FFIDetailedSyncProgress;
     use serial_test::serial;
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_void};
@@ -19,13 +20,16 @@ mod tests {
     }
 
     extern "C" fn test_progress_callback(
-        progress: f64,
-        _message: *const c_char,
+        progress: *const FFIDetailedSyncProgress,
         user_data: *mut c_void,
     ) {
         let data = unsafe { &*(user_data as *const TestCallbackData) };
         data.progress_count.fetch_add(1, Ordering::SeqCst);
-        *data.last_progress.lock().unwrap() = progress;
+        if !progress.is_null() {
+            unsafe {
+                *data.last_progress.lock().unwrap() = (*progress).percentage;
+            }
+        }
     }
 
     extern "C" fn test_completion_callback(
@@ -80,7 +84,7 @@ mod tests {
 
             // Test with null callbacks
             // Should handle null callbacks gracefully
-            let result = dash_spv_ffi_client_sync_to_tip(client, None, None, std::ptr::null_mut());
+            let result = dash_spv_ffi_client_sync_to_tip(client, None, std::ptr::null_mut());
             assert_eq!(result, FFIErrorCode::Success as i32);
 
             dash_spv_ffi_client_destroy(client);
@@ -95,16 +99,15 @@ mod tests {
             let (client, config, _temp_dir) = create_test_client();
             assert!(!client.is_null());
 
-            extern "C" fn null_data_progress(
-                progress: f64,
-                _msg: *const c_char,
+            extern "C" fn null_data_completion(
+                _success: bool,
+                _error: *const c_char,
                 user_data: *mut c_void,
             ) {
                 assert!(user_data.is_null());
-                assert!(progress >= 0.0 && progress <= 100.0);
             }
 
-            let result = dash_spv_ffi_client_sync_to_tip(client, Some(null_data_progress), None, std::ptr::null_mut());
+            let result = dash_spv_ffi_client_sync_to_tip(client, Some(null_data_completion), std::ptr::null_mut());
             assert_eq!(result, FFIErrorCode::Success as i32);
 
             dash_spv_ffi_client_destroy(client);
@@ -127,7 +130,7 @@ mod tests {
                 data_received: Arc::new(Mutex::new(Vec::new())),
             };
 
-            dash_spv_ffi_client_sync_to_tip(client, Some(test_progress_callback), Some(test_completion_callback), &test_data as *const _ as *mut c_void);
+            dash_spv_ffi_client_sync_to_tip_with_progress(client, Some(test_progress_callback), Some(test_completion_callback), &test_data as *const _ as *mut c_void);
 
             // Give time for callbacks
             thread::sleep(Duration::from_millis(100));
@@ -159,7 +162,7 @@ mod tests {
             // Stop client first to ensure sync fails
             dash_spv_ffi_client_stop(client);
 
-            dash_spv_ffi_client_sync_to_tip(client, None, Some(test_completion_callback), &test_data as *const _ as *mut c_void);
+            dash_spv_ffi_client_sync_to_tip(client, Some(test_completion_callback), &test_data as *const _ as *mut c_void);
 
             // Wait for completion
             let start = Instant::now();
@@ -223,8 +226,8 @@ mod tests {
             };
 
             extern "C" fn reentrant_callback(
-                _progress: f64,
-                _msg: *const c_char,
+                _success: bool,
+                _error: *const c_char,
                 user_data: *mut c_void,
             ) {
                 let data = unsafe { &*(user_data as *const ReentrantData) };
@@ -242,7 +245,7 @@ mod tests {
                 }
             }
 
-            dash_spv_ffi_client_sync_to_tip(client, Some(reentrant_callback), None, &reentrant_data as *const _ as *mut c_void);
+            dash_spv_ffi_client_sync_to_tip(client, Some(reentrant_callback), &reentrant_data as *const _ as *mut c_void);
 
             thread::sleep(Duration::from_millis(100));
 
