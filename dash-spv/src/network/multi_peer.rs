@@ -1186,15 +1186,7 @@ impl NetworkManager for MultiPeerNetworkManager {
     }
     
     async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
-        if let Some(addr) = self.get_last_message_peer().await {
-            // Simple hash-based mapping from SocketAddr to PeerId
-            use std::hash::{Hash, Hasher};
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            addr.hash(&mut hasher);
-            crate::types::PeerId(hasher.finish() as u64)
-        } else {
-            // Default to PeerId(0) if no peer available
-            crate::types::PeerId(0)
-        }
+        // Call the instance method to avoid code duplication
+        self.get_last_message_peer_id().await
     }
 }
