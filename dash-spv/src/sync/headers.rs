@@ -72,7 +72,7 @@ impl HeaderSyncManager {
         tracing::info!(
             "📥 Processing headers: first={} last={}",
             headers[0].block_hash(),
-            headers.last().unwrap().block_hash()
+            headers[headers.len() - 1].block_hash()
         );
 
         // Get the current tip before processing
