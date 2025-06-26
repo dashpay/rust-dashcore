@@ -384,6 +384,9 @@ impl MultiPeerNetworkManager {
                                     headers.len()
                                 );
                                 // Check if peer supports headers2
+                                // TODO: Re-enable this warning once headers2 is fixed
+                                // Currently suppressed since headers2 is disabled
+                                /*
                                 let conn_guard = conn.read().await;
                                 if conn_guard.peer_info().services.map(|s| {
                                     dashcore::network::constants::ServiceFlags::from(s).has(
@@ -393,6 +396,7 @@ impl MultiPeerNetworkManager {
                                     log::warn!("⚠️  Peer {} supports headers2 but sent regular headers - possible protocol issue", addr);
                                 }
                                 drop(conn_guard);
+                                */
                                 // Forward to client
                             }
                             NetworkMessage::Headers2(headers2) => {
@@ -1245,16 +1249,8 @@ impl NetworkManager for MultiPeerNetworkManager {
     }
 
     async fn has_headers2_peer(&self) -> bool {
-        let connections = self.pool.get_all_connections().await;
-
-        for (_, conn) in connections.iter() {
-            let conn_guard = conn.read().await;
-            // Check if this peer can send us headers2
-            if conn_guard.can_request_headers2() {
-                return true;
-            }
-        }
-
+        // Headers2 is currently disabled due to protocol compatibility issues
+        // TODO: Fix headers2 decompression before re-enabling
         false
     }
 
