@@ -39,12 +39,12 @@ Diff size: ~100MB, covering 376K blocks
 ## Terminal Block Heights
 
 ### Testnet
-- 387,480 - DIP3 activation
-- 400,000 through 900,000 (every 50,000 blocks)
+- 850,000 - Recent terminal block
+- 900,000 - Latest terminal block
 
 ### Mainnet
-- 1,088,640 - DIP3 activation
-- 1,100,000 through 2,000,000 (every 50,000 blocks)
+- 1,950,000 - Recent terminal block
+- 2,000,000 - Latest terminal block
 
 ## Data Structure
 
@@ -95,8 +95,8 @@ This will:
 
 ### Data Sizes
 
-- Testnet: ~2.4MB (13 terminal blocks)
-- Mainnet: ~35MB (21 terminal blocks)
+- Testnet: ~370KB (2 terminal blocks)
+- Mainnet: ~2.9MB (2 terminal blocks)
 
 ## Implementation Details
 
