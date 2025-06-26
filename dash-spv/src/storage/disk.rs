@@ -335,7 +335,7 @@ impl DiskStorageManager {
                 let segments = self.active_segments.read().await;
                 if let Some(segment) = segments.get(&segment_id) {
                     let tip_height =
-                        segment_id * HEADERS_PER_SEGMENT + segment.headers.len() as u32 - 1;
+                        segment_id * HEADERS_PER_SEGMENT + segment.valid_count as u32 - 1;
                     *self.cached_tip_height.write().await = Some(tip_height);
                 }
             }
