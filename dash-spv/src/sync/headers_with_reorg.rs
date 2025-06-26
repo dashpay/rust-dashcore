@@ -100,7 +100,7 @@ impl HeaderSyncManagerWithReorg {
     pub async fn load_headers_from_storage(&mut self, storage: &dyn StorageManager) -> SyncResult<u32> {
         // Get the current tip height from storage
         let tip_height = storage.get_tip_height().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
             
         let Some(tip_height) = tip_height else {
             tracing::debug!("No headers found in storage");
@@ -125,10 +125,10 @@ impl HeaderSyncManagerWithReorg {
             
             // Load batch from storage
             let headers = storage.load_headers(current_height..end_height + 1).await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to load headers: {}", e)))?;
+                .map_err(|e| SyncError::Storage(format!("Failed to load headers: {}", e)))?;
                 
             if headers.is_empty() {
-                return Err(SyncError::SyncFailed(format!(
+                return Err(SyncError::Storage(format!(
                     "No headers found for range {}..{}", current_height, end_height + 1
                 )));
             }
@@ -228,7 +228,7 @@ impl HeaderSyncManagerWithReorg {
     ) -> SyncResult<HeaderProcessResult> {
         // First validate the header structure
         self.validation.validate_header(header, None)
-            .map_err(|e| SyncError::SyncFailed(format!("Invalid header: {}", e)))?;
+            .map_err(|e| SyncError::Validation(format!("Invalid header: {}", e)))?;
 
         // Create a sync storage adapter
         let sync_storage = SyncStorageAdapter::new(storage);
@@ -246,7 +246,7 @@ impl HeaderSyncManagerWithReorg {
                 if self.reorg_config.enforce_checkpoints {
                     if !self.checkpoint_manager.validate_block(height, &header.block_hash()) {
                         // Block doesn't match checkpoint - reject it
-                        return Err(SyncError::SyncFailed(format!(
+                        return Err(SyncError::Validation(format!(
                             "Block at height {} does not match checkpoint", height
                         )));
                     }
@@ -254,13 +254,13 @@ impl HeaderSyncManagerWithReorg {
                 
                 // Store in async storage
                 storage.store_headers(&[*header]).await
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to store header: {}", e)))?;
+                    .map_err(|e| SyncError::Storage(format!("Failed to store header: {}", e)))?;
                 
                 // Update chain tip manager
                 let chain_work = ChainWork::from_height_and_header(height, header);
                 let tip = crate::chain::ChainTip::new(*header, height, chain_work);
                 self.tip_manager.add_tip(tip)
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to update tip: {}", e)))?;
+                    .map_err(|e| SyncError::Storage(format!("Failed to update tip: {}", e)))?;
                 
                 Ok(HeaderProcessResult::ExtendedMainChain)
             }
@@ -305,7 +305,7 @@ impl HeaderSyncManagerWithReorg {
                 let should_reorg = {
                     let sync_storage = SyncStorageAdapter::new(storage);
                     self.reorg_manager.should_reorganize(current_tip, strongest_fork, &sync_storage)
-                        .map_err(|e| SyncError::SyncFailed(format!("Reorg check failed: {}", e)))?
+                        .map_err(|e| SyncError::Validation(format!("Reorg check failed: {}", e)))?
                 };
                 
                 if should_reorg {
@@ -330,7 +330,7 @@ impl HeaderSyncManagerWithReorg {
                             storage,  // Only StorageManager needed now
                         )
                         .await
-                        .map_err(|e| SyncError::SyncFailed(format!("Reorganization failed: {}", e)))?;
+                        .map_err(|e| SyncError::Validation(format!("Reorganization failed: {}", e)))?;
                     
                     tracing::info!(
                         "🔄 Reorganization complete - common ancestor: {} at height {}, disconnected: {} blocks, connected: {} blocks",
@@ -408,7 +408,7 @@ impl HeaderSyncManagerWithReorg {
                     network
                         .send_message(NetworkMessage::GetHeaders(getheaders_msg))
                         .await
-                        .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+                        .map_err(|e| SyncError::Network(format!("Failed to send GetHeaders: {}", e)))?;
                 }
             }
         } else {
@@ -417,7 +417,7 @@ impl HeaderSyncManagerWithReorg {
             network
                 .send_message(NetworkMessage::GetHeaders(getheaders_msg))
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+                .map_err(|e| SyncError::Network(format!("Failed to send GetHeaders: {}", e)))?;
         }
 
         Ok(())
@@ -441,7 +441,7 @@ impl HeaderSyncManagerWithReorg {
         // Decompress headers using the peer's compression state
         let headers = self.headers2_state
             .process_headers(peer_id, headers2.headers)
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to decompress headers: {}", e)))?;
+            .map_err(|e| SyncError::Validation(format!("Failed to decompress headers: {}", e)))?;
         
         // Log compression statistics
         let stats = self.headers2_state.get_stats();
@@ -471,7 +471,7 @@ impl HeaderSyncManagerWithReorg {
         let current_tip_height = storage
             .get_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
 
         let base_hash = match current_tip_height {
             None => {
@@ -482,11 +482,11 @@ impl HeaderSyncManagerWithReorg {
                 if let Some(genesis_header) = self.chain_state.header_at_height(0) {
                     // Store genesis in storage if not already there
                     if storage.get_header(0).await.map_err(|e| {
-                        SyncError::SyncFailed(format!("Failed to check genesis: {}", e))
+                        SyncError::Storage(format!("Failed to check genesis: {}", e))
                     })?.is_none() {
                         tracing::info!("Storing genesis block in storage");
                         storage.store_headers(&[*genesis_header]).await
-                            .map_err(|e| SyncError::SyncFailed(format!("Failed to store genesis: {}", e)))?;
+                            .map_err(|e| SyncError::Storage(format!("Failed to store genesis: {}", e)))?;
                     }
                     
                     let genesis_hash = genesis_header.block_hash();
@@ -500,7 +500,7 @@ impl HeaderSyncManagerWithReorg {
                     } else {
                         // Use network genesis as fallback
                         let genesis_hash = self.config.network.known_genesis_block_hash()
-                            .ok_or_else(|| SyncError::SyncFailed("No known genesis hash".to_string()))?;
+                            .ok_or_else(|| SyncError::Storage("No known genesis hash".to_string()))?;
                         tracing::info!("Starting from network genesis: {}", genesis_hash);
                         Some(genesis_hash)
                     }
@@ -510,7 +510,7 @@ impl HeaderSyncManagerWithReorg {
                 tracing::info!("Current tip height: {}", height);
                 // Get the current tip hash
                 let tip_header = storage.get_header(height).await.map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to get tip header: {}", e))
+                    SyncError::Storage(format!("Failed to get tip header: {}", e))
                 })?;
                 let hash = tip_header.map(|h| h.block_hash());
                 tracing::info!("Current tip hash: {:?}", hash);
@@ -567,7 +567,7 @@ impl HeaderSyncManagerWithReorg {
             if network.peer_count() == 0 {
                 tracing::warn!("📊 Header sync stalled - no connected peers");
                 self.syncing_headers = false; // Reset state to allow restart
-                return Err(SyncError::SyncFailed(
+                return Err(SyncError::Network(
                     "No connected peers for header sync".to_string(),
                 ));
             }
@@ -581,7 +581,7 @@ impl HeaderSyncManagerWithReorg {
             let current_tip_height = storage
                 .get_tip_height()
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+                .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
 
             let recovery_base_hash = match current_tip_height {
                 None => None, // Genesis
@@ -591,7 +591,7 @@ impl HeaderSyncManagerWithReorg {
                         .get_header(height)
                         .await
                         .map_err(|e| {
-                            SyncError::SyncFailed(format!(
+                            SyncError::Storage(format!(
                                 "Failed to get tip header for recovery: {}",
                                 e
                             ))
@@ -649,7 +649,7 @@ impl HeaderSyncManagerWithReorg {
     ) -> SyncResult<()> {
         // Check if we already have this header using the efficient reverse index
         if let Some(height) = storage.get_header_height_by_hash(&block_hash).await.map_err(|e| {
-            SyncError::SyncFailed(format!("Failed to check header existence: {}", e))
+            SyncError::Storage(format!("Failed to check header existence: {}", e))
         })? {
             tracing::debug!("Header for block {} already exists at height {}", block_hash, height);
             return Ok(());
@@ -661,12 +661,12 @@ impl HeaderSyncManagerWithReorg {
         let current_tip = if let Some(tip_height) = storage
             .get_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
         {
             storage
                 .get_header(tip_height)
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
+                .map_err(|e| SyncError::Storage(format!("Failed to get tip header: {}", e)))?
                 .map(|h| h.block_hash())
                 .unwrap_or_else(|| {
                     self.config
@@ -687,7 +687,7 @@ impl HeaderSyncManagerWithReorg {
         network
             .send_message(NetworkMessage::GetHeaders(getheaders))
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+            .map_err(|e| SyncError::Network(format!("Failed to send GetHeaders: {}", e)))?;
 
         Ok(())
     }

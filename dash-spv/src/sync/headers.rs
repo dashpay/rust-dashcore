@@ -77,7 +77,7 @@ impl HeaderSyncManager {
         
         // Get the current tip before processing
         let tip_before = storage.get_tip_height().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
         tracing::info!("📊 Current tip height before processing: {:?}", tip_before);
 
         if self.syncing_headers {
@@ -100,7 +100,7 @@ impl HeaderSyncManager {
             let current_tip_height = storage
                 .get_tip_height()
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+                .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
                 .unwrap_or(0);
 
             tracing::info!(
@@ -131,11 +131,11 @@ impl HeaderSyncManager {
         storage
             .store_headers(&validated_headers)
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to store headers: {}", e)))?;
+            .map_err(|e| SyncError::Storage(format!("Failed to store headers: {}", e)))?;
         
         // Get the current tip after processing
         let tip_after = storage.get_tip_height().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
         tracing::info!("📊 Current tip height after processing: {:?}", tip_after);
         
         // Log if headers were actually stored
@@ -180,7 +180,7 @@ impl HeaderSyncManager {
         // Decompress headers using the peer's compression state
         let headers = self.headers2_state
             .process_headers(peer_id, headers2.headers)
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to decompress headers: {}", e)))?;
+            .map_err(|e| SyncError::Validation(format!("Failed to decompress headers: {}", e)))?;
         
         // Log compression statistics
         let stats = self.headers2_state.get_stats();
@@ -215,7 +215,7 @@ impl HeaderSyncManager {
             if network.peer_count() == 0 {
                 tracing::warn!("📊 Header sync stalled - no connected peers");
                 self.syncing_headers = false; // Reset state to allow restart
-                return Err(SyncError::SyncFailed(
+                return Err(SyncError::Network(
                     "No connected peers for header sync".to_string(),
                 ));
             }
@@ -229,7 +229,7 @@ impl HeaderSyncManager {
             let current_tip_height = storage
                 .get_tip_height()
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+                .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
 
             let recovery_base_hash = match current_tip_height {
                 None => None, // Genesis
@@ -239,7 +239,7 @@ impl HeaderSyncManager {
                         .get_header(height)
                         .await
                         .map_err(|e| {
-                            SyncError::SyncFailed(format!(
+                            SyncError::Storage(format!(
                                 "Failed to get tip header for recovery: {}",
                                 e
                             ))
@@ -273,7 +273,7 @@ impl HeaderSyncManager {
         let current_tip_height = storage
             .get_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
 
         let base_hash = match current_tip_height {
             None => {
@@ -284,7 +284,7 @@ impl HeaderSyncManager {
                 tracing::info!("Current tip height: {}", height);
                 // Get the current tip hash
                 let tip_header = storage.get_header(height).await.map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to get tip header: {}", e))
+                    SyncError::Storage(format!("Failed to get tip header: {}", e))
                 })?;
                 let hash = tip_header.map(|h| h.block_hash());
                 tracing::info!("Current tip hash: {:?}", hash);
@@ -320,14 +320,14 @@ impl HeaderSyncManager {
         let current_tip_height = storage
             .get_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
 
         let base_hash = match current_tip_height {
             None => None, // Start from genesis
             Some(height) => {
                 // Get the current tip hash
                 let tip_header = storage.get_header(height).await.map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to get tip header: {}", e))
+                    SyncError::Storage(format!("Failed to get tip header: {}", e))
                 })?;
                 tip_header.map(|h| h.block_hash())
             }
@@ -381,14 +381,14 @@ impl HeaderSyncManager {
             network
                 .send_message(NetworkMessage::GetHeaders2(getheaders_msg))
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders2: {}", e)))?;
+                .map_err(|e| SyncError::Network(format!("Failed to send GetHeaders2: {}", e)))?;
         } else {
             tracing::info!("📤 Sending GetHeaders message (uncompressed headers)");
             // Send regular GetHeaders message
             network
                 .send_message(NetworkMessage::GetHeaders(getheaders_msg))
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+                .map_err(|e| SyncError::Network(format!("Failed to send GetHeaders: {}", e)))?;
         }
 
         // Headers request sent successfully
@@ -417,12 +417,12 @@ impl HeaderSyncManager {
             let prev_header = if i == 0 {
                 // First header in batch - get from storage
                 let current_tip_height = storage.get_tip_height().await.map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to get tip height: {}", e))
+                    SyncError::Storage(format!("Failed to get tip height: {}", e))
                 })?;
 
                 if let Some(height) = current_tip_height {
                     storage.get_header(height).await.map_err(|e| {
-                        SyncError::SyncFailed(format!("Failed to get previous header: {}", e))
+                        SyncError::Storage(format!("Failed to get previous header: {}", e))
                     })?
                 } else {
                     None
@@ -433,7 +433,7 @@ impl HeaderSyncManager {
 
             // Check if this header already exists in storage
             let already_exists = storage.get_header_height_by_hash(&header.block_hash()).await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to check header existence: {}", e)))?
+                .map_err(|e| SyncError::Storage(format!("Failed to check header existence: {}", e)))?
                 .is_some();
             
             if already_exists {
@@ -451,7 +451,7 @@ impl HeaderSyncManager {
             }
 
             self.validation.validate_header(header, prev_header.as_ref()).map_err(|e| {
-                SyncError::SyncFailed(format!(
+                SyncError::Validation(format!(
                     "Header validation failed for block {}: {}",
                     header.block_hash(),
                     e
@@ -473,7 +473,7 @@ impl HeaderSyncManager {
     ) -> SyncResult<()> {
         // Check if we already have this header using the efficient reverse index
         if let Some(height) = storage.get_header_height_by_hash(&block_hash).await.map_err(|e| {
-            SyncError::SyncFailed(format!("Failed to check header existence: {}", e))
+            SyncError::Storage(format!("Failed to check header existence: {}", e))
         })? {
             tracing::debug!("Header for block {} already exists at height {}", block_hash, height);
             return Ok(());
@@ -485,12 +485,12 @@ impl HeaderSyncManager {
         let current_tip = if let Some(tip_height) = storage
             .get_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
         {
             storage
                 .get_header(tip_height)
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?
+                .map_err(|e| SyncError::Storage(format!("Failed to get tip header: {}", e)))?
                 .map(|h| h.block_hash())
                 .unwrap_or_else(|| {
                     self.config
@@ -522,7 +522,7 @@ impl HeaderSyncManager {
         network
             .send_message(NetworkMessage::GetHeaders(getheaders_msg))
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+            .map_err(|e| SyncError::Network(format!("Failed to send GetHeaders: {}", e)))?;
 
         tracing::debug!("Sent getheaders request for block {}", block_hash);
 

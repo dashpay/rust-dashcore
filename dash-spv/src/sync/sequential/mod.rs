@@ -214,7 +214,7 @@ impl SequentialSyncManager {
                 let filter_header_tip = storage
                     .get_filter_tip_height()
                     .await
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip: {}", e)))?
+                    .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?
                     .unwrap_or(0);
                 
                 if filter_header_tip > 0 {
@@ -577,7 +577,7 @@ impl SequentialSyncManager {
                 .can_transition_to(&self.current_phase, &next, storage)
                 .await?
             {
-                return Err(SyncError::SyncFailed(format!(
+                return Err(SyncError::Validation(format!(
                     "Invalid phase transition from {} to {}",
                     self.current_phase.name(),
                     next.name()
@@ -656,7 +656,7 @@ impl SequentialSyncManager {
         self.current_phase_retries += 1;
 
         if self.current_phase_retries > self.max_phase_retries {
-            return Err(SyncError::SyncFailed(format!(
+            return Err(SyncError::Timeout(format!(
                 "Phase {} failed after {} retries",
                 self.current_phase.name(),
                 self.max_phase_retries
@@ -1128,13 +1128,13 @@ impl SequentialSyncManager {
         storage: &dyn StorageManager,
     ) -> SyncResult<Option<BlockHash>> {
         let current_tip_height = storage.get_tip_height().await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
         
         let base_hash = match current_tip_height {
             None => None,
             Some(height) => {
                 let tip_header = storage.get_header(height).await
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip header: {}", e)))?;
+                    .map_err(|e| SyncError::Storage(format!("Failed to get tip header: {}", e)))?;
                 tip_header.map(|h| h.block_hash())
             }
         };
@@ -1192,7 +1192,7 @@ impl SequentialSyncManager {
                     
                     tracing::info!("📤 Sending GetHeaders with protocol version {}", dashcore::network::constants::PROTOCOL_VERSION);
                     network.send_message(get_headers).await
-                        .map_err(|e| SyncError::SyncFailed(format!("Failed to request headers: {}", e)))?;
+                        .map_err(|e| SyncError::Network(format!("Failed to request headers: {}", e)))?;
                     
                     // After we receive the header, we'll need to:
                     // 1. Request filter headers
@@ -1208,7 +1208,7 @@ impl SequentialSyncManager {
                         vec![Inventory::ChainLock(chainlock_hash)]
                     );
                     network.send_message(get_data).await
-                        .map_err(|e| SyncError::SyncFailed(format!("Failed to request chainlock: {}", e)))?;
+                        .map_err(|e| SyncError::Network(format!("Failed to request chainlock: {}", e)))?;
                     
                     // ChainLocks can help us detect if we're behind
                     // The ChainLock handler will check if we need to catch up
@@ -1221,7 +1221,7 @@ impl SequentialSyncManager {
                         vec![Inventory::InstantSendLock(islock_hash)]
                     );
                     network.send_message(get_data).await
-                        .map_err(|e| SyncError::SyncFailed(format!("Failed to request islock: {}", e)))?;
+                        .map_err(|e| SyncError::Network(format!("Failed to request islock: {}", e)))?;
                 }
                 
                 Inventory::Transaction(txid) => {
@@ -1265,11 +1265,11 @@ impl SequentialSyncManager {
 
         // Store the new headers
         storage.store_headers(&headers).await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to store headers: {}", e)))?;
+            .map_err(|e| SyncError::Storage(format!("Failed to store headers: {}", e)))?;
         
         for header in &headers {
             let height = storage.get_header_height_by_hash(&header.block_hash()).await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get block height: {}", e)))?
+                .map_err(|e| SyncError::Storage(format!("Failed to get block height: {}", e)))?
                 .ok_or(SyncError::InvalidState("Failed to get block height".to_string()))?;
             
             tracing::info!("📦 New block at height {}: {}", height, header.block_hash());
@@ -1292,7 +1292,7 @@ impl SequentialSyncManager {
                 );
                 
                 network.send_message(get_cfheaders).await
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to request filter headers: {}", e)))?;
+                    .map_err(|e| SyncError::Network(format!("Failed to request filter headers: {}", e)))?;
                 
                 // The filter headers will arrive via handle_message
                 // Then we'll request the actual filter
@@ -1319,7 +1319,7 @@ impl SequentialSyncManager {
         
         // Get the height of the stop_hash
         if let Some(height) = storage.get_header_height_by_hash(&stop_hash).await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter header height: {}", e)))? {
+            .map_err(|e| SyncError::Storage(format!("Failed to get filter header height: {}", e)))? {
             // Request the actual filter for this block
             let get_cfilters = dashcore::network::message::NetworkMessage::GetCFilters(
                 dashcore::network::message_filter::GetCFilters {
@@ -1330,7 +1330,7 @@ impl SequentialSyncManager {
             );
             
             network.send_message(get_cfilters).await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to request filters: {}", e)))?;
+                .map_err(|e| SyncError::Network(format!("Failed to request filters: {}", e)))?;
         }
         
         Ok(())
@@ -1347,12 +1347,12 @@ impl SequentialSyncManager {
         
         // Get the height for this filter's block
         let height = storage.get_header_height_by_hash(&cfilter.block_hash).await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter block height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get filter block height: {}", e)))?
             .ok_or(SyncError::InvalidState("Filter block height not found".to_string()))?;
         
         // Store the filter
         storage.store_filter(height, &cfilter.filter).await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to store filter: {}", e)))?;
+            .map_err(|e| SyncError::Storage(format!("Failed to store filter: {}", e)))?;
         
         // Load watch items from storage (consistent with sync-time behavior)
         let mut watch_items = Vec::new();
@@ -1389,7 +1389,7 @@ impl SequentialSyncManager {
                 );
                 
                 network.send_message(get_data).await
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to request block: {}", e)))?;
+                    .map_err(|e| SyncError::Network(format!("Failed to request block: {}", e)))?;
             } else {
                 tracing::debug!("Filter for block {} does not match any watch items", cfilter.block_hash);
             }

@@ -113,7 +113,7 @@ impl RequestController {
         request_type: RequestType,
     ) -> SyncResult<()> {
         if !self.is_request_allowed(phase, &request_type) {
-            return Err(SyncError::SyncFailed(format!(
+            return Err(SyncError::Validation(format!(
                 "Request type {:?} not allowed in phase {}",
                 request_type,
                 phase.name()
@@ -210,8 +210,8 @@ impl RequestController {
                         storage
                             .get_header(base_height)
                             .await
-                            .map_err(|e| SyncError::SyncFailed(format!("Failed to get base header: {}", e)))?
-                            .ok_or_else(|| SyncError::SyncFailed("Base header not found".to_string()))?
+                            .map_err(|e| SyncError::Storage(format!("Failed to get base header: {}", e)))?
+                            .ok_or_else(|| SyncError::Storage("Base header not found".to_string()))?
                             .block_hash()
                     }
                 };
@@ -220,8 +220,8 @@ impl RequestController {
                 let block_hash = storage
                     .get_header(*height)
                     .await
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get header at height {}: {}", height, e)))?
-                    .ok_or_else(|| SyncError::SyncFailed(format!("Header not found at height {}", height)))?
+                    .map_err(|e| SyncError::Storage(format!("Failed to get header at height {}: {}", height, e)))?
+                    .ok_or_else(|| SyncError::Storage(format!("Header not found at height {}", height)))?
                     .block_hash();
 
                 let getmnlistdiff = dashcore::network::message_sml::GetMnListDiff {
@@ -260,7 +260,7 @@ impl RequestController {
         network
             .send_message(message)
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to send request: {}", e)))?;
+            .map_err(|e| SyncError::Network(format!("Failed to send request: {}", e)))?;
 
         // Track as active
         let request_type = request.request_type.clone();

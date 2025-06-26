@@ -121,6 +121,8 @@ pub enum SyncError {
     #[error("Sync timeout")]
     SyncTimeout,
 
+    /// Deprecated: Use specific error variants instead
+    #[deprecated(note = "Use Network, Storage, Validation, or Timeout variants instead")]
     #[error("Sync failed: {0}")]
     SyncFailed(String),
 
@@ -154,20 +156,9 @@ impl SyncError {
             SyncError::MissingDependency(_) => "dependency",
             SyncError::Network(_) => "network",
             SyncError::Storage(_) => "storage",
-            SyncError::SyncFailed(msg) => {
-                // Fallback to string matching for legacy SyncFailed errors
-                if msg.contains("timeout") || msg.contains("timed out") {
-                    "timeout"
-                } else if msg.contains("network") || msg.contains("connection") {
-                    "network"
-                } else if msg.contains("validation") || msg.contains("invalid") {
-                    "validation"
-                } else if msg.contains("storage") || msg.contains("disk") {
-                    "storage"
-                } else {
-                    "unknown"
-                }
-            }
+            // Deprecated variant - should not be used
+            #[allow(deprecated)]
+            SyncError::SyncFailed(_) => "unknown"
         }
     }
 }

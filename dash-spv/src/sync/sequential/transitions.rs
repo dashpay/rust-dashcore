@@ -127,7 +127,7 @@ impl TransitionManager {
                 let start_height = storage
                     .get_tip_height()
                     .await
-                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+                    .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
                     .unwrap_or(0);
 
                 Ok(Some(SyncPhase::DownloadingHeaders {
@@ -148,7 +148,7 @@ impl TransitionManager {
                         .get_tip_height()
                         .await
                         .map_err(|e| {
-                            SyncError::SyncFailed(format!("Failed to get header tip: {}", e))
+                            SyncError::Storage(format!("Failed to get header tip: {}", e))
                         })?
                         .unwrap_or(0);
 
@@ -341,13 +341,13 @@ impl TransitionManager {
         let header_tip = storage
             .get_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get header tip: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get header tip: {}", e)))?
             .unwrap_or(0);
 
         let filter_tip = storage
             .get_filter_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?
             .unwrap_or(0);
 
         Ok(Some(SyncPhase::DownloadingCFHeaders {

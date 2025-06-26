@@ -185,7 +185,7 @@ impl SyncManager {
                 .get_tip_height()
                 .await
                 .map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to get final tip height: {}", e))
+                    SyncError::Storage(format!("Failed to get tip height: {}", e))
                 })?
                 .unwrap_or(0);
 
@@ -206,7 +206,7 @@ impl SyncManager {
         let final_height = storage
             .get_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get final tip height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
             .unwrap_or(0);
 
         Ok(SyncProgress {
@@ -229,13 +229,13 @@ impl SyncManager {
         let current_tip_height = storage
             .get_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
             .unwrap_or(0);
 
         let current_filter_tip_height = storage
             .get_filter_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get filter tip height: {}", e)))?
             .unwrap_or(0);
 
         tracing::info!(
@@ -270,7 +270,7 @@ impl SyncManager {
             .get_tip_height()
             .await
             .map_err(|e| {
-                SyncError::SyncFailed(format!("Failed to get final header height: {}", e))
+                SyncError::Storage(format!("Failed to get tip height: {}", e))
             })?
             .unwrap_or(0);
 
@@ -278,7 +278,7 @@ impl SyncManager {
             .get_filter_tip_height()
             .await
             .map_err(|e| {
-                SyncError::SyncFailed(format!("Failed to get final filter height: {}", e))
+                SyncError::Storage(format!("Failed to get filter tip height: {}", e))
             })?
             .unwrap_or(0);
 
@@ -318,7 +318,7 @@ impl SyncManager {
                 .get_filter_tip_height()
                 .await
                 .map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e))
+                    SyncError::Storage(format!("Failed to get filter tip height: {}", e))
                 })?
                 .unwrap_or(0);
 
@@ -342,7 +342,7 @@ impl SyncManager {
         let final_filter_height = storage
             .get_filter_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get filter tip height: {}", e)))?
             .unwrap_or(0);
 
         let filter_sync_available = self.filter_sync.is_filter_sync_available(network).await;

@@ -105,7 +105,7 @@ impl MasternodeSyncManager {
                 Ok(0)
             },
             Err(e) => {
-                Err(SyncError::SyncFailed(format!("Failed to get terminal block header: {}", e)))
+                Err(SyncError::Storage(format!("Failed to get terminal block header: {}", e)))
             }
         }
     }
@@ -143,7 +143,7 @@ impl MasternodeSyncManager {
                     .get_tip_height()
                     .await
                     .map_err(|e| {
-                        SyncError::SyncFailed(format!(
+                        SyncError::Storage(format!(
                             "Failed to get current height for fallback: {}",
                             e
                         ))
@@ -188,12 +188,12 @@ impl MasternodeSyncManager {
             let current_height = storage
                 .get_tip_height()
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get current height: {}", e)))?
+                .map_err(|e| SyncError::Storage(format!("Failed to get current height: {}", e)))?
                 .unwrap_or(0);
 
             let last_masternode_height =
                 match storage.load_masternode_state().await.map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to load masternode state: {}", e))
+                    SyncError::Storage(format!("Failed to load masternode state: {}", e))
                 })? {
                     Some(state) => state.last_height,
                     None => 0,
@@ -231,13 +231,13 @@ impl MasternodeSyncManager {
         let current_height = storage
             .get_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get current height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get current height: {}", e)))?
             .unwrap_or(0);
 
         // Get last known masternode height
         let last_masternode_height =
             match storage.load_masternode_state().await.map_err(|e| {
-                SyncError::SyncFailed(format!("Failed to load masternode state: {}", e))
+                SyncError::Storage(format!("Failed to load masternode state: {}", e))
             })? {
                 Some(state) => state.last_height,
                 None => 0,
@@ -475,8 +475,8 @@ impl MasternodeSyncManager {
             storage
                 .get_header(base_height)
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get base header: {}", e)))?
-                .ok_or_else(|| SyncError::SyncFailed("Base header not found".to_string()))?
+                .map_err(|e| SyncError::Storage(format!("Failed to get base header: {}", e)))?
+                .ok_or_else(|| SyncError::Storage("Base header not found".to_string()))?
                 .block_hash()
         };
 
@@ -484,8 +484,8 @@ impl MasternodeSyncManager {
         let current_block_hash = storage
             .get_header(current_height)
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get current header: {}", e)))?
-            .ok_or_else(|| SyncError::SyncFailed("Current header not found".to_string()))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get current header: {}", e)))?
+            .ok_or_else(|| SyncError::Storage("Current header not found".to_string()))?
             .block_hash();
 
         let get_mn_list_diff = GetMnListDiff {
@@ -496,7 +496,7 @@ impl MasternodeSyncManager {
         network
             .send_message(NetworkMessage::GetMnListD(get_mn_list_diff))
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetMnListDiff: {}", e)))?;
+            .map_err(|e| SyncError::Network(format!("Failed to send GetMnListDiff: {}", e)))?;
 
         tracing::debug!(
             "Requested masternode list diff from {} to {}",
@@ -514,7 +514,7 @@ impl MasternodeSyncManager {
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
         let engine = self.engine.as_mut().ok_or_else(|| {
-            SyncError::SyncFailed("Masternode engine not initialized".to_string())
+            SyncError::Validation("Masternode engine not initialized".to_string())
         })?;
 
         let _target_block_hash = diff.block_hash;
@@ -523,7 +523,7 @@ impl MasternodeSyncManager {
         let tip_height = storage
             .get_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
             .unwrap_or(0);
 
         // Only feed the block headers that are actually needed by the masternode engine
@@ -540,7 +540,7 @@ impl MasternodeSyncManager {
             // Feed target block hash
             if let Some(target_height) =
                 storage.get_header_height_by_hash(&target_block_hash).await.map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to lookup target hash: {}", e))
+                    SyncError::Storage(format!("Failed to lookup target hash: {}", e))
                 })?
             {
                 engine.feed_block_height(target_height, target_block_hash);
@@ -550,7 +550,7 @@ impl MasternodeSyncManager {
                     target_height
                 );
             } else {
-                return Err(SyncError::SyncFailed(format!(
+                return Err(SyncError::Storage(format!(
                     "Target block hash {} not found in storage",
                     target_block_hash
                 )));
@@ -560,7 +560,7 @@ impl MasternodeSyncManager {
             if let Some(base_height) = storage
                 .get_header_height_by_hash(&base_block_hash)
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to lookup base hash: {}", e)))?
+                .map_err(|e| SyncError::Storage(format!("Failed to lookup base hash: {}", e)))?
             {
                 engine.feed_block_height(base_height, base_block_hash);
                 tracing::debug!(
@@ -575,7 +575,7 @@ impl MasternodeSyncManager {
             let start_height = if let Some(base_height) = storage
                 .get_header_height_by_hash(&base_block_hash)
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to lookup base hash: {}", e)))?
+                .map_err(|e| SyncError::Storage(format!("Failed to lookup base hash: {}", e)))?
             {
                 base_height.saturating_sub(100) // Include some headers before base
             } else {
@@ -587,7 +587,7 @@ impl MasternodeSyncManager {
                 // Note: quorum_hash is not necessarily a block hash, so we check if it exists
                 if let Some(quorum_height) =
                     storage.get_header_height_by_hash(&quorum.quorum_hash).await.map_err(|e| {
-                        SyncError::SyncFailed(format!("Failed to lookup quorum hash: {}", e))
+                        SyncError::Storage(format!("Failed to lookup quorum hash: {}", e))
                     })?
                 {
                     // Only feed blocks at or after start_height to avoid redundant submissions
@@ -620,7 +620,7 @@ impl MasternodeSyncManager {
                 );
                 let headers =
                     storage.get_headers_batch(start_height, tip_height).await.map_err(|e| {
-                        SyncError::SyncFailed(format!("Failed to batch load headers: {}", e))
+                        SyncError::Storage(format!("Failed to batch load headers: {}", e))
                     })?;
 
                 for (height, header) in headers {
@@ -649,7 +649,7 @@ impl MasternodeSyncManager {
                 };
 
                 storage.store_masternode_state(&masternode_state).await.map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to store masternode state: {}", e))
+                    SyncError::Storage(format!("Failed to store masternode state: {}", e))
                 })?;
 
                 tracing::info!("Masternode synchronization completed (empty in regtest)");
@@ -666,7 +666,7 @@ impl MasternodeSyncManager {
                         "Failed to apply masternode diff in regtest (this is normal if no masternodes are configured): {:?}", e
                     ))
                 } else {
-                    SyncError::SyncFailed(format!("Failed to apply masternode diff: {:?}", e))
+                    SyncError::Validation(format!("Failed to apply masternode diff: {:?}", e))
                 }
             })?;
 
@@ -674,7 +674,7 @@ impl MasternodeSyncManager {
 
         // Find the height of the target block
         let target_height = if let Some(height) = storage.get_header_height_by_hash(&target_block_hash).await.map_err(|e| {
-            SyncError::SyncFailed(format!("Failed to lookup target block height: {}", e))
+            SyncError::Storage(format!("Failed to lookup target block height: {}", e))
         })? {
             height
         } else {
@@ -682,7 +682,7 @@ impl MasternodeSyncManager {
             storage
                 .get_tip_height()
                 .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+                .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
                 .unwrap_or(0)
         };
 
@@ -693,7 +693,7 @@ impl MasternodeSyncManager {
                 .await?;
             
             if !is_valid {
-                return Err(SyncError::SyncFailed(format!(
+                return Err(SyncError::Validation(format!(
                     "Terminal block validation failed at height {}",
                     target_height
                 )));
@@ -720,7 +720,7 @@ impl MasternodeSyncManager {
         };
 
         storage.store_masternode_state(&masternode_state).await.map_err(|e| {
-            SyncError::SyncFailed(format!("Failed to store masternode state: {}", e))
+            SyncError::Storage(format!("Failed to store masternode state: {}", e))
         })?;
 
         tracing::info!("Updated masternode list sync height to {}", target_height);
@@ -752,7 +752,7 @@ impl MasternodeSyncManager {
         storage: &dyn StorageManager,
     ) -> SyncResult<Option<&crate::sync::terminal_blocks::TerminalBlock>> {
         let current_height = match storage.load_masternode_state().await.map_err(|e| {
-            SyncError::SyncFailed(format!("Failed to load masternode state: {}", e))
+            SyncError::Storage(format!("Failed to load masternode state: {}", e))
         })? {
             Some(state) => state.last_height,
             None => 0,
