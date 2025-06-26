@@ -268,6 +268,20 @@ int32_t dash_spv_ffi_client_sync_to_tip(struct FFIDashSpvClient *client,
  */
 int32_t dash_spv_ffi_client_test_sync(struct FFIDashSpvClient *client);
 
+/**
+ * Synchronizes the SPV client to the chain tip with detailed progress reporting.
+ * 
+ * @param client The FFIDashSpvClient instance
+ * @param progress_callback Optional callback invoked periodically during sync to report progress.
+ *                          Can be NULL if progress updates are not needed.
+ *                          If provided, receives: detailed sync progress info and user_data.
+ * @param completion_callback Optional callback invoked when sync completes.
+ *                            Can be NULL if no completion notification is needed.
+ *                            If provided, receives: success status, error message (if any), and user_data.
+ * @param user_data Optional user data passed to both callbacks.
+ *                  Can be NULL. Only used if at least one callback is non-NULL.
+ * @return 0 on success, negative error code on failure
+ */
 int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *client,
                                                       void (*progress_callback)(const struct FFIDetailedSyncProgress*,
                                                                                 void*),
