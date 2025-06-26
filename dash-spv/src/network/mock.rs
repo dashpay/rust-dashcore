@@ -50,11 +50,11 @@ impl MockNetworkManager {
         // Skip genesis (height 0) as it's already in ChainState
         for i in 1..count {
             let header = BlockHeader {
-                version: dashcore::consensus::encode::Version::from_consensus(1),
+                version: dashcore::block::Version::from_consensus(1),
                 prev_blockhash: prev_hash,
                 merkle_root: dashcore::hashes::sha256d::Hash::all_zeros().into(),
                 time: 1000000 + i as u32,
-                bits: dashcore::consensus::encode::CompactTarget::from_consensus(0x207fffff),
+                bits: dashcore::CompactTarget::from_consensus(0x207fffff),
                 nonce: i as u32,
             };
             

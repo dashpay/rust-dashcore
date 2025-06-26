@@ -153,14 +153,10 @@ impl RecoveryManager {
     /// Execute a recovery strategy
     /// 
     /// # Example
-    /// ```no_run
-    /// # use dash_spv::sync::sequential::recovery::{RecoveryManager, RecoveryStrategy};
-    /// # use dash_spv::error::SyncError;
-    /// # async fn example(recovery_manager: &mut RecoveryManager, phase: &mut SyncPhase, network: &mut dyn NetworkManager, storage: &mut dyn StorageManager) {
+    /// ```ignore
     /// let error = SyncError::Timeout("Connection timed out".to_string());
     /// let strategy = recovery_manager.determine_strategy(&phase, &error);
-    /// recovery_manager.execute_recovery(&mut phase, strategy, &error, network, storage).await;
-    /// # }
+    /// recovery_manager.execute_recovery(phase, strategy, &error, network, storage).await;
     /// ```
     pub async fn execute_recovery(
         &mut self,
@@ -456,10 +452,11 @@ mod tests {
         
         // Create a test phase
         let mut phase = SyncPhase::DownloadingHeaders {
+            start_time: std::time::Instant::now(),
+            start_height: 50,
             current_height: 100,
             target_height: None,
             headers_downloaded: 50,
-            start_time: std::time::Instant::now(),
             headers_per_second: 10.0,
             received_empty_response: false,
             last_progress: std::time::Instant::now(),

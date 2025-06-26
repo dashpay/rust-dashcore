@@ -46,6 +46,9 @@ pub enum NetworkError {
     #[error("Peer disconnected")]
     PeerDisconnected,
 
+    #[error("Not connected")]
+    NotConnected,
+
     #[error("Message serialization error: {0}")]
     Serialization(#[from] dashcore::consensus::encode::Error),
 
