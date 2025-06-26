@@ -11,36 +11,16 @@ use dashcore::Network;
 
 /// Create a test configuration with the given network
 fn create_test_config(network: Network, data_dir: Option<TempDir>) -> ClientConfig {
-    ClientConfig {
-        network,
-        peers: vec![], // Will be populated by DNS discovery
-        storage_path: data_dir.map(|d| d.path().to_path_buf()),
-        validation_mode: ValidationMode::Basic,
-        filter_checkpoint_interval: 1000,
-        max_headers_per_message: 2000,
-        connection_timeout: Duration::from_secs(10),
-        message_timeout: Duration::from_secs(30),
-        sync_timeout: Duration::from_secs(300),
-        watch_items: vec![],
-        enable_filters: false,
-        enable_masternodes: false,
-        max_peers: 3,
-        enable_persistence: true,
-        log_level: "info".to_string(),
-        max_concurrent_filter_requests: 16,
-        enable_filter_flow_control: true,
-        filter_request_delay_ms: 0,
-        enable_cfheader_gap_restart: true,
-        cfheader_gap_check_interval_secs: 15,
-        cfheader_gap_restart_cooldown_secs: 30,
-        max_cfheader_gap_restart_attempts: 5,
-        enable_filter_gap_restart: true,
-        filter_gap_check_interval_secs: 20,
-        min_filter_gap_size: 10,
-        filter_gap_restart_cooldown_secs: 30,
-        max_filter_gap_restart_attempts: 5,
-        max_filter_gap_sync_size: 50000,
-    }
+    let mut config = ClientConfig::new(network);
+    config.storage_path = data_dir.map(|d| d.path().to_path_buf());
+    config.validation_mode = ValidationMode::Basic;
+    config.enable_filters = false;
+    config.enable_masternodes = false;
+    config.max_peers = 3;
+    config.connection_timeout = Duration::from_secs(10);
+    config.message_timeout = Duration::from_secs(30);
+    config.peers = vec![]; // Will be populated by DNS discovery
+    config
 }
 
 #[tokio::test]
@@ -162,7 +142,7 @@ async fn test_max_peer_limit() {
     // The client should never connect to more than MAX_PEERS
     // This is enforced in the ConnectionPool
     println!("Maximum peer limit is set to: {}", MAX_PEERS);
-    assert_eq!(MAX_PEERS, 5, "Default max peers should be 5");
+    assert_eq!(MAX_PEERS, 12, "Default max peers should be 12");
 }
 
 #[cfg(test)]
