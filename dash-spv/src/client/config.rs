@@ -173,7 +173,7 @@ impl Default for ClientConfig {
             connection_timeout: Duration::from_secs(30),
             message_timeout: Duration::from_secs(60),
             sync_timeout: Duration::from_secs(300),
-            read_timeout: Duration::from_millis(15),
+            read_timeout: Duration::from_millis(100),
             watch_items: vec![],
             enable_filters: true,
             enable_masternodes: true,
