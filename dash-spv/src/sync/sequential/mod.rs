@@ -530,6 +530,12 @@ impl SequentialSyncManager {
     pub fn current_phase(&self) -> &SyncPhase {
         &self.current_phase
     }
+    
+    /// Get a reference to the masternode list engine.
+    /// Returns None if masternode sync is not enabled in config.
+    pub fn masternode_list_engine(&self) -> Option<&dashcore::sml::masternode_list_engine::MasternodeListEngine> {
+        self.masternode_sync.engine()
+    }
 
     // Private helper methods
 
