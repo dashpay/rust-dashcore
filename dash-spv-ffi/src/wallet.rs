@@ -89,6 +89,7 @@ impl FFIWatchItem {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy)]
 pub struct FFIBalance {
     pub confirmed: u64,
     pub pending: u64,

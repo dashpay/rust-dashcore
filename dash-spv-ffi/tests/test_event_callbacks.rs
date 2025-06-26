@@ -35,7 +35,7 @@ extern "C" fn test_block_callback(height: u32, _hash: *const c_char, user_data: 
     data.block_height.store(height, Ordering::SeqCst);
 }
 
-extern "C" fn test_transaction_callback(_txid: *const c_char, _confirmed: bool, user_data: *mut c_void) {
+extern "C" fn test_transaction_callback(_txid: *const c_char, _confirmed: bool, _amount: i64, _addresses: *const c_char, _block_height: u32, user_data: *mut c_void) {
     println!("Test transaction callback called");
     let data = unsafe { &*(user_data as *const TestEventData) };
     data.transaction_received.store(true, Ordering::SeqCst);
@@ -77,6 +77,9 @@ fn test_event_callbacks_setup() {
             on_block: Some(test_block_callback),
             on_transaction: Some(test_transaction_callback),
             on_balance_update: Some(test_balance_callback),
+            on_mempool_transaction_added: None,
+            on_mempool_transaction_confirmed: None,
+            on_mempool_transaction_removed: None,
             user_data,
         };
         

@@ -92,7 +92,7 @@ mod tests {
 
             // Start a sync operation in background
             // Start sync (non-blocking)
-            dash_spv_ffi_client_sync_to_tip(client, None, None, std::ptr::null_mut());
+            dash_spv_ffi_client_sync_to_tip(client, None, std::ptr::null_mut());
 
             // Immediately destroy client (should handle pending operations)
             dash_spv_ffi_client_destroy(client);
@@ -228,7 +228,7 @@ mod tests {
             );
 
             assert_eq!(
-                dash_spv_ffi_client_sync_to_tip(std::ptr::null_mut(), None, None, std::ptr::null_mut()),
+                dash_spv_ffi_client_sync_to_tip(std::ptr::null_mut(), None, std::ptr::null_mut()),
                 FFIErrorCode::NullPointer as i32
             );
 
