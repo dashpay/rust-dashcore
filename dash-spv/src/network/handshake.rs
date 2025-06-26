@@ -290,19 +290,15 @@ impl HandshakeManager {
         // Check if both peers support headers2
         if let Some(peer_services) = self.peer_services {
             if peer_services.has(NODE_HEADERS_COMPRESSED) {
+                // If peer supports headers2, ONLY send SendHeaders2
                 tracing::info!("Peer supports headers2 - sending SendHeaders2");
                 connection.send_message(NetworkMessage::SendHeaders2).await?;
-                
-                // IMPORTANT: Also send regular SendHeaders after SendHeaders2
-                // This matches Dash Core behavior and ensures backward compatibility
-                tracing::info!("Also sending SendHeaders for compatibility");
-                connection.send_message(NetworkMessage::SendHeaders).await?;
                 return Ok(());
             }
         }
 
-        // Only send SendHeaders if we're not using headers2
-        tracing::info!("Sending SendHeaders to request headers be pushed");
+        // Only send SendHeaders if peer doesn't support headers2
+        tracing::info!("Peer doesn't support headers2 - sending SendHeaders");
         connection.send_message(NetworkMessage::SendHeaders).await?;
 
         Ok(())
