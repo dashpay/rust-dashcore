@@ -44,8 +44,30 @@ enum CallbackInfo {
     },
 }
 
-/// Safety: CallbackInfo is Send because we ensure callbacks are thread-safe
+/// # Safety
+/// 
+/// `CallbackInfo` is only `Send` if the following conditions are met:
+/// - All callback functions must be safe to call from any thread
+/// - The `user_data` pointer must either:
+///   - Point to thread-safe data (i.e., data that implements `Send`)
+///   - Be properly synchronized by the caller (e.g., using mutexes)
+///   - Be null
+/// 
+/// The caller is responsible for ensuring these conditions are met. Violating
+/// these requirements will result in undefined behavior.
 unsafe impl Send for CallbackInfo {}
+
+/// # Safety
+/// 
+/// `CallbackInfo` is only `Sync` if the following conditions are met:
+/// - All callback functions must be safe to call concurrently from multiple threads
+/// - The `user_data` pointer must either:
+///   - Point to thread-safe data (i.e., data that implements `Sync`)
+///   - Be properly synchronized by the caller (e.g., using mutexes)
+///   - Be null
+/// 
+/// The caller is responsible for ensuring these conditions are met. Violating
+/// these requirements will result in undefined behavior.
 unsafe impl Sync for CallbackInfo {}
 
 impl CallbackRegistry {
@@ -323,6 +345,27 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
     }
 }
 
+/// Sync the SPV client to the chain tip.
+/// 
+/// # Safety
+/// 
+/// This function is unsafe because:
+/// - `client` must be a valid pointer to an initialized `FFIDashSpvClient`
+/// - `user_data` must satisfy thread safety requirements:
+///   - If non-null, it must point to data that is safe to access from multiple threads
+///   - The caller must ensure proper synchronization if the data is mutable
+///   - The data must remain valid for the entire duration of the sync operation
+/// - `completion_callback` must be thread-safe and can be called from any thread
+/// 
+/// # Parameters
+/// 
+/// - `client`: Pointer to the SPV client
+/// - `completion_callback`: Optional callback invoked on completion
+/// - `user_data`: Optional user data pointer passed to callbacks
+/// 
+/// # Returns
+/// 
+/// 0 on success, error code on failure
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
     client: *mut FFIDashSpvClient,
@@ -482,6 +525,28 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
     }
 }
 
+/// Sync the SPV client to the chain tip with detailed progress updates.
+/// 
+/// # Safety
+/// 
+/// This function is unsafe because:
+/// - `client` must be a valid pointer to an initialized `FFIDashSpvClient`
+/// - `user_data` must satisfy thread safety requirements:
+///   - If non-null, it must point to data that is safe to access from multiple threads
+///   - The caller must ensure proper synchronization if the data is mutable
+///   - The data must remain valid for the entire duration of the sync operation
+/// - Both `progress_callback` and `completion_callback` must be thread-safe and can be called from any thread
+/// 
+/// # Parameters
+/// 
+/// - `client`: Pointer to the SPV client
+/// - `progress_callback`: Optional callback invoked periodically with sync progress
+/// - `completion_callback`: Optional callback invoked on completion
+/// - `user_data`: Optional user data pointer passed to all callbacks
+/// 
+/// # Returns
+/// 
+/// 0 on success, error code on failure
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     client: *mut FFIDashSpvClient,
