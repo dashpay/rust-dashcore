@@ -1,7 +1,7 @@
 //! Network handshake management.
 
 use std::net::SocketAddr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dashcore::network::constants;
 use dashcore::network::constants::{ServiceFlags, NODE_HEADERS_COMPRESSED};
@@ -241,7 +241,10 @@ impl HandshakeManager {
 
     /// Build version message.
     fn build_version_message(&self, address: SocketAddr) -> VersionMessage {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::from_secs(0))
+            .as_secs() as i64;
 
         // SPV client advertises headers2 support but no other services
         let services = NODE_HEADERS_COMPRESSED;
