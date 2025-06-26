@@ -164,6 +164,8 @@ impl NetworkManager for MockNetworkManager {
                 services: Some(1),
                 user_agent: Some("/MockPeer:1.0.0/".to_string()),
                 best_height: Some(self.headers_chain.len() as u32),
+                wants_dsq_messages: None,
+                has_sent_headers2: false,
             }]
         } else {
             vec![]
@@ -211,5 +213,10 @@ impl NetworkManager for MockNetworkManager {
         } else {
             crate::types::PeerId(0)
         }
+    }
+    
+    async fn update_peer_dsq_preference(&mut self, _wants_dsq: bool) -> NetworkResult<()> {
+        // Mock implementation - do nothing
+        Ok(())
     }
 }

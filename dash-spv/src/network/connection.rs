@@ -290,6 +290,20 @@ impl TcpConnection {
         };
 
         let serialized = encode::serialize(&raw_message);
+        
+        // Log details for debugging headers2 issues
+        if matches!(raw_message.payload, NetworkMessage::GetHeaders2(_) | NetworkMessage::GetHeaders(_)) {
+            let msg_type = match raw_message.payload {
+                NetworkMessage::GetHeaders2(_) => "GetHeaders2",
+                NetworkMessage::GetHeaders(_) => "GetHeaders",
+                _ => "Unknown",
+            };
+            tracing::debug!("Sending {} raw bytes (len={}): {:02x?}", 
+                msg_type,
+                serialized.len(), 
+                &serialized[..std::cmp::min(100, serialized.len())]
+            );
+        }
 
         // Lock the state for the entire write operation
         let mut state = state_arc.lock().await;
@@ -361,6 +375,11 @@ impl TcpConnection {
                     self.address,
                     raw_message.payload.cmd()
                 );
+                
+                // Special logging for headers2
+                if raw_message.payload.cmd() == "headers2" {
+                    tracing::info!("🎉 Received Headers2 message from {}!", self.address);
+                }
 
                 // Log block messages specifically for debugging
                 if let NetworkMessage::Block(ref block) = raw_message.payload {
@@ -525,6 +544,7 @@ impl TcpConnection {
             user_agent: self.peer_user_agent.clone(),
             best_height: self.peer_best_height,
             wants_dsq_messages: None, // We don't track this in TcpConnection yet
+            has_sent_headers2: false, // Will be tracked by the connection pool
         }
     }
 

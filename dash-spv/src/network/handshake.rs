@@ -292,7 +292,11 @@ impl HandshakeManager {
             if peer_services.has(NODE_HEADERS_COMPRESSED) {
                 tracing::info!("Peer supports headers2 - sending SendHeaders2");
                 connection.send_message(NetworkMessage::SendHeaders2).await?;
-                // Don't send regular SendHeaders if we're using headers2
+                
+                // IMPORTANT: Also send regular SendHeaders after SendHeaders2
+                // This matches Dash Core behavior and ensures backward compatibility
+                tracing::info!("Also sending SendHeaders for compatibility");
+                connection.send_message(NetworkMessage::SendHeaders).await?;
                 return Ok(());
             }
         }

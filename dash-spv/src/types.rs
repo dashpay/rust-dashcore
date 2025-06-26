@@ -390,6 +390,9 @@ pub struct PeerInfo {
 
     /// Whether this peer wants to receive DSQ (CoinJoin queue) messages.
     pub wants_dsq_messages: Option<bool>,
+    
+    /// Whether this peer has actually sent us Headers2 messages (not just supports it).
+    pub has_sent_headers2: bool,
 }
 
 impl PeerInfo {

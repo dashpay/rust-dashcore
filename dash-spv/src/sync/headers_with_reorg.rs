@@ -60,6 +60,7 @@ pub struct HeaderSyncManagerWithReorg {
     last_progress_log: Option<std::time::Instant>,
     syncing_headers: bool,
     last_sync_progress: std::time::Instant,
+    headers2_failed: bool,
 }
 
 impl HeaderSyncManagerWithReorg {
@@ -94,6 +95,7 @@ impl HeaderSyncManagerWithReorg {
             last_progress_log: None,
             syncing_headers: false,
             last_sync_progress: std::time::Instant::now(),
+            headers2_failed: false,
         }
     }
 
@@ -396,15 +398,33 @@ impl HeaderSyncManagerWithReorg {
         base_hash: Option<BlockHash>,
     ) -> SyncResult<()> {
         let block_locator = match base_hash {
-            Some(hash) => vec![hash],
-            None => Vec::new(),
+            Some(hash) => {
+                // Check if this is genesis and we're using headers2
+                if network.has_headers2_peer().await && !self.headers2_failed {
+                    let genesis_hash = self.config.network.known_genesis_block_hash();
+                    if genesis_hash == Some(hash) {
+                        tracing::info!("📍 Using empty locator for headers2 genesis sync");
+                        vec![]
+                    } else {
+                        vec![hash]
+                    }
+                } else {
+                    vec![hash]
+                }
+            },
+            None => {
+                // When starting from genesis, include genesis hash in locator
+                let genesis_hash = self.config.network.known_genesis_block_hash()
+                    .unwrap_or(BlockHash::from_byte_array([0; 32]));
+                vec![genesis_hash]
+            },
         };
 
         let stop_hash = BlockHash::from_byte_array([0; 32]);
         let getheaders_msg = GetHeadersMessage::new(block_locator.clone(), stop_hash);
         
         // Log the GetHeaders message details
-        tracing::debug!(
+        tracing::info!(
             "GetHeaders message - version: {}, locator_count: {}, locator: {:?}, stop_hash: {:?}",
             getheaders_msg.version,
             getheaders_msg.locator_hashes.len(),
@@ -413,7 +433,10 @@ impl HeaderSyncManagerWithReorg {
         );
 
         // Check if we have a peer that supports headers2
-        let use_headers2 = network.has_headers2_peer().await;
+        // But don't use it if we've already had a headers2 failure this session
+        // Use GetHeaders2 if the peer supports it (indicated by SendHeaders2 exchange)
+        let use_headers2 = network.has_headers2_peer().await 
+            && !self.headers2_failed;
         
         // Log details about the request
         tracing::info!(
@@ -426,6 +449,16 @@ impl HeaderSyncManagerWithReorg {
         // Try GetHeaders2 first if peer supports it, with fallback to regular GetHeaders
         if use_headers2 {
             tracing::info!("📤 Sending GetHeaders2 message (compressed headers)");
+            tracing::debug!("GetHeaders2 details: version={}, locator_hashes={:?}, stop_hash={}", 
+                getheaders_msg.version, 
+                getheaders_msg.locator_hashes, 
+                getheaders_msg.stop_hash
+            );
+            
+            // Log the raw message bytes for debugging
+            let msg_bytes = dashcore::consensus::encode::serialize(&getheaders_msg);
+            tracing::debug!("GetHeaders2 raw bytes ({}): {:02x?}", msg_bytes.len(), &msg_bytes[..std::cmp::min(100, msg_bytes.len())]);
+            
             // Send GetHeaders2 message for compressed headers
             let result =
                 network.send_message(NetworkMessage::GetHeaders2(getheaders_msg.clone())).await;
@@ -537,6 +570,8 @@ impl HeaderSyncManagerWithReorg {
                 }
                 
                 // Return a specific error that can trigger fallback
+                // Mark that headers2 failed for this sync session
+                self.headers2_failed = true;
                 return Err(SyncError::Headers2DecompressionFailed(format!("Failed to decompress headers: {}", e)));
             }
         };
