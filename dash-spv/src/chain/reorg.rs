@@ -3,7 +3,7 @@
 //! This module implements the core logic for handling blockchain reorganizations,
 //! including finding common ancestors, rolling back transactions, and switching chains.
 
-use dashcore::{BlockHash, Header as BlockHeader, Transaction};
+use dashcore::{BlockHash, Header as BlockHeader, Transaction, Txid};
 use dashcore_hashes::Hash;
 use std::sync::Arc;
 use crate::storage::{ChainStorage, StorageManager};
@@ -25,6 +25,24 @@ pub struct ReorgEvent {
     pub connected_headers: Vec<BlockHeader>,
     /// Transactions that may have changed confirmation status
     pub affected_transactions: Vec<Transaction>,
+}
+
+/// Data collected during the read phase of reorganization
+#[derive(Debug)]
+#[cfg_attr(test, derive(Clone))]
+pub(crate) struct ReorgData {
+    /// The common ancestor where chains diverged
+    pub(crate) common_ancestor: BlockHash,
+    /// Height of the common ancestor
+    pub(crate) common_height: u32,
+    /// Headers that need to be disconnected from the main chain
+    disconnected_headers: Vec<BlockHeader>,
+    /// Block hashes and heights for disconnected blocks
+    disconnected_blocks: Vec<(BlockHash, u32)>,
+    /// Transaction IDs from disconnected blocks that affect the wallet
+    affected_tx_ids: Vec<Txid>,
+    /// Actual transactions that were affected (if available)
+    affected_transactions: Vec<Transaction>,
 }
 
 /// Manages chain reorganizations
@@ -108,61 +126,184 @@ impl ReorgManager {
         Ok(true)
     }
 
-    /// Perform a chain reorganization
+    /// Perform a chain reorganization using a phased approach
     pub async fn reorganize(
         &self,
         chain_state: &mut ChainState,
         wallet_state: &mut WalletState,
         fork: &Fork,
-        chain_storage: &dyn ChainStorage,
         storage_manager: &mut dyn StorageManager,
     ) -> Result<ReorgEvent, String> {
-        // Find the common ancestor
-        let (common_ancestor, common_height) = self.find_common_ancestor(
+        // Phase 1: Collect all necessary data (read-only)
+        let reorg_data = self.collect_reorg_data(
             chain_state,
-            &fork.fork_point,
-            chain_storage,
-        )?;
-
-        // Collect headers to disconnect (from current tip back to common ancestor)
-        let disconnected_headers = self.collect_headers_to_disconnect(
-            chain_state,
-            common_height,
-            chain_storage,
-        )?;
-
-        // Collect headers to connect (from fork)
-        let connected_headers = fork.headers.clone();
-
-        // Collect affected transactions
-        let affected_transactions = self.collect_affected_transactions(
-            &disconnected_headers,
-            &connected_headers,
-            wallet_state,
-            chain_storage,
-        )?;
-
-        // Perform the reorganization
-        self.apply_reorganization(
-            chain_state,
-            wallet_state,
-            &disconnected_headers,
-            &connected_headers,
-            common_height,
-            chain_storage,
+            fork,
             storage_manager,
         ).await?;
 
-        Ok(ReorgEvent {
+        // Phase 2: Apply the reorganization (write-only)
+        self.apply_reorg_with_data(
+            chain_state,
+            wallet_state,
+            fork,
+            reorg_data,
+            storage_manager,
+        ).await
+    }
+    
+    /// Collect all data needed for reorganization (read-only phase)
+    #[cfg(test)]
+    pub async fn collect_reorg_data(
+        &self,
+        chain_state: &ChainState,
+        fork: &Fork,
+        storage_manager: &dyn StorageManager,
+    ) -> Result<ReorgData, String> {
+        self.collect_reorg_data_internal(chain_state, fork, storage_manager).await
+    }
+    
+    #[cfg(not(test))]
+    async fn collect_reorg_data(
+        &self,
+        chain_state: &ChainState,
+        fork: &Fork,
+        storage_manager: &dyn StorageManager,
+    ) -> Result<ReorgData, String> {
+        self.collect_reorg_data_internal(chain_state, fork, storage_manager).await
+    }
+
+    async fn collect_reorg_data_internal(
+        &self,
+        chain_state: &ChainState,
+        fork: &Fork,
+        storage: &dyn StorageManager,
+    ) -> Result<ReorgData, String> {
+        // Find the common ancestor
+        let (common_ancestor, common_height) = self.find_common_ancestor_with_fork(
+            fork,
+            storage,
+        ).await?;
+
+        // Collect headers to disconnect
+        let current_height = chain_state.get_height();
+        let mut disconnected_headers = Vec::new();
+        let mut disconnected_blocks = Vec::new();
+        
+        // Walk back from current tip to common ancestor
+        for height in ((common_height + 1)..=current_height).rev() {
+            if let Ok(Some(header)) = storage.get_header(height).await {
+                let block_hash = header.block_hash();
+                disconnected_blocks.push((block_hash, height));
+                disconnected_headers.push(header);
+            } else {
+                return Err(format!("Missing header at height {}", height));
+            }
+        }
+
+        // Collect affected transaction IDs
+        let affected_tx_ids = Vec::new(); // Will be populated when we have transaction storage
+        let affected_transactions = Vec::new(); // Will be populated when we have transaction storage
+        
+        Ok(ReorgData {
             common_ancestor,
             common_height,
             disconnected_headers,
-            connected_headers,
+            disconnected_blocks,
+            affected_tx_ids,
             affected_transactions,
         })
     }
+    
+    /// Apply reorganization using collected data (write-only phase)
+    async fn apply_reorg_with_data(
+        &self,
+        chain_state: &mut ChainState,
+        wallet_state: &mut WalletState,
+        fork: &Fork,
+        reorg_data: ReorgData,
+        storage_manager: &mut dyn StorageManager,
+    ) -> Result<ReorgEvent, String> {
+        // Use UTXO rollback if available
+        if wallet_state.rollback_manager().is_some() {
+            // Rollback wallet state to common ancestor height
+            wallet_state.rollback_to_height(reorg_data.common_height, storage_manager)
+                .await
+                .map_err(|e| format!("Failed to rollback wallet state: {:?}", e))?;
+        }
+        
+        // Disconnect blocks from the old chain
+        for header in &reorg_data.disconnected_headers {
+            // Mark transactions as unconfirmed if rollback manager not available
+            if wallet_state.rollback_manager().is_none() {
+                for txid in &reorg_data.affected_tx_ids {
+                    wallet_state.mark_transaction_unconfirmed(txid);
+                }
+            }
+            
+            // Remove header from chain state
+            chain_state.remove_tip();
+        }
+        
+        // Connect blocks from the new chain
+        let mut current_height = reorg_data.common_height;
+        for header in &fork.headers {
+            current_height += 1;
+            
+            // Add header to chain state
+            chain_state.add_header(*header);
+            
+            // Store the header
+            storage_manager.store_headers(&[*header]).await
+                .map_err(|e| format!("Failed to store header: {:?}", e))?;
+        }
+        
+        Ok(ReorgEvent {
+            common_ancestor: reorg_data.common_ancestor,
+            common_height: reorg_data.common_height,
+            disconnected_headers: reorg_data.disconnected_headers,
+            connected_headers: fork.headers.clone(),
+            affected_transactions: reorg_data.affected_transactions,
+        })
+    }
 
-    /// Find the common ancestor between current chain and a fork point
+    /// Find the common ancestor between current chain and a fork
+    async fn find_common_ancestor_with_fork(
+        &self,
+        fork: &Fork,
+        storage: &dyn StorageManager,
+    ) -> Result<(BlockHash, u32), String> {
+        // First check if the fork point itself is in our chain
+        if let Ok(Some(height)) = storage.get_header_height_by_hash(&fork.fork_point).await {
+            // The fork point is already in our chain, so it's the common ancestor
+            return Ok((fork.fork_point, height));
+        }
+        
+        // If we have fork headers, check their parent blocks
+        if !fork.headers.is_empty() {
+            // Start from the first header in the fork and walk backwards
+            let first_fork_header = &fork.headers[0];
+            let mut current_hash = first_fork_header.prev_blockhash;
+            
+            // Check if the parent of the first fork header is in our chain
+            if let Ok(Some(height)) = storage.get_header_height_by_hash(&current_hash).await {
+                return Ok((current_hash, height));
+            }
+        }
+        
+        // As a fallback, the fork should specify where it diverged from
+        // In a properly constructed Fork, fork_height should indicate where the split occurred
+        if fork.fork_height > 0 {
+            // Get the header at fork_height - 1 which should be the common ancestor
+            if let Ok(Some(header)) = storage.get_header(fork.fork_height.saturating_sub(1)).await {
+                let hash = header.block_hash();
+                return Ok((hash, fork.fork_height.saturating_sub(1)));
+            }
+        }
+        
+        Err("Cannot find common ancestor between fork and main chain".to_string())
+    }
+
+    /// Find the common ancestor between current chain and a fork point (sync version for ChainStorage)
     fn find_common_ancestor(
         &self,
         _chain_state: &ChainState,
@@ -244,60 +385,6 @@ impl ReorgManager {
         Ok(affected)
     }
 
-    /// Apply the reorganization to chain and wallet state
-    async fn apply_reorganization(
-        &self,
-        chain_state: &mut ChainState,
-        wallet_state: &mut WalletState,
-        disconnected_headers: &[BlockHeader],
-        connected_headers: &[BlockHeader],
-        common_height: u32,
-        chain_storage: &dyn ChainStorage,
-        storage_manager: &mut dyn StorageManager,
-    ) -> Result<(), String> {
-        // First, use UTXO rollback if available
-        if wallet_state.rollback_manager().is_some() {
-            // Rollback wallet state to common ancestor height
-            wallet_state.rollback_to_height(common_height, storage_manager)
-                .await
-                .map_err(|e| format!("Failed to rollback wallet state: {:?}", e))?;
-        }
-        
-        // Disconnect blocks from the old chain
-        for header in disconnected_headers {
-            let block_hash = header.block_hash();
-            
-            // Mark transactions as unconfirmed if rollback manager not available
-            if wallet_state.rollback_manager().is_none() {
-                if let Ok(Some(txids)) = chain_storage.get_block_transactions(&block_hash) {
-                    for txid in txids {
-                        wallet_state.mark_transaction_unconfirmed(&txid);
-                    }
-                }
-            }
-            
-            // Remove header from chain state
-            chain_state.remove_tip();
-        }
-        
-        // Then, connect blocks from the new chain
-        let mut current_height = common_height;
-        for header in connected_headers {
-            current_height += 1;
-            
-            // Add header to chain state
-            chain_state.add_header(*header);
-            
-            // Store the header
-            chain_storage.store_header(header, current_height)
-                .map_err(|e| format!("Failed to store header: {:?}", e))?;
-            
-            // Note: Transactions from these blocks need to be downloaded
-            // and processed separately
-        }
-        
-        Ok(())
-    }
 
     /// Check if a block is chain-locked
     fn is_chain_locked(&self, header: &BlockHeader, storage: &dyn ChainStorage) -> Result<bool, String> {
@@ -340,6 +427,7 @@ impl ReorgManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain::ChainWork;
     use crate::storage::{MemoryStorage, MemoryStorageManager};
     use dashcore::blockdata::constants::genesis_block;
     use dashcore::Network;
