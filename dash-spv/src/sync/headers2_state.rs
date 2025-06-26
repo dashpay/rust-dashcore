@@ -179,6 +179,7 @@ mod tests {
     use dashcore::hash_types::{BlockHash, TxMerkleNode};
     use dashcore::network::message_headers2::CompressionState;
     use dashcore::pow::CompactTarget;
+    use dashcore_hashes::Hash;
     
     fn create_test_header(nonce: u32) -> Header {
         Header {

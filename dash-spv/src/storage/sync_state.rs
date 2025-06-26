@@ -343,6 +343,7 @@ impl PersistentSyncState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dashcore_hashes::Hash;
     
     #[test]
     fn test_sync_state_validation() {
