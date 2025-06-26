@@ -1,11 +1,10 @@
 use dash_spv::error::SpvError;
-use std::cell::RefCell;
 use std::ffi::CString;
 use std::os::raw::c_char;
+use std::sync::Mutex;
 
-thread_local! {
-    static LAST_ERROR: RefCell<Option<CString>> = RefCell::new(None);
-}
+// Global error storage protected by mutex for thread safety
+static LAST_ERROR: Mutex<Option<CString>> = Mutex::new(None);
 
 #[repr(C)]
 pub enum FFIErrorCode {
@@ -24,20 +23,23 @@ pub enum FFIErrorCode {
 
 pub fn set_last_error(err: &str) {
     let c_err = CString::new(err).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
-    LAST_ERROR.with(|e| {
-        *e.borrow_mut() = Some(c_err);
-    });
+    if let Ok(mut guard) = LAST_ERROR.lock() {
+        *guard = Some(c_err);
+    }
 }
 
 pub fn clear_last_error() {
-    LAST_ERROR.with(|e| {
-        *e.borrow_mut() = None;
-    });
+    if let Ok(mut guard) = LAST_ERROR.lock() {
+        *guard = None;
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn dash_spv_ffi_get_last_error() -> *const c_char {
-    LAST_ERROR.with(|e| e.borrow().as_ref().map(|err| err.as_ptr()).unwrap_or(std::ptr::null()))
+    match LAST_ERROR.lock() {
+        Ok(guard) => guard.as_ref().map(|err| err.as_ptr()).unwrap_or(std::ptr::null()),
+        Err(_) => std::ptr::null(),
+    }
 }
 
 #[no_mangle]
