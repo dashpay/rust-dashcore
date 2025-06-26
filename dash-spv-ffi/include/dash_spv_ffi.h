@@ -245,6 +245,32 @@ int32_t dash_spv_ffi_client_start(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_stop(struct FFIDashSpvClient *client);
 
+/**
+ * Synchronizes the SPV client to the latest block tip
+ *
+ * This function initiates a synchronization process that downloads and validates
+ * blocks from the Dash network until the client reaches the current blockchain tip.
+ *
+ * # Parameters
+ * - `client`: Pointer to an FFIDashSpvClient instance
+ * - `completion_callback`: Function called when sync completes or encounters an error.
+ *   The callback receives three parameters:
+ *   - bool: true if sync completed successfully, false on error
+ *   - const char*: Error message (NULL on success)
+ *   - void*: User-provided data pointer
+ * - `user_data`: Arbitrary data passed to the completion callback
+ *
+ * # Returns
+ * - `0` if sync was successfully initiated
+ * - Negative error code if sync could not be started
+ *
+ * # Safety
+ * This function is unsafe because it dereferences raw pointers.
+ * The caller must ensure that:
+ * - The client pointer is valid for the duration of the sync operation
+ * - The completion_callback function pointer is valid
+ * - The user_data pointer remains valid until the callback is invoked
+ */
 int32_t dash_spv_ffi_client_sync_to_tip(struct FFIDashSpvClient *client,
                                         void (*completion_callback)(bool, const char*, void*),
                                         void *user_data);
