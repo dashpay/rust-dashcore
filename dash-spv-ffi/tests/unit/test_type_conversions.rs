@@ -51,6 +51,7 @@ mod tests {
             // Test destroying null (should be safe)
             dash_spv_ffi_string_destroy(FFIString {
                 ptr: std::ptr::null_mut(),
+                length: 0,
             });
         }
     }

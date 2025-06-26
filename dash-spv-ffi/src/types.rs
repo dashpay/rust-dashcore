@@ -8,13 +8,16 @@ use std::os::raw::{c_char, c_void};
 #[repr(C)]
 pub struct FFIString {
     pub ptr: *mut c_char,
+    pub length: usize,
 }
 
 impl FFIString {
     pub fn new(s: &str) -> Self {
         let c_string = CString::new(s).unwrap_or_else(|_| CString::new("").unwrap());
+        let length = s.len();
         FFIString {
             ptr: c_string.into_raw(),
+            length,
         }
     }
 

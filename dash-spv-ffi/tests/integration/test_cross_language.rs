@@ -79,6 +79,7 @@ mod tests {
                 // Pass through FFI boundary
                 let ffi_string = FFIString {
                     ptr: c_string.as_ptr() as *mut c_char,
+                    length: test_str.len(),
                 };
                 
                 // Recover on Rust side
