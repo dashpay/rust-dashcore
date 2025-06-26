@@ -275,7 +275,7 @@ impl RequestController {
         // Update rate limit tracking
         let phase_name = self.request_phase(&request_type);
         self.last_request_times
-            .insert(phase_name.clone(), Instant::now());
+            .insert(phase_name.to_string(), Instant::now());
 
         Ok(())
     }
@@ -293,7 +293,7 @@ impl RequestController {
     }
 
     /// Get the phase name for a request type
-    fn request_phase(&self, request_type: &RequestType) -> String {
+    fn request_phase(&self, request_type: &RequestType) -> &'static str {
         match request_type {
             RequestType::GetHeaders(_) => PHASE_DOWNLOADING_HEADERS,
             RequestType::GetMnListDiff(_) => PHASE_DOWNLOADING_MNLIST,
@@ -301,7 +301,6 @@ impl RequestController {
             RequestType::GetCFilters(_, _) => PHASE_DOWNLOADING_FILTERS,
             RequestType::GetBlock(_) => PHASE_DOWNLOADING_BLOCKS,
         }
-        .to_string()
     }
 
     /// Mark a request as completed
