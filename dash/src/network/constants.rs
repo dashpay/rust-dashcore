@@ -47,7 +47,7 @@ use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::constants::ChainHash;
 use crate::error::impl_std_error;
 use crate::prelude::ToOwned;
-use crate::{io, BlockHash};
+use crate::{BlockHash, io};
 use dash_network::Network;
 
 // Re-export NODE_HEADERS_COMPRESSED for convenience

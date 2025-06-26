@@ -1,11 +1,11 @@
 //! Bloom filter construction utilities
 
-use dashcore::bloom::{BloomFilter, BloomFlags};
-use dashcore::address::Address;
-use dashcore::OutPoint;
+use super::utils::{extract_pubkey_hash, outpoint_to_bytes};
 use crate::error::SpvError;
 use crate::wallet::Wallet;
-use super::utils::{extract_pubkey_hash, outpoint_to_bytes};
+use dashcore::address::Address;
+use dashcore::bloom::{BloomFilter, BloomFlags};
+use dashcore::OutPoint;
 
 /// Builder for constructing bloom filters from wallet state
 pub struct BloomFilterBuilder {
@@ -116,16 +116,15 @@ impl BloomFilterBuilder {
     /// Build the bloom filter
     pub fn build(self) -> Result<BloomFilter, SpvError> {
         // Calculate actual elements
-        let actual_elements = self.addresses.len() + self.outpoints.len() + self.data_elements.len();
+        let actual_elements =
+            self.addresses.len() + self.outpoints.len() + self.data_elements.len();
         let elements = std::cmp::max(self.elements, actual_elements as u32);
 
         // Create filter
-        let mut filter = BloomFilter::new(
-            elements,
-            self.false_positive_rate,
-            self.tweak,
-            self.flags,
-        ).map_err(|e| SpvError::General(format!("Failed to create bloom filter: {:?}", e)))?;
+        let mut filter =
+            BloomFilter::new(elements, self.false_positive_rate, self.tweak, self.flags).map_err(
+                |e| SpvError::General(format!("Failed to create bloom filter: {:?}", e)),
+            )?;
 
         // Add addresses
         for address in self.addresses {
@@ -157,4 +156,3 @@ impl Default for BloomFilterBuilder {
         Self::new()
     }
 }
-

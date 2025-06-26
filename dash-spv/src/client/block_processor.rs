@@ -164,7 +164,7 @@ impl BlockProcessor {
         let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
         if !watch_items.is_empty() {
             self.process_block_transactions(&block, &watch_items).await?;
-            
+
             // Update wallet confirmation statuses after processing block
             if let Err(e) = self.wallet.write().await.update_confirmation_status().await {
                 tracing::warn!("Failed to update wallet confirmations after block: {}", e);
@@ -433,9 +433,8 @@ impl BlockProcessor {
         // Emit transaction event if relevant
         if transaction_relevant {
             let net_amount: i64 = tx_balance_changes.values().sum();
-            let affected_addresses: Vec<String> = tx_balance_changes.keys()
-                .map(|addr| addr.to_string())
-                .collect();
+            let affected_addresses: Vec<String> =
+                tx_balance_changes.keys().map(|addr| addr.to_string()).collect();
 
             let _ = self.event_tx.send(SpvEvent::TransactionDetected {
                 txid: txid.to_string(),

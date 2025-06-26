@@ -1,6 +1,6 @@
+use dashcore::{BlockHash, Header as BlockHeader};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
-use dashcore::{BlockHash, Header as BlockHeader};
 use tracing::{debug, trace};
 
 /// Maximum number of orphan blocks to keep in memory
@@ -54,7 +54,7 @@ impl OrphanPool {
     /// Adds an orphan block to the pool
     pub fn add_orphan(&mut self, header: BlockHeader) -> bool {
         let block_hash = header.block_hash();
-        
+
         // Check if we already have this orphan
         if self.orphans_by_hash.contains_key(&block_hash) {
             trace!("Orphan block {} already in pool", block_hash);
@@ -77,20 +77,13 @@ impl OrphanPool {
         };
 
         // Index by previous block
-        self.orphans_by_prev
-            .entry(header.prev_blockhash)
-            .or_default()
-            .push(orphan.clone());
+        self.orphans_by_prev.entry(header.prev_blockhash).or_default().push(orphan.clone());
 
         // Index by hash
         self.orphans_by_hash.insert(block_hash, orphan);
         self.eviction_queue.push_back(block_hash);
 
-        debug!(
-            "Added orphan block {} (prev: {})",
-            block_hash,
-            header.prev_blockhash
-        );
+        debug!("Added orphan block {} (prev: {})", block_hash, header.prev_blockhash);
 
         true
     }
@@ -184,12 +177,8 @@ impl OrphanPool {
             .max()
             .unwrap_or(Duration::ZERO);
 
-        let max_attempts = self
-            .orphans_by_hash
-            .values()
-            .map(|o| o.process_attempts)
-            .max()
-            .unwrap_or(0);
+        let max_attempts =
+            self.orphans_by_hash.values().map(|o| o.process_attempts).max().unwrap_or(0);
 
         OrphanPoolStats {
             total_orphans: self.orphans_by_hash.len(),
@@ -211,13 +200,13 @@ impl OrphanPool {
     /// Returns headers that are now connectable
     pub fn process_new_block(&mut self, block_hash: &BlockHash) -> Vec<BlockHeader> {
         let orphans = self.get_orphans_by_prev(block_hash);
-        
+
         // Remove these from the pool since we're processing them
         for header in &orphans {
             let _block_hash = header.block_hash();
             self.remove_orphan(&header.block_hash());
         }
-        
+
         orphans
     }
 }
@@ -299,7 +288,7 @@ mod tests {
         }
 
         assert_eq!(pool.len(), 3);
-        
+
         // First orphan should have been evicted
         let first_hash = create_test_header(BlockHash::all_zeros(), 0).block_hash();
         assert!(!pool.contains(&first_hash));
@@ -318,7 +307,7 @@ mod tests {
     #[test]
     fn test_orphan_chain() {
         let mut pool = OrphanPool::new();
-        
+
         // Create a chain of orphans
         let genesis = BlockHash::all_zeros();
         let header1 = create_test_header(genesis, 1);
@@ -364,14 +353,14 @@ mod tests {
     #[test]
     fn test_clear_pool() {
         let mut pool = OrphanPool::new();
-        
+
         for i in 0..5 {
             let header = create_test_header(BlockHash::all_zeros(), i);
             pool.add_orphan(header);
         }
 
         assert_eq!(pool.len(), 5);
-        
+
         pool.clear();
         assert_eq!(pool.len(), 0);
         assert!(pool.is_empty());

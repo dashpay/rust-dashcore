@@ -1,10 +1,10 @@
 //! Wallet state management for reorganizations
 
-use dashcore::{BlockHash, Network, Transaction, Txid};
-use std::collections::HashMap;
+use super::{TransactionStatus, UTXORollbackManager};
 use crate::error::Result;
 use crate::storage::StorageManager;
-use super::{UTXORollbackManager, TransactionStatus};
+use dashcore::{BlockHash, Network, Transaction, Txid};
+use std::collections::HashMap;
 
 /// Wallet state that tracks transaction confirmations
 pub struct WalletState {
@@ -26,7 +26,7 @@ impl WalletState {
             rollback_manager: None,
         }
     }
-    
+
     /// Create a new wallet state with rollback support
     pub fn with_rollback(network: Network, persist_snapshots: bool) -> Self {
         Self {
@@ -36,44 +36,43 @@ impl WalletState {
             rollback_manager: Some(UTXORollbackManager::new(persist_snapshots)),
         }
     }
-    
+
     /// Initialize rollback manager from storage
     pub async fn init_rollback_from_storage(
         &mut self,
         storage: &dyn StorageManager,
         persist_snapshots: bool,
     ) -> Result<()> {
-        self.rollback_manager = Some(
-            UTXORollbackManager::from_storage(storage, persist_snapshots).await?
-        );
+        self.rollback_manager =
+            Some(UTXORollbackManager::from_storage(storage, persist_snapshots).await?);
         Ok(())
     }
-    
+
     /// Check if a transaction belongs to the wallet
     pub fn is_wallet_transaction(&self, txid: &Txid) -> bool {
         self.wallet_txs.contains_key(txid)
     }
-    
+
     /// Mark a transaction as unconfirmed (for reorgs)
     pub fn mark_transaction_unconfirmed(&mut self, txid: &Txid) {
         self.tx_heights.insert(*txid, None);
     }
-    
+
     /// Add a wallet transaction
     pub fn add_wallet_transaction(&mut self, txid: Txid) {
         self.wallet_txs.insert(txid, true);
     }
-    
+
     /// Set transaction confirmation height
     pub fn set_transaction_height(&mut self, txid: &Txid, height: Option<u32>) {
         self.tx_heights.insert(*txid, height);
     }
-    
+
     /// Get transaction confirmation height
     pub fn get_transaction_height(&self, txid: &Txid) -> Option<u32> {
         self.tx_heights.get(txid).and_then(|h| *h)
     }
-    
+
     /// Process a block and track UTXO changes
     pub async fn process_block_with_rollback(
         &mut self,
@@ -88,7 +87,7 @@ impl WalletState {
         }
         Ok(())
     }
-    
+
     /// Rollback to a specific height
     pub async fn rollback_to_height(
         &mut self,
@@ -101,17 +100,17 @@ impl WalletState {
         }
         Ok(())
     }
-    
+
     /// Get the rollback manager
     pub fn rollback_manager(&self) -> Option<&UTXORollbackManager> {
         self.rollback_manager.as_ref()
     }
-    
+
     /// Get the mutable rollback manager
     pub fn rollback_manager_mut(&mut self) -> Option<&mut UTXORollbackManager> {
         self.rollback_manager.as_mut()
     }
-    
+
     /// Mark a transaction as conflicted
     pub fn mark_transaction_conflicted(&mut self, txid: &Txid) {
         self.tx_heights.remove(txid);
@@ -119,7 +118,7 @@ impl WalletState {
             rollback_mgr.mark_transaction_conflicted(txid);
         }
     }
-    
+
     /// Get transaction status
     pub fn get_transaction_status(&self, txid: &Txid) -> TransactionStatus {
         if let Some(ref rollback_mgr) = self.rollback_manager {
@@ -127,7 +126,7 @@ impl WalletState {
                 return status;
             }
         }
-        
+
         // Fall back to height-based status
         if let Some(height) = self.get_transaction_height(txid) {
             TransactionStatus::Confirmed(height)

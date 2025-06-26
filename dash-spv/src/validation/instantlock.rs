@@ -84,7 +84,7 @@ impl InstantLockValidator {
         if lock1.txid == lock2.txid {
             return false;
         }
-        
+
         // InstantLocks conflict if they try to lock the same input
         for input1 in &lock1.inputs {
             for input2 in &lock2.inputs {
@@ -100,14 +100,15 @@ impl InstantLockValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::{Transaction, TxIn, TxOut, OutPoint, ScriptBuf};
     use dashcore::blockdata::constants::COIN_VALUE;
-    use dashcore_hashes::{Hash, sha256d};
+    use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut};
+    use dashcore_hashes::{sha256d, Hash};
 
     /// Helper to create a test transaction
     fn create_test_transaction(inputs: Vec<(sha256d::Hash, u32)>, value: u64) -> Transaction {
-        let tx_ins = inputs.into_iter().map(|(txid, vout)| {
-            TxIn {
+        let tx_ins = inputs
+            .into_iter()
+            .map(|(txid, vout)| TxIn {
                 previous_output: OutPoint {
                     txid: dashcore::Txid::from_raw_hash(txid),
                     vout,
@@ -115,15 +116,13 @@ mod tests {
                 script_sig: ScriptBuf::new(),
                 sequence: 0xffffffff,
                 witness: dashcore::Witness::new(),
-            }
-        }).collect();
+            })
+            .collect();
 
-        let tx_outs = vec![
-            TxOut {
-                value,
-                script_pubkey: ScriptBuf::new(),
-            }
-        ];
+        let tx_outs = vec![TxOut {
+            value,
+            script_pubkey: ScriptBuf::new(),
+        }];
 
         Transaction {
             version: 2,
@@ -136,9 +135,7 @@ mod tests {
 
     /// Helper to create a test InstantLock
     fn create_test_instant_lock(tx: &Transaction) -> InstantLock {
-        let inputs = tx.input.iter()
-            .map(|input| input.previous_output)
-            .collect();
+        let inputs = tx.input.iter().map(|input| input.previous_output).collect();
 
         InstantLock {
             version: 1,
@@ -150,13 +147,17 @@ mod tests {
     }
 
     /// Helper to create an InstantLock with specific inputs
-    fn create_instant_lock_with_inputs(txid: sha256d::Hash, inputs: Vec<(sha256d::Hash, u32)>) -> InstantLock {
-        let inputs = inputs.into_iter().map(|(txid, vout)| {
-            OutPoint {
+    fn create_instant_lock_with_inputs(
+        txid: sha256d::Hash,
+        inputs: Vec<(sha256d::Hash, u32)>,
+    ) -> InstantLock {
+        let inputs = inputs
+            .into_iter()
+            .map(|(txid, vout)| OutPoint {
                 txid: dashcore::Txid::from_raw_hash(txid),
                 vout,
-            }
-        }).collect();
+            })
+            .collect();
 
         InstantLock {
             version: 1,
@@ -172,7 +173,7 @@ mod tests {
         let validator = InstantLockValidator::new();
         let tx = create_test_transaction(vec![(sha256d::Hash::hash(&[1, 2, 3]), 0)], COIN_VALUE);
         let is_lock = create_test_instant_lock(&tx);
-        
+
         assert!(validator.validate(&is_lock).is_ok());
     }
 
@@ -181,10 +182,10 @@ mod tests {
         let validator = InstantLockValidator::new();
         let mut is_lock = create_instant_lock_with_inputs(
             sha256d::Hash::hash(&[1, 2, 3]),
-            vec![(sha256d::Hash::hash(&[4, 5, 6]), 0)]
+            vec![(sha256d::Hash::hash(&[4, 5, 6]), 0)],
         );
         is_lock.inputs.clear();
-        
+
         let result = validator.validate(&is_lock);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("at least one input"));
@@ -195,10 +196,10 @@ mod tests {
         let validator = InstantLockValidator::new();
         let mut is_lock = create_instant_lock_with_inputs(
             sha256d::Hash::hash(&[1, 2, 3]),
-            vec![(sha256d::Hash::hash(&[4, 5, 6]), 0)]
+            vec![(sha256d::Hash::hash(&[4, 5, 6]), 0)],
         );
         is_lock.signature = dashcore::bls_sig_utils::BLSSignature::from([0; 96]);
-        
+
         // Zero signatures should be rejected as invalid structure
         let result = validator.validate(&is_lock);
         assert!(result.is_err());
@@ -209,34 +210,30 @@ mod tests {
     fn test_conflicts_with_same_input() {
         let validator = InstantLockValidator::new();
         let input = (sha256d::Hash::hash(&[1, 2, 3]), 0);
-        
-        let lock1 = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[10, 11, 12]),
-            vec![input]
-        );
-        
-        let lock2 = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[13, 14, 15]),
-            vec![input]
-        );
-        
+
+        let lock1 =
+            create_instant_lock_with_inputs(sha256d::Hash::hash(&[10, 11, 12]), vec![input]);
+
+        let lock2 =
+            create_instant_lock_with_inputs(sha256d::Hash::hash(&[13, 14, 15]), vec![input]);
+
         assert!(validator.conflicts_with(&lock1, &lock2));
     }
 
     #[test]
     fn test_no_conflict_different_inputs() {
         let validator = InstantLockValidator::new();
-        
+
         let lock1 = create_instant_lock_with_inputs(
             sha256d::Hash::hash(&[10, 11, 12]),
-            vec![(sha256d::Hash::hash(&[1, 2, 3]), 0)]
+            vec![(sha256d::Hash::hash(&[1, 2, 3]), 0)],
         );
-        
+
         let lock2 = create_instant_lock_with_inputs(
             sha256d::Hash::hash(&[13, 14, 15]),
-            vec![(sha256d::Hash::hash(&[4, 5, 6]), 0)]
+            vec![(sha256d::Hash::hash(&[4, 5, 6]), 0)],
         );
-        
+
         assert!(!validator.conflicts_with(&lock1, &lock2));
     }
 
@@ -244,46 +241,34 @@ mod tests {
     fn test_partial_conflict() {
         let validator = InstantLockValidator::new();
         let shared_input = (sha256d::Hash::hash(&[1, 2, 3]), 0);
-        
+
         let lock1 = create_instant_lock_with_inputs(
             sha256d::Hash::hash(&[10, 11, 12]),
-            vec![
-                shared_input,
-                (sha256d::Hash::hash(&[4, 5, 6]), 0)
-            ]
+            vec![shared_input, (sha256d::Hash::hash(&[4, 5, 6]), 0)],
         );
-        
+
         let lock2 = create_instant_lock_with_inputs(
             sha256d::Hash::hash(&[13, 14, 15]),
-            vec![
-                shared_input,
-                (sha256d::Hash::hash(&[7, 8, 9]), 0)
-            ]
+            vec![shared_input, (sha256d::Hash::hash(&[7, 8, 9]), 0)],
         );
-        
+
         assert!(validator.conflicts_with(&lock1, &lock2));
     }
 
     #[test]
     fn test_multiple_inputs_no_conflict() {
         let validator = InstantLockValidator::new();
-        
+
         let lock1 = create_instant_lock_with_inputs(
             sha256d::Hash::hash(&[10, 11, 12]),
-            vec![
-                (sha256d::Hash::hash(&[1, 2, 3]), 0),
-                (sha256d::Hash::hash(&[4, 5, 6]), 0)
-            ]
+            vec![(sha256d::Hash::hash(&[1, 2, 3]), 0), (sha256d::Hash::hash(&[4, 5, 6]), 0)],
         );
-        
+
         let lock2 = create_instant_lock_with_inputs(
             sha256d::Hash::hash(&[13, 14, 15]),
-            vec![
-                (sha256d::Hash::hash(&[7, 8, 9]), 0),
-                (sha256d::Hash::hash(&[10, 11, 12]), 0)
-            ]
+            vec![(sha256d::Hash::hash(&[7, 8, 9]), 0), (sha256d::Hash::hash(&[10, 11, 12]), 0)],
         );
-        
+
         assert!(!validator.conflicts_with(&lock1, &lock2));
     }
 
@@ -292,7 +277,7 @@ mod tests {
         let validator = InstantLockValidator::new();
         let tx = create_test_transaction(vec![(sha256d::Hash::hash(&[1, 2, 3]), 0)], COIN_VALUE);
         let is_lock = create_test_instant_lock(&tx);
-        
+
         // For now, all locks are considered valid
         assert!(validator.is_still_valid(&is_lock));
     }
@@ -302,7 +287,7 @@ mod tests {
         let validator = InstantLockValidator::new();
         let tx = create_test_transaction(vec![(sha256d::Hash::hash(&[1, 2, 3]), 0)], COIN_VALUE);
         let is_lock = create_test_instant_lock(&tx);
-        
+
         // Should pass for now (not implemented)
         assert!(validator.validate_signature(&is_lock).is_ok());
     }
@@ -310,17 +295,14 @@ mod tests {
     #[test]
     fn test_edge_case_many_inputs() {
         let validator = InstantLockValidator::new();
-        
+
         // Create lock with many inputs
-        let many_inputs: Vec<(sha256d::Hash, u32)> = (0..100u32).map(|i| {
-            (sha256d::Hash::hash(&i.to_le_bytes()), i % 10)
-        }).collect();
-        
-        let lock = create_instant_lock_with_inputs(
-            sha256d::Hash::hash(&[100, 101, 102]),
-            many_inputs
-        );
-        
+        let many_inputs: Vec<(sha256d::Hash, u32)> =
+            (0..100u32).map(|i| (sha256d::Hash::hash(&i.to_le_bytes()), i % 10)).collect();
+
+        let lock =
+            create_instant_lock_with_inputs(sha256d::Hash::hash(&[100, 101, 102]), many_inputs);
+
         assert!(validator.validate(&lock).is_ok());
     }
 
@@ -329,7 +311,7 @@ mod tests {
         let validator = InstantLockValidator::new();
         let tx = create_test_transaction(vec![(sha256d::Hash::hash(&[1, 2, 3]), 0)], COIN_VALUE);
         let is_lock = create_test_instant_lock(&tx);
-        
+
         // Same lock should not conflict with itself
         assert!(!validator.conflicts_with(&is_lock, &is_lock));
     }

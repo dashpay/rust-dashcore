@@ -219,14 +219,14 @@ mod tests {
             let temp_dir = TempDir::new().unwrap();
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
             dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
-            
+
             // Enable test mode to use deterministic peers
             dash_spv_ffi_enable_test_mode();
-            
+
             // Create client
             let client = dash_spv_ffi_client_new(config);
             assert!(!client.is_null(), "Failed to create client");
-            
+
             // Start the client
             let start_result = dash_spv_ffi_client_start(client);
             if start_result != FFIErrorCode::Success as i32 {
@@ -237,11 +237,11 @@ mod tests {
                     println!("Error message: {:?}", error_str);
                 }
             }
-            
+
             // Run the diagnostic sync test
             println!("Running sync diagnostic test...");
             let test_result = dash_spv_ffi_client_test_sync(client);
-            
+
             if test_result == FFIErrorCode::Success as i32 {
                 println!("✅ Sync test passed!");
             } else {
@@ -252,7 +252,7 @@ mod tests {
                     println!("Error message: {:?}", error_str);
                 }
             }
-            
+
             // Stop and cleanup
             let _stop_result = dash_spv_ffi_client_stop(client);
             dash_spv_ffi_client_destroy(client);

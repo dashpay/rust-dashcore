@@ -6,5 +6,5 @@ pub mod stats;
 pub mod utils;
 
 pub use builder::BloomFilterBuilder;
-pub use manager::{BloomFilterManager, BloomFilterConfig};
-pub use stats::{BloomStatsTracker, DetailedBloomStats, BloomFilterStats};
+pub use manager::{BloomFilterConfig, BloomFilterManager};
+pub use stats::{BloomFilterStats, BloomStatsTracker, DetailedBloomStats};

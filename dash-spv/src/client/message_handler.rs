@@ -73,9 +73,14 @@ impl<'a> MessageHandler<'a> {
         // These messages can be moved to the sync manager without cloning
         match message {
             NetworkMessage::Headers2(ref headers2) => {
-                tracing::info!("📋 Received Headers2 message with {} compressed headers", headers2.headers.len());
+                tracing::info!(
+                    "📋 Received Headers2 message with {} compressed headers",
+                    headers2.headers.len()
+                );
                 // Move to sync manager without cloning
-                return self.sync_manager.handle_message(message, &mut *self.network, &mut *self.storage)
+                return self
+                    .sync_manager
+                    .handle_message(message, &mut *self.network, &mut *self.storage)
                     .await
                     .map_err(|e| {
                         tracing::error!("Sequential sync manager error handling message: {}", e);
@@ -86,7 +91,9 @@ impl<'a> MessageHandler<'a> {
                 tracing::info!("📨 Received MnListDiff message: {} new masternodes, {} deleted masternodes, {} quorums", 
                               diff.new_masternodes.len(), diff.deleted_masternodes.len(), diff.new_quorums.len());
                 // Move to sync manager without cloning
-                return self.sync_manager.handle_message(message, &mut *self.network, &mut *self.storage)
+                return self
+                    .sync_manager
+                    .handle_message(message, &mut *self.network, &mut *self.storage)
                     .await
                     .map_err(|e| {
                         tracing::error!("Sequential sync manager error handling message: {}", e);
@@ -99,7 +106,9 @@ impl<'a> MessageHandler<'a> {
                     cf_headers.filter_hashes.len()
                 );
                 // Move to sync manager without cloning
-                return self.sync_manager.handle_message(message, &mut *self.network, &mut *self.storage)
+                return self
+                    .sync_manager
+                    .handle_message(message, &mut *self.network, &mut *self.storage)
                     .await
                     .map_err(|e| {
                         tracing::error!("Sequential sync manager error handling message: {}", e);
@@ -114,7 +123,11 @@ impl<'a> MessageHandler<'a> {
         match &message {
             NetworkMessage::Headers(_) | NetworkMessage::CFilter(_) => {
                 // Headers and CFilters are relatively small, cloning is acceptable
-                if let Err(e) = self.sync_manager.handle_message(message.clone(), &mut *self.network, &mut *self.storage).await {
+                if let Err(e) = self
+                    .sync_manager
+                    .handle_message(message.clone(), &mut *self.network, &mut *self.storage)
+                    .await
+                {
                     tracing::error!("Sequential sync manager error handling message: {}", e);
                 }
             }
@@ -123,8 +136,15 @@ impl<'a> MessageHandler<'a> {
                 // Check if sync manager actually needs to process this block
                 if self.sync_manager.is_in_downloading_blocks_phase() {
                     // Only clone if we're in the downloading blocks phase
-                    if let Err(e) = self.sync_manager.handle_message(message.clone(), &mut *self.network, &mut *self.storage).await {
-                        tracing::error!("Sequential sync manager error handling block message: {}", e);
+                    if let Err(e) = self
+                        .sync_manager
+                        .handle_message(message.clone(), &mut *self.network, &mut *self.storage)
+                        .await
+                    {
+                        tracing::error!(
+                            "Sequential sync manager error handling block message: {}",
+                            e
+                        );
                     }
                 } else {
                     // Sync manager will just log and return, no need to send it
@@ -141,7 +161,9 @@ impl<'a> MessageHandler<'a> {
             NetworkMessage::Headers(headers) => {
                 // For post-sync headers, we need special handling
                 if self.sync_manager.is_synced() && !headers.is_empty() {
-                    tracing::info!("📋 Post-sync headers received, additional processing may be needed");
+                    tracing::info!(
+                        "📋 Post-sync headers received, additional processing may be needed"
+                    );
                 }
             }
             NetworkMessage::Block(block) => {
@@ -166,31 +188,34 @@ impl<'a> MessageHandler<'a> {
             }
             NetworkMessage::Tx(tx) => {
                 tracing::info!("📨 Received transaction: {}", tx.txid());
-                
+
                 // Only process if mempool tracking is enabled
                 if let Some(filter) = self.mempool_filter {
                     // Check if we should process this transaction
                     let wallet = self.wallet.read().await;
-                    if let Some(unconfirmed_tx) = filter.process_transaction(tx.clone(), &wallet).await {
+                    if let Some(unconfirmed_tx) =
+                        filter.process_transaction(tx.clone(), &wallet).await
+                    {
                         let txid = unconfirmed_tx.txid();
                         let amount = unconfirmed_tx.net_amount;
                         let is_instant_send = unconfirmed_tx.is_instant_send;
-                        let addresses: Vec<String> = unconfirmed_tx.addresses.iter()
-                            .map(|a| a.to_string())
-                            .collect();
-                        
+                        let addresses: Vec<String> =
+                            unconfirmed_tx.addresses.iter().map(|a| a.to_string()).collect();
+
                         // Store in mempool
                         let mut state = self.mempool_state.write().await;
                         state.add_transaction(unconfirmed_tx.clone());
                         drop(state);
-                        
+
                         // Store in storage if persistence is enabled
                         if self.config.persist_mempool {
-                            if let Err(e) = self.storage.store_mempool_transaction(&txid, &unconfirmed_tx).await {
+                            if let Err(e) =
+                                self.storage.store_mempool_transaction(&txid, &unconfirmed_tx).await
+                            {
                                 tracing::error!("Failed to persist mempool transaction: {}", e);
                             }
                         }
-                        
+
                         // Emit event
                         let event = SpvEvent::MempoolTransactionAdded {
                             txid,
@@ -200,10 +225,17 @@ impl<'a> MessageHandler<'a> {
                             is_instant_send,
                         };
                         let _ = self.event_tx.send(event);
-                        
-                        tracing::info!("💸 Added mempool transaction {} (amount: {})", txid, amount);
+
+                        tracing::info!(
+                            "💸 Added mempool transaction {} (amount: {})",
+                            txid,
+                            amount
+                        );
                     } else {
-                        tracing::debug!("Transaction {} not relevant or at capacity, ignoring", tx.txid());
+                        tracing::debug!(
+                            "Transaction {} not relevant or at capacity, ignoring",
+                            tx.txid()
+                        );
                     }
                 } else {
                     tracing::warn!("⚠️ Received transaction {} but mempool tracking is disabled (enable_mempool_tracking=false)", tx.txid());
@@ -286,11 +318,12 @@ impl<'a> MessageHandler<'a> {
                 }
                 Inventory::Transaction(txid) => {
                     tracing::debug!("💸 Inventory: New transaction {}", txid);
-                    
+
                     // Check if we should fetch this transaction
                     if let Some(filter) = self.mempool_filter {
-                        if self.config.fetch_mempool_transactions && 
-                           filter.should_fetch_transaction(&txid).await {
+                        if self.config.fetch_mempool_transactions
+                            && filter.should_fetch_transaction(&txid).await
+                        {
                             tracing::info!("📥 Requesting transaction {}", txid);
                             // Request the transaction
                             let getdata = NetworkMessage::GetData(vec![item]);
@@ -299,7 +332,7 @@ impl<'a> MessageHandler<'a> {
                             }
                         } else {
                             tracing::debug!("Not fetching transaction {} (fetch_mempool_transactions={}, should_fetch={})", 
-                                txid, 
+                                txid,
                                 self.config.fetch_mempool_transactions,
                                 filter.should_fetch_transaction(&txid).await
                             );
@@ -330,7 +363,10 @@ impl<'a> MessageHandler<'a> {
 
         // Process new blocks immediately when detected
         if !blocks_to_request.is_empty() {
-            tracing::info!("🔄 Processing {} new block announcements to stay synchronized", blocks_to_request.len());
+            tracing::info!(
+                "🔄 Processing {} new block announcements to stay synchronized",
+                blocks_to_request.len()
+            );
 
             // Extract block hashes
             let block_hashes: Vec<dashcore::BlockHash> = blocks_to_request
@@ -368,7 +404,8 @@ impl<'a> MessageHandler<'a> {
         // For sequential sync, new headers are handled by the sync manager's message handler
         // We just need to send them through the unified message interface
         let headers_msg = dashcore::network::message::NetworkMessage::Headers(headers);
-        self.sync_manager.handle_message(headers_msg, &mut *self.network, &mut *self.storage)
+        self.sync_manager
+            .handle_message(headers_msg, &mut *self.network, &mut *self.storage)
             .await
             .map_err(SpvError::Sync)?;
 
@@ -381,7 +418,8 @@ impl<'a> MessageHandler<'a> {
 
         // For sequential sync, handle through inventory message
         let inv = vec![dashcore::network::message_blockdata::Inventory::Block(block_hash)];
-        self.sync_manager.handle_inventory(inv, &mut *self.network, &mut *self.storage)
+        self.sync_manager
+            .handle_inventory(inv, &mut *self.network, &mut *self.storage)
             .await
             .map_err(SpvError::Sync)?;
 
@@ -404,7 +442,8 @@ impl<'a> MessageHandler<'a> {
 
         // For sequential sync, route through the message handler
         let cfheaders_msg = dashcore::network::message::NetworkMessage::CFHeaders(cfheaders);
-        self.sync_manager.handle_message(cfheaders_msg, &mut *self.network, &mut *self.storage)
+        self.sync_manager
+            .handle_message(cfheaders_msg, &mut *self.network, &mut *self.storage)
             .await
             .map_err(SpvError::Sync)?;
 
@@ -454,11 +493,15 @@ impl<'a> MessageHandler<'a> {
             return Ok(());
         }
 
-        tracing::info!("Handling {} post-sync headers - sequential sync will manage filter requests", headers.len());
+        tracing::info!(
+            "Handling {} post-sync headers - sequential sync will manage filter requests",
+            headers.len()
+        );
 
         // The sequential sync manager's handle_new_headers method will automatically
         // request filter headers and filters as needed
-        self.sync_manager.handle_new_headers(headers.to_vec(), &mut *self.network, &mut *self.storage)
+        self.sync_manager
+            .handle_new_headers(headers.to_vec(), &mut *self.network, &mut *self.storage)
             .await
             .map_err(SpvError::Sync)?;
 

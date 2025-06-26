@@ -10,8 +10,8 @@ pub mod headers_with_reorg;
 pub mod masternodes;
 pub mod sequential;
 pub mod state;
-pub mod terminal_blocks;
 pub mod terminal_block_data;
+pub mod terminal_blocks;
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
@@ -46,7 +46,7 @@ impl SyncManager {
     ) -> Self {
         // Create reorg config with sensible defaults
         let reorg_config = ReorgConfig::default();
-        
+
         Self {
             header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config),
             filter_sync: FilterSyncManager::new(config, received_filter_heights),
@@ -184,9 +184,7 @@ impl SyncManager {
             let final_height = storage
                 .get_tip_height()
                 .await
-                .map_err(|e| {
-                    SyncError::Storage(format!("Failed to get tip height: {}", e))
-                })?
+                .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
                 .unwrap_or(0);
 
             return Ok(SyncProgress {
@@ -269,22 +267,18 @@ impl SyncManager {
         let final_header_height = storage
             .get_tip_height()
             .await
-            .map_err(|e| {
-                SyncError::Storage(format!("Failed to get tip height: {}", e))
-            })?
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
             .unwrap_or(0);
 
         let final_filter_height = storage
             .get_filter_tip_height()
             .await
-            .map_err(|e| {
-                SyncError::Storage(format!("Failed to get filter tip height: {}", e))
-            })?
+            .map_err(|e| SyncError::Storage(format!("Failed to get filter tip height: {}", e)))?
             .unwrap_or(0);
 
         // Check filter sync availability
         let filter_sync_available = self.filter_sync.is_filter_sync_available(network).await;
-        
+
         Ok(SyncProgress {
             header_height: final_header_height,
             filter_header_height: final_filter_height,
@@ -317,13 +311,11 @@ impl SyncManager {
             let final_filter_height = storage
                 .get_filter_tip_height()
                 .await
-                .map_err(|e| {
-                    SyncError::Storage(format!("Failed to get filter tip height: {}", e))
-                })?
+                .map_err(|e| SyncError::Storage(format!("Failed to get filter tip height: {}", e)))?
                 .unwrap_or(0);
 
             let filter_sync_available = self.filter_sync.is_filter_sync_available(network).await;
-            
+
             return Ok(SyncProgress {
                 filter_header_height: final_filter_height,
                 filter_headers_synced: true,
@@ -346,7 +338,7 @@ impl SyncManager {
             .unwrap_or(0);
 
         let filter_sync_available = self.filter_sync.is_filter_sync_available(network).await;
-        
+
         Ok(SyncProgress {
             filter_header_height: final_filter_height,
             filter_headers_synced: false, // Sync is in progress, will complete asynchronously
@@ -508,9 +500,6 @@ impl SyncManager {
     pub fn filter_sync(&self) -> &FilterSyncManager {
         &self.filter_sync
     }
-
-
-
 }
 
 /// Sync component types.

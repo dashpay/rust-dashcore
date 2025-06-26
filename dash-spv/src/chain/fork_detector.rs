@@ -3,11 +3,11 @@
 //! This module detects when incoming headers create a fork in the blockchain
 //! rather than extending the current chain tip.
 
-use dashcore::{BlockHash, Header as BlockHeader};
-use std::collections::HashMap;
+use super::{ChainWork, Fork};
 use crate::storage::ChainStorage;
 use crate::types::ChainState;
-use super::{Fork, ChainWork};
+use dashcore::{BlockHash, Header as BlockHeader};
+use std::collections::HashMap;
 
 /// Detects and manages blockchain forks
 pub struct ForkDetector {
@@ -38,8 +38,11 @@ impl ForkDetector {
 
         // Check if this extends the main chain
         if let Some(tip_header) = chain_state.get_tip_header() {
-            tracing::trace!("Checking main chain extension - prev_hash: {}, tip_hash: {}", 
-                prev_hash, tip_header.block_hash());
+            tracing::trace!(
+                "Checking main chain extension - prev_hash: {}, tip_hash: {}",
+                prev_hash,
+                tip_header.block_hash()
+            );
             if prev_hash == tip_header.block_hash() {
                 return ForkDetectionResult::ExtendsMainChain;
             }
@@ -56,15 +59,20 @@ impl ForkDetector {
                 }
             }
         }
-        
+
         // Special case: Check if header connects to genesis which might be at height 0
         // This handles the case where chain_state has genesis but we're syncing the first real block
         if chain_state.tip_height() == 0 {
             if let Some(genesis_header) = chain_state.header_at_height(0) {
-                tracing::debug!("Checking if header connects to genesis - prev_hash: {}, genesis_hash: {}", 
-                    prev_hash, genesis_header.block_hash());
+                tracing::debug!(
+                    "Checking if header connects to genesis - prev_hash: {}, genesis_hash: {}",
+                    prev_hash,
+                    genesis_header.block_hash()
+                );
                 if prev_hash == genesis_header.block_hash() {
-                    tracing::info!("Header extends genesis block - treating as main chain extension");
+                    tracing::info!(
+                        "Header extends genesis block - treating as main chain extension"
+                    );
                     return ForkDetectionResult::ExtendsMainChain;
                 }
             }
@@ -72,24 +80,26 @@ impl ForkDetector {
 
         // Check if this extends a known fork
         // Need to find a fork whose tip matches our prev_hash
-        let matching_fork = self.forks.iter()
+        let matching_fork = self
+            .forks
+            .iter()
             .find(|(_, fork)| fork.tip_hash == prev_hash)
             .map(|(_, fork)| fork.clone());
-            
+
         if let Some(mut fork) = matching_fork {
             // Remove the old entry (indexed by old tip)
             self.forks.remove(&fork.tip_hash);
-            
+
             // Update the fork
             fork.headers.push(*header);
             fork.tip_hash = header_hash;
             fork.tip_height += 1;
             fork.chain_work = fork.chain_work.add_header(header);
-            
+
             // Re-insert with new tip hash
             let result_fork = fork.clone();
             self.forks.insert(header_hash, fork);
-            
+
             return ForkDetectionResult::ExtendsFork(result_fork);
         }
 
@@ -105,11 +115,11 @@ impl ForkDetector {
                 headers: vec![*header],
                 chain_work: ChainWork::from_height_and_header(fork_height, header),
             };
-            
+
             self.add_fork(fork.clone());
             return ForkDetectionResult::CreatesNewFork(fork);
         }
-        
+
         // Additional check: see if header connects to any header in chain_state
         // This helps when storage might be out of sync with chain_state
         for (height, state_header) in chain_state.headers.iter().enumerate() {
@@ -128,7 +138,7 @@ impl ForkDetector {
                         headers: vec![*header],
                         chain_work: ChainWork::from_height_and_header(height as u32, header),
                     };
-                    
+
                     self.add_fork(fork.clone());
                     return ForkDetectionResult::CreatesNewFork(fork);
                 }
@@ -142,7 +152,7 @@ impl ForkDetector {
     /// Add a new fork to track
     fn add_fork(&mut self, fork: Fork) {
         self.forks.insert(fork.tip_hash, fork);
-        
+
         // Limit the number of forks we track
         if self.forks.len() > self.max_forks {
             // Remove the fork with least work
@@ -154,10 +164,7 @@ impl ForkDetector {
 
     /// Find the fork with the least cumulative work
     fn find_weakest_fork(&self) -> Option<BlockHash> {
-        self.forks
-            .iter()
-            .min_by_key(|(_, fork)| &fork.chain_work)
-            .map(|(hash, _)| *hash)
+        self.forks.iter().min_by_key(|(_, fork)| &fork.chain_work).map(|(hash, _)| *hash)
     }
 
     /// Get all known forks
@@ -182,9 +189,7 @@ impl ForkDetector {
 
     /// Get the strongest fork (most cumulative work)
     pub fn get_strongest_fork(&self) -> Option<&Fork> {
-        self.forks
-            .values()
-            .max_by_key(|fork| &fork.chain_work)
+        self.forks.values().max_by_key(|fork| &fork.chain_work)
     }
 
     /// Clear all forks
@@ -209,10 +214,10 @@ pub enum ForkDetectionResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::MemoryStorage;
     use dashcore::blockdata::constants::genesis_block;
     use dashcore::Network;
     use dashcore_hashes::Hash;
-    use crate::storage::MemoryStorage;
 
     fn create_test_header(prev_hash: BlockHash, nonce: u32) -> BlockHeader {
         let mut header = genesis_block(Network::Dash).header;
@@ -226,25 +231,25 @@ mod tests {
         let mut detector = ForkDetector::new(10);
         let storage = MemoryStorage::new();
         let mut chain_state = ChainState::new();
-        
+
         // Add genesis
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).unwrap();
         chain_state.add_header(genesis.clone());
-        
+
         // Header that extends main chain
         let header1 = create_test_header(genesis.block_hash(), 1);
         let result = detector.check_header(&header1, &chain_state, &storage);
         assert!(matches!(result, ForkDetectionResult::ExtendsMainChain));
-        
+
         // Add header1 to chain
         storage.store_header(&header1, 1).unwrap();
         chain_state.add_header(header1.clone());
-        
+
         // Header that creates a fork from genesis
         let fork_header = create_test_header(genesis.block_hash(), 2);
         let result = detector.check_header(&fork_header, &chain_state, &storage);
-        
+
         match result {
             ForkDetectionResult::CreatesNewFork(fork) => {
                 assert_eq!(fork.fork_point, genesis.block_hash());
@@ -254,16 +259,19 @@ mod tests {
             }
             _ => panic!("Expected CreatesNewFork"),
         }
-        
+
         // Header that extends the fork
         let fork_header2 = create_test_header(fork_header.block_hash(), 3);
         let result = detector.check_header(&fork_header2, &chain_state, &storage);
-        
+
         assert!(matches!(result, ForkDetectionResult::ExtendsFork(_)));
         assert_eq!(detector.get_forks().len(), 1);
-        
+
         // Orphan header
-        let orphan = create_test_header(BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::all_zeros()), 4);
+        let orphan = create_test_header(
+            BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::all_zeros()),
+            4,
+        );
         let result = detector.check_header(&orphan, &chain_state, &storage);
         assert!(matches!(result, ForkDetectionResult::Orphan));
     }
@@ -273,23 +281,23 @@ mod tests {
         let mut detector = ForkDetector::new(2);
         let storage = MemoryStorage::new();
         let mut chain_state = ChainState::new();
-        
+
         // Add genesis
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).unwrap();
         chain_state.add_header(genesis.clone());
-        
+
         // Add a header to extend the main chain past genesis
         let header1 = create_test_header(genesis.block_hash(), 1);
         storage.store_header(&header1, 1).unwrap();
         chain_state.add_header(header1.clone());
-        
+
         // Create 3 forks from genesis, should only keep 2
         for i in 0..3 {
             let fork_header = create_test_header(genesis.block_hash(), i + 100);
             detector.check_header(&fork_header, &chain_state, &storage);
         }
-        
+
         assert_eq!(detector.get_forks().len(), 2);
     }
 

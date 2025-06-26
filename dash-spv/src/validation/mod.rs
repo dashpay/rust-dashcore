@@ -13,7 +13,7 @@ use crate::types::ValidationMode;
 pub use chainlock::ChainLockValidator;
 pub use headers::HeaderValidator;
 pub use instantlock::InstantLockValidator;
-pub use quorum::{QuorumManager, QuorumType, QuorumInfo};
+pub use quorum::{QuorumInfo, QuorumManager, QuorumType};
 
 /// Manages all validation operations.
 pub struct ValidationManager {

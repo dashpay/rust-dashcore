@@ -3,16 +3,17 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use blsful::{Bls12381G2Impl, SecretKey};
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     storage::MemoryStorageManager,
-    wallet::{Wallet, Utxo},
+    wallet::{Utxo, Wallet},
 };
 use dashcore::{
-    Address, Amount, Network, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness, InstantLock
+    Address, Amount, InstantLock, Network, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid,
+    Witness,
 };
-use dashcore_hashes::{Hash, sha256d};
-use blsful::{Bls12381G2Impl, SecretKey};
+use dashcore_hashes::{sha256d, Hash};
 use rand::thread_rng;
 
 /// Helper to create a test wallet with memory storage.
@@ -63,12 +64,12 @@ fn create_regular_transaction(
 /// Create a signed InstantLock for a transaction.
 fn create_signed_instantlock(tx: &Transaction, _sk: &SecretKey<Bls12381G2Impl>) -> InstantLock {
     let inputs = tx.input.iter().map(|input| input.previous_output).collect();
-    
+
     // Create a non-zero dummy signature that will pass basic validation
     let mut sig_bytes = [0u8; 96];
-    sig_bytes[0] = 0x01;  // Set first byte to make it non-zero
+    sig_bytes[0] = 0x01; // Set first byte to make it non-zero
     sig_bytes[95] = 0x01; // Set last byte too for good measure
-    
+
     let is_lock = InstantLock {
         version: 1,
         inputs,
@@ -94,9 +95,12 @@ async fn test_instantsend_end_to_end() {
     };
     let mut initial_utxo = Utxo::new(
         initial_outpoint,
-        TxOut { value: initial_amount, script_pubkey: address.script_pubkey() },
+        TxOut {
+            value: initial_amount,
+            script_pubkey: address.script_pubkey(),
+        },
         address.clone(),
-        100, // block height
+        100,   // block height
         false, // is_coinbase
     );
     initial_utxo.is_confirmed = true;
@@ -121,7 +125,7 @@ async fn test_instantsend_end_to_end() {
     // 4. Simulate the client receiving and processing the InstantLock.
     // We need to mock the quorum lookup.
     // For this test, we will directly call the validation and wallet update.
-    
+
     // First, validate the instantlock.
     let validator = dash_spv::validation::InstantLockValidator::new();
     assert!(validator.validate(&instant_lock).is_ok());
@@ -133,7 +137,7 @@ async fn test_instantsend_end_to_end() {
     // 5. Assert the wallet state has been updated correctly.
     let utxos = wallet.read().await.get_utxos().await;
     let spent_utxo = utxos.iter().find(|u| u.outpoint == initial_outpoint);
-    
+
     // The original UTXO should now be marked as instant-locked.
     // Note: In a real scenario, the UTXO would be *removed* and a new *change* UTXO added.
     // For this test, we simplify by just marking the spent UTXO.
@@ -143,10 +147,10 @@ async fn test_instantsend_end_to_end() {
     // Let's refine the test to be more realistic.
     // We will process the transaction first, which will remove the old UTXO and add a change UTXO.
     // Then we will process the InstantLock.
-    
+
     // This test setup is getting complicated without the full block processor.
     // Let's simplify and focus on the direct impact of the InstantLock on a UTXO.
-    
+
     // Let's create a new UTXO that represents a payment *to* us, and then InstantLock it.
     let wallet = create_test_wallet().await;
     let address = create_test_address();
@@ -158,13 +162,22 @@ async fn test_instantsend_end_to_end() {
         txid: Txid::from_byte_array([99; 32]),
         vout: 0,
     };
-    let incoming_tx = create_regular_transaction(vec![dummy_input], vec![(incoming_amount, address.script_pubkey())]);
-    let incoming_outpoint = OutPoint { txid: incoming_tx.txid(), vout: 0 };
+    let incoming_tx = create_regular_transaction(
+        vec![dummy_input],
+        vec![(incoming_amount, address.script_pubkey())],
+    );
+    let incoming_outpoint = OutPoint {
+        txid: incoming_tx.txid(),
+        vout: 0,
+    };
     let incoming_utxo = Utxo::new(
         incoming_outpoint,
-        TxOut { value: incoming_amount, script_pubkey: address.script_pubkey() },
+        TxOut {
+            value: incoming_amount,
+            script_pubkey: address.script_pubkey(),
+        },
         address.clone(),
-        0, // In mempool
+        0,     // In mempool
         false, // is_coinbase
     );
     wallet.write().await.add_utxo(incoming_utxo).await.unwrap();
@@ -178,11 +191,12 @@ async fn test_instantsend_end_to_end() {
     let sk = SecretKey::<Bls12381G2Impl>::random(&mut thread_rng());
     let pk = sk.public_key();
     let instant_lock = create_signed_instantlock(&incoming_tx, &sk);
-    
+
     let validator = dash_spv::validation::InstantLockValidator::new();
     assert!(validator.validate(&instant_lock).is_ok());
 
-    let updated = wallet.write().await.process_verified_instantlock(incoming_tx.txid()).await.unwrap();
+    let updated =
+        wallet.write().await.process_verified_instantlock(incoming_tx.txid()).await.unwrap();
     assert!(updated);
 
     // Verify the UTXO is now marked as instant-locked.

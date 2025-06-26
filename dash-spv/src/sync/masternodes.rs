@@ -1,20 +1,20 @@
 //! Masternode synchronization functionality.
 
 use dashcore::{
+    address::{Address, Payload},
+    bls_sig_utils::BLSPublicKey,
+    hash_types::MerkleRootMasternodeList,
     network::constants::NetworkExt,
     network::message::NetworkMessage,
     network::message_sml::{GetMnListDiff, MnListDiff},
     sml::{
-        masternode_list_engine::MasternodeListEngine,
         masternode_list::MasternodeList,
+        masternode_list_engine::MasternodeListEngine,
         masternode_list_entry::{
-            EntryMasternodeType, MasternodeListEntry,
-            qualified_masternode_list_entry::QualifiedMasternodeListEntry,
+            qualified_masternode_list_entry::QualifiedMasternodeListEntry, EntryMasternodeType,
+            MasternodeListEntry,
         },
     },
-    bls_sig_utils::BLSPublicKey,
-    hash_types::MerkleRootMasternodeList,
-    address::{Address, Payload},
     BlockHash, ProTxHash, PubkeyHash,
 };
 use dashcore_hashes::Hash;
@@ -96,14 +96,14 @@ impl MasternodeSyncManager {
                     tracing::warn!(msg, terminal_height);
                     Ok(0)
                 }
-            },
+            }
             Ok(None) => {
                 tracing::info!(
                     "Terminal block at height {} not yet synced - starting from genesis",
                     terminal_height
                 );
                 Ok(0)
-            },
+            }
             Err(e) => {
                 Err(SyncError::Storage(format!("Failed to get terminal block header: {}", e)))
             }
@@ -274,17 +274,24 @@ impl MasternodeSyncManager {
             last_masternode_height
         } else {
             // No previous state - check if we can start from a terminal block with pre-calculated data
-            if let Some(terminal_data) = self.terminal_block_manager.find_best_terminal_block_with_data(current_height).cloned() {
+            if let Some(terminal_data) = self
+                .terminal_block_manager
+                .find_best_terminal_block_with_data(current_height)
+                .cloned()
+            {
                 // We have pre-calculated masternode data for this terminal block!
                 self.load_precalculated_masternode_data(&terminal_data, storage).await?
-            } else if let Some(terminal_block) = self.terminal_block_manager.find_best_base_terminal_block(current_height) {
+            } else if let Some(terminal_block) =
+                self.terminal_block_manager.find_best_base_terminal_block(current_height)
+            {
                 // No pre-calculated data, but we have a terminal block reference
                 self.validate_terminal_block(
                     storage,
                     terminal_block.height,
                     terminal_block.block_hash,
-                    false
-                ).await?
+                    false,
+                )
+                .await?
             } else {
                 tracing::info!(
                     "No suitable terminal block found - requesting full diff from genesis to height {}",
@@ -307,24 +314,21 @@ impl MasternodeSyncManager {
         storage: &dyn StorageManager,
     ) -> SyncResult<u32> {
         if let Ok(terminal_block_hash) = terminal_data.get_block_hash() {
-            let validated_height = self.validate_terminal_block(
-                storage,
-                terminal_data.height,
-                terminal_block_hash,
-                true
-            ).await?;
-            
+            let validated_height = self
+                .validate_terminal_block(storage, terminal_data.height, terminal_block_hash, true)
+                .await?;
+
             if validated_height > 0 {
                 tracing::info!(
                     "Terminal block has {} masternodes in pre-calculated data",
                     terminal_data.masternode_count
                 );
-                
+
                 // Load the pre-calculated masternode list into the engine
                 if let Some(engine) = &mut self.engine {
                     // Convert stored masternode entries to MasternodeListEntry
                     let mut masternodes = BTreeMap::new();
-                    
+
                     for stored_mn in &terminal_data.masternode_list {
                         // Parse ProTxHash
                         let pro_tx_hash_bytes = match hex::decode(&stored_mn.pro_tx_hash) {
@@ -334,67 +338,89 @@ impl MasternodeSyncManager {
                                 arr
                             }
                             _ => {
-                                tracing::warn!("Invalid ProTxHash for masternode: {}", stored_mn.pro_tx_hash);
+                                tracing::warn!(
+                                    "Invalid ProTxHash for masternode: {}",
+                                    stored_mn.pro_tx_hash
+                                );
                                 continue;
                             }
                         };
                         let pro_tx_hash = ProTxHash::from_byte_array(pro_tx_hash_bytes);
-                        
+
                         // Parse service address
                         let service_address = match SocketAddr::from_str(&stored_mn.service) {
                             Ok(addr) => addr,
                             Err(e) => {
-                                tracing::warn!("Invalid service address for masternode {}: {}", stored_mn.pro_tx_hash, e);
+                                tracing::warn!(
+                                    "Invalid service address for masternode {}: {}",
+                                    stored_mn.pro_tx_hash,
+                                    e
+                                );
                                 continue;
                             }
                         };
-                        
+
                         // Parse BLS public key
-                        let operator_public_key_bytes = match hex::decode(&stored_mn.pub_key_operator) {
-                            Ok(bytes) if bytes.len() == 48 => bytes,
-                            _ => {
-                                tracing::warn!("Invalid BLS public key for masternode: {}", stored_mn.pro_tx_hash);
-                                continue;
-                            }
-                        };
-                        let operator_public_key = match BLSPublicKey::try_from(operator_public_key_bytes.as_slice()) {
-                            Ok(key) => key,
-                            Err(e) => {
-                                tracing::warn!("Failed to parse BLS public key for masternode {}: {:?}", stored_mn.pro_tx_hash, e);
-                                continue;
-                            }
-                        };
-                        
+                        let operator_public_key_bytes =
+                            match hex::decode(&stored_mn.pub_key_operator) {
+                                Ok(bytes) if bytes.len() == 48 => bytes,
+                                _ => {
+                                    tracing::warn!(
+                                        "Invalid BLS public key for masternode: {}",
+                                        stored_mn.pro_tx_hash
+                                    );
+                                    continue;
+                                }
+                            };
+                        let operator_public_key =
+                            match BLSPublicKey::try_from(operator_public_key_bytes.as_slice()) {
+                                Ok(key) => key,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to parse BLS public key for masternode {}: {:?}",
+                                        stored_mn.pro_tx_hash,
+                                        e
+                                    );
+                                    continue;
+                                }
+                            };
+
                         // Parse voting key hash from the voting address
                         let key_id_voting = match Address::from_str(&stored_mn.voting_address) {
-                            Ok(addr) => {
-                                match addr.payload() {
-                                    Payload::PubkeyHash(hash) => *hash,
-                                    _ => {
-                                        tracing::warn!("Voting address is not a P2PKH address for masternode {}: {}", stored_mn.pro_tx_hash, stored_mn.voting_address);
-                                        continue;
-                                    }
+                            Ok(addr) => match addr.payload() {
+                                Payload::PubkeyHash(hash) => *hash,
+                                _ => {
+                                    tracing::warn!("Voting address is not a P2PKH address for masternode {}: {}", stored_mn.pro_tx_hash, stored_mn.voting_address);
+                                    continue;
                                 }
-                            }
+                            },
                             Err(e) => {
-                                tracing::warn!("Failed to parse voting address for masternode {}: {:?}", stored_mn.pro_tx_hash, e);
+                                tracing::warn!(
+                                    "Failed to parse voting address for masternode {}: {:?}",
+                                    stored_mn.pro_tx_hash,
+                                    e
+                                );
                                 continue;
                             }
                         };
-                        
+
                         // Determine masternode type
                         let mn_type = match stored_mn.n_type {
                             0 => EntryMasternodeType::Regular,
                             1 => EntryMasternodeType::HighPerformance {
-                                platform_http_port: 0, // Not available in stored data
+                                platform_http_port: 0,                     // Not available in stored data
                                 platform_node_id: PubkeyHash::all_zeros(), // Not available in stored data
                             },
                             _ => {
-                                tracing::warn!("Unknown masternode type {} for masternode: {}", stored_mn.n_type, stored_mn.pro_tx_hash);
+                                tracing::warn!(
+                                    "Unknown masternode type {} for masternode: {}",
+                                    stored_mn.n_type,
+                                    stored_mn.pro_tx_hash
+                                );
                                 continue;
                             }
                         };
-                        
+
                         // Create MasternodeListEntry
                         let entry = MasternodeListEntry {
                             version: 2, // Latest version
@@ -406,12 +432,12 @@ impl MasternodeSyncManager {
                             is_valid: stored_mn.is_valid,
                             mn_type,
                         };
-                        
+
                         // Convert to qualified entry
                         let qualified_entry = QualifiedMasternodeListEntry::from(entry);
                         masternodes.insert(pro_tx_hash, qualified_entry);
                     }
-                    
+
                     // Parse merkle root
                     let merkle_root_bytes = match hex::decode(&terminal_data.merkle_root_mn_list) {
                         Ok(bytes) if bytes.len() == 32 => {
@@ -425,7 +451,7 @@ impl MasternodeSyncManager {
                         }
                     };
                     let merkle_root = MerkleRootMasternodeList::from_byte_array(merkle_root_bytes);
-                    
+
                     // Build masternode list
                     let masternode_list = MasternodeList::build(
                         masternodes,
@@ -435,11 +461,11 @@ impl MasternodeSyncManager {
                     )
                     .with_merkle_roots(merkle_root, None)
                     .build();
-                    
+
                     // Insert into engine
                     engine.masternode_lists.insert(terminal_data.height, masternode_list);
                     engine.feed_block_height(terminal_data.height, terminal_block_hash);
-                    
+
                     tracing::info!(
                         "Successfully loaded {} masternodes from terminal block at height {}",
                         terminal_data.masternode_list.len(),
@@ -538,10 +564,10 @@ impl MasternodeSyncManager {
             tracing::debug!("Target block hash is zero - likely empty masternode list in regtest");
         } else {
             // Feed target block hash
-            if let Some(target_height) =
-                storage.get_header_height_by_hash(&target_block_hash).await.map_err(|e| {
-                    SyncError::Storage(format!("Failed to lookup target hash: {}", e))
-                })?
+            if let Some(target_height) = storage
+                .get_header_height_by_hash(&target_block_hash)
+                .await
+                .map_err(|e| SyncError::Storage(format!("Failed to lookup target hash: {}", e)))?
             {
                 engine.feed_block_height(target_height, target_block_hash);
                 tracing::debug!(
@@ -673,9 +699,10 @@ impl MasternodeSyncManager {
         tracing::info!("Successfully applied masternode list diff");
 
         // Find the height of the target block
-        let target_height = if let Some(height) = storage.get_header_height_by_hash(&target_block_hash).await.map_err(|e| {
-            SyncError::Storage(format!("Failed to lookup target block height: {}", e))
-        })? {
+        let target_height = if let Some(height) =
+            storage.get_header_height_by_hash(&target_block_hash).await.map_err(|e| {
+                SyncError::Storage(format!("Failed to lookup target block height: {}", e))
+            })? {
             height
         } else {
             // Fallback to tip height if we can't find the specific block
@@ -688,27 +715,29 @@ impl MasternodeSyncManager {
 
         // Validate terminal block if this is one
         if self.terminal_block_manager.is_terminal_block_height(target_height) {
-            let is_valid = self.terminal_block_manager
+            let is_valid = self
+                .terminal_block_manager
                 .validate_terminal_block(target_height, &target_block_hash, storage)
                 .await?;
-            
+
             if !is_valid {
                 return Err(SyncError::Validation(format!(
                     "Terminal block validation failed at height {}",
                     target_height
                 )));
             }
-            
+
             tracing::info!("✅ Terminal block validated at height {}", target_height);
         }
 
         // Store the updated masternode state
-        let terminal_block_hash = if self.terminal_block_manager.is_terminal_block_height(target_height) {
-            Some(target_block_hash.to_byte_array())
-        } else {
-            None
-        };
-        
+        let terminal_block_hash =
+            if self.terminal_block_manager.is_terminal_block_height(target_height) {
+                Some(target_block_hash.to_byte_array())
+            } else {
+                None
+            };
+
         let masternode_state = MasternodeState {
             last_height: target_height,
             engine_state: Vec::new(), // TODO: Serialize engine state
@@ -719,9 +748,10 @@ impl MasternodeSyncManager {
             terminal_block_hash,
         };
 
-        storage.store_masternode_state(&masternode_state).await.map_err(|e| {
-            SyncError::Storage(format!("Failed to store masternode state: {}", e))
-        })?;
+        storage
+            .store_masternode_state(&masternode_state)
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to store masternode state: {}", e)))?;
 
         tracing::info!("Updated masternode list sync height to {}", target_height);
 
@@ -751,12 +781,13 @@ impl MasternodeSyncManager {
         &self,
         storage: &dyn StorageManager,
     ) -> SyncResult<Option<&crate::sync::terminal_blocks::TerminalBlock>> {
-        let current_height = match storage.load_masternode_state().await.map_err(|e| {
-            SyncError::Storage(format!("Failed to load masternode state: {}", e))
-        })? {
-            Some(state) => state.last_height,
-            None => 0,
-        };
+        let current_height =
+            match storage.load_masternode_state().await.map_err(|e| {
+                SyncError::Storage(format!("Failed to load masternode state: {}", e))
+            })? {
+                Some(state) => state.last_height,
+                None => 0,
+            };
 
         Ok(self.terminal_block_manager.get_next_terminal_block(current_height))
     }

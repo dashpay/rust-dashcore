@@ -72,7 +72,7 @@ async fn test_segmented_storage_persistence() {
     // Store data
     {
         let mut storage = DiskStorageManager::new(path.clone()).await.unwrap();
-        
+
         // Verify storage starts empty
         assert_eq!(storage.get_tip_height().await.unwrap(), None, "Storage should start empty");
 

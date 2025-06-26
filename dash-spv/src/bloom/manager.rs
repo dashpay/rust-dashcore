@@ -1,14 +1,14 @@
 //! Bloom filter lifecycle management for SPV clients
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use dashcore::bloom::{BloomFilter, BloomFlags};
-use dashcore::network::message_bloom::{FilterLoad, FilterAdd};
+use super::utils::{extract_pubkey_hash, outpoint_to_bytes};
+use crate::error::SpvError;
 use dashcore::address::Address;
+use dashcore::bloom::{BloomFilter, BloomFlags};
+use dashcore::network::message_bloom::{FilterAdd, FilterLoad};
 use dashcore::transaction::Transaction;
 use dashcore::OutPoint;
-use crate::error::SpvError;
-use super::utils::{extract_pubkey_hash, outpoint_to_bytes};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Configuration for bloom filter behavior
 #[derive(Debug, Clone)]
@@ -91,10 +91,9 @@ impl BloomFilterManager {
         let data_elements = self.data_elements.read().await;
 
         // Calculate total elements
-        let total_elements = addresses.len() as u32 
-            + outpoints.len() as u32 
-            + data_elements.len() as u32;
-        
+        let total_elements =
+            addresses.len() as u32 + outpoints.len() as u32 + data_elements.len() as u32;
+
         let elements = std::cmp::max(self.config.elements, total_elements);
 
         // Create new filter
@@ -103,7 +102,8 @@ impl BloomFilterManager {
             self.config.false_positive_rate,
             self.config.tweak,
             self.config.flags,
-        ).map_err(|e| SpvError::General(format!("Failed to create bloom filter: {:?}", e)))?;
+        )
+        .map_err(|e| SpvError::General(format!("Failed to create bloom filter: {:?}", e)))?;
 
         // Add all watched elements
         for address in addresses.iter() {
@@ -123,7 +123,8 @@ impl BloomFilterManager {
             let mut stats = self.stats.write().await;
             stats.recreations += 1;
             stats.items_added = total_elements as u64;
-            stats.current_false_positive_rate = new_filter.estimate_false_positive_rate(total_elements);
+            stats.current_false_positive_rate =
+                new_filter.estimate_false_positive_rate(total_elements);
         }
 
         // Store the new filter
@@ -142,7 +143,7 @@ impl BloomFilterManager {
         if let Some(ref mut filter) = *self.filter.write().await {
             let mut data = Vec::new();
             self.add_address_to_filter(filter, address)?;
-            
+
             // Get the script pubkey bytes
             let script = address.script_pubkey();
             data.extend_from_slice(script.as_bytes());
@@ -152,7 +153,9 @@ impl BloomFilterManager {
                 stats.items_added += 1;
             }
 
-            return Ok(Some(FilterAdd { data }));
+            return Ok(Some(FilterAdd {
+                data,
+            }));
         }
 
         Ok(None)
@@ -173,7 +176,9 @@ impl BloomFilterManager {
                 stats.items_added += 1;
             }
 
-            return Ok(Some(FilterAdd { data }));
+            return Ok(Some(FilterAdd {
+                data,
+            }));
         }
 
         Ok(None)
@@ -193,7 +198,9 @@ impl BloomFilterManager {
                 stats.items_added += 1;
             }
 
-            return Ok(Some(FilterAdd { data }));
+            return Ok(Some(FilterAdd {
+                data,
+            }));
         }
 
         Ok(None)
@@ -267,7 +274,11 @@ impl BloomFilterManager {
     }
 
     /// Helper to add address to filter
-    fn add_address_to_filter(&self, filter: &mut BloomFilter, address: &Address) -> Result<(), SpvError> {
+    fn add_address_to_filter(
+        &self,
+        filter: &mut BloomFilter,
+        address: &Address,
+    ) -> Result<(), SpvError> {
         // Add the script pubkey
         let script = address.script_pubkey();
         filter.insert(script.as_bytes());
@@ -279,5 +290,4 @@ impl BloomFilterManager {
 
         Ok(())
     }
-
 }

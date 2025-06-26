@@ -71,18 +71,46 @@ impl RequestController {
     /// Create a new request controller
     pub fn new(config: &ClientConfig) -> Self {
         let mut max_concurrent_requests = HashMap::new();
-        max_concurrent_requests.insert(PHASE_DOWNLOADING_HEADERS.to_string(), config.max_concurrent_headers_requests.unwrap_or(1));
-        max_concurrent_requests.insert(PHASE_DOWNLOADING_MNLIST.to_string(), config.max_concurrent_mnlist_requests.unwrap_or(1));
-        max_concurrent_requests.insert(PHASE_DOWNLOADING_CFHEADERS.to_string(), config.max_concurrent_cfheaders_requests.unwrap_or(1));
-        max_concurrent_requests.insert(PHASE_DOWNLOADING_FILTERS.to_string(), config.max_concurrent_filter_requests);
-        max_concurrent_requests.insert(PHASE_DOWNLOADING_BLOCKS.to_string(), config.max_concurrent_block_requests.unwrap_or(5));
+        max_concurrent_requests.insert(
+            PHASE_DOWNLOADING_HEADERS.to_string(),
+            config.max_concurrent_headers_requests.unwrap_or(1),
+        );
+        max_concurrent_requests.insert(
+            PHASE_DOWNLOADING_MNLIST.to_string(),
+            config.max_concurrent_mnlist_requests.unwrap_or(1),
+        );
+        max_concurrent_requests.insert(
+            PHASE_DOWNLOADING_CFHEADERS.to_string(),
+            config.max_concurrent_cfheaders_requests.unwrap_or(1),
+        );
+        max_concurrent_requests
+            .insert(PHASE_DOWNLOADING_FILTERS.to_string(), config.max_concurrent_filter_requests);
+        max_concurrent_requests.insert(
+            PHASE_DOWNLOADING_BLOCKS.to_string(),
+            config.max_concurrent_block_requests.unwrap_or(5),
+        );
 
         let mut rate_limits = HashMap::new();
-        rate_limits.insert(PHASE_DOWNLOADING_HEADERS.to_string(), config.headers_request_rate_limit.unwrap_or(10.0));
-        rate_limits.insert(PHASE_DOWNLOADING_MNLIST.to_string(), config.mnlist_request_rate_limit.unwrap_or(5.0));
-        rate_limits.insert(PHASE_DOWNLOADING_CFHEADERS.to_string(), config.cfheaders_request_rate_limit.unwrap_or(10.0));
-        rate_limits.insert(PHASE_DOWNLOADING_FILTERS.to_string(), config.filters_request_rate_limit.unwrap_or(50.0));
-        rate_limits.insert(PHASE_DOWNLOADING_BLOCKS.to_string(), config.blocks_request_rate_limit.unwrap_or(10.0));
+        rate_limits.insert(
+            PHASE_DOWNLOADING_HEADERS.to_string(),
+            config.headers_request_rate_limit.unwrap_or(10.0),
+        );
+        rate_limits.insert(
+            PHASE_DOWNLOADING_MNLIST.to_string(),
+            config.mnlist_request_rate_limit.unwrap_or(5.0),
+        );
+        rate_limits.insert(
+            PHASE_DOWNLOADING_CFHEADERS.to_string(),
+            config.cfheaders_request_rate_limit.unwrap_or(10.0),
+        );
+        rate_limits.insert(
+            PHASE_DOWNLOADING_FILTERS.to_string(),
+            config.filters_request_rate_limit.unwrap_or(50.0),
+        );
+        rate_limits.insert(
+            PHASE_DOWNLOADING_BLOCKS.to_string(),
+            config.blocks_request_rate_limit.unwrap_or(10.0),
+        );
 
         Self {
             config: config.clone(),
@@ -97,11 +125,36 @@ impl RequestController {
     /// Check if a request type is allowed in the current phase
     pub fn is_request_allowed(&self, phase: &SyncPhase, request_type: &RequestType) -> bool {
         match (phase, request_type) {
-            (SyncPhase::DownloadingHeaders { .. }, RequestType::GetHeaders(_)) => true,
-            (SyncPhase::DownloadingMnList { .. }, RequestType::GetMnListDiff(_)) => true,
-            (SyncPhase::DownloadingCFHeaders { .. }, RequestType::GetCFHeaders(_, _)) => true,
-            (SyncPhase::DownloadingFilters { .. }, RequestType::GetCFilters(_, _)) => true,
-            (SyncPhase::DownloadingBlocks { .. }, RequestType::GetBlock(_)) => true,
+            (
+                SyncPhase::DownloadingHeaders {
+                    ..
+                },
+                RequestType::GetHeaders(_),
+            ) => true,
+            (
+                SyncPhase::DownloadingMnList {
+                    ..
+                },
+                RequestType::GetMnListDiff(_),
+            ) => true,
+            (
+                SyncPhase::DownloadingCFHeaders {
+                    ..
+                },
+                RequestType::GetCFHeaders(_, _),
+            ) => true,
+            (
+                SyncPhase::DownloadingFilters {
+                    ..
+                },
+                RequestType::GetCFilters(_, _),
+            ) => true,
+            (
+                SyncPhase::DownloadingBlocks {
+                    ..
+                },
+                RequestType::GetBlock(_),
+            ) => true,
             _ => false,
         }
     }
@@ -137,11 +190,7 @@ impl RequestController {
         storage: &dyn StorageManager,
     ) -> SyncResult<()> {
         let phase_name = phase.name().to_string();
-        let max_concurrent = self
-            .max_concurrent_requests
-            .get(&phase_name)
-            .copied()
-            .unwrap_or(1);
+        let max_concurrent = self.max_concurrent_requests.get(&phase_name).copied().unwrap_or(1);
 
         // Count active requests for this phase
         let active_count = self
@@ -193,24 +242,24 @@ impl RequestController {
                 // Get the base block hash - either genesis or from a terminal block
                 let base_block_hash = if *height == 0 {
                     // Genesis block
-                    self.config
-                        .network
-                        .known_genesis_block_hash()
-                        .ok_or_else(|| SyncError::Network("No genesis hash for network".to_string()))?
+                    self.config.network.known_genesis_block_hash().ok_or_else(|| {
+                        SyncError::Network("No genesis hash for network".to_string())
+                    })?
                 } else {
                     // For non-genesis, we need to determine the base height
                     // This logic should match what the masternode sync manager does
                     let base_height = 0; // For now, always use genesis as base
                     if base_height == 0 {
-                        self.config
-                            .network
-                            .known_genesis_block_hash()
-                            .ok_or_else(|| SyncError::Network("No genesis hash for network".to_string()))?
+                        self.config.network.known_genesis_block_hash().ok_or_else(|| {
+                            SyncError::Network("No genesis hash for network".to_string())
+                        })?
                     } else {
                         storage
                             .get_header(base_height)
                             .await
-                            .map_err(|e| SyncError::Storage(format!("Failed to get base header: {}", e)))?
+                            .map_err(|e| {
+                                SyncError::Storage(format!("Failed to get base header: {}", e))
+                            })?
                             .ok_or_else(|| SyncError::Storage("Base header not found".to_string()))?
                             .block_hash()
                     }
@@ -220,8 +269,15 @@ impl RequestController {
                 let block_hash = storage
                     .get_header(*height)
                     .await
-                    .map_err(|e| SyncError::Storage(format!("Failed to get header at height {}: {}", height, e)))?
-                    .ok_or_else(|| SyncError::Storage(format!("Header not found at height {}", height)))?
+                    .map_err(|e| {
+                        SyncError::Storage(format!(
+                            "Failed to get header at height {}: {}",
+                            height, e
+                        ))
+                    })?
+                    .ok_or_else(|| {
+                        SyncError::Storage(format!("Header not found at height {}", height))
+                    })?
                     .block_hash();
 
                 let getmnlistdiff = dashcore::network::message_sml::GetMnListDiff {
@@ -274,8 +330,7 @@ impl RequestController {
 
         // Update rate limit tracking
         let phase_name = self.request_phase(&request_type);
-        self.last_request_times
-            .insert(phase_name.to_string(), Instant::now());
+        self.last_request_times.insert(phase_name.to_string(), Instant::now());
 
         Ok(())
     }

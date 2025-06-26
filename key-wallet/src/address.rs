@@ -82,7 +82,6 @@ impl Address {
         }
     }
 
-
     /// Parse an address from a string (network is inferred from version byte)
     pub fn from_string(s: &str) -> Result<Self> {
         s.parse()
@@ -131,14 +130,14 @@ impl FromStr for Address {
         // Determine network and address type from version byte
         let (network, address_type) = match version {
             // Mainnet
-            76 => (Network::Dash, AddressType::P2PKH),     // 0x4c
-            16 => (Network::Dash, AddressType::P2SH),      // 0x10
+            76 => (Network::Dash, AddressType::P2PKH), // 0x4c
+            16 => (Network::Dash, AddressType::P2SH),  // 0x10
             // Testnet/Regtest (same version bytes)
             140 => (Network::Testnet, AddressType::P2PKH), // 0x8c
             19 => (Network::Testnet, AddressType::P2SH),   // 0x13
             // Devnet
-            142 => (Network::Devnet, AddressType::P2PKH),  // 0x8e
-            21 => (Network::Devnet, AddressType::P2SH),    // 0x15
+            142 => (Network::Devnet, AddressType::P2PKH), // 0x8e
+            21 => (Network::Devnet, AddressType::P2SH),   // 0x15
             _ => return Err(Error::InvalidAddress("Unknown address version".into())),
         };
 

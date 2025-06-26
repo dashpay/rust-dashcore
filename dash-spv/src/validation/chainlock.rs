@@ -1,10 +1,10 @@
 //! ChainLock validation functionality.
 
-use dashcore::ChainLock;
-use dashcore::bls_sig_utils::BLSSignature;
-use dashcore_hashes::{Hash, sha256d};
-use tracing::{debug, warn, info};
 use blsful;
+use dashcore::bls_sig_utils::BLSSignature;
+use dashcore::ChainLock;
+use dashcore_hashes::{sha256d, Hash};
+use tracing::{debug, info, warn};
 
 use crate::error::{ValidationError, ValidationResult};
 
@@ -20,7 +20,7 @@ impl ChainLockValidator {
     /// Create a new ChainLock validator with default DIP8 parameters.
     pub fn new() -> Self {
         Self {
-            min_quorum_signatures: 240,  // 60% of 400
+            min_quorum_signatures: 240, // 60% of 400
             quorum_size: 400,
         }
     }
@@ -66,10 +66,7 @@ impl ChainLockValidator {
         quorum_public_key: &[u8],
     ) -> ValidationResult<()> {
         // Get the message that should have been signed
-        let message = self.get_signing_message(
-            chain_lock.block_height,
-            &chain_lock.block_hash,
-        );
+        let message = self.get_signing_message(chain_lock.block_height, &chain_lock.block_hash);
 
         // Hash the message to get the digest
         let message_digest = sha256d::Hash::hash(&message);
@@ -118,16 +115,16 @@ impl ChainLockValidator {
         // According to DIP8, the message signed is:
         // "clsig" + blockHeight + blockHash
         let mut message = Vec::new();
-        
+
         // Add message prefix
         message.extend_from_slice(b"clsig");
-        
+
         // Add block height (little-endian)
         message.extend_from_slice(&block_height.to_le_bytes());
-        
+
         // Add block hash
         message.extend_from_slice(block_hash.as_byte_array());
-        
+
         message
     }
 
@@ -150,19 +147,14 @@ impl ChainLockValidator {
         // ChainLocks should be signed by a quorum from a recent block
         let max_quorum_age = 24; // blocks
         if chain_lock.block_height > quorum_height + max_quorum_age {
-            return Err(ValidationError::InvalidChainLock(
-                format!(
-                    "Quorum at height {} is too old for ChainLock at height {}",
-                    quorum_height, chain_lock.block_height
-                )
-            ));
+            return Err(ValidationError::InvalidChainLock(format!(
+                "Quorum at height {} is too old for ChainLock at height {}",
+                quorum_height, chain_lock.block_height
+            )));
         }
 
         // Get the message that should have been signed
-        let message = self.get_signing_message(
-            chain_lock.block_height,
-            &chain_lock.block_hash,
-        );
+        let message = self.get_signing_message(chain_lock.block_height, &chain_lock.block_hash);
 
         // Hash the message to get the digest
         let message_digest = sha256d::Hash::hash(&message);
@@ -188,16 +180,18 @@ impl ChainLockValidator {
     }
 
     /// Validate ChainLock timing constraints
-    pub fn validate_timing(&self, chain_lock: &ChainLock, current_height: u32) -> ValidationResult<()> {
+    pub fn validate_timing(
+        &self,
+        chain_lock: &ChainLock,
+        current_height: u32,
+    ) -> ValidationResult<()> {
         // ChainLocks shouldn't be too far in the future
         let max_future_blocks = 10;
         if chain_lock.block_height > current_height + max_future_blocks {
-            return Err(ValidationError::InvalidChainLock(
-                format!(
-                    "ChainLock height {} is too far in the future (current height: {})",
-                    chain_lock.block_height, current_height
-                )
-            ));
+            return Err(ValidationError::InvalidChainLock(format!(
+                "ChainLock height {} is too far in the future (current height: {})",
+                chain_lock.block_height, current_height
+            )));
         }
 
         // ChainLocks shouldn't be too old
@@ -220,36 +214,35 @@ impl ChainLockValidator {
         quorum_public_key_bytes: &[u8],
     ) -> ValidationResult<()> {
         use blsful::Bls12381G2Impl;
-        
+
         // Validate public key length
         if quorum_public_key_bytes.len() != 48 {
-            return Err(ValidationError::InvalidChainLock(
-                format!(
-                    "Invalid quorum public key length: expected 48, got {}",
-                    quorum_public_key_bytes.len()
-                )
-            ));
+            return Err(ValidationError::InvalidChainLock(format!(
+                "Invalid quorum public key length: expected 48, got {}",
+                quorum_public_key_bytes.len()
+            )));
         }
 
         // Create BLS public key from bytes
         let public_key = blsful::PublicKey::<Bls12381G2Impl>::try_from(quorum_public_key_bytes)
-            .map_err(|e| ValidationError::InvalidChainLock(
-                format!("Failed to parse quorum public key: {:?}", e)
-            ))?;
+            .map_err(|e| {
+                ValidationError::InvalidChainLock(format!(
+                    "Failed to parse quorum public key: {:?}",
+                    e
+                ))
+            })?;
 
         // Convert signature to blsful type
         let sig_bytes = signature.to_bytes();
         let bls_signature = blsful::Signature::<Bls12381G2Impl>::try_from(sig_bytes.as_slice())
-            .map_err(|e| ValidationError::InvalidChainLock(
-                format!("Failed to parse BLS signature: {:?}", e)
-            ))?;
+            .map_err(|e| {
+                ValidationError::InvalidChainLock(format!("Failed to parse BLS signature: {:?}", e))
+            })?;
 
         // Verify the signature
-        bls_signature
-            .verify(&public_key, *message_digest)
-            .map_err(|e| ValidationError::InvalidChainLock(
-                format!("BLS signature verification failed: {}", e)
-            ))?;
+        bls_signature.verify(&public_key, *message_digest).map_err(|e| {
+            ValidationError::InvalidChainLock(format!("BLS signature verification failed: {}", e))
+        })?;
 
         debug!("BLS signature verified successfully");
         Ok(())

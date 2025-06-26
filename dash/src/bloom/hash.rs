@@ -18,12 +18,8 @@ pub fn murmur3(data: &[u8], seed: u32) -> u32 {
 
     // Process 4-byte blocks
     for i in 0..nblocks {
-        let k = u32::from_le_bytes([
-            data[i * 4],
-            data[i * 4 + 1],
-            data[i * 4 + 2],
-            data[i * 4 + 3],
-        ]);
+        let k =
+            u32::from_le_bytes([data[i * 4], data[i * 4 + 1], data[i * 4 + 2], data[i * 4 + 3]]);
 
         let k = k.wrapping_mul(C1);
         let k = k.rotate_left(R1);
@@ -103,7 +99,7 @@ mod tests {
         assert_eq!(murmur3(b"\x21\x43\x65\x87", 0), 0xf55b516b);
         assert_eq!(murmur3(b"\x21\x43\x65\x87", 0x5082edee), 0x2362f9de);
         assert_eq!(murmur3(b"", 0xffffffff), 0x81f16f39);
-        
+
         // BIP37 specific seed test
         assert_eq!(murmur3(b"", 0xfba4c795), 0x6a396f08);
     }

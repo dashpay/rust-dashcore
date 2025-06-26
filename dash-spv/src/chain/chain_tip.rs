@@ -3,9 +3,9 @@
 //! This module manages multiple chain tips to support fork handling
 //! and chain reorganization.
 
+use super::ChainWork;
 use dashcore::{BlockHash, Header as BlockHeader};
 use std::collections::HashMap;
-use super::ChainWork;
 
 /// Represents a chain tip with its metadata
 #[derive(Debug, Clone, PartialEq)]
@@ -58,28 +58,32 @@ impl ChainTipManager {
     /// Add a new chain tip
     pub fn add_tip(&mut self, tip: ChainTip) -> Result<(), &'static str> {
         let hash = tip.hash;
-        
+
         // Check if we need to make space
         if self.tips.len() >= self.max_tips && !self.tips.contains_key(&hash) {
             self.evict_weakest_tip()?;
         }
-        
+
         self.tips.insert(hash, tip);
-        
+
         // Update active tip if this has more work
         self.update_active_tip();
-        
+
         Ok(())
     }
 
     /// Update a tip with a new header extending it
-    pub fn extend_tip(&mut self, tip_hash: &BlockHash, header: BlockHeader, new_work: ChainWork) -> Result<(), &'static str> {
+    pub fn extend_tip(
+        &mut self,
+        tip_hash: &BlockHash,
+        header: BlockHeader,
+        new_work: ChainWork,
+    ) -> Result<(), &'static str> {
         let new_height = {
-            let tip = self.tips.get(tip_hash)
-                .ok_or("Tip not found")?;
+            let tip = self.tips.get(tip_hash).ok_or("Tip not found")?;
             tip.height + 1
         };
-        
+
         let new_tip = ChainTip {
             hash: header.block_hash(),
             height: new_height,
@@ -87,10 +91,10 @@ impl ChainTipManager {
             chain_work: new_work,
             is_active: false,
         };
-        
+
         // Store the old tip temporarily in case we need to restore it
         let old_tip = self.tips.remove(tip_hash);
-        
+
         // Attempt to add the new tip
         match self.add_tip(new_tip) {
             Ok(()) => Ok(()),
@@ -106,8 +110,7 @@ impl ChainTipManager {
 
     /// Get the current active (best) chain tip
     pub fn get_active_tip(&self) -> Option<&ChainTip> {
-        self.active_tip.as_ref()
-            .and_then(|hash| self.tips.get(hash))
+        self.active_tip.as_ref().and_then(|hash| self.tips.get(hash))
     }
 
     /// Get a specific tip by hash
@@ -125,12 +128,12 @@ impl ChainTipManager {
     /// Remove a tip
     pub fn remove_tip(&mut self, hash: &BlockHash) -> Option<ChainTip> {
         let tip = self.tips.remove(hash);
-        
+
         // If we removed the active tip, update to the next best
         if self.active_tip.as_ref() == Some(hash) {
             self.update_active_tip();
         }
-        
+
         tip
     }
 
@@ -150,31 +153,30 @@ impl ChainTipManager {
         for tip in self.tips.values_mut() {
             tip.is_active = false;
         }
-        
+
         // Find tip with most work
-        let best_tip = self.tips
-            .iter()
-            .max_by_key(|(_, tip)| &tip.chain_work)
-            .map(|(hash, _)| *hash);
-        
+        let best_tip =
+            self.tips.iter().max_by_key(|(_, tip)| &tip.chain_work).map(|(hash, _)| *hash);
+
         if let Some(ref hash) = best_tip {
             if let Some(tip) = self.tips.get_mut(hash) {
                 tip.is_active = true;
             }
         }
-        
+
         self.active_tip = best_tip;
     }
 
     /// Evict the tip with least work
     fn evict_weakest_tip(&mut self) -> Result<(), &'static str> {
         // Don't evict the active tip
-        let weakest = self.tips
+        let weakest = self
+            .tips
             .iter()
             .filter(|(hash, _)| self.active_tip.as_ref() != Some(hash))
             .min_by_key(|(_, tip)| &tip.chain_work)
             .map(|(hash, _)| *hash);
-        
+
         if let Some(hash) = weakest {
             self.tips.remove(&hash);
             Ok(())
@@ -199,35 +201,35 @@ mod tests {
     fn create_test_tip(height: u32, work_value: u8) -> ChainTip {
         let mut header = genesis_block(Network::Dash).header;
         header.nonce = height; // Make it unique
-        
+
         let mut work_bytes = [0u8; 32];
         work_bytes[31] = work_value;
         let chain_work = ChainWork::from_bytes(work_bytes);
-        
+
         ChainTip::new(header, height, chain_work)
     }
 
     #[test]
     fn test_tip_manager() {
         let mut manager = ChainTipManager::new(5);
-        
+
         // Add some tips with different work
         for i in 0..3 {
             let tip = create_test_tip(i, i as u8);
             manager.add_tip(tip).unwrap();
         }
-        
+
         assert_eq!(manager.tip_count(), 3);
-        
+
         // The tip with most work should be active
         let active = manager.get_active_tip().unwrap();
         assert_eq!(active.height, 2);
         assert!(active.is_active);
-        
+
         // Add a tip with more work
         let better_tip = create_test_tip(1, 10);
         manager.add_tip(better_tip).unwrap();
-        
+
         // Active tip should update
         let active = manager.get_active_tip().unwrap();
         assert_eq!(active.chain_work.as_bytes()[31], 10);
@@ -236,86 +238,86 @@ mod tests {
     #[test]
     fn test_tip_eviction() {
         let mut manager = ChainTipManager::new(2);
-        
+
         // Fill to capacity
         manager.add_tip(create_test_tip(1, 5)).unwrap();
         manager.add_tip(create_test_tip(2, 10)).unwrap();
-        
+
         // Adding another should evict the weakest
         manager.add_tip(create_test_tip(3, 7)).unwrap();
-        
+
         assert_eq!(manager.tip_count(), 2);
-        
+
         // The tip with work=5 should have been evicted
         let tips = manager.get_all_tips();
         assert!(tips.iter().all(|t| t.chain_work.as_bytes()[31] >= 7));
     }
-    
+
     #[test]
     fn test_extend_tip_atomic() {
         let mut manager = ChainTipManager::new(2);
-        
+
         // Add two tips to fill capacity
         let tip1 = create_test_tip(1, 5);
         let tip1_hash = tip1.hash;
         manager.add_tip(tip1).unwrap();
-        
+
         let tip2 = create_test_tip(2, 10);
         manager.add_tip(tip2).unwrap();
-        
+
         // Extend tip1 successfully - since we remove tip1 first, there's room for the new tip
         let new_header = create_test_tip(3, 6).header;
         let mut work_bytes = [0u8; 32];
         work_bytes[31] = 7; // Give it some work value
         let new_work = ChainWork::from_bytes(work_bytes);
-        
+
         // The extend operation should succeed
         let result = manager.extend_tip(&tip1_hash, new_header.clone(), new_work);
         assert!(result.is_ok());
-        
+
         // The old tip should be gone
         assert!(manager.get_tip(&tip1_hash).is_none());
-        
+
         // The new tip should exist
         let new_tip_hash = new_header.block_hash();
         assert!(manager.get_tip(&new_tip_hash).is_some());
         assert_eq!(manager.tip_count(), 2);
     }
-    
+
     #[test]
     fn test_extend_tip_atomic_with_failure() {
         // To properly test atomic behavior, we need a custom scenario where add_tip can fail
         // Since add_tip only fails when eviction fails (all tips are active), and only one
         // tip can be active at a time, we need to test the restoration logic differently.
-        
+
         // For now, we'll test that the extend operation is atomic when it succeeds
         // A more complex test would require mocking or a different failure scenario
         let mut manager = ChainTipManager::new(3);
-        
+
         // Add three tips
         let tip1 = create_test_tip(1, 5);
         let tip1_hash = tip1.hash;
         manager.add_tip(tip1).unwrap();
-        
+
         let tip2 = create_test_tip(2, 10);
         manager.add_tip(tip2).unwrap();
-        
+
         let tip3 = create_test_tip(3, 8);
         manager.add_tip(tip3).unwrap();
-        
+
         // Verify initial state
         assert_eq!(manager.tip_count(), 3);
         assert!(manager.get_tip(&tip1_hash).is_some());
-        
+
         // Extend tip1 - this should work and be atomic
         let new_header = create_test_tip(4, 6).header;
         let mut work_bytes = [0u8; 32];
         work_bytes[31] = 6;
         let new_work = ChainWork::from_bytes(work_bytes);
-        
+
         let result = manager.extend_tip(&tip1_hash, new_header.clone(), new_work);
         assert!(result.is_ok());
-        
+
         // Verify final state - old tip gone, new tip present
         assert!(manager.get_tip(&tip1_hash).is_none());
         assert!(manager.get_tip(&new_header.block_hash()).is_some());

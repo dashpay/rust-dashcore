@@ -3,14 +3,15 @@
 //! This module extends the basic header sync with fork detection and reorg handling.
 
 use dashcore::{
-    block::Header as BlockHeader, network::message::NetworkMessage,
-    network::message_blockdata::GetHeadersMessage,
-    network::constants::NetworkExt, BlockHash,
+    block::Header as BlockHeader, network::constants::NetworkExt, network::message::NetworkMessage,
+    network::message_blockdata::GetHeadersMessage, BlockHash,
 };
 use dashcore_hashes::Hash;
 
-use crate::chain::{ForkDetector, ForkDetectionResult, ReorgManager, ChainTipManager, ChainWork, ChainTip};
-use crate::chain::checkpoints::{CheckpointManager, mainnet_checkpoints, testnet_checkpoints};
+use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
+use crate::chain::{
+    ChainTip, ChainTipManager, ChainWork, ForkDetectionResult, ForkDetector, ReorgManager,
+};
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
@@ -66,7 +67,7 @@ impl HeaderSyncManagerWithReorg {
     pub fn new(config: &ClientConfig, reorg_config: ReorgConfig) -> Self {
         let chain_state = ChainState::new_for_network(config.network);
         let wallet_state = WalletState::new(config.network);
-        
+
         // Create checkpoint manager based on network
         let checkpoints = match config.network {
             dashcore::Network::Dash => mainnet_checkpoints(),
@@ -74,7 +75,7 @@ impl HeaderSyncManagerWithReorg {
             _ => Vec::new(), // No checkpoints for other networks
         };
         let checkpoint_manager = CheckpointManager::new(checkpoints);
-        
+
         Self {
             config: config.clone(),
             validation: ValidationManager::new(config.validation_mode),
@@ -95,65 +96,76 @@ impl HeaderSyncManagerWithReorg {
             last_sync_progress: std::time::Instant::now(),
         }
     }
-    
+
     /// Load headers from storage into the chain state
-    pub async fn load_headers_from_storage(&mut self, storage: &dyn StorageManager) -> SyncResult<u32> {
+    pub async fn load_headers_from_storage(
+        &mut self,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<u32> {
         // Get the current tip height from storage
-        let tip_height = storage.get_tip_height().await
+        let tip_height = storage
+            .get_tip_height()
+            .await
             .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
-            
+
         let Some(tip_height) = tip_height else {
             tracing::debug!("No headers found in storage");
             return Ok(0);
         };
-        
+
         if tip_height == 0 {
             tracing::debug!("Only genesis block in storage");
             return Ok(0);
         }
-        
+
         tracing::info!("Loading {} headers from storage into HeaderSyncManager", tip_height);
         let start_time = std::time::Instant::now();
-        
+
         // Load headers in batches
         const BATCH_SIZE: u32 = 10_000;
         let mut loaded_count = 0u32;
         let mut current_height = 1u32; // Start from 1 (genesis already in chain state)
-        
+
         while current_height <= tip_height {
             let end_height = (current_height + BATCH_SIZE - 1).min(tip_height);
-            
+
             // Load batch from storage
-            let headers = storage.load_headers(current_height..end_height + 1).await
+            let headers = storage
+                .load_headers(current_height..end_height + 1)
+                .await
                 .map_err(|e| SyncError::Storage(format!("Failed to load headers: {}", e)))?;
-                
+
             if headers.is_empty() {
                 return Err(SyncError::Storage(format!(
-                    "No headers found for range {}..{}", current_height, end_height + 1
+                    "No headers found for range {}..{}",
+                    current_height,
+                    end_height + 1
                 )));
             }
-            
+
             // Add headers to chain state
             for header in headers {
                 self.chain_state.add_header(header);
                 loaded_count += 1;
             }
-            
+
             // Progress logging
             if loaded_count % 50_000 == 0 || loaded_count == tip_height {
                 let elapsed = start_time.elapsed();
                 let headers_per_sec = loaded_count as f64 / elapsed.as_secs_f64();
                 tracing::info!(
                     "Loaded {}/{} headers ({:.0} headers/sec)",
-                    loaded_count, tip_height, headers_per_sec
+                    loaded_count,
+                    tip_height,
+                    headers_per_sec
                 );
             }
-            
+
             current_height = end_height + 1;
         }
-        
+
         self.total_headers_synced = tip_height;
-        
+
         let elapsed = start_time.elapsed();
         tracing::info!(
             "✅ Loaded {} headers into HeaderSyncManager in {:.2}s ({:.0} headers/sec)",
@@ -161,7 +173,7 @@ impl HeaderSyncManagerWithReorg {
             elapsed.as_secs_f64(),
             loaded_count as f64 / elapsed.as_secs_f64()
         );
-        
+
         Ok(loaded_count)
     }
 
@@ -172,10 +184,7 @@ impl HeaderSyncManagerWithReorg {
         storage: &mut dyn StorageManager,
         network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
-        tracing::info!(
-            "🔍 Handle headers message with {} headers (reorg-aware)",
-            headers.len(),
-        );
+        tracing::info!("🔍 Handle headers message with {} headers (reorg-aware)", headers.len(),);
 
         if headers.is_empty() {
             tracing::info!("📊 Header sync complete - no more headers from peers");
@@ -227,7 +236,8 @@ impl HeaderSyncManagerWithReorg {
         storage: &mut dyn StorageManager,
     ) -> SyncResult<HeaderProcessResult> {
         // First validate the header structure
-        self.validation.validate_header(header, None)
+        self.validation
+            .validate_header(header, None)
             .map_err(|e| SyncError::Validation(format!("Invalid header: {}", e)))?;
 
         // Create a sync storage adapter
@@ -241,27 +251,31 @@ impl HeaderSyncManagerWithReorg {
                 // Normal case - add to chain state and storage
                 self.chain_state.add_header(*header);
                 let height = self.chain_state.get_height();
-                
+
                 // Validate against checkpoints if enabled
                 if self.reorg_config.enforce_checkpoints {
                     if !self.checkpoint_manager.validate_block(height, &header.block_hash()) {
                         // Block doesn't match checkpoint - reject it
                         return Err(SyncError::Validation(format!(
-                            "Block at height {} does not match checkpoint", height
+                            "Block at height {} does not match checkpoint",
+                            height
                         )));
                     }
                 }
-                
+
                 // Store in async storage
-                storage.store_headers(&[*header]).await
+                storage
+                    .store_headers(&[*header])
+                    .await
                     .map_err(|e| SyncError::Storage(format!("Failed to store header: {}", e)))?;
-                
+
                 // Update chain tip manager
                 let chain_work = ChainWork::from_height_and_header(height, header);
                 let tip = crate::chain::ChainTip::new(*header, height, chain_work);
-                self.tip_manager.add_tip(tip)
+                self.tip_manager
+                    .add_tip(tip)
                     .map_err(|e| SyncError::Storage(format!("Failed to update tip: {}", e)))?;
-                
+
                 Ok(HeaderProcessResult::ExtendedMainChain)
             }
             ForkDetectionResult::CreatesNewFork(fork) => {
@@ -269,18 +283,25 @@ impl HeaderSyncManagerWithReorg {
                 if self.reorg_config.enforce_checkpoints {
                     // Don't reject forks from genesis (height 0) as this is the natural starting point
                     if fork.fork_height > 0 {
-                        if let Some(checkpoint) = self.checkpoint_manager.last_checkpoint_before_height(fork.fork_height) {
+                        if let Some(checkpoint) =
+                            self.checkpoint_manager.last_checkpoint_before_height(fork.fork_height)
+                        {
                             if fork.fork_height <= checkpoint.height {
-                                tracing::warn!("Rejecting fork that would reorg past checkpoint at height {}", 
-                                    checkpoint.height);
+                                tracing::warn!(
+                                    "Rejecting fork that would reorg past checkpoint at height {}",
+                                    checkpoint.height
+                                );
                                 return Ok(HeaderProcessResult::Orphan); // Treat as orphan
                             }
                         }
                     }
                 }
-                
-                tracing::warn!("Fork created at height {} from block {}", 
-                    fork.fork_height, fork.fork_point);
+
+                tracing::warn!(
+                    "Fork created at height {} from block {}",
+                    fork.fork_height,
+                    fork.fork_point
+                );
                 Ok(HeaderProcessResult::CreatedFork)
             }
             ForkDetectionResult::ExtendsFork(fork) => {
@@ -295,24 +316,22 @@ impl HeaderSyncManagerWithReorg {
     }
 
     /// Check if any fork should trigger a reorganization
-    async fn check_for_reorg(
-        &mut self,
-        storage: &mut dyn StorageManager,
-    ) -> SyncResult<()> {
+    async fn check_for_reorg(&mut self, storage: &mut dyn StorageManager) -> SyncResult<()> {
         if let Some(strongest_fork) = self.fork_detector.get_strongest_fork() {
             if let Some(current_tip) = self.tip_manager.get_active_tip() {
                 // First phase: Check if reorganization is needed (read-only)
                 let should_reorg = {
                     let sync_storage = SyncStorageAdapter::new(storage);
-                    self.reorg_manager.should_reorganize(current_tip, strongest_fork, &sync_storage)
+                    self.reorg_manager
+                        .should_reorganize(current_tip, strongest_fork, &sync_storage)
                         .map_err(|e| SyncError::Validation(format!("Reorg check failed: {}", e)))?
                 };
-                
+
                 if should_reorg {
                     // Clone necessary data before reorganization to avoid borrow conflicts
                     let fork_tip_hash = strongest_fork.tip_hash;
                     let fork_clone = strongest_fork.clone();
-                    
+
                     tracing::info!(
                         "⚠️ Reorganization needed: fork at height {} (work: {:?}) > main chain at height {} (work: {:?})",
                         fork_clone.tip_height,
@@ -320,18 +339,21 @@ impl HeaderSyncManagerWithReorg {
                         current_tip.height,
                         current_tip.chain_work
                     );
-                    
+
                     // Second phase: Perform reorganization using only StorageManager
-                    let event = self.reorg_manager
+                    let event = self
+                        .reorg_manager
                         .reorganize(
                             &mut self.chain_state,
                             &mut self.wallet_state,
                             &fork_clone,
-                            storage,  // Only StorageManager needed now
+                            storage, // Only StorageManager needed now
                         )
                         .await
-                        .map_err(|e| SyncError::Validation(format!("Reorganization failed: {}", e)))?;
-                    
+                        .map_err(|e| {
+                            SyncError::Validation(format!("Reorganization failed: {}", e))
+                        })?;
+
                     tracing::info!(
                         "🔄 Reorganization complete - common ancestor: {} at height {}, disconnected: {} blocks, connected: {} blocks",
                         event.common_ancestor,
@@ -339,7 +361,7 @@ impl HeaderSyncManagerWithReorg {
                         event.disconnected_headers.len(),
                         event.connected_headers.len()
                     );
-                    
+
                     // Update tip manager with new chain tip
                     if let Some(new_tip_header) = fork_clone.headers.last() {
                         let new_tip = ChainTip::new(
@@ -349,10 +371,10 @@ impl HeaderSyncManagerWithReorg {
                         );
                         let _ = self.tip_manager.add_tip(new_tip);
                     }
-                    
+
                     // Remove the processed fork
                     self.fork_detector.remove_fork(&fork_tip_hash);
-                    
+
                     // Notify about affected transactions
                     if !event.affected_transactions.is_empty() {
                         tracing::info!(
@@ -363,7 +385,7 @@ impl HeaderSyncManagerWithReorg {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -383,15 +405,14 @@ impl HeaderSyncManagerWithReorg {
 
         // Check if we have a peer that supports headers2
         let use_headers2 = network.has_headers2_peer().await;
-        
+
         // Try GetHeaders2 first if peer supports it, with fallback to regular GetHeaders
         if use_headers2 {
             tracing::info!("📤 Sending GetHeaders2 message (compressed headers)");
             // Send GetHeaders2 message for compressed headers
-            let result = network
-                .send_message(NetworkMessage::GetHeaders2(getheaders_msg.clone()))
-                .await;
-            
+            let result =
+                network.send_message(NetworkMessage::GetHeaders2(getheaders_msg.clone())).await;
+
             match result {
                 Ok(_) => {
                     // TODO: Implement timeout and fallback mechanism
@@ -408,7 +429,9 @@ impl HeaderSyncManagerWithReorg {
                     network
                         .send_message(NetworkMessage::GetHeaders(getheaders_msg))
                         .await
-                        .map_err(|e| SyncError::Network(format!("Failed to send GetHeaders: {}", e)))?;
+                        .map_err(|e| {
+                            SyncError::Network(format!("Failed to send GetHeaders: {}", e))
+                        })?;
                 }
             }
         } else {
@@ -422,7 +445,7 @@ impl HeaderSyncManagerWithReorg {
 
         Ok(())
     }
-    
+
     /// Handle a Headers2 message with compressed headers.
     /// Returns true if the message was processed and sync should continue, false if sync is complete.
     pub async fn handle_headers2_message(
@@ -437,12 +460,13 @@ impl HeaderSyncManagerWithReorg {
             headers2.headers.len(),
             peer_id
         );
-        
+
         // Decompress headers using the peer's compression state
-        let headers = self.headers2_state
+        let headers = self
+            .headers2_state
             .process_headers(peer_id, headers2.headers)
             .map_err(|e| SyncError::Validation(format!("Failed to decompress headers: {}", e)))?;
-        
+
         // Log compression statistics
         let stats = self.headers2_state.get_stats();
         tracing::info!(
@@ -450,11 +474,11 @@ impl HeaderSyncManagerWithReorg {
             stats.bandwidth_savings,
             stats.compression_ratio * 100.0
         );
-        
+
         // Process decompressed headers through the normal flow
         self.handle_headers_message(headers, storage, network).await
     }
-    
+
     /// Prepare sync state without sending network requests.
     /// This allows monitoring to be set up before requests are sent.
     pub async fn prepare_sync(
@@ -477,18 +501,22 @@ impl HeaderSyncManagerWithReorg {
             None => {
                 // No headers in storage, ensure genesis is stored
                 tracing::info!("No tip height found, ensuring genesis block is stored");
-                
+
                 // Get genesis header from chain state (which was initialized with genesis)
                 if let Some(genesis_header) = self.chain_state.header_at_height(0) {
                     // Store genesis in storage if not already there
-                    if storage.get_header(0).await.map_err(|e| {
-                        SyncError::Storage(format!("Failed to check genesis: {}", e))
-                    })?.is_none() {
+                    if storage
+                        .get_header(0)
+                        .await
+                        .map_err(|e| SyncError::Storage(format!("Failed to check genesis: {}", e)))?
+                        .is_none()
+                    {
                         tracing::info!("Storing genesis block in storage");
-                        storage.store_headers(&[*genesis_header]).await
-                            .map_err(|e| SyncError::Storage(format!("Failed to store genesis: {}", e)))?;
+                        storage.store_headers(&[*genesis_header]).await.map_err(|e| {
+                            SyncError::Storage(format!("Failed to store genesis: {}", e))
+                        })?;
                     }
-                    
+
                     let genesis_hash = genesis_header.block_hash();
                     tracing::info!("Starting from genesis block: {}", genesis_hash);
                     Some(genesis_hash)
@@ -499,8 +527,10 @@ impl HeaderSyncManagerWithReorg {
                         Some(hash)
                     } else {
                         // Use network genesis as fallback
-                        let genesis_hash = self.config.network.known_genesis_block_hash()
-                            .ok_or_else(|| SyncError::Storage("No known genesis hash".to_string()))?;
+                        let genesis_hash =
+                            self.config.network.known_genesis_block_hash().ok_or_else(|| {
+                                SyncError::Storage("No known genesis hash".to_string())
+                            })?;
                         tracing::info!("Starting from network genesis: {}", genesis_hash);
                         Some(genesis_hash)
                     }
@@ -509,9 +539,10 @@ impl HeaderSyncManagerWithReorg {
             Some(height) => {
                 tracing::info!("Current tip height: {}", height);
                 // Get the current tip hash
-                let tip_header = storage.get_header(height).await.map_err(|e| {
-                    SyncError::Storage(format!("Failed to get tip header: {}", e))
-                })?;
+                let tip_header = storage
+                    .get_header(height)
+                    .await
+                    .map_err(|e| SyncError::Storage(format!("Failed to get tip header: {}", e)))?;
                 let hash = tip_header.map(|h| h.block_hash());
                 tracing::info!("Current tip hash: {:?}", hash);
                 hash
@@ -567,9 +598,7 @@ impl HeaderSyncManagerWithReorg {
             if network.peer_count() == 0 {
                 tracing::warn!("📊 Header sync stalled - no connected peers");
                 self.syncing_headers = false; // Reset state to allow restart
-                return Err(SyncError::Network(
-                    "No connected peers for header sync".to_string(),
-                ));
+                return Err(SyncError::Network("No connected peers for header sync".to_string()));
             }
 
             tracing::warn!(
@@ -608,7 +637,7 @@ impl HeaderSyncManagerWithReorg {
 
         Ok(false)
     }
-    
+
     /// Get the optimal starting point for sync based on checkpoints
     pub fn get_sync_starting_point(&self) -> Option<(u32, BlockHash)> {
         // For now, don't use checkpoints as starting point during initial sync
@@ -616,12 +645,13 @@ impl HeaderSyncManagerWithReorg {
         // TODO: Implement checkpoint-based fast sync that pre-populates headers
         None
     }
-    
+
     /// Check if we can skip ahead to a checkpoint
     pub fn can_skip_to_checkpoint(&self, current_height: u32) -> Option<(u32, BlockHash)> {
         // Find next checkpoint after current height
         for height in self.checkpoint_manager.checkpoint_heights() {
-            if *height > current_height + 1000 { // Only skip if checkpoint is far enough ahead
+            if *height > current_height + 1000 {
+                // Only skip if checkpoint is far enough ahead
                 if let Some(checkpoint) = self.checkpoint_manager.get_checkpoint(*height) {
                     return Some((checkpoint.height, checkpoint.block_hash));
                 }
@@ -629,17 +659,17 @@ impl HeaderSyncManagerWithReorg {
         }
         None
     }
-    
+
     /// Check if we're past all checkpoints and can relax validation
     pub fn is_past_checkpoints(&self) -> bool {
         self.checkpoint_manager.is_past_last_checkpoint(self.chain_state.get_height())
     }
-    
+
     /// Check if header sync is currently in progress
     pub fn is_syncing(&self) -> bool {
         self.syncing_headers
     }
-    
+
     /// Download a single header by hash
     pub async fn download_single_header(
         &mut self,
@@ -648,9 +678,11 @@ impl HeaderSyncManagerWithReorg {
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
         // Check if we already have this header using the efficient reverse index
-        if let Some(height) = storage.get_header_height_by_hash(&block_hash).await.map_err(|e| {
-            SyncError::Storage(format!("Failed to check header existence: {}", e))
-        })? {
+        if let Some(height) = storage
+            .get_header_height_by_hash(&block_hash)
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to check header existence: {}", e)))?
+        {
             tracing::debug!("Header for block {} already exists at height {}", block_hash, height);
             return Ok(());
         }
@@ -683,7 +715,7 @@ impl HeaderSyncManagerWithReorg {
 
         // Create GetHeaders message with specific stop hash
         let getheaders = GetHeadersMessage::new(vec![current_tip], block_hash);
-        
+
         network
             .send_message(NetworkMessage::GetHeaders(getheaders))
             .await
@@ -701,12 +733,12 @@ impl HeaderSyncManagerWithReorg {
         self.fork_detector = ForkDetector::new(self.reorg_config.max_forks);
         tracing::debug!("Reset header sync pending requests");
     }
-    
+
     /// Get the current chain height
     pub fn get_chain_height(&self) -> u32 {
         self.chain_state.get_height()
     }
-    
+
     /// Get the tip hash
     pub fn get_tip_hash(&self) -> Option<BlockHash> {
         self.chain_state.tip_hash()
@@ -729,81 +761,114 @@ struct SyncStorageAdapter<'a> {
 
 impl<'a> SyncStorageAdapter<'a> {
     fn new(storage: &'a dyn StorageManager) -> Self {
-        Self { storage }
+        Self {
+            storage,
+        }
     }
 }
 
 impl<'a> crate::storage::ChainStorage for SyncStorageAdapter<'a> {
-    fn get_header(&self, hash: &BlockHash) -> Result<Option<BlockHeader>, crate::error::StorageError> {
+    fn get_header(
+        &self,
+        hash: &BlockHash,
+    ) -> Result<Option<BlockHeader>, crate::error::StorageError> {
         // Use block_in_place to run async code in sync context
         // This is safe because we're already in a tokio runtime
         tokio::task::block_in_place(|| {
             // Get a handle to the current runtime
             let handle = tokio::runtime::Handle::current();
-            
+
             // Block on the async operation
             handle.block_on(async {
                 tracing::trace!("SyncStorageAdapter: Looking up header by hash: {}", hash);
-                
+
                 // First, we need to find the height of this block by hash
                 match self.storage.get_header_height_by_hash(hash).await {
                     Ok(Some(height)) => {
-                        tracing::trace!("SyncStorageAdapter: Found header at height {} for hash {}", height, hash);
+                        tracing::trace!(
+                            "SyncStorageAdapter: Found header at height {} for hash {}",
+                            height,
+                            hash
+                        );
                         // Now get the header at that height
-                        self.storage.get_header(height).await
-                            .map_err(|e| crate::error::StorageError::Io(
-                                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                        self.storage.get_header(height).await.map_err(|e| {
+                            crate::error::StorageError::Io(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                e.to_string(),
                             ))
+                        })
                     }
                     Ok(None) => {
                         tracing::trace!("SyncStorageAdapter: No header found for hash {}", hash);
                         Ok(None)
-                    },
+                    }
                     Err(e) => {
-                        tracing::error!("SyncStorageAdapter: Error looking up header by hash {}: {}", hash, e);
-                        Err(crate::error::StorageError::Io(
-                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                        ))
+                        tracing::error!(
+                            "SyncStorageAdapter: Error looking up header by hash {}: {}",
+                            hash,
+                            e
+                        );
+                        Err(crate::error::StorageError::Io(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            e.to_string(),
+                        )))
                     }
                 }
             })
         })
     }
-    
-    fn get_header_by_height(&self, height: u32) -> Result<Option<BlockHeader>, crate::error::StorageError> {
+
+    fn get_header_by_height(
+        &self,
+        height: u32,
+    ) -> Result<Option<BlockHeader>, crate::error::StorageError> {
         tokio::task::block_in_place(|| {
             let handle = tokio::runtime::Handle::current();
-            
+
             handle.block_on(async {
                 tracing::trace!("SyncStorageAdapter: Looking up header by height: {}", height);
-                
+
                 match self.storage.get_header(height).await {
                     Ok(header) => {
                         if header.is_some() {
-                            tracing::trace!("SyncStorageAdapter: Found header at height {}", height);
+                            tracing::trace!(
+                                "SyncStorageAdapter: Found header at height {}",
+                                height
+                            );
                         } else {
-                            tracing::trace!("SyncStorageAdapter: No header found at height {}", height);
+                            tracing::trace!(
+                                "SyncStorageAdapter: No header found at height {}",
+                                height
+                            );
                         }
                         Ok(header)
                     }
                     Err(e) => {
-                        tracing::error!("SyncStorageAdapter: Error looking up header at height {}: {}", height, e);
-                        Err(crate::error::StorageError::Io(
-                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                        ))
+                        tracing::error!(
+                            "SyncStorageAdapter: Error looking up header at height {}: {}",
+                            height,
+                            e
+                        );
+                        Err(crate::error::StorageError::Io(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            e.to_string(),
+                        )))
                     }
                 }
             })
         })
     }
-    
-    fn get_header_height(&self, hash: &BlockHash) -> Result<Option<u32>, crate::error::StorageError> {
+
+    fn get_header_height(
+        &self,
+        hash: &BlockHash,
+    ) -> Result<Option<u32>, crate::error::StorageError> {
         tokio::task::block_in_place(|| {
             let handle = tokio::runtime::Handle::current();
-            
+
             handle.block_on(async {
                 tracing::trace!("SyncStorageAdapter: Looking up height for hash: {}", hash);
-                
+
                 match self.storage.get_header_height_by_hash(hash).await {
                     Ok(height) => {
                         if let Some(h) = height {
@@ -814,36 +879,49 @@ impl<'a> crate::storage::ChainStorage for SyncStorageAdapter<'a> {
                         Ok(height)
                     }
                     Err(e) => {
-                        tracing::error!("SyncStorageAdapter: Error looking up height for hash {}: {}", hash, e);
-                        Err(crate::error::StorageError::Io(
-                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                        ))
+                        tracing::error!(
+                            "SyncStorageAdapter: Error looking up height for hash {}: {}",
+                            hash,
+                            e
+                        );
+                        Err(crate::error::StorageError::Io(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            e.to_string(),
+                        )))
                     }
                 }
             })
         })
     }
-    
-    fn store_header(&self, _header: &BlockHeader, _height: u32) -> Result<(), crate::error::StorageError> {
+
+    fn store_header(
+        &self,
+        _header: &BlockHeader,
+        _height: u32,
+    ) -> Result<(), crate::error::StorageError> {
         // Note: This method cannot be properly implemented because StorageManager's store_headers
         // requires &mut self, but ChainStorage's store_header only provides &self.
         // In production code, headers are stored directly through the async StorageManager,
         // not through this sync adapter. This method is only used in tests with MemoryStorage
         // which implements both traits.
-        Err(crate::error::StorageError::Io(
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Cannot store headers through immutable sync adapter"
-            )
-        ))
+        Err(crate::error::StorageError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Cannot store headers through immutable sync adapter",
+        )))
     }
-    
-    fn get_block_transactions(&self, _block_hash: &BlockHash) -> Result<Option<Vec<dashcore::Txid>>, crate::error::StorageError> {
+
+    fn get_block_transactions(
+        &self,
+        _block_hash: &BlockHash,
+    ) -> Result<Option<Vec<dashcore::Txid>>, crate::error::StorageError> {
         // Currently not implemented in StorageManager, return None
         Ok(None)
     }
-    
-    fn get_transaction(&self, _txid: &dashcore::Txid) -> Result<Option<dashcore::Transaction>, crate::error::StorageError> {
+
+    fn get_transaction(
+        &self,
+        _txid: &dashcore::Txid,
+    ) -> Result<Option<dashcore::Transaction>, crate::error::StorageError> {
         // Currently not implemented in StorageManager, return None
         Ok(None)
     }
@@ -852,43 +930,43 @@ impl<'a> crate::storage::ChainStorage for SyncStorageAdapter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{MemoryStorageManager, StorageManager, ChainStorage};
+    use crate::storage::{ChainStorage, MemoryStorageManager, StorageManager};
     use dashcore_hashes::Hash;
-    
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_sync_storage_adapter_queries_storage() {
         // Create a memory storage manager
         let mut storage = MemoryStorageManager::new().await.unwrap();
-        
+
         // Create a test header
         let genesis = dashcore::blockdata::constants::genesis_block(dashcore::Network::Dash).header;
         let genesis_hash = genesis.block_hash();
-        
+
         // Store the header using async storage
         storage.store_headers(&[genesis]).await.unwrap();
-        
+
         // Create sync adapter
         let sync_adapter = SyncStorageAdapter::new(&storage);
-        
+
         // Test get_header_by_height
         let header = sync_adapter.get_header_by_height(0).unwrap();
         assert!(header.is_some());
         assert_eq!(header.unwrap().block_hash(), genesis_hash);
-        
+
         // Test get_header_height
         let height = sync_adapter.get_header_height(&genesis_hash).unwrap();
         assert_eq!(height, Some(0));
-        
+
         // Test get_header (by hash)
         let header = sync_adapter.get_header(&genesis_hash).unwrap();
         assert!(header.is_some());
         assert_eq!(header.unwrap().block_hash(), genesis_hash);
-        
+
         // Test non-existent header
         let fake_hash = BlockHash::from_byte_array([1; 32]);
         let header = sync_adapter.get_header(&fake_hash).unwrap();
         assert!(header.is_none());
-        
+
         let height = sync_adapter.get_header_height(&fake_hash).unwrap();
         assert!(height.is_none());
     }

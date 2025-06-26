@@ -169,7 +169,7 @@ impl FilterSyncManager {
             max_gap_restart_attempts: config.max_cfheader_gap_restart_attempts,
         }
     }
-    
+
     /// Enable flow control for filter downloads.
     pub fn enable_flow_control(&mut self) {
         self.flow_control_enabled = true;
@@ -182,7 +182,9 @@ impl FilterSyncManager {
 
     /// Check if filter sync is available (any peer supports compact filters).
     pub async fn is_filter_sync_available(&self, network: &dyn NetworkManager) -> bool {
-        network.has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS).await
+        network
+            .has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS)
+            .await
     }
 
     /// Handle a CFHeaders message during filter header synchronization.
@@ -454,9 +456,7 @@ impl FilterSyncManager {
             let header_tip_height = storage
                 .get_tip_height()
                 .await
-                .map_err(|e| {
-                    SyncError::Storage(format!("Failed to get header tip height: {}", e))
-                })?
+                .map_err(|e| SyncError::Storage(format!("Failed to get header tip height: {}", e)))?
                 .unwrap_or(0);
 
             // Re-calculate current batch parameters for recovery
@@ -595,7 +595,10 @@ impl FilterSyncManager {
         }
 
         // Check if any connected peer supports compact filters
-        if !network.has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS).await {
+        if !network
+            .has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS)
+            .await
+        {
             tracing::warn!("⚠️  No connected peers support compact filters (BIP 157/158). Skipping filter synchronization.");
             tracing::warn!("⚠️  To enable filter sync, connect to peers that advertise NODE_COMPACT_FILTERS service bit.");
             return Ok(false); // No sync started
@@ -1300,7 +1303,7 @@ impl FilterSyncManager {
             self.active_filter_requests.remove(range);
             tracing::debug!("✅ Filter request range {}-{} completed", range.0, range.1);
         }
-        
+
         // Log current state periodically
         if self.received_filter_heights.lock().unwrap().len() % 1000 == 0 {
             tracing::info!(
@@ -2021,9 +2024,10 @@ impl FilterSyncManager {
         let getdata = vec![inv];
 
         // Send the request
-        network.send_message(NetworkMessage::GetData(getdata)).await.map_err(|e| {
-            SyncError::Network(format!("Failed to send GetData for block: {}", e))
-        })?;
+        network
+            .send_message(NetworkMessage::GetData(getdata))
+            .await
+            .map_err(|e| SyncError::Network(format!("Failed to send GetData for block: {}", e)))?;
 
         // Mark as downloading and add to queue
         self.downloading_blocks.insert(filter_match.block_hash, filter_match.height);
@@ -2102,22 +2106,22 @@ impl FilterSyncManager {
     pub fn pending_download_count(&self) -> usize {
         self.pending_block_downloads.len()
     }
-    
+
     /// Get the number of active filter requests (for flow control).
     pub fn active_request_count(&self) -> usize {
         self.active_filter_requests.len()
     }
-    
+
     /// Check if there are pending filter requests in the queue.
     pub fn has_pending_filter_requests(&self) -> bool {
         !self.pending_filter_requests.is_empty()
     }
-    
+
     /// Get the number of available request slots.
     pub fn get_available_request_slots(&self) -> usize {
         MAX_CONCURRENT_FILTER_REQUESTS.saturating_sub(self.active_filter_requests.len())
     }
-    
+
     /// Send the next batch of filter requests from the queue.
     pub async fn send_next_filter_batch(
         &mut self,
@@ -2125,22 +2129,22 @@ impl FilterSyncManager {
     ) -> SyncResult<()> {
         let available_slots = self.get_available_request_slots();
         let requests_to_send = available_slots.min(self.pending_filter_requests.len());
-        
+
         if requests_to_send > 0 {
             tracing::debug!(
-                "Sending {} more filter requests ({} queued, {} active)", 
+                "Sending {} more filter requests ({} queued, {} active)",
                 requests_to_send,
                 self.pending_filter_requests.len() - requests_to_send,
                 self.active_filter_requests.len() + requests_to_send
             );
-            
+
             for _ in 0..requests_to_send {
                 if let Some(request) = self.pending_filter_requests.pop_front() {
                     self.send_filter_request(network, request).await?;
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -2225,12 +2229,12 @@ impl FilterSyncManager {
         self.requested_filter_ranges.clear();
         self.active_filter_requests.clear();
         self.pending_filter_requests.clear();
-        
+
         // Clear retry counts for fresh start
         self.filter_retry_counts.clear();
-        
+
         // Note: We don't clear received_filter_heights as those are actually received
-        
+
         tracing::debug!("Cleared filter sync state for retry/recovery");
     }
 
@@ -2438,9 +2442,10 @@ impl FilterSyncManager {
         &mut self,
         storage: &dyn StorageManager,
     ) -> SyncResult<bool> {
-        let current_filter_tip = storage.get_filter_tip_height().await.map_err(|e| {
-            SyncError::Storage(format!("Failed to get filter tip height: {}", e))
-        })?;
+        let current_filter_tip = storage
+            .get_filter_tip_height()
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to get filter tip height: {}", e)))?;
 
         let now = std::time::Instant::now();
 

@@ -23,7 +23,7 @@ pub enum SpvError {
 
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
-    
+
     #[error("General error: {0}")]
     General(String),
 }
@@ -76,10 +76,10 @@ pub enum StorageError {
 
     #[error("Serialization error: {0}")]
     Serialization(String),
-    
+
     #[error("Inconsistent state: {0}")]
     InconsistentState(String),
-    
+
     #[error("Lock poisoned: {0}")]
     LockPoisoned(String),
 }
@@ -132,22 +132,21 @@ pub enum SyncError {
     /// Indicates a missing dependency required for sync (e.g., missing previous block)
     #[error("Missing dependency: {0}")]
     MissingDependency(String),
-    
+
     // Explicit error category variants
-    
     /// Timeout errors during sync operations (e.g., peer response timeout)
     #[error("Timeout error: {0}")]
     Timeout(String),
-    
+
     /// Network-related errors (e.g., connection failures, protocol errors)
     #[error("Network error: {0}")]
     Network(String),
-    
+
     /// Validation errors for data received during sync (e.g., invalid headers, invalid proofs)
     /// Use this for data validation errors, not state errors
     #[error("Validation error: {0}")]
     Validation(String),
-    
+
     /// Storage-related errors (e.g., database failures)
     #[error("Storage error: {0}")]
     Storage(String),
@@ -165,7 +164,7 @@ impl SyncError {
             SyncError::Storage(_) => "storage",
             // Deprecated variant - should not be used
             #[allow(deprecated)]
-            SyncError::SyncFailed(_) => "unknown"
+            SyncError::SyncFailed(_) => "unknown",
         }
     }
 }
@@ -196,18 +195,24 @@ mod tests {
         assert_eq!(SyncError::Network("test".to_string()).category(), "network");
         assert_eq!(SyncError::Validation("test".to_string()).category(), "validation");
         assert_eq!(SyncError::Storage("test".to_string()).category(), "storage");
-        
+
         // Test existing variant categories
         assert_eq!(SyncError::SyncInProgress.category(), "state");
         assert_eq!(SyncError::InvalidState("test".to_string()).category(), "state");
         assert_eq!(SyncError::MissingDependency("test".to_string()).category(), "dependency");
-        
+
         // Test deprecated SyncFailed always returns "unknown"
         #[allow(deprecated)]
         {
-            assert_eq!(SyncError::SyncFailed("connection timeout".to_string()).category(), "unknown");
+            assert_eq!(
+                SyncError::SyncFailed("connection timeout".to_string()).category(),
+                "unknown"
+            );
             assert_eq!(SyncError::SyncFailed("network error".to_string()).category(), "unknown");
-            assert_eq!(SyncError::SyncFailed("validation failed".to_string()).category(), "unknown");
+            assert_eq!(
+                SyncError::SyncFailed("validation failed".to_string()).category(),
+                "unknown"
+            );
             assert_eq!(SyncError::SyncFailed("disk full".to_string()).category(), "unknown");
             assert_eq!(SyncError::SyncFailed("something else".to_string()).category(), "unknown");
         }

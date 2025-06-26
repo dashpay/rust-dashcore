@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use super::phases::{PhaseProgress, PhaseTransition, SyncPhase};
 use super::request_control::{
-    PHASE_DOWNLOADING_HEADERS, PHASE_DOWNLOADING_MNLIST, PHASE_DOWNLOADING_CFHEADERS,
-    PHASE_DOWNLOADING_FILTERS, PHASE_DOWNLOADING_BLOCKS,
+    PHASE_DOWNLOADING_BLOCKS, PHASE_DOWNLOADING_CFHEADERS, PHASE_DOWNLOADING_FILTERS,
+    PHASE_DOWNLOADING_HEADERS, PHASE_DOWNLOADING_MNLIST,
 };
 
 /// Overall sync progress across all phases
@@ -13,25 +13,25 @@ use super::request_control::{
 pub struct OverallSyncProgress {
     /// Current phase name
     pub current_phase: String,
-    
+
     /// Progress within current phase
     pub phase_progress: PhaseProgress,
-    
+
     /// List of completed phases
     pub phases_completed: Vec<String>,
-    
+
     /// List of remaining phases
     pub phases_remaining: Vec<String>,
-    
+
     /// Total elapsed time since sync started
     pub total_elapsed: Duration,
-    
+
     /// Estimated total time for complete sync
     pub estimated_total_time: Option<Duration>,
-    
+
     /// Overall completion percentage (0-100)
     pub overall_percentage: f64,
-    
+
     /// Human-readable status message
     pub status_message: String,
 }
@@ -40,7 +40,7 @@ pub struct OverallSyncProgress {
 pub struct ProgressTracker {
     /// Start time of sync
     sync_start: Option<std::time::Instant>,
-    
+
     /// Phase weights for overall percentage calculation
     phase_weights: std::collections::HashMap<String, f64>,
 }
@@ -49,25 +49,25 @@ impl ProgressTracker {
     /// Create a new progress tracker
     pub fn new() -> Self {
         let mut phase_weights = std::collections::HashMap::new();
-        
+
         // Assign weights based on typical time/importance
         phase_weights.insert(PHASE_DOWNLOADING_HEADERS.to_string(), 0.4);
         phase_weights.insert(PHASE_DOWNLOADING_MNLIST.to_string(), 0.1);
         phase_weights.insert(PHASE_DOWNLOADING_CFHEADERS.to_string(), 0.2);
         phase_weights.insert(PHASE_DOWNLOADING_FILTERS.to_string(), 0.2);
         phase_weights.insert(PHASE_DOWNLOADING_BLOCKS.to_string(), 0.1);
-        
+
         Self {
             sync_start: None,
             phase_weights,
         }
     }
-    
+
     /// Mark sync as started
     pub fn start_sync(&mut self) {
         self.sync_start = Some(std::time::Instant::now());
     }
-    
+
     /// Calculate overall sync progress
     pub fn calculate_overall_progress(
         &self,
@@ -78,18 +78,16 @@ impl ProgressTracker {
         let phase_progress = current_phase.progress();
         let phases_completed = self.get_completed_phases(phase_history);
         let phases_remaining = self.get_remaining_phases(current_phase, &enabled_features);
-        
-        let total_elapsed = self.sync_start
-            .map(|start| start.elapsed())
-            .unwrap_or_default();
-        
+
+        let total_elapsed = self.sync_start.map(|start| start.elapsed()).unwrap_or_default();
+
         let overall_percentage = self.calculate_overall_percentage(
             current_phase,
             &phases_completed,
             &phases_remaining,
             &phase_progress,
         );
-        
+
         let estimated_total_time = self.estimate_total_time(
             current_phase,
             &phase_progress,
@@ -97,13 +95,10 @@ impl ProgressTracker {
             &phases_remaining,
             total_elapsed,
         );
-        
-        let status_message = self.generate_status_message(
-            current_phase,
-            &phase_progress,
-            overall_percentage,
-        );
-        
+
+        let status_message =
+            self.generate_status_message(current_phase, &phase_progress, overall_percentage);
+
         OverallSyncProgress {
             current_phase: current_phase.name().to_string(),
             phase_progress,
@@ -115,15 +110,12 @@ impl ProgressTracker {
             status_message,
         }
     }
-    
+
     /// Get list of completed phases from history
     fn get_completed_phases(&self, history: &[PhaseTransition]) -> Vec<String> {
-        history.iter()
-            .map(|t| t.from_phase.clone())
-            .filter(|phase| phase != "Idle")
-            .collect()
+        history.iter().map(|t| t.from_phase.clone()).filter(|phase| phase != "Idle").collect()
     }
-    
+
     /// Get list of remaining phases
     fn get_remaining_phases(
         &self,
@@ -131,7 +123,7 @@ impl ProgressTracker {
         features: &EnabledFeatures,
     ) -> Vec<String> {
         let mut remaining = Vec::new();
-        
+
         match current_phase {
             SyncPhase::Idle => {
                 remaining.push(PHASE_DOWNLOADING_HEADERS.to_string());
@@ -144,8 +136,10 @@ impl ProgressTracker {
                 }
                 // Blocks phase is dynamic based on filter matches
             }
-            
-            SyncPhase::DownloadingHeaders { .. } => {
+
+            SyncPhase::DownloadingHeaders {
+                ..
+            } => {
                 if features.masternodes {
                     remaining.push(PHASE_DOWNLOADING_MNLIST.to_string());
                 }
@@ -154,28 +148,34 @@ impl ProgressTracker {
                     remaining.push(PHASE_DOWNLOADING_FILTERS.to_string());
                 }
             }
-            
-            SyncPhase::DownloadingMnList { .. } => {
+
+            SyncPhase::DownloadingMnList {
+                ..
+            } => {
                 if features.filters {
                     remaining.push(PHASE_DOWNLOADING_CFHEADERS.to_string());
                     remaining.push(PHASE_DOWNLOADING_FILTERS.to_string());
                 }
             }
-            
-            SyncPhase::DownloadingCFHeaders { .. } => {
+
+            SyncPhase::DownloadingCFHeaders {
+                ..
+            } => {
                 remaining.push(PHASE_DOWNLOADING_FILTERS.to_string());
             }
-            
-            SyncPhase::DownloadingFilters { .. } => {
+
+            SyncPhase::DownloadingFilters {
+                ..
+            } => {
                 // Blocks phase is dynamic
             }
-            
+
             _ => {}
         }
-        
+
         remaining
     }
-    
+
     /// Calculate overall completion percentage
     fn calculate_overall_percentage(
         &self,
@@ -187,7 +187,7 @@ impl ProgressTracker {
         // Calculate total weight
         let mut total_weight = 0.0;
         let mut completed_weight = 0.0;
-        
+
         // Add completed phases
         for phase in completed {
             if let Some(weight) = self.phase_weights.get(phase) {
@@ -195,28 +195,28 @@ impl ProgressTracker {
                 completed_weight += weight;
             }
         }
-        
+
         // Add current phase
         let current_phase_name = current_phase.name();
         if let Some(weight) = self.phase_weights.get(current_phase_name) {
             total_weight += weight;
             completed_weight += weight * (phase_progress.percentage / 100.0);
         }
-        
+
         // Add remaining phases
         for phase in remaining {
             if let Some(weight) = self.phase_weights.get(phase) {
                 total_weight += weight;
             }
         }
-        
+
         if total_weight > 0.0 {
             (completed_weight / total_weight) * 100.0
         } else {
             0.0
         }
     }
-    
+
     /// Estimate total sync time
     fn estimate_total_time(
         &self,
@@ -230,13 +230,13 @@ impl ProgressTracker {
         if elapsed.as_secs_f64() < 1.0 {
             return None;
         }
-        
+
         let current_phase_name = current_phase.name();
-        
+
         // Calculate total weight and completed weight
         let mut total_weight = 0.0;
         let mut completed_weight = 0.0;
-        
+
         // Add completed phases weight
         for phase in completed {
             if let Some(weight) = self.phase_weights.get(phase) {
@@ -244,20 +244,20 @@ impl ProgressTracker {
                 completed_weight += weight;
             }
         }
-        
+
         // Add current phase weight (partially completed)
         if let Some(current_weight) = self.phase_weights.get(current_phase_name) {
             total_weight += current_weight;
             completed_weight += current_weight * (current_progress.percentage / 100.0);
         }
-        
+
         // Add remaining phases weight
         for phase in remaining {
             if let Some(weight) = self.phase_weights.get(phase) {
                 total_weight += weight;
             }
         }
-        
+
         // Calculate estimated total time based on weights
         if completed_weight > 0.0 && total_weight > 0.0 {
             let estimated_total_secs = (elapsed.as_secs_f64() / completed_weight) * total_weight;
@@ -266,7 +266,7 @@ impl ProgressTracker {
             None
         }
     }
-    
+
     /// Generate human-readable status message
     fn generate_status_message(
         &self,
@@ -276,39 +276,44 @@ impl ProgressTracker {
     ) -> String {
         match phase {
             SyncPhase::Idle => "Preparing to sync".to_string(),
-            
-            SyncPhase::DownloadingHeaders { .. } => {
+
+            SyncPhase::DownloadingHeaders {
+                ..
+            } => {
                 format!(
                     "Downloading headers: {} at {:.1} headers/sec",
-                    progress.items_completed,
-                    progress.rate
+                    progress.items_completed, progress.rate
                 )
             }
-            
-            SyncPhase::DownloadingMnList { .. } => {
-                format!(
-                    "Syncing masternode lists: {} processed",
-                    progress.items_completed
-                )
+
+            SyncPhase::DownloadingMnList {
+                ..
+            } => {
+                format!("Syncing masternode lists: {} processed", progress.items_completed)
             }
-            
-            SyncPhase::DownloadingCFHeaders { .. } => {
+
+            SyncPhase::DownloadingCFHeaders {
+                ..
+            } => {
                 format!(
                     "Downloading filter headers: {:.1}% at {:.1} headers/sec",
-                    progress.percentage,
-                    progress.rate
+                    progress.percentage, progress.rate
                 )
             }
-            
-            SyncPhase::DownloadingFilters { .. } => {
+
+            SyncPhase::DownloadingFilters {
+                ..
+            } => {
                 format!(
                     "Downloading filters: {} of {}",
                     progress.items_completed,
                     progress.items_total.unwrap_or(0)
                 )
             }
-            
-            SyncPhase::DownloadingBlocks { .. } => {
+
+            SyncPhase::DownloadingBlocks {
+                ..
+            } => {
                 format!(
                     "Downloading blocks: {} of {} ({:.1}%)",
                     progress.items_completed,
@@ -316,8 +321,10 @@ impl ProgressTracker {
                     progress.percentage
                 )
             }
-            
-            SyncPhase::FullySynced { .. } => {
+
+            SyncPhase::FullySynced {
+                ..
+            } => {
                 format!("Fully synchronized ({:.1}% complete)", overall_percentage)
             }
         }
@@ -343,7 +350,7 @@ pub fn format_duration(duration: Duration) -> String {
     let hours = total_secs / 3600;
     let minutes = (total_secs % 3600) / 60;
     let seconds = total_secs % 60;
-    
+
     if hours > 0 {
         format!("{}h {}m {}s", hours, minutes, seconds)
     } else if minutes > 0 {

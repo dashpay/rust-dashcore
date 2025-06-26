@@ -15,15 +15,17 @@ use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
 use dashcore::Network;
 
-use crate::client::ClientConfig;
 use crate::client::config::MempoolStrategy;
+use crate::client::ClientConfig;
 use crate::error::{NetworkError, NetworkResult, SpvError as Error};
 use crate::network::addrv2::AddrV2Handler;
 use crate::network::constants::*;
 use crate::network::discovery::DnsDiscovery;
 use crate::network::persist::PeerStore;
 use crate::network::pool::ConnectionPool;
-use crate::network::reputation::{PeerReputationManager, ReputationAware, misbehavior_scores, positive_scores};
+use crate::network::reputation::{
+    misbehavior_scores, positive_scores, PeerReputationManager, ReputationAware,
+};
 use crate::network::{HandshakeManager, NetworkManager, TcpConnection};
 use crate::types::PeerInfo;
 
@@ -72,12 +74,12 @@ impl MultiPeerNetworkManager {
         let discovery = DnsDiscovery::new().await?;
         let data_dir = config.storage_path.clone().unwrap_or_else(|| PathBuf::from("."));
         let peer_store = PeerStore::new(config.network, data_dir.clone());
-        
+
         let reputation_manager = Arc::new(PeerReputationManager::new());
-        
+
         // Load reputation data if available
         let reputation_path = data_dir.join("peer_reputation.json");
-        
+
         // Ensure the directory exists before attempting to load
         if let Some(parent_dir) = reputation_path.parent() {
             if !parent_dir.exists() {
@@ -86,7 +88,7 @@ impl MultiPeerNetworkManager {
                 }
             }
         }
-        
+
         if let Err(e) = reputation_manager.load_from_storage(&reputation_path).await {
             log::warn!("Failed to load peer reputation data: {}", e);
         }
@@ -159,7 +161,7 @@ impl MultiPeerNetworkManager {
             log::warn!("Not connecting to {} due to bad reputation", addr);
             return;
         }
-        
+
         // Check if already connected or connecting
         if self.pool.is_connected(&addr).await || self.pool.is_connecting(&addr).await {
             return;
@@ -169,7 +171,7 @@ impl MultiPeerNetworkManager {
         if !self.pool.mark_connecting(addr).await {
             return; // Already being connected to
         }
-        
+
         // Record connection attempt
         self.reputation_manager.record_connection_attempt(addr).await;
 
@@ -187,14 +189,16 @@ impl MultiPeerNetworkManager {
         tasks.spawn(async move {
             log::debug!("Attempting to connect to {}", addr);
 
-            match TcpConnection::connect(addr, CONNECTION_TIMEOUT.as_secs(), read_timeout, network).await {
+            match TcpConnection::connect(addr, CONNECTION_TIMEOUT.as_secs(), read_timeout, network)
+                .await
+            {
                 Ok(mut conn) => {
                     // Perform handshake
                     let mut handshake_manager = HandshakeManager::new(network, mempool_strategy);
                     match handshake_manager.perform_handshake(&mut conn).await {
                         Ok(_) => {
                             log::info!("Successfully connected to {}", addr);
-                            
+
                             // Record successful connection
                             reputation_manager.record_successful_connection(addr).await;
 
@@ -221,11 +225,13 @@ impl MultiPeerNetworkManager {
                         Err(e) => {
                             log::warn!("Handshake failed with {}: {}", addr, e);
                             // Update reputation for handshake failure
-                            reputation_manager.update_reputation(
-                                addr,
-                                misbehavior_scores::INVALID_MESSAGE,
-                                "Handshake failed",
-                            ).await;
+                            reputation_manager
+                                .update_reputation(
+                                    addr,
+                                    misbehavior_scores::INVALID_MESSAGE,
+                                    "Handshake failed",
+                                )
+                                .await;
                             // For handshake failures, try again later
                             tokio::time::sleep(RECONNECT_DELAY).await;
                         }
@@ -234,11 +240,13 @@ impl MultiPeerNetworkManager {
                 Err(e) => {
                     log::debug!("Failed to connect to {}: {}", addr, e);
                     // Minor reputation penalty for connection failure
-                    reputation_manager.update_reputation(
-                        addr,
-                        misbehavior_scores::TIMEOUT / 2,
-                        "Connection failed",
-                    ).await;
+                    reputation_manager
+                        .update_reputation(
+                            addr,
+                            misbehavior_scores::TIMEOUT / 2,
+                            "Connection failed",
+                        )
+                        .await;
                 }
             }
         });
@@ -304,7 +312,10 @@ impl MultiPeerNetworkManager {
                             }
                             NetworkMessage::SendHeaders2 => {
                                 // Peer is indicating they will send us compressed headers
-                                log::info!("Peer {} sent SendHeaders2 - they will send compressed headers", addr);
+                                log::info!(
+                                    "Peer {} sent SendHeaders2 - they will send compressed headers",
+                                    addr
+                                );
                                 let mut conn_guard = conn.write().await;
                                 conn_guard.set_peer_sent_sendheaders2(true);
                                 drop(conn_guard);
@@ -364,7 +375,11 @@ impl MultiPeerNetworkManager {
                             }
                             NetworkMessage::Headers(headers) => {
                                 // Log headers messages specifically
-                                log::info!("📨 Received Headers message from {} with {} headers!", addr, headers.len());
+                                log::info!(
+                                    "📨 Received Headers message from {} with {} headers!",
+                                    addr,
+                                    headers.len()
+                                );
                                 // Forward to client
                             }
                             NetworkMessage::Headers2(headers2) => {
@@ -374,15 +389,24 @@ impl MultiPeerNetworkManager {
                             }
                             NetworkMessage::GetHeaders(_) => {
                                 // SPV clients don't serve headers to peers
-                                log::debug!("Received GetHeaders from {} - ignoring (SPV client)", addr);
+                                log::debug!(
+                                    "Received GetHeaders from {} - ignoring (SPV client)",
+                                    addr
+                                );
                                 continue; // Don't forward to client
                             }
                             NetworkMessage::GetHeaders2(_) => {
                                 // SPV clients don't serve compressed headers to peers
-                                log::debug!("Received GetHeaders2 from {} - ignoring (SPV client)", addr);
+                                log::debug!(
+                                    "Received GetHeaders2 from {} - ignoring (SPV client)",
+                                    addr
+                                );
                                 continue; // Don't forward to client
                             }
-                            NetworkMessage::Unknown { command, payload } => {
+                            NetworkMessage::Unknown {
+                                command,
+                                payload,
+                            } => {
                                 // Log unknown messages with more detail
                                 log::warn!("Received unknown message from {}: command='{}', payload_len={}", 
                                          addr, command, payload.len());
@@ -414,11 +438,13 @@ impl MultiPeerNetworkManager {
                             NetworkError::Timeout => {
                                 log::debug!("Timeout reading from {}, continuing...", addr);
                                 // Minor reputation penalty for timeout
-                                reputation_manager.update_reputation(
-                                    addr,
-                                    misbehavior_scores::TIMEOUT,
-                                    "Read timeout",
-                                ).await;
+                                reputation_manager
+                                    .update_reputation(
+                                        addr,
+                                        misbehavior_scores::TIMEOUT,
+                                        "Read timeout",
+                                    )
+                                    .await;
                                 continue;
                             }
                             _ => {
@@ -434,11 +460,13 @@ impl MultiPeerNetworkManager {
                                             error_msg
                                         );
                                         // Reputation penalty for invalid data
-                                        reputation_manager.update_reputation(
-                                            addr,
-                                            misbehavior_scores::INVALID_TRANSACTION,
-                                            "Invalid transaction type in block",
-                                        ).await;
+                                        reputation_manager
+                                            .update_reputation(
+                                                addr,
+                                                misbehavior_scores::INVALID_TRANSACTION,
+                                                "Invalid transaction type in block",
+                                            )
+                                            .await;
                                     } else if error_msg
                                         .contains("Failed to decode transactions for block")
                                     {
@@ -483,15 +511,14 @@ impl MultiPeerNetworkManager {
             // Remove from pool
             log::warn!("Disconnecting from {} (peer reader loop ended)", addr);
             pool.remove_connection(&addr).await;
-            
+
             // Give small positive reputation if peer maintained long connection
             let conn_duration = Duration::from_secs(60 * loop_iteration); // Rough estimate
-            if conn_duration > Duration::from_secs(3600) { // 1 hour
-                reputation_manager.update_reputation(
-                    addr,
-                    positive_scores::LONG_UPTIME,
-                    "Long connection uptime",
-                ).await;
+            if conn_duration > Duration::from_secs(3600) {
+                // 1 hour
+                reputation_manager
+                    .update_reputation(addr, positive_scores::LONG_UPTIME, "Long connection uptime")
+                    .await;
             }
         });
     }
@@ -552,7 +579,6 @@ impl MultiPeerNetworkManager {
                         // Try known addresses first, sorted by reputation
                         let known = addrv2_handler.get_known_addresses().await;
                         let needed = TARGET_PEERS.saturating_sub(count);
-                        
                         // Select best peers based on reputation
                         let best_peers = reputation_manager.select_best_peers(known, needed * 2).await;
                         let mut attempted = 0;
@@ -623,7 +649,7 @@ impl MultiPeerNetworkManager {
                             log::warn!("Failed to save peers: {}", e);
                         }
                     }
-                    
+
                     // Save reputation data periodically
                     let storage_path = data_dir.join("peer_reputation.json");
                     if let Err(e) = reputation_manager.save_to_storage(&storage_path).await {
@@ -645,10 +671,8 @@ impl MultiPeerNetworkManager {
         }
 
         // For filter-related messages, we need a peer that supports compact filters
-        let requires_compact_filters = matches!(
-            &message,
-            NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_)
-        );
+        let requires_compact_filters =
+            matches!(&message, NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_));
 
         let selected_peer = if requires_compact_filters {
             // Find a peer that supports compact filters
@@ -657,13 +681,13 @@ impl MultiPeerNetworkManager {
                 let conn_guard = conn.read().await;
                 let peer_info = conn_guard.peer_info();
                 drop(conn_guard);
-                
+
                 if peer_info.supports_compact_filters() {
                     filter_peer = Some(*addr);
                     break;
                 }
             }
-            
+
             match filter_peer {
                 Some(addr) => {
                     log::debug!("Selected peer {} for compact filter request", addr);
@@ -672,7 +696,7 @@ impl MultiPeerNetworkManager {
                 None => {
                     log::warn!("No peers support compact filters, cannot send {}", message.cmd());
                     return Err(NetworkError::ProtocolError(
-                        "No peers support compact filters".to_string()
+                        "No peers support compact filters".to_string(),
                     ));
                 }
             }
@@ -818,21 +842,19 @@ impl MultiPeerNetworkManager {
     pub async fn peer_count_async(&self) -> usize {
         self.pool.connection_count().await
     }
-    
+
     /// Get reputation information for all peers
     pub async fn get_peer_reputations(&self) -> HashMap<SocketAddr, (i32, bool)> {
         let reputations = self.reputation_manager.get_all_reputations().await;
-        reputations.into_iter()
-            .map(|(addr, rep)| (addr, (rep.score, rep.is_banned())))
-            .collect()
+        reputations.into_iter().map(|(addr, rep)| (addr, (rep.score, rep.is_banned()))).collect()
     }
-    
+
     /// Get the last peer that sent us a message
     pub async fn get_last_message_peer(&self) -> Option<SocketAddr> {
         let last_peer = self.last_message_peer.lock().await;
         *last_peer
     }
-    
+
     /// Get the last message peer as a PeerId
     pub async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
         if let Some(addr) = self.get_last_message_peer().await {
@@ -846,24 +868,26 @@ impl MultiPeerNetworkManager {
             crate::types::PeerId(0)
         }
     }
-    
+
     /// Ban a specific peer manually
     pub async fn ban_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
         log::info!("Manually banning peer {} - reason: {}", addr, reason);
-        
+
         // Disconnect the peer first
         self.disconnect_peer(addr, reason).await?;
-        
+
         // Update reputation to trigger ban
-        self.reputation_manager.update_reputation(
-            *addr,
-            misbehavior_scores::INVALID_HEADER * 2, // Severe penalty
-            reason,
-        ).await;
-        
+        self.reputation_manager
+            .update_reputation(
+                *addr,
+                misbehavior_scores::INVALID_HEADER * 2, // Severe penalty
+                reason,
+            )
+            .await;
+
         Ok(())
     }
-    
+
     /// Unban a specific peer
     pub async fn unban_peer(&self, addr: &SocketAddr) {
         self.reputation_manager.unban_peer(addr).await;
@@ -881,7 +905,7 @@ impl MultiPeerNetworkManager {
                 log::warn!("Failed to save peers on shutdown: {}", e);
             }
         }
-        
+
         // Save reputation data before shutdown
         let reputation_path = self.data_dir.join("peer_reputation.json");
         if let Err(e) = self.reputation_manager.save_to_storage(&reputation_path).await {
@@ -982,7 +1006,7 @@ impl NetworkManager for MultiPeerNetworkManager {
                 let mut last_peer = self.last_message_peer.lock().await;
                 *last_peer = Some(addr);
                 drop(last_peer);
-                
+
                 // Reduce verbosity for common sync messages
                 match &msg {
                     NetworkMessage::Headers(_) | NetworkMessage::CFilter(_) => {
@@ -1101,79 +1125,102 @@ impl NetworkManager for MultiPeerNetworkManager {
 
         tx
     }
-    
+
     async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
         let connections = self.pool.get_all_connections().await;
-        
+
         if connections.is_empty() {
             log::debug!("get_peer_best_height: No connections available");
             return Ok(None);
         }
-        
+
         let mut best_height = 0u32;
         let mut peer_count = 0;
-        
+
         for (addr, conn) in connections.iter() {
             let conn_guard = conn.read().await;
             let peer_info = conn_guard.peer_info();
             peer_count += 1;
-            
-            log::debug!("get_peer_best_height: Peer {} - best_height: {:?}, version: {:?}, connected: {}", 
-                       addr, peer_info.best_height, peer_info.version, peer_info.connected);
-            
+
+            log::debug!(
+                "get_peer_best_height: Peer {} - best_height: {:?}, version: {:?}, connected: {}",
+                addr,
+                peer_info.best_height,
+                peer_info.version,
+                peer_info.connected
+            );
+
             if let Some(peer_height) = peer_info.best_height {
                 if peer_height > 0 {
                     best_height = best_height.max(peer_height as u32);
-                    log::debug!("get_peer_best_height: Updated best_height to {} from peer {}", best_height, addr);
+                    log::debug!(
+                        "get_peer_best_height: Updated best_height to {} from peer {}",
+                        best_height,
+                        addr
+                    );
                 }
             }
         }
-        
-        log::debug!("get_peer_best_height: Checked {} peers, best_height: {}", peer_count, best_height);
-        
+
+        log::debug!(
+            "get_peer_best_height: Checked {} peers, best_height: {}",
+            peer_count,
+            best_height
+        );
+
         if best_height > 0 {
             Ok(Some(best_height))
         } else {
             Ok(None)
         }
     }
-    
-    async fn has_peer_with_service(&self, service_flags: dashcore::network::constants::ServiceFlags) -> bool {
+
+    async fn has_peer_with_service(
+        &self,
+        service_flags: dashcore::network::constants::ServiceFlags,
+    ) -> bool {
         let connections = self.pool.get_all_connections().await;
-        
+
         for (_, conn) in connections.iter() {
             let conn_guard = conn.read().await;
             let peer_info = conn_guard.peer_info();
-            if peer_info.services
+            if peer_info
+                .services
                 .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))
-                .unwrap_or(false) {
+                .unwrap_or(false)
+            {
                 return true;
             }
         }
-        
+
         false
     }
-    
-    async fn get_peers_with_service(&self, service_flags: dashcore::network::constants::ServiceFlags) -> Vec<PeerInfo> {
+
+    async fn get_peers_with_service(
+        &self,
+        service_flags: dashcore::network::constants::ServiceFlags,
+    ) -> Vec<PeerInfo> {
         let connections = self.pool.get_all_connections().await;
         let mut matching_peers = Vec::new();
-        
+
         for (_, conn) in connections.iter() {
             let conn_guard = conn.read().await;
             let peer_info = conn_guard.peer_info();
-            if peer_info.services
+            if peer_info
+                .services
                 .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))
-                .unwrap_or(false) {
+                .unwrap_or(false)
+            {
                 matching_peers.push(peer_info);
             }
         }
-        
+
         matching_peers
     }
-    
+
     async fn has_headers2_peer(&self) -> bool {
         let connections = self.pool.get_all_connections().await;
-        
+
         for (_, conn) in connections.iter() {
             let conn_guard = conn.read().await;
             // Check if this peer can send us headers2
@@ -1181,10 +1228,10 @@ impl NetworkManager for MultiPeerNetworkManager {
                 return true;
             }
         }
-        
+
         false
     }
-    
+
     async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
         // Call the instance method to avoid code duplication
         self.get_last_message_peer_id().await

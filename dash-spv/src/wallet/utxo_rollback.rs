@@ -4,12 +4,12 @@
 //! during blockchain reorganizations. It maintains snapshots of UTXO state at key heights
 //! and tracks transaction confirmation status changes.
 
-use dashcore::{BlockHash, OutPoint, Transaction, Txid};
-use std::collections::{HashMap, VecDeque};
-use serde::{Deserialize, Serialize};
+use super::{Utxo, WalletState};
 use crate::error::{Result, StorageError};
 use crate::storage::StorageManager;
-use super::{Utxo, WalletState};
+use dashcore::{BlockHash, OutPoint, Transaction, Txid};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
 
 /// Maximum number of rollback snapshots to maintain
 const MAX_ROLLBACK_SNAPSHOTS: usize = 100;
@@ -102,7 +102,7 @@ impl UTXORollbackManager {
         persist_snapshots: bool,
     ) -> Result<Self> {
         let mut manager = Self::new(persist_snapshots);
-        
+
         // Load persisted snapshots if enabled
         if persist_snapshots {
             if let Ok(Some(data)) = storage.load_metadata("utxo_snapshots").await {
@@ -110,7 +110,7 @@ impl UTXORollbackManager {
                     manager.snapshots = snapshots;
                 }
             }
-            
+
             // Load transaction statuses
             if let Ok(Some(data)) = storage.load_metadata("tx_statuses").await {
                 if let Ok(statuses) = bincode::deserialize(&data) {
@@ -118,10 +118,10 @@ impl UTXORollbackManager {
                 }
             }
         }
-        
+
         // Rebuild UTXO index from current wallet state
         manager.rebuild_utxo_index(storage).await?;
-        
+
         Ok(manager)
     }
 
@@ -172,10 +172,10 @@ impl UTXORollbackManager {
             let txid = tx.txid();
 
             // Track transaction confirmation status change
-            let old_status = self.tx_statuses.get(&txid).copied()
-                .unwrap_or(TransactionStatus::Unconfirmed);
+            let old_status =
+                self.tx_statuses.get(&txid).copied().unwrap_or(TransactionStatus::Unconfirmed);
             let new_status = TransactionStatus::Confirmed(height);
-            
+
             if old_status != new_status {
                 tx_changes.insert(txid, (old_status, new_status));
                 self.tx_statuses.insert(txid, new_status);
@@ -184,13 +184,13 @@ impl UTXORollbackManager {
             // Process inputs (spent UTXOs)
             for input in &tx.input {
                 let outpoint = input.previous_output;
-                
+
                 if let Some(_utxo) = self.utxo_index.remove(&outpoint) {
                     changes.push(UTXOChange::Spent(outpoint));
-                    
+
                     // Update wallet state
                     wallet_state.mark_transaction_unconfirmed(&outpoint.txid);
-                    
+
                     // Remove from storage
                     storage.remove_utxo(&outpoint).await?;
                 }
@@ -210,18 +210,21 @@ impl UTXORollbackManager {
                         outpoint,
                         output.clone(),
                         // Address would come from wallet's address matching
-                        dashcore::Address::from_script(&output.script_pubkey, dashcore::Network::Dash)
-                            .unwrap_or_else(|_| panic!("Invalid script")),
+                        dashcore::Address::from_script(
+                            &output.script_pubkey,
+                            dashcore::Network::Dash,
+                        )
+                        .unwrap_or_else(|_| panic!("Invalid script")),
                         height,
                         false, // Coinbase detection would be done elsewhere
                     );
 
                     changes.push(UTXOChange::Created(utxo.clone()));
                     self.utxo_index.insert(outpoint, utxo.clone());
-                    
+
                     // Update wallet state
                     wallet_state.set_transaction_height(&txid, Some(height));
-                    
+
                     // Store in storage
                     storage.store_utxo(&outpoint, &utxo).await?;
                 }
@@ -272,7 +275,11 @@ impl UTXORollbackManager {
                         // For now, mark as unconfirmed
                         wallet_state.mark_transaction_unconfirmed(&outpoint.txid);
                     }
-                    UTXOChange::StatusChanged { outpoint, old_status, .. } => {
+                    UTXOChange::StatusChanged {
+                        outpoint,
+                        old_status,
+                        ..
+                    } => {
                         // Restore old status
                         if let Some(utxo) = self.utxo_index.get_mut(outpoint) {
                             utxo.set_confirmed(*old_status);
@@ -284,7 +291,7 @@ impl UTXORollbackManager {
             // Reverse transaction status changes
             for (txid, (old_status, _)) in snapshot.tx_status_changes {
                 self.tx_statuses.insert(txid, old_status);
-                
+
                 match old_status {
                     TransactionStatus::Unconfirmed => {
                         wallet_state.mark_transaction_unconfirmed(&txid);
@@ -307,10 +314,7 @@ impl UTXORollbackManager {
 
     /// Get snapshots in a height range
     pub fn get_snapshots_in_range(&self, start: u32, end: u32) -> Vec<&UTXOSnapshot> {
-        self.snapshots
-            .iter()
-            .filter(|s| s.height >= start && s.height <= end)
-            .collect()
+        self.snapshots.iter().filter(|s| s.height >= start && s.height <= end).collect()
     }
 
     /// Get the latest snapshot
@@ -347,7 +351,7 @@ impl UTXORollbackManager {
     pub fn clear_snapshots(&mut self) {
         self.snapshots.clear();
     }
-    
+
     /// Get snapshot statistics
     pub fn get_snapshot_info(&self) -> (usize, u32, u32) {
         let count = self.snapshots.len();
@@ -382,9 +386,11 @@ impl UTXORollbackManager {
         // Check that all UTXOs have valid data
         for (outpoint, utxo) in &self.utxo_index {
             if outpoint != &utxo.outpoint {
-                return Err(StorageError::InconsistentState(
-                    format!("UTXO outpoint mismatch: {:?} vs {:?}", outpoint, utxo.outpoint)
-                ).into());
+                return Err(StorageError::InconsistentState(format!(
+                    "UTXO outpoint mismatch: {:?} vs {:?}",
+                    outpoint, utxo.outpoint
+                ))
+                .into());
             }
         }
 
@@ -392,9 +398,11 @@ impl UTXORollbackManager {
         let mut prev_height = 0;
         for snapshot in &self.snapshots {
             if snapshot.height <= prev_height {
-                return Err(StorageError::InconsistentState(
-                    format!("Snapshots not in ascending order: {} <= {}", snapshot.height, prev_height)
-                ).into());
+                return Err(StorageError::InconsistentState(format!(
+                    "Snapshots not in ascending order: {} <= {}",
+                    snapshot.height, prev_height
+                ))
+                .into());
             }
             prev_height = snapshot.height;
         }
@@ -406,9 +414,9 @@ impl UTXORollbackManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::MemoryStorageManager;
     use dashcore::{Amount, ScriptBuf, TxOut};
     use dashcore_hashes::Hash;
-    use crate::storage::MemoryStorageManager;
 
     async fn create_test_manager() -> UTXORollbackManager {
         UTXORollbackManager::new(false)
@@ -419,11 +427,12 @@ mod tests {
             value,
             script_pubkey: ScriptBuf::new(),
         };
-        
+
         let address = dashcore::Address::from_script(
             &ScriptBuf::new_p2pkh(&dashcore::PubkeyHash::from_byte_array([1u8; 20])),
-            dashcore::Network::Testnet
-        ).unwrap();
+            dashcore::Network::Testnet,
+        )
+        .unwrap();
 
         Utxo::new(outpoint, txout, address, height, false)
     }
@@ -431,18 +440,12 @@ mod tests {
     #[tokio::test]
     async fn test_snapshot_creation() {
         let mut manager = create_test_manager().await;
-        
+
         let block_hash = BlockHash::from_byte_array([1u8; 32]);
-        let changes = vec![
-            UTXOChange::Created(create_test_utxo(
-                OutPoint::null(),
-                100000,
-                100
-            )),
-        ];
-        
+        let changes = vec![UTXOChange::Created(create_test_utxo(OutPoint::null(), 100000, 100))];
+
         manager.create_snapshot(100, block_hash, changes, HashMap::new()).unwrap();
-        
+
         assert_eq!(manager.snapshots.len(), 1);
         let snapshot = manager.get_latest_snapshot().unwrap();
         assert_eq!(snapshot.height, 100);
@@ -452,13 +455,13 @@ mod tests {
     #[tokio::test]
     async fn test_snapshot_limit() {
         let mut manager = UTXORollbackManager::with_max_snapshots(5, false);
-        
+
         // Create more snapshots than the limit
         for i in 0..10 {
             let block_hash = BlockHash::from_byte_array([i as u8; 32]);
             manager.create_snapshot(i, block_hash, vec![], HashMap::new()).unwrap();
         }
-        
+
         // Should only keep the last 5
         assert_eq!(manager.snapshots.len(), 5);
         assert_eq!(manager.snapshots.front().unwrap().height, 5);
@@ -468,25 +471,19 @@ mod tests {
     #[tokio::test]
     async fn test_transaction_status_tracking() {
         let mut manager = create_test_manager().await;
-        
+
         let txid = Txid::from_byte_array([1u8; 32]);
-        
+
         // Initially unconfirmed
         assert_eq!(manager.get_transaction_status(&txid), None);
-        
+
         // Mark as confirmed
         manager.tx_statuses.insert(txid, TransactionStatus::Confirmed(100));
-        assert_eq!(
-            manager.get_transaction_status(&txid),
-            Some(TransactionStatus::Confirmed(100))
-        );
-        
+        assert_eq!(manager.get_transaction_status(&txid), Some(TransactionStatus::Confirmed(100)));
+
         // Mark as conflicted
         manager.mark_transaction_conflicted(&txid);
-        assert_eq!(
-            manager.get_transaction_status(&txid),
-            Some(TransactionStatus::Conflicted)
-        );
+        assert_eq!(manager.get_transaction_status(&txid), Some(TransactionStatus::Conflicted));
     }
 
     #[tokio::test]
@@ -494,7 +491,7 @@ mod tests {
         let mut manager = create_test_manager().await;
         let mut wallet_state = WalletState::new(dashcore::Network::Testnet);
         let mut storage = MemoryStorageManager::new().await.unwrap();
-        
+
         // Create snapshots at heights 100, 110, 120
         for height in [100, 110, 120] {
             let block_hash = BlockHash::from_byte_array([height as u8; 32]);
@@ -502,20 +499,21 @@ mod tests {
                 txid: Txid::from_byte_array([height as u8; 32]),
                 vout: 0,
             };
-            
+
             let utxo = create_test_utxo(outpoint, 100000, height);
             manager.utxo_index.insert(outpoint, utxo.clone());
-            
+
             let changes = vec![UTXOChange::Created(utxo)];
             manager.create_snapshot(height, block_hash, changes, HashMap::new()).unwrap();
         }
-        
+
         assert_eq!(manager.snapshots.len(), 3);
         assert_eq!(manager.utxo_index.len(), 3);
-        
+
         // Rollback to height 105 (should remove snapshots at 110 and 120)
-        let rolled_back = manager.rollback_to_height(105, &mut wallet_state, &mut storage).await.unwrap();
-        
+        let rolled_back =
+            manager.rollback_to_height(105, &mut wallet_state, &mut storage).await.unwrap();
+
         assert_eq!(rolled_back.len(), 2);
         assert_eq!(manager.snapshots.len(), 1);
         assert_eq!(manager.utxo_index.len(), 1);
@@ -524,15 +522,15 @@ mod tests {
     #[tokio::test]
     async fn test_consistency_validation() {
         let mut manager = create_test_manager().await;
-        
+
         // Add valid UTXO
         let outpoint = OutPoint::null();
         let utxo = create_test_utxo(outpoint, 100000, 100);
         manager.utxo_index.insert(outpoint, utxo);
-        
+
         // Should pass validation
         assert!(manager.validate_consistency().is_ok());
-        
+
         // Add inconsistent UTXO (wrong outpoint)
         let wrong_outpoint = OutPoint {
             txid: Txid::from_byte_array([1u8; 32]),
@@ -541,7 +539,7 @@ mod tests {
         let mut bad_utxo = create_test_utxo(outpoint, 100000, 100);
         bad_utxo.outpoint = wrong_outpoint;
         manager.utxo_index.insert(outpoint, bad_utxo);
-        
+
         // Should fail validation
         assert!(manager.validate_consistency().is_err());
     }

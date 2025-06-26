@@ -10,9 +10,9 @@ use dashcore::network::message_network::VersionMessage;
 use dashcore::Network;
 // Hash trait not needed in current implementation
 
+use crate::client::config::MempoolStrategy;
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::connection::TcpConnection;
-use crate::client::config::MempoolStrategy;
 
 /// Handshake state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,8 +78,12 @@ impl HandshakeManager {
         loop {
             // Check if we've exceeded the overall handshake timeout
             if start_time.elapsed() > HANDSHAKE_TIMEOUT {
-                tracing::error!("Handshake timeout after {}s - version_received={}, verack_received={}", 
-                    HANDSHAKE_TIMEOUT.as_secs(), self.version_received, self.verack_received);
+                tracing::error!(
+                    "Handshake timeout after {}s - version_received={}, verack_received={}",
+                    HANDSHAKE_TIMEOUT.as_secs(),
+                    self.version_received,
+                    self.verack_received
+                );
                 return Err(NetworkError::Timeout);
             }
 
@@ -115,8 +119,11 @@ impl HandshakeManager {
             }
         }
 
-        tracing::info!("Handshake completed successfully - version_received={}, verack_received={}", 
-            self.version_received, self.verack_received);
+        tracing::info!(
+            "Handshake completed successfully - version_received={}, verack_received={}",
+            self.version_received,
+            self.verack_received
+        );
         Ok(())
     }
 
@@ -141,7 +148,7 @@ impl HandshakeManager {
                 self.peer_version = Some(version_msg.version);
                 self.peer_services = Some(version_msg.services);
                 self.version_received = true;
-                
+
                 // Update connection's peer information
                 connection.update_peer_info(&version_msg);
 
@@ -159,21 +166,22 @@ impl HandshakeManager {
                 // Then send verack
                 tracing::debug!("Sending verack in response to version");
                 connection.send_message(NetworkMessage::Verack).await?;
-                tracing::debug!("Sent verack, version_received={}, verack_received={}", 
-                              self.version_received, self.verack_received);
+                tracing::debug!(
+                    "Sent verack, version_received={}, verack_received={}",
+                    self.version_received,
+                    self.verack_received
+                );
 
                 // Update state
                 self.state = HandshakeState::VersionReceivedVerackSent;
 
                 // Check if handshake is complete (both version and verack received)
                 if self.version_received && self.verack_received {
-                    tracing::info!(
-                        "Handshake complete - both version and verack exchanged!"
-                    );
-                    
+                    tracing::info!("Handshake complete - both version and verack exchanged!");
+
                     // Negotiate headers2 support
                     self.negotiate_headers2(connection).await?;
-                    
+
                     return Ok(Some(HandshakeState::Complete));
                 }
 
@@ -182,19 +190,19 @@ impl HandshakeManager {
             NetworkMessage::Verack => {
                 tracing::debug!("Received verack message, current state: {:?}", self.state);
                 self.verack_received = true;
-                
+
                 // Update state
                 if self.state == HandshakeState::VersionSent {
                     self.state = HandshakeState::VerackReceived;
                 }
-                
+
                 // Check if handshake is complete (both version and verack received)
                 if self.version_received && self.verack_received {
                     tracing::info!("Handshake complete - both version and verack exchanged!");
-                    
+
                     // Negotiate headers2 support
                     self.negotiate_headers2(connection).await?;
-                    
+
                     return Ok(Some(HandshakeState::Complete));
                 } else {
                     tracing::debug!(
@@ -249,10 +257,10 @@ impl HandshakeManager {
             ),
             nonce: rand::random(),
             user_agent: "/rust-dash-spv:0.1.0/".to_string(),
-            start_height: 0,              // SPV client starts at 0
+            start_height: 0, // SPV client starts at 0
             relay: match self.mempool_strategy {
-                MempoolStrategy::FetchAll => true,  // Want all transactions for FetchAll strategy
-                _ => false,                         // Don't want relay for other strategies
+                MempoolStrategy::FetchAll => true, // Want all transactions for FetchAll strategy
+                _ => false,                        // Don't want relay for other strategies
             },
             mn_auth_challenge: [0; 32],   // Not a masternode
             masternode_connection: false, // Not connecting to masternode
@@ -268,12 +276,10 @@ impl HandshakeManager {
     pub fn peer_version(&self) -> Option<u32> {
         self.peer_version
     }
-    
+
     /// Check if peer supports headers2 compression.
     pub fn peer_supports_headers2(&self) -> bool {
-        self.peer_services
-            .map(|services| services.has(NODE_HEADERS_COMPRESSED))
-            .unwrap_or(false)
+        self.peer_services.map(|services| services.has(NODE_HEADERS_COMPRESSED)).unwrap_or(false)
     }
 
     /// Negotiate headers2 support with the peer after handshake completion.
@@ -285,11 +291,11 @@ impl HandshakeManager {
                 connection.send_message(NetworkMessage::SendHeaders2).await?;
             }
         }
-        
+
         // Also send SendHeaders to request headers be pushed to us
         tracing::info!("Sending SendHeaders to request headers be pushed");
         connection.send_message(NetworkMessage::SendHeaders).await?;
-        
+
         Ok(())
     }
 }

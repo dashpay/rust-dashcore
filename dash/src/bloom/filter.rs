@@ -5,10 +5,10 @@ use std::io;
 
 use bitvec::prelude::*;
 
-use crate::consensus::{Decodable, Encodable, ReadExt, encode};
-use crate::network::message_bloom::BloomFlags;
 use super::error::BloomError;
 use super::hash::murmur3;
+use crate::consensus::{Decodable, Encodable, ReadExt, encode};
+use crate::network::message_bloom::BloomFlags;
 
 /// Maximum size of a bloom filter in bytes (36KB)
 pub const MAX_BLOOM_FILTER_SIZE: usize = 36000;
@@ -55,7 +55,8 @@ impl BloomFilter {
         let ln2 = std::f64::consts::LN_2;
         let ln2_squared = ln2 * ln2;
 
-        let filter_size = (-1.0 * elements as f64 * false_positive_rate.ln() / ln2_squared).ceil() as usize;
+        let filter_size =
+            (-1.0 * elements as f64 * false_positive_rate.ln() / ln2_squared).ceil() as usize;
         let filter_size = cmp::max(1, cmp::min(filter_size, MAX_BLOOM_FILTER_SIZE * 8));
 
         let n_hash_funcs = (filter_size as f64 / elements as f64 * ln2).ceil() as u32;
@@ -67,7 +68,7 @@ impl BloomFilter {
         }
 
         let filter = bitvec![u8, Lsb0; 0; filter_size];
-        
+
         Ok(BloomFilter {
             filter,
             n_hash_funcs,
@@ -210,12 +211,12 @@ mod tests {
     #[test]
     fn test_bloom_filter_basic() {
         let mut filter = BloomFilter::new(10, 0.001, 0, BloomFlags::None).unwrap();
-        
+
         // Test insertion and lookup
         filter.insert(b"hello");
         assert!(filter.contains(b"hello"));
         assert!(!filter.contains(b"world"));
-        
+
         filter.insert(b"world");
         assert!(filter.contains(b"hello"));
         assert!(filter.contains(b"world"));
@@ -224,17 +225,17 @@ mod tests {
     #[test]
     fn test_bloom_filter_false_positives() {
         let mut filter = BloomFilter::new(100, 0.01, 0, BloomFlags::None).unwrap();
-        
+
         // Insert some elements
         for i in 0u32..50 {
             filter.insert(&i.to_le_bytes());
         }
-        
+
         // Check inserted elements
         for i in 0u32..50 {
             assert!(filter.contains(&i.to_le_bytes()));
         }
-        
+
         // Count false positives
         let mut false_positives = 0;
         for i in 50u32..1000 {
@@ -242,7 +243,7 @@ mod tests {
                 false_positives += 1;
             }
         }
-        
+
         // Should be roughly around 1% (10 out of 950)
         assert!(false_positives < 50); // Allow some margin
     }
@@ -250,10 +251,10 @@ mod tests {
     #[test]
     fn test_bloom_filter_clear() {
         let mut filter = BloomFilter::new(10, 0.001, 0, BloomFlags::None).unwrap();
-        
+
         filter.insert(b"test");
         assert!(filter.contains(b"test"));
-        
+
         filter.clear();
         assert!(!filter.contains(b"test"));
         assert!(filter.is_empty());
@@ -263,18 +264,18 @@ mod tests {
     fn test_bloom_filter_limits() {
         // Test maximum size
         assert!(BloomFilter::new(100000, 0.00001, 0, BloomFlags::None).is_ok());
-        
+
         // Test invalid parameters
         assert!(matches!(
             BloomFilter::new(0, 0.01, 0, BloomFlags::None),
             Err(BloomError::InvalidElementCount(0))
         ));
-        
+
         assert!(matches!(
             BloomFilter::new(10, 0.0, 0, BloomFlags::None),
             Err(BloomError::InvalidFalsePositiveRate(_))
         ));
-        
+
         assert!(matches!(
             BloomFilter::new(10, 1.0, 0, BloomFlags::None),
             Err(BloomError::InvalidFalsePositiveRate(_))
@@ -284,14 +285,14 @@ mod tests {
     #[test]
     fn test_bloom_filter_serialization() {
         let filter = BloomFilter::new(10, 0.001, 12345, BloomFlags::All).unwrap();
-        
+
         // Encode
         let mut encoded = Vec::new();
         filter.consensus_encode(&mut encoded).unwrap();
-        
+
         // Decode
         let decoded = BloomFilter::consensus_decode(&mut &encoded[..]).unwrap();
-        
+
         assert_eq!(filter, decoded);
     }
 }

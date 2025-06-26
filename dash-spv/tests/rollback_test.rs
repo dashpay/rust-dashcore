@@ -15,20 +15,21 @@ async fn test_disk_storage_rollback() -> Result<(), Box<dyn std::error::Error>> 
     let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
 
     // Create test headers
-    let headers: Vec<BlockHeader> = (0..10).map(|i| {
-        BlockHeader {
+    let headers: Vec<BlockHeader> = (0..10)
+        .map(|i| BlockHeader {
             version: Version::from_consensus(1),
             prev_blockhash: if i == 0 {
                 BlockHash::all_zeros()
             } else {
                 BlockHash::from_byte_array([i as u8 - 1; 32])
             },
-            merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([(i + 100) as u8; 32]).into(),
+            merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([(i + 100) as u8; 32])
+                .into(),
             time: 1000000 + i,
             bits: CompactTarget::from_consensus(0x1d00ffff),
             nonce: 12345 + i,
-        }
-    }).collect();
+        })
+        .collect();
 
     // Store headers
     storage.store_headers(&headers).await?;
@@ -69,15 +70,14 @@ async fn test_disk_storage_rollback() -> Result<(), Box<dyn std::error::Error>> 
 #[ignore = "rollback_to_height not implemented in StorageManager trait"]
 async fn test_disk_storage_rollback_filter_headers() -> Result<(), Box<dyn std::error::Error>> {
     use dashcore::hash_types::FilterHeader;
-    
+
     // Create a temporary directory for testing
     let temp_dir = TempDir::new()?;
     let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
 
     // Create test filter headers
-    let filter_headers: Vec<FilterHeader> = (0..10).map(|i| {
-        FilterHeader::from_byte_array([i as u8; 32])
-    }).collect();
+    let filter_headers: Vec<FilterHeader> =
+        (0..10).map(|i| FilterHeader::from_byte_array([i as u8; 32])).collect();
 
     // Store filter headers
     storage.store_filter_headers(&filter_headers).await?;
