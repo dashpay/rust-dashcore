@@ -39,11 +39,9 @@ Diff size: ~100MB, covering 376K blocks
 ## Terminal Block Heights
 
 ### Testnet
-- 850,000 - Recent terminal block
 - 900,000 - Latest terminal block
 
 ### Mainnet
-- 1,950,000 - Recent terminal block
 - 2,000,000 - Latest terminal block
 
 ## Data Structure
@@ -95,8 +93,8 @@ This will:
 
 ### Data Sizes
 
-- Testnet: ~370KB (2 terminal blocks)
-- Mainnet: ~2.9MB (2 terminal blocks)
+- Testnet: ~190KB (1 terminal block)
+- Mainnet: ~1.4MB (1 terminal block)
 
 ## Implementation Details
 
