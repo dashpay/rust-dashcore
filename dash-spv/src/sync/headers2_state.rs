@@ -22,6 +22,9 @@ use dashcore::network::message_headers2::{CompressedHeader, CompressionState, De
 use std::collections::HashMap;
 use crate::types::PeerId;
 
+/// Size of an uncompressed block header in bytes
+const UNCOMPRESSED_HEADER_SIZE: usize = 80;
+
 /// Error types for headers2 processing
 #[derive(Debug, Clone)]
 pub enum ProcessError {
@@ -130,7 +133,7 @@ impl Headers2StateManager {
         if self.total_bytes_received == 0 {
             0.0
         } else {
-            let uncompressed_size = self.total_headers_received * 80;
+            let uncompressed_size = self.total_headers_received * UNCOMPRESSED_HEADER_SIZE;
             let savings = (uncompressed_size - self.total_bytes_received) as f64;
             (savings / uncompressed_size as f64) * 100.0
         }
