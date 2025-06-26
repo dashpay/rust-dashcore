@@ -406,15 +406,33 @@ impl HeaderSyncManagerWithReorg {
         // Check if we have a peer that supports headers2
         let use_headers2 = network.has_headers2_peer().await;
         
-        // TODO: Debug why GetHeaders2 doesn't receive response from peer
-        // For now, always use regular GetHeaders
-        if false && use_headers2 {
+        // Try GetHeaders2 first if peer supports it, with fallback to regular GetHeaders
+        if use_headers2 {
             tracing::info!("📤 Sending GetHeaders2 message (compressed headers)");
             // Send GetHeaders2 message for compressed headers
-            network
-                .send_message(NetworkMessage::GetHeaders2(getheaders_msg))
-                .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders2: {}", e)))?;
+            let result = network
+                .send_message(NetworkMessage::GetHeaders2(getheaders_msg.clone()))
+                .await;
+            
+            match result {
+                Ok(_) => {
+                    // TODO: Implement timeout and fallback mechanism
+                    // For now, we rely on the network layer's timeout handling
+                    // In the future, we should:
+                    // 1. Track the request with a unique ID
+                    // 2. Set a specific timeout for GetHeaders2 response
+                    // 3. Fall back to GetHeaders if no response within timeout
+                    // 4. Mark peers that don't respond to GetHeaders2 properly
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to send GetHeaders2, falling back to GetHeaders: {}", e);
+                    // Fall back to regular GetHeaders
+                    network
+                        .send_message(NetworkMessage::GetHeaders(getheaders_msg))
+                        .await
+                        .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+                }
+            }
         } else {
             tracing::info!("📤 Sending GetHeaders message (uncompressed headers)");
             // Send regular GetHeaders message
