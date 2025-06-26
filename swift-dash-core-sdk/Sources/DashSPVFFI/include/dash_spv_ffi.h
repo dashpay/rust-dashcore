@@ -40,10 +40,14 @@ typedef enum FFIWatchItemType {
 
 typedef struct FFIClientConfig FFIClientConfig;
 
+/**
+ * FFIDashSpvClient structure
+ */
 typedef struct FFIDashSpvClient FFIDashSpvClient;
 
 typedef struct FFIString {
   char *ptr;
+  uintptr_t length;
 } FFIString;
 
 typedef struct FFIDetailedSyncProgress {
@@ -97,15 +101,26 @@ typedef struct FFIBalance {
   uint64_t total;
 } FFIBalance;
 
+/**
+ * FFI-safe array that transfers ownership of memory to the C caller.
+ *
+ * # Safety
+ *
+ * This struct represents memory that has been allocated by Rust but ownership
+ * has been transferred to the C caller. The caller is responsible for:
+ * - Not accessing the memory after it has been freed
+ * - Calling `dash_spv_ffi_array_destroy` to properly deallocate the memory
+ * - Ensuring the data, len, and capacity fields remain consistent
+ */
 typedef struct FFIArray {
   void *data;
   uintptr_t len;
   uintptr_t capacity;
 } FFIArray;
 
-typedef void (*BlockCallback)(uint32_t height, const char *hash, void *user_data);
+typedef void (*BlockCallback)(uint32_t height, const uint8_t (*hash)[32], void *user_data);
 
-typedef void (*TransactionCallback)(const char *txid,
+typedef void (*TransactionCallback)(const uint8_t (*txid)[32],
                                     bool confirmed,
                                     int64_t amount,
                                     const char *addresses,
@@ -114,18 +129,18 @@ typedef void (*TransactionCallback)(const char *txid,
 
 typedef void (*BalanceCallback)(uint64_t confirmed, uint64_t unconfirmed, void *user_data);
 
-typedef void (*MempoolTransactionCallback)(const char *txid,
+typedef void (*MempoolTransactionCallback)(const uint8_t (*txid)[32],
                                            int64_t amount,
                                            const char *addresses,
                                            bool is_instant_send,
                                            void *user_data);
 
-typedef void (*MempoolConfirmedCallback)(const char *txid,
+typedef void (*MempoolConfirmedCallback)(const uint8_t (*txid)[32],
                                          uint32_t block_height,
-                                         const char *block_hash,
+                                         const uint8_t (*block_hash)[32],
                                          void *user_data);
 
-typedef void (*MempoolRemovedCallback)(const char *txid, uint8_t reason, void *user_data);
+typedef void (*MempoolRemovedCallback)(const uint8_t (*txid)[32], uint8_t reason, void *user_data);
 
 typedef struct FFIEventCallbacks {
   BlockCallback on_block;
@@ -144,6 +159,39 @@ typedef struct FFITransaction {
   uint32_t size;
   uint32_t weight;
 } FFITransaction;
+
+/**
+ * FFI-safe representation of an unconfirmed transaction
+ *
+ * # Safety
+ *
+ * This struct contains raw pointers that must be properly managed:
+ *
+ * - `raw_tx`: A pointer to the raw transaction bytes. The caller is responsible for:
+ *   - Allocating this memory before passing it to Rust
+ *   - Ensuring the pointer remains valid for the lifetime of this struct
+ *   - Freeing the memory after use with `dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx`
+ *
+ * - `addresses`: A pointer to an array of FFIString objects. The caller is responsible for:
+ *   - Allocating this array before passing it to Rust
+ *   - Ensuring the pointer remains valid for the lifetime of this struct
+ *   - Freeing each FFIString in the array with `dash_spv_ffi_string_destroy`
+ *   - Freeing the array itself after use with `dash_spv_ffi_unconfirmed_transaction_destroy_addresses`
+ *
+ * Use `dash_spv_ffi_unconfirmed_transaction_destroy` to safely clean up all resources
+ * associated with this struct.
+ */
+typedef struct FFIUnconfirmedTransaction {
+  struct FFIString txid;
+  uint8_t *raw_tx;
+  uintptr_t raw_tx_len;
+  int64_t amount;
+  uint64_t fee;
+  bool is_instant_send;
+  bool is_outgoing;
+  struct FFIString *addresses;
+  uintptr_t addresses_len;
+} FFIUnconfirmedTransaction;
 
 typedef struct FFIUtxo {
   struct FFIString txid;
@@ -197,12 +245,73 @@ int32_t dash_spv_ffi_client_start(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_stop(struct FFIDashSpvClient *client);
 
+/**
+ * Sync the SPV client to the chain tip.
+ *
+ * # Safety
+ *
+ * This function is unsafe because:
+ * - `client` must be a valid pointer to an initialized `FFIDashSpvClient`
+ * - `user_data` must satisfy thread safety requirements:
+ *   - If non-null, it must point to data that is safe to access from multiple threads
+ *   - The caller must ensure proper synchronization if the data is mutable
+ *   - The data must remain valid for the entire duration of the sync operation
+ * - `completion_callback` must be thread-safe and can be called from any thread
+ *
+ * # Parameters
+ *
+ * - `client`: Pointer to the SPV client
+ * - `completion_callback`: Optional callback invoked on completion
+ * - `user_data`: Optional user data pointer passed to callbacks
+ *
+ * # Returns
+ *
+ * 0 on success, error code on failure
+ */
 int32_t dash_spv_ffi_client_sync_to_tip(struct FFIDashSpvClient *client,
                                         void (*completion_callback)(bool, const char*, void*),
                                         void *user_data);
 
+/**
+ * Performs a test synchronization of the SPV client
+ *
+ * # Parameters
+ * - `client`: Pointer to an FFIDashSpvClient instance
+ *
+ * # Returns
+ * - `0` on success
+ * - Negative error code on failure
+ *
+ * # Safety
+ * This function is unsafe because it dereferences a raw pointer.
+ * The caller must ensure that the client pointer is valid.
+ */
 int32_t dash_spv_ffi_client_test_sync(struct FFIDashSpvClient *client);
 
+/**
+ * Sync the SPV client to the chain tip with detailed progress updates.
+ *
+ * # Safety
+ *
+ * This function is unsafe because:
+ * - `client` must be a valid pointer to an initialized `FFIDashSpvClient`
+ * - `user_data` must satisfy thread safety requirements:
+ *   - If non-null, it must point to data that is safe to access from multiple threads
+ *   - The caller must ensure proper synchronization if the data is mutable
+ *   - The data must remain valid for the entire duration of the sync operation
+ * - Both `progress_callback` and `completion_callback` must be thread-safe and can be called from any thread
+ *
+ * # Parameters
+ *
+ * - `client`: Pointer to the SPV client
+ * - `progress_callback`: Optional callback invoked periodically with sync progress
+ * - `completion_callback`: Optional callback invoked on completion
+ * - `user_data`: Optional user data pointer passed to all callbacks
+ *
+ * # Returns
+ *
+ * 0 on success, error code on failure
+ */
 int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *client,
                                                       void (*progress_callback)(const struct FFIDetailedSyncProgress*,
                                                                                 void*),
@@ -211,6 +320,20 @@ int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *c
                                                                                   void*),
                                                       void *user_data);
 
+/**
+ * Cancels the sync operation.
+ *
+ * **Note**: This function currently only stops the SPV client and clears sync callbacks,
+ * but does not fully abort the ongoing sync process. The sync operation may continue
+ * running in the background until it completes naturally. Full sync cancellation with
+ * proper task abortion is not yet implemented.
+ *
+ * # Safety
+ * The client pointer must be valid and non-null.
+ *
+ * # Returns
+ * Returns 0 on success, or an error code on failure.
+ */
 int32_t dash_spv_ffi_client_cancel_sync(struct FFIDashSpvClient *client);
 
 struct FFISyncProgress *dash_spv_ffi_client_get_sync_progress(struct FFIDashSpvClient *client);
@@ -345,6 +468,44 @@ void dash_spv_ffi_clear_error(void);
 void dash_spv_ffi_string_destroy(struct FFIString s);
 
 void dash_spv_ffi_array_destroy(struct FFIArray *arr);
+
+/**
+ * Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction
+ *
+ * # Safety
+ *
+ * - `raw_tx` must be a valid pointer to memory allocated by the caller
+ * - `raw_tx_len` must be the correct length of the allocated memory
+ * - The pointer must not be used after this function is called
+ * - This function should only be called once per allocation
+ */
+void dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx(uint8_t *raw_tx, uintptr_t raw_tx_len);
+
+/**
+ * Destroys the addresses array allocated for an FFIUnconfirmedTransaction
+ *
+ * # Safety
+ *
+ * - `addresses` must be a valid pointer to an array of FFIString objects
+ * - `addresses_len` must be the correct length of the array
+ * - Each FFIString in the array must be destroyed separately using `dash_spv_ffi_string_destroy`
+ * - The pointer must not be used after this function is called
+ * - This function should only be called once per allocation
+ */
+void dash_spv_ffi_unconfirmed_transaction_destroy_addresses(struct FFIString *addresses,
+                                                            uintptr_t addresses_len);
+
+/**
+ * Destroys an FFIUnconfirmedTransaction and all its associated resources
+ *
+ * # Safety
+ *
+ * - `tx` must be a valid pointer to an FFIUnconfirmedTransaction
+ * - All resources (raw_tx, addresses array, and individual FFIStrings) will be freed
+ * - The pointer must not be used after this function is called
+ * - This function should only be called once per FFIUnconfirmedTransaction
+ */
+void dash_spv_ffi_unconfirmed_transaction_destroy(struct FFIUnconfirmedTransaction *tx);
 
 int32_t dash_spv_ffi_init_logging(const char *level);
 
