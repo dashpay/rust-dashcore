@@ -1,0 +1,24 @@
+[
+  [
+    "149.28.22.65:9999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 1,
+      "successful_connections": 0
+    }
+  ],
+  [
+    "104.248.113.204:9999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 1,
+      "successful_connections": 0
+    }
+  ]
+]
