@@ -60,7 +60,7 @@ impl TerminalBlockManager {
     pub fn new(network: Network) -> Self {
         let mut data_manager = TerminalBlockDataManager::new();
         data_manager.load_embedded_data(network);
-        
+
         let mut manager = Self {
             network,
             terminal_blocks: HashMap::new(),
@@ -242,7 +242,8 @@ impl TerminalBlockManager {
         start_height: u32,
         end_height: u32,
     ) -> Vec<&TerminalBlock> {
-        let mut blocks: Vec<&TerminalBlock> = self.terminal_blocks
+        let mut blocks: Vec<&TerminalBlock> = self
+            .terminal_blocks
             .values()
             .filter(|block| block.height >= start_height && block.height <= end_height)
             .collect();
@@ -251,33 +252,33 @@ impl TerminalBlockManager {
     }
 
     /// Update terminal blocks from storage (for dynamic terminal blocks).
-    pub async fn update_from_storage(
-        &mut self,
-        _storage: &dyn StorageManager,
-    ) -> SyncResult<()> {
+    pub async fn update_from_storage(&mut self, _storage: &dyn StorageManager) -> SyncResult<()> {
         // This method can be used to load additional terminal blocks from storage
         // that might have been discovered during sync or imported from other sources
-        
+
         // For now, we just log that this functionality is available
         tracing::debug!(
             "Terminal block manager update from storage called (dynamic terminal blocks not yet implemented)"
         );
-        
+
         Ok(())
     }
-    
+
     /// Check if we have pre-calculated masternode data for a terminal block.
     pub fn has_masternode_data(&self, height: u32) -> bool {
         self.data_manager.has_state(height)
     }
-    
+
     /// Get pre-calculated masternode data for a terminal block.
     pub fn get_masternode_data(&self, height: u32) -> Option<&TerminalBlockMasternodeState> {
         self.data_manager.get_state(height)
     }
-    
+
     /// Find the best terminal block with pre-calculated masternode data.
-    pub fn find_best_terminal_block_with_data(&self, target_height: u32) -> Option<&TerminalBlockMasternodeState> {
+    pub fn find_best_terminal_block_with_data(
+        &self,
+        target_height: u32,
+    ) -> Option<&TerminalBlockMasternodeState> {
         self.data_manager.find_best_terminal_block_with_data(target_height)
     }
 }
@@ -301,15 +302,17 @@ mod tests {
     fn test_terminal_block_with_merkle_root() {
         let height = 1088640;
         // Create a block hash from bytes
-        let hash_bytes = hex::decode("00000000000000112c41b144f542e82648e5f72f960e1c2477a88b0ab7a29adb").unwrap();
+        let hash_bytes =
+            hex::decode("00000000000000112c41b144f542e82648e5f72f960e1c2477a88b0ab7a29adb")
+                .unwrap();
         let mut hash_array = [0u8; 32];
         hash_array.copy_from_slice(&hash_bytes);
         hash_array.reverse(); // Little-endian
         let hash = BlockHash::from_byte_array(hash_array);
         let merkle_root = [42u8; 32];
-        
+
         let block = TerminalBlock::with_merkle_root(height, hash, merkle_root);
-        
+
         assert_eq!(block.height, height);
         assert_eq!(block.block_hash, hash);
         assert!(block.masternode_list_merkle_root.is_some());
@@ -321,7 +324,7 @@ mod tests {
         let manager = TerminalBlockManager::new(Network::Dash);
         assert!(!manager.terminal_blocks.is_empty());
         assert!(manager.get_highest_terminal_block().is_some());
-        
+
         // Verify specific known terminal blocks exist
         assert!(manager.get_terminal_block(1088640).is_some()); // DIP3 activation
         assert!(manager.get_terminal_block(1500000).is_some());
@@ -362,17 +365,17 @@ mod tests {
         let blocks = manager.get_terminal_blocks_in_range(1100000, 1500000);
         assert!(!blocks.is_empty());
         assert!(blocks.iter().all(|b| b.height >= 1100000 && b.height <= 1500000));
-        
+
         // Verify blocks are sorted
         for i in 1..blocks.len() {
-            assert!(blocks[i].height > blocks[i-1].height);
+            assert!(blocks[i].height > blocks[i - 1].height);
         }
     }
 
     #[test]
     fn test_is_terminal_block_height() {
         let manager = TerminalBlockManager::new(Network::Dash);
-        
+
         assert!(manager.is_terminal_block_height(1088640));
         assert!(manager.is_terminal_block_height(1500000));
         assert!(!manager.is_terminal_block_height(1234567));
@@ -382,11 +385,11 @@ mod tests {
     #[test]
     fn test_testnet_terminal_blocks() {
         let manager = TerminalBlockManager::new(Network::Testnet);
-        
+
         assert!(!manager.terminal_blocks.is_empty());
         assert!(manager.get_terminal_block(387480).is_some()); // DIP3 activation on testnet
         assert!(manager.get_terminal_block(760000).is_some());
-        
+
         let highest = manager.get_highest_terminal_block();
         assert!(highest.is_some());
         assert!(highest.unwrap().height >= 760000);
@@ -395,7 +398,7 @@ mod tests {
     #[test]
     fn test_devnet_terminal_blocks() {
         let manager = TerminalBlockManager::new(Network::Devnet);
-        
+
         assert!(manager.terminal_blocks.is_empty());
         assert!(manager.get_highest_terminal_block().is_none());
     }
@@ -403,22 +406,22 @@ mod tests {
     #[test]
     fn test_add_terminal_block() {
         let mut manager = TerminalBlockManager::new(Network::Regtest);
-        
+
         // Initially empty for regtest
         assert!(manager.terminal_blocks.is_empty());
-        
+
         // Add a terminal block
         let block = TerminalBlock::new(1000, BlockHash::all_zeros());
         manager.add_terminal_block(block.clone());
-        
+
         assert_eq!(manager.terminal_blocks.len(), 1);
         assert!(manager.get_terminal_block(1000).is_some());
         assert_eq!(manager.get_highest_terminal_block().unwrap().height, 1000);
-        
+
         // Add another higher block
         let block2 = TerminalBlock::new(2000, BlockHash::all_zeros());
         manager.add_terminal_block(block2);
-        
+
         assert_eq!(manager.terminal_blocks.len(), 2);
         assert_eq!(manager.get_highest_terminal_block().unwrap().height, 2000);
     }
@@ -426,16 +429,16 @@ mod tests {
     #[test]
     fn test_best_base_terminal_block() {
         let manager = TerminalBlockManager::new(Network::Dash);
-        
+
         // Find best base for various target heights
         let base = manager.find_best_base_terminal_block(1750000);
         assert!(base.is_some());
         assert_eq!(base.unwrap().height, 1750000);
-        
+
         let base = manager.find_best_base_terminal_block(1775000);
         assert!(base.is_some());
         assert_eq!(base.unwrap().height, 1750000);
-        
+
         let base = manager.find_best_base_terminal_block(500000);
         assert!(base.is_none()); // No terminal blocks this early
     }

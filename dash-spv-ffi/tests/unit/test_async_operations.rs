@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::*;
     use crate::types::FFIDetailedSyncProgress;
+    use crate::*;
     use serial_test::serial;
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_void};
@@ -86,7 +86,7 @@ mod tests {
             // Instead, test that we can safely destroy a client with null callbacks
             // The test is really about null pointer safety, not sync functionality
             println!("Testing null callback safety without starting client");
-            
+
             // Just verify we can safely clean up without crashes
             // This tests the null callback handling in destruction paths
 
@@ -117,7 +117,7 @@ mod tests {
             // Don't call sync_to_tip on unstarted client as it will hang
             // Test null user_data handling in a different way
             println!("Testing null user_data safety without starting client");
-            
+
             // We could test with get_sync_progress which shouldn't hang
             let progress = dash_spv_ffi_client_get_sync_progress(client);
             if !progress.is_null() {
@@ -145,7 +145,12 @@ mod tests {
                 data_received: Arc::new(Mutex::new(Vec::new())),
             };
 
-            dash_spv_ffi_client_sync_to_tip_with_progress(client, Some(test_progress_callback), Some(test_completion_callback), &test_data as *const _ as *mut c_void);
+            dash_spv_ffi_client_sync_to_tip_with_progress(
+                client,
+                Some(test_progress_callback),
+                Some(test_completion_callback),
+                &test_data as *const _ as *mut c_void,
+            );
 
             // Give time for callbacks
             thread::sleep(Duration::from_millis(100));
@@ -178,7 +183,11 @@ mod tests {
             // Stop client first to ensure sync fails
             dash_spv_ffi_client_stop(client);
 
-            dash_spv_ffi_client_sync_to_tip(client, Some(test_completion_callback), &test_data as *const _ as *mut c_void);
+            dash_spv_ffi_client_sync_to_tip(
+                client,
+                Some(test_completion_callback),
+                &test_data as *const _ as *mut c_void,
+            );
 
             // Wait for completion
             let start = Instant::now();
@@ -255,7 +264,7 @@ mod tests {
             // Don't call sync_to_tip on unstarted client as it will hang
             // Just test that callback tracking works
             println!("Testing callback reentrancy safety without network operations");
-            
+
             // Simulate a callback invocation
             reentrant_callback(false, std::ptr::null(), &reentrant_data as *const _ as *mut c_void);
 
@@ -331,7 +340,14 @@ mod tests {
                 assert!(!hash.is_null());
             }
 
-            extern "C" fn on_tx(txid: *const c_char, _confirmed: bool, _amount: i64, _addresses: *const c_char, _block_height: u32, user_data: *mut c_void) {
+            extern "C" fn on_tx(
+                txid: *const c_char,
+                _confirmed: bool,
+                _amount: i64,
+                _addresses: *const c_char,
+                _block_height: u32,
+                user_data: *mut c_void,
+            ) {
                 let data = unsafe { &*(user_data as *const EventData) };
                 data.tx.store(true, Ordering::SeqCst);
                 assert!(!txid.is_null());

@@ -49,7 +49,7 @@ pub struct ClientConfig {
 
     /// Sync timeout.
     pub sync_timeout: Duration,
-    
+
     /// Read timeout for TCP socket operations.
     pub read_timeout: Duration,
 
@@ -197,7 +197,7 @@ impl Default for ClientConfig {
             enable_mempool_tracking: false,
             mempool_strategy: MempoolStrategy::Selective,
             max_mempool_transactions: 1000,
-            mempool_timeout_secs: 3600, // 1 hour
+            mempool_timeout_secs: 3600,   // 1 hour
             recent_send_window_secs: 300, // 5 minutes
             fetch_mempool_transactions: true,
             persist_mempool: false,
@@ -288,7 +288,7 @@ impl ClientConfig {
         self.connection_timeout = timeout;
         self
     }
-    
+
     /// Set read timeout for TCP socket operations.
     pub fn with_read_timeout(mut self, timeout: Duration) -> Self {
         self.read_timeout = timeout;
@@ -375,13 +375,20 @@ impl ClientConfig {
         // Mempool validation
         if self.enable_mempool_tracking {
             if self.max_mempool_transactions == 0 {
-                return Err("max_mempool_transactions must be > 0 when mempool tracking is enabled".to_string());
+                return Err(
+                    "max_mempool_transactions must be > 0 when mempool tracking is enabled"
+                        .to_string(),
+                );
             }
             if self.mempool_timeout_secs == 0 {
                 return Err("mempool_timeout_secs must be > 0".to_string());
             }
-            if self.mempool_strategy == MempoolStrategy::Selective && self.recent_send_window_secs == 0 {
-                return Err("recent_send_window_secs must be > 0 for Selective strategy".to_string());
+            if self.mempool_strategy == MempoolStrategy::Selective
+                && self.recent_send_window_secs == 0
+            {
+                return Err(
+                    "recent_send_window_secs must be > 0 for Selective strategy".to_string()
+                );
             }
         }
 
@@ -394,7 +401,7 @@ impl ClientConfig {
             Network::Dash => vec![
                 // Use well-known IP addresses instead of DNS names for reliability
                 "104.248.113.204:9999".parse().unwrap(), // dashdot.io seed
-                "149.28.22.65:9999".parse().unwrap(), // masternode.io seed
+                "149.28.22.65:9999".parse().unwrap(),    // masternode.io seed
             ],
             Network::Testnet => vec![
                 "174.138.35.118:19999".parse().unwrap(), // testnet seed

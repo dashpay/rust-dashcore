@@ -35,10 +35,20 @@ impl TransitionManager {
         // Check specific transition rules
         match (current_phase, target_phase) {
             // From Idle, can only go to DownloadingHeaders
-            (SyncPhase::Idle, SyncPhase::DownloadingHeaders { .. }) => Ok(true),
+            (
+                SyncPhase::Idle,
+                SyncPhase::DownloadingHeaders {
+                    ..
+                },
+            ) => Ok(true),
 
             // From DownloadingHeaders, check completion
-            (SyncPhase::DownloadingHeaders { .. }, next_phase) => {
+            (
+                SyncPhase::DownloadingHeaders {
+                    ..
+                },
+                next_phase,
+            ) => {
                 // Headers must be complete
                 if !self.are_headers_complete(current_phase, storage).await? {
                     return Ok(false);
@@ -46,57 +56,84 @@ impl TransitionManager {
 
                 // Can go to MnList if enabled, or skip to CFHeaders
                 match next_phase {
-                    SyncPhase::DownloadingMnList { .. } => Ok(self.config.enable_masternodes),
-                    SyncPhase::DownloadingCFHeaders { .. } => {
-                        Ok(!self.config.enable_masternodes && self.config.enable_filters)
-                    }
-                    SyncPhase::FullySynced { .. } => {
-                        Ok(!self.config.enable_masternodes && !self.config.enable_filters)
-                    }
+                    SyncPhase::DownloadingMnList {
+                        ..
+                    } => Ok(self.config.enable_masternodes),
+                    SyncPhase::DownloadingCFHeaders {
+                        ..
+                    } => Ok(!self.config.enable_masternodes && self.config.enable_filters),
+                    SyncPhase::FullySynced {
+                        ..
+                    } => Ok(!self.config.enable_masternodes && !self.config.enable_filters),
                     _ => Ok(false),
                 }
             }
 
             // From DownloadingMnList
-            (SyncPhase::DownloadingMnList { .. }, next_phase) => {
+            (
+                SyncPhase::DownloadingMnList {
+                    ..
+                },
+                next_phase,
+            ) => {
                 // MnList must be complete
                 if !self.are_masternodes_complete(current_phase, storage).await? {
                     return Ok(false);
                 }
 
                 match next_phase {
-                    SyncPhase::DownloadingCFHeaders { .. } => Ok(self.config.enable_filters),
-                    SyncPhase::FullySynced { .. } => Ok(!self.config.enable_filters),
+                    SyncPhase::DownloadingCFHeaders {
+                        ..
+                    } => Ok(self.config.enable_filters),
+                    SyncPhase::FullySynced {
+                        ..
+                    } => Ok(!self.config.enable_filters),
                     _ => Ok(false),
                 }
             }
 
             // From DownloadingCFHeaders
-            (SyncPhase::DownloadingCFHeaders { .. }, next_phase) => {
+            (
+                SyncPhase::DownloadingCFHeaders {
+                    ..
+                },
+                next_phase,
+            ) => {
                 // CFHeaders must be complete
                 if !self.are_cfheaders_complete(current_phase, storage).await? {
                     return Ok(false);
                 }
 
                 match next_phase {
-                    SyncPhase::DownloadingFilters { .. } => Ok(true), // Always download filters after cfheaders
+                    SyncPhase::DownloadingFilters {
+                        ..
+                    } => Ok(true), // Always download filters after cfheaders
                     _ => Ok(false),
                 }
             }
 
             // From DownloadingFilters
-            (SyncPhase::DownloadingFilters { .. }, next_phase) => {
+            (
+                SyncPhase::DownloadingFilters {
+                    ..
+                },
+                next_phase,
+            ) => {
                 // Filters must be complete or no blocks needed
                 if !self.are_filters_complete(current_phase) {
                     return Ok(false);
                 }
 
                 match next_phase {
-                    SyncPhase::DownloadingBlocks { .. } => {
+                    SyncPhase::DownloadingBlocks {
+                        ..
+                    } => {
                         // Check if we have blocks to download
                         Ok(self.has_blocks_to_download(current_phase))
                     }
-                    SyncPhase::FullySynced { .. } => {
+                    SyncPhase::FullySynced {
+                        ..
+                    } => {
                         // Can go to synced if no blocks to download
                         Ok(!self.has_blocks_to_download(current_phase))
                     }
@@ -105,7 +142,14 @@ impl TransitionManager {
             }
 
             // From DownloadingBlocks
-            (SyncPhase::DownloadingBlocks { .. }, SyncPhase::FullySynced { .. }) => {
+            (
+                SyncPhase::DownloadingBlocks {
+                    ..
+                },
+                SyncPhase::FullySynced {
+                    ..
+                },
+            ) => {
                 // All blocks must be downloaded
                 Ok(self.are_blocks_complete(current_phase))
             }
@@ -142,7 +186,9 @@ impl TransitionManager {
                 }))
             }
 
-            SyncPhase::DownloadingHeaders { .. } => {
+            SyncPhase::DownloadingHeaders {
+                ..
+            } => {
                 if self.config.enable_masternodes {
                     let header_tip = storage
                         .get_tip_height()
@@ -172,7 +218,9 @@ impl TransitionManager {
                 }
             }
 
-            SyncPhase::DownloadingMnList { .. } => {
+            SyncPhase::DownloadingMnList {
+                ..
+            } => {
                 if self.config.enable_filters {
                     self.create_cfheaders_phase(storage).await
                 } else {
@@ -180,7 +228,9 @@ impl TransitionManager {
                 }
             }
 
-            SyncPhase::DownloadingCFHeaders { .. } => {
+            SyncPhase::DownloadingCFHeaders {
+                ..
+            } => {
                 // After CFHeaders, we need to determine what filters to download
                 // For now, we'll create a filters phase that will be populated later
                 Ok(Some(SyncPhase::DownloadingFilters {
@@ -193,10 +243,15 @@ impl TransitionManager {
                 }))
             }
 
-            SyncPhase::DownloadingFilters { .. } => {
+            SyncPhase::DownloadingFilters {
+                ..
+            } => {
                 // Check if we have blocks to download
                 if self.has_blocks_to_download(current_phase) {
-                    if let SyncPhase::DownloadingFilters { .. } = current_phase {
+                    if let SyncPhase::DownloadingFilters {
+                        ..
+                    } = current_phase
+                    {
                         Ok(Some(SyncPhase::DownloadingBlocks {
                             start_time: Instant::now(),
                             pending_blocks: Vec::new(), // Will be populated from filter matches
@@ -213,9 +268,13 @@ impl TransitionManager {
                 }
             }
 
-            SyncPhase::DownloadingBlocks { .. } => self.create_fully_synced_phase(storage).await,
+            SyncPhase::DownloadingBlocks {
+                ..
+            } => self.create_fully_synced_phase(storage).await,
 
-            SyncPhase::FullySynced { .. } => Ok(None), // Already synced
+            SyncPhase::FullySynced {
+                ..
+            } => Ok(None), // Already synced
         }
     }
 

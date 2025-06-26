@@ -18,7 +18,7 @@ use std::sync::Arc;
 use dashcore::{Address, Amount, OutPoint, Txid};
 use tokio::sync::RwLock;
 
-use crate::bloom::{BloomFilterManager, BloomFilterConfig};
+use crate::bloom::{BloomFilterConfig, BloomFilterManager};
 use crate::error::{SpvError, StorageError};
 use crate::storage::StorageManager;
 use crate::types::MempoolState;
@@ -26,9 +26,7 @@ pub use transaction_processor::{
     AddressStats, BlockResult, TransactionProcessor, TransactionResult,
 };
 pub use utxo::Utxo;
-pub use utxo_rollback::{
-    UTXORollbackManager, UTXOSnapshot, UTXOChange, TransactionStatus,
-};
+pub use utxo_rollback::{TransactionStatus, UTXOChange, UTXORollbackManager, UTXOSnapshot};
 pub use wallet_state::WalletState;
 
 /// Main wallet interface for monitoring addresses and tracking UTXOs.
@@ -42,13 +40,13 @@ pub struct Wallet {
 
     /// Current UTXO set indexed by outpoint.
     utxo_set: Arc<RwLock<HashMap<OutPoint, Utxo>>>,
-    
+
     /// UTXO rollback manager for reorg handling.
     rollback_manager: Arc<RwLock<Option<UTXORollbackManager>>>,
-    
+
     /// Wallet state for tracking transactions.
     wallet_state: Arc<RwLock<WalletState>>,
-    
+
     /// Bloom filter manager for SPV filtering.
     bloom_filter_manager: Option<Arc<BloomFilterManager>>,
 }
@@ -64,10 +62,10 @@ pub struct Balance {
 
     /// InstantLocked balance (InstantLocked but not ChainLocked).
     pub instantlocked: Amount,
-    
+
     /// Mempool balance (unconfirmed transactions not yet in blocks).
     pub mempool: Amount,
-    
+
     /// Mempool InstantLocked balance.
     pub mempool_instant: Amount,
 }
@@ -117,13 +115,13 @@ impl Wallet {
             bloom_filter_manager: None,
         }
     }
-    
+
     /// Get the network this wallet is operating on.
     pub fn network(&self) -> dashcore::Network {
         // Default to mainnet for now - in real implementation this should be configurable
         dashcore::Network::Dash
     }
-    
+
     /// Check if we have a specific UTXO.
     pub fn has_utxo(&self, outpoint: &OutPoint) -> bool {
         // We need async access, but this method is sync, so we'll use try_read
@@ -133,11 +131,11 @@ impl Wallet {
             false
         }
     }
-    
+
     /// Calculate the net amount change for our wallet from a transaction.
     pub fn calculate_net_amount(&self, tx: &dashcore::Transaction) -> i64 {
         let mut net_amount: i64 = 0;
-        
+
         // Check inputs (subtract if we're spending our UTXOs)
         if let Ok(utxos) = self.utxo_set.try_read() {
             for input in &tx.input {
@@ -146,7 +144,7 @@ impl Wallet {
                 }
             }
         }
-        
+
         // Check outputs (add if we're receiving)
         if let Ok(watched_addrs) = self.watched_addresses.try_read() {
             for output in &tx.output {
@@ -157,16 +155,19 @@ impl Wallet {
                 }
             }
         }
-        
+
         net_amount
     }
-    
+
     /// Calculate transaction fee for a given transaction.
     /// Returns the fee amount if we have all input UTXOs, otherwise returns None.
-    pub fn calculate_transaction_fee(&self, tx: &dashcore::Transaction) -> Option<dashcore::Amount> {
+    pub fn calculate_transaction_fee(
+        &self,
+        tx: &dashcore::Transaction,
+    ) -> Option<dashcore::Amount> {
         let mut total_input = 0u64;
         let mut have_all_inputs = true;
-        
+
         // Get input values from our UTXO set
         if let Ok(utxos) = self.utxo_set.try_read() {
             for input in &tx.input {
@@ -180,15 +181,15 @@ impl Wallet {
         } else {
             return None; // Could not acquire lock
         }
-        
+
         // If we don't have all inputs, we can't calculate the fee accurately
         if !have_all_inputs {
             return None;
         }
-        
+
         // Sum output values
         let total_output: u64 = tx.output.iter().map(|out| out.value).sum();
-        
+
         // Calculate fee (inputs - outputs)
         if total_input >= total_output {
             Some(dashcore::Amount::from_sat(total_input - total_output))
@@ -197,15 +198,18 @@ impl Wallet {
             None
         }
     }
-    
+
     /// Calculate transaction fee for a given transaction using partial inputs.
     /// This method attempts to calculate a minimum fee based on available input UTXOs.
     /// Returns Some(fee) if at least one input UTXO is available and the calculation is valid,
     /// otherwise returns None.
-    pub fn calculate_partial_transaction_fee(&self, tx: &dashcore::Transaction) -> Option<dashcore::Amount> {
+    pub fn calculate_partial_transaction_fee(
+        &self,
+        tx: &dashcore::Transaction,
+    ) -> Option<dashcore::Amount> {
         let mut partial_input_value = 0u64;
         let mut inputs_found = 0;
-        
+
         // Get input values from our UTXO set
         if let Ok(utxos) = self.utxo_set.try_read() {
             for input in &tx.input {
@@ -217,15 +221,15 @@ impl Wallet {
         } else {
             return None; // Could not acquire lock
         }
-        
+
         // If we have no inputs, we can't calculate any fee
         if inputs_found == 0 {
             return None;
         }
-        
+
         // Sum output values
         let total_output: u64 = tx.output.iter().map(|out| out.value).sum();
-        
+
         // Calculate minimum fee (actual fee might be higher if we're missing inputs)
         if partial_input_value >= total_output {
             Some(dashcore::Amount::from_sat(partial_input_value - total_output))
@@ -234,7 +238,7 @@ impl Wallet {
             None
         }
     }
-    
+
     /// Check if a transaction has an InstantLock.
     pub async fn has_instant_lock(&self, txid: &dashcore::Txid) -> bool {
         let storage = self.storage.read().await;
@@ -243,7 +247,7 @@ impl Wallet {
             _ => false,
         }
     }
-    
+
     /// Check if a transaction is relevant to this wallet.
     pub fn is_transaction_relevant(&self, tx: &dashcore::Transaction) -> bool {
         // Check if any input spends our UTXOs
@@ -254,7 +258,7 @@ impl Wallet {
                 }
             }
         }
-        
+
         // Check if any output is to our watched addresses
         if let Ok(watched_addrs) = self.watched_addresses.try_read() {
             for output in &tx.output {
@@ -265,24 +269,27 @@ impl Wallet {
                 }
             }
         }
-        
+
         false
     }
-    
+
     /// Create a new wallet with rollback support.
-    pub fn new_with_rollback(storage: Arc<RwLock<dyn StorageManager>>, enable_rollback: bool) -> Self {
+    pub fn new_with_rollback(
+        storage: Arc<RwLock<dyn StorageManager>>,
+        enable_rollback: bool,
+    ) -> Self {
         let rollback_manager = if enable_rollback {
             Some(UTXORollbackManager::with_max_snapshots(100, true)) // 100 snapshots, persist to storage
         } else {
             None
         };
-        
+
         let wallet_state = if enable_rollback {
             WalletState::with_rollback(dashcore::Network::Dash, true)
         } else {
             WalletState::new(dashcore::Network::Dash)
         };
-        
+
         Self {
             storage,
             watched_addresses: Arc::new(RwLock::new(HashSet::new())),
@@ -297,7 +304,7 @@ impl Wallet {
     pub fn enable_bloom_filter(&mut self, config: BloomFilterConfig) {
         self.bloom_filter_manager = Some(Arc::new(BloomFilterManager::new(config)));
     }
-    
+
     /// Get the bloom filter manager if enabled.
     pub fn bloom_filter_manager(&self) -> Option<&Arc<BloomFilterManager>> {
         self.bloom_filter_manager.as_ref()
@@ -310,7 +317,7 @@ impl Wallet {
 
         // Persist the updated watch list
         self.save_watched_addresses(&watched).await?;
-        
+
         // Update bloom filter if enabled
         if let Some(ref bloom_manager) = self.bloom_filter_manager {
             bloom_manager.add_address(&address).await?;
@@ -353,7 +360,7 @@ impl Wallet {
     pub async fn get_balance_for_address(&self, address: &Address) -> Result<Balance, SpvError> {
         self.calculate_balance(Some(address)).await
     }
-    
+
     /// Get the balance including mempool transactions.
     pub async fn get_balance_with_mempool(
         &self,
@@ -361,7 +368,7 @@ impl Wallet {
     ) -> Result<Balance, SpvError> {
         // Get regular balance
         let mut balance = self.get_balance().await?;
-        
+
         // Add mempool balances
         if mempool_state.pending_balance != 0 {
             if mempool_state.pending_balance > 0 {
@@ -372,18 +379,19 @@ impl Wallet {
                 balance.mempool = Amount::ZERO;
             }
         }
-        
+
         if mempool_state.pending_instant_balance != 0 {
             if mempool_state.pending_instant_balance > 0 {
-                balance.mempool_instant = Amount::from_sat(mempool_state.pending_instant_balance as u64);
+                balance.mempool_instant =
+                    Amount::from_sat(mempool_state.pending_instant_balance as u64);
             } else {
                 balance.mempool_instant = Amount::ZERO;
             }
         }
-        
+
         Ok(balance)
     }
-    
+
     /// Get the balance for a specific address including mempool.
     pub async fn get_balance_for_address_with_mempool(
         &self,
@@ -392,7 +400,7 @@ impl Wallet {
     ) -> Result<Balance, SpvError> {
         // Get regular balance
         let mut balance = self.get_balance_for_address(address).await?;
-        
+
         // Add mempool balance for this specific address
         for tx in mempool_state.transactions.values() {
             if tx.addresses.contains(address) {
@@ -404,7 +412,7 @@ impl Wallet {
                 }
             }
         }
-        
+
         Ok(balance)
     }
 
@@ -413,12 +421,12 @@ impl Wallet {
         let utxos = self.utxo_set.read().await;
         utxos.values().cloned().collect()
     }
-    
+
     /// Get all unspent outputs (alias for get_utxos).
     pub async fn get_unspent_outputs(&self) -> Result<Vec<Utxo>, SpvError> {
         Ok(self.get_utxos().await)
     }
-    
+
     /// Get all addresses (alias for get_watched_addresses).
     pub async fn get_all_addresses(&self) -> Result<Vec<Address>, SpvError> {
         Ok(self.get_watched_addresses().await)
@@ -435,7 +443,7 @@ impl Wallet {
     pub async fn add_utxo(&self, utxo: Utxo) -> Result<(), SpvError> {
         self.add_utxo_internal(utxo).await
     }
-    
+
     /// Internal implementation for adding a UTXO.
     async fn add_utxo_internal(&self, utxo: Utxo) -> Result<(), SpvError> {
         tracing::info!(
@@ -445,14 +453,14 @@ impl Wallet {
             utxo.height,
             utxo.is_confirmed
         );
-        
+
         let mut utxos = self.utxo_set.write().await;
         utxos.insert(utxo.outpoint, utxo.clone());
 
         // Persist the UTXO
         let mut storage = self.storage.write().await;
         storage.store_utxo(&utxo.outpoint, &utxo).await?;
-        
+
         // Track in rollback manager if enabled
         if let Some(ref _rollback_mgr) = *self.rollback_manager.read().await {
             let _change = UTXOChange::Created(utxo.clone());
@@ -468,12 +476,12 @@ impl Wallet {
     pub async fn remove_utxo(&self, outpoint: &OutPoint) -> Result<Option<Utxo>, SpvError> {
         self.remove_utxo_internal(outpoint).await
     }
-    
+
     #[cfg(not(test))]
     pub(crate) async fn remove_utxo(&self, outpoint: &OutPoint) -> Result<Option<Utxo>, SpvError> {
         self.remove_utxo_internal(outpoint).await
     }
-    
+
     async fn remove_utxo_internal(&self, outpoint: &OutPoint) -> Result<Option<Utxo>, SpvError> {
         let mut utxos = self.utxo_set.write().await;
         let removed = utxos.remove(outpoint);
@@ -532,10 +540,10 @@ impl Wallet {
     ) -> Result<Balance, SpvError> {
         let utxos = self.utxo_set.read().await;
         let mut balance = Balance::new();
-        
+
         tracing::debug!(
-            "Calculating balance for address filter: {:?}, total UTXOs: {}", 
-            address_filter, 
+            "Calculating balance for address filter: {:?}, total UTXOs: {}",
+            address_filter,
             utxos.len()
         );
 
@@ -552,7 +560,7 @@ impl Wallet {
             }
 
             let amount = Amount::from_sat(utxo.txout.value);
-            
+
             tracing::debug!(
                 "UTXO {}: amount={}, height={}, is_confirmed={}, is_instantlocked={}",
                 utxo.outpoint,
@@ -594,7 +602,7 @@ impl Wallet {
                 }
             }
         }
-        
+
         tracing::debug!(
             "Final balance: confirmed={}, pending={}, instantlocked={}, total={}",
             balance.confirmed,
@@ -680,7 +688,7 @@ impl Wallet {
 
         Ok(())
     }
-    
+
     /// Handle a transaction being confirmed in a block (moved from mempool).
     pub async fn handle_transaction_confirmed(
         &self,
@@ -698,10 +706,10 @@ impl Wallet {
                 tx.first_seen.elapsed()
             );
         }
-        
+
         Ok(())
     }
-    
+
     /// Process a new block - track UTXO changes for rollback support.
     pub async fn process_block(
         &self,
@@ -714,36 +722,38 @@ impl Wallet {
         if let Some(ref mut rollback_mgr) = *rollback_mgr_guard {
             let mut wallet_state = self.wallet_state.write().await;
             let mut storage = self.storage.write().await;
-            
-            rollback_mgr.process_block(
-                block_height,
-                block_hash,
-                transactions,
-                &mut *wallet_state,
-                &mut *storage,
-            ).await.map_err(|e| SpvError::Storage(StorageError::ReadFailed(e.to_string())))?;
+
+            rollback_mgr
+                .process_block(
+                    block_height,
+                    block_hash,
+                    transactions,
+                    &mut *wallet_state,
+                    &mut *storage,
+                )
+                .await
+                .map_err(|e| SpvError::Storage(StorageError::ReadFailed(e.to_string())))?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Rollback wallet state to a specific height.
     pub async fn rollback_to_height(&self, target_height: u32) -> Result<(), SpvError> {
         let mut rollback_mgr_guard = self.rollback_manager.write().await;
         if let Some(ref mut rollback_mgr) = *rollback_mgr_guard {
             let mut wallet_state = self.wallet_state.write().await;
             let mut storage = self.storage.write().await;
-            
+
             // Rollback and get the snapshots that were rolled back
-            let rolled_back_snapshots = rollback_mgr.rollback_to_height(
-                target_height,
-                &mut *wallet_state,
-                &mut *storage,
-            ).await.map_err(|e| SpvError::Storage(StorageError::ReadFailed(e.to_string())))?;
-            
+            let rolled_back_snapshots = rollback_mgr
+                .rollback_to_height(target_height, &mut *wallet_state, &mut *storage)
+                .await
+                .map_err(|e| SpvError::Storage(StorageError::ReadFailed(e.to_string())))?;
+
             // Apply changes to wallet's UTXO set
             let mut utxos = self.utxo_set.write().await;
-            
+
             for snapshot in rolled_back_snapshots {
                 for change in snapshot.changes {
                     match change {
@@ -754,9 +764,16 @@ impl Wallet {
                         UTXOChange::Spent(outpoint) => {
                             // For spent UTXOs, we need to restore them but we don't have the full UTXO data
                             // This is a limitation - we would need to store the full UTXO in the Spent variant
-                            tracing::warn!("Cannot restore spent UTXO {} - full data not available", outpoint);
+                            tracing::warn!(
+                                "Cannot restore spent UTXO {} - full data not available",
+                                outpoint
+                            );
                         }
-                        UTXOChange::StatusChanged { outpoint, old_status, .. } => {
+                        UTXOChange::StatusChanged {
+                            outpoint,
+                            old_status,
+                            ..
+                        } => {
                             // Restore old status
                             if let Some(utxo) = utxos.get_mut(&outpoint) {
                                 // Set confirmation status based on old_status boolean
@@ -766,20 +783,20 @@ impl Wallet {
                     }
                 }
             }
-            
+
             tracing::info!("Wallet rolled back to height {}", target_height);
         } else {
             return Err(SpvError::Config("Rollback not enabled for this wallet".to_string()));
         }
-        
+
         Ok(())
     }
-    
+
     /// Check if rollback is enabled.
     pub async fn is_rollback_enabled(&self) -> bool {
         self.rollback_manager.read().await.is_some()
     }
-    
+
     /// Get rollback manager statistics.
     pub async fn get_rollback_stats(&self) -> Option<(usize, u32, u32)> {
         if let Some(ref mgr) = *self.rollback_manager.read().await {
@@ -789,7 +806,7 @@ impl Wallet {
             None
         }
     }
-    
+
     /// Process a verified InstantLock.
     /// NOTE: This is pub for integration tests. In production, InstantLocks should be processed
     /// through the proper transaction processing pipeline.
@@ -797,7 +814,7 @@ impl Wallet {
         let mut utxos = self.utxo_set.write().await;
         let mut updated = false;
         let mut updates_to_store = Vec::new();
-        
+
         // Find all UTXOs from this transaction and mark them as instant-locked
         for utxo in utxos.values_mut() {
             if utxo.outpoint.txid == txid && !utxo.is_instantlocked {
@@ -806,10 +823,10 @@ impl Wallet {
                 updates_to_store.push((utxo.outpoint, utxo.clone()));
             }
         }
-        
+
         // Release the UTXO lock before acquiring storage lock
         drop(utxos);
-        
+
         // Update storage if needed
         if !updates_to_store.is_empty() {
             let mut storage = self.storage.write().await;
@@ -817,7 +834,7 @@ impl Wallet {
                 storage.store_utxo(&outpoint, &utxo).await?;
             }
         }
-        
+
         Ok(updated)
     }
 }

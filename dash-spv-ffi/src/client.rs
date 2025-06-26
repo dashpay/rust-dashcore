@@ -1,24 +1,24 @@
 use crate::{
     null_check, set_last_error, FFIArray, FFIBalance, FFIClientConfig, FFIDetailedSyncProgress,
-    FFIErrorCode, FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFISyncProgress, 
+    FFIErrorCode, FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFISyncProgress,
     FFITransaction, FFIUtxo, FFIWatchItem,
 };
 use dash_spv::types::SyncStage;
 use dash_spv::DashSpvClient;
 use dash_spv::Utxo;
 use dashcore::{Address, ScriptBuf, Txid};
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Runtime;
-use once_cell::sync::Lazy;
 
 /// Global callback registry for thread-safe callback management
-static CALLBACK_REGISTRY: Lazy<Arc<Mutex<CallbackRegistry>>> = 
+static CALLBACK_REGISTRY: Lazy<Arc<Mutex<CallbackRegistry>>> =
     Lazy::new(|| Arc::new(Mutex::new(CallbackRegistry::new())));
 
 /// Atomic counter for generating unique callback IDs
@@ -54,17 +54,17 @@ impl CallbackRegistry {
             callbacks: HashMap::new(),
         }
     }
-    
+
     fn register(&mut self, info: CallbackInfo) -> u64 {
         let id = CALLBACK_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
         self.callbacks.insert(id, info);
         id
     }
-    
+
     fn get(&self, id: u64) -> Option<&CallbackInfo> {
         self.callbacks.get(&id)
     }
-    
+
     fn unregister(&mut self, id: u64) -> Option<CallbackInfo> {
         self.callbacks.remove(&id)
     }
@@ -170,7 +170,7 @@ impl FFIDashSpvClient {
         let event_callbacks = self.event_callbacks.clone();
         let runtime = self.runtime.clone();
         let shutdown_signal = self.shutdown_signal.clone();
-        
+
         let handle = std::thread::spawn(move || {
             runtime.block_on(async {
                 let event_rx = {
@@ -181,7 +181,7 @@ impl FFIDashSpvClient {
                         None
                     }
                 };
-                
+
                 if let Some(mut rx) = event_rx {
                     tracing::info!("🎧 FFI event listener started successfully");
                     loop {
@@ -190,13 +190,12 @@ impl FFIDashSpvClient {
                             tracing::info!("🛑 FFI event listener received shutdown signal");
                             break;
                         }
-                        
+
                         // Use recv with timeout to periodically check shutdown signal
                         match tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
                             Ok(Some(event)) => {
                                 tracing::info!("🎧 FFI received event: {:?}", event);
                                 let callbacks = event_callbacks.lock().unwrap();
-                        
                         match event {
                             dash_spv::types::SpvEvent::BalanceUpdate { confirmed, unconfirmed, total } => {
                                 tracing::info!("💰 Balance update event: confirmed={}, unconfirmed={}, total={}", 
@@ -260,7 +259,7 @@ impl FFIDashSpvClient {
                 }
             });
         });
-        
+
         // Store thread handle
         self.active_threads.lock().unwrap().push(handle);
     }
@@ -351,11 +350,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
                 Ok(_sync_result) => {
                     // sync_to_tip returns a SyncResult, not a stream
                     // Progress callbacks removed as sync_to_tip doesn't provide real progress updates
-                    
+
                     // Report completion and unregister callbacks
                     {
                         let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                        if let Some(CallbackInfo::Simple { completion_callback, user_data }) = registry.unregister(callback_id) {
+                        if let Some(CallbackInfo::Simple {
+                            completion_callback,
+                            user_data,
+                        }) = registry.unregister(callback_id)
+                        {
                             if let Some(callback) = completion_callback {
                                 let msg = CString::new("Sync completed successfully").unwrap();
                                 // SAFETY: The callback and user_data are safely managed through the registry
@@ -364,14 +367,18 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
                             }
                         }
                     }
-                    
+
                     Ok(())
                 }
                 Err(e) => {
                     // Report error and unregister callbacks
                     {
                         let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                        if let Some(CallbackInfo::Simple { completion_callback, user_data }) = registry.unregister(callback_id) {
+                        if let Some(CallbackInfo::Simple {
+                            completion_callback,
+                            user_data,
+                        }) = registry.unregister(callback_id)
+                        {
                             if let Some(callback) = completion_callback {
                                 let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
                                 // SAFETY: The callback and user_data are safely managed through the registry
@@ -400,17 +407,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(
-    client: *mut FFIDashSpvClient,
-) -> i32 {
+pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvClient) -> i32 {
     null_check!(client);
-    
+
     let client = &(*client);
     let result = client.runtime.block_on(async {
         let mut guard = client.inner.lock().unwrap();
         if let Some(ref mut spv_client) = *guard {
             println!("Starting test sync...");
-            
+
             // Get initial height
             let start_height = match spv_client.sync_progress().await {
                 Ok(progress) => progress.header_height,
@@ -420,7 +425,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(
                 }
             };
             println!("Initial height: {}", start_height);
-            
+
             // Start sync
             match spv_client.sync_to_tip().await {
                 Ok(_) => println!("Sync started successfully"),
@@ -429,10 +434,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(
                     return Err(e);
                 }
             }
-            
+
             // Wait a bit for headers to download
             tokio::time::sleep(Duration::from_secs(10)).await;
-            
+
             // Check if headers increased
             let end_height = match spv_client.sync_progress().await {
                 Ok(progress) => progress.header_height,
@@ -442,7 +447,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(
                 }
             };
             println!("Final height: {}", end_height);
-            
+
             if end_height > start_height {
                 println!("✅ Sync working! Downloaded {} headers", end_height - start_height);
                 Ok(())
@@ -455,7 +460,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(
             Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
         }
     });
-    
+
     match result {
         Ok(_) => FFIErrorCode::Success as i32,
         Err(e) => {
@@ -473,9 +478,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     user_data: *mut c_void,
 ) -> i32 {
     null_check!(client);
-    
+
     let client = &(*client);
-    
+
     // Register callbacks in the global registry
     let callback_info = CallbackInfo::Detailed {
         progress_callback,
@@ -483,45 +488,50 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
         user_data,
     };
     let callback_id = CALLBACK_REGISTRY.lock().unwrap().register(callback_info);
-    
+
     // Store callback ID in the client
     let callback_data = SyncCallbackData {
         callback_id,
         _marker: std::marker::PhantomData,
     };
     *client.sync_callbacks.lock().unwrap() = Some(callback_data);
-    
+
     let inner = client.inner.clone();
     let runtime = client.runtime.clone();
     let sync_callbacks = client.sync_callbacks.clone();
-    
+
     // Take progress receiver from client
     let progress_receiver = {
         let mut guard = inner.lock().unwrap();
         guard.as_mut().and_then(|c| c.take_progress_receiver())
     };
-    
+
     // Setup progress monitoring with safe callback access
     if let Some(mut receiver) = progress_receiver {
         let runtime_handle = runtime.handle().clone();
         let sync_callbacks_clone = sync_callbacks.clone();
-        
+
         let handle = std::thread::spawn(move || {
             runtime_handle.block_on(async move {
                 while let Some(progress) = receiver.recv().await {
                     // Handle callback in a thread-safe way
                     let should_stop = matches!(progress.sync_stage, SyncStage::Complete);
-                    
+
                     // Create FFI progress
                     let ffi_progress = Box::new(FFIDetailedSyncProgress::from(progress));
-                    
+
                     // Call the callback using the registry
                     {
                         let cb_guard = sync_callbacks_clone.lock().unwrap();
-                        
+
                         if let Some(ref callback_data) = *cb_guard {
                             let registry = CALLBACK_REGISTRY.lock().unwrap();
-                            if let Some(CallbackInfo::Detailed { progress_callback: Some(callback), user_data, .. }) = registry.get(callback_data.callback_id) {
+                            if let Some(CallbackInfo::Detailed {
+                                progress_callback: Some(callback),
+                                user_data,
+                                ..
+                            }) = registry.get(callback_data.callback_id)
+                            {
                                 // SAFETY: The callback and user_data are safely stored in the registry
                                 // and accessed through thread-safe mechanisms. The registry ensures
                                 // proper lifetime management without raw pointer passing across threads.
@@ -529,18 +539,18 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                             }
                         }
                     }
-                    
+
                     if should_stop {
                         break;
                     }
                 }
             });
         });
-        
+
         // Store thread handle
         client.active_threads.lock().unwrap().push(handle);
     }
-    
+
     // Spawn sync task in a separate thread with safe callback access
     let runtime_handle = runtime.handle().clone();
     let sync_callbacks_clone = sync_callbacks.clone();
@@ -555,13 +565,18 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                 Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
             }
         });
-        
+
         // Send completion callback and cleanup
         {
             let mut cb_guard = sync_callbacks_clone.lock().unwrap();
             if let Some(ref callback_data) = *cb_guard {
                 let mut registry = CALLBACK_REGISTRY.lock().unwrap();
-                if let Some(CallbackInfo::Detailed { completion_callback: Some(callback), user_data, .. }) = registry.unregister(callback_data.callback_id) {
+                if let Some(CallbackInfo::Detailed {
+                    completion_callback: Some(callback),
+                    user_data,
+                    ..
+                }) = registry.unregister(callback_data.callback_id)
+                {
                     match monitor_result {
                         Ok(_) => {
                             let msg = CString::new("Sync completed successfully").unwrap();
@@ -586,10 +601,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
             *cb_guard = None;
         }
     });
-    
+
     // Store thread handle
     client.active_threads.lock().unwrap().push(sync_handle);
-    
+
     FFIErrorCode::Success as i32
 }
 
@@ -608,16 +623,16 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpvClient) -> i32 {
     null_check!(client);
-    
+
     let client = &(*client);
-    
+
     // Clear callbacks to stop progress updates and unregister from the registry
     let mut cb_guard = client.sync_callbacks.lock().unwrap();
     if let Some(ref callback_data) = *cb_guard {
         CALLBACK_REGISTRY.lock().unwrap().unregister(callback_data.callback_id);
     }
     *cb_guard = None;
-    
+
     // TODO: Implement proper sync task cancellation using cancellation tokens or abort handles.
     // Currently, this only stops the client, but the sync task may continue running in the background.
     let inner = client.inner.clone();
@@ -629,7 +644,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpv
             Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
         }
     });
-    
+
     match result {
         Ok(_) => FFIErrorCode::Success as i32,
         Err(e) => {
@@ -976,15 +991,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
     null_check!(client);
 
     let client = &(*client);
-    
+
     tracing::info!("🔧 Setting event callbacks on FFI client");
     tracing::info!("   Block callback: {}", callbacks.on_block.is_some());
     tracing::info!("   Transaction callback: {}", callbacks.on_transaction.is_some());
     tracing::info!("   Balance update callback: {}", callbacks.on_balance_update.is_some());
-    
+
     let mut event_callbacks = client.event_callbacks.lock().unwrap();
     *event_callbacks = callbacks;
-    
+
     // Check if we need to start the event listener
     // This ensures callbacks work even if set after client.start()
     let inner = client.inner.lock().unwrap();
@@ -1003,15 +1018,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_set_event_callbacks(
 pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClient) {
     if !client.is_null() {
         let client = Box::from_raw(client);
-        
+
         // Set shutdown signal to stop all threads
         client.shutdown_signal.store(true, Ordering::Relaxed);
-        
+
         // Clean up any registered callbacks
         if let Some(ref callback_data) = *client.sync_callbacks.lock().unwrap() {
             CALLBACK_REGISTRY.lock().unwrap().unregister(callback_data.callback_id);
         }
-        
+
         // Stop the SPV client
         let _ = client.runtime.block_on(async {
             let mut guard = client.inner.lock().unwrap();
@@ -1019,19 +1034,19 @@ pub unsafe extern "C" fn dash_spv_ffi_client_destroy(client: *mut FFIDashSpvClie
                 let _ = spv_client.stop().await;
             }
         });
-        
+
         // Join all active threads to ensure clean shutdown
         let threads = {
             let mut threads_guard = client.active_threads.lock().unwrap();
             std::mem::take(&mut *threads_guard)
         };
-        
+
         for handle in threads {
             if let Err(e) = handle.join() {
                 tracing::error!("Failed to join thread during cleanup: {:?}", e);
             }
         }
-        
+
         tracing::info!("✅ FFI client destroyed and all threads cleaned up");
     }
 }
@@ -1418,16 +1433,24 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_total_balance(
             let watch_items = spv_client.get_watch_items().await;
             let mut total_confirmed = 0u64;
             let mut total_unconfirmed = 0u64;
-            
+
             // Sum up balances for all watched addresses
             for item in watch_items {
-                if let dash_spv::types::WatchItem::Address { address, .. } = item {
+                if let dash_spv::types::WatchItem::Address {
+                    address,
+                    ..
+                } = item
+                {
                     match spv_client.get_address_balance(&address).await {
                         Ok(balance) => {
                             total_confirmed += balance.confirmed.to_sat();
                             total_unconfirmed += balance.unconfirmed.to_sat();
-                            tracing::debug!("Address {} balance: confirmed={}, unconfirmed={}", 
-                                         address, balance.confirmed, balance.unconfirmed);
+                            tracing::debug!(
+                                "Address {} balance: confirmed={}, unconfirmed={}",
+                                address,
+                                balance.confirmed,
+                                balance.unconfirmed
+                            );
                         }
                         Err(e) => {
                             tracing::warn!("Failed to get balance for address {}: {}", address, e);
@@ -1435,7 +1458,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_total_balance(
                     }
                 }
             }
-            
+
             Ok(dash_spv::types::AddressBalance {
                 confirmed: dashcore::Amount::from_sat(total_confirmed),
                 unconfirmed: dashcore::Amount::from_sat(total_unconfirmed),
@@ -1538,7 +1561,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_enable_mempool_tracking(
 
     let client = &(*client);
     let inner = client.inner.clone();
-    
+
     let mempool_strategy = strategy.into();
 
     let result = client.runtime.block_on(async {
@@ -1712,7 +1735,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_mempool_balance(
                 confirmed: 0, // No confirmed balance in mempool
                 pending: mempool_balance.pending.to_sat(),
                 instantlocked: 0, // No confirmed instantlocked in mempool
-                mempool: mempool_balance.pending.to_sat() + mempool_balance.pending_instant.to_sat(),
+                mempool: mempool_balance.pending.to_sat()
+                    + mempool_balance.pending_instant.to_sat(),
                 mempool_instant: mempool_balance.pending_instant.to_sat(),
                 total: mempool_balance.pending.to_sat() + mempool_balance.pending_instant.to_sat(),
             };

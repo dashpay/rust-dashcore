@@ -387,7 +387,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ = signal::ctrl_c() => {
             tracing::info!("Received shutdown signal (Ctrl-C)");
-            
+
             // Stop the client immediately
             tracing::info!("Stopping SPV client...");
             if let Err(e) = client.stop().await {

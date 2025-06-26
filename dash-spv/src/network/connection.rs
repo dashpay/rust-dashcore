@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::io::{BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::time::{Duration, SystemTime};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex;
 
 use dashcore::consensus::{encode, Decodable};
@@ -69,7 +69,12 @@ impl TcpConnection {
     }
 
     /// Connect to a peer and return a connected instance.
-    pub async fn connect(address: SocketAddr, timeout_secs: u64, read_timeout: Duration, network: Network) -> NetworkResult<Self> {
+    pub async fn connect(
+        address: SocketAddr,
+        timeout_secs: u64,
+        read_timeout: Duration,
+        network: Network,
+    ) -> NetworkResult<Self> {
         let timeout = Duration::from_secs(timeout_secs);
 
         let stream = TcpStream::connect_timeout(&address, timeout).map_err(|e| {
@@ -79,7 +84,7 @@ impl TcpConnection {
         stream.set_nodelay(true).map_err(|e| {
             NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
         })?;
-        
+
         // Set a read timeout instead of non-blocking mode
         // This allows us to return None when no data is available
         // Using configurable timeout for optimal balance of performance and reliability
@@ -172,91 +177,104 @@ impl TcpConnection {
     }
 
     /// Update peer information from a received Version message
-    pub fn update_peer_info(&mut self, version_msg: &dashcore::network::message_network::VersionMessage) {
+    pub fn update_peer_info(
+        &mut self,
+        version_msg: &dashcore::network::message_network::VersionMessage,
+    ) {
         // Define validation constants
         const MIN_PROTOCOL_VERSION: u32 = 60001; // Minimum version that supports ping/pong
         const MAX_PROTOCOL_VERSION: u32 = 100000; // Reasonable upper bound for protocol version
         const MAX_USER_AGENT_LENGTH: usize = 256; // Maximum reasonable user agent length
         const MAX_START_HEIGHT: i32 = 10_000_000; // Reasonable upper bound for block height
-        
+
         // Validate protocol version
         if version_msg.version < MIN_PROTOCOL_VERSION {
             tracing::warn!(
                 "Peer {} reported protocol version {} below minimum {}, skipping update",
-                self.address, version_msg.version, MIN_PROTOCOL_VERSION
+                self.address,
+                version_msg.version,
+                MIN_PROTOCOL_VERSION
             );
             return;
         }
-        
+
         if version_msg.version > MAX_PROTOCOL_VERSION {
             tracing::warn!(
                 "Peer {} reported suspiciously high protocol version {}, skipping update",
-                self.address, version_msg.version
+                self.address,
+                version_msg.version
             );
             return;
         }
-        
+
         // Validate start height
         if version_msg.start_height < 0 {
             tracing::warn!(
                 "Peer {} reported negative start height {}, skipping update",
-                self.address, version_msg.start_height
+                self.address,
+                version_msg.start_height
             );
             return;
         }
-        
+
         if version_msg.start_height > MAX_START_HEIGHT {
             tracing::warn!(
                 "Peer {} reported suspiciously high start height {}, skipping update",
-                self.address, version_msg.start_height
+                self.address,
+                version_msg.start_height
             );
             return;
         }
-        
+
         // Validate user agent
         if version_msg.user_agent.is_empty() {
-            tracing::warn!(
-                "Peer {} provided empty user agent, skipping update",
-                self.address
-            );
+            tracing::warn!("Peer {} provided empty user agent, skipping update", self.address);
             return;
         }
-        
+
         if version_msg.user_agent.len() > MAX_USER_AGENT_LENGTH {
             tracing::warn!(
                 "Peer {} provided excessively long user agent ({} bytes), skipping update",
-                self.address, version_msg.user_agent.len()
+                self.address,
+                version_msg.user_agent.len()
             );
             return;
         }
-        
+
         // Validate services - ensure they contain expected flags
         let services = version_msg.services.as_u64();
         const KNOWN_SERVICE_FLAGS: u64 = 0x0000_0000_0000_1FFF; // All known service flags up to bit 12
         if services & !KNOWN_SERVICE_FLAGS != 0 {
             tracing::warn!(
                 "Peer {} reported unknown service flags: 0x{:016x}, proceeding with caution",
-                self.address, services
+                self.address,
+                services
             );
             // Note: We don't return here as unknown flags might be from newer versions
         }
-        
+
         // All validations passed, update peer info
         self.peer_version = Some(version_msg.version);
         self.peer_services = Some(version_msg.services.as_u64());
         self.peer_user_agent = Some(version_msg.user_agent.clone());
         self.peer_best_height = Some(version_msg.start_height as u32);
         self.peer_relay = Some(version_msg.relay);
-        
-        tracing::info!("Updated peer info for {}: height={}, version={}, services={:?}", 
-                       self.address,
-                       version_msg.start_height, 
-                       version_msg.version, 
-                       version_msg.services);
-        
+
+        tracing::info!(
+            "Updated peer info for {}: height={}, version={}, services={:?}",
+            self.address,
+            version_msg.start_height,
+            version_msg.version,
+            version_msg.services
+        );
+
         // Also log with standard logging for debugging
-        log::info!("PEER_INFO_DEBUG: Updated peer {} with height={}, version={}", 
-                   self.address, version_msg.start_height, version_msg.version);
+        log::info!(
+            "PEER_INFO_DEBUG: Updated peer {} with height={}, version={}",
+            self.address,
+            version_msg.start_height,
+            version_msg.version
+        );
     }
 
     /// Send a message to the peer.
@@ -353,7 +371,7 @@ impl TcpConnection {
                         self.address
                     );
                 }
-                
+
                 // Log Headers2 messages for debugging
                 if let NetworkMessage::Headers2(ref headers2) = raw_message.payload {
                     tracing::info!(
@@ -403,7 +421,7 @@ impl TcpConnection {
             }
             Err(e) => {
                 tracing::error!("Failed to decode message from {}: {}", self.address, e);
-                
+
                 // Log more details about what we were trying to decode
                 if let encode::Error::Io(ref io_err) = e {
                     tracing::error!("IO error details: {:?}", io_err);
@@ -610,7 +628,7 @@ impl TcpConnection {
     pub fn ping_stats(&self) -> (Option<SystemTime>, Option<SystemTime>, usize) {
         (self.last_ping_sent, self.last_pong_received, self.pending_pings.len())
     }
-    
+
     /// Set that peer prefers headers2.
     pub fn set_prefers_headers2(&mut self, prefers: bool) {
         self.peer_prefers_headers2 = prefers;
@@ -618,25 +636,28 @@ impl TcpConnection {
             tracing::info!("Peer {} prefers headers2 compression", self.address);
         }
     }
-    
+
     /// Check if peer prefers headers2.
     pub fn prefers_headers2(&self) -> bool {
         self.peer_prefers_headers2
     }
-    
+
     /// Set that peer sent us SendHeaders2.
     pub fn set_peer_sent_sendheaders2(&mut self, sent: bool) {
         self.peer_sent_sendheaders2 = sent;
         if sent {
-            tracing::info!("Peer {} sent SendHeaders2 - they will send compressed headers", self.address);
+            tracing::info!(
+                "Peer {} sent SendHeaders2 - they will send compressed headers",
+                self.address
+            );
         }
     }
-    
+
     /// Check if peer sent us SendHeaders2.
     pub fn peer_sent_sendheaders2(&self) -> bool {
         self.peer_sent_sendheaders2
     }
-    
+
     /// Check if we can request headers2 from this peer.
     pub fn can_request_headers2(&self) -> bool {
         // We can request headers2 if:

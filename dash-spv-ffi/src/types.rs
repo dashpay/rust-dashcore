@@ -1,6 +1,6 @@
-use dash_spv::{ChainState, PeerInfo, SpvStats, SyncProgress};
-use dash_spv::types::{DetailedSyncProgress, SyncStage, MempoolRemovalReason};
 use dash_spv::client::config::MempoolStrategy;
+use dash_spv::types::{DetailedSyncProgress, MempoolRemovalReason, SyncStage};
+use dash_spv::{ChainState, PeerInfo, SpvStats, SyncProgress};
 use dashcore::Network;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
@@ -109,9 +109,15 @@ impl From<SyncStage> for FFISyncStage {
         match stage {
             SyncStage::Connecting => FFISyncStage::Connecting,
             SyncStage::QueryingPeerHeight => FFISyncStage::QueryingHeight,
-            SyncStage::DownloadingHeaders { .. } => FFISyncStage::Downloading,
-            SyncStage::ValidatingHeaders { .. } => FFISyncStage::Validating,
-            SyncStage::StoringHeaders { .. } => FFISyncStage::Storing,
+            SyncStage::DownloadingHeaders {
+                ..
+            } => FFISyncStage::Downloading,
+            SyncStage::ValidatingHeaders {
+                ..
+            } => FFISyncStage::Validating,
+            SyncStage::StoringHeaders {
+                ..
+            } => FFISyncStage::Storing,
             SyncStage::Complete => FFISyncStage::Complete,
             SyncStage::Failed(_) => FFISyncStage::Failed,
         }
@@ -135,33 +141,39 @@ pub struct FFIDetailedSyncProgress {
 impl From<DetailedSyncProgress> for FFIDetailedSyncProgress {
     fn from(progress: DetailedSyncProgress) -> Self {
         use std::time::UNIX_EPOCH;
-        
+
         let stage_message = match &progress.sync_stage {
             SyncStage::Connecting => "Connecting to peers".to_string(),
             SyncStage::QueryingPeerHeight => "Querying blockchain height".to_string(),
-            SyncStage::DownloadingHeaders { start, end } => 
-                format!("Downloading headers {} to {}", start, end),
-            SyncStage::ValidatingHeaders { batch_size } => 
-                format!("Validating {} headers", batch_size),
-            SyncStage::StoringHeaders { batch_size } => 
-                format!("Storing {} headers", batch_size),
+            SyncStage::DownloadingHeaders {
+                start,
+                end,
+            } => format!("Downloading headers {} to {}", start, end),
+            SyncStage::ValidatingHeaders {
+                batch_size,
+            } => format!("Validating {} headers", batch_size),
+            SyncStage::StoringHeaders {
+                batch_size,
+            } => format!("Storing {} headers", batch_size),
             SyncStage::Complete => "Synchronization complete".to_string(),
             SyncStage::Failed(err) => err.clone(),
         };
-        
+
         FFIDetailedSyncProgress {
             current_height: progress.current_height,
             total_height: progress.peer_best_height,
             percentage: progress.percentage,
             headers_per_second: progress.headers_per_second,
-            estimated_seconds_remaining: progress.estimated_time_remaining
+            estimated_seconds_remaining: progress
+                .estimated_time_remaining
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(-1),
             stage: progress.sync_stage.into(),
             stage_message: FFIString::new(&stage_message),
             connected_peers: progress.connected_peers as u32,
             total_headers: progress.total_headers_processed,
-            sync_start_timestamp: progress.sync_start_time
+            sync_start_timestamp: progress
+                .sync_start_time
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or(std::time::Duration::from_secs(0))
                 .as_secs() as i64,
@@ -241,7 +253,11 @@ impl From<PeerInfo> for FFIPeerInfo {
             } else {
                 0
             },
-            last_seen: info.last_seen.duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0)).as_secs(),
+            last_seen: info
+                .last_seen
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or(std::time::Duration::from_secs(0))
+                .as_secs(),
             version: info.version.unwrap_or(0),
             services: info.services.unwrap_or(0),
             user_agent: FFIString::new(&info.user_agent.as_deref().unwrap_or("")),
@@ -251,9 +267,9 @@ impl From<PeerInfo> for FFIPeerInfo {
 }
 
 /// FFI-safe array that transfers ownership of memory to the C caller.
-/// 
+///
 /// # Safety
-/// 
+///
 /// This struct represents memory that has been allocated by Rust but ownership
 /// has been transferred to the C caller. The caller is responsible for:
 /// - Not accessing the memory after it has been freed
@@ -268,9 +284,9 @@ pub struct FFIArray {
 
 impl FFIArray {
     /// Creates a new FFIArray from a Vec, transferring ownership of the memory to the caller.
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// This function uses `std::mem::forget` to prevent Rust from deallocating the Vec's memory.
     /// The caller becomes responsible for freeing this memory by calling `dash_spv_ffi_array_destroy`.
     /// Failure to call the destroy function will result in a memory leak.
@@ -365,8 +381,12 @@ impl From<MempoolRemovalReason> for FFIMempoolRemovalReason {
     fn from(reason: MempoolRemovalReason) -> Self {
         match reason {
             MempoolRemovalReason::Expired => FFIMempoolRemovalReason::Expired,
-            MempoolRemovalReason::Replaced { .. } => FFIMempoolRemovalReason::Replaced,
-            MempoolRemovalReason::DoubleSpent { .. } => FFIMempoolRemovalReason::DoubleSpent,
+            MempoolRemovalReason::Replaced {
+                ..
+            } => FFIMempoolRemovalReason::Replaced,
+            MempoolRemovalReason::DoubleSpent {
+                ..
+            } => FFIMempoolRemovalReason::DoubleSpent,
             MempoolRemovalReason::Confirmed => FFIMempoolRemovalReason::Confirmed,
             MempoolRemovalReason::Manual => FFIMempoolRemovalReason::Manual,
         }
@@ -374,22 +394,22 @@ impl From<MempoolRemovalReason> for FFIMempoolRemovalReason {
 }
 
 /// FFI-safe representation of an unconfirmed transaction
-/// 
+///
 /// # Safety
-/// 
+///
 /// This struct contains raw pointers that must be properly managed:
-/// 
+///
 /// - `raw_tx`: A pointer to the raw transaction bytes. The caller is responsible for:
 ///   - Allocating this memory before passing it to Rust
 ///   - Ensuring the pointer remains valid for the lifetime of this struct
 ///   - Freeing the memory after use with `dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx`
-/// 
+///
 /// - `addresses`: A pointer to an array of FFIString objects. The caller is responsible for:
 ///   - Allocating this array before passing it to Rust
 ///   - Ensuring the pointer remains valid for the lifetime of this struct
 ///   - Freeing each FFIString in the array with `dash_spv_ffi_string_destroy`
 ///   - Freeing the array itself after use with `dash_spv_ffi_unconfirmed_transaction_destroy_addresses`
-/// 
+///
 /// Use `dash_spv_ffi_unconfirmed_transaction_destroy` to safely clean up all resources
 /// associated with this struct.
 #[repr(C)]
@@ -406,9 +426,9 @@ pub struct FFIUnconfirmedTransaction {
 }
 
 /// Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction
-/// 
+///
 /// # Safety
-/// 
+///
 /// - `raw_tx` must be a valid pointer to memory allocated by the caller
 /// - `raw_tx_len` must be the correct length of the allocated memory
 /// - The pointer must not be used after this function is called
@@ -425,9 +445,9 @@ pub unsafe extern "C" fn dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx(
 }
 
 /// Destroys the addresses array allocated for an FFIUnconfirmedTransaction
-/// 
+///
 /// # Safety
-/// 
+///
 /// - `addresses` must be a valid pointer to an array of FFIString objects
 /// - `addresses_len` must be the correct length of the array
 /// - Each FFIString in the array must be destroyed separately using `dash_spv_ffi_string_destroy`
@@ -445,9 +465,9 @@ pub unsafe extern "C" fn dash_spv_ffi_unconfirmed_transaction_destroy_addresses(
 }
 
 /// Destroys an FFIUnconfirmedTransaction and all its associated resources
-/// 
+///
 /// # Safety
-/// 
+///
 /// - `tx` must be a valid pointer to an FFIUnconfirmedTransaction
 /// - All resources (raw_tx, addresses array, and individual FFIStrings) will be freed
 /// - The pointer must not be used after this function is called
@@ -458,15 +478,15 @@ pub unsafe extern "C" fn dash_spv_ffi_unconfirmed_transaction_destroy(
 ) {
     if !tx.is_null() {
         let tx = Box::from_raw(tx);
-        
+
         // Destroy the txid FFIString
         dash_spv_ffi_string_destroy(tx.txid);
-        
+
         // Destroy the raw_tx bytes
         if !tx.raw_tx.is_null() && tx.raw_tx_len > 0 {
             dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx(tx.raw_tx, tx.raw_tx_len);
         }
-        
+
         // Destroy each FFIString in the addresses array
         if !tx.addresses.is_null() && tx.addresses_len > 0 {
             // We need to read the addresses and destroy them one by one
@@ -478,8 +498,7 @@ pub unsafe extern "C" fn dash_spv_ffi_unconfirmed_transaction_destroy(
             // Destroy the addresses array itself
             dash_spv_ffi_unconfirmed_transaction_destroy_addresses(tx.addresses, tx.addresses_len);
         }
-        
+
         // The Box will be dropped here, freeing the FFIUnconfirmedTransaction itself
     }
 }
-

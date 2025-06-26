@@ -7,24 +7,24 @@
 //! - Chain work calculation
 //! - Transaction rollback during reorgs
 
-pub mod fork_detector;
-pub mod reorg;
-pub mod chain_work;
 pub mod chain_tip;
-pub mod checkpoints;
+pub mod chain_work;
 pub mod chainlock_manager;
+pub mod checkpoints;
+pub mod fork_detector;
 pub mod orphan_pool;
+pub mod reorg;
 
 #[cfg(test)]
 mod reorg_test;
 
-pub use fork_detector::{ForkDetector, ForkDetectionResult};
-pub use reorg::{ReorgManager, ReorgEvent};
-pub use chain_work::ChainWork;
 pub use chain_tip::{ChainTip, ChainTipManager};
+pub use chain_work::ChainWork;
+pub use chainlock_manager::{ChainLockEntry, ChainLockManager, ChainLockStats};
 pub use checkpoints::{Checkpoint, CheckpointManager};
-pub use chainlock_manager::{ChainLockManager, ChainLockEntry, ChainLockStats};
-pub use orphan_pool::{OrphanPool, OrphanBlock, OrphanPoolStats};
+pub use fork_detector::{ForkDetectionResult, ForkDetector};
+pub use orphan_pool::{OrphanBlock, OrphanPool, OrphanPoolStats};
+pub use reorg::{ReorgEvent, ReorgManager};
 
 use dashcore::{BlockHash, Header as BlockHeader};
 
@@ -44,4 +44,3 @@ pub struct Fork {
     /// Cumulative chain work of this fork
     pub chain_work: ChainWork,
 }
-

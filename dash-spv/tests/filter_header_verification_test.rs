@@ -103,19 +103,25 @@ impl NetworkManager for MockNetworkManager {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    
+
     async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
         Ok(Some(100))
     }
-    
-    async fn has_peer_with_service(&self, _service_flags: dashcore::network::constants::ServiceFlags) -> bool {
+
+    async fn has_peer_with_service(
+        &self,
+        _service_flags: dashcore::network::constants::ServiceFlags,
+    ) -> bool {
         true
     }
-    
-    async fn get_peers_with_service(&self, _service_flags: dashcore::network::constants::ServiceFlags) -> Vec<dash_spv::types::PeerInfo> {
+
+    async fn get_peers_with_service(
+        &self,
+        _service_flags: dashcore::network::constants::ServiceFlags,
+    ) -> Vec<dash_spv::types::PeerInfo> {
         vec![]
     }
-    
+
     async fn get_last_message_peer_id(&self) -> dash_spv::types::PeerId {
         dash_spv::types::PeerId(1)
     }

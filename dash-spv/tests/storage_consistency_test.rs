@@ -375,8 +375,7 @@ async fn test_reproduce_filter_sync_bug_small() {
             );
 
             if tip_header.is_none() {
-                println!("🔥 BUG REPRODUCED: Fallback to tip {} also failed!", 
-                         tip_height);
+                println!("🔥 BUG REPRODUCED: Fallback to tip {} also failed!", tip_height);
                 panic!("Reproduced the filter sync bug scenario");
             }
         }
@@ -649,37 +648,37 @@ async fn test_tip_height_segment_boundary_race() {
 
     let temp_dir = TempDir::new().unwrap();
     let storage_path = temp_dir.path().to_path_buf();
-    
+
     // Segment size is 50,000 headers
     let segment_size = 50_000;
-    
+
     // Test the specific case where tip is at segment boundary
     {
         let mut storage = DiskStorageManager::new(storage_path.clone()).await.unwrap();
-        
+
         // Store exactly one segment worth of headers
         let headers: Vec<BlockHeader> = (0..segment_size).map(create_test_header).collect();
         storage.store_headers(&headers).await.unwrap();
-        
+
         // Verify tip is at segment boundary
         let tip_height = storage.get_tip_height().await.unwrap();
         assert_eq!(tip_height, Some((segment_size - 1) as u32));
-        
+
         storage.shutdown().await.unwrap();
     }
-    
+
     // Now force segment eviction and check consistency
     {
         let mut storage = DiskStorageManager::new(storage_path.clone()).await.unwrap();
-        
+
         // Store headers in a different segment range to trigger eviction
         // This simulates the case where the tip segment might get evicted
         for i in 1..12 {
             let start = i * segment_size;
-            let headers: Vec<BlockHeader> = 
+            let headers: Vec<BlockHeader> =
                 (start..start + segment_size).map(|h| create_test_header(h as u32)).collect();
             storage.store_headers(&headers).await.unwrap();
-            
+
             // After storing each segment, verify tip consistency
             let reported_tip = storage.get_tip_height().await.unwrap();
             if let Some(tip) = reported_tip {
@@ -690,25 +689,25 @@ async fn test_tip_height_segment_boundary_race() {
                 }
             }
         }
-        
+
         // Final consistency check - try to access the original tip
         let original_tip = (segment_size - 1) as u32;
         let header_at_original_tip = storage.get_header(original_tip).await.unwrap();
-        
+
         // This might be None due to eviction, which is expected
         if header_at_original_tip.is_none() {
             println!("Original tip segment was evicted as expected");
         }
-        
+
         // But the current tip should always be accessible
         let current_tip = storage.get_tip_height().await.unwrap();
         if let Some(tip) = current_tip {
             let header = storage.get_header(tip).await.unwrap();
             assert!(header.is_some(), "Current tip header must always be accessible");
         }
-        
+
         storage.shutdown().await.unwrap();
     }
-    
+
     println!("✅ Segment boundary race test completed");
 }

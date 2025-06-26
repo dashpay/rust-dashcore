@@ -4,8 +4,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use dashcore::{
     block::Header as BlockHeader, hash_types::FilterHeader, network::constants::NetworkExt,
-    sml::masternode_list_engine::MasternodeListEngine, Amount, BlockHash, Network,
-    Transaction, Txid,
+    sml::masternode_list_engine::MasternodeListEngine, Amount, BlockHash, Network, Transaction,
+    Txid,
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,7 +42,7 @@ pub struct SyncProgress {
 
     /// Whether masternode list is synced.
     pub masternodes_synced: bool,
-    
+
     /// Whether filter sync is available (peers support it).
     pub filter_sync_available: bool,
 
@@ -86,18 +86,18 @@ pub struct DetailedSyncProgress {
     pub current_height: u32,
     pub peer_best_height: u32,
     pub percentage: f64,
-    
+
     /// Performance metrics
     pub headers_per_second: f64,
     pub bytes_per_second: u64,
     pub estimated_time_remaining: Option<Duration>,
-    
+
     /// Detailed status
     pub sync_stage: SyncStage,
     pub connected_peers: usize,
     pub total_headers_processed: u64,
     pub total_bytes_downloaded: u64,
-    
+
     /// Timing
     pub sync_start_time: SystemTime,
     pub last_update_time: SystemTime,
@@ -108,9 +108,16 @@ pub struct DetailedSyncProgress {
 pub enum SyncStage {
     Connecting,
     QueryingPeerHeight,
-    DownloadingHeaders { start: u32, end: u32 },
-    ValidatingHeaders { batch_size: usize },
-    StoringHeaders { batch_size: usize },
+    DownloadingHeaders {
+        start: u32,
+        end: u32,
+    },
+    ValidatingHeaders {
+        batch_size: usize,
+    },
+    StoringHeaders {
+        batch_size: usize,
+    },
     Complete,
     Failed(String),
 }
@@ -122,17 +129,17 @@ impl DetailedSyncProgress {
         }
         ((self.current_height as f64 / self.peer_best_height as f64) * 100.0).min(100.0)
     }
-    
+
     pub fn calculate_eta(&self) -> Option<Duration> {
         if self.headers_per_second <= 0.0 {
             return None;
         }
-        
+
         let remaining = self.peer_best_height.saturating_sub(self.current_height);
         if remaining == 0 {
             return Some(Duration::from_secs(0));
         }
-        
+
         let seconds = remaining as f64 / self.headers_per_second;
         Some(Duration::from_secs_f64(seconds))
     }
@@ -182,7 +189,7 @@ impl ChainState {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Create a new chain state for the given network.
     pub fn new_for_network(network: Network) -> Self {
         let mut state = Self::default();
@@ -202,10 +209,10 @@ impl ChainState {
                 dashcore::blockdata::constants::genesis_block(network).header
             }
         };
-        
+
         // Add genesis header to the chain state
         state.headers.push(genesis_header);
-        
+
         tracing::debug!("Initialized ChainState with genesis block - network: {:?}, hash: {}, headers_count: {}", 
             network, genesis_header.block_hash(), state.headers.len());
 
@@ -251,27 +258,27 @@ impl ChainState {
         }
         self.filter_headers.extend(filter_headers);
     }
-    
+
     /// Get the tip header
     pub fn get_tip_header(&self) -> Option<BlockHeader> {
         self.headers.last().copied()
     }
-    
+
     /// Get the height
     pub fn get_height(&self) -> u32 {
         self.tip_height()
     }
-    
+
     /// Add a single header
     pub fn add_header(&mut self, header: BlockHeader) {
         self.headers.push(header);
     }
-    
+
     /// Remove the tip header (for reorgs)
     pub fn remove_tip(&mut self) -> Option<BlockHeader> {
         self.headers.pop()
     }
-    
+
     /// Update chain lock status
     pub fn update_chain_lock(&mut self, height: u32, hash: BlockHash) {
         // Only update if this is a newer chain lock
@@ -280,22 +287,22 @@ impl ChainState {
             self.last_chainlock_hash = Some(hash);
         }
     }
-    
+
     /// Check if a block at given height is chain-locked
     pub fn is_height_chain_locked(&self, height: u32) -> bool {
         self.last_chainlock_height.map_or(false, |locked_height| height <= locked_height)
     }
-    
+
     /// Check if we have a chain lock
     pub fn has_chain_lock(&self) -> bool {
         self.last_chainlock_height.is_some()
     }
-    
+
     /// Get the last chain-locked height
     pub fn get_last_chainlock_height(&self) -> Option<u32> {
         self.last_chainlock_height
     }
-    
+
     /// Get filter matched heights (placeholder for now)
     /// In a real implementation, this would track heights where filters matched wallet transactions
     pub fn get_filter_matched_heights(&self) -> Option<Vec<u32>> {
@@ -303,24 +310,24 @@ impl ChainState {
         // This would typically be populated during filter sync when matches are found
         Some(Vec::new())
     }
-    
+
     /// Calculate the total chain work up to the tip
     pub fn calculate_chain_work(&self) -> Option<crate::chain::chain_work::ChainWork> {
         use crate::chain::chain_work::ChainWork;
-        
+
         // If we have no headers, return None
         if self.headers.is_empty() {
             return None;
         }
-        
+
         // Start with zero work
         let mut total_work = ChainWork::zero();
-        
+
         // Add work from each header
         for header in &self.headers {
             total_work = total_work.add_header(header);
         }
-        
+
         Some(total_work)
     }
 }
@@ -386,19 +393,17 @@ impl PeerInfo {
     /// Check if peer supports compact filters (BIP 157/158).
     pub fn supports_compact_filters(&self) -> bool {
         use dashcore::network::constants::ServiceFlags;
-        
+
         self.services
             .map(|s| ServiceFlags::from(s).has(ServiceFlags::COMPACT_FILTERS))
             .unwrap_or(false)
     }
-    
+
     /// Check if peer supports headers2 compression (DIP-0025).
     pub fn supports_headers2(&self) -> bool {
         use dashcore::network::constants::{ServiceFlags, NODE_HEADERS_COMPRESSED};
-        
-        self.services
-            .map(|s| ServiceFlags::from(s).has(NODE_HEADERS_COMPRESSED))
-            .unwrap_or(false)
+
+        self.services.map(|s| ServiceFlags::from(s).has(NODE_HEADERS_COMPRESSED)).unwrap_or(false)
     }
 }
 
@@ -704,10 +709,10 @@ pub struct AddressBalance {
 
     /// Unconfirmed balance (less than 6 confirmations).
     pub unconfirmed: dashcore::Amount,
-    
+
     /// Pending balance from mempool transactions (not InstantLocked).
     pub pending: dashcore::Amount,
-    
+
     /// Pending balance from InstantLocked mempool transactions.
     pub pending_instant: dashcore::Amount,
 }
@@ -717,7 +722,7 @@ impl AddressBalance {
     pub fn total(&self) -> dashcore::Amount {
         self.confirmed + self.unconfirmed + self.pending + self.pending_instant
     }
-    
+
     /// Get the available balance (confirmed + pending_instant).
     pub fn available(&self) -> dashcore::Amount {
         self.confirmed + self.pending_instant
@@ -729,7 +734,7 @@ impl AddressBalance {
 pub struct MempoolBalance {
     /// Pending balance from mempool transactions (not InstantLocked).
     pub pending: dashcore::Amount,
-    
+
     /// Pending balance from InstantLocked mempool transactions.
     pub pending_instant: dashcore::Amount,
 }
@@ -846,7 +851,7 @@ pub enum SpvEvent {
         /// Total balance in satoshis.
         total: u64,
     },
-    
+
     /// New transaction detected.
     TransactionDetected {
         /// Transaction ID.
@@ -860,7 +865,7 @@ pub enum SpvEvent {
         /// Addresses affected by this transaction.
         addresses: Vec<String>,
     },
-    
+
     /// Block processed.
     BlockProcessed {
         /// Block height.
@@ -872,7 +877,7 @@ pub enum SpvEvent {
         /// Number of relevant transactions.
         relevant_transactions: usize,
     },
-    
+
     /// Sync progress update.
     SyncProgress {
         /// Current block height.
@@ -882,7 +887,7 @@ pub enum SpvEvent {
         /// Progress percentage.
         percentage: f64,
     },
-    
+
     /// ChainLock received and validated.
     ChainLockReceived {
         /// Block height of the ChainLock.
@@ -890,7 +895,7 @@ pub enum SpvEvent {
         /// Block hash of the ChainLock.
         hash: dashcore::BlockHash,
     },
-    
+
     /// Unconfirmed transaction added to mempool.
     MempoolTransactionAdded {
         /// Transaction ID.
@@ -904,7 +909,7 @@ pub enum SpvEvent {
         /// Whether this is an InstantSend transaction.
         is_instant_send: bool,
     },
-    
+
     /// Transaction confirmed (moved from mempool to block).
     MempoolTransactionConfirmed {
         /// Transaction ID.
@@ -914,7 +919,7 @@ pub enum SpvEvent {
         /// Block hash where confirmed.
         block_hash: BlockHash,
     },
-    
+
     /// Transaction removed from mempool (expired, replaced, or double-spent).
     MempoolTransactionRemoved {
         /// Transaction ID.
@@ -930,9 +935,13 @@ pub enum MempoolRemovalReason {
     /// Transaction expired (exceeded timeout).
     Expired,
     /// Transaction was replaced by another transaction.
-    Replaced { by_txid: Txid },
+    Replaced {
+        by_txid: Txid,
+    },
     /// Transaction was double-spent.
-    DoubleSpent { conflicting_txid: Txid },
+    DoubleSpent {
+        conflicting_txid: Txid,
+    },
     /// Transaction was included in a block.
     Confirmed,
     /// Manual removal (e.g., user action).
@@ -971,7 +980,7 @@ impl UnconfirmedTransaction {
         net_amount: i64,
     ) -> Self {
         let size = dashcore::consensus::encode::serialize(&transaction).len();
-        
+
         Self {
             transaction,
             first_seen: Instant::now(),
@@ -983,17 +992,17 @@ impl UnconfirmedTransaction {
             net_amount,
         }
     }
-    
+
     /// Get the transaction ID.
     pub fn txid(&self) -> Txid {
         self.transaction.txid()
     }
-    
+
     /// Check if transaction has expired.
     pub fn is_expired(&self, timeout: Duration) -> bool {
         self.first_seen.elapsed() > timeout
     }
-    
+
     /// Get fee rate in satoshis per byte.
     pub fn fee_rate(&self) -> f64 {
         if self.size == 0 {
@@ -1024,11 +1033,11 @@ impl MempoolState {
         } else {
             self.pending_balance += tx.net_amount;
         }
-        
+
         let txid = tx.txid();
         self.transactions.insert(txid, tx);
     }
-    
+
     /// Remove a transaction from mempool.
     pub fn remove_transaction(&mut self, txid: &Txid) -> Option<UnconfirmedTransaction> {
         if let Some(tx) = self.transactions.remove(txid) {
@@ -1042,11 +1051,11 @@ impl MempoolState {
             None
         }
     }
-    
+
     /// Prune expired transactions.
     pub fn prune_expired(&mut self, timeout: Duration) -> Vec<Txid> {
         let mut expired = Vec::new();
-        
+
         self.transactions.retain(|txid, tx| {
             if tx.is_expired(timeout) {
                 expired.push(*txid);
@@ -1060,27 +1069,24 @@ impl MempoolState {
                 true
             }
         });
-        
+
         // Also prune old recent sends
         let cutoff = Instant::now() - timeout;
         self.recent_sends.retain(|_, &mut timestamp| timestamp > cutoff);
-        
+
         expired
     }
-    
+
     /// Record a recent send.
     pub fn record_send(&mut self, txid: Txid) {
         self.recent_sends.insert(txid, Instant::now());
     }
-    
+
     /// Check if a transaction was recently sent.
     pub fn is_recent_send(&self, txid: &Txid, window: Duration) -> bool {
-        self.recent_sends
-            .get(txid)
-            .map(|&timestamp| timestamp.elapsed() < window)
-            .unwrap_or(false)
+        self.recent_sends.get(txid).map(|&timestamp| timestamp.elapsed() < window).unwrap_or(false)
     }
-    
+
     /// Get total pending balance (regular + InstantSend).
     pub fn total_pending_balance(&self) -> i64 {
         self.pending_balance + self.pending_instant_balance

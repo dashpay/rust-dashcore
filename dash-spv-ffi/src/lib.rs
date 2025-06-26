@@ -17,7 +17,6 @@ pub use wallet::*;
 // Re-export commonly used types
 pub use types::FFINetwork;
 
-
 #[cfg(test)]
 #[path = "../tests/unit/test_type_conversions.rs"]
 mod test_type_conversions;

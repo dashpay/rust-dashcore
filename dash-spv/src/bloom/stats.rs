@@ -107,12 +107,13 @@ impl BloomStatsTracker {
         // Update query performance
         let micros = duration.as_micros() as u64;
         self.stats.query_performance.total_query_time_us += micros;
-        
-        if self.stats.query_performance.min_query_time_us == 0 
-            || micros < self.stats.query_performance.min_query_time_us {
+
+        if self.stats.query_performance.min_query_time_us == 0
+            || micros < self.stats.query_performance.min_query_time_us
+        {
             self.stats.query_performance.min_query_time_us = micros;
         }
-        
+
         if micros > self.stats.query_performance.max_query_time_us {
             self.stats.query_performance.max_query_time_us = micros;
         }
@@ -122,12 +123,10 @@ impl BloomStatsTracker {
             self.query_times.pop_front();
         }
         self.query_times.push_back(duration);
-        
+
         // Update average
-        let total_micros: u64 = self.query_times.iter()
-            .map(|d| d.as_micros() as u64)
-            .sum();
-        self.stats.query_performance.avg_query_time_us = 
+        let total_micros: u64 = self.query_times.iter().map(|d| d.as_micros() as u64).sum();
+        self.stats.query_performance.avg_query_time_us =
             total_micros as f64 / self.query_times.len() as f64;
     }
 
@@ -140,13 +139,12 @@ impl BloomStatsTracker {
     pub fn record_recreation(&mut self, filter_size: usize, bits_set: usize, total_bits: usize) {
         self.stats.basic.recreations += 1;
         self.last_recreation = Some(Instant::now());
-        
+
         // Update filter health
         self.stats.filter_health.filter_size_bytes = filter_size;
         self.stats.filter_health.bits_set = bits_set;
         self.stats.filter_health.total_bits = total_bits;
-        self.stats.filter_health.saturation_percent = 
-            (bits_set as f64 / total_bits as f64) * 100.0;
+        self.stats.filter_health.saturation_percent = (bits_set as f64 / total_bits as f64) * 100.0;
     }
 
     /// Record a transaction received
@@ -157,7 +155,8 @@ impl BloomStatsTracker {
         } else {
             // Estimate bandwidth saved by not downloading unrelated transactions
             // Assume average transaction size if this was a true positive
-            self.stats.network_impact.bandwidth_saved_bytes += (tx_size * 10) as u64; // Rough estimate
+            self.stats.network_impact.bandwidth_saved_bytes += (tx_size * 10) as u64;
+            // Rough estimate
         }
     }
 
@@ -177,7 +176,7 @@ impl BloomStatsTracker {
         if let Some(last) = self.last_recreation {
             self.stats.filter_health.time_since_recreation = Some(last.elapsed());
         }
-        
+
         self.stats.clone()
     }
 
@@ -224,8 +223,9 @@ impl BloomStatsTracker {
             stats.network_impact.transactions_received,
             stats.network_impact.false_positive_transactions,
             if stats.network_impact.transactions_received > 0 {
-                (stats.network_impact.false_positive_transactions as f64 
-                    / stats.network_impact.transactions_received as f64) * 100.0
+                (stats.network_impact.false_positive_transactions as f64
+                    / stats.network_impact.transactions_received as f64)
+                    * 100.0
             } else {
                 0.0
             },

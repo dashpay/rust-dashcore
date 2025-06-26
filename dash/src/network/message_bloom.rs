@@ -35,12 +35,7 @@ impl FilterLoad {
 
     /// Convert to a BloomFilter
     pub fn to_bloom_filter(&self) -> Result<BloomFilter, crate::bloom::BloomError> {
-        BloomFilter::from_bytes(
-            self.filter.clone(),
-            self.hash_funcs,
-            self.tweak,
-            self.flags,
-        )
+        BloomFilter::from_bytes(self.filter.clone(), self.hash_funcs, self.tweak, self.flags)
     }
 }
 

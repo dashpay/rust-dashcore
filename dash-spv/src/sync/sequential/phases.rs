@@ -117,12 +117,24 @@ impl SyncPhase {
     pub fn name(&self) -> &'static str {
         match self {
             SyncPhase::Idle => "Idle",
-            SyncPhase::DownloadingHeaders { .. } => "Downloading Headers",
-            SyncPhase::DownloadingMnList { .. } => "Downloading Masternode Lists",
-            SyncPhase::DownloadingCFHeaders { .. } => "Downloading Filter Headers",
-            SyncPhase::DownloadingFilters { .. } => "Downloading Filters",
-            SyncPhase::DownloadingBlocks { .. } => "Downloading Blocks",
-            SyncPhase::FullySynced { .. } => "Fully Synced",
+            SyncPhase::DownloadingHeaders {
+                ..
+            } => "Downloading Headers",
+            SyncPhase::DownloadingMnList {
+                ..
+            } => "Downloading Masternode Lists",
+            SyncPhase::DownloadingCFHeaders {
+                ..
+            } => "Downloading Filter Headers",
+            SyncPhase::DownloadingFilters {
+                ..
+            } => "Downloading Filters",
+            SyncPhase::DownloadingBlocks {
+                ..
+            } => "Downloading Blocks",
+            SyncPhase::FullySynced {
+                ..
+            } => "Fully Synced",
         }
     }
 
@@ -134,11 +146,26 @@ impl SyncPhase {
     /// Get the last progress time for timeout detection
     pub fn last_progress_time(&self) -> Option<Instant> {
         match self {
-            SyncPhase::DownloadingHeaders { last_progress, .. } => Some(*last_progress),
-            SyncPhase::DownloadingMnList { last_progress, .. } => Some(*last_progress),
-            SyncPhase::DownloadingCFHeaders { last_progress, .. } => Some(*last_progress),
-            SyncPhase::DownloadingFilters { last_progress, .. } => Some(*last_progress),
-            SyncPhase::DownloadingBlocks { last_progress, .. } => Some(*last_progress),
+            SyncPhase::DownloadingHeaders {
+                last_progress,
+                ..
+            } => Some(*last_progress),
+            SyncPhase::DownloadingMnList {
+                last_progress,
+                ..
+            } => Some(*last_progress),
+            SyncPhase::DownloadingCFHeaders {
+                last_progress,
+                ..
+            } => Some(*last_progress),
+            SyncPhase::DownloadingFilters {
+                last_progress,
+                ..
+            } => Some(*last_progress),
+            SyncPhase::DownloadingBlocks {
+                last_progress,
+                ..
+            } => Some(*last_progress),
             _ => None,
         }
     }
@@ -147,11 +174,26 @@ impl SyncPhase {
     pub fn update_progress(&mut self) {
         let now = Instant::now();
         match self {
-            SyncPhase::DownloadingHeaders { last_progress, .. } => *last_progress = now,
-            SyncPhase::DownloadingMnList { last_progress, .. } => *last_progress = now,
-            SyncPhase::DownloadingCFHeaders { last_progress, .. } => *last_progress = now,
-            SyncPhase::DownloadingFilters { last_progress, .. } => *last_progress = now,
-            SyncPhase::DownloadingBlocks { last_progress, .. } => *last_progress = now,
+            SyncPhase::DownloadingHeaders {
+                last_progress,
+                ..
+            } => *last_progress = now,
+            SyncPhase::DownloadingMnList {
+                last_progress,
+                ..
+            } => *last_progress = now,
+            SyncPhase::DownloadingCFHeaders {
+                last_progress,
+                ..
+            } => *last_progress = now,
+            SyncPhase::DownloadingFilters {
+                last_progress,
+                ..
+            } => *last_progress = now,
+            SyncPhase::DownloadingBlocks {
+                last_progress,
+                ..
+            } => *last_progress = now,
             _ => {}
         }
     }
@@ -159,12 +201,30 @@ impl SyncPhase {
     /// Get phase elapsed time
     pub fn elapsed_time(&self) -> Option<Duration> {
         match self {
-            SyncPhase::DownloadingHeaders { start_time, .. } => Some(start_time.elapsed()),
-            SyncPhase::DownloadingMnList { start_time, .. } => Some(start_time.elapsed()),
-            SyncPhase::DownloadingCFHeaders { start_time, .. } => Some(start_time.elapsed()),
-            SyncPhase::DownloadingFilters { start_time, .. } => Some(start_time.elapsed()),
-            SyncPhase::DownloadingBlocks { start_time, .. } => Some(start_time.elapsed()),
-            SyncPhase::FullySynced { total_sync_time, .. } => Some(*total_sync_time),
+            SyncPhase::DownloadingHeaders {
+                start_time,
+                ..
+            } => Some(start_time.elapsed()),
+            SyncPhase::DownloadingMnList {
+                start_time,
+                ..
+            } => Some(start_time.elapsed()),
+            SyncPhase::DownloadingCFHeaders {
+                start_time,
+                ..
+            } => Some(start_time.elapsed()),
+            SyncPhase::DownloadingFilters {
+                start_time,
+                ..
+            } => Some(start_time.elapsed()),
+            SyncPhase::DownloadingBlocks {
+                start_time,
+                ..
+            } => Some(start_time.elapsed()),
+            SyncPhase::FullySynced {
+                total_sync_time,
+                ..
+            } => Some(*total_sync_time),
             SyncPhase::Idle => None,
         }
     }
@@ -251,9 +311,7 @@ impl SyncPhase {
 
                 let eta = if *cfheaders_per_second > 0.0 {
                     let remaining = items_total.saturating_sub(items_completed);
-                    Some(Duration::from_secs_f64(
-                        remaining as f64 / cfheaders_per_second,
-                    ))
+                    Some(Duration::from_secs_f64(remaining as f64 / cfheaders_per_second))
                 } else {
                     None
                 };

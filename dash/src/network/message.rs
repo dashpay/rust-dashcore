@@ -541,9 +541,9 @@ impl Decodable for RawNetworkMessage {
                 Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
             ),
             "sendheaders2" => NetworkMessage::SendHeaders2,
-            "headers2" => NetworkMessage::Headers2(
-                Decodable::consensus_decode_from_finite_reader(&mut mem_d)?,
-            ),
+            "headers2" => NetworkMessage::Headers2(Decodable::consensus_decode_from_finite_reader(
+                &mut mem_d,
+            )?),
             "getaddr" => NetworkMessage::GetAddr,
             "ping" => {
                 NetworkMessage::Ping(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)

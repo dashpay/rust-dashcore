@@ -3,14 +3,14 @@
 //! This module implements the core logic for handling blockchain reorganizations,
 //! including finding common ancestors, rolling back transactions, and switching chains.
 
-use dashcore::{BlockHash, Header as BlockHeader, Transaction, Txid};
-use dashcore_hashes::Hash;
-use std::sync::Arc;
+use super::chainlock_manager::ChainLockManager;
+use super::{ChainTip, Fork};
 use crate::storage::{ChainStorage, StorageManager};
 use crate::types::ChainState;
 use crate::wallet::WalletState;
-use super::{ChainTip, Fork};
-use super::chainlock_manager::ChainLockManager;
+use dashcore::{BlockHash, Header as BlockHeader, Transaction, Txid};
+use dashcore_hashes::Hash;
+use std::sync::Arc;
 
 /// Event emitted when a reorganization occurs
 #[derive(Debug, Clone)]
@@ -67,8 +67,8 @@ impl ReorgManager {
 
     /// Create a new reorganization manager with chain lock support
     pub fn new_with_chain_locks(
-        max_reorg_depth: u32, 
-        chain_lock_manager: Arc<ChainLockManager>
+        max_reorg_depth: u32,
+        chain_lock_manager: Arc<ChainLockManager>,
     ) -> Self {
         Self {
             max_reorg_depth,
@@ -135,22 +135,13 @@ impl ReorgManager {
         storage_manager: &mut dyn StorageManager,
     ) -> Result<ReorgEvent, String> {
         // Phase 1: Collect all necessary data (read-only)
-        let reorg_data = self.collect_reorg_data(
-            chain_state,
-            fork,
-            storage_manager,
-        ).await?;
+        let reorg_data = self.collect_reorg_data(chain_state, fork, storage_manager).await?;
 
         // Phase 2: Apply the reorganization (write-only)
-        self.apply_reorg_with_data(
-            chain_state,
-            wallet_state,
-            fork,
-            reorg_data,
-            storage_manager,
-        ).await
+        self.apply_reorg_with_data(chain_state, wallet_state, fork, reorg_data, storage_manager)
+            .await
     }
-    
+
     /// Collect all data needed for reorganization (read-only phase)
     #[cfg(test)]
     pub async fn collect_reorg_data(
@@ -161,7 +152,7 @@ impl ReorgManager {
     ) -> Result<ReorgData, String> {
         self.collect_reorg_data_internal(chain_state, fork, storage_manager).await
     }
-    
+
     #[cfg(not(test))]
     async fn collect_reorg_data(
         &self,
@@ -179,16 +170,14 @@ impl ReorgManager {
         storage: &dyn StorageManager,
     ) -> Result<ReorgData, String> {
         // Find the common ancestor
-        let (common_ancestor, common_height) = self.find_common_ancestor_with_fork(
-            fork,
-            storage,
-        ).await?;
+        let (common_ancestor, common_height) =
+            self.find_common_ancestor_with_fork(fork, storage).await?;
 
         // Collect headers to disconnect
         let current_height = chain_state.get_height();
         let mut disconnected_headers = Vec::new();
         let mut disconnected_blocks = Vec::new();
-        
+
         // Walk back from current tip to common ancestor
         for height in ((common_height + 1)..=current_height).rev() {
             if let Ok(Some(header)) = storage.get_header(height).await {
@@ -203,7 +192,7 @@ impl ReorgManager {
         // Collect affected transaction IDs
         let affected_tx_ids = Vec::new(); // Will be populated when we have transaction storage
         let affected_transactions = Vec::new(); // Will be populated when we have transaction storage
-        
+
         Ok(ReorgData {
             common_ancestor,
             common_height,
@@ -213,7 +202,7 @@ impl ReorgManager {
             affected_transactions,
         })
     }
-    
+
     /// Apply reorganization using collected data (write-only phase)
     async fn apply_reorg_with_data(
         &self,
@@ -226,11 +215,12 @@ impl ReorgManager {
         // Use UTXO rollback if available
         if wallet_state.rollback_manager().is_some() {
             // Rollback wallet state to common ancestor height
-            wallet_state.rollback_to_height(reorg_data.common_height, storage_manager)
+            wallet_state
+                .rollback_to_height(reorg_data.common_height, storage_manager)
                 .await
                 .map_err(|e| format!("Failed to rollback wallet state: {:?}", e))?;
         }
-        
+
         // Disconnect blocks from the old chain
         for header in &reorg_data.disconnected_headers {
             // Mark transactions as unconfirmed if rollback manager not available
@@ -239,24 +229,26 @@ impl ReorgManager {
                     wallet_state.mark_transaction_unconfirmed(txid);
                 }
             }
-            
+
             // Remove header from chain state
             chain_state.remove_tip();
         }
-        
+
         // Connect blocks from the new chain
         let mut current_height = reorg_data.common_height;
         for header in &fork.headers {
             current_height += 1;
-            
+
             // Add header to chain state
             chain_state.add_header(*header);
-            
+
             // Store the header
-            storage_manager.store_headers(&[*header]).await
+            storage_manager
+                .store_headers(&[*header])
+                .await
                 .map_err(|e| format!("Failed to store header: {:?}", e))?;
         }
-        
+
         Ok(ReorgEvent {
             common_ancestor: reorg_data.common_ancestor,
             common_height: reorg_data.common_height,
@@ -277,19 +269,19 @@ impl ReorgManager {
             // The fork point is already in our chain, so it's the common ancestor
             return Ok((fork.fork_point, height));
         }
-        
+
         // If we have fork headers, check their parent blocks
         if !fork.headers.is_empty() {
             // Start from the first header in the fork and walk backwards
             let first_fork_header = &fork.headers[0];
             let mut current_hash = first_fork_header.prev_blockhash;
-            
+
             // Check if the parent of the first fork header is in our chain
             if let Ok(Some(height)) = storage.get_header_height_by_hash(&current_hash).await {
                 return Ok((current_hash, height));
             }
         }
-        
+
         // As a fallback, the fork should specify where it diverged from
         // In a properly constructed Fork, fork_height should indicate where the split occurred
         if fork.fork_height > 0 {
@@ -299,7 +291,7 @@ impl ReorgManager {
                 return Ok((hash, fork.fork_height.saturating_sub(1)));
             }
         }
-        
+
         Err("Cannot find common ancestor between fork and main chain".to_string())
     }
 
@@ -314,22 +306,22 @@ impl ReorgManager {
         let mut current_hash = *fork_point;
         let mut iterations = 0;
         const MAX_ITERATIONS: u32 = 1_000_000; // Reasonable limit for chain traversal
-        
+
         loop {
             if let Ok(Some(height)) = storage.get_header_height(&current_hash) {
                 // Found it in our chain
                 return Ok((current_hash, height));
             }
-            
+
             // Get the previous block
             if let Ok(Some(header)) = storage.get_header(&current_hash) {
                 current_hash = header.prev_blockhash;
-                
+
                 // Safety check: don't go back too far
                 if current_hash == BlockHash::all_zeros() {
                     return Err("Reached genesis without finding common ancestor".to_string());
                 }
-                
+
                 // Prevent infinite loops in case of corrupted chain
                 iterations += 1;
                 if iterations > MAX_ITERATIONS {
@@ -350,7 +342,7 @@ impl ReorgManager {
     ) -> Result<Vec<BlockHeader>, String> {
         let current_height = chain_state.get_height();
         let mut headers = Vec::new();
-        
+
         // Walk back from current tip to common ancestor
         for height in ((common_height + 1)..=current_height).rev() {
             if let Ok(Some(header)) = storage.get_header_by_height(height) {
@@ -359,7 +351,7 @@ impl ReorgManager {
                 return Err(format!("Missing header at height {}", height));
             }
         }
-        
+
         Ok(headers)
     }
 
@@ -372,7 +364,7 @@ impl ReorgManager {
         storage: &dyn ChainStorage,
     ) -> Result<Vec<Transaction>, String> {
         let mut affected = Vec::new();
-        
+
         // Collect transactions from disconnected blocks
         for header in disconnected_headers {
             let block_hash = header.block_hash();
@@ -386,16 +378,19 @@ impl ReorgManager {
                 }
             }
         }
-        
+
         // Note: We don't have transactions from connected headers yet,
         // they would need to be downloaded after the reorg
-        
+
         Ok(affected)
     }
 
-
     /// Check if a block is chain-locked
-    fn is_chain_locked(&self, header: &BlockHeader, storage: &dyn ChainStorage) -> Result<bool, String> {
+    fn is_chain_locked(
+        &self,
+        header: &BlockHeader,
+        storage: &dyn ChainStorage,
+    ) -> Result<bool, String> {
         if let Some(ref chain_lock_mgr) = self.chain_lock_manager {
             // Get the height of this header
             if let Ok(Some(height)) = storage.get_header_height(&header.block_hash()) {
@@ -407,11 +402,7 @@ impl ReorgManager {
     }
 
     /// Validate that a reorganization is safe to perform
-    pub fn validate_reorg(
-        &self,
-        current_tip: &ChainTip,
-        fork: &Fork,
-    ) -> Result<(), String> {
+    pub fn validate_reorg(&self, current_tip: &ChainTip, fork: &Fork) -> Result<(), String> {
         // Check maximum reorg depth
         let reorg_depth = current_tip.height.saturating_sub(fork.fork_height);
         if reorg_depth > self.max_reorg_depth {
@@ -427,7 +418,7 @@ impl ReorgManager {
         }
 
         // Additional validation could go here
-        
+
         Ok(())
     }
 }
@@ -451,10 +442,10 @@ mod tests {
     #[tokio::test]
     async fn test_reorg_validation() {
         let reorg_mgr = ReorgManager::new(100, false);
-        
+
         let genesis = genesis_block(Network::Dash).header;
         let tip = ChainTip::new(genesis.clone(), 0, ChainWork::from_header(&genesis));
-        
+
         // Create a fork with less work - should not reorg
         let fork = Fork {
             fork_point: BlockHash::from(dashcore_hashes::hash_x11::Hash::all_zeros()),
@@ -464,7 +455,7 @@ mod tests {
             headers: vec![genesis.clone()],
             chain_work: ChainWork::zero(), // Less work
         };
-        
+
         let result = reorg_mgr.validate_reorg(&tip, &fork);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does not have more work"));
@@ -473,10 +464,10 @@ mod tests {
     #[tokio::test]
     async fn test_max_reorg_depth() {
         let reorg_mgr = ReorgManager::new(10, false);
-        
+
         let genesis = genesis_block(Network::Dash).header;
         let tip = ChainTip::new(genesis.clone(), 100, ChainWork::from_header(&genesis));
-        
+
         // Create a fork that would require deep reorg
         let fork = Fork {
             fork_point: genesis.block_hash(),
@@ -486,7 +477,7 @@ mod tests {
             headers: vec![],
             chain_work: ChainWork::from_bytes([255u8; 32]), // Max work
         };
-        
+
         let result = reorg_mgr.validate_reorg(&tip, &fork);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("exceeds maximum allowed"));

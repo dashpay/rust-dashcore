@@ -120,10 +120,10 @@ pub enum MessageHandleResult {
 
     /// Block headers.
     Headers(Vec<dashcore::block::Header>),
-    
+
     /// Compressed block headers.
     Headers2(Headers2Message),
-    
+
     /// SendHeaders2 preference.
     SendHeaders2,
 

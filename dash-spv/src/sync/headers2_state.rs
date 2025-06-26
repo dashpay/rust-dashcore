@@ -17,10 +17,10 @@
 //! This module manages compression state for each peer and provides
 //! statistics about header compression efficiency.
 
+use crate::types::PeerId;
 use dashcore::blockdata::block::Header;
 use dashcore::network::message_headers2::{CompressedHeader, CompressionState, DecompressionError};
 use std::collections::HashMap;
-use crate::types::PeerId;
 
 /// Size of an uncompressed block header in bytes
 const UNCOMPRESSED_HEADER_SIZE: usize = 80;
@@ -54,7 +54,7 @@ impl std::error::Error for ProcessError {}
 pub struct Headers2StateManager {
     /// Compression state per peer
     peer_states: HashMap<PeerId, CompressionState>,
-    
+
     /// Statistics
     pub total_headers_received: u64,
     pub compressed_headers_received: u64,
@@ -73,52 +73,57 @@ impl Headers2StateManager {
             total_bytes_received: 0,
         }
     }
-    
+
     /// Get or create compression state for a peer
     pub fn get_state(&mut self, peer_id: PeerId) -> &mut CompressionState {
         self.peer_states.entry(peer_id).or_insert_with(CompressionState::new)
     }
-    
+
     /// Process compressed headers from a peer
-    pub fn process_headers(&mut self, peer_id: PeerId, headers: Vec<CompressedHeader>) -> Result<Vec<Header>, ProcessError> {
+    pub fn process_headers(
+        &mut self,
+        peer_id: PeerId,
+        headers: Vec<CompressedHeader>,
+    ) -> Result<Vec<Header>, ProcessError> {
         if headers.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         // First header must be uncompressed for proper sync
         if !headers[0].is_full() {
             return Err(ProcessError::FirstHeaderNotFull);
         }
-        
+
         let mut decompressed = Vec::with_capacity(headers.len());
-        
+
         // Process headers and collect statistics
         for (i, compressed) in headers.into_iter().enumerate() {
             // Update statistics
             self.total_headers_received += 1;
             self.total_bytes_received += compressed.encoded_size() as u64;
-            
+
             if compressed.is_compressed() {
                 self.compressed_headers_received += 1;
                 self.bytes_saved += compressed.bytes_saved() as u64;
             }
-            
+
             // Get state and decompress
             let state = self.get_state(peer_id);
-            let header = state.decompress(&compressed)
+            let header = state
+                .decompress(&compressed)
                 .map_err(|e| ProcessError::DecompressionError(i, e))?;
-            
+
             decompressed.push(header);
         }
-        
+
         Ok(decompressed)
     }
-    
+
     /// Reset state for a peer (e.g., after disconnect)
     pub fn reset_peer(&mut self, peer_id: PeerId) {
         self.peer_states.remove(&peer_id);
     }
-    
+
     /// Get compression ratio
     pub fn compression_ratio(&self) -> f64 {
         if self.total_headers_received == 0 {
@@ -127,7 +132,7 @@ impl Headers2StateManager {
             self.compressed_headers_received as f64 / self.total_headers_received as f64
         }
     }
-    
+
     /// Get bandwidth savings percentage
     pub fn bandwidth_savings(&self) -> f64 {
         if self.total_bytes_received == 0 {
@@ -138,7 +143,7 @@ impl Headers2StateManager {
             (savings / uncompressed_size as f64) * 100.0
         }
     }
-    
+
     /// Get detailed statistics
     pub fn get_stats(&self) -> Headers2Stats {
         Headers2Stats {
@@ -180,7 +185,7 @@ mod tests {
     use dashcore::network::message_headers2::CompressionState;
     use dashcore::pow::CompactTarget;
     use dashcore_hashes::Hash;
-    
+
     fn create_test_header(nonce: u32) -> Header {
         Header {
             version: Version::from_consensus(0x20000000),
@@ -191,74 +196,74 @@ mod tests {
             nonce,
         }
     }
-    
+
     #[test]
     fn test_headers2_state_manager() {
         let mut manager = Headers2StateManager::new();
         let peer_id = PeerId(1);
-        
+
         // Create a compression state and compress some headers
         let mut compress_state = CompressionState::new();
         let header1 = create_test_header(1);
         let header2 = create_test_header(2);
-        
+
         let compressed1 = compress_state.compress(&header1);
         let compressed2 = compress_state.compress(&header2);
-        
+
         // Process headers
         let result = manager.process_headers(peer_id, vec![compressed1, compressed2]);
         assert!(result.is_ok());
-        
+
         let decompressed = result.unwrap();
         assert_eq!(decompressed.len(), 2);
         assert_eq!(decompressed[0], header1);
         assert_eq!(decompressed[1], header2);
-        
+
         // Check statistics
         assert_eq!(manager.total_headers_received, 2);
         assert!(manager.compressed_headers_received > 0);
         assert!(manager.bytes_saved > 0);
     }
-    
+
     #[test]
     fn test_first_header_must_be_full() {
         let mut manager = Headers2StateManager::new();
         let peer_id = PeerId(1);
-        
+
         // Create a highly compressed header (would fail without previous state)
         let mut state = CompressionState::new();
         let header = create_test_header(1);
-        
+
         // Compress once to prime the state
         let _ = state.compress(&header);
-        
+
         // Now compress another header - this will be highly compressed
         let compressed = state.compress(&header);
-        
+
         // Try to process it as first header - should fail
         let result = manager.process_headers(peer_id, vec![compressed]);
         assert!(matches!(result, Err(ProcessError::FirstHeaderNotFull)));
     }
-    
+
     #[test]
     fn test_peer_reset() {
         let mut manager = Headers2StateManager::new();
         let peer_id = PeerId(1);
-        
+
         // Add some state
         let _state = manager.get_state(peer_id);
         assert_eq!(manager.peer_states.len(), 1);
-        
+
         // Reset peer
         manager.reset_peer(peer_id);
         assert_eq!(manager.peer_states.len(), 0);
     }
-    
+
     #[test]
     fn test_statistics() {
         let mut manager = Headers2StateManager::new();
         let stats = manager.get_stats();
-        
+
         assert_eq!(stats.total_headers, 0);
         assert_eq!(stats.compression_ratio, 0.0);
         assert_eq!(stats.bandwidth_savings, 0.0);

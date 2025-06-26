@@ -75,9 +75,8 @@ pub use dashcore::{Address, BlockHash, Network, OutPoint, ScriptBuf};
 
 // Re-export MasternodeListEngine and related types
 pub use dashcore::sml::masternode_list_engine::{
-    MasternodeListEngine,
+    MasternodeListEngine, MasternodeListEngineBTreeMapBlockContainer,
     MasternodeListEngineBlockContainer,
-    MasternodeListEngineBTreeMapBlockContainer,
 };
 
 /// Current version of the dash-spv library.

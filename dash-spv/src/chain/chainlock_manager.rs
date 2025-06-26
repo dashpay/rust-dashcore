@@ -6,12 +6,12 @@
 use dashcore::{BlockHash, ChainLock};
 use indexmap::IndexMap;
 use std::sync::{Arc, RwLock};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
-use crate::error::{ValidationError, ValidationResult, StorageError, StorageResult};
+use crate::error::{StorageError, StorageResult, ValidationError, ValidationResult};
 use crate::storage::StorageManager;
-use crate::validation::ChainLockValidator;
 use crate::types::ChainState;
+use crate::validation::ChainLockValidator;
 
 /// ChainLock storage entry
 #[derive(Debug, Clone)]
@@ -76,9 +76,10 @@ impl ChainLockManager {
                         existing_entry.chain_lock.block_hash,
                         chain_lock.block_hash
                     );
-                    return Err(ValidationError::InvalidChainLock(
-                        format!("Conflicting ChainLock at height {}", chain_lock.block_height)
-                    ));
+                    return Err(ValidationError::InvalidChainLock(format!(
+                        "Conflicting ChainLock at height {}",
+                        chain_lock.block_height
+                    )));
                 }
                 debug!("Already have ChainLock for height {}", chain_lock.block_height);
                 return Ok(());
@@ -89,19 +90,14 @@ impl ChainLockManager {
         if let Some(header) = chain_state.header_at_height(chain_lock.block_height) {
             let header_hash = header.block_hash();
             if header_hash != chain_lock.block_hash {
-                return Err(ValidationError::InvalidChainLock(
-                    format!(
-                        "ChainLock block hash {} does not match our chain at height {} (expected {})",
-                        chain_lock.block_hash, chain_lock.block_height, header_hash
-                    )
-                ));
+                return Err(ValidationError::InvalidChainLock(format!(
+                    "ChainLock block hash {} does not match our chain at height {} (expected {})",
+                    chain_lock.block_hash, chain_lock.block_height, header_hash
+                )));
             }
         } else {
             // We don't have this block yet, store the chain lock for future validation
-            warn!(
-                "Received ChainLock for future block at height {}",
-                chain_lock.block_height
-            );
+            warn!("Received ChainLock for future block at height {}", chain_lock.block_height);
         }
 
         // Note: Full quorum validation requires masternode list which may not be available yet
@@ -113,10 +109,7 @@ impl ChainLockManager {
         // Update chain state
         self.update_chain_state_with_lock(&chain_lock, chain_state);
 
-        info!(
-            "Successfully processed ChainLock for height {}",
-            chain_lock.block_height
-        );
+        info!("Successfully processed ChainLock for height {}", chain_lock.block_height);
 
         Ok(())
     }
@@ -145,14 +138,14 @@ impl ChainLockManager {
             if by_height.len() > self.max_cache_size {
                 // Calculate how many entries to remove
                 let entries_to_remove = by_height.len() - self.max_cache_size;
-                
+
                 // Collect keys to remove (oldest entries are at the beginning)
                 let keys_to_remove: Vec<(u32, BlockHash)> = by_height
                     .iter()
                     .take(entries_to_remove)
                     .map(|(height, entry)| (*height, entry.chain_lock.block_hash))
                     .collect();
-                
+
                 // Batch remove from both maps
                 for (height, block_hash) in keys_to_remove {
                     by_height.shift_remove(&height);
@@ -210,24 +203,17 @@ impl ChainLockManager {
     }
 
     /// Check if a reorganization would violate chain locks
-    pub fn would_violate_chain_lock(
-        &self,
-        reorg_from_height: u32,
-        reorg_to_height: u32,
-    ) -> bool {
+    pub fn would_violate_chain_lock(&self, reorg_from_height: u32, reorg_to_height: u32) -> bool {
         if !self.enforce_chain_locks {
             return false;
         }
 
         let locks = self.chain_locks_by_height.read().unwrap();
-        
+
         // Check if any chain-locked block would be reorganized
         for height in reorg_from_height..=reorg_to_height {
             if locks.contains_key(&height) {
-                debug!(
-                    "Reorg would violate chain lock at height {}",
-                    height
-                );
+                debug!("Reorg would violate chain lock at height {}", height);
                 return true;
             }
         }
@@ -261,13 +247,13 @@ impl ChainLockManager {
                             received_at: std::time::SystemTime::now(),
                             validated: true,
                         };
-                        
+
                         let mut by_height = self.chain_locks_by_height.write().unwrap();
                         let mut by_hash = self.chain_locks_by_hash.write().unwrap();
-                        
+
                         by_height.insert(chain_lock.block_height, entry.clone());
                         by_hash.insert(chain_lock.block_hash, entry);
-                        
+
                         chain_locks.push(chain_lock);
                     }
                     Err(e) => {
@@ -296,10 +282,7 @@ impl ChainLockManager {
         quorum_public_key: &[u8],
         quorum_height: u32,
     ) -> ValidationResult<()> {
-        info!(
-            "Validating ChainLock for height {} with quorum",
-            chain_lock.block_height
-        );
+        info!("Validating ChainLock for height {} with quorum", chain_lock.block_height);
 
         // Use the validator to perform full validation including BLS signature
         self.validator.validate_with_quorum(chain_lock, quorum_public_key, quorum_height)?;

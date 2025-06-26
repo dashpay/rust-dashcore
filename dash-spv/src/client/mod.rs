@@ -17,15 +17,18 @@ use std::collections::HashSet;
 
 use crate::terminal::TerminalUI;
 
+use crate::chain::ChainLockManager;
 use crate::error::{Result, SpvError};
+use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::filters::FilterNotificationSender;
 use crate::sync::sequential::SequentialSyncManager;
-use crate::types::{AddressBalance, ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats, SyncProgress, WatchItem};
+use crate::types::{
+    AddressBalance, ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats,
+    SyncProgress, WatchItem,
+};
 use crate::validation::ValidationManager;
-use crate::chain::ChainLockManager;
-use crate::mempool_filter::MempoolFilter;
 use dashcore::network::constants::NetworkExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 
@@ -37,7 +40,6 @@ pub use message_handler::MessageHandler;
 pub use status_display::StatusDisplay;
 pub use wallet_utils::{WalletSummary, WalletUtils};
 pub use watch_manager::{WatchItemUpdateSender, WatchManager};
-
 
 /// Main Dash SPV client.
 pub struct DashSpvClient {
@@ -67,28 +69,30 @@ pub struct DashSpvClient {
 
 impl DashSpvClient {
     /// Take the progress receiver for external consumption.
-    pub fn take_progress_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<DetailedSyncProgress>> {
+    pub fn take_progress_receiver(
+        &mut self,
+    ) -> Option<mpsc::UnboundedReceiver<DetailedSyncProgress>> {
         self.progress_receiver.take()
     }
-    
+
     /// Emit a progress update.
     fn emit_progress(&self, progress: DetailedSyncProgress) {
         if let Some(ref sender) = self.progress_sender {
             let _ = sender.send(progress);
         }
     }
-    
+
     /// Take the event receiver for external consumption.
     pub fn take_event_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<SpvEvent>> {
         self.event_rx.take()
     }
-    
+
     /// Emit an event.
     pub(crate) fn emit_event(&self, event: SpvEvent) {
         tracing::debug!("Emitting event: {:?}", event);
         let _ = self.event_tx.send(event);
     }
-    
+
     /// Helper to create a StatusDisplay instance.
     async fn create_status_display(&self) -> StatusDisplay {
         StatusDisplay::new(
@@ -99,7 +103,6 @@ impl DashSpvClient {
             &self.config,
         )
     }
-
 
     /// Helper to convert wallet errors to SpvError.
     fn wallet_to_spv_error(e: impl std::fmt::Display) -> SpvError {
@@ -272,7 +275,7 @@ impl DashSpvClient {
 
         // Create progress channels
         let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
-        
+
         // Create event channels
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
@@ -330,10 +333,12 @@ impl DashSpvClient {
                 self.mempool_state.clone(),
                 watch_items,
             )));
-            
+
             // Load mempool state from storage if persistence is enabled
             if self.config.persist_mempool {
-                if let Some(state) = self.storage.load_mempool_state().await.map_err(SpvError::Storage)? {
+                if let Some(state) =
+                    self.storage.load_mempool_state().await.map_err(SpvError::Storage)?
+                {
                     *self.mempool_state.write().await = state;
                 }
             }
@@ -383,7 +388,9 @@ impl DashSpvClient {
             match self.restore_sync_state().await {
                 Ok(restored) => {
                     if restored {
-                        tracing::info!("✅ Successfully restored sync state from persistent storage");
+                        tracing::info!(
+                            "✅ Successfully restored sync state from persistent storage"
+                        );
                     } else {
                         tracing::info!("No previous sync state found, starting fresh sync");
                     }
@@ -452,11 +459,14 @@ impl DashSpvClient {
     }
 
     /// Enable mempool tracking with the specified strategy.
-    pub async fn enable_mempool_tracking(&mut self, strategy: crate::client::config::MempoolStrategy) -> Result<()> {
+    pub async fn enable_mempool_tracking(
+        &mut self,
+        strategy: crate::client::config::MempoolStrategy,
+    ) -> Result<()> {
         // Update config
         self.config.enable_mempool_tracking = true;
         self.config.mempool_strategy = strategy;
-        
+
         // Initialize mempool filter if not already done
         if self.mempool_filter.is_none() {
             let watch_items = self.watch_items.read().await.iter().cloned().collect();
@@ -468,18 +478,21 @@ impl DashSpvClient {
                 watch_items,
             )));
         }
-        
+
         Ok(())
     }
 
     /// Get mempool balance for an address.
-    pub async fn get_mempool_balance(&self, address: &dashcore::Address) -> Result<crate::types::MempoolBalance> {
+    pub async fn get_mempool_balance(
+        &self,
+        address: &dashcore::Address,
+    ) -> Result<crate::types::MempoolBalance> {
         let wallet = self.wallet.read().await;
         let mempool_state = self.mempool_state.read().await;
-        
+
         let mut pending = 0u64;
         let mut pending_instant = 0u64;
-        
+
         // Calculate pending balances from mempool transactions
         for tx in mempool_state.transactions.values() {
             // Check if this transaction affects the given address
@@ -490,7 +503,7 @@ impl DashSpvClient {
                     break;
                 }
             }
-            
+
             if address_affected {
                 // Handle both incoming (positive) and outgoing (negative) transactions
                 // For incoming transactions, add to balance; for outgoing, subtract from balance
@@ -513,7 +526,7 @@ impl DashSpvClient {
                 }
             }
         }
-        
+
         Ok(crate::types::MempoolBalance {
             pending: dashcore::Amount::from_sat(pending),
             pending_instant: dashcore::Amount::from_sat(pending_instant),
@@ -525,7 +538,7 @@ impl DashSpvClient {
         let mempool_state = self.mempool_state.read().await;
         mempool_state.transactions.len()
     }
-    
+
     /// Update mempool filter with current watch items.
     async fn update_mempool_filter(&mut self) {
         let watch_items = self.watch_items.read().await.iter().cloned().collect();
@@ -548,7 +561,9 @@ impl DashSpvClient {
 
     /// Check if filter sync is available (any peer supports compact filters).
     pub async fn is_filter_sync_available(&self) -> bool {
-        self.network.has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS).await
+        self.network
+            .has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS)
+            .await
     }
 
     /// Stop the SPV client.
@@ -586,7 +601,7 @@ impl DashSpvClient {
 
         Ok(())
     }
-    
+
     /// Shutdown the SPV client (alias for stop).
     pub async fn shutdown(&mut self) -> Result<()> {
         self.stop().await
@@ -597,7 +612,7 @@ impl DashSpvClient {
         self.sync_to_tip().await?;
         Ok(())
     }
-    
+
     /// Synchronize to the tip of the blockchain.
     pub async fn sync_to_tip(&mut self) -> Result<SyncProgress> {
         let running = self.running.read().await;
@@ -674,7 +689,7 @@ impl DashSpvClient {
         let mut last_filter_gap_check = Instant::now();
         let filter_gap_check_interval =
             std::time::Duration::from_secs(self.config.cfheader_gap_check_interval_secs);
-        
+
         // Progress tracking variables
         let sync_start_time = SystemTime::now();
         let mut last_height = 0u32;
@@ -714,14 +729,20 @@ impl DashSpvClient {
                 match self.sync_manager.start_sync(&mut *self.network, &mut *self.storage).await {
                     Ok(started) => {
                         tracing::info!("✅ Sequential sync start_sync returned: {}", started);
-                        
+
                         // Send initial requests after sync is prepared
-                        if let Err(e) = self.sync_manager.send_initial_requests(&mut *self.network, &mut *self.storage).await {
+                        if let Err(e) = self
+                            .sync_manager
+                            .send_initial_requests(&mut *self.network, &mut *self.storage)
+                            .await
+                        {
                             tracing::error!("Failed to send initial sync requests: {}", e);
-                            
+
                             // Reset sync manager state to prevent inconsistent state
                             self.sync_manager.reset_pending_requests();
-                            tracing::warn!("Reset sync manager state after send_initial_requests failure");
+                            tracing::warn!(
+                                "Reset sync manager state after send_initial_requests failure"
+                            );
                         }
                     }
                     Err(e) => {
@@ -737,7 +758,7 @@ impl DashSpvClient {
                 self.update_status_display().await;
 
                 // Sequential sync handles filter gaps internally
-                
+
                 // Filter sync progress is handled by sequential sync manager internally
                 let (
                     filters_requested,
@@ -809,34 +830,41 @@ impl DashSpvClient {
                 if let Err(e) = self.update_wallet_confirmations().await {
                     tracing::warn!("Failed to update wallet confirmations: {}", e);
                 }
-                
+
                 // Emit detailed progress update
                 if last_rate_calc.elapsed() >= Duration::from_secs(1) {
-                    let current_height = self.storage.get_tip_height().await.ok().flatten().unwrap_or(0);
-                    let peer_best = self.network.get_peer_best_height().await.ok().flatten().unwrap_or(current_height);
-                    
+                    let current_height =
+                        self.storage.get_tip_height().await.ok().flatten().unwrap_or(0);
+                    let peer_best = self
+                        .network
+                        .get_peer_best_height()
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or(current_height);
+
                     // Calculate headers downloaded this second
                     if current_height > last_height {
                         headers_this_second = current_height - last_height;
                         last_height = current_height;
                     }
-                    
+
                     let headers_per_second = headers_this_second as f64;
-                    
+
                     // Determine sync stage
                     let sync_stage = if self.network.peer_count() == 0 {
                         crate::types::SyncStage::Connecting
                     } else if current_height == 0 {
                         crate::types::SyncStage::QueryingPeerHeight
                     } else if current_height < peer_best {
-                        crate::types::SyncStage::DownloadingHeaders { 
-                            start: current_height, 
-                            end: peer_best 
+                        crate::types::SyncStage::DownloadingHeaders {
+                            start: current_height,
+                            end: peer_best,
                         }
                     } else {
                         crate::types::SyncStage::Complete
                     };
-                    
+
                     let progress = crate::types::DetailedSyncProgress {
                         current_height,
                         peer_best_height: peer_best,
@@ -847,7 +875,9 @@ impl DashSpvClient {
                         },
                         headers_per_second,
                         bytes_per_second: 0, // TODO: Track actual bytes
-                        estimated_time_remaining: if headers_per_second > 0.0 && peer_best > current_height {
+                        estimated_time_remaining: if headers_per_second > 0.0
+                            && peer_best > current_height
+                        {
                             let remaining = peer_best - current_height;
                             Some(Duration::from_secs_f64(remaining as f64 / headers_per_second))
                         } else {
@@ -860,9 +890,9 @@ impl DashSpvClient {
                         sync_start_time,
                         last_update_time: SystemTime::now(),
                     };
-                    
+
                     self.emit_progress(progress);
-                    
+
                     headers_this_second = 0;
                     last_rate_calc = Instant::now();
                 }
@@ -871,11 +901,13 @@ impl DashSpvClient {
             }
 
             // Save sync state periodically (every 30 seconds or after significant progress)
-            let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+            let current_time =
+                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
             let last_sync_state_save = self.last_sync_state_save.clone();
             let last_save = *last_sync_state_save.read().await;
-            
-            if current_time - last_save >= 30 {  // Save every 30 seconds
+
+            if current_time - last_save >= 30 {
+                // Save every 30 seconds
                 if let Err(e) = self.save_sync_state().await {
                     tracing::warn!("Failed to save sync state: {}", e);
                 } else {
@@ -885,10 +917,8 @@ impl DashSpvClient {
 
             // Check for sync timeouts and handle recovery (only periodically, not every loop)
             if last_timeout_check.elapsed() >= timeout_check_interval {
-                let _ = self
-                    .sync_manager
-                    .check_timeout(&mut *self.network, &mut *self.storage)
-                    .await;
+                let _ =
+                    self.sync_manager.check_timeout(&mut *self.network, &mut *self.storage).await;
             }
 
             // Check for request timeouts and handle retries
@@ -923,76 +953,79 @@ impl DashSpvClient {
             // Handle network messages with timeout for responsiveness
             match tokio::time::timeout(
                 std::time::Duration::from_millis(1000),
-                self.network.receive_message()
-            ).await {
+                self.network.receive_message(),
+            )
+            .await
+            {
                 Ok(msg_result) => match msg_result {
-                Ok(Some(message)) => {
-                    // Wrap message handling in comprehensive error handling
-                    match self.handle_network_message(message).await {
-                        Ok(_) => {
-                            // Message handled successfully
-                        }
-                        Err(e) => {
-                            tracing::error!("Error handling network message: {}", e);
-
-                            // Categorize error severity
-                            match &e {
-                                SpvError::Network(_) => {
-                                    tracing::warn!("Network error during message handling - may recover automatically");
-                                }
-                                SpvError::Storage(_) => {
-                                    tracing::error!("Storage error during message handling - this may affect data consistency");
-                                }
-                                SpvError::Validation(_) => {
-                                    tracing::warn!("Validation error during message handling - message rejected");
-                                }
-                                _ => {
-                                    tracing::error!("Unexpected error during message handling");
-                                }
+                    Ok(Some(message)) => {
+                        // Wrap message handling in comprehensive error handling
+                        match self.handle_network_message(message).await {
+                            Ok(_) => {
+                                // Message handled successfully
                             }
+                            Err(e) => {
+                                tracing::error!("Error handling network message: {}", e);
 
-                            // Continue monitoring despite errors
-                            tracing::debug!(
-                                "Continuing network monitoring despite message handling error"
-                            );
+                                // Categorize error severity
+                                match &e {
+                                    SpvError::Network(_) => {
+                                        tracing::warn!("Network error during message handling - may recover automatically");
+                                    }
+                                    SpvError::Storage(_) => {
+                                        tracing::error!("Storage error during message handling - this may affect data consistency");
+                                    }
+                                    SpvError::Validation(_) => {
+                                        tracing::warn!("Validation error during message handling - message rejected");
+                                    }
+                                    _ => {
+                                        tracing::error!("Unexpected error during message handling");
+                                    }
+                                }
+
+                                // Continue monitoring despite errors
+                                tracing::debug!(
+                                    "Continuing network monitoring despite message handling error"
+                                );
+                            }
                         }
                     }
-                }
                     Ok(None) => {
                         // No message available, brief pause before continuing
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                     Err(e) => {
-                    // Handle specific network error types
-                    if let crate::error::NetworkError::ConnectionFailed(msg) = &e {
-                        if msg.contains("No connected peers") || self.network.peer_count() == 0 {
-                            tracing::warn!("All peers disconnected during monitoring, checking connection health");
+                        // Handle specific network error types
+                        if let crate::error::NetworkError::ConnectionFailed(msg) = &e {
+                            if msg.contains("No connected peers") || self.network.peer_count() == 0
+                            {
+                                tracing::warn!("All peers disconnected during monitoring, checking connection health");
 
-                            // Wait for potential reconnection
-                            let mut wait_count = 0;
-                            while wait_count < 10 && self.network.peer_count() == 0 {
-                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                                wait_count += 1;
-                            }
+                                // Wait for potential reconnection
+                                let mut wait_count = 0;
+                                while wait_count < 10 && self.network.peer_count() == 0 {
+                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                    wait_count += 1;
+                                }
 
-                            if self.network.peer_count() > 0 {
-                                tracing::info!(
-                                    "✅ Reconnected to {} peer(s), resuming monitoring",
-                                    self.network.peer_count()
-                                );
-                                continue;
-                            } else {
-                                tracing::warn!(
-                                    "No peers available after waiting, will retry monitoring"
-                                );
+                                if self.network.peer_count() > 0 {
+                                    tracing::info!(
+                                        "✅ Reconnected to {} peer(s), resuming monitoring",
+                                        self.network.peer_count()
+                                    );
+                                    continue;
+                                } else {
+                                    tracing::warn!(
+                                        "No peers available after waiting, will retry monitoring"
+                                    );
+                                }
                             }
                         }
-                    }
 
                         tracing::error!("Network error during monitoring: {}", e);
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     }
-                }
+                },
                 Err(_) => {
                     // Timeout occurred - this is expected and allows checking running state
                     // Continue the loop to check if we should stop
@@ -1066,7 +1099,8 @@ impl DashSpvClient {
 
         // For sequential sync, route headers through the message handler
         let headers_msg = dashcore::network::message::NetworkMessage::Headers(headers);
-        self.sync_manager.handle_message(headers_msg, &mut *self.network, &mut *self.storage)
+        self.sync_manager
+            .handle_message(headers_msg, &mut *self.network, &mut *self.storage)
             .await
             .map_err(|e| SpvError::Sync(e))?;
 
@@ -1130,7 +1164,8 @@ impl DashSpvClient {
 
         // For sequential sync, route through the message handler
         let cfheaders_msg = dashcore::network::message::NetworkMessage::CFHeaders(cfheaders);
-        self.sync_manager.handle_message(cfheaders_msg, &mut *self.network, &mut *self.storage)
+        self.sync_manager
+            .handle_message(cfheaders_msg, &mut *self.network, &mut *self.storage)
             .await
             .map_err(|e| SpvError::Sync(e))?;
 
@@ -1146,7 +1181,7 @@ impl DashSpvClient {
     /// Process a new block.
     async fn process_new_block(&mut self, block: dashcore::Block) -> Result<()> {
         let block_hash = block.block_hash();
-        
+
         tracing::info!("📦 Routing block {} to async block processor", block_hash);
 
         // Send block to the background processor without waiting for completion
@@ -1469,8 +1504,11 @@ impl DashSpvClient {
         let mut state = self.state.write().await;
         if let Some(current_chainlock_height) = state.last_chainlock_height {
             if chainlock.block_height <= current_chainlock_height {
-                tracing::debug!("ChainLock for height {} does not supersede current ChainLock at height {}",
-                               chainlock.block_height, current_chainlock_height);
+                tracing::debug!(
+                    "ChainLock for height {} does not supersede current ChainLock at height {}",
+                    chainlock.block_height,
+                    current_chainlock_height
+                );
                 return Ok(());
             }
         }
@@ -1535,12 +1573,12 @@ impl DashSpvClient {
             &mut *self.storage,
         )
         .await?;
-        
+
         // Update mempool filter with new watch items if mempool tracking is enabled
         if self.config.enable_mempool_tracking {
             self.update_mempool_filter().await;
         }
-        
+
         Ok(())
     }
 
@@ -1554,12 +1592,12 @@ impl DashSpvClient {
             &mut *self.storage,
         )
         .await?;
-        
+
         // Update mempool filter with new watch items if mempool tracking is enabled
         if removed && self.config.enable_mempool_tracking {
             self.update_mempool_filter().await;
         }
-        
+
         Ok(removed)
     }
 
@@ -1714,20 +1752,20 @@ impl DashSpvClient {
     async fn restore_sync_state(&mut self) -> Result<bool> {
         // Load sync state from storage
         let sync_state = self.storage.load_sync_state().await.map_err(|e| SpvError::Storage(e))?;
-        
+
         let Some(saved_state) = sync_state else {
             return Ok(false);
         };
-        
+
         // Validate the sync state
         let validation = saved_state.validate(self.config.network);
-        
+
         if !validation.is_valid {
             tracing::error!("Sync state validation failed:");
             for error in &validation.errors {
                 tracing::error!("  - {}", error);
             }
-            
+
             // Handle recovery based on suggestion
             if let Some(suggestion) = validation.recovery_suggestion {
                 match suggestion {
@@ -1737,19 +1775,21 @@ impl DashSpvClient {
                     }
                     crate::storage::RecoverySuggestion::RollbackToHeight(height) => {
                         tracing::warn!("Recovery: Rolling back to height {}", height);
-                        
+
                         // Validate the rollback height
                         if height == 0 {
                             tracing::error!("Cannot rollback to genesis block (height 0)");
                             return Ok(false); // Start fresh sync
                         }
-                        
+
                         // Get current height from storage to validate against
-                        let current_height = self.storage.get_tip_height()
+                        let current_height = self
+                            .storage
+                            .get_tip_height()
                             .await
                             .map_err(|e| SpvError::Storage(e))?
                             .unwrap_or(0);
-                        
+
                         if height > current_height {
                             tracing::error!(
                                 "Cannot rollback to height {} which is greater than current height {}",
@@ -1757,7 +1797,7 @@ impl DashSpvClient {
                             );
                             return Ok(false); // Start fresh sync
                         }
-                        
+
                         match self.rollback_to_height(height).await {
                             Ok(_) => {
                                 tracing::info!("Successfully rolled back to height {}", height);
@@ -1771,19 +1811,21 @@ impl DashSpvClient {
                     }
                     crate::storage::RecoverySuggestion::UseCheckpoint(height) => {
                         tracing::warn!("Recovery: Using checkpoint at height {}", height);
-                        
+
                         // Validate the checkpoint height
                         if height == 0 {
                             tracing::error!("Cannot use checkpoint at genesis block (height 0)");
                             return Ok(false); // Start fresh sync
                         }
-                        
+
                         // Check if checkpoint height is reasonable (not in the future)
-                        let current_height = self.storage.get_tip_height()
+                        let current_height = self
+                            .storage
+                            .get_tip_height()
                             .await
                             .map_err(|e| SpvError::Storage(e))?
                             .unwrap_or(0);
-                        
+
                         if current_height > 0 && height > current_height {
                             tracing::error!(
                                 "Cannot use checkpoint at height {} which is greater than current height {}",
@@ -1791,14 +1833,21 @@ impl DashSpvClient {
                             );
                             return Ok(false); // Start fresh sync
                         }
-                        
+
                         match self.recover_from_checkpoint(height).await {
                             Ok(_) => {
-                                tracing::info!("Successfully recovered from checkpoint at height {}", height);
+                                tracing::info!(
+                                    "Successfully recovered from checkpoint at height {}",
+                                    height
+                                );
                                 return Ok(true); // State restored from checkpoint
                             }
                             Err(e) => {
-                                tracing::error!("Failed to recover from checkpoint {}: {}", height, e);
+                                tracing::error!(
+                                    "Failed to recover from checkpoint {}: {}",
+                                    height,
+                                    e
+                                );
                                 return Ok(false); // Start fresh sync
                             }
                         }
@@ -1813,61 +1862,66 @@ impl DashSpvClient {
                     }
                 }
             }
-            
+
             return Ok(false);
         }
-        
+
         // Log any warnings
         for warning in &validation.warnings {
             tracing::warn!("Sync state warning: {}", warning);
         }
-        
+
         tracing::info!(
             "Restoring sync state from height {} (saved at {:?})",
             saved_state.chain_tip.height,
             saved_state.saved_at
         );
-        
+
         // CRITICAL: Load headers from storage into ChainState
         if saved_state.chain_tip.height > 0 {
             tracing::info!("Loading headers from storage into ChainState...");
             let start_time = std::time::Instant::now();
-            
+
             // Load headers in batches to avoid memory spikes
             const BATCH_SIZE: u32 = 10_000;
             let mut loaded_count = 0u32;
             let target_height = saved_state.chain_tip.height;
-            
+
             // Start from height 1 (genesis is already in ChainState)
             let mut current_height = 1u32;
-            
+
             while current_height <= target_height {
                 let end_height = (current_height + BATCH_SIZE - 1).min(target_height);
-                
+
                 // Load batch of headers from storage
-                let headers = self.storage.load_headers(current_height..end_height + 1)
+                let headers = self
+                    .storage
+                    .load_headers(current_height..end_height + 1)
                     .await
                     .map_err(|e| SpvError::Storage(e))?;
-                
+
                 if headers.is_empty() {
                     tracing::error!(
                         "Failed to load headers for range {}..{} - storage may be corrupted",
-                        current_height, end_height + 1
+                        current_height,
+                        end_height + 1
                     );
                     return Ok(false); // Start fresh sync
                 }
-                
+
                 // Validate headers before adding to chain state
                 {
                     // Validate the batch of headers
                     if let Err(e) = self.validation.validate_header_chain(&headers, false) {
                         tracing::error!(
                             "Header validation failed for range {}..{}: {:?}",
-                            current_height, end_height + 1, e
+                            current_height,
+                            end_height + 1,
+                            e
                         );
                         return Ok(false); // Start fresh sync
                     }
-                    
+
                     // Add validated headers to chain state
                     let mut state = self.state.write().await;
                     for header in headers {
@@ -1875,20 +1929,22 @@ impl DashSpvClient {
                         loaded_count += 1;
                     }
                 }
-                
+
                 // Progress logging for large header counts
                 if loaded_count % 50_000 == 0 || loaded_count == target_height {
                     let elapsed = start_time.elapsed();
                     let headers_per_sec = loaded_count as f64 / elapsed.as_secs_f64();
                     tracing::info!(
                         "Loaded {}/{} headers ({:.0} headers/sec)",
-                        loaded_count, target_height, headers_per_sec
+                        loaded_count,
+                        target_height,
+                        headers_per_sec
                     );
                 }
-                
+
                 current_height = end_height + 1;
             }
-            
+
             let elapsed = start_time.elapsed();
             tracing::info!(
                 "✅ Loaded {} headers into ChainState in {:.2}s ({:.0} headers/sec)",
@@ -1896,37 +1952,41 @@ impl DashSpvClient {
                 elapsed.as_secs_f64(),
                 loaded_count as f64 / elapsed.as_secs_f64()
             );
-            
+
             // Validate the loaded chain state
             let state = self.state.read().await;
             let actual_height = state.tip_height();
             if actual_height != target_height {
                 tracing::error!(
                     "Chain state height mismatch after loading: expected {}, got {}",
-                    target_height, actual_height
+                    target_height,
+                    actual_height
                 );
                 return Ok(false); // Start fresh sync
             }
-            
+
             // Verify tip hash matches
             if let Some(tip_hash) = state.tip_hash() {
                 if tip_hash != saved_state.chain_tip.hash {
                     tracing::error!(
                         "Chain tip hash mismatch: expected {}, got {}",
-                        saved_state.chain_tip.hash, tip_hash
+                        saved_state.chain_tip.hash,
+                        tip_hash
                     );
                     return Ok(false); // Start fresh sync
                 }
             }
         }
-        
+
         // Load filter headers if they exist
         if saved_state.sync_progress.filter_header_height > 0 {
             tracing::info!("Loading filter headers from storage...");
-            let filter_headers = self.storage.load_filter_headers(0..saved_state.sync_progress.filter_header_height + 1)
+            let filter_headers = self
+                .storage
+                .load_filter_headers(0..saved_state.sync_progress.filter_header_height + 1)
                 .await
                 .map_err(|e| SpvError::Storage(e))?;
-            
+
             if !filter_headers.is_empty() {
                 let mut state = self.state.write().await;
                 state.add_filter_headers(filter_headers);
@@ -1936,26 +1996,27 @@ impl DashSpvClient {
                 );
             }
         }
-        
+
         // Update sync progress in stats
         {
             let mut stats = self.stats.write().await;
             stats.headers_downloaded = saved_state.sync_progress.header_height as u64;
             stats.filter_headers_downloaded = saved_state.sync_progress.filter_header_height as u64;
             stats.filters_downloaded = saved_state.filter_sync.filters_downloaded;
-            stats.masternode_diffs_processed = saved_state.masternode_sync.last_diff_height.unwrap_or(0) as u64;
+            stats.masternode_diffs_processed =
+                saved_state.masternode_sync.last_diff_height.unwrap_or(0) as u64;
         }
-        
+
         // Restore masternode state if available
         if let Some(last_mn_height) = saved_state.masternode_sync.last_synced_height {
             tracing::info!("Restored masternode sync state at height {}", last_mn_height);
             // The masternode engine state will be loaded from storage separately
         }
-        
+
         // Update sync manager state
         // Sequential sync manager needs to determine which phase to resume
         tracing::debug!("Sequential sync manager will resume from stored state");
-        
+
         // Determine phase based on sync progress
         if saved_state.sync_progress.headers_synced {
             if saved_state.sync_progress.filter_headers_synced {
@@ -1969,10 +2030,10 @@ impl DashSpvClient {
             // Still downloading headers
             tracing::info!("Resuming sequential sync in header download phase");
         }
-        
+
         // Reset any in-flight requests
         self.sync_manager.reset_pending_requests();
-        
+
         // CRITICAL: Load headers into the sync manager's chain state
         if saved_state.chain_tip.height > 0 {
             tracing::info!("Loading headers into sync manager...");
@@ -1986,37 +2047,37 @@ impl DashSpvClient {
                 }
             }
         }
-        
+
         tracing::info!(
             "Sync state restored: headers={}, filter_headers={}, filters_downloaded={}",
             saved_state.sync_progress.header_height,
             saved_state.sync_progress.filter_header_height,
             saved_state.filter_sync.filters_downloaded
         );
-        
+
         Ok(true)
     }
 
     /// Rollback chain state to a specific height.
     async fn rollback_to_height(&mut self, target_height: u32) -> Result<()> {
         tracing::info!("Rolling back chain state to height {}", target_height);
-        
+
         // Get current height
         let current_height = self.state.read().await.tip_height();
-        
+
         if target_height >= current_height {
             return Err(SpvError::Config(format!(
                 "Cannot rollback to height {} when current height is {}",
                 target_height, current_height
             )));
         }
-        
+
         // Remove headers above target height from in-memory state
         let mut state = self.state.write().await;
         while state.tip_height() > target_height {
             state.remove_tip();
         }
-        
+
         // Also remove filter headers above target height
         // Keep only filter headers up to and including target_height
         if state.filter_headers.len() > (target_height + 1) as usize {
@@ -2024,7 +2085,7 @@ impl DashSpvClient {
             // Update current filter tip if we have filter headers
             state.current_filter_tip = state.filter_headers.last().copied();
         }
-        
+
         // Clear chain lock if it's above the target height
         if let Some(chainlock_height) = state.last_chainlock_height {
             if chainlock_height > target_height {
@@ -2032,43 +2093,43 @@ impl DashSpvClient {
                 state.last_chainlock_hash = None;
             }
         }
-        
+
         // Clone the updated state for storage
         let updated_state = state.clone();
         drop(state);
-        
+
         // Update persistent storage to reflect the rollback
         // Store the updated chain state
-        self.storage.store_chain_state(&updated_state).await
-            .map_err(|e| SpvError::Storage(e))?;
-        
+        self.storage.store_chain_state(&updated_state).await.map_err(|e| SpvError::Storage(e))?;
+
         // Clear any cached filter data above the target height
         // Note: Since we can't directly remove individual filters from storage,
         // the next sync will overwrite them as needed
-        
+
         tracing::info!("Rolled back to height {} and updated persistent storage", target_height);
         Ok(())
     }
-    
+
     /// Recover from a saved checkpoint.
     async fn recover_from_checkpoint(&mut self, checkpoint_height: u32) -> Result<()> {
         tracing::info!("Recovering from checkpoint at height {}", checkpoint_height);
-        
+
         // Load checkpoints around the target height
-        let checkpoints = self.storage
+        let checkpoints = self
+            .storage
             .get_sync_checkpoints(checkpoint_height, checkpoint_height)
             .await
             .map_err(|e| SpvError::Storage(e))?;
-        
+
         if checkpoints.is_empty() {
             return Err(SpvError::Config(format!(
                 "No checkpoint found at height {}",
                 checkpoint_height
             )));
         }
-        
+
         let checkpoint = &checkpoints[0];
-        
+
         // Verify the checkpoint is validated
         if !checkpoint.validated {
             return Err(SpvError::Config(format!(
@@ -2076,18 +2137,18 @@ impl DashSpvClient {
                 checkpoint_height
             )));
         }
-        
+
         // Rollback to checkpoint height
         self.rollback_to_height(checkpoint_height).await?;
-        
+
         tracing::info!("Successfully recovered from checkpoint at height {}", checkpoint_height);
         Ok(())
     }
-    
+
     /// Reset filter sync state while keeping headers.
     async fn reset_filter_sync_state(&mut self) -> Result<()> {
         tracing::info!("Resetting filter sync state");
-        
+
         // Reset filter-related stats
         {
             let mut stats = self.stats.write().await;
@@ -2097,18 +2158,18 @@ impl DashSpvClient {
             stats.filters_requested = 0;
             stats.filters_received = 0;
         }
-        
+
         // Clear filter headers from chain state
         {
             let mut state = self.state.write().await;
             state.filter_headers.clear();
             state.current_filter_tip = None;
         }
-        
+
         // Reset sync manager filter state
         // Sequential sync manager handles filter state internally
         tracing::debug!("Reset sequential filter sync state");
-        
+
         tracing::info!("Filter sync state reset completed");
         Ok(())
     }
@@ -2118,20 +2179,20 @@ impl DashSpvClient {
         if !self.config.enable_persistence {
             return Ok(());
         }
-        
+
         // Get current sync progress
         let sync_progress = self.sync_progress().await?;
-        
+
         // Get current chain state
         let chain_state = self.state.read().await;
-        
+
         // Create persistent sync state
         let persistent_state = crate::storage::PersistentSyncState::from_chain_state(
             &*chain_state,
             &sync_progress,
             self.config.network,
         );
-        
+
         if let Some(state) = persistent_state {
             // Check if we should create a checkpoint
             if state.should_checkpoint(state.chain_tip.height) {
@@ -2143,13 +2204,10 @@ impl DashSpvClient {
                     tracing::info!("Created sync checkpoint at height {}", checkpoint.height);
                 }
             }
-            
+
             // Save the sync state
-            self.storage
-                .store_sync_state(&state)
-                .await
-                .map_err(|e| SpvError::Storage(e))?;
-            
+            self.storage.store_sync_state(&state).await.map_err(|e| SpvError::Storage(e))?;
+
             tracing::debug!(
                 "Saved sync state: headers={}, filter_headers={}, filters={}",
                 state.sync_progress.header_height,
@@ -2157,7 +2215,7 @@ impl DashSpvClient {
                 state.filter_sync.filters_downloaded
             );
         }
-        
+
         Ok(())
     }
 
@@ -2241,8 +2299,12 @@ impl DashSpvClient {
         self.storage.store_headers(&genesis_headers).await.map_err(|e| SpvError::Storage(e))?;
 
         // Verify it was stored correctly
-        let stored_height = self.storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?;
-        tracing::info!("✅ Genesis block initialized at height 0, storage reports tip height: {:?}", stored_height);
+        let stored_height =
+            self.storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?;
+        tracing::info!(
+            "✅ Genesis block initialized at height 0, storage reports tip height: {:?}",
+            stored_height
+        );
 
         Ok(())
     }
@@ -2581,7 +2643,10 @@ impl DashSpvClient {
             let block_hash = header.block_hash();
 
             // Sequential sync handles filter headers internally
-            tracing::debug!("Sequential sync mode: filter headers handled internally for block {}", block_hash);
+            tracing::debug!(
+                "Sequential sync mode: filter headers handled internally for block {}",
+                block_hash
+            );
         }
 
         tracing::info!(

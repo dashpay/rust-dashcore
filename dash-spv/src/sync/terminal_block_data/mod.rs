@@ -4,8 +4,8 @@
 //! to optimize masternode synchronization. Instead of syncing from genesis, nodes can
 //! start from the nearest terminal block with known masternode state.
 
-pub mod testnet;
 pub mod mainnet;
+pub mod testnet;
 
 use dashcore::BlockHash;
 use dashcore_hashes::Hash;
@@ -54,7 +54,7 @@ impl TerminalBlockMasternodeState {
         hash_array.copy_from_slice(&bytes);
         Ok(BlockHash::from_byte_array(hash_array))
     }
-    
+
     /// Validate the terminal block data
     pub fn validate(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Validate block hash format
@@ -62,28 +62,28 @@ impl TerminalBlockMasternodeState {
             return Err("Invalid block hash length".into());
         }
         hex::decode(&self.block_hash)?;
-        
+
         // Validate merkle root format
         if self.merkle_root_mn_list.len() != 64 {
             return Err("Invalid merkle root length".into());
         }
         hex::decode(&self.merkle_root_mn_list)?;
-        
+
         // Validate masternode count matches list length
         if self.masternode_count as usize != self.masternode_list.len() {
             return Err(format!(
                 "Masternode count mismatch: expected {}, got {}",
                 self.masternode_count,
                 self.masternode_list.len()
-            ).into());
+            )
+            .into());
         }
-        
+
         // Validate each masternode entry
         for (i, mn) in self.masternode_list.iter().enumerate() {
-            mn.validate()
-                .map_err(|e| format!("Invalid masternode at index {}: {}", i, e))?;
+            mn.validate().map_err(|e| format!("Invalid masternode at index {}: {}", i, e))?;
         }
-        
+
         Ok(())
     }
 }
@@ -96,28 +96,28 @@ impl StoredMasternodeEntry {
             return Err("Invalid ProTxHash length".into());
         }
         hex::decode(&self.pro_tx_hash)?;
-        
+
         // Validate service address format (IP:port)
         if !self.service.contains(':') {
             return Err("Invalid service address format".into());
         }
-        
+
         // Validate BLS public key (should be 96 hex chars)
         if self.pub_key_operator.len() != 96 {
             return Err("Invalid BLS public key length".into());
         }
         hex::decode(&self.pub_key_operator)?;
-        
+
         // Validate voting address (basic check)
         if self.voting_address.is_empty() {
             return Err("Empty voting address".into());
         }
-        
+
         // Validate masternode type
         if self.n_type > 1 {
             return Err(format!("Invalid masternode type: {}", self.n_type).into());
         }
-        
+
         Ok(())
     }
 }
@@ -188,7 +188,10 @@ impl TerminalBlockDataManager {
     }
 
     /// Find the best terminal block with pre-calculated data for a target height
-    pub fn find_best_terminal_block_with_data(&self, target_height: u32) -> Option<&TerminalBlockMasternodeState> {
+    pub fn find_best_terminal_block_with_data(
+        &self,
+        target_height: u32,
+    ) -> Option<&TerminalBlockMasternodeState> {
         let mut best_state: Option<&TerminalBlockMasternodeState> = None;
         let mut best_height = 0;
 
@@ -245,22 +248,24 @@ mod tests {
     #[test]
     fn test_terminal_block_data_manager() {
         let mut manager = TerminalBlockDataManager::new();
-        
+
         // Create a test state
         let state = TerminalBlockMasternodeState {
             height: 900000,
-            block_hash: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
-            merkle_root_mn_list: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            block_hash: "0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+            merkle_root_mn_list: "0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
             masternode_list: vec![],
             masternode_count: 0,
             fetched_at: 0,
         };
-        
+
         manager.add_state(state);
-        
+
         assert!(manager.has_state(900000));
         assert!(!manager.has_state(900001));
-        
+
         let found = manager.find_best_terminal_block_with_data(950000);
         assert!(found.is_some());
         assert_eq!(found.unwrap().height, 900000);
