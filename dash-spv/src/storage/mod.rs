@@ -54,6 +54,43 @@ pub trait ChainStorage: Send + Sync {
 }
 
 /// Storage manager trait for abstracting data persistence.
+///
+/// # Thread Safety
+///
+/// This trait requires `Send + Sync` bounds to ensure thread safety, but uses `&mut self`
+/// for mutation methods. This design choice provides several benefits:
+///
+/// 1. **Simplified Implementation**: Storage backends don't need to implement interior
+///    mutability patterns (like `Arc<Mutex<T>>` or `RwLock<T>`) internally.
+///
+/// 2. **Performance**: Avoids unnecessary locking overhead when the storage manager
+///    is already protected by external synchronization.
+///
+/// 3. **Flexibility**: Callers can choose the appropriate synchronization strategy
+///    based on their specific use case (e.g., single-threaded, mutex-protected, etc.).
+///
+/// ## Usage Pattern
+///
+/// The typical usage pattern wraps the storage manager in an `Arc<Mutex<T>>` or similar:
+///
+/// ```rust
+/// let storage: Arc<Mutex<dyn StorageManager>> = Arc::new(Mutex::new(MemoryStorageManager::new()));
+/// 
+/// // In async context:
+/// let mut guard = storage.lock().await;
+/// guard.store_headers(&headers).await?;
+/// ```
+///
+/// ## Implementation Requirements
+///
+/// Implementations must ensure that:
+/// - All operations are atomic at the logical level (e.g., all headers in a batch succeed or fail together)
+/// - Read operations are consistent (no partial reads of in-progress writes)
+/// - The implementation is safe to move between threads (`Send`)
+/// - The implementation can be referenced from multiple threads (`Sync`)
+///
+/// Note that the `&mut self` requirement means only one thread can be mutating the storage
+/// at a time when using external synchronization, which naturally provides consistency.
 #[async_trait]
 pub trait StorageManager: Send + Sync {
     /// Convert to Any for downcasting
