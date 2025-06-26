@@ -80,16 +80,14 @@ impl TerminalBlockManager {
                 // Mainnet terminal blocks
                 // These are blocks where masternode lists are known to be accurate
                 vec![
-                    // Latest terminal blocks only (keeping 2 most recent)
-                    (1950000, "0000000000000024a59f30cddbee13ef0711f7965d2f810e6c36e577c1e8b3b5"),
+                    // Latest terminal block only
                     (2000000, "0000000000000021f7b88e014325c323dc41d20aec211e5cc5a81eeef2f91de2"),
                 ]
             }
             Network::Testnet => {
                 // Testnet terminal blocks
                 vec![
-                    // Latest terminal blocks only (keeping 2 most recent)
-                    (850000, "0000011ec1156e732e75b636d3b0dc37cb27a44fb4e1b0a47d82dab693b32e88"),
+                    // Latest terminal block only
                     (900000, "0000011764a05571e0b3963b1422a8f3771e4c0d5b72e9b8e0799aabf07d28ef"),
                 ]
             }
