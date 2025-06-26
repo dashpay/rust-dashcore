@@ -281,6 +281,13 @@ impl<'a> MessageHandler<'a> {
                 // Sequential sync manager handles the filter internally
                 // For sequential sync, filter checking is done within the sync manager
             }
+            NetworkMessage::SendDsq(wants_dsq) => {
+                tracing::info!("Received SendDsq message - peer wants DSQ messages: {}", wants_dsq);
+                // Store peer's DSQ preference
+                if let Err(e) = self.network.update_peer_dsq_preference(wants_dsq).await {
+                    tracing::error!("Failed to update peer DSQ preference: {}", e);
+                }
+            }
             _ => {
                 // Ignore other message types for now
                 tracing::debug!("Received network message: {:?}", std::mem::discriminant(&message));

@@ -460,12 +460,68 @@ impl HeaderSyncManagerWithReorg {
             headers2.headers.len(),
             peer_id
         );
+        
+        // If this is the first headers2 message and we need to initialize compression state
+        if !headers2.headers.is_empty() {
+            // Check if we need to initialize the compression state
+            let state = self.headers2_state.get_state(peer_id);
+            if state.prev_header.is_none() {
+                // If we're syncing from genesis (height 0), initialize with genesis header
+                if self.chain_state.tip_height() == 0 {
+                    // We have genesis header at index 0
+                    if let Some(genesis_header) = self.chain_state.header_at_height(0) {
+                        tracing::info!(
+                            "Initializing headers2 compression state for peer {} with genesis header",
+                            peer_id
+                        );
+                        self.headers2_state.init_peer_state(peer_id, genesis_header.clone());
+                    }
+                } else if self.chain_state.tip_height() > 0 {
+                    // Get our current tip to use as the base for compression
+                    if let Some(tip_header) = self.chain_state.get_tip_header() {
+                        tracing::info!(
+                            "Initializing headers2 compression state for peer {} with tip header at height {}",
+                            peer_id,
+                            self.chain_state.tip_height()
+                        );
+                        self.headers2_state.init_peer_state(peer_id, tip_header);
+                    }
+                }
+            }
+        }
 
         // Decompress headers using the peer's compression state
-        let headers = self
+        let headers = match self
             .headers2_state
-            .process_headers(peer_id, headers2.headers)
-            .map_err(|e| SyncError::Validation(format!("Failed to decompress headers: {}", e)))?;
+            .process_headers(peer_id, headers2.headers.clone())
+        {
+            Ok(headers) => headers,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to decompress headers2 from peer {}: {}. Headers count: {}, first header compressed: {}, chain height: {}",
+                    peer_id,
+                    e,
+                    headers2.headers.len(),
+                    if headers2.headers.is_empty() {
+                        "N/A (empty)".to_string()
+                    } else {
+                        (!headers2.headers[0].is_full()).to_string()
+                    },
+                    self.chain_state.tip_height()
+                );
+                
+                // If we failed due to missing previous header and we're at genesis,
+                // this might be a protocol issue where peer expects us to have genesis in compression state
+                if matches!(e, crate::sync::headers2_state::ProcessError::DecompressionError(0, _)) 
+                    && self.chain_state.tip_height() == 0 {
+                    tracing::warn!(
+                        "Headers2 decompression failed at genesis. Peer may be sending compressed headers that reference genesis. Consider falling back to regular headers."
+                    );
+                }
+                
+                return Err(SyncError::Validation(format!("Failed to decompress headers: {}", e)));
+            }
+        };
 
         // Log compression statistics
         let stats = self.headers2_state.get_stats();

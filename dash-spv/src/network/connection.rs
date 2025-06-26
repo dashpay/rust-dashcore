@@ -524,6 +524,7 @@ impl TcpConnection {
             services: self.peer_services,
             user_agent: self.peer_user_agent.clone(),
             best_height: self.peer_best_height,
+            wants_dsq_messages: None, // We don't track this in TcpConnection yet
         }
     }
 
