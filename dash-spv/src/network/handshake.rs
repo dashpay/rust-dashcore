@@ -292,10 +292,12 @@ impl HandshakeManager {
             if peer_services.has(NODE_HEADERS_COMPRESSED) {
                 tracing::info!("Peer supports headers2 - sending SendHeaders2");
                 connection.send_message(NetworkMessage::SendHeaders2).await?;
+                // Don't send regular SendHeaders if we're using headers2
+                return Ok(());
             }
         }
 
-        // Also send SendHeaders to request headers be pushed to us
+        // Only send SendHeaders if we're not using headers2
         tracing::info!("Sending SendHeaders to request headers be pushed");
         connection.send_message(NetworkMessage::SendHeaders).await?;
 

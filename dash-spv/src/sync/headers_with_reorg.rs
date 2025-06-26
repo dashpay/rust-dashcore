@@ -401,17 +401,27 @@ impl HeaderSyncManagerWithReorg {
         };
 
         let stop_hash = BlockHash::from_byte_array([0; 32]);
-        let getheaders_msg = GetHeadersMessage::new(block_locator, stop_hash);
-
-        // For now, disable headers2 due to compatibility issues with some peers
-        // Even peers that advertise headers2 support and send SendHeaders2 may still
-        // disconnect when receiving GetHeaders2 messages
-        let use_headers2 = false;
+        let getheaders_msg = GetHeadersMessage::new(block_locator.clone(), stop_hash);
         
-        // Log if peer supports headers2 but we're not using it
-        if network.has_headers2_peer().await {
-            tracing::info!("Peer supports headers2 but using regular headers for compatibility");
-        }
+        // Log the GetHeaders message details
+        tracing::debug!(
+            "GetHeaders message - version: {}, locator_count: {}, locator: {:?}, stop_hash: {:?}",
+            getheaders_msg.version,
+            getheaders_msg.locator_hashes.len(),
+            getheaders_msg.locator_hashes,
+            getheaders_msg.stop_hash
+        );
+
+        // Check if we have a peer that supports headers2
+        let use_headers2 = network.has_headers2_peer().await;
+        
+        // Log details about the request
+        tracing::info!(
+            "Preparing headers request - height: {}, base_hash: {:?}, headers2_supported: {}",
+            self.chain_state.tip_height(),
+            base_hash,
+            use_headers2
+        );
 
         // Try GetHeaders2 first if peer supports it, with fallback to regular GetHeaders
         if use_headers2 {
