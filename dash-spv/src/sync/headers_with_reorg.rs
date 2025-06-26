@@ -406,6 +406,22 @@ impl HeaderSyncManagerWithReorg {
         // Check if we have a peer that supports headers2
         let use_headers2 = network.has_headers2_peer().await;
 
+        // If peer has headers2 service flag but hasn't sent SendHeaders2 yet, wait briefly
+        if !use_headers2 && network.has_peer_with_service(dashcore::network::constants::NODE_HEADERS_COMPRESSED).await {
+            tracing::info!("Peer has headers2 service flag but hasn't sent SendHeaders2 yet - waiting briefly");
+            // Give peer a chance to send SendHeaders2 after handshake
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            
+            // Check again after delay
+            let use_headers2_after_wait = network.has_headers2_peer().await;
+            if use_headers2_after_wait {
+                tracing::info!("Peer sent SendHeaders2 after delay - can now use headers2");
+            }
+        }
+
+        // Re-check after potential wait
+        let use_headers2 = network.has_headers2_peer().await;
+
         // Try GetHeaders2 first if peer supports it, with fallback to regular GetHeaders
         if use_headers2 {
             tracing::info!("📤 Sending GetHeaders2 message (compressed headers)");
@@ -519,7 +535,8 @@ impl HeaderSyncManagerWithReorg {
                     );
                 }
                 
-                return Err(SyncError::Validation(format!("Failed to decompress headers: {}", e)));
+                // Return a specific error that can trigger fallback
+                return Err(SyncError::Headers2DecompressionFailed(format!("Failed to decompress headers: {}", e)));
             }
         };
 

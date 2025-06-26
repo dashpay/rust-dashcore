@@ -150,6 +150,10 @@ pub enum SyncError {
     /// Storage-related errors (e.g., database failures)
     #[error("Storage error: {0}")]
     Storage(String),
+
+    /// Headers2 decompression failed - can trigger fallback to regular headers
+    #[error("Headers2 decompression failed: {0}")]
+    Headers2DecompressionFailed(String),
 }
 
 impl SyncError {
@@ -162,6 +166,7 @@ impl SyncError {
             SyncError::MissingDependency(_) => "dependency",
             SyncError::Network(_) => "network",
             SyncError::Storage(_) => "storage",
+            SyncError::Headers2DecompressionFailed(_) => "headers2",
             // Deprecated variant - should not be used
             #[allow(deprecated)]
             SyncError::SyncFailed(_) => "unknown",
