@@ -134,7 +134,7 @@ impl Headers2StateManager {
             0.0
         } else {
             let uncompressed_size = self.total_headers_received as usize * UNCOMPRESSED_HEADER_SIZE;
-            let savings = (uncompressed_size - self.total_bytes_received) as f64;
+            let savings = (uncompressed_size - self.total_bytes_received as usize) as f64;
             (savings / uncompressed_size as f64) * 100.0
         }
     }
