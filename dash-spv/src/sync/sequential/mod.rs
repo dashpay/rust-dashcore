@@ -873,8 +873,16 @@ impl SequentialSyncManager {
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
-        let continue_sync =
-            self.header_sync.handle_headers2_message(headers2, peer_id, storage, network).await?;
+        let continue_sync = match self.header_sync.handle_headers2_message(headers2, peer_id, storage, network).await {
+            Ok(continue_sync) => continue_sync,
+            Err(SyncError::Headers2DecompressionFailed(e)) => {
+                // Headers2 decompression failed - we should fall back to regular headers
+                tracing::warn!("Headers2 decompression failed: {} - peer may not properly support headers2 or connection issue", e);
+                // For now, just return the error. In future, we could trigger a fallback here
+                return Err(SyncError::Headers2DecompressionFailed(e));
+            }
+            Err(e) => return Err(e),
+        };
 
         // Update phase state and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingHeaders {

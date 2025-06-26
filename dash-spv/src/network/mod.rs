@@ -292,8 +292,19 @@ impl NetworkManager for TcpNetworkManager {
 
     async fn has_headers2_peer(&self) -> bool {
         // For single peer connection, check if we can actually request headers2
+        // This requires both the service flag AND that peer has sent SendHeaders2
         if let Some(connection) = &self.connection {
-            connection.can_request_headers2()
+            let can_request = connection.can_request_headers2();
+            if !can_request && connection.peer_info().services.map(|s| 
+                dashcore::network::constants::ServiceFlags::from(s)
+                    .has(dashcore::network::constants::NODE_HEADERS_COMPRESSED)
+            ).unwrap_or(false) {
+                // Peer has the flag but hasn't sent SendHeaders2 yet
+                tracing::debug!(
+                    "Peer has headers2 service flag but hasn't sent SendHeaders2 yet - waiting"
+                );
+            }
+            can_request
         } else {
             false
         }
