@@ -1,5 +1,6 @@
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
+use dashcore::hashes::Hash;
 
 pub type ProgressCallback =
     extern "C" fn(progress: f64, message: *const c_char, user_data: *mut c_void);
@@ -80,10 +81,10 @@ impl FFICallbacks {
 }
 
 pub type BlockCallback =
-    Option<extern "C" fn(height: u32, hash: *const c_char, user_data: *mut c_void)>;
+    Option<extern "C" fn(height: u32, hash: *const [u8; 32], user_data: *mut c_void)>;
 pub type TransactionCallback = Option<
     extern "C" fn(
-        txid: *const c_char,
+        txid: *const [u8; 32],
         confirmed: bool,
         amount: i64,
         addresses: *const c_char,
@@ -95,7 +96,7 @@ pub type BalanceCallback =
     Option<extern "C" fn(confirmed: u64, unconfirmed: u64, user_data: *mut c_void)>;
 pub type MempoolTransactionCallback = Option<
     extern "C" fn(
-        txid: *const c_char,
+        txid: *const [u8; 32],
         amount: i64,
         addresses: *const c_char,
         is_instant_send: bool,
@@ -104,14 +105,14 @@ pub type MempoolTransactionCallback = Option<
 >;
 pub type MempoolConfirmedCallback = Option<
     extern "C" fn(
-        txid: *const c_char,
+        txid: *const [u8; 32],
         block_height: u32,
-        block_hash: *const c_char,
+        block_hash: *const [u8; 32],
         user_data: *mut c_void,
     ),
 >;
 pub type MempoolRemovedCallback =
-    Option<extern "C" fn(txid: *const c_char, reason: u8, user_data: *mut c_void)>;
+    Option<extern "C" fn(txid: *const [u8; 32], reason: u8, user_data: *mut c_void)>;
 
 #[repr(C)]
 pub struct FFIEventCallbacks {
@@ -153,11 +154,11 @@ impl Default for FFIEventCallbacks {
 }
 
 impl FFIEventCallbacks {
-    pub fn call_block(&self, height: u32, hash: &str) {
+    pub fn call_block(&self, height: u32, hash: &dashcore::BlockHash) {
         if let Some(callback) = self.on_block {
             tracing::info!("🎯 Calling block callback: height={}, hash={}", height, hash);
-            let c_hash = CString::new(hash).unwrap_or_else(|_| CString::new("").unwrap());
-            callback(height, c_hash.as_ptr(), self.user_data);
+            let hash_bytes = hash.as_byte_array();
+            callback(height, hash_bytes.as_ptr() as *const [u8; 32], self.user_data);
             tracing::info!("✅ Block callback completed");
         } else {
             tracing::warn!("⚠️ Block callback not set");
@@ -166,7 +167,7 @@ impl FFIEventCallbacks {
 
     pub fn call_transaction(
         &self,
-        txid: &str,
+        txid: &dashcore::Txid,
         confirmed: bool,
         amount: i64,
         addresses: &[String],
@@ -180,12 +181,12 @@ impl FFIEventCallbacks {
                 amount,
                 addresses
             );
-            let c_txid = CString::new(txid).unwrap_or_else(|_| CString::new("").unwrap());
+            let txid_bytes = txid.as_byte_array();
             let addresses_str = addresses.join(",");
             let c_addresses =
                 CString::new(addresses_str).unwrap_or_else(|_| CString::new("").unwrap());
             callback(
-                c_txid.as_ptr(),
+                txid_bytes.as_ptr() as *const [u8; 32],
                 confirmed,
                 amount,
                 c_addresses.as_ptr(),
@@ -215,7 +216,7 @@ impl FFIEventCallbacks {
     // Mempool callbacks use debug level for "not set" messages as they are optional and frequently unused
     pub fn call_mempool_transaction_added(
         &self,
-        txid: &str,
+        txid: &dashcore::Txid,
         amount: i64,
         addresses: &[String],
         is_instant_send: bool,
@@ -223,12 +224,12 @@ impl FFIEventCallbacks {
         if let Some(callback) = self.on_mempool_transaction_added {
             tracing::info!("🎯 Calling mempool transaction added callback: txid={}, amount={}, is_instant_send={}", 
                          txid, amount, is_instant_send);
-            let c_txid = CString::new(txid).unwrap_or_else(|_| CString::new("").unwrap());
+            let txid_bytes = txid.as_byte_array();
             let addresses_str = addresses.join(",");
             let c_addresses =
                 CString::new(addresses_str).unwrap_or_else(|_| CString::new("").unwrap());
             callback(
-                c_txid.as_ptr(),
+                txid_bytes.as_ptr() as *const [u8; 32],
                 amount,
                 c_addresses.as_ptr(),
                 is_instant_send,
@@ -242,9 +243,9 @@ impl FFIEventCallbacks {
 
     pub fn call_mempool_transaction_confirmed(
         &self,
-        txid: &str,
+        txid: &dashcore::Txid,
         block_height: u32,
-        block_hash: &str,
+        block_hash: &dashcore::BlockHash,
     ) {
         if let Some(callback) = self.on_mempool_transaction_confirmed {
             tracing::info!(
@@ -253,24 +254,24 @@ impl FFIEventCallbacks {
                 block_height,
                 block_hash
             );
-            let c_txid = CString::new(txid).unwrap_or_else(|_| CString::new("").unwrap());
-            let c_hash = CString::new(block_hash).unwrap_or_else(|_| CString::new("").unwrap());
-            callback(c_txid.as_ptr(), block_height, c_hash.as_ptr(), self.user_data);
+            let txid_bytes = txid.as_byte_array();
+            let hash_bytes = block_hash.as_byte_array();
+            callback(txid_bytes.as_ptr() as *const [u8; 32], block_height, hash_bytes.as_ptr() as *const [u8; 32], self.user_data);
             tracing::info!("✅ Mempool transaction confirmed callback completed");
         } else {
             tracing::debug!("Mempool transaction confirmed callback not set");
         }
     }
 
-    pub fn call_mempool_transaction_removed(&self, txid: &str, reason: u8) {
+    pub fn call_mempool_transaction_removed(&self, txid: &dashcore::Txid, reason: u8) {
         if let Some(callback) = self.on_mempool_transaction_removed {
             tracing::info!(
                 "🎯 Calling mempool transaction removed callback: txid={}, reason={}",
                 txid,
                 reason
             );
-            let c_txid = CString::new(txid).unwrap_or_else(|_| CString::new("").unwrap());
-            callback(c_txid.as_ptr(), reason, self.user_data);
+            let txid_bytes = txid.as_byte_array();
+            callback(txid_bytes.as_ptr() as *const [u8; 32], reason, self.user_data);
             tracing::info!("✅ Mempool transaction removed callback completed");
         } else {
             tracing::debug!("Mempool transaction removed callback not set");

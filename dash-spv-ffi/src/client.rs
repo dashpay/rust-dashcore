@@ -227,12 +227,22 @@ impl FFIDashSpvClient {
                             dash_spv::types::SpvEvent::TransactionDetected { ref txid, confirmed, ref addresses, amount, block_height, .. } => {
                                 tracing::info!("💸 Transaction detected: txid={}, confirmed={}, amount={}, addresses={:?}, height={:?}", 
                                              txid, confirmed, amount, addresses, block_height);
-                                callbacks.call_transaction(txid, confirmed, amount as i64, addresses, block_height);
+                                // Parse the txid string to a Txid type
+                                if let Ok(txid_parsed) = txid.parse::<dashcore::Txid>() {
+                                    callbacks.call_transaction(&txid_parsed, confirmed, amount as i64, addresses, block_height);
+                                } else {
+                                    tracing::error!("Failed to parse transaction ID: {}", txid);
+                                }
                             }
                             dash_spv::types::SpvEvent::BlockProcessed { height, ref hash, transactions_count, relevant_transactions } => {
                                 tracing::info!("📦 Block processed: height={}, hash={}, total_tx={}, relevant_tx={}", 
                                              height, hash, transactions_count, relevant_transactions);
-                                callbacks.call_block(height, hash);
+                                // Parse the block hash string to a BlockHash type
+                                if let Ok(hash_parsed) = hash.parse::<dashcore::BlockHash>() {
+                                    callbacks.call_block(height, &hash_parsed);
+                                } else {
+                                    tracing::error!("Failed to parse block hash: {}", hash);
+                                }
                             }
                             dash_spv::types::SpvEvent::SyncProgress { .. } => {
                                 // Sync progress is handled via existing progress callback
@@ -246,13 +256,13 @@ impl FFIDashSpvClient {
                                 tracing::info!("➕ Mempool transaction added: txid={}, amount={}, addresses={:?}, instant_send={}", 
                                              txid, amount, addresses, is_instant_send);
                                 // Call the mempool-specific callback
-                                callbacks.call_mempool_transaction_added(&txid.to_string(), amount, addresses, is_instant_send);
+                                callbacks.call_mempool_transaction_added(txid, amount, addresses, is_instant_send);
                             }
                             dash_spv::types::SpvEvent::MempoolTransactionConfirmed { ref txid, block_height, ref block_hash } => {
                                 tracing::info!("✅ Mempool transaction confirmed: txid={}, height={}, hash={}", 
                                              txid, block_height, block_hash);
                                 // Call the mempool confirmed callback
-                                callbacks.call_mempool_transaction_confirmed(&txid.to_string(), block_height, &block_hash.to_string());
+                                callbacks.call_mempool_transaction_confirmed(txid, block_height, block_hash);
                             }
                             dash_spv::types::SpvEvent::MempoolTransactionRemoved { ref txid, ref reason } => {
                                 tracing::info!("❌ Mempool transaction removed: txid={}, reason={:?}", 
@@ -260,7 +270,7 @@ impl FFIDashSpvClient {
                                 // Convert reason to u8 for FFI using existing conversion
                                 let ffi_reason: crate::types::FFIMempoolRemovalReason = reason.clone().into();
                                 let reason_code = ffi_reason as u8;
-                                callbacks.call_mempool_transaction_removed(&txid.to_string(), reason_code);
+                                callbacks.call_mempool_transaction_removed(txid, reason_code);
                             }
                         }
                             }

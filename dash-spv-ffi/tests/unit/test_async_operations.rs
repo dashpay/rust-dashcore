@@ -2,6 +2,7 @@
 mod tests {
     use crate::types::FFIDetailedSyncProgress;
     use crate::*;
+    use crate::callbacks::{BlockCallback, TransactionCallback};
     use serial_test::serial;
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_void};
@@ -334,14 +335,14 @@ mod tests {
                 balance: balance_called.clone(),
             };
 
-            extern "C" fn on_block(_height: u32, hash: *const c_char, user_data: *mut c_void) {
+            extern "C" fn on_block(_height: u32, hash: *const [u8; 32], user_data: *mut c_void) {
                 let data = unsafe { &*(user_data as *const EventData) };
                 data.block.store(true, Ordering::SeqCst);
                 assert!(!hash.is_null());
             }
 
             extern "C" fn on_tx(
-                txid: *const c_char,
+                txid: *const [u8; 32],
                 _confirmed: bool,
                 _amount: i64,
                 _addresses: *const c_char,
