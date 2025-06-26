@@ -406,6 +406,18 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
     }
 }
 
+/// Performs a test synchronization of the SPV client
+///
+/// # Parameters
+/// - `client`: Pointer to an FFIDashSpvClient instance
+///
+/// # Returns
+/// - `0` on success
+/// - Negative error code on failure
+///
+/// # Safety
+/// This function is unsafe because it dereferences a raw pointer.
+/// The caller must ensure that the client pointer is valid.
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvClient) -> i32 {
     null_check!(client);
