@@ -432,13 +432,9 @@ impl HeaderSyncManagerWithReorg {
             getheaders_msg.stop_hash
         );
 
-        // Check if we have a peer that supports headers2
-        // But don't use it if we've already had a headers2 failure this session
-        // Also don't use headers2 for initial sync (when we only have genesis)
-        let at_genesis = self.chain_state.tip_height() == 0;
-        let use_headers2 = network.has_headers2_peer().await 
-            && !self.headers2_failed
-            && !at_genesis;
+        // Headers2 is currently disabled due to protocol compatibility issues
+        // TODO: Fix headers2 decompression before re-enabling
+        let use_headers2 = false; // Disabled until headers2 implementation is fixed
         
         // Log details about the request
         tracing::info!(
@@ -507,12 +503,19 @@ impl HeaderSyncManagerWithReorg {
         storage: &mut dyn StorageManager,
         network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
-        tracing::info!(
-            "🔍 Handle headers2 message called with {} compressed headers from peer {}",
+        tracing::warn!(
+            "⚠️ Headers2 support is currently NON-FUNCTIONAL. Received {} compressed headers from peer {} but cannot process them.",
             headers2.headers.len(),
             peer_id
         );
-        
+
+        // Mark headers2 as failed for this session to avoid retrying
+        self.headers2_failed = true;
+
+        // Return an error to trigger fallback to regular headers
+        return Err(SyncError::Headers2DecompressionFailed(
+            "Headers2 is currently disabled due to protocol compatibility issues".to_string()
+        ));
         // If this is the first headers2 message and we need to initialize compression state
         if !headers2.headers.is_empty() {
             // Check if we need to initialize the compression state
