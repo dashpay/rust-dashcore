@@ -681,13 +681,12 @@ impl TcpConnection {
 
     /// Check if we can request headers2 from this peer.
     pub fn can_request_headers2(&self) -> bool {
-        // We can request headers2 if:
-        // 1. Peer has the service flag for headers2 support
-        // 2. Peer has sent us SendHeaders2 to indicate they're ready
+        // We can request headers2 if peer has the service flag for headers2 support
+        // Note: We don't wait for SendHeaders2 from peer as that creates a race condition
+        // during initial sync. The service flag is sufficient to know they support headers2.
         if let Some(services) = self.peer_services {
-            let has_flag = dashcore::network::constants::ServiceFlags::from(services)
-                .has(dashcore::network::constants::NODE_HEADERS_COMPRESSED);
-            has_flag && self.peer_sent_sendheaders2
+            dashcore::network::constants::ServiceFlags::from(services)
+                .has(dashcore::network::constants::NODE_HEADERS_COMPRESSED)
         } else {
             false
         }

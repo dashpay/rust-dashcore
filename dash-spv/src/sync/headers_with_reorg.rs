@@ -434,9 +434,11 @@ impl HeaderSyncManagerWithReorg {
 
         // Check if we have a peer that supports headers2
         // But don't use it if we've already had a headers2 failure this session
-        // Use GetHeaders2 if the peer supports it (indicated by SendHeaders2 exchange)
+        // Also don't use headers2 for initial sync (when we only have genesis)
+        let at_genesis = self.chain_state.tip_height() == 0;
         let use_headers2 = network.has_headers2_peer().await 
-            && !self.headers2_failed;
+            && !self.headers2_failed
+            && !at_genesis;
         
         // Log details about the request
         tracing::info!(
