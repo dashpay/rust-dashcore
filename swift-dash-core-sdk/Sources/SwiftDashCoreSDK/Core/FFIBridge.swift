@@ -164,7 +164,8 @@ internal enum FFIBridge {
     
     static func createFFIWatchItem(type: WatchItemType, data: String) -> FFIWatchItem {
         let cString = (data as NSString).utf8String!
-        let ffiString = FFIString(ptr: UnsafeMutablePointer(mutating: cString))
+        let length = strlen(cString)
+        let ffiString = FFIString(ptr: UnsafeMutablePointer(mutating: cString), length: UInt(length))
         return FFIWatchItem(
             item_type: convertWatchItemType(type),
             data: ffiString

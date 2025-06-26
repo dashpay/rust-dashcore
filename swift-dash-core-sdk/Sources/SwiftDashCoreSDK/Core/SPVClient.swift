@@ -359,28 +359,39 @@ private let detailedSyncCompletionCallback: @convention(c) (Bool, UnsafePointer<
 }
 
 // Event callbacks
-private let eventBlockCallback: @convention(c) (UInt32, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void = { height, hash, userData in
+private let eventBlockCallback: BlockCallback = { height, hashBytes, userData in
     guard let userData = userData,
-          let hash = hash else { return }
+          let hashBytes = hashBytes else { return }
     
     let holder = Unmanaged<EventCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
     guard let client = holder.client else { return }
     
+    // Convert byte array to hex string
+    let hashArray = withUnsafeBytes(of: hashBytes.pointee) { bytes in
+        Array(bytes)
+    }
+    let hashHex = hashArray.map { String(format: "%02x", $0) }.joined()
+    
     let event = SPVEvent.blockReceived(
         height: height,
-        hash: String(cString: hash)
+        hash: hashHex
     )
     client.eventSubject.send(event)
 }
 
-private let eventTransactionCallback: @convention(c) (UnsafePointer<CChar>?, Bool, Int64, UnsafePointer<CChar>?, UInt32, UnsafeMutableRawPointer?) -> Void = { txid, confirmed, amount, addresses, blockHeight, userData in
+private let eventTransactionCallback: TransactionCallback = { txidBytes, confirmed, amount, addresses, blockHeight, userData in
     guard let userData = userData,
-          let txid = txid else { return }
+          let txidBytes = txidBytes else { return }
     
     let holder = Unmanaged<EventCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
     guard let client = holder.client else { return }
     
-    let txidString = String(cString: txid)
+    // Convert byte array to hex string
+    let txidArray = withUnsafeBytes(of: txidBytes.pointee) { bytes in
+        Array(bytes)
+    }
+    let txidString = txidArray.map { String(format: "%02x", $0) }.joined()
+    
     let addressArray: [String] = {
         if let addresses = addresses {
             let addressesString = String(cString: addresses)
@@ -399,7 +410,7 @@ private let eventTransactionCallback: @convention(c) (UnsafePointer<CChar>?, Boo
     client.eventSubject.send(event)
 }
 
-private let eventBalanceCallback: @convention(c) (UInt64, UInt64, UnsafeMutableRawPointer?) -> Void = { confirmed, unconfirmed, userData in
+private let eventBalanceCallback: BalanceCallback = { confirmed, unconfirmed, userData in
     guard let userData = userData else { return }
     
     let holder = Unmanaged<EventCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
@@ -416,14 +427,19 @@ private let eventBalanceCallback: @convention(c) (UInt64, UInt64, UnsafeMutableR
 }
 
 // Mempool event callbacks
-private let eventMempoolTransactionAddedCallback: @convention(c) (UnsafePointer<CChar>?, Int64, UnsafePointer<CChar>?, Bool, UnsafeMutableRawPointer?) -> Void = { txid, amount, addresses, isInstantSend, userData in
+private let eventMempoolTransactionAddedCallback: MempoolTransactionCallback = { txidBytes, amount, addresses, isInstantSend, userData in
     guard let userData = userData,
-          let txid = txid else { return }
+          let txidBytes = txidBytes else { return }
     
     let holder = Unmanaged<EventCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
     guard let client = holder.client else { return }
     
-    let txidString = String(cString: txid)
+    // Convert byte array to hex string
+    let txidArray = withUnsafeBytes(of: txidBytes.pointee) { bytes in
+        Array(bytes)
+    }
+    let txidString = txidArray.map { String(format: "%02x", $0) }.joined()
+    
     let addressArray: [String] = {
         if let addresses = addresses {
             let addressesString = String(cString: addresses)
@@ -440,14 +456,19 @@ private let eventMempoolTransactionAddedCallback: @convention(c) (UnsafePointer<
     client.eventSubject.send(event)
 }
 
-private let eventMempoolTransactionConfirmedCallback: @convention(c) (UnsafePointer<CChar>?, UInt32, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void = { txid, blockHeight, blockHash, userData in
+private let eventMempoolTransactionConfirmedCallback: MempoolConfirmedCallback = { txidBytes, blockHeight, blockHashBytes, userData in
     guard let userData = userData,
-          let txid = txid else { return }
+          let txidBytes = txidBytes else { return }
     
     let holder = Unmanaged<EventCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
     guard let client = holder.client else { return }
     
-    let txidString = String(cString: txid)
+    // Convert byte array to hex string
+    let txidArray = withUnsafeBytes(of: txidBytes.pointee) { bytes in
+        Array(bytes)
+    }
+    let txidString = txidArray.map { String(format: "%02x", $0) }.joined()
+    
     // For now, we're using blockHeight as confirmations (1 confirmation when just confirmed)
     let confirmations: UInt32 = 1
     
@@ -459,14 +480,19 @@ private let eventMempoolTransactionConfirmedCallback: @convention(c) (UnsafePoin
     client.eventSubject.send(event)
 }
 
-private let eventMempoolTransactionRemovedCallback: @convention(c) (UnsafePointer<CChar>?, UInt8, UnsafeMutableRawPointer?) -> Void = { txid, reason, userData in
+private let eventMempoolTransactionRemovedCallback: MempoolRemovedCallback = { txidBytes, reason, userData in
     guard let userData = userData,
-          let txid = txid else { return }
+          let txidBytes = txidBytes else { return }
     
     let holder = Unmanaged<EventCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
     guard let client = holder.client else { return }
     
-    let txidString = String(cString: txid)
+    // Convert byte array to hex string
+    let txidArray = withUnsafeBytes(of: txidBytes.pointee) { bytes in
+        Array(bytes)
+    }
+    let txidString = txidArray.map { String(format: "%02x", $0) }.joined()
+    
     let removalReason: MempoolRemovalReason = {
         switch reason {
         case 0: return .expired
@@ -672,7 +698,6 @@ public final class SPVClient {
             
             let result = dash_spv_ffi_client_sync_to_tip(
                 client,
-                syncProgressCallback,
                 syncCompletionCallback,
                 userData
             )
