@@ -187,6 +187,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(
     if config.is_null() {
         return FFIString {
             ptr: std::ptr::null_mut(),
+            length: 0,
         };
     }
 
@@ -195,6 +196,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(
         Some(dir) => FFIString::new(&dir.to_string_lossy()),
         None => FFIString {
             ptr: std::ptr::null_mut(),
+            length: 0,
         },
     }
 }

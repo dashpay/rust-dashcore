@@ -186,6 +186,7 @@ mod tests {
             // Second destroy should handle gracefully
             let null_string = FFIString {
                 ptr: std::ptr::null_mut(),
+                length: 0,
             };
             dash_spv_ffi_string_destroy(null_string);
 

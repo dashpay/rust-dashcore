@@ -47,6 +47,7 @@ typedef struct FFIDashSpvClient FFIDashSpvClient;
 
 typedef struct FFIString {
   char *ptr;
+  uintptr_t length;
 } FFIString;
 
 typedef struct FFIDetailedSyncProgress {
@@ -248,17 +249,6 @@ int32_t dash_spv_ffi_client_sync_to_tip(struct FFIDashSpvClient *client,
                                         void (*completion_callback)(bool, const char*, void*),
                                         void *user_data);
 
-/**
- * Tests the sync functionality of the SPV client.
- * 
- * This function performs a basic synchronization test to verify that the SPV client
- * can successfully download headers from the network. It records the initial height,
- * starts a sync operation, waits for 10 seconds, and then checks if new headers
- * were downloaded.
- * 
- * @param client Pointer to the FFIDashSpvClient instance to test
- * @return 0 on success (headers were downloaded), or an error code on failure
- */
 int32_t dash_spv_ffi_client_test_sync(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_sync_to_tip_with_progress(struct FFIDashSpvClient *client,
