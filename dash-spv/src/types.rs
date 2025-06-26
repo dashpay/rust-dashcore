@@ -387,6 +387,9 @@ pub struct PeerInfo {
 
     /// Best height reported by peer.
     pub best_height: Option<u32>,
+
+    /// Whether this peer wants to receive DSQ (CoinJoin queue) messages.
+    pub wants_dsq_messages: Option<bool>,
 }
 
 impl PeerInfo {

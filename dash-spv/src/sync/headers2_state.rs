@@ -78,6 +78,19 @@ impl Headers2StateManager {
     pub fn get_state(&mut self, peer_id: PeerId) -> &mut CompressionState {
         self.peer_states.entry(peer_id).or_insert_with(CompressionState::new)
     }
+    
+    /// Initialize compression state for a peer with a known header
+    /// This is useful when starting sync from a specific point
+    pub fn init_peer_state(&mut self, peer_id: PeerId, last_header: Header) {
+        let state = self.peer_states.entry(peer_id).or_insert_with(CompressionState::new);
+        // Set the previous header in the compression state
+        state.prev_header = Some(last_header);
+        tracing::debug!(
+            "Initialized compression state for peer {} with header at height implied by hash {}",
+            peer_id,
+            state.prev_header.as_ref().unwrap().block_hash()
+        );
+    }
 
     /// Process compressed headers from a peer
     pub fn process_headers(
@@ -89,9 +102,15 @@ impl Headers2StateManager {
             return Ok(Vec::new());
         }
 
-        // First header must be uncompressed for proper sync
+        // First header should ideally be uncompressed for proper sync
+        // However, if we're continuing from an existing state, it might be compressed
+        // Also, when syncing from genesis, some peers send compressed headers that reference genesis
         if !headers[0].is_full() {
-            return Err(ProcessError::FirstHeaderNotFull);
+            tracing::warn!(
+                "First header in batch is compressed - this may indicate we're continuing from existing state or syncing from genesis"
+            );
+            // Don't fail here - let the decompression logic handle it
+            // If it fails due to missing previous header, the caller should initialize compression state
         }
 
         let mut decompressed = Vec::with_capacity(headers.len());

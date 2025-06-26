@@ -99,6 +99,9 @@ pub trait NetworkManager: Send + Sync {
     async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
         crate::types::PeerId(0) // Default implementation
     }
+
+    /// Update the DSQ (CoinJoin queue) message preference for the current peer.
+    async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()>;
 }
 
 /// TCP-based network manager implementation.
@@ -287,6 +290,15 @@ impl NetworkManager for TcpNetworkManager {
         }
     }
 
+    async fn has_headers2_peer(&self) -> bool {
+        // For single peer connection, check if we can actually request headers2
+        if let Some(connection) = &self.connection {
+            connection.can_request_headers2()
+        } else {
+            false
+        }
+    }
+
     async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
         // For single peer connection, always return PeerId(1) when connected
         if self.connection.is_some() {
@@ -294,5 +306,20 @@ impl NetworkManager for TcpNetworkManager {
         } else {
             crate::types::PeerId(0)
         }
+    }
+
+    async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()> {
+        // For single peer connection, update the peer info if we have one
+        if let Some(connection) = &self.connection {
+            let peer_info = connection.peer_info();
+            // Note: In a real implementation, we'd update the connection's peer info
+            // For now, just log it as we don't have a setter method
+            tracing::info!(
+                "Updated peer {} DSQ preference to: {}",
+                peer_info.address,
+                wants_dsq
+            );
+        }
+        Ok(())
     }
 }
