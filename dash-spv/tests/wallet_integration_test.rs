@@ -36,7 +36,7 @@ fn create_test_address(seed: u8) -> Address {
 /// Create a test block with given transactions.
 fn create_test_block(transactions: Vec<Transaction>, prev_hash: dashcore::BlockHash) -> Block {
     let header = BlockHeader {
-        version: 1,
+        version: dashcore::block::Version::from_consensus(1),
         prev_blockhash: prev_hash,
         merkle_root: dashcore_hashes::sha256d::Hash::all_zeros().into(),
         time: 1640995200, // Fixed timestamp for deterministic tests
