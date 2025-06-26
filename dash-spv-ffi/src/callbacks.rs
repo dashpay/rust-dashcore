@@ -165,6 +165,7 @@ impl FFIEventCallbacks {
         }
     }
     
+    // Mempool callbacks use debug level for "not set" messages as they are optional and frequently unused
     pub fn call_mempool_transaction_added(&self, txid: &str, amount: i64, addresses: &[String], is_instant_send: bool) {
         if let Some(callback) = self.on_mempool_transaction_added {
             tracing::info!("🎯 Calling mempool transaction added callback: txid={}, amount={}, is_instant_send={}", 
