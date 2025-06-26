@@ -1,9 +1,10 @@
 use dash_spv_ffi::*;
-use std::ffi::{c_char, c_void, CStr};
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use tempfile::TempDir;
 
 // Test data tracking
 struct TestEventData {
@@ -60,10 +61,17 @@ fn test_event_callbacks_setup() {
     let test_data = TestEventData::new();
     let user_data = Arc::as_ptr(&test_data) as *mut c_void;
 
+    // Create temp directory for test data
+    let temp_dir = TempDir::new().unwrap();
+
     unsafe {
         // Create config
         let config = dash_spv_ffi_config_new(FFINetwork::Testnet);
         assert!(!config.is_null());
+        
+        // Set data directory to temp directory
+        let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
+        dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
         
         // Set validation mode to basic for faster testing
         dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::Basic);
