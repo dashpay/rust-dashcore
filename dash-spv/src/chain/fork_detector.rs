@@ -19,6 +19,7 @@ pub struct ForkDetector {
 
 impl ForkDetector {
     pub fn new(max_forks: usize) -> Self {
+        assert!(max_forks > 0, "max_forks must be greater than 0");
         Self {
             forks: HashMap::new(),
             max_forks,
@@ -284,5 +285,11 @@ mod tests {
         }
         
         assert_eq!(detector.get_forks().len(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_forks must be greater than 0")]
+    fn test_fork_detector_zero_max_forks() {
+        let _ = ForkDetector::new(0);
     }
 }
