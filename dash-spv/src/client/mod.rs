@@ -49,6 +49,32 @@ pub struct DashSpvClient {
     network: Box<dyn NetworkManager>,
     storage: Box<dyn StorageManager>,
     wallet: Arc<RwLock<crate::wallet::Wallet>>,
+    /// Synchronization manager for coordinating blockchain sync operations.
+    ///
+    /// # Architectural Design
+    ///
+    /// The sync manager is stored as a non-shared field (not wrapped in Arc<Mutex<T>>)
+    /// for the following reasons:
+    ///
+    /// 1. **Single Owner Pattern**: The sync manager is exclusively owned by the client,
+    ///    ensuring clear ownership and preventing concurrent access issues.
+    ///
+    /// 2. **Sequential Operations**: Blockchain synchronization is inherently sequential -
+    ///    headers must be validated in order, and sync phases must complete before
+    ///    progressing to the next phase.
+    ///
+    /// 3. **Simplified State Management**: Avoiding shared ownership eliminates complex
+    ///    synchronization issues and makes the sync state machine easier to reason about.
+    ///
+    /// ## Future Considerations
+    ///
+    /// If concurrent access becomes necessary (e.g., for monitoring sync progress from
+    /// multiple threads), consider:
+    /// - Using interior mutability patterns (Arc<Mutex<SequentialSyncManager>>)
+    /// - Extracting read-only state into a separate shared structure
+    /// - Implementing a message-passing architecture for sync commands
+    ///
+    /// The current design prioritizes simplicity and correctness over concurrent access.
     sync_manager: SequentialSyncManager,
     validation: ValidationManager,
     chainlock_manager: Arc<ChainLockManager>,
