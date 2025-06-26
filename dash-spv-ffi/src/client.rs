@@ -413,7 +413,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
                         }) = registry.unregister(callback_id)
                         {
                             if let Some(callback) = completion_callback {
-                                let msg = CString::new("Sync completed successfully").unwrap();
+                                let msg = CString::new("Sync completed successfully")
+                                    .unwrap_or_else(|_| CString::new("Sync completed").expect("hardcoded string is safe"));
                                 // SAFETY: The callback and user_data are safely managed through the registry
                                 // The registry ensures proper lifetime management and thread safety
                                 callback(true, msg.as_ptr(), user_data);
@@ -433,7 +434,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
                         }) = registry.unregister(callback_id)
                         {
                             if let Some(callback) = completion_callback {
-                                let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
+                                let msg = match CString::new(format!("Sync failed: {}", e)) {
+                                    Ok(s) => s,
+                                    Err(_) => CString::new("Sync failed").expect("hardcoded string is safe"),
+                                };
                                 // SAFETY: The callback and user_data are safely managed through the registry
                                 // The registry ensures proper lifetime management and thread safety
                                 callback(false, msg.as_ptr(), user_data);
@@ -666,7 +670,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                 {
                     match monitor_result {
                         Ok(_) => {
-                            let msg = CString::new("Sync completed successfully").unwrap();
+                            let msg = CString::new("Sync completed successfully")
+                                .unwrap_or_else(|_| CString::new("Sync completed").expect("hardcoded string is safe"));
                             // SAFETY: The callback and user_data are safely managed through the registry.
                             // The registry ensures proper lifetime management and thread safety.
                             // The string pointer is only valid for the duration of the callback.
@@ -675,7 +680,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                             // should not store or use the pointer after it returns
                         }
                         Err(e) => {
-                            let msg = CString::new(format!("Sync failed: {}", e)).unwrap();
+                            let msg = match CString::new(format!("Sync failed: {}", e)) {
+                                Ok(s) => s,
+                                Err(_) => CString::new("Sync failed").expect("hardcoded string is safe"),
+                            };
                             // SAFETY: Same as above
                             callback(false, msg.as_ptr(), user_data);
                             // CString is automatically dropped here, which is safe because the callback
