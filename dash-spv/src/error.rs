@@ -115,33 +115,40 @@ pub enum ValidationError {
 /// Synchronization-related errors.
 #[derive(Debug, Error)]
 pub enum SyncError {
+    /// Indicates that a sync operation is already in progress
     #[error("Sync already in progress")]
     SyncInProgress,
-
-    #[error("Sync timeout")]
-    SyncTimeout,
 
     /// Deprecated: Use specific error variants instead
     #[deprecated(note = "Use Network, Storage, Validation, or Timeout variants instead")]
     #[error("Sync failed: {0}")]
     SyncFailed(String),
 
+    /// Indicates an invalid state in the sync process (e.g., unexpected phase transitions)
+    /// Use this for sync state machine errors, not validation errors
     #[error("Invalid sync state: {0}")]
     InvalidState(String),
 
+    /// Indicates a missing dependency required for sync (e.g., missing previous block)
     #[error("Missing dependency: {0}")]
     MissingDependency(String),
     
     // Explicit error category variants
+    
+    /// Timeout errors during sync operations (e.g., peer response timeout)
     #[error("Timeout error: {0}")]
     Timeout(String),
     
+    /// Network-related errors (e.g., connection failures, protocol errors)
     #[error("Network error: {0}")]
     Network(String),
     
+    /// Validation errors for data received during sync (e.g., invalid headers, invalid proofs)
+    /// Use this for data validation errors, not state errors
     #[error("Validation error: {0}")]
     Validation(String),
     
+    /// Storage-related errors (e.g., database failures)
     #[error("Storage error: {0}")]
     Storage(String),
 }
@@ -150,9 +157,9 @@ impl SyncError {
     /// Returns a static string representing the error category based on the variant
     pub fn category(&self) -> &'static str {
         match self {
-            SyncError::SyncInProgress => "state",
-            SyncError::SyncTimeout | SyncError::Timeout(_) => "timeout",
-            SyncError::InvalidState(_) | SyncError::Validation(_) => "validation",
+            SyncError::SyncInProgress | SyncError::InvalidState(_) => "state",
+            SyncError::Timeout(_) => "timeout",
+            SyncError::Validation(_) => "validation",
             SyncError::MissingDependency(_) => "dependency",
             SyncError::Network(_) => "network",
             SyncError::Storage(_) => "storage",
@@ -192,15 +199,17 @@ mod tests {
         
         // Test existing variant categories
         assert_eq!(SyncError::SyncInProgress.category(), "state");
-        assert_eq!(SyncError::SyncTimeout.category(), "timeout");
-        assert_eq!(SyncError::InvalidState("test".to_string()).category(), "validation");
+        assert_eq!(SyncError::InvalidState("test".to_string()).category(), "state");
         assert_eq!(SyncError::MissingDependency("test".to_string()).category(), "dependency");
         
-        // Test SyncFailed fallback categorization
-        assert_eq!(SyncError::SyncFailed("connection timeout".to_string()).category(), "timeout");
-        assert_eq!(SyncError::SyncFailed("network error".to_string()).category(), "network");
-        assert_eq!(SyncError::SyncFailed("validation failed".to_string()).category(), "validation");
-        assert_eq!(SyncError::SyncFailed("disk full".to_string()).category(), "storage");
-        assert_eq!(SyncError::SyncFailed("something else".to_string()).category(), "unknown");
+        // Test deprecated SyncFailed always returns "unknown"
+        #[allow(deprecated)]
+        {
+            assert_eq!(SyncError::SyncFailed("connection timeout".to_string()).category(), "unknown");
+            assert_eq!(SyncError::SyncFailed("network error".to_string()).category(), "unknown");
+            assert_eq!(SyncError::SyncFailed("validation failed".to_string()).category(), "unknown");
+            assert_eq!(SyncError::SyncFailed("disk full".to_string()).category(), "unknown");
+            assert_eq!(SyncError::SyncFailed("something else".to_string()).category(), "unknown");
+        }
     }
 }
