@@ -109,7 +109,7 @@ mod tests {
         let val_err = SpvError::Validation(ValidationError::InvalidProofOfWork);
         assert_eq!(FFIErrorCode::from(val_err) as i32, FFIErrorCode::ValidationError as i32);
 
-        let sync_err = SpvError::Sync(SyncError::SyncTimeout);
+        let sync_err = SpvError::Sync(SyncError::Timeout("Test timeout".to_string()));
         assert_eq!(FFIErrorCode::from(sync_err) as i32, FFIErrorCode::SyncError as i32);
 
         let io_err = SpvError::Io(std::io::Error::new(std::io::ErrorKind::Other, "test"));

@@ -118,9 +118,9 @@ typedef struct FFIArray {
   uintptr_t capacity;
 } FFIArray;
 
-typedef void (*BlockCallback)(uint32_t height, const char *hash, void *user_data);
+typedef void (*BlockCallback)(uint32_t height, const uint8_t (*hash)[32], void *user_data);
 
-typedef void (*TransactionCallback)(const char *txid,
+typedef void (*TransactionCallback)(const uint8_t (*txid)[32],
                                     bool confirmed,
                                     int64_t amount,
                                     const char *addresses,
@@ -129,18 +129,18 @@ typedef void (*TransactionCallback)(const char *txid,
 
 typedef void (*BalanceCallback)(uint64_t confirmed, uint64_t unconfirmed, void *user_data);
 
-typedef void (*MempoolTransactionCallback)(const char *txid,
+typedef void (*MempoolTransactionCallback)(const uint8_t (*txid)[32],
                                            int64_t amount,
                                            const char *addresses,
                                            bool is_instant_send,
                                            void *user_data);
 
-typedef void (*MempoolConfirmedCallback)(const char *txid,
+typedef void (*MempoolConfirmedCallback)(const uint8_t (*txid)[32],
                                          uint32_t block_height,
-                                         const char *block_hash,
+                                         const uint8_t (*block_hash)[32],
                                          void *user_data);
 
-typedef void (*MempoolRemovedCallback)(const char *txid, uint8_t reason, void *user_data);
+typedef void (*MempoolRemovedCallback)(const uint8_t (*txid)[32], uint8_t reason, void *user_data);
 
 typedef struct FFIEventCallbacks {
   BlockCallback on_block;

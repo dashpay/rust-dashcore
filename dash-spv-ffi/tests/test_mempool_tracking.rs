@@ -1,4 +1,5 @@
 use dash_spv_ffi::*;
+use dash_spv_ffi::callbacks::{MempoolTransactionCallback, MempoolConfirmedCallback, MempoolRemovedCallback};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::sync::{Arc, Mutex};
@@ -13,7 +14,7 @@ struct TestCallbacks {
 }
 
 extern "C" fn test_mempool_added(
-    _txid: *const c_char,
+    _txid: *const [u8; 32],
     _amount: i64,
     _addresses: *const c_char,
     _is_instant_send: bool,
@@ -25,9 +26,9 @@ extern "C" fn test_mempool_added(
 }
 
 extern "C" fn test_mempool_confirmed(
-    _txid: *const c_char,
+    _txid: *const [u8; 32],
     _block_height: u32,
-    _block_hash: *const c_char,
+    _block_hash: *const [u8; 32],
     user_data: *mut c_void,
 ) {
     let callbacks = unsafe { &*(user_data as *const TestCallbacks) };
@@ -35,7 +36,7 @@ extern "C" fn test_mempool_confirmed(
     *count += 1;
 }
 
-extern "C" fn test_mempool_removed(_txid: *const c_char, _reason: u8, user_data: *mut c_void) {
+extern "C" fn test_mempool_removed(_txid: *const [u8; 32], _reason: u8, user_data: *mut c_void) {
     let callbacks = unsafe { &*(user_data as *const TestCallbacks) };
     let mut count = callbacks.mempool_removed_count.lock().unwrap();
     *count += 1;

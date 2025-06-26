@@ -1,4 +1,5 @@
 use dash_spv_ffi::*;
+use dash_spv_ffi::callbacks::{BlockCallback, TransactionCallback};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -29,7 +30,7 @@ impl TestEventData {
     }
 }
 
-extern "C" fn test_block_callback(height: u32, _hash: *const c_char, user_data: *mut c_void) {
+extern "C" fn test_block_callback(height: u32, _hash: *const [u8; 32], user_data: *mut c_void) {
     println!("Test block callback called: height={}", height);
     let data = unsafe { &*(user_data as *const TestEventData) };
     data.block_received.store(true, Ordering::SeqCst);
@@ -37,7 +38,7 @@ extern "C" fn test_block_callback(height: u32, _hash: *const c_char, user_data: 
 }
 
 extern "C" fn test_transaction_callback(
-    _txid: *const c_char,
+    _txid: *const [u8; 32],
     _confirmed: bool,
     _amount: i64,
     _addresses: *const c_char,
