@@ -272,15 +272,12 @@ impl DashSpvClient {
 
         // Create progress channels
         let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
-<<<<<<< HEAD
         
         // Create event channels
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
         // Create mempool state
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
-=======
->>>>>>> sync-progress-tracking
 
         Ok(Self {
             config,
