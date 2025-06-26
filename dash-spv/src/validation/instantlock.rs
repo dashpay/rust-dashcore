@@ -32,10 +32,10 @@ impl InstantLockValidator {
         // Check transaction ID is not zero (we'll skip this check for now)
         // TODO: Implement proper null txid check
 
-        // Check signature is not empty
-        if instant_lock.signature.as_bytes().is_empty() {
+        // Check signature is not zero (null signature)
+        if instant_lock.signature.is_zeroed() {
             return Err(ValidationError::InvalidInstantLock(
-                "InstantLock signature cannot be empty".to_string(),
+                "InstantLock signature cannot be zero".to_string(),
             ));
         }
 
@@ -80,6 +80,11 @@ impl InstantLockValidator {
 
     /// Check if an InstantLock conflicts with another.
     pub fn conflicts_with(&self, lock1: &InstantLock, lock2: &InstantLock) -> bool {
+        // InstantLocks for the same transaction don't conflict
+        if lock1.txid == lock2.txid {
+            return false;
+        }
+        
         // InstantLocks conflict if they try to lock the same input
         for input1 in &lock1.inputs {
             for input2 in &lock2.inputs {
@@ -95,7 +100,7 @@ impl InstantLockValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::{Transaction, TxIn, TxOut, OutPoint, Script};
+    use dashcore::{Transaction, TxIn, TxOut, OutPoint, ScriptBuf};
     use dashcore::blockdata::constants::COIN_VALUE;
     use dashcore_hashes::{Hash, sha256d};
 
@@ -194,8 +199,10 @@ mod tests {
         );
         is_lock.signature = dashcore::bls_sig_utils::BLSSignature::from([0; 96]);
         
-        // This should still pass basic validation - signature verification is separate
-        assert!(validator.validate(&is_lock).is_ok());
+        // Zero signatures should be rejected as invalid structure
+        let result = validator.validate(&is_lock);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("signature cannot be zero"));
     }
 
     #[test]
