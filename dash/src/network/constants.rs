@@ -42,13 +42,12 @@ use core::str::FromStr;
 use core::{fmt, ops};
 
 use hashes::Hash;
-use internals::write_err;
 
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::constants::ChainHash;
 use crate::error::impl_std_error;
-use crate::prelude::{String, ToOwned};
-use crate::{BlockHash, io};
+use crate::prelude::ToOwned;
+use crate::{io, BlockHash};
 use dash_network::Network;
 
 // Re-export NODE_HEADERS_COMPRESSED for convenience
