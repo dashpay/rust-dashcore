@@ -407,6 +407,7 @@ impl UTXORollbackManager {
 mod tests {
     use super::*;
     use dashcore::{Amount, ScriptBuf, TxOut};
+    use dashcore_hashes::Hash;
     use crate::storage::MemoryStorageManager;
 
     async fn create_test_manager() -> UTXORollbackManager {
