@@ -80,27 +80,7 @@ impl TerminalBlockManager {
                 // Mainnet terminal blocks
                 // These are blocks where masternode lists are known to be accurate
                 vec![
-                    // DIP3 activation (first DML)
-                    (1088640, "00000000000000112c41b144f542e82648e5f72f960e1c2477a88b0ab7a29adb"),
-                    // Regular interval terminal blocks (approximately every 50k blocks)
-                    (1100000, "00000000000000293c502c43cb40aabaf40b87a0dd2a0c976b58f91dc6ae7eb5"),
-                    (1150000, "0000000000000024152a225357799bbfa8cc5cbfce4cffb0f7b55ba8cb874d76"),
-                    (1200000, "000000000000001fb9163ded58126ea7e042bab70e2c57ad133e2fc37f40a327"),
-                    (1250000, "00000000000000193e14f7c0c6fb28a3f14383a0dd37e1c09819da9873b73e28"),
-                    (1300000, "00000000000000068a5c9a31b08e7f4db17608e1df7a0226cf4dfa64a750e5ad"),
-                    (1350000, "0000000000000015097b4ba2285ec5a5a7ced7f4486b917e5a6f1dd7e9b9d37e"),
-                    (1400000, "00000000000000051369d45797fad1e61e268c22e8f563f3493a94987b36eff6"),
-                    (1450000, "0000000000000018bb047c3b014e6f4d5c6bd34ce97d7d7917f8e2e5c8c6d768"),
-                    (1500000, "00000000000000142e01db30b08c354dd974ce5db7dcf217aaeb38c0aaf0f6d2"),
-                    (1550000, "00000000000000055344c498db27e8f4a4c36dd3dd3c0336b4e9e384e5c3c53e"),
-                    (1600000, "000000000000001c5f5612481eea94df7bd4140cf8c3e2cc5ad7a2d1ac4655ba"),
-                    (1650000, "00000000000000164f1248a0771e4c3ad49434bbbb48e230aa9d5bc6ce8f9e83"),
-                    (1700000, "00000000000000203f57e71709c7a04faa48d102a7dc7d8c1a2bf6cf973aad5f"),
-                    (1720000, "0000000000000014b29f6d05f89fa59c97d40e0e7beaf07c19ad70bce6a5de20"),
-                    (1750000, "000000000000001074530ae70b93c2e719c94fb3b85b09497ba27285ceef0ced"),
-                    (1800000, "0000000000000010dc57c6cfd87d8ee0cf3a5ba7a529dd9b9270fdf8fe399daa"),
-                    (1850000, "00000000000000117aead9de4a6764fb08de85709157073fc1f4ced5eb4e7ceb"),
-                    (1900000, "00000000000000208dcb56c5cbf7adff63ad6b965c3a088e2e9b4e607c7a88e1"),
+                    // Latest terminal blocks only (keeping 2 most recent)
                     (1950000, "0000000000000024a59f30cddbee13ef0711f7965d2f810e6c36e577c1e8b3b5"),
                     (2000000, "0000000000000021f7b88e014325c323dc41d20aec211e5cc5a81eeef2f91de2"),
                 ]
@@ -108,19 +88,7 @@ impl TerminalBlockManager {
             Network::Testnet => {
                 // Testnet terminal blocks
                 vec![
-                    // DIP3 activation on testnet
-                    (387480, "0000014a5675057c06f88654e97ddab3e44e63636cf3c3a9f5448f40806e9ecb"),
-                    // Regular interval terminal blocks
-                    (400000, "000000ce6ce6c920f09b7b996270da542e45c0074ce1bdcaeca33e3d958bbe61"),
-                    (450000, "00000292c92e419b1a8512feb948b5a93f375c7f4f3f0013a9b1c969e0ee1ce6"),
-                    (500000, "000000f8a4233b014f0e7d0e6db5c4e6e8f8b3c45fc988b5afc2a5bfa2d41af6"),
-                    (550000, "0000022a91356497cf8c06e0254a51e8e6b5e3a3a43f23a2ddc96a46b3b056d9"),
-                    (600000, "00000288d38ed1b96e970f86b23cf4e01d97b4e3e6ab7d79b088bb1b5c5de21f"),
-                    (650000, "000002577ac3f24b0e879dd98ae7a5b0dd6ac582a96e0cfcc99c6dc8fb6fd5ac"),
-                    (700000, "00000134f48b6ad337eeb69df6fb97b2e0fb018cd1a8065c4a479cf3f96c9c4f"),
-                    (750000, "000003012d866e4f96b0e2f92a17cbedd42fa8e3b744ab2d99296c964b407b01"),
-                    (760000, "0000015fd0eeab8712b86fc89ec9e7fa4851e922e3903046fcc38b87e9fe2ba2"),
-                    (800000, "000002f16a1e34a62e88e4b50bf5767c4ab027e11fb2a65c4b4b068ad18f07e1"),
+                    // Latest terminal blocks only (keeping 2 most recent)
                     (850000, "0000011ec1156e732e75b636d3b0dc37cb27a44fb4e1b0a47d82dab693b32e88"),
                     (900000, "0000011764a05571e0b3963b1422a8f3771e4c0d5b72e9b8e0799aabf07d28ef"),
                 ]
