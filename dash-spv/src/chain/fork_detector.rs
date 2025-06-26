@@ -272,13 +272,19 @@ mod tests {
     fn test_fork_limits() {
         let mut detector = ForkDetector::new(2);
         let storage = MemoryStorage::new();
-        let chain_state = ChainState::new();
+        let mut chain_state = ChainState::new();
         
         // Add genesis
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).unwrap();
+        chain_state.add_header(genesis.clone());
         
-        // Create 3 forks, should only keep 2
+        // Add a header to extend the main chain past genesis
+        let header1 = create_test_header(genesis.block_hash(), 1);
+        storage.store_header(&header1, 1).unwrap();
+        chain_state.add_header(header1.clone());
+        
+        // Create 3 forks from genesis, should only keep 2
         for i in 0..3 {
             let fork_header = create_test_header(genesis.block_hash(), i + 100);
             detector.check_header(&fork_header, &chain_state, &storage);
