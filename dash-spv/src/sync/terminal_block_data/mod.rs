@@ -268,6 +268,6 @@ mod tests {
 
         let found = manager.find_best_terminal_block_with_data(950000);
         assert!(found.is_some());
-        assert_eq!(found.unwrap().height, 900000);
+        assert_eq!(found.expect("terminal block should be found").height, 900000);
     }
 }

@@ -162,7 +162,7 @@ mod tests {
         assert!(pool.can_accept_connections().await);
 
         // Test marking as connecting
-        let addr = "127.0.0.1:9999".parse().unwrap();
+        let addr = "127.0.0.1:9999".parse().expect("Failed to parse test address");
         assert!(pool.mark_connecting(addr).await);
         assert!(!pool.mark_connecting(addr).await); // Already marked
         assert!(pool.is_connecting(&addr).await);

@@ -4,7 +4,7 @@ use rand::prelude::*;
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
 use dashcore::network::address::{AddrV2, AddrV2Message};
@@ -39,7 +39,14 @@ impl AddrV2Handler {
     /// Handle incoming AddrV2 messages
     pub async fn handle_addrv2(&self, messages: Vec<AddrV2Message>) {
         let mut known_peers = self.known_peers.write().await;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as u32;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| {
+                log::error!("System time error in handle_addrv2: {}", e);
+                e
+            })
+            .unwrap_or_else(|_| Duration::from_secs(0))
+            .as_secs() as u32;
 
         let _initial_count = known_peers.len();
         let mut added = 0;
@@ -114,7 +121,14 @@ impl AddrV2Handler {
 
     /// Add a known peer address
     pub async fn add_known_address(&self, addr: SocketAddr, services: ServiceFlags) {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as u32;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| {
+                log::error!("System time error in add_known_address: {}", e);
+                e
+            })
+            .unwrap_or_else(|_| Duration::from_secs(0))
+            .as_secs() as u32;
 
         let addr_v2 = match addr.ip() {
             std::net::IpAddr::V4(ipv4) => AddrV2::Ipv4(ipv4),
@@ -161,12 +175,12 @@ mod tests {
         let handler = AddrV2Handler::new();
 
         // Test SendAddrV2 support tracking
-        let peer = "127.0.0.1:9999".parse().unwrap();
+        let peer = "127.0.0.1:9999".parse().expect("Failed to parse test peer address");
         handler.handle_sendaddrv2(peer).await;
         assert!(handler.peer_supports_addrv2(&peer).await);
 
         // Test adding known address
-        let addr = "192.168.1.1:9999".parse().unwrap();
+        let addr = "192.168.1.1:9999".parse().expect("Failed to parse test address");
         handler.add_known_address(addr, ServiceFlags::from(1)).await;
 
         let known = handler.get_known_addresses().await;
@@ -177,13 +191,16 @@ mod tests {
     #[tokio::test]
     async fn test_addrv2_timestamp_validation() {
         let handler = AddrV2Handler::new();
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as u32;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Failed to get system time in test")
+            .as_secs() as u32;
 
         // Create test messages with various timestamps
-        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let addr: SocketAddr = "127.0.0.1:9999".parse().expect("Failed to parse test socket address");
         let ipv4_addr = match addr.ip() {
             std::net::IpAddr::V4(v4) => v4,
-            _ => panic!("Expected IPv4 address"),
+            _ => panic!("Test expects IPv4 address but got IPv6"),
         };
 
         let messages = vec![

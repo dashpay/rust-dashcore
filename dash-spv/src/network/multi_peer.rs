@@ -590,7 +590,13 @@ impl MultiPeerNetworkManager {
                             *search_started = Some(SystemTime::now());
                             log::info!("Below minimum peers ({}/{}), starting peer search (will try DNS after {}s)", count, MIN_PEERS, DNS_DISCOVERY_DELAY.as_secs());
                         }
-                        let search_time = search_started.unwrap();
+                        let search_time = match *search_started {
+                            Some(time) => time,
+                            None => {
+                                log::error!("Search time not set when expected");
+                                continue;
+                            }
+                        };
                         drop(search_started);
 
                         // Try known addresses first, sorted by reputation
@@ -613,7 +619,12 @@ impl MultiPeerNetworkManager {
                         // If still need more, check if we can use DNS (after 10 second delay)
                         let count = pool.connection_count().await;
                         if count < MIN_PEERS {
-                            let elapsed = SystemTime::now().duration_since(search_time).unwrap_or(Duration::ZERO);
+                            let elapsed = SystemTime::now()
+                                .duration_since(search_time)
+                                .unwrap_or_else(|e| {
+                                    log::warn!("System time error calculating elapsed time: {}", e);
+                                    Duration::ZERO
+                                });
                             if elapsed >= DNS_DISCOVERY_DELAY {
                                 log::info!("Using DNS discovery after {}s delay", elapsed.as_secs());
                                 let dns_peers = discovery.discover_peers(network).await;
