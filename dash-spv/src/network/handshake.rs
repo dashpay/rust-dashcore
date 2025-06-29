@@ -233,14 +233,14 @@ impl HandshakeManager {
 
     /// Send version message.
     async fn send_version(&mut self, connection: &mut TcpConnection) -> NetworkResult<()> {
-        let version_message = self.build_version_message(connection.peer_info().address);
+        let version_message = self.build_version_message(connection.peer_info().address)?;
         connection.send_message(NetworkMessage::Version(version_message)).await?;
         tracing::debug!("Sent version message");
         Ok(())
     }
 
     /// Build version message.
-    fn build_version_message(&self, address: SocketAddr) -> VersionMessage {
+    fn build_version_message(&self, address: SocketAddr) -> NetworkResult<VersionMessage> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::from_secs(0))
@@ -249,15 +249,17 @@ impl HandshakeManager {
         // SPV client advertises headers2 support but no other services
         let services = NODE_HEADERS_COMPRESSED;
 
-        VersionMessage {
+        // Parse the local address safely
+        let local_addr = "127.0.0.1:0"
+            .parse()
+            .map_err(|_| NetworkError::AddressParse("Failed to parse local address".to_string()))?;
+
+        Ok(VersionMessage {
             version: self.our_version,
             services,
             timestamp,
             receiver: dashcore::network::address::Address::new(&address, ServiceFlags::NETWORK),
-            sender: dashcore::network::address::Address::new(
-                &"127.0.0.1:0".parse().unwrap(),
-                services,
-            ),
+            sender: dashcore::network::address::Address::new(&local_addr, services),
             nonce: rand::random(),
             user_agent: "/rust-dash-spv:0.1.0/".to_string(),
             start_height: 0, // SPV client starts at 0
@@ -267,7 +269,7 @@ impl HandshakeManager {
             },
             mn_auth_challenge: [0; 32],   // Not a masternode
             masternode_connection: false, // Not connecting to masternode
-        }
+        })
     }
 
     /// Get current handshake state.
