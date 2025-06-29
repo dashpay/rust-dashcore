@@ -135,7 +135,7 @@ impl TerminalBlockManager {
     pub fn add_terminal_block(&mut self, block: TerminalBlock) {
         // Update highest terminal block if needed
         if self.highest_terminal_block.is_none()
-            || block.height > self.highest_terminal_block.as_ref().unwrap().height
+            || block.height > self.highest_terminal_block.as_ref().map(|b| b.height).unwrap_or(0)
         {
             self.highest_terminal_block = Some(block.clone());
         }
@@ -304,7 +304,7 @@ mod tests {
         // Create a block hash from bytes
         let hash_bytes =
             hex::decode("00000000000000112c41b144f542e82648e5f72f960e1c2477a88b0ab7a29adb")
-                .unwrap();
+                .expect("hardcoded hex string should be valid");
         let mut hash_array = [0u8; 32];
         hash_array.copy_from_slice(&hash_bytes);
         hash_array.reverse(); // Little-endian
@@ -316,7 +316,7 @@ mod tests {
         assert_eq!(block.height, height);
         assert_eq!(block.block_hash, hash);
         assert!(block.masternode_list_merkle_root.is_some());
-        assert_eq!(block.masternode_list_merkle_root.unwrap(), merkle_root);
+        assert_eq!(block.masternode_list_merkle_root.expect("merkle root should be present"), merkle_root);
     }
 
     #[test]
@@ -338,17 +338,17 @@ mod tests {
         // Test finding blocks before or at a height
         let block = manager.get_terminal_block_before_or_at(1250000);
         assert!(block.is_some());
-        assert_eq!(block.unwrap().height, 1250000);
+        assert_eq!(block.expect("terminal block should exist at 1250000").height, 1250000);
 
         // Test finding at exact height
         let block = manager.get_terminal_block_before_or_at(1300000);
         assert!(block.is_some());
-        assert_eq!(block.unwrap().height, 1300000);
+        assert_eq!(block.expect("terminal block should exist at 1300000").height, 1300000);
 
         // Test finding next block
         let next = manager.get_next_terminal_block(1200000);
         assert!(next.is_some());
-        assert_eq!(next.unwrap().height, 1250000);
+        assert_eq!(next.expect("next terminal block should exist after 1200000").height, 1250000);
 
         // Test edge cases
         let block = manager.get_terminal_block_before_or_at(500000);
@@ -392,7 +392,7 @@ mod tests {
 
         let highest = manager.get_highest_terminal_block();
         assert!(highest.is_some());
-        assert!(highest.unwrap().height >= 760000);
+        assert!(highest.expect("highest terminal block should exist").height >= 760000);
     }
 
     #[test]
@@ -416,14 +416,14 @@ mod tests {
 
         assert_eq!(manager.terminal_blocks.len(), 1);
         assert!(manager.get_terminal_block(1000).is_some());
-        assert_eq!(manager.get_highest_terminal_block().unwrap().height, 1000);
+        assert_eq!(manager.get_highest_terminal_block().expect("highest terminal block should exist").height, 1000);
 
         // Add another higher block
         let block2 = TerminalBlock::new(2000, BlockHash::all_zeros());
         manager.add_terminal_block(block2);
 
         assert_eq!(manager.terminal_blocks.len(), 2);
-        assert_eq!(manager.get_highest_terminal_block().unwrap().height, 2000);
+        assert_eq!(manager.get_highest_terminal_block().expect("highest terminal block should exist").height, 2000);
     }
 
     #[test]
@@ -433,11 +433,11 @@ mod tests {
         // Find best base for various target heights
         let base = manager.find_best_base_terminal_block(1750000);
         assert!(base.is_some());
-        assert_eq!(base.unwrap().height, 1750000);
+        assert_eq!(base.expect("base terminal block should exist for 1750000").height, 1750000);
 
         let base = manager.find_best_base_terminal_block(1775000);
         assert!(base.is_some());
-        assert_eq!(base.unwrap().height, 1750000);
+        assert_eq!(base.expect("base terminal block should exist for 1775000").height, 1750000);
 
         let base = manager.find_best_base_terminal_block(500000);
         assert!(base.is_none()); // No terminal blocks this early

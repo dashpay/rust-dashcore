@@ -335,14 +335,14 @@ mod tests {
     use tokio::sync::RwLock;
 
     async fn create_test_wallet() -> Wallet {
-        let storage = Arc::new(RwLock::new(MemoryStorageManager::new().await.unwrap()));
+        let storage = Arc::new(RwLock::new(MemoryStorageManager::new().await.expect("Failed to create memory storage manager for test")));
         Wallet::new(storage)
     }
 
     fn create_test_address() -> Address {
-        let pubkey_hash = PubkeyHash::from_slice(&[1u8; 20]).unwrap();
+        let pubkey_hash = PubkeyHash::from_slice(&[1u8; 20]).expect("Valid 20-byte slice for pubkey hash");
         let script = ScriptBuf::new_p2pkh(&pubkey_hash);
-        Address::from_script(&script, Network::Testnet).unwrap()
+        Address::from_script(&script, Network::Testnet).expect("Valid P2PKH script should produce valid address")
     }
 
     fn create_test_block_with_transactions(transactions: Vec<Transaction>) -> Block {
@@ -427,17 +427,17 @@ mod tests {
         let extracted = processor.extract_address_from_script(&script);
         assert!(extracted.is_some());
         // The extracted address should have the same script, even if it's on a different network
-        assert_eq!(extracted.unwrap().script_pubkey(), script);
+        assert_eq!(extracted.expect("Address should have been extracted from script").script_pubkey(), script);
     }
 
     #[tokio::test]
     async fn test_process_empty_block() {
         let processor = TransactionProcessor::new();
         let wallet = create_test_wallet().await;
-        let mut storage = MemoryStorageManager::new().await.unwrap();
+        let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage manager for test");
 
         let block = create_test_block_with_transactions(vec![]);
-        let result = processor.process_block(&block, 100, &wallet, &mut storage).await.unwrap();
+        let result = processor.process_block(&block, 100, &wallet, &mut storage).await.expect("Should process block at height 100 successfully");
 
         assert_eq!(result.height, 100);
         assert_eq!(result.transactions.len(), 0);
@@ -450,15 +450,15 @@ mod tests {
     async fn test_process_block_with_coinbase_to_watched_address() {
         let processor = TransactionProcessor::new();
         let wallet = create_test_wallet().await;
-        let mut storage = MemoryStorageManager::new().await.unwrap();
+        let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage manager for test");
 
         let address = create_test_address();
-        wallet.add_watched_address(address.clone()).await.unwrap();
+        wallet.add_watched_address(address.clone()).await.expect("Should add watched address successfully");
 
         let coinbase_tx = create_coinbase_transaction(5000000000, address.script_pubkey());
         let block = create_test_block_with_transactions(vec![coinbase_tx.clone()]);
 
-        let result = processor.process_block(&block, 100, &wallet, &mut storage).await.unwrap();
+        let result = processor.process_block(&block, 100, &wallet, &mut storage).await.expect("Should process block at height 100 successfully");
 
         assert_eq!(result.relevant_transaction_count, 1);
         assert_eq!(result.total_utxos_added, 1);
@@ -487,17 +487,17 @@ mod tests {
     async fn test_process_block_with_regular_transaction_to_watched_address() {
         let processor = TransactionProcessor::new();
         let wallet = create_test_wallet().await;
-        let mut storage = MemoryStorageManager::new().await.unwrap();
+        let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage manager for test");
 
         let address = create_test_address();
-        wallet.add_watched_address(address.clone()).await.unwrap();
+        wallet.add_watched_address(address.clone()).await.expect("Should add watched address successfully");
 
         // Create a regular transaction that sends to our watched address
         let input_outpoint = OutPoint {
             txid: Txid::from_str(
                 "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             )
-            .unwrap(),
+            .expect("Valid test txid"),
             vout: 0,
         };
 
@@ -511,7 +511,7 @@ mod tests {
 
         let block = create_test_block_with_transactions(vec![coinbase_tx, regular_tx.clone()]);
 
-        let result = processor.process_block(&block, 200, &wallet, &mut storage).await.unwrap();
+        let result = processor.process_block(&block, 200, &wallet, &mut storage).await.expect("Should process block at height 200 successfully");
 
         assert_eq!(result.relevant_transaction_count, 1);
         assert_eq!(result.total_utxos_added, 1);
@@ -535,17 +535,17 @@ mod tests {
     async fn test_process_block_with_spending_transaction() {
         let processor = TransactionProcessor::new();
         let wallet = create_test_wallet().await;
-        let mut storage = MemoryStorageManager::new().await.unwrap();
+        let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage manager for test");
 
         let address = create_test_address();
-        wallet.add_watched_address(address.clone()).await.unwrap();
+        wallet.add_watched_address(address.clone()).await.expect("Should add watched address successfully");
 
         // First, add a UTXO to the wallet
         let utxo_outpoint = OutPoint {
             txid: Txid::from_str(
                 "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
             )
-            .unwrap(),
+            .expect("Valid test txid"),
             vout: 1,
         };
 
@@ -560,7 +560,7 @@ mod tests {
             false,
         );
 
-        wallet.add_utxo(utxo).await.unwrap();
+        wallet.add_utxo(utxo).await.expect("Should add UTXO successfully");
 
         // Now create a transaction that spends this UTXO
         let spending_tx = create_regular_transaction(
@@ -573,7 +573,7 @@ mod tests {
 
         let block = create_test_block_with_transactions(vec![coinbase_tx, spending_tx.clone()]);
 
-        let result = processor.process_block(&block, 300, &wallet, &mut storage).await.unwrap();
+        let result = processor.process_block(&block, 300, &wallet, &mut storage).await.expect("Should process block at height 300 successfully");
 
         assert_eq!(result.relevant_transaction_count, 1);
         assert_eq!(result.total_utxos_added, 0);
@@ -594,7 +594,7 @@ mod tests {
     async fn test_process_block_with_irrelevant_transactions() {
         let processor = TransactionProcessor::new();
         let wallet = create_test_wallet().await;
-        let mut storage = MemoryStorageManager::new().await.unwrap();
+        let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage manager for test");
 
         // Don't add any watched addresses
 
@@ -603,7 +603,7 @@ mod tests {
                 txid: Txid::from_str(
                     "1111111111111111111111111111111111111111111111111111111111111111",
                 )
-                .unwrap(),
+                .expect("Valid test txid"),
                 vout: 0,
             }],
             vec![(1000000, ScriptBuf::new())],
@@ -611,7 +611,7 @@ mod tests {
 
         let block = create_test_block_with_transactions(vec![irrelevant_tx]);
 
-        let result = processor.process_block(&block, 400, &wallet, &mut storage).await.unwrap();
+        let result = processor.process_block(&block, 400, &wallet, &mut storage).await.expect("Should process block at height 400 successfully");
 
         assert_eq!(result.relevant_transaction_count, 0);
         assert_eq!(result.total_utxos_added, 0);
@@ -627,7 +627,7 @@ mod tests {
         let wallet = create_test_wallet().await;
 
         let address = create_test_address();
-        wallet.add_watched_address(address.clone()).await.unwrap();
+        wallet.add_watched_address(address.clone()).await.expect("Should add watched address successfully");
 
         // Add some UTXOs
         let utxo1 = Utxo::new(
@@ -635,7 +635,7 @@ mod tests {
                 txid: Txid::from_str(
                     "1111111111111111111111111111111111111111111111111111111111111111",
                 )
-                .unwrap(),
+                .expect("Valid test txid"),
                 vout: 0,
             },
             TxOut {
@@ -652,7 +652,7 @@ mod tests {
                 txid: Txid::from_str(
                     "2222222222222222222222222222222222222222222222222222222222222222",
                 )
-                .unwrap(),
+                .expect("Valid test txid"),
                 vout: 0,
             },
             TxOut {
@@ -664,10 +664,10 @@ mod tests {
             true, // coinbase
         );
 
-        wallet.add_utxo(utxo1).await.unwrap();
-        wallet.add_utxo(utxo2).await.unwrap();
+        wallet.add_utxo(utxo1).await.expect("Should add UTXO1 successfully");
+        wallet.add_utxo(utxo2).await.expect("Should add UTXO2 successfully");
 
-        let stats = processor.get_address_stats(&address, &wallet).await.unwrap();
+        let stats = processor.get_address_stats(&address, &wallet).await.expect("Should get address stats successfully");
 
         assert_eq!(stats.address, address);
         assert_eq!(stats.utxo_count, 2);

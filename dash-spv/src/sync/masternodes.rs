@@ -743,7 +743,7 @@ impl MasternodeSyncManager {
             engine_state: Vec::new(), // TODO: Serialize engine state
             last_update: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .map_err(|e| SyncError::InvalidState(format!("System time error: {}", e)))?
                 .as_secs(),
             terminal_block_hash,
         };

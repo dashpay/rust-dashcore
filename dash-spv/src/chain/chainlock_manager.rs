@@ -128,8 +128,10 @@ impl ChainLockManager {
 
         // Store in memory caches
         {
-            let mut by_height = self.chain_locks_by_height.write().unwrap();
-            let mut by_hash = self.chain_locks_by_hash.write().unwrap();
+            let mut by_height = self.chain_locks_by_height.write()
+                .map_err(|_| StorageError::LockPoisoned("chain_locks_by_height".to_string()))?;
+            let mut by_hash = self.chain_locks_by_hash.write()
+                .map_err(|_| StorageError::LockPoisoned("chain_locks_by_hash".to_string()))?;
 
             by_height.insert(chain_lock.block_height, entry.clone());
             by_hash.insert(chain_lock.block_hash, entry);
@@ -165,20 +167,23 @@ impl ChainLockManager {
 
     /// Check if we have a chain lock at the given height
     pub fn has_chain_lock_at_height(&self, height: u32) -> bool {
-        let locks = self.chain_locks_by_height.read().unwrap();
-        locks.contains_key(&height)
+        self.chain_locks_by_height.read()
+            .map(|locks| locks.contains_key(&height))
+            .unwrap_or(false)
     }
 
     /// Get chain lock by height
     pub fn get_chain_lock_by_height(&self, height: u32) -> Option<ChainLockEntry> {
-        let locks = self.chain_locks_by_height.read().unwrap();
-        locks.get(&height).cloned()
+        self.chain_locks_by_height.read()
+            .ok()
+            .and_then(|locks| locks.get(&height).cloned())
     }
 
     /// Get chain lock by block hash
     pub fn get_chain_lock_by_hash(&self, hash: &BlockHash) -> Option<ChainLockEntry> {
-        let locks = self.chain_locks_by_hash.read().unwrap();
-        locks.get(hash).cloned()
+        self.chain_locks_by_hash.read()
+            .ok()
+            .and_then(|locks| locks.get(hash).cloned())
     }
 
     /// Check if a block is chain-locked
@@ -198,8 +203,9 @@ impl ChainLockManager {
 
     /// Get the highest chain-locked block height
     pub fn get_highest_chain_locked_height(&self) -> Option<u32> {
-        let locks = self.chain_locks_by_height.read().unwrap();
-        locks.keys().max().cloned()
+        self.chain_locks_by_height.read()
+            .ok()
+            .and_then(|locks| locks.keys().max().cloned())
     }
 
     /// Check if a reorganization would violate chain locks
@@ -208,7 +214,10 @@ impl ChainLockManager {
             return false;
         }
 
-        let locks = self.chain_locks_by_height.read().unwrap();
+        let locks = match self.chain_locks_by_height.read() {
+            Ok(locks) => locks,
+            Err(_) => return false, // If we can't read locks, assume no violation
+        };
 
         // Check if any chain-locked block would be reorganized
         for height in reorg_from_height..=reorg_to_height {
@@ -248,8 +257,10 @@ impl ChainLockManager {
                             validated: true,
                         };
 
-                        let mut by_height = self.chain_locks_by_height.write().unwrap();
-                        let mut by_hash = self.chain_locks_by_hash.write().unwrap();
+                        let mut by_height = self.chain_locks_by_height.write()
+                            .map_err(|_| StorageError::LockPoisoned("chain_locks_by_height".to_string()))?;
+                        let mut by_hash = self.chain_locks_by_hash.write()
+                            .map_err(|_| StorageError::LockPoisoned("chain_locks_by_hash".to_string()))?;
 
                         by_height.insert(chain_lock.block_height, entry.clone());
                         by_hash.insert(chain_lock.block_hash, entry);
@@ -289,9 +300,10 @@ impl ChainLockManager {
 
         // Mark this chain lock as fully validated
         {
-            let mut by_height = self.chain_locks_by_height.write().unwrap();
-            if let Some(entry) = by_height.get_mut(&chain_lock.block_height) {
-                entry.validated = true;
+            if let Ok(mut by_height) = self.chain_locks_by_height.write() {
+                if let Some(entry) = by_height.get_mut(&chain_lock.block_height) {
+                    entry.validated = true;
+                }
             }
         }
 
@@ -300,8 +312,28 @@ impl ChainLockManager {
 
     /// Get chain lock statistics
     pub fn get_stats(&self) -> ChainLockStats {
-        let by_height = self.chain_locks_by_height.read().unwrap();
-        let by_hash = self.chain_locks_by_hash.read().unwrap();
+        let by_height = match self.chain_locks_by_height.read() {
+            Ok(guard) => guard,
+            Err(_) => return ChainLockStats {
+                total_chain_locks: 0,
+                cached_by_height: 0,
+                cached_by_hash: 0,
+                highest_locked_height: None,
+                lowest_locked_height: None,
+                enforce_chain_locks: self.enforce_chain_locks,
+            },
+        };
+        let by_hash = match self.chain_locks_by_hash.read() {
+            Ok(guard) => guard,
+            Err(_) => return ChainLockStats {
+                total_chain_locks: 0,
+                cached_by_height: 0,
+                cached_by_hash: 0,
+                highest_locked_height: None,
+                lowest_locked_height: None,
+                enforce_chain_locks: self.enforce_chain_locks,
+            },
+        };
 
         ChainLockStats {
             total_chain_locks: by_height.len(),
