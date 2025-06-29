@@ -29,6 +29,9 @@ pub enum SpvError {
     
     #[error("Parse error: {0}")]
     Parse(#[from] ParseError),
+    
+    #[error("Wallet error: {0}")]
+    Wallet(#[from] WalletError),
 }
 
 /// Parse-related errors.
@@ -213,6 +216,40 @@ pub type ValidationResult<T> = std::result::Result<T, ValidationError>;
 
 /// Type alias for sync operation results.
 pub type SyncResult<T> = std::result::Result<T, SyncError>;
+
+/// Wallet-related errors.
+#[derive(Debug, Error)]
+pub enum WalletError {
+    #[error("Balance calculation overflow")]
+    BalanceOverflow,
+    
+    #[error("Unsupported address type: {0}")]
+    UnsupportedAddressType(String),
+    
+    #[error("UTXO not found: {0}")]
+    UtxoNotFound(dashcore::OutPoint),
+    
+    #[error("Invalid script pubkey")]
+    InvalidScriptPubkey,
+    
+    #[error("Wallet not initialized")]
+    NotInitialized,
+    
+    #[error("Transaction validation failed: {0}")]
+    TransactionValidation(String),
+    
+    #[error("Invalid transaction output at index {0}")]
+    InvalidOutput(usize),
+    
+    #[error("Address error: {0}")]
+    AddressError(String),
+    
+    #[error("Script error: {0}")]
+    ScriptError(String),
+}
+
+/// Type alias for wallet operation results.
+pub type WalletResult<T> = std::result::Result<T, WalletError>;
 
 #[cfg(test)]
 mod tests {

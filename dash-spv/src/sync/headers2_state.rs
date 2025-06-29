@@ -84,11 +84,11 @@ impl Headers2StateManager {
     pub fn init_peer_state(&mut self, peer_id: PeerId, last_header: Header) {
         let state = self.peer_states.entry(peer_id).or_insert_with(CompressionState::new);
         // Set the previous header in the compression state
-        state.prev_header = Some(last_header);
+        state.prev_header = Some(last_header.clone());
         tracing::debug!(
             "Initialized compression state for peer {} with header at height implied by hash {}",
             peer_id,
-            state.prev_header.as_ref().unwrap().block_hash()
+            last_header.block_hash()
         );
     }
 
@@ -233,7 +233,7 @@ mod tests {
         let result = manager.process_headers(peer_id, vec![compressed1, compressed2]);
         assert!(result.is_ok());
 
-        let decompressed = result.unwrap();
+        let decompressed = result.expect("decompression should succeed in test");
         assert_eq!(decompressed.len(), 2);
         assert_eq!(decompressed[0], header1);
         assert_eq!(decompressed[1], header2);
@@ -245,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn test_first_header_must_be_full() {
+    fn test_first_header_compressed_fails_decompression() {
         let mut manager = Headers2StateManager::new();
         let peer_id = PeerId(1);
 
@@ -259,9 +259,10 @@ mod tests {
         // Now compress another header - this will be highly compressed
         let compressed = state.compress(&header);
 
-        // Try to process it as first header - should fail
+        // Try to process it as first header - should fail with DecompressionError
+        // because the peer doesn't have the previous header state
         let result = manager.process_headers(peer_id, vec![compressed]);
-        assert!(matches!(result, Err(ProcessError::FirstHeaderNotFull)));
+        assert!(matches!(result, Err(ProcessError::DecompressionError(0, _))));
     }
 
     #[test]

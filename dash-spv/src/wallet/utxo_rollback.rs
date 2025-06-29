@@ -141,7 +141,7 @@ impl UTXORollbackManager {
             utxo_count: self.utxo_index.len(),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .map_err(|e| StorageError::InconsistentState(format!("System time error: {}", e)))?
                 .as_secs(),
         };
 
@@ -257,7 +257,9 @@ impl UTXORollbackManager {
                 break;
             }
 
-            let snapshot = self.snapshots.pop_back().unwrap();
+            let snapshot = self.snapshots.pop_back().ok_or_else(|| {
+                StorageError::InconsistentState("Snapshot queue unexpectedly empty".to_string())
+            })?;
             rolled_back_snapshots.push(snapshot.clone());
 
             // Reverse the changes in this snapshot
@@ -432,7 +434,7 @@ mod tests {
             &ScriptBuf::new_p2pkh(&dashcore::PubkeyHash::from_byte_array([1u8; 20])),
             dashcore::Network::Testnet,
         )
-        .unwrap();
+        .expect("Valid P2PKH script should produce valid address");
 
         Utxo::new(outpoint, txout, address, height, false)
     }
@@ -444,10 +446,10 @@ mod tests {
         let block_hash = BlockHash::from_byte_array([1u8; 32]);
         let changes = vec![UTXOChange::Created(create_test_utxo(OutPoint::null(), 100000, 100))];
 
-        manager.create_snapshot(100, block_hash, changes, HashMap::new()).unwrap();
+        manager.create_snapshot(100, block_hash, changes, HashMap::new()).expect("Should create snapshot successfully");
 
         assert_eq!(manager.snapshots.len(), 1);
-        let snapshot = manager.get_latest_snapshot().unwrap();
+        let snapshot = manager.get_latest_snapshot().expect("Should have at least one snapshot");
         assert_eq!(snapshot.height, 100);
         assert_eq!(snapshot.block_hash, block_hash);
     }
@@ -459,13 +461,13 @@ mod tests {
         // Create more snapshots than the limit
         for i in 0..10 {
             let block_hash = BlockHash::from_byte_array([i as u8; 32]);
-            manager.create_snapshot(i, block_hash, vec![], HashMap::new()).unwrap();
+            manager.create_snapshot(i, block_hash, vec![], HashMap::new()).expect("Should create snapshot successfully");
         }
 
         // Should only keep the last 5
         assert_eq!(manager.snapshots.len(), 5);
-        assert_eq!(manager.snapshots.front().unwrap().height, 5);
-        assert_eq!(manager.snapshots.back().unwrap().height, 9);
+        assert_eq!(manager.snapshots.front().expect("Should have front snapshot").height, 5);
+        assert_eq!(manager.snapshots.back().expect("Should have back snapshot").height, 9);
     }
 
     #[tokio::test]
@@ -490,7 +492,7 @@ mod tests {
     async fn test_rollback_basic() {
         let mut manager = create_test_manager().await;
         let mut wallet_state = WalletState::new(dashcore::Network::Testnet);
-        let mut storage = MemoryStorageManager::new().await.unwrap();
+        let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage manager for test");
 
         // Create snapshots at heights 100, 110, 120
         for height in [100, 110, 120] {
@@ -504,7 +506,7 @@ mod tests {
             manager.utxo_index.insert(outpoint, utxo.clone());
 
             let changes = vec![UTXOChange::Created(utxo)];
-            manager.create_snapshot(height, block_hash, changes, HashMap::new()).unwrap();
+            manager.create_snapshot(height, block_hash, changes, HashMap::new()).expect("Should create snapshot successfully");
         }
 
         assert_eq!(manager.snapshots.len(), 3);
@@ -512,7 +514,7 @@ mod tests {
 
         // Rollback to height 105 (should remove snapshots at 110 and 120)
         let rolled_back =
-            manager.rollback_to_height(105, &mut wallet_state, &mut storage).await.unwrap();
+            manager.rollback_to_height(105, &mut wallet_state, &mut storage).await.expect("Should rollback to height 105 successfully");
 
         assert_eq!(rolled_back.len(), 2);
         assert_eq!(manager.snapshots.len(), 1);

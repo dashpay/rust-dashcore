@@ -18,12 +18,14 @@ pub struct ForkDetector {
 }
 
 impl ForkDetector {
-    pub fn new(max_forks: usize) -> Self {
-        assert!(max_forks > 0, "max_forks must be greater than 0");
-        Self {
+    pub fn new(max_forks: usize) -> Result<Self, &'static str> {
+        if max_forks == 0 {
+            return Err("max_forks must be greater than 0");
+        }
+        Ok(Self {
             forks: HashMap::new(),
             max_forks,
-        }
+        })
     }
 
     /// Check if a header creates or extends a fork
@@ -228,13 +230,13 @@ mod tests {
 
     #[test]
     fn test_fork_detection() {
-        let mut detector = ForkDetector::new(10);
+        let mut detector = ForkDetector::new(10).expect("Failed to create fork detector");
         let storage = MemoryStorage::new();
         let mut chain_state = ChainState::new();
 
         // Add genesis
         let genesis = genesis_block(Network::Dash).header;
-        storage.store_header(&genesis, 0).unwrap();
+        storage.store_header(&genesis, 0).expect("Failed to store genesis header");
         chain_state.add_header(genesis.clone());
 
         // Header that extends main chain
@@ -243,7 +245,7 @@ mod tests {
         assert!(matches!(result, ForkDetectionResult::ExtendsMainChain));
 
         // Add header1 to chain
-        storage.store_header(&header1, 1).unwrap();
+        storage.store_header(&header1, 1).expect("Failed to store header1");
         chain_state.add_header(header1.clone());
 
         // Header that creates a fork from genesis
@@ -257,7 +259,7 @@ mod tests {
                 assert_eq!(fork.tip_height, 1);
                 assert_eq!(fork.headers.len(), 1);
             }
-            _ => panic!("Expected CreatesNewFork"),
+            result => panic!("Expected CreatesNewFork, got {:?}", result),
         }
 
         // Header that extends the fork
@@ -278,18 +280,18 @@ mod tests {
 
     #[test]
     fn test_fork_limits() {
-        let mut detector = ForkDetector::new(2);
+        let mut detector = ForkDetector::new(2).expect("Failed to create fork detector");
         let storage = MemoryStorage::new();
         let mut chain_state = ChainState::new();
 
         // Add genesis
         let genesis = genesis_block(Network::Dash).header;
-        storage.store_header(&genesis, 0).unwrap();
+        storage.store_header(&genesis, 0).expect("Failed to store genesis header");
         chain_state.add_header(genesis.clone());
 
         // Add a header to extend the main chain past genesis
         let header1 = create_test_header(genesis.block_hash(), 1);
-        storage.store_header(&header1, 1).unwrap();
+        storage.store_header(&header1, 1).expect("Failed to store header1");
         chain_state.add_header(header1.clone());
 
         // Create 3 forks from genesis, should only keep 2
@@ -302,8 +304,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "max_forks must be greater than 0")]
     fn test_fork_detector_zero_max_forks() {
-        let _ = ForkDetector::new(0);
+        let result = ForkDetector::new(0);
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some("max_forks must be greater than 0"));
     }
 }

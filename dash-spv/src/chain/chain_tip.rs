@@ -216,22 +216,22 @@ mod tests {
         // Add some tips with different work
         for i in 0..3 {
             let tip = create_test_tip(i, i as u8);
-            manager.add_tip(tip).unwrap();
+            manager.add_tip(tip).expect("Failed to add tip");
         }
 
         assert_eq!(manager.tip_count(), 3);
 
         // The tip with most work should be active
-        let active = manager.get_active_tip().unwrap();
+        let active = manager.get_active_tip().expect("Should have an active tip");
         assert_eq!(active.height, 2);
         assert!(active.is_active);
 
         // Add a tip with more work
         let better_tip = create_test_tip(1, 10);
-        manager.add_tip(better_tip).unwrap();
+        manager.add_tip(better_tip).expect("Failed to add better tip");
 
         // Active tip should update
-        let active = manager.get_active_tip().unwrap();
+        let active = manager.get_active_tip().expect("Should have an active tip");
         assert_eq!(active.chain_work.as_bytes()[31], 10);
     }
 
@@ -240,11 +240,11 @@ mod tests {
         let mut manager = ChainTipManager::new(2);
 
         // Fill to capacity
-        manager.add_tip(create_test_tip(1, 5)).unwrap();
-        manager.add_tip(create_test_tip(2, 10)).unwrap();
+        manager.add_tip(create_test_tip(1, 5)).expect("Failed to add first tip");
+        manager.add_tip(create_test_tip(2, 10)).expect("Failed to add second tip");
 
         // Adding another should evict the weakest
-        manager.add_tip(create_test_tip(3, 7)).unwrap();
+        manager.add_tip(create_test_tip(3, 7)).expect("Failed to add third tip");
 
         assert_eq!(manager.tip_count(), 2);
 
@@ -260,10 +260,10 @@ mod tests {
         // Add two tips to fill capacity
         let tip1 = create_test_tip(1, 5);
         let tip1_hash = tip1.hash;
-        manager.add_tip(tip1).unwrap();
+        manager.add_tip(tip1).expect("Failed to add tip1");
 
         let tip2 = create_test_tip(2, 10);
-        manager.add_tip(tip2).unwrap();
+        manager.add_tip(tip2).expect("Failed to add tip2");
 
         // Extend tip1 successfully - since we remove tip1 first, there's room for the new tip
         let new_header = create_test_tip(3, 6).header;
@@ -297,13 +297,13 @@ mod tests {
         // Add three tips
         let tip1 = create_test_tip(1, 5);
         let tip1_hash = tip1.hash;
-        manager.add_tip(tip1).unwrap();
+        manager.add_tip(tip1).expect("Failed to add tip1");
 
         let tip2 = create_test_tip(2, 10);
-        manager.add_tip(tip2).unwrap();
+        manager.add_tip(tip2).expect("Failed to add tip2");
 
         let tip3 = create_test_tip(3, 8);
-        manager.add_tip(tip3).unwrap();
+        manager.add_tip(tip3).expect("Failed to add tip3");
 
         // Verify initial state
         assert_eq!(manager.tip_count(), 3);

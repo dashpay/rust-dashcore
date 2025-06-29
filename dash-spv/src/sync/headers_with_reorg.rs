@@ -65,7 +65,7 @@ pub struct HeaderSyncManagerWithReorg {
 
 impl HeaderSyncManagerWithReorg {
     /// Create a new header sync manager with reorg support
-    pub fn new(config: &ClientConfig, reorg_config: ReorgConfig) -> Self {
+    pub fn new(config: &ClientConfig, reorg_config: ReorgConfig) -> SyncResult<Self> {
         let chain_state = ChainState::new_for_network(config.network);
         let wallet_state = WalletState::new(config.network);
 
@@ -77,10 +77,11 @@ impl HeaderSyncManagerWithReorg {
         };
         let checkpoint_manager = CheckpointManager::new(checkpoints);
 
-        Self {
+        Ok(Self {
             config: config.clone(),
             validation: ValidationManager::new(config.validation_mode),
-            fork_detector: ForkDetector::new(reorg_config.max_forks),
+            fork_detector: ForkDetector::new(reorg_config.max_forks)
+                .map_err(|e| SyncError::InvalidState(e.to_string()))?,
             reorg_manager: ReorgManager::new(
                 reorg_config.max_reorg_depth,
                 reorg_config.respect_chain_locks,
@@ -96,7 +97,7 @@ impl HeaderSyncManagerWithReorg {
             syncing_headers: false,
             last_sync_progress: std::time::Instant::now(),
             headers2_failed: false,
-        }
+        })
     }
 
     /// Load headers from storage into the chain state
@@ -814,17 +815,12 @@ impl HeaderSyncManagerWithReorg {
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to get tip header: {}", e)))?
                 .map(|h| h.block_hash())
-                .unwrap_or_else(|| {
-                    self.config
-                        .network
-                        .known_genesis_block_hash()
-                        .expect("unable to get genesis block hash")
-                })
+                .ok_or_else(|| SyncError::MissingDependency("no tip header found".to_string()))?
         } else {
             self.config
                 .network
                 .known_genesis_block_hash()
-                .expect("unable to get genesis block hash")
+                .ok_or_else(|| SyncError::MissingDependency("no genesis block hash for network".to_string()))?
         };
 
         // Create GetHeaders message with specific stop hash
@@ -839,13 +835,15 @@ impl HeaderSyncManagerWithReorg {
     }
 
     /// Reset any pending requests after restart.
-    pub fn reset_pending_requests(&mut self) {
+    pub fn reset_pending_requests(&mut self) -> SyncResult<()> {
         // Reset sync state
         self.syncing_headers = false;
         self.last_sync_progress = std::time::Instant::now();
         // Clear any fork tracking state that shouldn't persist across restarts
-        self.fork_detector = ForkDetector::new(self.reorg_config.max_forks);
+        self.fork_detector = ForkDetector::new(self.reorg_config.max_forks)
+            .map_err(|e| SyncError::InvalidState(format!("Failed to create fork detector: {}", e)))?;
         tracing::debug!("Reset header sync pending requests");
+        Ok(())
     }
 
     /// Get the current chain height
@@ -1050,38 +1048,38 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_sync_storage_adapter_queries_storage() {
         // Create a memory storage manager
-        let mut storage = MemoryStorageManager::new().await.unwrap();
+        let mut storage = MemoryStorageManager::new().await.expect("should create memory storage");
 
         // Create a test header
         let genesis = dashcore::blockdata::constants::genesis_block(dashcore::Network::Dash).header;
         let genesis_hash = genesis.block_hash();
 
         // Store the header using async storage
-        storage.store_headers(&[genesis]).await.unwrap();
+        storage.store_headers(&[genesis]).await.expect("should store genesis header");
 
         // Create sync adapter
         let sync_adapter = SyncStorageAdapter::new(&storage);
 
         // Test get_header_by_height
-        let header = sync_adapter.get_header_by_height(0).unwrap();
+        let header = sync_adapter.get_header_by_height(0).expect("should get header by height");
         assert!(header.is_some());
-        assert_eq!(header.unwrap().block_hash(), genesis_hash);
+        assert_eq!(header.expect("genesis header should exist").block_hash(), genesis_hash);
 
         // Test get_header_height
-        let height = sync_adapter.get_header_height(&genesis_hash).unwrap();
+        let height = sync_adapter.get_header_height(&genesis_hash).expect("should get header height");
         assert_eq!(height, Some(0));
 
         // Test get_header (by hash)
-        let header = sync_adapter.get_header(&genesis_hash).unwrap();
+        let header = sync_adapter.get_header(&genesis_hash).expect("should get header by hash");
         assert!(header.is_some());
-        assert_eq!(header.unwrap().block_hash(), genesis_hash);
+        assert_eq!(header.expect("genesis header should exist by hash").block_hash(), genesis_hash);
 
         // Test non-existent header
         let fake_hash = BlockHash::from_byte_array([1; 32]);
-        let header = sync_adapter.get_header(&fake_hash).unwrap();
+        let header = sync_adapter.get_header(&fake_hash).expect("should query non-existent header");
         assert!(header.is_none());
 
-        let height = sync_adapter.get_header_height(&fake_hash).unwrap();
+        let height = sync_adapter.get_header_height(&fake_hash).expect("should query non-existent height");
         assert!(height.is_none());
     }
 }

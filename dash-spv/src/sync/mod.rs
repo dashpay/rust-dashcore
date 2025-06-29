@@ -43,17 +43,18 @@ impl SyncManager {
     pub fn new(
         config: &ClientConfig,
         received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
-    ) -> Self {
+    ) -> SyncResult<Self> {
         // Create reorg config with sensible defaults
         let reorg_config = ReorgConfig::default();
 
-        Self {
-            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config),
+        Ok(Self {
+            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config)
+                .map_err(|e| SyncError::InvalidState(format!("Failed to create header sync manager: {}", e)))?,
             filter_sync: FilterSyncManager::new(config, received_filter_heights),
             masternode_sync: MasternodeSyncManager::new(config),
             state: SyncState::new(),
             config: config.clone(),
-        }
+        })
     }
 
     /// Handle a Headers message by routing it to the header sync manager.

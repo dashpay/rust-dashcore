@@ -1305,13 +1305,15 @@ impl FilterSyncManager {
         }
 
         // Log current state periodically
-        if self.received_filter_heights.lock().unwrap().len() % 1000 == 0 {
-            tracing::info!(
-                "Filter sync state: {} filters received, {} active requests, {} pending requests",
-                self.received_filter_heights.lock().unwrap().len(),
-                self.active_filter_requests.len(),
-                self.pending_filter_requests.len()
-            );
+        if let Ok(guard) = self.received_filter_heights.lock() {
+            if guard.len() % 1000 == 0 {
+                tracing::info!(
+                    "Filter sync state: {} filters received, {} active requests, {} pending requests",
+                    guard.len(),
+                    self.active_filter_requests.len(),
+                    self.pending_filter_requests.len()
+                );
+            }
         }
 
         // Always return at least one "completion" to trigger queue processing
@@ -2058,7 +2060,8 @@ impl FilterSyncManager {
             if let Some(pos) =
                 self.pending_block_downloads.iter().position(|m| m.block_hash == block_hash)
             {
-                let mut filter_match = self.pending_block_downloads.remove(pos).unwrap();
+                let mut filter_match = self.pending_block_downloads.remove(pos)
+                    .ok_or_else(|| SyncError::InvalidState("filter match should exist at position".to_string()))?;
                 filter_match.block_requested = true;
 
                 tracing::debug!(
@@ -2073,7 +2076,8 @@ impl FilterSyncManager {
 
         // Check if this block was requested by the filter processing thread
         {
-            let mut processing_requests = self.processing_thread_requests.lock().unwrap();
+            let mut processing_requests = self.processing_thread_requests.lock()
+                .map_err(|e| SyncError::InvalidState(format!("processing thread requests lock poisoned: {}", e)))?;
             if processing_requests.remove(&block_hash) {
                 tracing::info!(
                     "📦 Received block {} requested by filter processing thread",
@@ -2367,12 +2371,19 @@ impl FilterSyncManager {
 
             // Register this request in the processing thread tracking
             {
-                let mut requests = processing_thread_requests.lock().unwrap();
-                requests.insert(cfilter.block_hash);
-                tracing::debug!(
-                    "Registered block {} in processing thread requests",
-                    cfilter.block_hash
-                );
+                match processing_thread_requests.lock() {
+                    Ok(mut requests) => {
+                        requests.insert(cfilter.block_hash);
+                        tracing::debug!(
+                            "Registered block {} in processing thread requests",
+                            cfilter.block_hash
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to lock processing thread requests: {}", e);
+                        return Ok(());
+                    }
+                }
             }
 
             // Request the full block download
@@ -2382,8 +2393,9 @@ impl FilterSyncManager {
             if let Err(e) = network_message_sender.send(getdata).await {
                 tracing::error!("Failed to request block download for match: {}", e);
                 // Remove from tracking if request failed
-                let mut requests = processing_thread_requests.lock().unwrap();
-                requests.remove(&cfilter.block_hash);
+                if let Ok(mut requests) = processing_thread_requests.lock() {
+                    requests.remove(&cfilter.block_hash);
+                }
             } else {
                 tracing::info!(
                     "📦 Requested block download for filter match: {}",

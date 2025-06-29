@@ -45,7 +45,7 @@ impl Checkpoint {
         // Otherwise extract from masternode list name
         self.masternode_list_name.as_ref().and_then(|name| {
             // Format: "ML{height}__{protocol_version}"
-            name.split("__").nth(1)?.parse().ok()
+            name.split("__").nth(1).and_then(|s| s.parse().ok())
         })
     }
 
@@ -133,7 +133,7 @@ impl CheckpointManager {
 
     /// Get the last checkpoint
     pub fn last_checkpoint(&self) -> Option<&Checkpoint> {
-        self.sorted_heights.last().and_then(|height| self.checkpoints.get(height))
+        self.sorted_heights.last().and_then(|&height| self.checkpoints.get(&height))
     }
 
     /// Get all checkpoint heights
@@ -143,7 +143,7 @@ impl CheckpointManager {
 
     /// Check if we're past the last checkpoint
     pub fn is_past_last_checkpoint(&self, height: u32) -> bool {
-        self.sorted_heights.last().map(|&last| height > last).unwrap_or(true)
+        self.sorted_heights.last().map_or(true, |&last| height > last)
     }
 
     /// Get the last checkpoint before a given timestamp
@@ -273,7 +273,7 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "000000003b01809551952460744d5dbb8fcbd6cbae3c220267bf7fa43f837367",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1390163520,
             target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
             merkle_root: None,
@@ -288,7 +288,7 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "00000000213e229f332c0ffbe34defdaa9e74de87f2d8d1f01af8d121c3c170b",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1390344765,
             target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
             merkle_root: None,
@@ -303,7 +303,7 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "00000000075c0d10371d55a60634da70f197548dbbfa4123e12abfcbc5738af9",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1390821265,
             target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
             merkle_root: None,
@@ -318,7 +318,7 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "000000000063d411655d590590e16960f15ceea4257122ac430c6fbe39fbf02d",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1391836907,
             target: Target::from_compact(CompactTarget::from_consensus(0x1c2ac4af)),
             merkle_root: None,
@@ -333,7 +333,7 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "00000000000a23840ac16115407488267aa3da2b9bc843e301185b7d17e4dc40",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1395522898,
             target: Target::from_compact(CompactTarget::from_consensus(0x1b04864c)),
             merkle_root: None,
@@ -348,7 +348,7 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "0000000000059dcb71ad35a9e40526c44e7aae6c99169a9e7017b7d84b1c2daf",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1407621730,
             target: Target::from_compact(CompactTarget::from_consensus(0x1b345f4c)),
             merkle_root: None,
@@ -363,7 +363,7 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "00000000000000b4181bbbdddbae464ce11fede5d0292fb63fdede1e7c8ab21c",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1491953700,
             target: Target::from_compact(CompactTarget::from_consensus(0x1a075a02)),
             merkle_root: None,
@@ -411,7 +411,7 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1390666206,
             target: Target::from_compact(CompactTarget::from_consensus(0x1e0ffff0)),
             merkle_root: None,
@@ -427,7 +427,7 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "0000080b600e06f4c07880673f027210f9314575f5f875fafe51971e268b886a",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1390668900, // Approximate
             target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
             merkle_root: None,
@@ -442,7 +442,7 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "00000052e538d27fa53693efe6fb6892a0c1d26c0235f599171c48a3cce553b1",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1390700000, // Approximate
             target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
             merkle_root: None,
@@ -457,7 +457,7 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "00000000033df4b94d17ab43e999caaf6c4735095cc77703685da81254d09bba",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1392000000, // Approximate
             target: Target::from_compact(CompactTarget::from_consensus(0x1c0168fd)),
             merkle_root: None,
@@ -472,7 +472,7 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "000000001015eb5ef86a8fe2b3074d947bc972c5befe32b28dd5ce915dc0d029",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1394000000, // Approximate
             target: Target::from_compact(CompactTarget::from_consensus(0x1b342be5)),
             merkle_root: None,
@@ -487,7 +487,7 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "0000009303aeadf8cf3812f5c869691dbd4cb118ad20e9bf553be434bafe6a52",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1500000000, // Approximate
             target: Target::from_compact(CompactTarget::from_consensus(0x1a1c3bbe)),
             merkle_root: None,
@@ -502,7 +502,7 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
             block_hash: parse_block_hash(
                 "000001860e4c7248a9c5cc3bc7106041750560dc5cd9b3a2641b49494bcff5f2",
             )
-            .unwrap(),
+            .expect("Failed to parse checkpoint block hash"),
             timestamp: 1600000000, // Approximate
             target: Target::from_compact(CompactTarget::from_consensus(0x1a0b47cf)),
             merkle_root: None,
@@ -516,10 +516,10 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
 }
 
 /// Helper to parse hex block hash strings
-fn parse_block_hash(s: &str) -> Result<BlockHash, &'static str> {
-    let bytes = hex::decode(s).map_err(|_| "Invalid hex")?;
+fn parse_block_hash(s: &str) -> Result<BlockHash, String> {
+    let bytes = hex::decode(s).map_err(|e| format!("Invalid hex: {}", e))?;
     if bytes.len() != 32 {
-        return Err("Invalid hash length");
+        return Err("Invalid hash length: expected 32 bytes".to_string());
     }
     let mut hash_bytes = [0u8; 32];
     hash_bytes.copy_from_slice(&bytes);
@@ -539,7 +539,7 @@ fn create_checkpoint(
 ) -> Checkpoint {
     Checkpoint {
         height,
-        block_hash: parse_block_hash(hash).unwrap(),
+        block_hash: parse_block_hash(hash).expect("Failed to parse checkpoint block hash"),
         timestamp,
         target: Target::from_compact(CompactTarget::from_consensus(bits)),
         merkle_root: None,
@@ -560,14 +560,14 @@ mod tests {
         let manager = CheckpointManager::new(checkpoints);
 
         // Test genesis block
-        let genesis_checkpoint = manager.get_checkpoint(0).unwrap();
+        let genesis_checkpoint = manager.get_checkpoint(0).expect("Genesis checkpoint should exist");
         assert_eq!(genesis_checkpoint.height, 0);
         assert_eq!(genesis_checkpoint.timestamp, 1390095618);
 
         // Test validation
         let genesis_hash =
             parse_block_hash("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6")
-                .unwrap();
+                .expect("Failed to parse genesis hash for test");
         assert!(manager.validate_block(0, &genesis_hash));
 
         // Test invalid hash
@@ -588,10 +588,10 @@ mod tests {
         let manager = CheckpointManager::new(checkpoints);
 
         // Test finding checkpoint before various heights
-        assert_eq!(manager.last_checkpoint_before_height(0).unwrap().height, 0);
-        assert_eq!(manager.last_checkpoint_before_height(1000).unwrap().height, 0);
-        assert_eq!(manager.last_checkpoint_before_height(2000).unwrap().height, 1500);
-        assert_eq!(manager.last_checkpoint_before_height(50000).unwrap().height, 45479);
+        assert_eq!(manager.last_checkpoint_before_height(0).expect("Should find checkpoint").height, 0);
+        assert_eq!(manager.last_checkpoint_before_height(1000).expect("Should find checkpoint").height, 0);
+        assert_eq!(manager.last_checkpoint_before_height(2000).expect("Should find checkpoint").height, 1500);
+        assert_eq!(manager.last_checkpoint_before_height(50000).expect("Should find checkpoint").height, 45479);
     }
 
     #[test]
@@ -629,17 +629,17 @@ mod tests {
         // Test sync override
         manager.set_sync_override(Some(1500));
         let sync_checkpoint = manager.get_sync_checkpoint(None);
-        assert_eq!(sync_checkpoint.unwrap().height, 1500);
+        assert_eq!(sync_checkpoint.expect("Should have sync checkpoint").height, 1500);
 
         // Test terminal override
         manager.set_terminal_override(Some(100000));
         let terminal_checkpoint = manager.get_terminal_checkpoint();
-        assert_eq!(terminal_checkpoint.unwrap().height, 45479);
+        assert_eq!(terminal_checkpoint.expect("Should have terminal checkpoint").height, 45479);
 
         // Test sync from genesis
         manager.set_sync_from_genesis(true);
         let genesis_checkpoint = manager.get_sync_checkpoint(None);
-        assert_eq!(genesis_checkpoint.unwrap().height, 0);
+        assert_eq!(genesis_checkpoint.expect("Should have genesis checkpoint").height, 0);
     }
 
     #[test]
@@ -663,8 +663,8 @@ mod tests {
         // Find last checkpoint with masternode list
         let ml_checkpoint = manager.last_checkpoint_having_masternode_list();
         assert!(ml_checkpoint.is_some());
-        assert!(ml_checkpoint.unwrap().has_masternode_list());
-        assert_eq!(ml_checkpoint.unwrap().height, 1900000);
+        assert!(ml_checkpoint.expect("Should have ML checkpoint").has_masternode_list());
+        assert_eq!(ml_checkpoint.expect("Should have ML checkpoint").height, 1900000);
     }
 
     #[test]
@@ -675,6 +675,6 @@ mod tests {
         // Test finding checkpoint by timestamp
         let checkpoint = manager.last_checkpoint_before_timestamp(1500000000);
         assert!(checkpoint.is_some());
-        assert!(checkpoint.unwrap().timestamp <= 1500000000);
+        assert!(checkpoint.expect("Should find checkpoint by timestamp").timestamp <= 1500000000);
     }
 }
