@@ -69,15 +69,16 @@ impl SequentialSyncManager {
     pub fn new(
         config: &ClientConfig,
         received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
-    ) -> Self {
+    ) -> SyncResult<Self> {
         // Create reorg config with sensible defaults
         let reorg_config = ReorgConfig::default();
 
-        Self {
+        Ok(Self {
             current_phase: SyncPhase::Idle,
             transition_manager: TransitionManager::new(config),
             request_controller: RequestController::new(config),
-            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config),
+            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config)
+                .map_err(|e| SyncError::InvalidState(format!("Failed to create header sync manager: {}", e)))?,
             filter_sync: FilterSyncManager::new(config, received_filter_heights),
             masternode_sync: MasternodeSyncManager::new(config),
             config: config.clone(),
@@ -86,7 +87,7 @@ impl SequentialSyncManager {
             phase_timeout: Duration::from_secs(60), // 1 minute default timeout per phase
             max_phase_retries: 3,
             current_phase_retries: 0,
-        }
+        })
     }
 
     /// Load headers from storage into the sync managers

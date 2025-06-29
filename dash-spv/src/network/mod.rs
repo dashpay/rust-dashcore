@@ -122,6 +122,7 @@ pub struct TcpNetworkManager {
     _message_handler: MessageHandler,
     message_sender: mpsc::Sender<NetworkMessage>,
     message_receiver: mpsc::Receiver<NetworkMessage>,
+    dsq_preference: bool,
 }
 
 impl TcpNetworkManager {
@@ -136,7 +137,13 @@ impl TcpNetworkManager {
             _message_handler: MessageHandler::new(),
             message_sender,
             message_receiver,
+            dsq_preference: false,
         })
+    }
+    
+    /// Get the current DSQ preference state.
+    pub fn get_dsq_preference(&self) -> bool {
+        self.dsq_preference
     }
 }
 
@@ -316,11 +323,12 @@ impl NetworkManager for TcpNetworkManager {
     }
 
     async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()> {
+        // Store the DSQ preference
+        self.dsq_preference = wants_dsq;
+        
         // For single peer connection, update the peer info if we have one
         if let Some(connection) = &self.connection {
             let peer_info = connection.peer_info();
-            // Note: In a real implementation, we'd update the connection's peer info
-            // For now, just log it as we don't have a setter method
             tracing::info!(
                 "Updated peer {} DSQ preference to: {}",
                 peer_info.address,

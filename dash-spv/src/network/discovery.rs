@@ -78,7 +78,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_dns_discovery_mainnet() {
-        let discovery = DnsDiscovery::new().await.unwrap();
+        let discovery = DnsDiscovery::new().await.expect("Failed to create DNS discovery for test");
         let peers = discovery.discover_peers(Network::Dash).await;
 
         // Should find at least some peers
@@ -93,7 +93,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_dns_discovery_testnet() {
-        let discovery = DnsDiscovery::new().await.unwrap();
+        let discovery = DnsDiscovery::new().await.expect("Failed to create DNS discovery for test");
         let peers = discovery.discover_peers(Network::Testnet).await;
 
         // Should find at least some peers
@@ -107,7 +107,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dns_discovery_regtest() {
-        let discovery = DnsDiscovery::new().await.unwrap();
+        let discovery = DnsDiscovery::new().await.expect("Failed to create DNS discovery for test");
         let peers = discovery.discover_peers(Network::Regtest).await;
 
         // Should return empty for regtest (no DNS seeds)
