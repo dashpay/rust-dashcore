@@ -26,6 +26,25 @@ pub enum SpvError {
 
     #[error("General error: {0}")]
     General(String),
+    
+    #[error("Parse error: {0}")]
+    Parse(#[from] ParseError),
+}
+
+/// Parse-related errors.
+#[derive(Debug, Error)]
+pub enum ParseError {
+    #[error("Invalid network address: {0}")]
+    InvalidAddress(String),
+    
+    #[error("Invalid network name: {0}")]
+    InvalidNetwork(String),
+    
+    #[error("Missing required argument: {0}")]
+    MissingArgument(String),
+    
+    #[error("Invalid argument value for {0}: {1}")]
+    InvalidArgument(String, String),
 }
 
 /// Network-related errors.
@@ -54,6 +73,12 @@ pub enum NetworkError {
 
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
+    
+    #[error("Address parse error: {0}")]
+    AddressParse(String),
+    
+    #[error("System time error: {0}")]
+    SystemTime(String),
 }
 
 /// Storage-related errors.
