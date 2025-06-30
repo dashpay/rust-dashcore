@@ -270,10 +270,9 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
         ),
         Checkpoint {
             height: 4991,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "000000003b01809551952460744d5dbb8fcbd6cbae3c220267bf7fa43f837367",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1390163520,
             target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
             merkle_root: None,
@@ -285,10 +284,9 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
         },
         Checkpoint {
             height: 9918,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "00000000213e229f332c0ffbe34defdaa9e74de87f2d8d1f01af8d121c3c170b",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1390344765,
             target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
             merkle_root: None,
@@ -300,10 +298,9 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
         },
         Checkpoint {
             height: 16912,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "00000000075c0d10371d55a60634da70f197548dbbfa4123e12abfcbc5738af9",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1390821265,
             target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
             merkle_root: None,
@@ -315,10 +312,9 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
         },
         Checkpoint {
             height: 45479,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "000000000063d411655d590590e16960f15ceea4257122ac430c6fbe39fbf02d",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1391836907,
             target: Target::from_compact(CompactTarget::from_consensus(0x1c2ac4af)),
             merkle_root: None,
@@ -330,10 +326,9 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
         },
         Checkpoint {
             height: 107996,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "00000000000a23840ac16115407488267aa3da2b9bc843e301185b7d17e4dc40",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1395522898,
             target: Target::from_compact(CompactTarget::from_consensus(0x1b04864c)),
             merkle_root: None,
@@ -345,10 +340,9 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
         },
         Checkpoint {
             height: 312645,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "0000000000059dcb71ad35a9e40526c44e7aae6c99169a9e7017b7d84b1c2daf",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1407621730,
             target: Target::from_compact(CompactTarget::from_consensus(0x1b345f4c)),
             merkle_root: None,
@@ -360,10 +354,9 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
         },
         Checkpoint {
             height: 750000,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "00000000000000b4181bbbdddbae464ce11fede5d0292fb63fdede1e7c8ab21c",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1491953700,
             target: Target::from_compact(CompactTarget::from_consensus(0x1a075a02)),
             merkle_root: None,
@@ -408,10 +401,9 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
         // Genesis block
         Checkpoint {
             height: 0,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1390666206,
             target: Target::from_compact(CompactTarget::from_consensus(0x1e0ffff0)),
             merkle_root: None,
@@ -424,10 +416,9 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
         // Early testnet checkpoints
         Checkpoint {
             height: 255,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "0000080b600e06f4c07880673f027210f9314575f5f875fafe51971e268b886a",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1390668900, // Approximate
             target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
             merkle_root: None,
@@ -439,10 +430,9 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
         },
         Checkpoint {
             height: 1999,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "00000052e538d27fa53693efe6fb6892a0c1d26c0235f599171c48a3cce553b1",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1390700000, // Approximate
             target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
             merkle_root: None,
@@ -454,10 +444,9 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
         },
         Checkpoint {
             height: 96090,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "00000000033df4b94d17ab43e999caaf6c4735095cc77703685da81254d09bba",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1392000000, // Approximate
             target: Target::from_compact(CompactTarget::from_consensus(0x1c0168fd)),
             merkle_root: None,
@@ -469,10 +458,9 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
         },
         Checkpoint {
             height: 200000,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "000000001015eb5ef86a8fe2b3074d947bc972c5befe32b28dd5ce915dc0d029",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1394000000, // Approximate
             target: Target::from_compact(CompactTarget::from_consensus(0x1b342be5)),
             merkle_root: None,
@@ -484,10 +472,9 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
         },
         Checkpoint {
             height: 470000,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "0000009303aeadf8cf3812f5c869691dbd4cb118ad20e9bf553be434bafe6a52",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1500000000, // Approximate
             target: Target::from_compact(CompactTarget::from_consensus(0x1a1c3bbe)),
             merkle_root: None,
@@ -499,10 +486,9 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
         },
         Checkpoint {
             height: 794950,
-            block_hash: parse_block_hash(
+            block_hash: parse_block_hash_safe(
                 "000001860e4c7248a9c5cc3bc7106041750560dc5cd9b3a2641b49494bcff5f2",
-            )
-            .expect("Failed to parse checkpoint block hash"),
+            ),
             timestamp: 1600000000, // Approximate
             target: Target::from_compact(CompactTarget::from_consensus(0x1a0b47cf)),
             merkle_root: None,
@@ -528,6 +514,14 @@ fn parse_block_hash(s: &str) -> Result<BlockHash, String> {
     Ok(BlockHash::from_byte_array(hash_bytes))
 }
 
+/// Helper to parse hex block hash strings, returning zero hash on error
+fn parse_block_hash_safe(s: &str) -> BlockHash {
+    parse_block_hash(s).unwrap_or_else(|e| {
+        tracing::error!("Failed to parse checkpoint block hash '{}': {}", s, e);
+        BlockHash::all_zeros()
+    })
+}
+
 /// Helper to create a checkpoint with common defaults
 fn create_checkpoint(
     height: u32,
@@ -539,7 +533,7 @@ fn create_checkpoint(
 ) -> Checkpoint {
     Checkpoint {
         height,
-        block_hash: parse_block_hash(hash).expect("Failed to parse checkpoint block hash"),
+        block_hash: parse_block_hash_safe(hash),
         timestamp,
         target: Target::from_compact(CompactTarget::from_consensus(bits)),
         merkle_root: None,

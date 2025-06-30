@@ -282,7 +282,8 @@ impl DashSpvClient {
         // Create sync manager
         let received_filter_heights = stats.read().await.received_filter_heights.clone();
         tracing::info!("Creating sequential sync manager");
-        let sync_manager = SequentialSyncManager::new(&config, received_filter_heights);
+        let sync_manager = SequentialSyncManager::new(&config, received_filter_heights)
+            .map_err(|e| SpvError::Sync(e))?;
 
         // Create validation manager
         let validation = ValidationManager::new(config.validation_mode);
@@ -2286,7 +2287,7 @@ impl DashSpvClient {
                     prev_blockhash: dashcore::BlockHash::all_zeros(),
                     merkle_root: "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
                         .parse()
-                        .expect("valid merkle root"),
+                        .unwrap_or_else(|_| dashcore::hashes::sha256d::Hash::all_zeros().into()),
                     time: 1390095618,
                     bits: CompactTarget::from_consensus(0x1e0ffff0),
                     nonce: 28917698,
@@ -2299,7 +2300,7 @@ impl DashSpvClient {
                     prev_blockhash: dashcore::BlockHash::all_zeros(),
                     merkle_root: "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
                         .parse()
-                        .expect("valid merkle root"),
+                        .unwrap_or_else(|_| dashcore::hashes::sha256d::Hash::all_zeros().into()),
                     time: 1390666206,
                     bits: CompactTarget::from_consensus(0x1e0ffff0),
                     nonce: 3861367235,
