@@ -41,11 +41,10 @@ impl AddrV2Handler {
         let mut known_peers = self.known_peers.write().await;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| {
+            .unwrap_or_else(|e| {
                 log::error!("System time error in handle_addrv2: {}", e);
-                e
+                Duration::from_secs(0)
             })
-            .unwrap_or_else(|_| Duration::from_secs(0))
             .as_secs() as u32;
 
         let _initial_count = known_peers.len();
@@ -123,11 +122,10 @@ impl AddrV2Handler {
     pub async fn add_known_address(&self, addr: SocketAddr, services: ServiceFlags) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| {
+            .unwrap_or_else(|e| {
                 log::error!("System time error in add_known_address: {}", e);
-                e
+                Duration::from_secs(0)
             })
-            .unwrap_or_else(|_| Duration::from_secs(0))
             .as_secs() as u32;
 
         let addr_v2 = match addr.ip() {

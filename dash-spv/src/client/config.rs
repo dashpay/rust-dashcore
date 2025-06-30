@@ -400,14 +400,23 @@ impl ClientConfig {
         match network {
             Network::Dash => vec![
                 // Use well-known IP addresses instead of DNS names for reliability
-                "104.248.113.204:9999".parse().unwrap(), // dashdot.io seed
-                "149.28.22.65:9999".parse().unwrap(),    // masternode.io seed
-            ],
+                "104.248.113.204:9999".parse::<SocketAddr>(),
+                "149.28.22.65:9999".parse::<SocketAddr>(),
+            ]
+            .into_iter()
+            .filter_map(Result::ok)
+            .collect(),
             Network::Testnet => vec![
-                "174.138.35.118:19999".parse().unwrap(), // testnet seed
-                "149.28.22.65:19999".parse().unwrap(),   // testnet masternode.io
-            ],
-            Network::Regtest => vec!["127.0.0.1:19899".parse().unwrap()],
+                "174.138.35.118:19999".parse::<SocketAddr>(),
+                "149.28.22.65:19999".parse::<SocketAddr>(),
+            ]
+            .into_iter()
+            .filter_map(Result::ok)
+            .collect(),
+            Network::Regtest => vec!["127.0.0.1:19899".parse::<SocketAddr>()]
+                .into_iter()
+                .filter_map(Result::ok)
+                .collect(),
             _ => vec![],
         }
     }

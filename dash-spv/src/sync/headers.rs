@@ -520,13 +520,21 @@ impl HeaderSyncManager {
                     self.config
                         .network
                         .known_genesis_block_hash()
-                        .expect("unable to get genesis block hash")
+                        .ok_or_else(|| SyncError::InvalidState("Unable to get genesis block hash for network".to_string()))
+                        .unwrap_or_else(|e| {
+                            tracing::error!("Failed to get genesis block hash: {}", e);
+                            dashcore::BlockHash::all_zeros()
+                        })
                 })
         } else {
             self.config
                 .network
                 .known_genesis_block_hash()
-                .expect("unable to get genesis block hash")
+                .ok_or_else(|| SyncError::InvalidState("Unable to get genesis block hash for network".to_string()))
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to get genesis block hash: {}", e);
+                    dashcore::BlockHash::all_zeros()
+                })
         };
 
         tracing::info!(
