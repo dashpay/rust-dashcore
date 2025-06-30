@@ -12,7 +12,6 @@ use tracing::{debug, error, info, warn};
 use crate::error::{StorageError, StorageResult, ValidationError, ValidationResult};
 use crate::storage::StorageManager;
 use crate::types::ChainState;
-use crate::validation::ChainLockValidator;
 
 /// ChainLock storage entry
 #[derive(Debug, Clone)]
@@ -27,8 +26,6 @@ pub struct ChainLockEntry {
 
 /// Manages ChainLocks according to DIP8
 pub struct ChainLockManager {
-    /// Chain lock validator
-    validator: ChainLockValidator,
     /// In-memory cache of chain locks by height (maintains insertion order)
     chain_locks_by_height: Arc<RwLock<IndexMap<u32, ChainLockEntry>>>,
     /// In-memory cache of chain locks by block hash
@@ -47,7 +44,6 @@ impl ChainLockManager {
     /// Create a new ChainLockManager
     pub fn new(enforce_chain_locks: bool) -> Self {
         Self {
-            validator: ChainLockValidator::new(),
             chain_locks_by_height: Arc::new(RwLock::new(IndexMap::new())),
             chain_locks_by_hash: Arc::new(RwLock::new(IndexMap::new())),
             max_cache_size: 1000,
@@ -127,9 +123,6 @@ impl ChainLockManager {
             "Processing ChainLock for height {} hash {}",
             chain_lock.block_height, chain_lock.block_hash
         );
-
-        // Basic validation
-        self.validator.validate(&chain_lock)?;
 
         // Check if we already have this chain lock
         if self.has_chain_lock_at_height(chain_lock.block_height) {
@@ -395,38 +388,6 @@ impl ChainLockManager {
         Ok(chain_locks)
     }
 
-    /// Validate a chain lock signature with quorum information
-    pub fn validate_chain_lock_signature(
-        &self,
-        chain_lock: &ChainLock,
-        quorum_public_key: &[u8],
-    ) -> ValidationResult<()> {
-        self.validator.validate_signature(chain_lock, quorum_public_key)
-    }
-
-    /// Validate a chain lock with full quorum information
-    pub fn validate_chain_lock_with_quorum(
-        &self,
-        chain_lock: &ChainLock,
-        quorum_public_key: &[u8],
-        quorum_height: u32,
-    ) -> ValidationResult<()> {
-        info!("Validating ChainLock for height {} with quorum", chain_lock.block_height);
-
-        // Use the validator to perform full validation including BLS signature
-        self.validator.validate_with_quorum(chain_lock, quorum_public_key, quorum_height)?;
-
-        // Mark this chain lock as fully validated
-        {
-            if let Ok(mut by_height) = self.chain_locks_by_height.write() {
-                if let Some(entry) = by_height.get_mut(&chain_lock.block_height) {
-                    entry.validated = true;
-                }
-            }
-        }
-
-        Ok(())
-    }
 
     /// Get chain lock statistics
     pub fn get_stats(&self) -> ChainLockStats {

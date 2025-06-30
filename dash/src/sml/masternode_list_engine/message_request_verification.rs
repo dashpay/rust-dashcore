@@ -180,7 +180,7 @@ impl MasternodeListEngine {
         chain_lock: &ChainLock,
     ) -> Result<Option<&QualifiedQuorumEntry>, MessageVerificationError> {
         // Retrieve the masternode list at or before (block_height - 8)
-        let (before, _) = self.masternode_lists_around_height(chain_lock.block_height - 8);
+        let (before, _) = self.masternode_lists_around_height(chain_lock.block_height.saturating_sub(8));
 
         // Compute the signing request ID
         let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
@@ -220,7 +220,7 @@ impl MasternodeListEngine {
         chain_lock: &ChainLock,
     ) -> Result<Option<&QualifiedQuorumEntry>, MessageVerificationError> {
         // Retrieve the masternode list after (block_height - 8)
-        let (_, after) = self.masternode_lists_around_height(chain_lock.block_height - 8);
+        let (_, after) = self.masternode_lists_around_height(chain_lock.block_height.saturating_sub(8));
 
         // Compute the signing request ID
         let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
@@ -266,7 +266,7 @@ impl MasternodeListEngine {
         chain_lock: &ChainLock,
     ) -> Result<(), MessageVerificationError> {
         // Retrieve masternode lists surrounding the signing height (block_height - 8)
-        let (before, after) = self.masternode_lists_around_height(chain_lock.block_height - 8);
+        let (before, after) = self.masternode_lists_around_height(chain_lock.block_height.saturating_sub(8));
 
         if before.is_none() && after.is_none() {
             return Err(MessageVerificationError::NoMasternodeLists);
