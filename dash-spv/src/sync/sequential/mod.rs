@@ -1672,4 +1672,22 @@ impl SequentialSyncManager {
 
         tracing::info!("Reset sequential sync manager to idle state");
     }
+
+    /// Get reference to the masternode engine if available.
+    /// Returns None if masternodes are disabled or engine is not initialized.
+    pub fn get_masternode_engine(&self) -> Option<&dashcore::sml::masternode_list_engine::MasternodeListEngine> {
+        self.masternode_sync.engine()
+    }
+
+    /// Set the current phase (for testing)
+    #[cfg(test)]
+    pub fn set_phase(&mut self, phase: SyncPhase) {
+        self.current_phase = phase;
+    }
+
+    /// Get mutable reference to masternode sync manager (for testing)
+    #[cfg(test)]
+    pub fn masternode_sync_mut(&mut self) -> &mut MasternodeSyncManager {
+        &mut self.masternode_sync
+    }
 }
