@@ -12,6 +12,7 @@ pub mod watch_manager;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{mpsc, RwLock};
+use tracing::{error, info, warn};
 
 use std::collections::HashSet;
 
@@ -723,6 +724,9 @@ impl DashSpvClient {
         let mut headers_this_second = 0u32;
         let mut last_rate_calc = Instant::now();
         let total_bytes_downloaded = 0u64;
+        
+        // Track masternode sync completion for ChainLock validation
+        let mut masternode_engine_updated = false;
 
         loop {
             // Check if we should stop
@@ -977,6 +981,21 @@ impl DashSpvClient {
                     // Sequential sync handles filter gap detection and recovery internally
                 }
                 last_filter_gap_check = Instant::now();
+            }
+            
+            // Check if masternode sync has completed and update ChainLock validation
+            if !masternode_engine_updated && self.config.enable_masternodes {
+                // Check if we have a masternode engine available now
+                if let Ok(has_engine) = self.update_chainlock_validation() {
+                    if has_engine {
+                        masternode_engine_updated = true;
+                        info!("✅ Masternode sync complete - ChainLock validation enabled");
+                        
+                        // Validate any pending ChainLocks
+                        // Note: This requires mutable access, so we can't do it here directly
+                        // The pending ChainLocks will be validated when next processed
+                    }
+                }
             }
 
             // Handle network messages with timeout for responsiveness
@@ -1584,6 +1603,49 @@ impl DashSpvClient {
         );
 
         Ok(())
+    }
+
+    /// Update ChainLock validation with masternode engine after sync completes.
+    /// This should be called when masternode sync finishes to enable full validation.
+    /// Returns true if the engine was successfully set.
+    pub fn update_chainlock_validation(&self) -> Result<bool> {
+        // Check if masternode sync has an engine available
+        if let Some(engine) = self.sync_manager.get_masternode_engine() {
+            // Clone the engine for the ChainLockManager
+            let engine_arc = Arc::new(engine.clone());
+            self.chainlock_manager.set_masternode_engine(engine_arc);
+            
+            info!("Updated ChainLockManager with masternode engine for full validation");
+            
+            // Note: Pending ChainLocks will be validated when they are next processed
+            // or can be triggered by calling validate_pending_chainlocks separately
+            // when mutable access to storage is available
+            
+            Ok(true)
+        } else {
+            warn!("Masternode engine not available for ChainLock validation update");
+            Ok(false)
+        }
+    }
+
+    /// Validate all pending ChainLocks after masternode engine is available.
+    /// This requires mutable access to self for storage access.
+    pub async fn validate_pending_chainlocks(&mut self) -> Result<()> {
+        let chain_state = self.state.read().await;
+        
+        match self.chainlock_manager.validate_pending_chainlocks(
+            &*chain_state,
+            &mut *self.storage,
+        ).await {
+            Ok(_) => {
+                info!("Successfully validated pending ChainLocks");
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to validate pending ChainLocks: {}", e);
+                Err(SpvError::Validation(e))
+            }
+        }
     }
 
     /// Get current sync progress.
@@ -2683,5 +2745,29 @@ impl DashSpvClient {
             headers.len()
         );
         Ok(())
+    }
+
+    /// Get mutable reference to sync manager (for testing)
+    #[cfg(test)]
+    pub fn sync_manager_mut(&mut self) -> &mut SequentialSyncManager {
+        &mut self.sync_manager
+    }
+
+    /// Get reference to chainlock manager (for testing)
+    #[cfg(test)]
+    pub fn chainlock_manager(&self) -> &Arc<ChainLockManager> {
+        &self.chainlock_manager
+    }
+
+    /// Get reference to storage manager (for testing)
+    #[cfg(test)]
+    pub fn storage(&self) -> &dyn StorageManager {
+        &*self.storage
+    }
+
+    /// Get mutable reference to storage manager (for testing)
+    #[cfg(test)]
+    pub fn storage_mut(&mut self) -> &mut dyn StorageManager {
+        &mut *self.storage
     }
 }

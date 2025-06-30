@@ -771,6 +771,12 @@ impl MasternodeSyncManager {
         self.engine.as_ref()
     }
 
+    /// Set the masternode engine (for testing)
+    #[cfg(test)]
+    pub fn set_engine(&mut self, engine: Option<MasternodeListEngine>) {
+        self.engine = engine;
+    }
+
     /// Get a reference to the terminal block manager.
     pub fn terminal_block_manager(&self) -> &TerminalBlockManager {
         &self.terminal_block_manager
