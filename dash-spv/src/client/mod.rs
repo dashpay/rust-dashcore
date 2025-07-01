@@ -1841,11 +1841,55 @@ impl DashSpvClient {
     /// Restore sync state from persistent storage.
     /// Returns true if state was successfully restored, false if no state was found.
     async fn restore_sync_state(&mut self) -> Result<bool> {
+        // Load and validate sync state
+        let (saved_state, should_continue) = self.load_and_validate_sync_state().await?;
+        if !should_continue {
+            return Ok(false);
+        }
+
+        let saved_state = saved_state.unwrap();
+
+        tracing::info!(
+            "Restoring sync state from height {} (saved at {:?})",
+            saved_state.chain_tip.height,
+            saved_state.saved_at
+        );
+
+        // Restore headers from state
+        if !self.restore_headers_from_state(&saved_state).await? {
+            return Ok(false);
+        }
+
+        // Restore filter headers from state
+        self.restore_filter_headers_from_state(&saved_state).await?;
+
+        // Update stats from state
+        self.update_stats_from_state(&saved_state).await;
+
+        // Restore sync manager state
+        if !self.restore_sync_manager_state(&saved_state).await? {
+            return Ok(false);
+        }
+
+        tracing::info!(
+            "Sync state restored: headers={}, filter_headers={}, filters_downloaded={}",
+            saved_state.sync_progress.header_height,
+            saved_state.sync_progress.filter_header_height,
+            saved_state.filter_sync.filters_downloaded
+        );
+
+        Ok(true)
+    }
+
+    /// Load sync state from storage and validate it, handling recovery if needed.
+    async fn load_and_validate_sync_state(
+        &mut self,
+    ) -> Result<(Option<crate::storage::PersistentSyncState>, bool)> {
         // Load sync state from storage
         let sync_state = self.storage.load_sync_state().await.map_err(|e| SpvError::Storage(e))?;
 
         let Some(saved_state) = sync_state else {
-            return Ok(false);
+            return Ok((None, false));
         };
 
         // Validate the sync state
@@ -1862,86 +1906,15 @@ impl DashSpvClient {
                 match suggestion {
                     crate::storage::RecoverySuggestion::StartFresh => {
                         tracing::warn!("Recovery: Starting fresh sync");
-                        return Ok(false);
+                        return Ok((None, false));
                     }
                     crate::storage::RecoverySuggestion::RollbackToHeight(height) => {
-                        tracing::warn!("Recovery: Rolling back to height {}", height);
-
-                        // Validate the rollback height
-                        if height == 0 {
-                            tracing::error!("Cannot rollback to genesis block (height 0)");
-                            return Ok(false); // Start fresh sync
-                        }
-
-                        // Get current height from storage to validate against
-                        let current_height = self
-                            .storage
-                            .get_tip_height()
-                            .await
-                            .map_err(|e| SpvError::Storage(e))?
-                            .unwrap_or(0);
-
-                        if height > current_height {
-                            tracing::error!(
-                                "Cannot rollback to height {} which is greater than current height {}",
-                                height, current_height
-                            );
-                            return Ok(false); // Start fresh sync
-                        }
-
-                        match self.rollback_to_height(height).await {
-                            Ok(_) => {
-                                tracing::info!("Successfully rolled back to height {}", height);
-                                return Ok(false); // Start fresh sync from rollback point
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to rollback to height {}: {}", height, e);
-                                return Ok(false); // Start fresh sync
-                            }
-                        }
+                        let recovered = self.handle_rollback_recovery(height).await?;
+                        return Ok((None, recovered));
                     }
                     crate::storage::RecoverySuggestion::UseCheckpoint(height) => {
-                        tracing::warn!("Recovery: Using checkpoint at height {}", height);
-
-                        // Validate the checkpoint height
-                        if height == 0 {
-                            tracing::error!("Cannot use checkpoint at genesis block (height 0)");
-                            return Ok(false); // Start fresh sync
-                        }
-
-                        // Check if checkpoint height is reasonable (not in the future)
-                        let current_height = self
-                            .storage
-                            .get_tip_height()
-                            .await
-                            .map_err(|e| SpvError::Storage(e))?
-                            .unwrap_or(0);
-
-                        if current_height > 0 && height > current_height {
-                            tracing::error!(
-                                "Cannot use checkpoint at height {} which is greater than current height {}",
-                                height, current_height
-                            );
-                            return Ok(false); // Start fresh sync
-                        }
-
-                        match self.recover_from_checkpoint(height).await {
-                            Ok(_) => {
-                                tracing::info!(
-                                    "Successfully recovered from checkpoint at height {}",
-                                    height
-                                );
-                                return Ok(true); // State restored from checkpoint
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    "Failed to recover from checkpoint {}: {}",
-                                    height,
-                                    e
-                                );
-                                return Ok(false); // Start fresh sync
-                            }
-                        }
+                        let recovered = self.handle_checkpoint_recovery(height).await?;
+                        return Ok((None, recovered));
                     }
                     crate::storage::RecoverySuggestion::PartialRecovery => {
                         tracing::warn!("Recovery: Attempting partial recovery");
@@ -1949,12 +1922,12 @@ impl DashSpvClient {
                         if let Err(e) = self.reset_filter_sync_state().await {
                             tracing::error!("Failed to reset filter sync state: {}", e);
                         }
-                        return Ok(true); // Continue with partial state
+                        return Ok((Some(saved_state), true));
                     }
                 }
             }
 
-            return Ok(false);
+            return Ok((None, false));
         }
 
         // Log any warnings
@@ -1962,150 +1935,247 @@ impl DashSpvClient {
             tracing::warn!("Sync state warning: {}", warning);
         }
 
-        tracing::info!(
-            "Restoring sync state from height {} (saved at {:?})",
-            saved_state.chain_tip.height,
-            saved_state.saved_at
-        );
+        Ok((Some(saved_state), true))
+    }
 
-        // CRITICAL: Load headers from storage into ChainState
-        if saved_state.chain_tip.height > 0 {
-            tracing::info!("Loading headers from storage into ChainState...");
-            let start_time = std::time::Instant::now();
+    /// Handle rollback recovery to a specific height.
+    async fn handle_rollback_recovery(&mut self, height: u32) -> Result<bool> {
+        tracing::warn!("Recovery: Rolling back to height {}", height);
 
-            // Load headers in batches to avoid memory spikes
-            const BATCH_SIZE: u32 = 10_000;
-            let mut loaded_count = 0u32;
-            let target_height = saved_state.chain_tip.height;
-
-            // Start from height 1 (genesis is already in ChainState)
-            let mut current_height = 1u32;
-
-            while current_height <= target_height {
-                let end_height = (current_height + BATCH_SIZE - 1).min(target_height);
-
-                // Load batch of headers from storage
-                let headers = self
-                    .storage
-                    .load_headers(current_height..end_height + 1)
-                    .await
-                    .map_err(|e| SpvError::Storage(e))?;
-
-                if headers.is_empty() {
-                    tracing::error!(
-                        "Failed to load headers for range {}..{} - storage may be corrupted",
-                        current_height,
-                        end_height + 1
-                    );
-                    return Ok(false); // Start fresh sync
-                }
-
-                // Validate headers before adding to chain state
-                {
-                    // Validate the batch of headers
-                    if let Err(e) = self.validation.validate_header_chain(&headers, false) {
-                        tracing::error!(
-                            "Header validation failed for range {}..{}: {:?}",
-                            current_height,
-                            end_height + 1,
-                            e
-                        );
-                        return Ok(false); // Start fresh sync
-                    }
-
-                    // Add validated headers to chain state
-                    let mut state = self.state.write().await;
-                    for header in headers {
-                        state.add_header(header);
-                        loaded_count += 1;
-                    }
-                }
-
-                // Progress logging for large header counts
-                if loaded_count % 50_000 == 0 || loaded_count == target_height {
-                    let elapsed = start_time.elapsed();
-                    let headers_per_sec = loaded_count as f64 / elapsed.as_secs_f64();
-                    tracing::info!(
-                        "Loaded {}/{} headers ({:.0} headers/sec)",
-                        loaded_count,
-                        target_height,
-                        headers_per_sec
-                    );
-                }
-
-                current_height = end_height + 1;
-            }
-
-            let elapsed = start_time.elapsed();
-            tracing::info!(
-                "✅ Loaded {} headers into ChainState in {:.2}s ({:.0} headers/sec)",
-                loaded_count,
-                elapsed.as_secs_f64(),
-                loaded_count as f64 / elapsed.as_secs_f64()
-            );
-
-            // Validate the loaded chain state
-            let state = self.state.read().await;
-            let actual_height = state.tip_height();
-            if actual_height != target_height {
-                tracing::error!(
-                    "Chain state height mismatch after loading: expected {}, got {}",
-                    target_height,
-                    actual_height
-                );
-                return Ok(false); // Start fresh sync
-            }
-
-            // Verify tip hash matches
-            if let Some(tip_hash) = state.tip_hash() {
-                if tip_hash != saved_state.chain_tip.hash {
-                    tracing::error!(
-                        "Chain tip hash mismatch: expected {}, got {}",
-                        saved_state.chain_tip.hash,
-                        tip_hash
-                    );
-                    return Ok(false); // Start fresh sync
-                }
-            }
+        // Validate the rollback height
+        if height == 0 {
+            tracing::error!("Cannot rollback to genesis block (height 0)");
+            return Ok(false);
         }
 
-        // Load filter headers if they exist
-        if saved_state.sync_progress.filter_header_height > 0 {
-            tracing::info!("Loading filter headers from storage...");
-            let filter_headers = self
+        // Get current height from storage to validate against
+        let current_height = self
+            .storage
+            .get_tip_height()
+            .await
+            .map_err(|e| SpvError::Storage(e))?
+            .unwrap_or(0);
+
+        if height > current_height {
+            tracing::error!(
+                "Cannot rollback to height {} which is greater than current height {}",
+                height,
+                current_height
+            );
+            return Ok(false);
+        }
+
+        match self.rollback_to_height(height).await {
+            Ok(_) => {
+                tracing::info!("Successfully rolled back to height {}", height);
+                Ok(false) // Start fresh sync from rollback point
+            }
+            Err(e) => {
+                tracing::error!("Failed to rollback to height {}: {}", height, e);
+                Ok(false) // Start fresh sync
+            }
+        }
+    }
+
+    /// Handle checkpoint recovery at a specific height.
+    async fn handle_checkpoint_recovery(&mut self, height: u32) -> Result<bool> {
+        tracing::warn!("Recovery: Using checkpoint at height {}", height);
+
+        // Validate the checkpoint height
+        if height == 0 {
+            tracing::error!("Cannot use checkpoint at genesis block (height 0)");
+            return Ok(false);
+        }
+
+        // Check if checkpoint height is reasonable (not in the future)
+        let current_height = self
+            .storage
+            .get_tip_height()
+            .await
+            .map_err(|e| SpvError::Storage(e))?
+            .unwrap_or(0);
+
+        if current_height > 0 && height > current_height {
+            tracing::error!(
+                "Cannot use checkpoint at height {} which is greater than current height {}",
+                height,
+                current_height
+            );
+            return Ok(false);
+        }
+
+        match self.recover_from_checkpoint(height).await {
+            Ok(_) => {
+                tracing::info!("Successfully recovered from checkpoint at height {}", height);
+                Ok(true) // State restored from checkpoint
+            }
+            Err(e) => {
+                tracing::error!("Failed to recover from checkpoint {}: {}", height, e);
+                Ok(false) // Start fresh sync
+            }
+        }
+    }
+
+    /// Restore headers from saved state into ChainState.
+    async fn restore_headers_from_state(
+        &mut self,
+        saved_state: &crate::storage::PersistentSyncState,
+    ) -> Result<bool> {
+        if saved_state.chain_tip.height == 0 {
+            return Ok(true);
+        }
+
+        tracing::info!("Loading headers from storage into ChainState...");
+        let start_time = std::time::Instant::now();
+
+        // Load headers in batches to avoid memory spikes
+        const BATCH_SIZE: u32 = 10_000;
+        let mut loaded_count = 0u32;
+        let target_height = saved_state.chain_tip.height;
+
+        // Start from height 1 (genesis is already in ChainState)
+        let mut current_height = 1u32;
+
+        while current_height <= target_height {
+            let end_height = (current_height + BATCH_SIZE - 1).min(target_height);
+
+            // Load batch of headers from storage
+            let headers = self
                 .storage
-                .load_filter_headers(0..saved_state.sync_progress.filter_header_height + 1)
+                .load_headers(current_height..end_height + 1)
                 .await
                 .map_err(|e| SpvError::Storage(e))?;
 
-            if !filter_headers.is_empty() {
-                let mut state = self.state.write().await;
-                state.add_filter_headers(filter_headers);
-                tracing::info!(
-                    "✅ Loaded {} filter headers into ChainState",
-                    saved_state.sync_progress.filter_header_height + 1
+            if headers.is_empty() {
+                tracing::error!(
+                    "Failed to load headers for range {}..{} - storage may be corrupted",
+                    current_height,
+                    end_height + 1
                 );
+                return Ok(false);
+            }
+
+            // Validate headers before adding to chain state
+            {
+                // Validate the batch of headers
+                if let Err(e) = self.validation.validate_header_chain(&headers, false) {
+                    tracing::error!(
+                        "Header validation failed for range {}..{}: {:?}",
+                        current_height,
+                        end_height + 1,
+                        e
+                    );
+                    return Ok(false);
+                }
+
+                // Add validated headers to chain state
+                let mut state = self.state.write().await;
+                for header in headers {
+                    state.add_header(header);
+                    loaded_count += 1;
+                }
+            }
+
+            // Progress logging for large header counts
+            if loaded_count % 50_000 == 0 || loaded_count == target_height {
+                let elapsed = start_time.elapsed();
+                let headers_per_sec = loaded_count as f64 / elapsed.as_secs_f64();
+                tracing::info!(
+                    "Loaded {}/{} headers ({:.0} headers/sec)",
+                    loaded_count,
+                    target_height,
+                    headers_per_sec
+                );
+            }
+
+            current_height = end_height + 1;
+        }
+
+        let elapsed = start_time.elapsed();
+        tracing::info!(
+            "✅ Loaded {} headers into ChainState in {:.2}s ({:.0} headers/sec)",
+            loaded_count,
+            elapsed.as_secs_f64(),
+            loaded_count as f64 / elapsed.as_secs_f64()
+        );
+
+        // Validate the loaded chain state
+        let state = self.state.read().await;
+        let actual_height = state.tip_height();
+        if actual_height != target_height {
+            tracing::error!(
+                "Chain state height mismatch after loading: expected {}, got {}",
+                target_height,
+                actual_height
+            );
+            return Ok(false);
+        }
+
+        // Verify tip hash matches
+        if let Some(tip_hash) = state.tip_hash() {
+            if tip_hash != saved_state.chain_tip.hash {
+                tracing::error!(
+                    "Chain tip hash mismatch: expected {}, got {}",
+                    saved_state.chain_tip.hash,
+                    tip_hash
+                );
+                return Ok(false);
             }
         }
 
-        // Update sync progress in stats
-        {
-            let mut stats = self.stats.write().await;
-            stats.headers_downloaded = saved_state.sync_progress.header_height as u64;
-            stats.filter_headers_downloaded = saved_state.sync_progress.filter_header_height as u64;
-            stats.filters_downloaded = saved_state.filter_sync.filters_downloaded;
-            stats.masternode_diffs_processed =
-                saved_state.masternode_sync.last_diff_height.unwrap_or(0) as u64;
+        Ok(true)
+    }
+
+    /// Restore filter headers from saved state.
+    async fn restore_filter_headers_from_state(
+        &mut self,
+        saved_state: &crate::storage::PersistentSyncState,
+    ) -> Result<()> {
+        if saved_state.sync_progress.filter_header_height == 0 {
+            return Ok(());
         }
 
-        // Restore masternode state if available
+        tracing::info!("Loading filter headers from storage...");
+        let filter_headers = self
+            .storage
+            .load_filter_headers(0..saved_state.sync_progress.filter_header_height + 1)
+            .await
+            .map_err(|e| SpvError::Storage(e))?;
+
+        if !filter_headers.is_empty() {
+            let mut state = self.state.write().await;
+            state.add_filter_headers(filter_headers);
+            tracing::info!(
+                "✅ Loaded {} filter headers into ChainState",
+                saved_state.sync_progress.filter_header_height + 1
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Update stats from saved state.
+    async fn update_stats_from_state(&mut self, saved_state: &crate::storage::PersistentSyncState) {
+        let mut stats = self.stats.write().await;
+        stats.headers_downloaded = saved_state.sync_progress.header_height as u64;
+        stats.filter_headers_downloaded = saved_state.sync_progress.filter_header_height as u64;
+        stats.filters_downloaded = saved_state.filter_sync.filters_downloaded;
+        stats.masternode_diffs_processed =
+            saved_state.masternode_sync.last_diff_height.unwrap_or(0) as u64;
+
+        // Log masternode state if available
         if let Some(last_mn_height) = saved_state.masternode_sync.last_synced_height {
             tracing::info!("Restored masternode sync state at height {}", last_mn_height);
             // The masternode engine state will be loaded from storage separately
         }
+    }
 
+    /// Restore sync manager state.
+    async fn restore_sync_manager_state(
+        &mut self,
+        saved_state: &crate::storage::PersistentSyncState,
+    ) -> Result<bool> {
         // Update sync manager state
-        // Sequential sync manager needs to determine which phase to resume
         tracing::debug!("Sequential sync manager will resume from stored state");
 
         // Determine phase based on sync progress
@@ -2134,17 +2204,10 @@ impl DashSpvClient {
                 }
                 Err(e) => {
                     tracing::error!("Failed to load headers into sync manager: {}", e);
-                    return Ok(false); // Start fresh sync
+                    return Ok(false);
                 }
             }
         }
-
-        tracing::info!(
-            "Sync state restored: headers={}, filter_headers={}, filters_downloaded={}",
-            saved_state.sync_progress.header_height,
-            saved_state.sync_progress.filter_header_height,
-            saved_state.filter_sync.filters_downloaded
-        );
 
         Ok(true)
     }
@@ -2693,7 +2756,22 @@ impl DashSpvClient {
     /// Get current statistics.
     pub async fn stats(&self) -> Result<SpvStats> {
         let display = self.create_status_display().await;
-        display.stats().await
+        let mut stats = display.stats().await?;
+        
+        // Add real-time peer count and heights
+        stats.connected_peers = self.network.peer_count() as u32;
+        stats.total_peers = self.network.peer_count() as u32; // TODO: Track total discovered peers
+        
+        // Get current heights from storage
+        if let Ok(Some(header_height)) = self.storage.get_tip_height().await {
+            stats.header_height = header_height;
+        }
+        
+        if let Ok(Some(filter_height)) = self.storage.get_filter_tip_height().await {
+            stats.filter_height = filter_height;
+        }
+        
+        Ok(stats)
     }
 
     /// Get current chain state (read-only).
