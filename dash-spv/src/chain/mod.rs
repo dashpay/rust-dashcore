@@ -14,6 +14,7 @@ pub mod chain_tip;
 pub mod checkpoints;
 pub mod chainlock_manager;
 pub mod orphan_pool;
+pub mod block_locator;
 
 #[cfg(test)]
 mod reorg_test;

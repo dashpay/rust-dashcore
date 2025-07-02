@@ -297,14 +297,11 @@ impl DashSpvClient {
             block_processor_tx,
             progress_sender: Some(progress_sender),
             progress_receiver: Some(progress_receiver),
-<<<<<<< HEAD
             event_tx,
             event_rx: Some(event_rx),
             mempool_state,
             mempool_filter: None,
             last_sync_state_save: Arc::new(RwLock::new(0)),
-=======
->>>>>>> sync-progress-tracking
         })
     }
 
@@ -454,7 +451,6 @@ impl DashSpvClient {
         self.config.network
     }
 
-<<<<<<< HEAD
     /// Enable mempool tracking with the specified strategy.
     pub async fn enable_mempool_tracking(&mut self, strategy: crate::client::config::MempoolStrategy) -> Result<()> {
         // Update config
@@ -550,8 +546,6 @@ impl DashSpvClient {
         }
     }
 
-=======
->>>>>>> sync-progress-tracking
     /// Check if filter sync is available (any peer supports compact filters).
     pub async fn is_filter_sync_available(&self) -> bool {
         self.network.has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS).await
@@ -680,17 +674,13 @@ impl DashSpvClient {
         let mut last_filter_gap_check = Instant::now();
         let filter_gap_check_interval =
             std::time::Duration::from_secs(self.config.cfheader_gap_check_interval_secs);
-        
+
         // Progress tracking variables
         let sync_start_time = SystemTime::now();
         let mut last_height = 0u32;
         let mut headers_this_second = 0u32;
         let mut last_rate_calc = Instant::now();
-<<<<<<< HEAD
-        let total_bytes_downloaded = 0u64;
-=======
         let mut total_bytes_downloaded = 0u64;
->>>>>>> sync-progress-tracking
 
         loop {
             // Check if we should stop

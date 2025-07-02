@@ -83,11 +83,6 @@ pub trait NetworkManager: Send + Sync {
     /// Get peers that support a specific service.
     async fn get_peers_with_service(&self, service_flags: dashcore::network::constants::ServiceFlags) -> Vec<crate::types::PeerInfo>;
     
-    /// Check if any connected peer supports headers2 compression.
-    async fn has_headers2_peer(&self) -> bool {
-        self.has_peer_with_service(dashcore::network::constants::NODE_HEADERS_COMPRESSED).await
-    }
-    
     /// Get the peer ID of the last peer that sent us a message.
     /// Returns PeerId(0) if no message has been received yet.
     async fn get_last_message_peer_id(&self) -> crate::types::PeerId {

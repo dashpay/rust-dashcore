@@ -11,11 +11,11 @@ use dashcore_hashes::Hash;
 
 use crate::chain::{ForkDetector, ForkDetectionResult, ReorgManager, ChainTipManager, ChainWork, ChainTip};
 use crate::chain::checkpoints::{CheckpointManager, mainnet_checkpoints, testnet_checkpoints};
+use crate::chain::block_locator::build_block_locator;
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::headers2_state::Headers2StateManager;
 use crate::types::ChainState;
 use crate::validation::ValidationManager;
 use crate::wallet::WalletState;
@@ -54,7 +54,6 @@ pub struct HeaderSyncManagerWithReorg {
     reorg_config: ReorgConfig,
     chain_state: ChainState,
     wallet_state: WalletState,
-    headers2_state: Headers2StateManager,
     total_headers_synced: u32,
     last_progress_log: Option<std::time::Instant>,
     syncing_headers: bool,
@@ -88,7 +87,6 @@ impl HeaderSyncManagerWithReorg {
             reorg_config,
             chain_state,
             wallet_state,
-            headers2_state: Headers2StateManager::new(),
             total_headers_synced: 0,
             last_progress_log: None,
             syncing_headers: false,
@@ -213,7 +211,7 @@ impl HeaderSyncManagerWithReorg {
         if self.syncing_headers {
             // During sync mode - request next batch
             if let Some(tip) = self.chain_state.get_tip_header() {
-                self.request_headers(network, Some(tip.block_hash())).await?;
+                self.request_headers(network, Some(tip.block_hash()), storage).await?;
             }
         }
 
@@ -372,88 +370,45 @@ impl HeaderSyncManagerWithReorg {
         &mut self,
         network: &mut dyn NetworkManager,
         base_hash: Option<BlockHash>,
+        storage: &dyn StorageManager,
     ) -> SyncResult<()> {
-        let block_locator = match base_hash {
-            Some(hash) => vec![hash],
-            None => Vec::new(),
+        // Get genesis hash for the network
+        let genesis_hash = self.config.network.known_genesis_block_hash()
+            .ok_or_else(|| SyncError::SyncFailed("No genesis hash for network".to_string()))?;
+
+        // Build a proper block locator according to Bitcoin/Dash protocol
+        let block_locator = if base_hash.is_some() {
+            // We have headers, build a proper locator
+            tracing::info!("📍 Building block locator from current chain state");
+            build_block_locator(storage, genesis_hash).await?
+        } else {
+            // No headers yet, just use genesis
+            tracing::info!("📍 Requesting headers from genesis (no local headers)");
+            vec![genesis_hash]
         };
 
-        let stop_hash = BlockHash::from_byte_array([0; 32]);
-        let getheaders_msg = GetHeadersMessage::new(block_locator, stop_hash);
-
-        // Check if we have a peer that supports headers2
-        let use_headers2 = network.has_headers2_peer().await;
-        
-        // Try GetHeaders2 first if peer supports it, with fallback to regular GetHeaders
-        if use_headers2 {
-            tracing::info!("📤 Sending GetHeaders2 message (compressed headers)");
-            // Send GetHeaders2 message for compressed headers
-            let result = network
-                .send_message(NetworkMessage::GetHeaders2(getheaders_msg.clone()))
-                .await;
-            
-            match result {
-                Ok(_) => {
-                    // TODO: Implement timeout and fallback mechanism
-                    // For now, we rely on the network layer's timeout handling
-                    // In the future, we should:
-                    // 1. Track the request with a unique ID
-                    // 2. Set a specific timeout for GetHeaders2 response
-                    // 3. Fall back to GetHeaders if no response within timeout
-                    // 4. Mark peers that don't respond to GetHeaders2 properly
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to send GetHeaders2, falling back to GetHeaders: {}", e);
-                    // Fall back to regular GetHeaders
-                    network
-                        .send_message(NetworkMessage::GetHeaders(getheaders_msg))
-                        .await
-                        .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
-                }
-            }
-        } else {
-            tracing::info!("📤 Sending GetHeaders message (uncompressed headers)");
-            // Send regular GetHeaders message
-            network
-                .send_message(NetworkMessage::GetHeaders(getheaders_msg))
-                .await
-                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+        // Log the locator for debugging
+        if block_locator.len() > 1 {
+            tracing::info!("📍 Block locator has {} hashes: tip={}, genesis={}", 
+                block_locator.len(), 
+                block_locator.first().map(|h| h.to_string()).unwrap_or_default(),
+                block_locator.last().map(|h| h.to_string()).unwrap_or_default()
+            );
         }
+
+        let stop_hash = BlockHash::from_byte_array([0; 32]);
+        let getheaders_msg = GetHeadersMessage::new(block_locator.clone(), stop_hash);
+
+        tracing::info!("📤 Sending GetHeaders message with {} locator hashes", block_locator.len());
+        // Send regular GetHeaders message
+        network
+            .send_message(NetworkMessage::GetHeaders(getheaders_msg))
+            .await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
 
         Ok(())
     }
     
-    /// Handle a Headers2 message with compressed headers.
-    /// Returns true if the message was processed and sync should continue, false if sync is complete.
-    pub async fn handle_headers2_message(
-        &mut self,
-        headers2: dashcore::network::message_headers2::Headers2Message,
-        peer_id: crate::types::PeerId,
-        storage: &mut dyn StorageManager,
-        network: &mut dyn NetworkManager,
-    ) -> SyncResult<bool> {
-        tracing::info!(
-            "🔍 Handle headers2 message called with {} compressed headers from peer {}",
-            headers2.headers.len(),
-            peer_id
-        );
-        
-        // Decompress headers using the peer's compression state
-        let headers = self.headers2_state
-            .process_headers(peer_id, headers2.headers)
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to decompress headers: {}", e)))?;
-        
-        // Log compression statistics
-        let stats = self.headers2_state.get_stats();
-        tracing::info!(
-            "📊 Headers2 compression stats: {:.1}% bandwidth saved, {:.1}% compression ratio",
-            stats.bandwidth_savings,
-            stats.compression_ratio * 100.0
-        );
-        
-        // Process decompressed headers through the normal flow
-        self.handle_headers_message(headers, storage, network).await
-    }
     
     /// Prepare sync state without sending network requests.
     /// This allows monitoring to be set up before requests are sent.
@@ -541,7 +496,7 @@ impl HeaderSyncManagerWithReorg {
         let base_hash = self.prepare_sync(storage).await?;
 
         // Request headers starting from our current tip or checkpoint
-        self.request_headers(network, base_hash).await?;
+        self.request_headers(network, base_hash, storage).await?;
 
         Ok(true) // Sync started
     }
@@ -600,7 +555,7 @@ impl HeaderSyncManagerWithReorg {
                 }
             };
 
-            self.request_headers(network, recovery_base_hash).await?;
+            self.request_headers(network, recovery_base_hash, storage).await?;
             self.last_sync_progress = std::time::Instant::now();
 
             return Ok(true);

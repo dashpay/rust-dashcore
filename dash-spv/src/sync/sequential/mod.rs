@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
+use dashcore::network::constants::NetworkExt;
 use dashcore::block::Header as BlockHeader;
 use dashcore::BlockHash;
 
@@ -22,6 +23,7 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::{FilterSyncManager, HeaderSyncManagerWithReorg, ReorgConfig, MasternodeSyncManager};
 use crate::types::SyncProgress;
+use crate::chain::block_locator::build_block_locator;
 
 use phases::{PhaseTransition, SyncPhase};
 use request_control::RequestController;
@@ -163,7 +165,7 @@ impl SequentialSyncManager {
                     let base_hash = self.get_base_hash_from_storage(storage).await?;
                     
                     // Request headers starting from our current tip
-                    self.header_sync.request_headers(network, base_hash).await?;
+                    self.header_sync.request_headers(network, base_hash, storage).await?;
                 } else {
                     // Otherwise start sync normally
                     self.header_sync.start_sync(network, storage).await?;
@@ -190,7 +192,7 @@ impl SequentialSyncManager {
                     // Already prepared, just send the initial request
                     let base_hash = self.get_base_hash_from_storage(storage).await?;
                     
-                    self.header_sync.request_headers(network, base_hash).await?;
+                    self.header_sync.request_headers(network, base_hash, storage).await?;
                 } else {
                     // Not prepared yet, start sync normally
                     self.header_sync.start_sync(network, storage).await?;
@@ -302,12 +304,6 @@ impl SequentialSyncManager {
             (SyncPhase::DownloadingHeaders { .. }, NetworkMessage::Headers(headers)) => {
                 self.handle_headers_message(headers, network, storage).await?;
             }
-            
-            (SyncPhase::DownloadingHeaders { .. }, NetworkMessage::Headers2(headers2)) => {
-                // Get the actual peer ID from the network manager
-                let peer_id = network.get_last_message_peer_id().await;
-                self.handle_headers2_message(headers2, peer_id, network, storage).await?;
-            }
 
             (SyncPhase::DownloadingMnList { .. }, NetworkMessage::MnListDiff(diff)) => {
                 self.handle_mnlistdiff_message(diff, network, storage).await?;
@@ -324,12 +320,6 @@ impl SequentialSyncManager {
             // Handle headers when fully synced (from new block announcements)
             (SyncPhase::FullySynced { .. }, NetworkMessage::Headers(headers)) => {
                 self.handle_new_headers(headers, network, storage).await?;
-            }
-            
-            // Handle compressed headers when fully synced
-            (SyncPhase::FullySynced { .. }, NetworkMessage::Headers2(headers2)) => {
-                let peer_id = network.get_last_message_peer_id().await;
-                self.handle_headers2_message(headers2, peer_id, network, storage).await?;
             }
             
             // Handle filter headers when fully synced
@@ -543,14 +533,12 @@ impl SequentialSyncManager {
     fn is_message_expected_in_phase(&self, message: &NetworkMessage) -> bool {
         match (&self.current_phase, message) {
             (SyncPhase::DownloadingHeaders { .. }, NetworkMessage::Headers(_)) => true,
-            (SyncPhase::DownloadingHeaders { .. }, NetworkMessage::Headers2(_)) => true,
             (SyncPhase::DownloadingMnList { .. }, NetworkMessage::MnListDiff(_)) => true,
             (SyncPhase::DownloadingCFHeaders { .. }, NetworkMessage::CFHeaders(_)) => true,
             (SyncPhase::DownloadingFilters { .. }, NetworkMessage::CFilter(_)) => true,
             (SyncPhase::DownloadingBlocks { .. }, NetworkMessage::Block(_)) => true,
             // During FullySynced phase, we need to accept sync maintenance messages
             (SyncPhase::FullySynced { .. }, NetworkMessage::Headers(_)) => true,
-            (SyncPhase::FullySynced { .. }, NetworkMessage::Headers2(_)) => true,
             (SyncPhase::FullySynced { .. }, NetworkMessage::CFHeaders(_)) => true,
             (SyncPhase::FullySynced { .. }, NetworkMessage::CFilter(_)) => true,
             (SyncPhase::FullySynced { .. }, NetworkMessage::MnListDiff(_)) => true,
@@ -694,56 +682,6 @@ impl SequentialSyncManager {
 
     // Message handlers for each phase
 
-    async fn handle_headers2_message(
-        &mut self,
-        headers2: dashcore::network::message_headers2::Headers2Message,
-        peer_id: crate::types::PeerId,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
-    ) -> SyncResult<()> {
-        let continue_sync = self
-            .header_sync
-            .handle_headers2_message(headers2, peer_id, storage, network)
-            .await?;
-
-        // Update phase state and check if we need to transition
-        let should_transition = if let SyncPhase::DownloadingHeaders {
-            current_height,
-            headers_downloaded,
-            start_time,
-            headers_per_second,
-            received_empty_response,
-            last_progress,
-            ..
-        } = &mut self.current_phase
-        {
-            // Update current height
-            if let Ok(Some(tip)) = storage.get_tip_height().await {
-                *current_height = tip;
-            }
-
-            // Note: We can't easily track headers_downloaded for compressed headers
-            // without decompressing first, so we rely on the header sync manager's internal stats
-            
-            // Update progress time
-            *last_progress = Instant::now();
-            
-            // Check if phase is complete
-            !continue_sync
-        } else {
-            false
-        };
-
-        if should_transition {
-            self.transition_to_next_phase(storage, "Headers sync complete via Headers2")
-                .await?;
-            
-            // Execute the next phase
-            self.execute_current_phase(network, storage).await?;
-        }
-
-        Ok(())
-    }
 
     async fn handle_headers_message(
         &mut self,
@@ -1164,21 +1102,25 @@ impl SequentialSyncManager {
                 Inventory::Block(block_hash) => {
                     tracing::info!("📨 New block announced: {}", block_hash);
                     
-                    // Get our current tip to use as locator - use the helper method
-                    let base_hash = self.get_base_hash_from_storage(storage).await?;
+                    // Get genesis hash for the network
+                    let genesis_hash = self.config.network.known_genesis_block_hash()
+                        .ok_or_else(|| SyncError::SyncFailed("No genesis hash for network".to_string()))?;
                     
-                    // Build locator hashes based on base hash
-                    let locator_hashes = match base_hash {
-                        Some(hash) => {
-                            tracing::info!("📍 Using tip hash as locator: {}", hash);
-                            vec![hash]
-                        }
-                        None => {
-                            // No headers found - this should only happen on initial sync
-                            tracing::info!("📍 No headers found in storage, using empty locator for initial sync");
-                            Vec::new()
-                        }
-                    };
+                    // Build a proper block locator according to Bitcoin/Dash protocol
+                    let locator_hashes = build_block_locator(storage, genesis_hash).await?;
+                    
+                    // Log the locator for debugging
+                    if locator_hashes.len() > 1 {
+                        tracing::info!("📍 Block locator has {} hashes: tip={}, genesis={}", 
+                            locator_hashes.len(), 
+                            locator_hashes.first().map(|h| h.to_string()).unwrap_or_default(),
+                            locator_hashes.last().map(|h| h.to_string()).unwrap_or_default()
+                        );
+                    } else {
+                        tracing::info!("📍 Using single-element locator: {}", 
+                            locator_hashes.first().map(|h| h.to_string()).unwrap_or_default()
+                        );
+                    }
                     
                     // Request headers starting from our tip
                     // Use the same protocol version as during initial sync

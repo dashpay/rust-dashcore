@@ -302,14 +302,6 @@ impl MultiPeerNetworkManager {
                                 addrv2_handler.handle_sendaddrv2(addr).await;
                                 continue; // Don't forward to client
                             }
-                            NetworkMessage::SendHeaders2 => {
-                                // Peer is indicating they will send us compressed headers
-                                log::info!("Peer {} sent SendHeaders2 - they will send compressed headers", addr);
-                                let mut conn_guard = conn.write().await;
-                                conn_guard.set_peer_sent_sendheaders2(true);
-                                drop(conn_guard);
-                                continue; // Don't forward to client
-                            }
                             NetworkMessage::AddrV2(addresses) => {
                                 addrv2_handler.handle_addrv2(addresses.clone()).await;
                                 continue; // Don't forward to client
@@ -375,11 +367,6 @@ impl MultiPeerNetworkManager {
                             NetworkMessage::GetHeaders(_) => {
                                 // SPV clients don't serve headers to peers
                                 log::debug!("Received GetHeaders from {} - ignoring (SPV client)", addr);
-                                continue; // Don't forward to client
-                            }
-                            NetworkMessage::GetHeaders2(_) => {
-                                // SPV clients don't serve compressed headers to peers
-                                log::debug!("Received GetHeaders2 from {} - ignoring (SPV client)", addr);
                                 continue; // Don't forward to client
                             }
                             NetworkMessage::Unknown { command, payload } => {
@@ -1169,20 +1156,6 @@ impl NetworkManager for MultiPeerNetworkManager {
         }
         
         matching_peers
-    }
-    
-    async fn has_headers2_peer(&self) -> bool {
-        let connections = self.pool.get_all_connections().await;
-        
-        for (_, conn) in connections.iter() {
-            let conn_guard = conn.read().await;
-            // Check if this peer can send us headers2
-            if conn_guard.can_request_headers2() {
-                return true;
-            }
-        }
-        
-        false
     }
     
     async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
