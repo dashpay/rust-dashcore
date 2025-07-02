@@ -93,21 +93,31 @@ impl ForkDetector {
             return ForkDetectionResult::ExtendsFork(result_fork);
         }
 
-        // Check if this connects to the main chain (creates new fork)
+        // Check if this connects to the main chain 
         if let Ok(Some(height)) = storage.get_header_height(&prev_hash) {
-            // Found connection point - this creates a new fork
-            let fork_height = height;
-            let fork = Fork {
-                fork_point: prev_hash,
-                fork_height,
-                tip_hash: header_hash,
-                tip_height: fork_height + 1,
-                headers: vec![*header],
-                chain_work: ChainWork::from_height_and_header(fork_height, header),
-            };
+            // Found connection point in storage
+            // Check if this is actually extending the main chain tip
+            let current_tip_height = chain_state.tip_height();
             
-            self.add_fork(fork.clone());
-            return ForkDetectionResult::CreatesNewFork(fork);
+            if height == current_tip_height {
+                // This connects to the current tip - it's a normal chain extension
+                tracing::debug!("Header connects to tip at height {} - extending main chain", height);
+                return ForkDetectionResult::ExtendsMainChain;
+            } else {
+                // This connects to an earlier block - it's a fork
+                tracing::debug!("Header connects to block at height {} (tip is at {})", height, current_tip_height);
+                let fork = Fork {
+                    fork_point: prev_hash,
+                    fork_height: height,
+                    tip_hash: header_hash,
+                    tip_height: height + 1,
+                    headers: vec![*header],
+                    chain_work: ChainWork::from_height_and_header(height, header),
+                };
+                
+                self.add_fork(fork.clone());
+                return ForkDetectionResult::CreatesNewFork(fork);
+            }
         }
         
         // Additional check: see if header connects to any header in chain_state

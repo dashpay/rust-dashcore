@@ -150,7 +150,15 @@ impl PersistentSyncState {
         sync_progress: &SyncProgress,
         network: Network,
     ) -> Option<Self> {
-        let tip_height = chain_state.tip_height();
+        // Use sync_progress.header_height which is the actual synced height
+        // chain_state.tip_height() may be stale/incorrect
+        let tip_height = if sync_progress.header_height > 0 {
+            sync_progress.header_height
+        } else {
+            chain_state.tip_height()
+        };
+        
+        // For hash, we still need it from chain_state as sync_progress doesn't have it
         let tip_hash = chain_state.tip_hash()?;
         let tip_header = chain_state.get_tip_header()?;
         

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::client::ClientConfig;
-use crate::error::Result;
+use crate::error::{Result, SpvError};
 use crate::storage::StorageManager;
 use crate::terminal::TerminalUI;
 use crate::types::{ChainState, SpvStats, SyncProgress};
@@ -48,8 +48,14 @@ impl<'a> StatusDisplay<'a> {
             None
         };
 
+        // Use storage tip height instead of in-memory state to fix sync persistence bug
+        // The in-memory ChainState headers vector might be empty during sync
+        let header_height = self.storage.get_tip_height().await
+            .map_err(|e| SpvError::Storage(e))?
+            .unwrap_or(0);
+
         Ok(SyncProgress {
-            header_height: state.tip_height(),
+            header_height,
             filter_header_height: state.filter_headers.len().saturating_sub(1) as u32,
             masternode_height: state.last_masternode_diff_height.unwrap_or(0),
             peer_count: 1,                // TODO: Get from network manager

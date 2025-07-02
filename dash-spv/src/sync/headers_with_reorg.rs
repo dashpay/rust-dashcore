@@ -5,7 +5,7 @@
 use dashcore::{
     block::Header as BlockHeader, network::message::NetworkMessage,
     network::message_blockdata::GetHeadersMessage,
-    network::constants::NetworkExt, BlockHash,
+    network::constants::{NetworkExt, ServiceFlags, NODE_HEADERS_COMPRESSED}, BlockHash,
 };
 use dashcore_hashes::Hash;
 
@@ -189,9 +189,11 @@ impl HeaderSyncManagerWithReorg {
             match self.process_header_with_fork_detection(header, storage).await? {
                 HeaderProcessResult::ExtendedMainChain => {
                     // Normal case - header extends the main chain
+                    tracing::trace!("Header {} extends main chain", header.block_hash());
                 }
                 HeaderProcessResult::CreatedFork => {
-                    tracing::warn!("⚠️ Fork detected at height {}", self.chain_state.get_height());
+                    // Note: Actual fork height is logged in process_header_with_fork_detection
+                    tracing::warn!("⚠️ Fork created - see previous log for details");
                 }
                 HeaderProcessResult::ExtendedFork => {
                     tracing::debug!("Fork extended");
@@ -399,12 +401,33 @@ impl HeaderSyncManagerWithReorg {
         let stop_hash = BlockHash::from_byte_array([0; 32]);
         let getheaders_msg = GetHeadersMessage::new(block_locator.clone(), stop_hash);
 
-        tracing::info!("📤 Sending GetHeaders message with {} locator hashes", block_locator.len());
-        // Send regular GetHeaders message
-        network
-            .send_message(NetworkMessage::GetHeaders(getheaders_msg))
-            .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+        // Check if peer supports headers2 compression AND we're past the headers2 activation height
+        let supports_headers2 = network.has_peer_with_service(NODE_HEADERS_COMPRESSED).await;
+        
+        // Get current height to determine if we should use GetHeaders2
+        let current_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+            .unwrap_or(0);
+        
+        // Only use GetHeaders2 for blocks after height 1,055,000 (where it was activated)
+        // TEMPORARILY DISABLED: Some peers close connection when receiving GetHeaders2
+        let should_use_headers2 = false; // supports_headers2 && current_height > 1_055_000;
+        
+        if should_use_headers2 {
+            tracing::info!("📤 Sending GetHeaders2 message (height {} > 1,055,000) with {} locator hashes", current_height, block_locator.len());
+            // Send GetHeaders2 for compressed headers
+            network
+                .send_message(NetworkMessage::GetHeaders2(getheaders_msg))
+                .await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders2: {}", e)))?;
+        } else {
+            tracing::info!("📤 Sending GetHeaders message with {} locator hashes", block_locator.len());
+            // Send regular GetHeaders message
+            network
+                .send_message(NetworkMessage::GetHeaders(getheaders_msg))
+                .await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+        }
 
         Ok(())
     }
@@ -515,7 +538,9 @@ impl HeaderSyncManagerWithReorg {
             // More aggressive timeout when no peers
             std::time::Duration::from_secs(5)
         } else {
-            std::time::Duration::from_millis(500)
+            // Give peers more time, especially when network messages are getting corrupted
+            // We've seen cases where peers send responses but with invalid checksums
+            std::time::Duration::from_secs(30)
         };
 
         if self.last_sync_progress.elapsed() > timeout_duration {
@@ -528,9 +553,11 @@ impl HeaderSyncManagerWithReorg {
             }
 
             tracing::warn!(
-                "📊 No header sync progress for {}+ seconds, re-sending header request",
+                "📊 No header sync progress for {} seconds, peer may not serve genesis blocks - will try again",
                 timeout_duration.as_secs()
             );
+            tracing::info!("💡 Many mainnet peers only serve recent blocks (~2.29M height)");
+            tracing::info!("💡 If this continues failing, the SPV manager will try different peers automatically");
 
             // Get current tip for recovery
             let current_tip_height = storage
@@ -639,10 +666,30 @@ impl HeaderSyncManagerWithReorg {
         // Create GetHeaders message with specific stop hash
         let getheaders = GetHeadersMessage::new(vec![current_tip], block_hash);
         
-        network
-            .send_message(NetworkMessage::GetHeaders(getheaders))
-            .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+        // Check if peer supports headers2 compression AND we're past the headers2 activation height
+        let supports_headers2 = network.has_peer_with_service(NODE_HEADERS_COMPRESSED).await;
+        
+        // Get current height to determine if we should use GetHeaders2
+        let current_height = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+            .unwrap_or(0);
+        
+        // Only use GetHeaders2 for blocks after height 1,055,000
+        // TEMPORARILY DISABLED: Some peers close connection when receiving GetHeaders2
+        let should_use_headers2 = false; // supports_headers2 && current_height > 1_055_000;
+        
+        if should_use_headers2 {
+            tracing::info!("📤 Using GetHeaders2 for specific header request (height {} > 1,055,000)", current_height);
+            network
+                .send_message(NetworkMessage::GetHeaders2(getheaders))
+                .await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders2: {}", e)))?;
+        } else {
+            network
+                .send_message(NetworkMessage::GetHeaders(getheaders))
+                .await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+        }
 
         Ok(())
     }

@@ -351,12 +351,30 @@ impl HeaderSyncManager {
         // Create GetHeaders message
         let getheaders_msg = GetHeadersMessage::new(block_locator.clone(), stop_hash);
         
-        tracing::info!("📤 Sending GetHeaders message with {} locator hashes", block_locator.len());
-        // Send regular GetHeaders message
-        network
-            .send_message(NetworkMessage::GetHeaders(getheaders_msg))
-            .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+        // Check if we should try GetHeaders2 based on height
+        let should_try_headers2 = if let Some(height) = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))? {
+            // Try GetHeaders2 for blocks after height 1,055,000
+            height > 1_055_000
+        } else {
+            false
+        };
+
+        if should_try_headers2 {
+            tracing::info!("📤 Sending GetHeaders2 message (height > 1,055,000) with {} locator hashes", block_locator.len());
+            // Send GetHeaders2 for newer blocks
+            network
+                .send_message(NetworkMessage::GetHeaders2(getheaders_msg))
+                .await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders2: {}", e)))?;
+        } else {
+            tracing::info!("📤 Sending GetHeaders message with {} locator hashes", block_locator.len());
+            // Send regular GetHeaders message
+            network
+                .send_message(NetworkMessage::GetHeaders(getheaders_msg))
+                .await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+        }
 
         // Headers request sent successfully
 
@@ -467,11 +485,28 @@ impl HeaderSyncManager {
         
         tracing::info!("📤 Requesting headers up to block {}", block_hash);
 
+        // Check if we should use GetHeaders2 based on current height
+        let should_try_headers2 = if let Some(height) = storage.get_tip_height().await
+            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))? {
+            // Try GetHeaders2 for blocks after height 1,055,000
+            height > 1_055_000
+        } else {
+            false
+        };
+        
         // Send the message
-        network
-            .send_message(NetworkMessage::GetHeaders(getheaders_msg))
-            .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+        if should_try_headers2 {
+            tracing::info!("📤 Using GetHeaders2 for single header request (height > 1,055,000)");
+            network
+                .send_message(NetworkMessage::GetHeaders2(getheaders_msg))
+                .await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders2: {}", e)))?;
+        } else {
+            network
+                .send_message(NetworkMessage::GetHeaders(getheaders_msg))
+                .await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+        }
 
         tracing::debug!("Sent getheaders request for block {}", block_hash);
 
