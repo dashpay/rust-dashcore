@@ -236,6 +236,8 @@ mod tests {
             services: None,
             user_agent: None,
             best_height: None,
+            wants_dsq_messages: None,
+            has_sent_headers2: false,
         };
 
         let ffi_info = FFIPeerInfo::from(info);

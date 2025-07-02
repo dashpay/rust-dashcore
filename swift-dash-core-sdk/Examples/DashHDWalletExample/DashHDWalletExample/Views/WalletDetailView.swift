@@ -14,6 +14,8 @@ struct WalletDetailView: View {
     @State private var useEnhancedSync = true  // Feature flag for enhanced sync UI
     @State private var syncWasCompleted = false  // Track if sync finished
     @State private var lastSyncProgress: SyncProgress?  // Store last sync state
+    @State private var showConnectionError = false
+    @State private var connectionError: String = ""
     
     var body: some View {
         #if os(iOS)
@@ -79,9 +81,23 @@ struct WalletDetailView: View {
                 SyncProgressView()
             }
         }
+        .alert("Connection Error", isPresented: $showConnectionError) {
+            Button("OK") {
+                showConnectionError = false
+            }
+        } message: {
+            Text(connectionError)
+        }
         .onAppear {
             if selectedAccount == nil {
                 selectedAccount = wallet.accounts.first
+            }
+            // Auto-connect if not connected
+            if !walletService.isConnected || walletService.activeWallet != wallet {
+                Task {
+                    print("🔄 Auto-connecting wallet...")
+                    connectWallet()
+                }
             }
         }
         #else
@@ -148,9 +164,23 @@ struct WalletDetailView: View {
                 SyncProgressView()
             }
         }
+        .alert("Connection Error", isPresented: $showConnectionError) {
+            Button("OK") {
+                showConnectionError = false
+            }
+        } message: {
+            Text(connectionError)
+        }
         .onAppear {
             if selectedAccount == nil {
                 selectedAccount = wallet.accounts.first
+            }
+            // Auto-connect if not connected
+            if !walletService.isConnected || walletService.activeWallet != wallet {
+                Task {
+                    print("🔄 Auto-connecting wallet...")
+                    connectWallet()
+                }
             }
         }
         .onChange(of: walletService.syncProgress) { oldValue, newValue in
@@ -183,8 +213,13 @@ struct WalletDetailView: View {
             do {
                 try await walletService.connect(wallet: wallet, account: firstAccount)
                 selectedAccount = firstAccount
+                print("✅ Wallet connected successfully!")
             } catch {
-                print("Connection error: \(error)")
+                print("❌ Connection error: \(error)")
+                await MainActor.run {
+                    connectionError = error.localizedDescription
+                    showConnectionError = true
+                }
             }
             isConnecting = false
         }

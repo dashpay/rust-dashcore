@@ -3,7 +3,7 @@ import DashSPVFFI
 
 // FFI types are imported directly from the C header
 
-public struct SyncProgress: Sendable {
+public struct SyncProgress: Sendable, Equatable {
     public let currentHeight: UInt32
     public let totalHeight: UInt32
     public let progress: Double

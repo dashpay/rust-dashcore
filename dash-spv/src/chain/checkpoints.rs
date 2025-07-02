@@ -7,7 +7,7 @@
 //! - Bootstrap masternode lists at specific heights
 
 use dashcore::{BlockHash, CompactTarget, Target};
-use dashcore_hashes::Hash;
+use dashcore_hashes::{Hash, hex};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -18,6 +18,8 @@ pub struct Checkpoint {
     pub height: u32,
     /// Block hash
     pub block_hash: BlockHash,
+    /// Previous block hash
+    pub prev_blockhash: BlockHash,
     /// Block timestamp
     pub timestamp: u32,
     /// Difficulty target
@@ -32,6 +34,8 @@ pub struct Checkpoint {
     pub include_merkle_root: bool,
     /// Protocol version at this checkpoint
     pub protocol_version: Option<u32>,
+    /// Nonce value for the block
+    pub nonce: u32,
 }
 
 impl Checkpoint {
@@ -161,6 +165,21 @@ impl CheckpointManager {
         best_checkpoint
     }
 
+    /// Find the best checkpoint at or before a given height
+    pub fn best_checkpoint_at_or_before_height(&self, height: u32) -> Option<&Checkpoint> {
+        let mut best_checkpoint = None;
+        let mut best_height = 0;
+
+        for checkpoint in self.checkpoints.values() {
+            if checkpoint.height <= height && checkpoint.height >= best_height {
+                best_height = checkpoint.height;
+                best_checkpoint = Some(checkpoint);
+            }
+        }
+
+        best_checkpoint
+    }
+
     /// Get the last checkpoint that has a masternode list
     pub fn last_checkpoint_having_masternode_list(&self) -> Option<&Checkpoint> {
         self.sorted_heights
@@ -251,145 +270,76 @@ impl CheckpointManager {
 /// Create mainnet checkpoints
 pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
     vec![
-        // Genesis block
+        // Genesis block (required)
         create_checkpoint(
             0,
             "00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6",
+            "0000000000000000000000000000000000000000000000000000000000000000",
             1390095618,
             0x1e0ffff0,
             "0x0000000000000000000000000000000000000000000000000000000100010001",
+            "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7",
+            28917698,
             None,
         ),
+        // Early network checkpoint (1 week after genesis)
         create_checkpoint(
-            1500,
-            "000000aaf0300f59f49bc3e970bad15c11f961fe2347accffff19d96ec9778e3",
-            1390133640,
+            4991,
+            "000000003b01809551952460744d5dbb8fcbd6cbae3c220267bf7fa43f837367",
+            "000000001263f3327dd2f6bc445b47beb82fb8807a62e252ba064e2d2b6f91a6",
+            1390163520,
             0x1e0fffff,
-            "0x00000000000000000000000000000000000000000000000000000000b3f3b3f4",
+            "0x00000000000000000000000000000000000000000000000000000000271027f0",
+            "7faff642d9e914716c50e3406df522b2b9a10ea3df4fef4e2229997367a6cab1",
+            357631712,
             None,
         ),
-        Checkpoint {
-            height: 4991,
-            block_hash: parse_block_hash_safe(
-                "000000003b01809551952460744d5dbb8fcbd6cbae3c220267bf7fa43f837367",
-            ),
-            timestamp: 1390163520,
-            target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
-            merkle_root: None,
-            chain_work: "0x00000000000000000000000000000000000000000000000000000000271027f0"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
-        Checkpoint {
-            height: 9918,
-            block_hash: parse_block_hash_safe(
-                "00000000213e229f332c0ffbe34defdaa9e74de87f2d8d1f01af8d121c3c170b",
-            ),
-            timestamp: 1390344765,
-            target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
-            merkle_root: None,
-            chain_work: "0x00000000000000000000000000000000000000000000000000000000b5b3b5bf"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
-        Checkpoint {
-            height: 16912,
-            block_hash: parse_block_hash_safe(
-                "00000000075c0d10371d55a60634da70f197548dbbfa4123e12abfcbc5738af9",
-            ),
-            timestamp: 1390821265,
-            target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
-            merkle_root: None,
-            chain_work: "0x00000000000000000000000000000000000000000000000000000001086108a1"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
-        Checkpoint {
-            height: 45479,
-            block_hash: parse_block_hash_safe(
-                "000000000063d411655d590590e16960f15ceea4257122ac430c6fbe39fbf02d",
-            ),
-            timestamp: 1391836907,
-            target: Target::from_compact(CompactTarget::from_consensus(0x1c2ac4af)),
-            merkle_root: None,
-            chain_work: "0x0000000000000000000000000000000000000000000000000002c7875c78875f"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
-        Checkpoint {
-            height: 107996,
-            block_hash: parse_block_hash_safe(
-                "00000000000a23840ac16115407488267aa3da2b9bc843e301185b7d17e4dc40",
-            ),
-            timestamp: 1395522898,
-            target: Target::from_compact(CompactTarget::from_consensus(0x1b04864c)),
-            merkle_root: None,
-            chain_work: "0x0000000000000000000000000000000000000000000000000056bf9caa56bf9d"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
-        Checkpoint {
-            height: 312645,
-            block_hash: parse_block_hash_safe(
-                "0000000000059dcb71ad35a9e40526c44e7aae6c99169a9e7017b7d84b1c2daf",
-            ),
-            timestamp: 1407621730,
-            target: Target::from_compact(CompactTarget::from_consensus(0x1b345f4c)),
-            merkle_root: None,
-            chain_work: "0x00000000000000000000000000000000000000000000000017d08c8717d08c89"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
-        Checkpoint {
-            height: 750000,
-            block_hash: parse_block_hash_safe(
-                "00000000000000b4181bbbdddbae464ce11fede5d0292fb63fdede1e7c8ab21c",
-            ),
-            timestamp: 1491953700,
-            target: Target::from_compact(CompactTarget::from_consensus(0x1a075a02)),
-            merkle_root: None,
-            chain_work: "0x00000000000000000000000000000000000000000000000485f01ee9f01ee9f8"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
+        // 3 months checkpoint
         create_checkpoint(
-            1450000,
-            "00000000000000105cfae44a995332d8ec256850ea33a1f7b700474e3dad82bc",
-            1607611038,
-            0x1946c21f,
-            "0x00000000000000000000000000000000000000000000008c90b78c90b78c90b7",
+            107996,
+            "00000000000a23840ac16115407488267aa3da2b9bc843e301185b7d17e4dc40",
+            "000000000006fe4020a310786bd34e17aa7681c86a20a2e121e0e3dd599800e8",
+            1395522898,
+            0x1b04864c,
+            "0x0000000000000000000000000000000000000000000000000056bf9caa56bf9d",
+            "15c3852f9e71a6cbc0cfa96d88202746cfeae6fc645ccc878580bc29daeff193",
+            10049236,
             None,
         ),
-        // Recent checkpoint with masternode list
+        // 2017 checkpoint
+        create_checkpoint(
+            750000,
+            "00000000000000b4181bbbdddbae464ce11fede5d0292fb63fdede1e7c8ab21c",
+            "00000000000001e115237541be8dd91bce2653edd712429d11371842f85bd3e1",
+            1491953700,
+            0x1a075a02,
+            "0x00000000000000000000000000000000000000000000000485f01ee9f01ee9f8",
+            "0ce99835e2de1240e230b5075024817aace2b03b3944967a88af079744d0aa62",
+            2199533779,
+            None,
+        ),
+        // Recent checkpoint with masternode list (2022)
         create_checkpoint(
             1700000,
             "00000000000000f50e46a529f588282b62e5b2e604fe604037f6eb39c68dc58f",
+            "000000000000001a5631d781a4be0d9cda08b470ac6f108843cedf32e4dc081e",
             1641154800,
             0x193b81f5,
             "0x0000000000000000000000000000000000000000000000a1c2b3a1c2b3a1c2b3",
+            "dafe57cefc3bc265dfe8416e2f2e3a22af268fd587a48f36affd404bec738305",
+            3820512540,
             Some("ML1700000__70227"),
         ),
-        // Even more recent checkpoint
+        // Latest checkpoint with masternode list (2022/2023)
         create_checkpoint(
             1900000,
             "00000000000000268c5f5dc9e3bdda0dc7e93cf7ebf256b45b3de75b3cc0b923",
+            "000000000000000d41ff4e55f8ebc2e610ec74a0cbdd33e59ebbfeeb1f8a0a0d",
             1672688400,
             0x1918b7a5,
             "0x0000000000000000000000000000000000000000000000b8d9eab8d9eab8d9ea",
+            "3a6ff72336cf78e45b23101f755f4d7dce915b32336a8c242c33905b72b07b35",
+            498598646,
             Some("ML1900000__70230"),
         ),
     ]
@@ -399,111 +349,60 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
 pub fn testnet_checkpoints() -> Vec<Checkpoint> {
     vec![
         // Genesis block
-        Checkpoint {
-            height: 0,
-            block_hash: parse_block_hash_safe(
-                "00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c",
-            ),
-            timestamp: 1390666206,
-            target: Target::from_compact(CompactTarget::from_consensus(0x1e0ffff0)),
-            merkle_root: None,
-            chain_work: "0x0000000000000000000000000000000000000000000000000000000100010001"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
-        // Early testnet checkpoints
-        Checkpoint {
-            height: 255,
-            block_hash: parse_block_hash_safe(
-                "0000080b600e06f4c07880673f027210f9314575f5f875fafe51971e268b886a",
-            ),
-            timestamp: 1390668900, // Approximate
-            target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
-            merkle_root: None,
-            chain_work: "0x0000000000000000000000000000000000000000000000000000000200020002"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
-        Checkpoint {
-            height: 1999,
-            block_hash: parse_block_hash_safe(
-                "00000052e538d27fa53693efe6fb6892a0c1d26c0235f599171c48a3cce553b1",
-            ),
-            timestamp: 1390700000, // Approximate
-            target: Target::from_compact(CompactTarget::from_consensus(0x1e0fffff)),
-            merkle_root: None,
-            chain_work: "0x00000000000000000000000000000000000000000000000000000fa0fa0fa0fa"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
-        Checkpoint {
-            height: 96090,
-            block_hash: parse_block_hash_safe(
-                "00000000033df4b94d17ab43e999caaf6c4735095cc77703685da81254d09bba",
-            ),
-            timestamp: 1392000000, // Approximate
-            target: Target::from_compact(CompactTarget::from_consensus(0x1c0168fd)),
-            merkle_root: None,
-            chain_work: "0x00000000000000000000000000000000000000000000000000059f8a5f8a5f8a"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
-        Checkpoint {
-            height: 200000,
-            block_hash: parse_block_hash_safe(
-                "000000001015eb5ef86a8fe2b3074d947bc972c5befe32b28dd5ce915dc0d029",
-            ),
-            timestamp: 1394000000, // Approximate
-            target: Target::from_compact(CompactTarget::from_consensus(0x1b342be5)),
-            merkle_root: None,
-            chain_work: "0x0000000000000000000000000000000000000000000000000030f5830f5830f5"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
-        Checkpoint {
-            height: 470000,
-            block_hash: parse_block_hash_safe(
-                "0000009303aeadf8cf3812f5c869691dbd4cb118ad20e9bf553be434bafe6a52",
-            ),
-            timestamp: 1500000000, // Approximate
-            target: Target::from_compact(CompactTarget::from_consensus(0x1a1c3bbe)),
-            merkle_root: None,
-            chain_work: "0x000000000000000000000000000000000000000000000000072f17072f17072f"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
-        Checkpoint {
-            height: 794950,
-            block_hash: parse_block_hash_safe(
-                "000001860e4c7248a9c5cc3bc7106041750560dc5cd9b3a2641b49494bcff5f2",
-            ),
-            timestamp: 1600000000, // Approximate
-            target: Target::from_compact(CompactTarget::from_consensus(0x1a0b47cf)),
-            merkle_root: None,
-            chain_work: "0x0000000000000000000000000000000000000000000000000c1e270c1e270c1e"
-                .to_string(),
-            masternode_list_name: None,
-            include_merkle_root: false,
-            protocol_version: None,
-        },
+        create_checkpoint(
+            0,
+            "00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            1390666206,
+            0x1e0ffff0,
+            "0x0000000000000000000000000000000000000000000000000000000100010001",
+            "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7",
+            3861367235,
+            None,
+        ),
+        // Height 500000
+        create_checkpoint(
+            500000,
+            "000000d0f2239d3ea3d1e39e624f651c5a349b5ca729eec29540aeae0ecc94a7",
+            "000001d6339e773dea2a9f1eae5e569a04963eb885008be9d553568932885745",
+            1621049765,
+            0x1e025b1b,
+            "0x000000000000000000000000000000000000000000000000022f14e45fc51a2e",
+            "618c77a7c45783f5f20e957a296e077220b50690aae51d714ae164eb8d669fdf",
+            10457,
+            None,
+        ),
+        // Height 800000
+        create_checkpoint(
+            800000,
+            "00000075cdfa0a552e488406074bb95d831aee16c0ec30114319a587a8a8fb0c",
+            "0000011921c298768dc2ab0f9ca5a3ff4527813bbd7cd77f45bf93efd0bb0799",
+            1671238603,
+            0x1e018b19,
+            "0x00000000000000000000000000000000000000000000000002d68bf1d7e434f6",
+            "d58300efccbace51cdf5c8a012979e310da21337a7f311b1dcea7c1c894dfb94",
+            607529,
+            None,
+        ),
+        // Height 1100000
+        create_checkpoint(
+            1100000,
+            "000000078cc3952c7f594de921ae82fcf430a5f3b86755cd72acd819d0001015",
+            "00000068da3dc19e54cefd3f7e2a7f380bf8d9a0eb1090a7197c3e0b10e2cf1f",
+            1725934127,
+            0x1e017da4,
+            "0x000000000000000000000000000000000000000000000000031c3fcb33bc3a48",
+            "4cc82bf21c5f1e0e712ca1a3d5bde2f92eee2700b86019c6d0ace9c91a8b9bd8",
+            251545,
+            None,
+        ),
     ]
 }
 
 /// Helper to parse hex block hash strings
 fn parse_block_hash(s: &str) -> Result<BlockHash, String> {
-    let bytes = hex::decode(s).map_err(|e| format!("Invalid hex: {}", e))?;
+    use hex::FromHex;
+    let bytes = Vec::<u8>::from_hex(s).map_err(|e| format!("Invalid hex: {}", e))?;
     if bytes.len() != 32 {
         return Err("Invalid hash length: expected 32 bytes".to_string());
     }
@@ -518,7 +417,7 @@ fn parse_block_hash(s: &str) -> Result<BlockHash, String> {
 fn parse_block_hash_safe(s: &str) -> BlockHash {
     parse_block_hash(s).unwrap_or_else(|e| {
         tracing::error!("Failed to parse checkpoint block hash '{}': {}", s, e);
-        BlockHash::all_zeros()
+        BlockHash::from_byte_array([0u8; 32])
     })
 }
 
@@ -526,21 +425,29 @@ fn parse_block_hash_safe(s: &str) -> BlockHash {
 fn create_checkpoint(
     height: u32,
     hash: &str,
+    prev_hash: &str,
     timestamp: u32,
     bits: u32,
     chain_work: &str,
+    merkle_root: &str,
+    nonce: u32,
     masternode_list: Option<&str>,
 ) -> Checkpoint {
     Checkpoint {
         height,
         block_hash: parse_block_hash_safe(hash),
+        prev_blockhash: parse_block_hash_safe(prev_hash),
         timestamp,
         target: Target::from_compact(CompactTarget::from_consensus(bits)),
-        merkle_root: None,
+        merkle_root: Some(parse_block_hash_safe(merkle_root)),
         chain_work: chain_work.to_string(),
         masternode_list_name: masternode_list.map(|s| s.to_string()),
-        include_merkle_root: false,
-        protocol_version: None,
+        include_merkle_root: true,
+        protocol_version: masternode_list.and_then(|ml| {
+            // Extract protocol version from masternode list name
+            ml.split("__").nth(1).and_then(|s| s.parse().ok())
+        }),
+        nonce,
     }
 }
 
@@ -584,8 +491,8 @@ mod tests {
         // Test finding checkpoint before various heights
         assert_eq!(manager.last_checkpoint_before_height(0).expect("Should find checkpoint").height, 0);
         assert_eq!(manager.last_checkpoint_before_height(1000).expect("Should find checkpoint").height, 0);
-        assert_eq!(manager.last_checkpoint_before_height(2000).expect("Should find checkpoint").height, 1500);
-        assert_eq!(manager.last_checkpoint_before_height(50000).expect("Should find checkpoint").height, 45479);
+        assert_eq!(manager.last_checkpoint_before_height(5000).expect("Should find checkpoint").height, 4991);
+        assert_eq!(manager.last_checkpoint_before_height(200000).expect("Should find checkpoint").height, 107996);
     }
 
     #[test]
@@ -593,9 +500,12 @@ mod tests {
         let checkpoint = create_checkpoint(
             1088640,
             "0000000000000000000000000000000000000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000000",
             0,
             0,
             "",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            0,
             Some("ML1088640__70218"),
         );
 
@@ -605,9 +515,12 @@ mod tests {
         let checkpoint_no_version = create_checkpoint(
             0,
             "0000000000000000000000000000000000000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000000",
             0,
             0,
             "",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            0,
             None,
         );
 
@@ -621,14 +534,14 @@ mod tests {
         let mut manager = CheckpointManager::new(checkpoints);
 
         // Test sync override
-        manager.set_sync_override(Some(1500));
+        manager.set_sync_override(Some(5000));
         let sync_checkpoint = manager.get_sync_checkpoint(None);
-        assert_eq!(sync_checkpoint.expect("Should have sync checkpoint").height, 1500);
+        assert_eq!(sync_checkpoint.expect("Should have sync checkpoint").height, 4991);
 
         // Test terminal override
-        manager.set_terminal_override(Some(100000));
+        manager.set_terminal_override(Some(800000));
         let terminal_checkpoint = manager.get_terminal_checkpoint();
-        assert_eq!(terminal_checkpoint.expect("Should have terminal checkpoint").height, 45479);
+        assert_eq!(terminal_checkpoint.expect("Should have terminal checkpoint").height, 750000);
 
         // Test sync from genesis
         manager.set_sync_from_genesis(true);

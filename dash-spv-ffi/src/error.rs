@@ -56,6 +56,8 @@ impl From<SpvError> for FFIErrorCode {
             SpvError::Sync(_) => FFIErrorCode::SyncError,
             SpvError::Io(_) => FFIErrorCode::RuntimeError,
             SpvError::Config(_) => FFIErrorCode::ConfigError,
+            SpvError::Parse(_) => FFIErrorCode::ValidationError,
+            SpvError::Wallet(_) => FFIErrorCode::WalletError,
             SpvError::General(_) => FFIErrorCode::Unknown,
         }
     }

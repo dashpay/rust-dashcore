@@ -12,7 +12,7 @@ pub mod watch_manager;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{mpsc, RwLock};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use std::collections::HashSet;
 
@@ -436,6 +436,25 @@ impl DashSpvClient {
 
         // Initialize genesis block if not already present
         self.initialize_genesis_block().await?;
+        
+        // If we initialized from a checkpoint, we need to ensure the sync manager loads the state
+        // This is critical for checkpoint-based sync to work correctly
+        let state = self.state.read().await;
+        if state.synced_from_checkpoint && state.sync_base_height > 0 {
+            drop(state); // Release the lock before calling other methods
+            tracing::info!("Loading checkpoint state into sync manager...");
+            match self.sync_manager.load_headers_from_storage(&*self.storage).await {
+                Ok(loaded_count) => {
+                    tracing::info!("✅ Sync manager loaded {} headers from checkpoint storage", loaded_count);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to load checkpoint state into sync manager: {}", e);
+                    return Err(SpvError::Sync(e));
+                }
+            }
+        } else {
+            drop(state);
+        }
 
         // Connect to network
         self.network.connect().await?;
@@ -718,6 +737,10 @@ impl DashSpvClient {
         let filter_gap_check_interval =
             std::time::Duration::from_secs(self.config.cfheader_gap_check_interval_secs);
 
+        // Timer for pending ChainLock validation
+        let mut last_chainlock_validation_check = Instant::now();
+        let chainlock_validation_interval = std::time::Duration::from_secs(30); // Every 30 seconds
+
         // Progress tracking variables
         let sync_start_time = SystemTime::now();
         let mut last_height = 0u32;
@@ -992,10 +1015,20 @@ impl DashSpvClient {
                         info!("✅ Masternode sync complete - ChainLock validation enabled");
                         
                         // Validate any pending ChainLocks
-                        // Note: This requires mutable access, so we can't do it here directly
-                        // The pending ChainLocks will be validated when next processed
+                        if let Err(e) = self.validate_pending_chainlocks().await {
+                            error!("Failed to validate pending ChainLocks after masternode sync: {}", e);
+                        }
                     }
                 }
+            }
+            
+            // Periodically retry validation of pending ChainLocks
+            if masternode_engine_updated && last_chainlock_validation_check.elapsed() >= chainlock_validation_interval {
+                debug!("Checking for pending ChainLocks to validate...");
+                if let Err(e) = self.validate_pending_chainlocks().await {
+                    debug!("Periodic pending ChainLock validation check failed: {}", e);
+                }
+                last_chainlock_validation_check = Instant::now();
             }
 
             // Handle network messages with timeout for responsiveness
@@ -2382,6 +2415,84 @@ impl DashSpvClient {
             // We already have headers, genesis block should be at height 0
             tracing::debug!("Headers already exist in storage, skipping genesis initialization");
             return Ok(());
+        }
+
+        // Check if we should use a checkpoint instead of genesis
+        if let Some(start_height) = self.config.start_from_height {
+            // Get checkpoints for this network
+            let checkpoints = match self.config.network {
+                dashcore::Network::Dash => crate::chain::checkpoints::mainnet_checkpoints(),
+                dashcore::Network::Testnet => crate::chain::checkpoints::testnet_checkpoints(),
+                _ => vec![],
+            };
+
+            // Create checkpoint manager
+            let checkpoint_manager = crate::chain::checkpoints::CheckpointManager::new(checkpoints);
+            
+            // Find the best checkpoint at or before the requested height
+            if let Some(checkpoint) = checkpoint_manager.best_checkpoint_at_or_before_height(start_height) {
+                if checkpoint.height > 0 {
+                    tracing::info!(
+                        "🚀 Starting sync from checkpoint at height {} instead of genesis (requested start height: {})",
+                        checkpoint.height,
+                        start_height
+                    );
+                    
+                    // Initialize chain state with checkpoint
+                    let mut chain_state = self.state.write().await;
+                    chain_state.sync_base_height = checkpoint.height;
+                    chain_state.synced_from_checkpoint = true;
+                    
+                    // Build header from checkpoint
+                    let checkpoint_header = dashcore::block::Header {
+                        version: dashcore::block::Version::from_consensus(536870912), // Version 0x20000000 is common for modern blocks
+                        prev_blockhash: checkpoint.prev_blockhash,
+                        merkle_root: checkpoint.merkle_root
+                            .map(|h| dashcore::TxMerkleNode::from_byte_array(*h.as_byte_array()))
+                            .unwrap_or_else(|| dashcore::TxMerkleNode::all_zeros()),
+                        time: checkpoint.timestamp,
+                        bits: dashcore::pow::CompactTarget::from_consensus(
+                            checkpoint.target.to_compact_lossy().to_consensus()
+                        ),
+                        nonce: checkpoint.nonce,
+                    };
+                    
+                    // Verify hash matches
+                    let calculated_hash = checkpoint_header.block_hash();
+                    if calculated_hash != checkpoint.block_hash {
+                        tracing::warn!(
+                            "Checkpoint header hash mismatch at height {}: expected {}, calculated {}",
+                            checkpoint.height,
+                            checkpoint.block_hash,
+                            calculated_hash
+                        );
+                    } else {
+                        // When syncing from checkpoint, don't add headers to the array
+                        // The tip_height calculation relies on sync_base_height + headers.len() - 1
+                        // So we keep headers empty and let sync_base_height represent our starting point
+                        chain_state.headers.clear(); // Ensure no genesis header
+                        
+                        // Clone the chain state for storage
+                        let chain_state_for_storage = chain_state.clone();
+                        drop(chain_state);
+                        
+                        // Update storage with chain state including sync_base_height
+                        self.storage.store_chain_state(&chain_state_for_storage).await
+                            .map_err(|e| SpvError::Storage(e))?;
+                        
+                        // Don't store the checkpoint header itself - we'll request headers from peers
+                        // starting from this checkpoint
+                        
+                        tracing::info!(
+                            "✅ Initialized from checkpoint at height {}, skipping {} headers",
+                            checkpoint.height,
+                            checkpoint.height
+                        );
+                        
+                        return Ok(());
+                    }
+                }
+            }
         }
 
         // Get the genesis block hash for this network

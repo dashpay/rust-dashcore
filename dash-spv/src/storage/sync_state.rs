@@ -8,7 +8,7 @@ use crate::types::{ChainState, SyncProgress};
 
 /// Version for sync state serialization format.
 /// Increment this when making breaking changes to the format.
-const SYNC_STATE_VERSION: u32 = 1;
+const SYNC_STATE_VERSION: u32 = 2;
 
 /// Complete persistent sync state that can be saved and restored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +39,12 @@ pub struct PersistentSyncState {
 
     /// Chain work up to the tip (for validation).
     pub chain_work: String,
+
+    /// Base height when syncing from a checkpoint (0 if syncing from genesis).
+    pub sync_base_height: u32,
+
+    /// Whether the chain was synced from a checkpoint rather than genesis.
+    pub synced_from_checkpoint: bool,
 }
 
 /// Chain tip information.
@@ -192,6 +198,8 @@ impl PersistentSyncState {
                 .calculate_chain_work()
                 .map(|work| format!("{:?}", work))
                 .unwrap_or_else(|| String::from("0")),
+            sync_base_height: chain_state.sync_base_height,
+            synced_from_checkpoint: chain_state.synced_from_checkpoint,
         })
     }
 
@@ -373,6 +381,8 @@ mod tests {
             },
             saved_at: SystemTime::now(),
             chain_work: String::new(),
+            sync_base_height: 0,
+            synced_from_checkpoint: false,
         };
 
         // Valid state

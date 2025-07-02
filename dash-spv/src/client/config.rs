@@ -159,6 +159,10 @@ pub struct ClientConfig {
 
     /// Rate limit for block requests per second (default: 10.0).
     pub blocks_request_rate_limit: Option<f64>,
+
+    /// Start syncing from a specific block height.
+    /// The client will use the nearest checkpoint at or before this height.
+    pub start_from_height: Option<u32>,
 }
 
 impl Default for ClientConfig {
@@ -211,6 +215,7 @@ impl Default for ClientConfig {
             cfheaders_request_rate_limit: None,
             filters_request_rate_limit: None,
             blocks_request_rate_limit: None,
+            start_from_height: None,
         }
     }
 }
@@ -347,6 +352,12 @@ impl ClientConfig {
     /// Enable or disable mempool persistence.
     pub fn with_mempool_persistence(mut self, enabled: bool) -> Self {
         self.persist_mempool = enabled;
+        self
+    }
+
+    /// Set the starting height for synchronization.
+    pub fn with_start_height(mut self, height: u32) -> Self {
+        self.start_from_height = Some(height);
         self
     }
 

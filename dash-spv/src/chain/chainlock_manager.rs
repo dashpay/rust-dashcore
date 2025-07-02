@@ -174,9 +174,21 @@ impl ChainLockManager {
                     validated = true;
                 }
                 Err(e) => {
-                    return Err(ValidationError::InvalidChainLock(
-                        format!("MasternodeListEngine validation failed: {:?}", e)
-                    ));
+                    // Check if the error is due to missing masternode lists
+                    let error_string = e.to_string();
+                    if error_string.contains("No masternode lists in engine") {
+                        warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {}, queueing ChainLock for later validation", 
+                            chain_lock.block_height);
+                        drop(engine_guard); // Release the read lock before acquiring write lock
+                        self.queue_pending_chainlock(chain_lock.clone())
+                            .map_err(|e| ValidationError::InvalidChainLock(
+                                format!("Failed to queue pending ChainLock: {}", e)
+                            ))?;
+                    } else {
+                        return Err(ValidationError::InvalidChainLock(
+                            format!("MasternodeListEngine validation failed: {:?}", e)
+                        ));
+                    }
                 }
             }
         } else {

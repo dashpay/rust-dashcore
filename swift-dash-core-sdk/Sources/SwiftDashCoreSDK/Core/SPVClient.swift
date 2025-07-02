@@ -1,12 +1,13 @@
 import Foundation
 import Combine
 import DashSPVFFI
+import Network
 
 // MARK: - Sync Progress Types
 // These types are defined here to ensure they're available for SPVClient
 
 /// Detailed sync progress information with real-time statistics
-public struct DetailedSyncProgress: Sendable {
+public struct DetailedSyncProgress: Sendable, Equatable {
     public let currentHeight: UInt32
     public let totalHeight: UInt32
     public let percentage: Double
@@ -60,6 +61,31 @@ public struct DetailedSyncProgress: Sendable {
         formatter.unitsStyle = .positional
         formatter.zeroFormattingBehavior = .pad
         return formatter.string(from: syncDuration) ?? "00:00:00"
+    }
+    
+    /// Public initializer for creating DetailedSyncProgress
+    public init(
+        currentHeight: UInt32,
+        totalHeight: UInt32,
+        percentage: Double,
+        headersPerSecond: Double,
+        estimatedSecondsRemaining: Int64,
+        stage: SyncStage,
+        stageMessage: String,
+        connectedPeers: UInt32,
+        totalHeadersProcessed: UInt64,
+        syncStartTimestamp: Date
+    ) {
+        self.currentHeight = currentHeight
+        self.totalHeight = totalHeight
+        self.percentage = percentage
+        self.headersPerSecond = headersPerSecond
+        self.estimatedSecondsRemaining = estimatedSecondsRemaining
+        self.stage = stage
+        self.stageMessage = stageMessage
+        self.connectedPeers = connectedPeers
+        self.totalHeadersProcessed = totalHeadersProcessed
+        self.syncStartTimestamp = syncStartTimestamp
     }
     
     /// Initialize from FFI type
@@ -531,7 +557,12 @@ public final class SPVClient {
     public init(configuration: SPVClientConfiguration = .default) {
         self.configuration = configuration
         
+        print("\n🚧 Initializing SPV Client...")
+        print("   - Network: \(configuration.network.rawValue)")
+        print("   - Log level: \(configuration.logLevel)")
+        
         // Initialize Rust logging with configured level
+        print("🔧 Initializing Rust FFI logging...")
         let logResult = FFIBridge.withCString(configuration.logLevel) { logLevel in
             dash_spv_ffi_init_logging(logLevel)
         }
@@ -539,6 +570,8 @@ public final class SPVClient {
         if logResult != 0 {
             print("⚠️ Failed to initialize logging with level '\(configuration.logLevel)', defaulting to 'info'")
             let _ = dash_spv_ffi_init_logging("info")
+        } else {
+            print("✅ Rust logging initialized with level: \(configuration.logLevel)")
         }
     }
     
@@ -645,26 +678,118 @@ public final class SPVClient {
             throw DashSDKError.alreadyConnected
         }
         
+        print("🚀 Starting SPV client...")
+        print("📡 Network: \(configuration.network.rawValue)")
+        print("👥 Configured peers: \(configuration.additionalPeers.count)")
+        for (index, peer) in configuration.additionalPeers.enumerated() {
+            print("   \(index + 1). \(peer)")
+        }
+        
+        // Log network reachability status if available
+        logNetworkReachability()
+        
+        print("\n📋 Creating FFI configuration...")
+        print("   - Max peers: \(configuration.maxPeers)")
+        print("   - Validation mode: \(configuration.validationMode)")
+        print("   - Filter load enabled: \(configuration.enableFilterLoad)")
+        print("   - User agent: \(configuration.userAgent)")
+        print("   - Log level: \(configuration.logLevel)")
+        
         let ffiConfig = try configuration.createFFIConfig()
         defer {
+            print("🧹 Cleaning up FFI config")
             dash_spv_ffi_config_destroy(OpaquePointer(ffiConfig))
         }
         
+        print("\n🏗️ Creating SPV client with FFI...")
         guard let newClient = dash_spv_ffi_client_new(OpaquePointer(ffiConfig)) else {
-            throw DashSDKError.invalidConfiguration("Failed to create SPV client")
+            let error = FFIBridge.getLastError() ?? "Unknown error"
+            print("❌ Failed to create SPV client: \(error)")
+            throw DashSDKError.invalidConfiguration("Failed to create SPV client: \(error)")
         }
+        print("✅ SPV client created successfully")
         
         self.client = newClient
         
-        if !eventCallbacksSet {
-            setupEventCallbacks()
+        // Always set up event callbacks before starting the client
+        // This is required by the FFI layer to avoid InvalidArgument error
+        print("🎯 Setting up event callbacks...")
+        setupEventCallbacks()
+        
+        print("\n🔌 Starting SPV client (calling dash_spv_ffi_client_start)...")
+        let startTime = Date()
+        let result = dash_spv_ffi_client_start(client)
+        let startDuration = Date().timeIntervalSince(startTime)
+        print("⏱️ FFI start call completed in \(String(format: "%.3f", startDuration)) seconds")
+        
+        if result != 0 {
+            let error = FFIBridge.getLastError() ?? "Unknown error"
+            print("❌ Failed to start SPV client: \(error) (code: \(result))")
+            throw DashSDKError.ffiError(code: result, message: error)
         }
         
-        let result = dash_spv_ffi_client_start(client)
         try FFIBridge.checkError(result)
         
         isConnected = true
+        print("✅ SPV client started successfully")
+        
+        // Monitor peer connections with multiple checks
+        print("\n🔍 Monitoring peer connections...")
+        var totalWaitTime = 0
+        let maxWaitTime = 30 // 30 seconds max
+        var lastPeerCount: UInt32 = 0
+        
+        while totalWaitTime < maxWaitTime {
+            await updateStats()
+            
+            if let stats = self.stats {
+                if stats.connectedPeers != lastPeerCount {
+                    print("   [\(totalWaitTime)s] Connected peers: \(stats.connectedPeers) (change: +\(Int(stats.connectedPeers) - Int(lastPeerCount)))")
+                    lastPeerCount = stats.connectedPeers
+                }
+                
+                if stats.connectedPeers > 0 {
+                    print("\n🎉 Successfully connected to \(stats.connectedPeers) peer(s)!")
+                    break
+                }
+            }
+            
+            // Wait 1 second before next check
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            totalWaitTime += 1
+            
+            // Log every 5 seconds if still no peers
+            if totalWaitTime % 5 == 0 && (stats?.connectedPeers ?? 0) == 0 {
+                print("   [\(totalWaitTime)s] Still waiting for peer connections...")
+                
+                // Try to get more detailed error info
+                if let error = FFIBridge.getLastError() {
+                    print("   ⚠️ Last FFI error: \(error)")
+                }
+            }
+        }
+        
         await updateStats()
+        
+        if let stats = self.stats {
+            print("\n📊 Final connection stats:")
+            print("   - Connected peers: \(stats.connectedPeers)")
+            print("   - Header height: \(stats.headerHeight)")
+            print("   - Filter height: \(stats.filterHeight)")
+            print("   - Total headers: \(stats.totalHeaders)")
+            print("   - Network: \(configuration.network.rawValue)")
+            
+            if stats.connectedPeers == 0 {
+                print("\n⚠️ WARNING: No peers connected after \(totalWaitTime) seconds!")
+                print("Possible issues:")
+                print("  1. Network connectivity problems")
+                print("  2. Firewall blocking connections")
+                print("  3. Invalid peer addresses")
+                print("  4. Peers are offline or unreachable")
+            }
+        } else {
+            print("\n❌ Failed to retrieve stats after starting")
+        }
     }
     
     public func stop() async throws {
@@ -898,25 +1023,138 @@ public final class SPVClient {
     
     // MARK: - Stats
     
+    /// Debug method to print detailed connection information
+    public func debugConnectionState() async {
+        print("\n🔍 SPV Client Debug Information:")
+        print("================================")
+        
+        print("\n📋 Configuration:")
+        print("   - Network: \(configuration.network.rawValue)")
+        print("   - Max peers: \(configuration.maxPeers)")
+        print("   - Additional peers: \(configuration.additionalPeers.count)")
+        for (index, peer) in configuration.additionalPeers.enumerated() {
+            print("     \(index + 1). \(peer)")
+        }
+        print("   - Data directory: \(configuration.dataDirectory?.path ?? "None")")
+        print("   - Validation mode: \(configuration.validationMode)")
+        print("   - Filter load enabled: \(configuration.enableFilterLoad)")
+        
+        print("\n🔌 Connection State:")
+        print("   - Is connected: \(isConnected)")
+        print("   - Client pointer: \(client != nil ? "Valid" : "Nil")")
+        print("   - Event callbacks set: \(eventCallbacksSet)")
+        
+        if isConnected {
+            await updateStats()
+            
+            if let stats = self.stats {
+                print("\n📊 Current Stats:")
+                print("   - Connected peers: \(stats.connectedPeers)")
+                print("   - Header height: \(stats.headerHeight)")
+                print("   - Filter height: \(stats.filterHeight)")
+                print("   - Total headers: \(stats.totalHeaders)")
+                print("   - Network: \(configuration.network.rawValue)")
+            } else {
+                print("\n⚠️ Unable to retrieve stats")
+            }
+            
+            // Check FFI error state
+            if let error = FFIBridge.getLastError() {
+                print("\n❌ Last FFI Error: \(error)")
+            }
+        }
+        
+        // Network reachability check
+        logNetworkReachability()
+        
+        print("\n================================")
+    }
+    
     public func updateStats() async {
         guard isConnected, let client = client else {
             return
         }
         
         guard let ffiStats = dash_spv_ffi_client_get_stats(client) else {
+            let error = FFIBridge.getLastError()
+            if let error = error {
+                print("⚠️ Failed to get SPV stats: \(error)")
+            }
             return
         }
         defer {
             dash_spv_ffi_spv_stats_destroy(ffiStats)
         }
         
-        self.stats = SPVStats(ffiStats: ffiStats.pointee)
+        let previousPeerCount = self.stats?.connectedPeers ?? 0
+        let ffiStatsValue = ffiStats.pointee
+        
+        // Debug log the raw FFI values
+        print("🔍 FFI Stats Debug:")
+        print("   - connected_peers: \(ffiStatsValue.connected_peers)")
+        print("   - total_peers: \(ffiStatsValue.total_peers)")
+        print("   - header_height: \(ffiStatsValue.header_height)")
+        print("   - filter_height: \(ffiStatsValue.filter_height)")
+        
+        self.stats = SPVStats(ffiStats: ffiStatsValue)
+        
+        // Log significant changes
+        if let stats = self.stats {
+            if stats.connectedPeers != previousPeerCount {
+                print("👥 Peer count changed: \(previousPeerCount) → \(stats.connectedPeers)")
+            }
+        }
     }
     
     // MARK: - Private
     
+    private func logNetworkReachability() {
+        let monitor = NWPathMonitor()
+        let queue = DispatchQueue(label: "NetworkMonitor")
+        
+        monitor.pathUpdateHandler = { path in
+            print("\n🌐 Network Status:")
+            print("   - Status: \(path.status == .satisfied ? "✅ Connected" : "❌ Disconnected")")
+            
+            if path.status == .satisfied {
+                print("   - Is expensive: \(path.isExpensive ? "Yes" : "No")")
+                print("   - Is constrained: \(path.isConstrained ? "Yes" : "No")")
+                
+                print("   - Available interfaces:")
+                for interface in path.availableInterfaces {
+                    print("     • \(interface.name) (\(interface.type))")
+                }
+                
+                if path.usesInterfaceType(.wifi) {
+                    print("   - Using: WiFi")
+                } else if path.usesInterfaceType(.cellular) {
+                    print("   - Using: Cellular")
+                } else if path.usesInterfaceType(.wiredEthernet) {
+                    print("   - Using: Ethernet")
+                } else {
+                    print("   - Using: Other/Unknown")
+                }
+            } else {
+                print("   ⚠️ No network connection available!")
+            }
+            
+            // Stop monitoring after first check
+            monitor.cancel()
+        }
+        
+        monitor.start(queue: queue)
+        
+        // Give it a moment to report
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    
     private func setupEventCallbacks() {
-        guard let client = client else { return }
+        guard let client = client else { 
+            print("❌ Cannot setup event callbacks - client is nil")
+            return 
+        }
+        
+        print("📢 Setting up event callbacks...")
         
         // Create event callback holder with weak reference to self
         let eventHolder = EventCallbackHolder(client: self)
@@ -933,12 +1171,23 @@ public final class SPVClient {
             user_data: userData
         )
         
+        print("   - Block callback: ✅")
+        print("   - Transaction callback: ✅")
+        print("   - Balance callback: ✅")
+        print("   - Mempool callbacks: ✅")
+        
         let result = dash_spv_ffi_client_set_event_callbacks(client, callbacks)
         if result != 0 {
-            print("Warning: Failed to set event callbacks")
+            let error = FFIBridge.getLastError() ?? "Unknown error"
+            print("❌ Failed to set event callbacks: \(error) (code: \(result))")
+            // Don't mark as set if it failed
+            eventCallbacksSet = false
+            // Note: We don't throw here as the client might still work without event callbacks
+            // The FFI layer will handle the error appropriately
+        } else {
+            print("✅ Event callbacks set successfully")
+            eventCallbacksSet = true
         }
-        
-        eventCallbacksSet = true
     }
 }
 
@@ -969,6 +1218,44 @@ extension SPVClient {
             throw DashSDKError.notConnected
         }
         
+        // Check if we have peers before starting sync
+        await updateStats()
+        if let stats = self.stats, stats.connectedPeers == 0 {
+            print("⚠️ Warning: No peers connected. Waiting for peer connections...")
+            print("   Current network: \(configuration.network.rawValue)")
+            print("   Total headers: \(stats.totalHeaders)")
+            
+            // Wait up to 10 seconds for peers to connect
+            var waitTime = 0
+            while waitTime < 10 {
+                try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                waitTime += 1
+                
+                await updateStats()
+                if let updatedStats = self.stats {
+                    print("   [\(waitTime)s] Peers: \(updatedStats.connectedPeers), Headers: \(updatedStats.headerHeight)")
+                    if updatedStats.connectedPeers > 0 {
+                        print("🎉 Connected to \(updatedStats.connectedPeers) peer(s)")
+                        break
+                    }
+                }
+            }
+            
+            // Final check
+            if let finalStats = self.stats, finalStats.connectedPeers == 0 {
+                let error = "No peers connected after 10 seconds. Check network connectivity and peer configuration."
+                print("❌ \(error)")
+                print("   Configured peers: \(configuration.additionalPeers)")
+                completionCallback?(false, error)
+                throw DashSDKError.networkError(error)
+            }
+        }
+        
+        print("\n📡 Starting blockchain sync...")
+        print("   - Connected peers: \(stats?.connectedPeers ?? 0)")
+        print("   - Current height: \(stats?.headerHeight ?? 0)")
+        print("   - Filter height: \(stats?.filterHeight ?? 0)")
+        
         // Create a callback holder with type-erased callbacks
         let wrappedProgressCallback: (@Sendable (Any) -> Void)? = progressCallback.map { callback in
             { progress in
@@ -993,9 +1280,13 @@ extension SPVClient {
         )
         
         if result != 0 {
-            completionCallback?(false, "Failed to start sync")
+            let error = FFIBridge.getLastError() ?? "Failed to start sync"
+            print("❌ Sync failed: \(error)")
+            completionCallback?(false, error)
             Unmanaged<DetailedCallbackHolder>.fromOpaque(userData).release()
             try FFIBridge.checkError(result)
+        } else {
+            print("✅ Sync started successfully")
         }
     }
     

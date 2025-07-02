@@ -10,7 +10,7 @@
 
 use dash_spv::{
     client::ClientConfig,
-    error::{NetworkError, SyncError},
+    error::{NetworkError, NetworkResult, SyncError},
     network::NetworkManager,
     storage::{MemoryStorageManager, StorageManager},
     sync::filters::FilterSyncManager,
@@ -124,6 +124,10 @@ impl NetworkManager for MockNetworkManager {
 
     async fn get_last_message_peer_id(&self) -> dash_spv::types::PeerId {
         dash_spv::types::PeerId(1)
+    }
+
+    async fn update_peer_dsq_preference(&mut self, _wants_dsq: bool) -> NetworkResult<()> {
+        Ok(())
     }
 }
 
@@ -331,7 +335,7 @@ async fn test_filter_header_verification_failure_reproduction() {
 
     match result {
         Ok(_) => panic!("Second batch should have failed verification!"),
-        Err(SyncError::SyncFailed(msg)) => {
+        Err(SyncError::Validation(msg)) => {
             println!("✅ Expected failure occurred: {}", msg);
             assert!(msg.contains("Filter header chain verification failed"));
         }

@@ -217,7 +217,40 @@ impl SequentialSyncManager {
                 ..
             } => {
                 tracing::info!("📥 Starting masternode list download phase");
-                self.masternode_sync.start_sync(network, storage).await?;
+                // Get the effective chain height from header sync which accounts for checkpoint base
+                let effective_height = self.header_sync.get_chain_height();
+                let sync_base_height = self.header_sync.get_sync_base_height();
+                
+                // Also get the actual storage tip height to verify
+                let storage_tip = storage.get_tip_height().await
+                    .map_err(|e| SyncError::Storage(format!("Failed to get storage tip: {}", e)))?;
+                
+                tracing::info!(
+                    "Starting masternode sync: effective_height={}, sync_base={}, storage_tip={:?}, expected_storage_height={}",
+                    effective_height, 
+                    sync_base_height,
+                    storage_tip,
+                    if sync_base_height > 0 { effective_height - sync_base_height } else { effective_height }
+                );
+                
+                // Use the minimum of effective height and what's actually in storage
+                let safe_height = if let Some(tip) = storage_tip {
+                    let storage_based_height = sync_base_height + tip;
+                    if storage_based_height < effective_height {
+                        tracing::warn!(
+                            "Chain state height {} exceeds storage height {}, using storage height",
+                            effective_height,
+                            storage_based_height
+                        );
+                        storage_based_height
+                    } else {
+                        effective_height
+                    }
+                } else {
+                    effective_height
+                };
+                
+                self.masternode_sync.start_sync_with_height(network, storage, safe_height, sync_base_height).await?;
             }
 
             SyncPhase::DownloadingCFHeaders {

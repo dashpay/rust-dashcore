@@ -77,6 +77,10 @@ typedef struct FFISyncProgress {
 } FFISyncProgress;
 
 typedef struct FFISpvStats {
+  uint32_t connected_peers;
+  uint32_t total_peers;
+  uint32_t header_height;
+  uint32_t filter_height;
   uint64_t headers_downloaded;
   uint64_t filter_headers_downloaded;
   uint64_t filters_downloaded;
@@ -159,6 +163,21 @@ typedef struct FFITransaction {
   uint32_t size;
   uint32_t weight;
 } FFITransaction;
+
+/**
+ * Handle for Core SDK that can be passed to Platform SDK
+ */
+typedef struct CoreSDKHandle {
+  struct FFIDashSpvClient *client;
+} CoreSDKHandle;
+
+/**
+ * FFIResult type for error handling
+ */
+typedef struct FFIResult {
+  int32_t error_code;
+  const char *error_message;
+} FFIResult;
 
 /**
  * FFI-safe representation of an unconfirmed transaction
@@ -464,6 +483,56 @@ enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const struct FF
 const char *dash_spv_ffi_get_last_error(void);
 
 void dash_spv_ffi_clear_error(void);
+
+/**
+ * Creates a CoreSDKHandle from an FFIDashSpvClient
+ *
+ * # Safety
+ *
+ * This function is unsafe because:
+ * - The caller must ensure the client pointer is valid
+ * - The returned handle must be properly released with ffi_dash_spv_release_core_handle
+ */
+struct CoreSDKHandle *ffi_dash_spv_get_core_handle(struct FFIDashSpvClient *client);
+
+/**
+ * Releases a CoreSDKHandle
+ *
+ * # Safety
+ *
+ * This function is unsafe because:
+ * - The caller must ensure the handle pointer is valid
+ * - The handle must not be used after this call
+ */
+void ffi_dash_spv_release_core_handle(struct CoreSDKHandle *handle);
+
+/**
+ * Gets a quorum public key from the Core chain
+ *
+ * # Safety
+ *
+ * This function is unsafe because:
+ * - The caller must ensure all pointers are valid
+ * - quorum_hash must point to a 32-byte array
+ * - out_pubkey must point to a 48-byte buffer
+ */
+struct FFIResult ffi_dash_spv_get_quorum_public_key(struct FFIDashSpvClient *client,
+                                                    uint32_t _quorum_type,
+                                                    const uint8_t *quorum_hash,
+                                                    uint32_t _core_chain_locked_height,
+                                                    uint8_t *out_pubkey);
+
+/**
+ * Gets the platform activation height from the Core chain
+ *
+ * # Safety
+ *
+ * This function is unsafe because:
+ * - The caller must ensure all pointers are valid
+ * - out_height must point to a valid u32
+ */
+struct FFIResult ffi_dash_spv_get_platform_activation_height(struct FFIDashSpvClient *client,
+                                                             uint32_t *out_height);
 
 void dash_spv_ffi_string_destroy(struct FFIString s);
 

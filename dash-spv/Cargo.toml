@@ -10,7 +10,7 @@ rust-version = "1.80"
 
 [dependencies]
 # Core Dash libraries
-dashcore = { path = "../dash", features = ["std", "serde", "core-block-hash-use-x11", "message_verification", "bls"] }
+dashcore = { path = "../dash", features = ["std", "serde", "core-block-hash-use-x11", "message_verification", "bls", "quorum_validation"] }
 dashcore_hashes = { path = "../hashes" }
 
 # BLS signatures

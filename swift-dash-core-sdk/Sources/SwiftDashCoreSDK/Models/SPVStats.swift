@@ -43,10 +43,10 @@ public struct SPVStats: Sendable {
     }
     
     internal init(ffiStats: FFISpvStats) {
-        self.connectedPeers = 0 // Not provided by FFISpvStats
-        self.totalPeers = 0 // Not provided by FFISpvStats
-        self.headerHeight = 0 // Not provided by FFISpvStats
-        self.filterHeight = 0 // Not provided by FFISpvStats
+        self.connectedPeers = ffiStats.connected_peers
+        self.totalPeers = ffiStats.total_peers
+        self.headerHeight = ffiStats.header_height
+        self.filterHeight = ffiStats.filter_height
         self.scannedHeight = 0 // Not provided by FFISpvStats
         self.totalHeaders = ffiStats.headers_downloaded
         self.totalFilters = ffiStats.filters_downloaded
