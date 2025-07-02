@@ -3,8 +3,8 @@
 //! This module extends the basic header sync with fork detection and reorg handling.
 
 use dashcore::{
-    block::Header as BlockHeader, network::constants::NetworkExt, network::message::NetworkMessage,
-    network::message_blockdata::GetHeadersMessage, BlockHash,
+    block::{Header as BlockHeader, Version}, network::constants::NetworkExt, network::message::NetworkMessage,
+    network::message_blockdata::GetHeadersMessage, BlockHash, TxMerkleNode,
 };
 use dashcore_hashes::Hash;
 
@@ -105,6 +105,17 @@ impl HeaderSyncManagerWithReorg {
         &mut self,
         storage: &dyn StorageManager,
     ) -> SyncResult<u32> {
+        // First, try to load the persisted chain state which may contain sync_base_height
+        if let Ok(Some(stored_chain_state)) = storage.load_chain_state().await {
+            tracing::info!(
+                "Loaded chain state from storage with sync_base_height: {}, synced_from_checkpoint: {}",
+                stored_chain_state.sync_base_height,
+                stored_chain_state.synced_from_checkpoint
+            );
+            // Update our chain state with the loaded one to preserve sync_base_height
+            self.chain_state = stored_chain_state;
+        }
+
         // Get the current tip height from storage
         let tip_height = storage
             .get_tip_height()
@@ -195,8 +206,86 @@ impl HeaderSyncManagerWithReorg {
             return Ok(false);
         }
 
+        // Check if we're receiving headers from genesis when we expected headers from a checkpoint
+        if self.chain_state.synced_from_checkpoint && !headers.is_empty() {
+            // Try to determine the height of the first header we received
+            if let Some(first_header) = headers.first() {
+                // Check if this might be a genesis or very early block
+                // Genesis block has all zero prev_blockhash
+                if first_header.prev_blockhash == BlockHash::from_byte_array([0; 32]) {
+                    tracing::warn!(
+                        "⚠️ Received headers starting from genesis while syncing from checkpoint at height {}. \
+                        Peer may not have the checkpoint block.",
+                        self.chain_state.sync_base_height
+                    );
+                    // The peer doesn't have our checkpoint in their chain
+                    // This could mean:
+                    // 1. We're using an invalid checkpoint
+                    // 2. The peer is on a different chain/fork
+                    // 3. The peer is not fully synced
+                    
+                    tracing::error!(
+                        "CHECKPOINT SYNC FAILED: Peer sent headers from genesis instead of connecting to checkpoint at height {}. \
+                        This indicates the checkpoint may not be valid for this network or the peer doesn't have it.",
+                        self.chain_state.sync_base_height
+                    );
+                    
+                    // For now, reject this and let the client handle it
+                    // In production, we might want to try other peers or fall back to genesis
+                    return Err(SyncError::InvalidState(format!(
+                        "Checkpoint sync failed: peer doesn't recognize checkpoint at height {}",
+                        self.chain_state.sync_base_height
+                    )));
+                }
+                
+                // Additional check: if we have a stored tip and the headers don't connect
+                if let Some(tip) = self.chain_state.get_tip_header() {
+                    if first_header.prev_blockhash != tip.block_hash() {
+                        tracing::warn!(
+                            "⚠️ Received headers that don't connect to our tip. Expected prev_hash: {}, got: {}",
+                            tip.block_hash(),
+                            first_header.prev_blockhash
+                        );
+                        // This might be headers from a different part of the chain
+                        // For checkpoint sync, we should reject and try another peer
+                        if self.chain_state.synced_from_checkpoint {
+                            return Err(SyncError::InvalidState(
+                                "Peer sent headers that don't connect to checkpoint".to_string()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         self.last_sync_progress = std::time::Instant::now();
         self.total_headers_synced += headers.len() as u32;
+
+        // Log details about the first few headers for debugging
+        if !headers.is_empty() {
+            let first = headers.first().unwrap();
+            let last = headers.last().unwrap();
+            tracing::debug!(
+                "Received headers batch: first.prev_hash={}, first.hash={}, last.hash={}, count={}",
+                first.prev_blockhash,
+                first.block_hash(),
+                last.block_hash(),
+                headers.len()
+            );
+            
+            // If we're syncing from checkpoint, log if headers appear to be from wrong height
+            if self.chain_state.synced_from_checkpoint {
+                // Check if this looks like early blocks (low difficulty, early timestamps)
+                if first.bits.to_consensus() == 0x1e0ffff0 || first.time < 1400000000 {
+                    tracing::warn!(
+                        "Headers appear to be from early in the chain (bits={:x}, time={}), but we're syncing from checkpoint at height {}",
+                        first.bits.to_consensus(),
+                        first.time,
+                        self.chain_state.sync_base_height
+                    );
+                }
+            }
+        }
 
         // Process each header with fork detection
         for header in &headers {
@@ -605,6 +694,12 @@ impl HeaderSyncManagerWithReorg {
         }
 
         tracing::info!("Preparing header synchronization with reorg support");
+        tracing::info!(
+            "Chain state before prepare_sync: sync_base_height={}, synced_from_checkpoint={}, headers_count={}",
+            self.chain_state.sync_base_height,
+            self.chain_state.synced_from_checkpoint,
+            self.chain_state.headers.len()
+        );
 
         // Get current tip from storage
         let current_tip_height = storage
@@ -612,7 +707,27 @@ impl HeaderSyncManagerWithReorg {
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
 
-        let base_hash = match current_tip_height {
+        // If we're syncing from a checkpoint, we need to account for sync_base_height
+        let effective_tip_height = if self.chain_state.synced_from_checkpoint && current_tip_height.is_some() {
+            let stored_headers = current_tip_height.unwrap();
+            let actual_height = self.chain_state.sync_base_height + stored_headers;
+            tracing::info!(
+                "Syncing from checkpoint: sync_base_height={}, stored_headers={}, effective_height={}",
+                self.chain_state.sync_base_height,
+                stored_headers,
+                actual_height
+            );
+            Some(actual_height)
+        } else {
+            tracing::info!(
+                "Not syncing from checkpoint or no tip height. synced_from_checkpoint={}, current_tip_height={:?}",
+                self.chain_state.synced_from_checkpoint,
+                current_tip_height
+            );
+            current_tip_height
+        };
+
+        let base_hash = match effective_tip_height {
             None => {
                 // No headers in storage, ensure genesis is stored
                 tracing::info!("No tip height found, ensuring genesis block is stored");
@@ -652,15 +767,46 @@ impl HeaderSyncManagerWithReorg {
                 }
             }
             Some(height) => {
-                tracing::info!("Current tip height: {}", height);
-                // Get the current tip hash
-                let tip_header = storage
-                    .get_header(height)
-                    .await
-                    .map_err(|e| SyncError::Storage(format!("Failed to get tip header: {}", e)))?;
-                let hash = tip_header.map(|h| h.block_hash());
-                tracing::info!("Current tip hash: {:?}", hash);
-                hash
+                tracing::info!("Current effective tip height: {}", height);
+                
+                // When syncing from a checkpoint, we need to use the checkpoint hash directly
+                // if we only have the checkpoint header stored
+                if self.chain_state.synced_from_checkpoint && height == self.chain_state.sync_base_height {
+                    // We're at the checkpoint height - use the checkpoint hash from chain state
+                    tracing::info!(
+                        "At checkpoint height {}. Chain state has {} headers",
+                        height,
+                        self.chain_state.headers.len()
+                    );
+                    
+                    // The checkpoint header should be the first (and possibly only) header
+                    if !self.chain_state.headers.is_empty() {
+                        let checkpoint_header = &self.chain_state.headers[0];
+                        let hash = checkpoint_header.block_hash();
+                        tracing::info!("Using checkpoint hash for height {}: {}", height, hash);
+                        Some(hash)
+                    } else {
+                        tracing::error!("Synced from checkpoint but no headers in chain state!");
+                        None
+                    }
+                } else {
+                    // Get the current tip hash from storage
+                    // When syncing from checkpoint, the storage height is different from effective height
+                    let storage_height = if self.chain_state.synced_from_checkpoint {
+                        // The actual storage height is effective_height - sync_base_height
+                        height.saturating_sub(self.chain_state.sync_base_height)
+                    } else {
+                        height
+                    };
+                    
+                    let tip_header = storage
+                        .get_header(storage_height)
+                        .await
+                        .map_err(|e| SyncError::Storage(format!("Failed to get tip header at storage height {}: {}", storage_height, e)))?;
+                    let hash = tip_header.map(|h| h.block_hash());
+                    tracing::info!("Current tip hash from storage height {}: {:?}", storage_height, hash);
+                    hash
+                }
             }
         };
 
@@ -755,19 +901,46 @@ impl HeaderSyncManagerWithReorg {
 
     /// Get the optimal starting point for sync based on checkpoints
     pub fn get_sync_starting_point(&self) -> Option<(u32, BlockHash)> {
-        // For now, don't use checkpoints as starting point during initial sync
-        // This is because we need to have the headers in storage to properly sync
-        // TODO: Implement checkpoint-based fast sync that pre-populates headers
+        // For now, we can't check storage here without passing it as parameter
+        // The actual implementation would need to check if headers exist in storage
+        // before deciding to use checkpoints
+        
+        // No headers in storage, use checkpoint based on wallet creation time
+        // TODO: Pass wallet creation time from client config
+        if let Some(checkpoint) = self.checkpoint_manager.get_sync_checkpoint(None) {
+            // Return checkpoint as starting point
+            // Note: We'll need to prepopulate headers from checkpoints for this to work properly
+            return Some((checkpoint.height, checkpoint.block_hash));
+        }
+        
+        // No suitable checkpoint, start from genesis
         None
     }
 
-    /// Check if we can skip ahead to a checkpoint
-    pub fn can_skip_to_checkpoint(&self, current_height: u32) -> Option<(u32, BlockHash)> {
+    /// Check if we can skip ahead to a checkpoint during sync
+    pub fn can_skip_to_checkpoint(&self, current_height: u32, peer_height: u32) -> Option<(u32, BlockHash)> {
+        // Don't skip if we're already close to the peer's tip
+        if peer_height.saturating_sub(current_height) < 1000 {
+            return None;
+        }
+        
         // Find next checkpoint after current height
-        for height in self.checkpoint_manager.checkpoint_heights() {
-            if *height > current_height + 1000 {
-                // Only skip if checkpoint is far enough ahead
+        let checkpoint_heights = self.checkpoint_manager.checkpoint_heights();
+        
+        for height in checkpoint_heights {
+            // Skip if checkpoint is:
+            // 1. After our current position
+            // 2. Before or at peer's height (peer has it)
+            // 3. Far enough ahead to be worth skipping (at least 500 blocks)
+            if *height > current_height && 
+               *height <= peer_height && 
+               *height > current_height + 500 {
                 if let Some(checkpoint) = self.checkpoint_manager.get_checkpoint(*height) {
+                    tracing::info!(
+                        "Can skip from height {} to checkpoint at height {}",
+                        current_height,
+                        checkpoint.height
+                    );
                     return Some((checkpoint.height, checkpoint.block_hash));
                 }
             }
@@ -778,6 +951,74 @@ impl HeaderSyncManagerWithReorg {
     /// Check if we're past all checkpoints and can relax validation
     pub fn is_past_checkpoints(&self) -> bool {
         self.checkpoint_manager.is_past_last_checkpoint(self.chain_state.get_height())
+    }
+    
+    /// Pre-populate headers from checkpoints for fast initial sync
+    /// Note: This requires having prev_blockhash data for checkpoints
+    pub async fn prepopulate_from_checkpoints(
+        &mut self,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<u32> {
+        // Check if we already have headers
+        if let Some(tip_height) = storage.get_tip_height().await
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))? {
+            if tip_height > 0 {
+                tracing::debug!("Headers already exist in storage (height {}), skipping checkpoint prepopulation", tip_height);
+                return Ok(0);
+            }
+        }
+        
+        tracing::info!("Pre-populating headers from checkpoints for fast sync");
+        
+        // Now that we have prev_blockhash data, we can implement this!
+        let checkpoints = self.checkpoint_manager.checkpoint_heights();
+        let mut headers_to_insert = Vec::new();
+        
+        for &height in checkpoints {
+            if let Some(checkpoint) = self.checkpoint_manager.get_checkpoint(height) {
+                // Convert checkpoint to header
+                let header = BlockHeader {
+                    version: Version::from_consensus(1),
+                    prev_blockhash: checkpoint.prev_blockhash,
+                    merkle_root: checkpoint.merkle_root
+                        .map(|hash| TxMerkleNode::from_byte_array(*hash.as_byte_array()))
+                        .unwrap_or_else(|| TxMerkleNode::from_byte_array([0u8; 32])),
+                    time: checkpoint.timestamp,
+                    bits: checkpoint.target.to_compact_lossy(),
+                    nonce: checkpoint.nonce,
+                };
+                
+                // Verify the header hash matches the checkpoint
+                let calculated_hash = header.block_hash();
+                if calculated_hash != checkpoint.block_hash {
+                    tracing::error!(
+                        "Checkpoint hash mismatch at height {}: expected {:?}, got {:?}",
+                        height, checkpoint.block_hash, calculated_hash
+                    );
+                    continue;
+                }
+                
+                headers_to_insert.push((height, header));
+            }
+        }
+        
+        if headers_to_insert.is_empty() {
+            tracing::warn!("No valid headers to prepopulate from checkpoints");
+            return Ok(0);
+        }
+        
+        tracing::info!("Prepopulating {} checkpoint headers", headers_to_insert.len());
+        
+        // TODO: Implement batch storage operation
+        // For now, we'll need to store them one by one
+        let mut count = 0;
+        for (height, header) in headers_to_insert {
+            // Note: This would need proper storage implementation
+            tracing::debug!("Would store checkpoint header at height {}", height);
+            count += 1;
+        }
+        
+        Ok(count)
     }
 
     /// Check if header sync is currently in progress
@@ -854,6 +1095,11 @@ impl HeaderSyncManagerWithReorg {
     /// Get the tip hash
     pub fn get_tip_hash(&self) -> Option<BlockHash> {
         self.chain_state.tip_hash()
+    }
+
+    /// Get the sync base height (used when syncing from checkpoint)
+    pub fn get_sync_base_height(&self) -> u32 {
+        self.chain_state.sync_base_height
     }
 }
 

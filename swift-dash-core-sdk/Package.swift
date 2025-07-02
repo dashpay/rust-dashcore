@@ -36,6 +36,7 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("dash_spv_ffi"),
                 .unsafeFlags([
+                    "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk/Sources/DashSPVFFI",
                     "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk/Examples/DashHDWalletExample",
                     "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk",
                     "-L/Users/quantum/src/rust-dashcore/target/aarch64-apple-ios-sim/release",
@@ -59,6 +60,7 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("key_wallet_ffi"),
                 .unsafeFlags([
+                    "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk/Sources/DashSPVFFI",
                     "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk/Examples/DashHDWalletExample",
                     "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk",
                     "-L/Users/quantum/src/rust-dashcore/target/aarch64-apple-ios-sim/release",

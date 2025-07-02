@@ -27,11 +27,10 @@ async fn main() -> Result<(), SpvError> {
     ];
     
     config.max_peers = 1; // Single peer for testing
-    config.header_batch_size = 100; // Small batch for testing
     config.connection_timeout = Duration::from_secs(30); // Shorter timeout for testing
 
     // Create and start client
-    let client = DashSpvClient::new(config).await?;
+    let mut client = DashSpvClient::new(config).await?;
     
     println!("📡 Starting SPV client...");
     client.start().await?;

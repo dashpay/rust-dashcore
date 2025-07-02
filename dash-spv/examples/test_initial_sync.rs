@@ -11,7 +11,7 @@ use tracing_subscriber;
 async fn main() -> Result<(), SpvError> {
     // Setup logging
     tracing_subscriber::fmt()
-        .with_env_filter("dash_spv=debug")
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
     // Create a temporary directory for this test
@@ -37,39 +37,30 @@ async fn main() -> Result<(), SpvError> {
     tokio::time::sleep(Duration::from_secs(10)).await;
     
     // Check sync progress
-    let progress = client.sync_progress().await;
-    if let Some(p) = progress {
-        println!("📊 Sync progress after 10 seconds:");
-        println!("  - Headers synced: {}", p.header_height);
-        println!("  - Headers synced (bool): {}", p.headers_synced);
-        println!("  - Peer count: {}", p.peer_count);
-    } else {
-        println!("❌ No sync progress available");
-    }
+    let progress = client.sync_progress().await?;
+    println!("📊 Sync progress after 10 seconds:");
+    println!("  - Headers synced: {}", progress.header_height);
+    println!("  - Headers synced (bool): {}", progress.headers_synced);
+    println!("  - Peer count: {}", progress.peer_count);
     
     // Wait a bit more to see if headers2 kicks in after initial sync
     println!("\n⏳ Waiting to see if headers2 is used after initial sync...");
     tokio::time::sleep(Duration::from_secs(10)).await;
     
-    let final_progress = client.sync_progress().await;
+    let final_progress = client.sync_progress().await?;
     
     // Clean up
     client.stop().await?;
     let _ = std::fs::remove_dir_all(data_dir);
     
-    if let Some(p) = final_progress {
-        println!("\n📊 Final sync progress:");
-        println!("  - Headers synced: {}", p.header_height);
-        
-        if p.header_height > 0 {
-            println!("\n✅ Initial sync successful! Synced {} headers", p.header_height);
-            Ok(())
-        } else {
-            println!("\n❌ Initial sync failed - no headers synced");
-            Err(SpvError::Sync(dash_spv::error::SyncError::SyncFailed("No headers synced".to_string())))
-        }
+    println!("\n📊 Final sync progress:");
+    println!("  - Headers synced: {}", final_progress.header_height);
+    
+    if final_progress.header_height > 0 {
+        println!("\n✅ Initial sync successful! Synced {} headers", final_progress.header_height);
+        Ok(())
     } else {
-        println!("\n❌ No sync progress available");
-        Err(SpvError::Sync(dash_spv::error::SyncError::SyncFailed("No sync progress".to_string())))
+        println!("\n❌ Initial sync failed - no headers synced");
+        Err(SpvError::Sync(dash_spv::error::SyncError::Network("No headers synced".to_string())))
     }
 }

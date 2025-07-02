@@ -17,6 +17,7 @@ public enum DashSDKError: LocalizedError {
     case persistenceError(String)
     case invalidArgument(String)
     case unknownError(String)
+    case notImplemented(String)
     
     public var errorDescription: String? {
         switch self {
@@ -54,6 +55,8 @@ public enum DashSDKError: LocalizedError {
             return "Invalid argument: \(message)"
         case .unknownError(let message):
             return "Unknown error: \(message)"
+        case .notImplemented(let message):
+            return "Not implemented: \(message)"
         }
     }
     
@@ -91,6 +94,8 @@ public enum DashSDKError: LocalizedError {
             return "Check the provided arguments"
         case .unknownError:
             return "Try again or contact support"
+        case .notImplemented:
+            return "This feature is temporarily unavailable"
         }
     }
 }

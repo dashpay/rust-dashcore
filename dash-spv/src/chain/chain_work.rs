@@ -92,6 +92,24 @@ impl ChainWork {
     pub fn is_zero(&self) -> bool {
         self.work.iter().all(|&b| b == 0)
     }
+
+    /// Create ChainWork from a hex string
+    pub fn from_hex(hex: &str) -> Result<Self, String> {
+        // Remove 0x prefix if present
+        let hex = hex.strip_prefix("0x").unwrap_or(hex);
+        
+        // Parse hex string to bytes
+        let bytes = hex::decode(hex).map_err(|e| format!("Invalid hex: {}", e))?;
+        
+        if bytes.len() != 32 {
+            return Err(format!("Invalid work length: expected 32 bytes, got {}", bytes.len()));
+        }
+        
+        let mut work = [0u8; 32];
+        work.copy_from_slice(&bytes);
+        
+        Ok(Self { work })
+    }
 }
 
 impl Ord for ChainWork {

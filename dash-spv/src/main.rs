@@ -111,6 +111,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .help("Disable terminal UI status bar")
                 .action(clap::ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("start-height")
+                .long("start-height")
+                .short('s')
+                .help("Start syncing from a specific block height using the nearest checkpoint. Use 'now' for the latest checkpoint")
+                .value_name("HEIGHT"),
+        )
         .get_matches();
 
     // Get log level (will be used after we know if terminal UI is enabled)
@@ -166,6 +173,20 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if matches.get_flag("no-masternodes") {
         config = config.without_masternodes();
+    }
+    
+    // Set start height if specified
+    if let Some(start_height_str) = matches.get_one::<String>("start-height") {
+        if start_height_str == "now" {
+            // Use a very high number to get the latest checkpoint
+            config.start_from_height = Some(u32::MAX);
+            tracing::info!("Will start syncing from the latest available checkpoint");
+        } else {
+            let start_height = start_height_str.parse::<u32>()
+                .expect("Invalid start height");
+            config.start_from_height = Some(start_height);
+            tracing::info!("Will start syncing from height: {}", start_height);
+        }
     }
 
     // Validate configuration

@@ -263,33 +263,26 @@ class WalletService: ObservableObject {
         // This allows the wallet to see all network transactions
         config.mempoolConfig = .fetchAll(maxTransactions: 5000)
         
-        // Using local network for testing - comment out to use public peers
+        // Using active masternode peers
         if wallet.network == .mainnet {
             config.additionalPeers = [
-                "192.168.1.163:9999"  // Local mainnet node
-            ]
-        } else if wallet.network == .testnet {
-            config.additionalPeers = [
-                "192.168.1.163:19999"  // Local testnet node
-            ]
-        }
-        
-        // Original public peers (commented out for testing)
-        /*
-        if wallet.network == .mainnet {
-            config.additionalPeers = [
+                "142.93.154.186:9999",
+                "8.219.251.8:9999",
+                "165.22.30.195:9999",
                 "65.109.114.212:9999",
-                "8.222.135.69:9999",
-                "188.40.180.135:9999"
+                "188.40.21.248:9999",
+                "66.42.58.154:9999"
             ]
         } else if wallet.network == .testnet {
             config.additionalPeers = [
-                "43.229.77.46:19999",
-                "45.77.167.247:19999",
-                "178.62.203.249:19999"
+                "192.168.1.137:19999",
+                "54.149.33.167:19999",
+                "35.90.252.3:19999",
+                "18.237.170.32:19999",
+                "34.220.243.24:19999",
+                "34.214.48.68:19999"
             ]
         }
-        */
         
         print("📡 Initializing DashSDK...")
         // Initialize SDK on MainActor since DashSDK init is marked @MainActor

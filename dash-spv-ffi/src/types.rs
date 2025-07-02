@@ -208,6 +208,10 @@ impl From<ChainState> for FFIChainState {
 
 #[repr(C)]
 pub struct FFISpvStats {
+    pub connected_peers: u32,
+    pub total_peers: u32,
+    pub header_height: u32,
+    pub filter_height: u32,
     pub headers_downloaded: u64,
     pub filter_headers_downloaded: u64,
     pub filters_downloaded: u64,
@@ -221,6 +225,10 @@ pub struct FFISpvStats {
 impl From<SpvStats> for FFISpvStats {
     fn from(stats: SpvStats) -> Self {
         FFISpvStats {
+            connected_peers: stats.connected_peers,
+            total_peers: stats.total_peers,
+            header_height: stats.header_height,
+            filter_height: stats.filter_height,
             headers_downloaded: stats.headers_downloaded,
             filter_headers_downloaded: stats.filter_headers_downloaded,
             filters_downloaded: stats.filters_downloaded,
