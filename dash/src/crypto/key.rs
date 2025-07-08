@@ -43,9 +43,6 @@ pub enum Error {
     Base58(base58::Error),
     /// secp256k1-related error
     Secp256k1(secp256k1::Error),
-    /// bls signatures related error
-    #[cfg(feature = "bls-signatures")]
-    BLSError(String),
     /// edwards 25519 related error
     #[cfg(feature = "ed25519-dalek")]
     Ed25519Dalek(String),
@@ -72,8 +69,6 @@ impl fmt::Display for Error {
             Error::NotSupported(string) => {
                 write!(f, "{}", string.as_str())
             }
-            #[cfg(feature = "bls-signatures")]
-            Error::BLSError(string) => write!(f, "{}", string.as_str()),
             #[cfg(feature = "ed25519-dalek")]
             Error::Ed25519Dalek(string) => write!(f, "{}", string.as_str()),
         }
@@ -91,8 +86,6 @@ impl std::error::Error for Error {
             Hex(e) => Some(e),
             InvalidKeyPrefix(_) | InvalidHexLength(_) => None,
             NotSupported(_) => None,
-            #[cfg(feature = "bls-signatures")]
-            BLSError(_) => None,
             #[cfg(feature = "ed25519-dalek")]
             Ed25519Dalek(_) => None,
         }

@@ -8,5 +8,8 @@ version = "0.39.6"
 [patch.crates-io.dashcore_hashes]
 path = "hashes"
 
+[patch.crates-io]
+blsful = { git = "https://github.com/dashpay/agora-blsful", rev = "5f017aa1a0452ebc73e47f219f50c906522df4ea" }
+
 
 
