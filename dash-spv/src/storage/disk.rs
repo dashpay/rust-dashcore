@@ -1005,6 +1005,12 @@ impl StorageManager for DiskStorageManager {
         self
     }
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
+        // Early return if no headers to store
+        if headers.is_empty() {
+            tracing::trace!("DiskStorage: no headers to store");
+            return Ok(());
+        }
+        
         // Acquire write locks for the entire operation to prevent race conditions
         let mut cached_tip = self.cached_tip_height.write().await;
         let mut reverse_index = self.header_hash_index.write().await;
@@ -1064,9 +1070,16 @@ impl StorageManager for DiskStorageManager {
         }
 
         // Update cached tip height atomically with reverse index
-        *cached_tip = Some(next_height - 1);
+        // Only update if we actually stored headers
+        if !headers.is_empty() {
+            *cached_tip = Some(next_height - 1);
+        }
 
-        let final_height = next_height - 1;
+        let final_height = if next_height > 0 {
+            next_height - 1
+        } else {
+            0  // No headers were stored
+        };
 
         // Use appropriate log level based on batch size
         match headers.len() {

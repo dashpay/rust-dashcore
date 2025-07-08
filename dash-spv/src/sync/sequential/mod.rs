@@ -257,6 +257,14 @@ impl SequentialSyncManager {
                 ..
             } => {
                 tracing::info!("📥 Starting filter header download phase");
+                
+                // Get sync base height from header sync
+                let sync_base_height = self.header_sync.get_sync_base_height();
+                if sync_base_height > 0 {
+                    tracing::info!("Setting filter sync base height to {} for checkpoint sync", sync_base_height);
+                    self.filter_sync.set_sync_base_height(sync_base_height);
+                }
+                
                 self.filter_sync.start_sync_headers(network, storage).await?;
             }
 
@@ -266,11 +274,19 @@ impl SequentialSyncManager {
                 tracing::info!("📥 Starting filter download phase");
 
                 // Get the range of filters to download
-                let filter_header_tip = storage
+                let filter_header_tip_storage = storage
                     .get_filter_tip_height()
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?
                     .unwrap_or(0);
+                
+                // Convert storage height to blockchain height for checkpoint sync
+                let sync_base_height = self.header_sync.get_sync_base_height();
+                let filter_header_tip = if sync_base_height > 0 && filter_header_tip_storage > 0 {
+                    sync_base_height + filter_header_tip_storage
+                } else {
+                    filter_header_tip_storage
+                };
 
                 if filter_header_tip > 0 {
                     // Download filters for recent blocks by default

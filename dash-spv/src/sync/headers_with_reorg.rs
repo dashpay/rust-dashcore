@@ -124,10 +124,15 @@ impl HeaderSyncManagerWithReorg {
 
         let Some(tip_height) = tip_height else {
             tracing::debug!("No headers found in storage");
+            // If we're syncing from a checkpoint, this is expected
+            if self.chain_state.synced_from_checkpoint && self.chain_state.sync_base_height > 0 {
+                tracing::info!("No headers in storage for checkpoint sync - this is expected");
+                return Ok(0);
+            }
             return Ok(0);
         };
 
-        if tip_height == 0 {
+        if tip_height == 0 && !self.chain_state.synced_from_checkpoint {
             tracing::debug!("Only genesis block in storage");
             return Ok(0);
         }
@@ -138,22 +143,32 @@ impl HeaderSyncManagerWithReorg {
         // Load headers in batches
         const BATCH_SIZE: u32 = 10_000;
         let mut loaded_count = 0u32;
-        let mut current_height = 1u32; // Start from 1 (genesis already in chain state)
+        
+        // When syncing from a checkpoint, we need to handle storage differently
+        // Storage indices start at 0, but represent blockchain heights starting from sync_base_height
+        let mut current_storage_index = if self.chain_state.synced_from_checkpoint && self.chain_state.sync_base_height > 0 {
+            // For checkpoint sync, start from index 0 in storage
+            // (which represents blockchain height sync_base_height)
+            0u32
+        } else {
+            // For normal sync from genesis, start from 1 (genesis already in chain state)
+            1u32
+        };
 
-        while current_height <= tip_height {
-            let end_height = (current_height + BATCH_SIZE - 1).min(tip_height);
+        while current_storage_index <= tip_height {
+            let end_storage_index = (current_storage_index + BATCH_SIZE - 1).min(tip_height);
 
             // Load batch from storage
             let headers = storage
-                .load_headers(current_height..end_height + 1)
+                .load_headers(current_storage_index..end_storage_index + 1)
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to load headers: {}", e)))?;
 
             if headers.is_empty() {
                 return Err(SyncError::Storage(format!(
                     "No headers found for range {}..{}",
-                    current_height,
-                    end_height + 1
+                    current_storage_index,
+                    end_storage_index + 1
                 )));
             }
 
@@ -175,10 +190,16 @@ impl HeaderSyncManagerWithReorg {
                 );
             }
 
-            current_height = end_height + 1;
+            current_storage_index = end_storage_index + 1;
         }
 
-        self.total_headers_synced = tip_height;
+        // Update total headers synced based on checkpoint status
+        if self.chain_state.synced_from_checkpoint && self.chain_state.sync_base_height > 0 {
+            // For checkpoint sync, the total includes the sync base height
+            self.total_headers_synced = self.chain_state.sync_base_height + tip_height;
+        } else {
+            self.total_headers_synced = tip_height;
+        }
 
         let elapsed = start_time.elapsed();
         tracing::info!(
@@ -489,8 +510,22 @@ impl HeaderSyncManagerWithReorg {
     ) -> SyncResult<()> {
         let block_locator = match base_hash {
             Some(hash) => {
-                // Check if this is genesis and we're using headers2
-                if network.has_headers2_peer().await && !self.headers2_failed {
+                // When syncing from a checkpoint, we need to create a proper locator
+                // that helps the peer understand we want headers AFTER this point
+                if self.chain_state.synced_from_checkpoint && self.chain_state.sync_base_height > 0 {
+                    // For checkpoint sync, include the checkpoint hash and genesis
+                    // This tells the peer we have the checkpoint block and want headers after it
+                    let genesis_hash = self.config.network.known_genesis_block_hash()
+                        .unwrap_or(BlockHash::from_byte_array([0; 32]));
+                    tracing::info!(
+                        "📍 Using checkpoint locator for height {}: [{}, genesis ({})]",
+                        self.chain_state.sync_base_height,
+                        hash,
+                        genesis_hash
+                    );
+                    vec![hash, genesis_hash]
+                } else if network.has_headers2_peer().await && !self.headers2_failed {
+                    // Check if this is genesis and we're using headers2
                     let genesis_hash = self.config.network.known_genesis_block_hash();
                     if genesis_hash == Some(hash) {
                         tracing::info!("📍 Using empty locator for headers2 genesis sync");
@@ -874,16 +909,43 @@ impl HeaderSyncManagerWithReorg {
                 .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?;
 
             let recovery_base_hash = match current_tip_height {
-                None => None, // Genesis
+                None => {
+                    // No headers in storage - check if we're syncing from a checkpoint
+                    if self.chain_state.synced_from_checkpoint && self.chain_state.sync_base_height > 0 {
+                        // Use the checkpoint hash from chain state
+                        if !self.chain_state.headers.is_empty() {
+                            let checkpoint_hash = self.chain_state.headers[0].block_hash();
+                            tracing::info!(
+                                "Using checkpoint hash for recovery: {} (chain state has {} headers, first header time: {})",
+                                checkpoint_hash,
+                                self.chain_state.headers.len(),
+                                self.chain_state.headers[0].time
+                            );
+                            Some(checkpoint_hash)
+                        } else {
+                            tracing::warn!("No checkpoint header in chain state for recovery");
+                            None
+                        }
+                    } else {
+                        None // Genesis
+                    }
+                },
                 Some(height) => {
+                    // When syncing from checkpoint, adjust the storage height
+                    let storage_height = if self.chain_state.synced_from_checkpoint {
+                        height  // height is already the storage index
+                    } else {
+                        height
+                    };
+                    
                     // Get the current tip hash
                     storage
-                        .get_header(height)
+                        .get_header(storage_height)
                         .await
                         .map_err(|e| {
                             SyncError::Storage(format!(
-                                "Failed to get tip header for recovery: {}",
-                                e
+                                "Failed to get tip header for recovery at height {}: {}",
+                                storage_height, e
                             ))
                         })?
                         .map(|h| h.block_hash())
