@@ -480,3 +480,54 @@ pub unsafe extern "C" fn dash_spv_ffi_unconfirmed_transaction_destroy(
     }
 }
 
+/// FFI-safe representation of quorum information
+#[repr(C)]
+pub struct FFIQuorumInfo {
+    pub quorum_hash: FFIString,
+    pub quorum_type: u8,
+    pub member_count: u32,
+    pub threshold: u32,
+    pub is_verified: bool,
+    pub block_height: u32,
+    pub verification_vector_hash: FFIString,
+}
+
+/// FFI-safe representation of masternode information
+#[repr(C)]
+pub struct FFIMasternodeInfo {
+    pub pro_tx_hash: FFIString,
+    pub service_address: FFIString,
+    pub is_valid: bool,
+    pub masternode_type: u8,
+    pub platform_node_id: FFIString,
+}
+
+/// Destroys an FFIQuorumInfo and all its associated resources
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_quorum_info_destroy(quorum_info: *mut FFIQuorumInfo) {
+    if !quorum_info.is_null() {
+        let quorum_info = Box::from_raw(quorum_info);
+        
+        // Destroy the FFIStrings
+        dash_spv_ffi_string_destroy(quorum_info.quorum_hash);
+        dash_spv_ffi_string_destroy(quorum_info.verification_vector_hash);
+        
+        // The Box will be dropped here, freeing the FFIQuorumInfo itself
+    }
+}
+
+/// Destroys an FFIMasternodeInfo and all its associated resources
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_masternode_info_destroy(masternode_info: *mut FFIMasternodeInfo) {
+    if !masternode_info.is_null() {
+        let masternode_info = Box::from_raw(masternode_info);
+        
+        // Destroy the FFIStrings
+        dash_spv_ffi_string_destroy(masternode_info.pro_tx_hash);
+        dash_spv_ffi_string_destroy(masternode_info.service_address);
+        dash_spv_ffi_string_destroy(masternode_info.platform_node_id);
+        
+        // The Box will be dropped here, freeing the FFIMasternodeInfo itself
+    }
+}
+

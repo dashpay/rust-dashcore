@@ -40,21 +40,38 @@ impl TransitionManager {
             // From DownloadingHeaders, check completion
             (SyncPhase::DownloadingHeaders { .. }, next_phase) => {
                 // Headers must be complete
-                if !self.are_headers_complete(current_phase, storage).await? {
+                let headers_complete = self.are_headers_complete(current_phase, storage).await?;
+                if !headers_complete {
+                    tracing::debug!("Cannot transition from DownloadingHeaders: headers not complete");
                     return Ok(false);
                 }
 
                 // Can go to MnList if enabled, or skip to CFHeaders
-                match next_phase {
-                    SyncPhase::DownloadingMnList { .. } => Ok(self.config.enable_masternodes),
+                let result = match next_phase {
+                    SyncPhase::DownloadingMnList { .. } => {
+                        let can_transition = self.config.enable_masternodes;
+                        tracing::debug!("Transition to DownloadingMnList: enable_masternodes={}, can_transition={}", 
+                                       self.config.enable_masternodes, can_transition);
+                        Ok(can_transition)
+                    }
                     SyncPhase::DownloadingCFHeaders { .. } => {
-                        Ok(!self.config.enable_masternodes && self.config.enable_filters)
+                        let can_transition = !self.config.enable_masternodes && self.config.enable_filters;
+                        tracing::debug!("Transition to DownloadingCFHeaders: enable_masternodes={}, enable_filters={}, can_transition={}", 
+                                       self.config.enable_masternodes, self.config.enable_filters, can_transition);
+                        Ok(can_transition)
                     }
                     SyncPhase::FullySynced { .. } => {
-                        Ok(!self.config.enable_masternodes && !self.config.enable_filters)
+                        let can_transition = !self.config.enable_masternodes && !self.config.enable_filters;
+                        tracing::debug!("Transition to FullySynced: enable_masternodes={}, enable_filters={}, can_transition={}", 
+                                       self.config.enable_masternodes, self.config.enable_filters, can_transition);
+                        Ok(can_transition)
                     }
-                    _ => Ok(false),
-                }
+                    _ => {
+                        tracing::debug!("Invalid transition target from DownloadingHeaders: {}", next_phase.name());
+                        Ok(false)
+                    }
+                };
+                result
             }
 
             // From DownloadingMnList
@@ -143,6 +160,9 @@ impl TransitionManager {
             }
 
             SyncPhase::DownloadingHeaders { .. } => {
+                tracing::debug!("get_next_phase from DownloadingHeaders: enable_masternodes={}, enable_filters={}", 
+                              self.config.enable_masternodes, self.config.enable_filters);
+                
                 if self.config.enable_masternodes {
                     let header_tip = storage
                         .get_tip_height()
@@ -157,6 +177,9 @@ impl TransitionManager {
                         _ => 0,
                     };
 
+                    tracing::debug!("Creating DownloadingMnList phase: header_tip={}, mn_height={}", 
+                                   header_tip, mn_height);
+
                     Ok(Some(SyncPhase::DownloadingMnList {
                         start_time: Instant::now(),
                         start_height: mn_height,
@@ -166,8 +189,10 @@ impl TransitionManager {
                         diffs_processed: 0,
                     }))
                 } else if self.config.enable_filters {
+                    tracing::debug!("Creating DownloadingCFHeaders phase (masternodes disabled)");
                     self.create_cfheaders_phase(storage).await
                 } else {
+                    tracing::debug!("Creating FullySynced phase (both masternodes and filters disabled)");
                     self.create_fully_synced_phase(storage).await
                 }
             }
@@ -248,11 +273,18 @@ impl TransitionManager {
     ) -> SyncResult<bool> {
         if let SyncPhase::DownloadingHeaders {
             received_empty_response,
+            current_height,
+            target_height,
             ..
         } = phase
         {
             // Headers are complete when we receive an empty response
-            Ok(*received_empty_response)
+            let complete = *received_empty_response;
+            tracing::debug!(
+                "Headers completion check: received_empty_response={}, current_height={}, target_height={:?}, complete={}",
+                received_empty_response, current_height, target_height, complete
+            );
+            Ok(complete)
         } else {
             Ok(false)
         }

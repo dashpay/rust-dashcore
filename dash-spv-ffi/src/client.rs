@@ -1,7 +1,7 @@
 use crate::{
     null_check, set_last_error, FFIArray, FFIBalance, FFIClientConfig, FFIDetailedSyncProgress,
-    FFIErrorCode, FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFISyncProgress, 
-    FFITransaction, FFIUtxo, FFIWatchItem,
+    FFIErrorCode, FFIEventCallbacks, FFIMempoolStrategy, FFIQuorumInfo, FFIMasternodeInfo,
+    FFISpvStats, FFISyncProgress, FFITransaction, FFIUtxo, FFIWatchItem,
 };
 use dash_spv::types::SyncStage;
 use dash_spv::DashSpvClient;
@@ -1722,5 +1722,472 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_mempool_balance(
             set_last_error(&e.to_string());
             std::ptr::null_mut()
         }
+    }
+}
+
+/// Get quorum information for a specific type
+/// Returns an FFIArray of FFIQuorumInfo structures
+/// 
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `quorum_type` - Type of quorum (1=ChainLock, 2=InstantSend, etc.)
+/// 
+/// # Returns
+/// FFIArray containing FFIQuorumInfo structures, or empty array on error
+/// The caller is responsible for freeing the returned array and its contents
+#[no_mangle]
+pub extern "C" fn dash_spv_ffi_client_get_quorums(
+    client: *const FFIDashSpvClient,
+    quorum_type: u8,
+) -> FFIArray {
+    null_check!(client, FFIArray::new(Vec::<u8>::new()));
+
+    let ffi_client = unsafe { &*client };
+    let runtime = &ffi_client.runtime;
+
+    let result = runtime.block_on(async {
+        // Add timeout to prevent hanging - 30 seconds should be sufficient
+        let timeout_duration = std::time::Duration::from_secs(30);
+        
+        match tokio::time::timeout(timeout_duration, async {
+            let client_guard = ffi_client.inner.lock().unwrap();
+            if let Some(spv_client) = &*client_guard {
+                spv_client.get_quorums_for_type(quorum_type).await
+            } else {
+                Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                    "Client not initialized".to_string(),
+                )))
+            }
+        }).await {
+            Ok(result) => result,
+            Err(_) => {
+                Err(dash_spv::SpvError::Config(
+                    "Timeout: Quorum retrieval took too long (>30s)".to_string()
+                ))
+            }
+        }
+    });
+
+    match result {
+        Ok(quorums) => {
+            let ffi_quorums: Vec<FFIQuorumInfo> = quorums.into_iter().map(|quorum| {
+                FFIQuorumInfo {
+                    quorum_hash: FFIString::new(&quorum.quorum_hash),
+                    quorum_type: quorum.quorum_type,
+                    member_count: quorum.member_count,
+                    threshold: quorum.threshold,
+                    is_verified: quorum.is_verified,
+                    block_height: quorum.block_height,
+                    verification_vector_hash: FFIString::new(&quorum.verification_vector_hash),
+                }
+            }).collect();
+            FFIArray::new(ffi_quorums)
+        }
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIArray::new(Vec::<u8>::new())
+        }
+    }
+}
+
+/// Get all active masternodes
+/// Returns an FFIArray of FFIMasternodeInfo structures
+/// 
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// 
+/// # Returns
+/// FFIArray containing FFIMasternodeInfo structures, or empty array on error
+/// The caller is responsible for freeing the returned array and its contents
+#[no_mangle]
+pub extern "C" fn dash_spv_ffi_client_get_masternodes(
+    client: *const FFIDashSpvClient,
+) -> FFIArray {
+    null_check!(client, FFIArray::new(Vec::<u8>::new()));
+
+    let ffi_client = unsafe { &*client };
+    let runtime = &ffi_client.runtime;
+
+    let result = runtime.block_on(async {
+        // Add timeout to prevent hanging - 30 seconds should be sufficient
+        let timeout_duration = std::time::Duration::from_secs(30);
+        
+        match tokio::time::timeout(timeout_duration, async {
+            let client_guard = ffi_client.inner.lock().unwrap();
+            if let Some(spv_client) = &*client_guard {
+                spv_client.get_masternodes().await
+            } else {
+                Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                    "Client not initialized".to_string(),
+                )))
+            }
+        }).await {
+            Ok(result) => result,
+            Err(_) => {
+                Err(dash_spv::SpvError::Config(
+                    "Timeout: Masternode retrieval took too long (>30s)".to_string()
+                ))
+            }
+        }
+    });
+
+    match result {
+        Ok(masternodes) => {
+            let ffi_masternodes: Vec<FFIMasternodeInfo> = masternodes.into_iter().map(|mn| {
+                FFIMasternodeInfo {
+                    pro_tx_hash: FFIString::new(&mn.pro_tx_hash),
+                    service_address: FFIString::new(&mn.service_address),
+                    is_valid: mn.is_valid,
+                    masternode_type: mn.masternode_type,
+                    platform_node_id: FFIString::new(&mn.platform_node_id),
+                }
+            }).collect();
+            FFIArray::new(ffi_masternodes)
+        }
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIArray::new(Vec::<u8>::new())
+        }
+    }
+}
+
+/// Get a specific quorum by hash
+/// Returns a pointer to FFIQuorumInfo or null if not found
+/// 
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `quorum_hash` - Hex string of the quorum hash
+/// 
+/// # Returns
+/// Pointer to FFIQuorumInfo or null if not found
+/// The caller is responsible for freeing the returned structure
+#[no_mangle]
+pub extern "C" fn dash_spv_ffi_client_get_quorum_by_hash(
+    client: *const FFIDashSpvClient,
+    quorum_hash: *const c_char,
+) -> *mut FFIQuorumInfo {
+    null_check!(client, std::ptr::null_mut());
+    null_check!(quorum_hash, std::ptr::null_mut());
+
+    let hash_str = match unsafe { CStr::from_ptr(quorum_hash) }.to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in quorum hash: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let ffi_client = unsafe { &*client };
+    let runtime = &ffi_client.runtime;
+
+    let result = runtime.block_on(async {
+        // Add timeout to prevent hanging - 30 seconds should be sufficient
+        let timeout_duration = std::time::Duration::from_secs(30);
+        
+        match tokio::time::timeout(timeout_duration, async {
+            let client_guard = ffi_client.inner.lock().unwrap();
+            if let Some(spv_client) = &*client_guard {
+                spv_client.get_quorum_by_hash(hash_str).await
+            } else {
+                Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                    "Client not initialized".to_string(),
+                )))
+            }
+        }).await {
+            Ok(result) => result,
+            Err(_) => {
+                Err(dash_spv::SpvError::Config(
+                    "Timeout: Quorum lookup took too long (>30s)".to_string()
+                ))
+            }
+        }
+    });
+
+    match result {
+        Ok(Some(quorum)) => {
+            let ffi_quorum = FFIQuorumInfo {
+                quorum_hash: FFIString::new(&quorum.quorum_hash),
+                quorum_type: quorum.quorum_type,
+                member_count: quorum.member_count,
+                threshold: quorum.threshold,
+                is_verified: quorum.is_verified,
+                block_height: quorum.block_height,
+                verification_vector_hash: FFIString::new(&quorum.verification_vector_hash),
+            };
+            Box::into_raw(Box::new(ffi_quorum))
+        }
+        Ok(None) => {
+            set_last_error("Quorum not found");
+            std::ptr::null_mut()
+        }
+        Err(e) => {
+            set_last_error(&e.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Get a quorum public key synchronously for Platform queries.
+/// This method avoids async/sync deadlocks by using a synchronous cache.
+/// 
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `quorum_type` - Type of quorum (1=InstantSend, 2=ChainLock, etc.)
+/// * `quorum_hash` - 32-byte quorum hash
+/// * `public_key_out` - Output buffer for 48-byte compressed BLS public key
+/// 
+/// # Returns
+/// 1 if found and copied to output buffer, 0 if not found
+/// 
+/// # Safety
+/// The caller must ensure `public_key_out` points to a valid 48-byte buffer
+#[no_mangle]
+pub extern "C" fn dash_spv_ffi_client_get_quorum_public_key_sync(
+    client: *const FFIDashSpvClient,
+    quorum_type: u8,
+    quorum_hash: *const u8,
+    public_key_out: *mut u8,
+) -> i32 {
+    null_check!(client, 0);
+    null_check!(quorum_hash, 0);
+    null_check!(public_key_out, 0);
+
+    let ffi_client = unsafe { &*client };
+
+    // Convert quorum hash to array
+    let hash_array = unsafe {
+        let mut array = [0u8; 32];
+        std::ptr::copy_nonoverlapping(quorum_hash, array.as_mut_ptr(), 32);
+        array
+    };
+
+    // Access the SPV client
+    let client_guard = match ffi_client.inner.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_last_error("Failed to acquire client lock");
+            return 0;
+        }
+    };
+
+    if let Some(spv_client) = &*client_guard {
+        // Get the quorum public key synchronously
+        if let Some(public_key) = spv_client.get_quorum_public_key_sync(quorum_type, hash_array) {
+            // Copy to output buffer
+            unsafe {
+                std::ptr::copy_nonoverlapping(public_key.as_ptr(), public_key_out, 48);
+            }
+            return 1; // Success
+        } else {
+            set_last_error("Quorum public key not found");
+            return 0;
+        }
+    } else {
+        set_last_error("Client not initialized");
+        return 0;
+    }
+}
+
+/// Get a quorum public key from a specific block height synchronously.
+/// 
+/// This function retrieves quorum public keys from historical masternode data
+/// at a specific block height. This is useful when Platform proofs reference
+/// quorums from specific historical blocks.
+/// 
+/// # Arguments
+/// * `client` - Pointer to the FFI client instance
+/// * `quorum_type` - Type of quorum (1=InstantSend, 2=ChainLock, etc.)
+/// * `quorum_hash` - Pointer to 32-byte quorum hash
+/// * `height` - Specific block height to search
+/// * `public_key_out` - Pointer to 48-byte buffer for the public key
+/// 
+/// # Returns
+/// 1 if quorum found and public key written to buffer, 0 otherwise
+/// 
+/// # Safety
+/// - `client` must be a valid pointer to an initialized FFIDashSpvClient
+/// - `quorum_hash` must point to a valid 32-byte buffer
+/// - `public_key_out` must point to a valid 48-byte buffer
+#[no_mangle]
+pub extern "C" fn dash_spv_ffi_client_get_quorum_public_key_at_height_sync(
+    client: *const FFIDashSpvClient,
+    quorum_type: u8,
+    quorum_hash: *const u8,
+    height: u32,
+    public_key_out: *mut u8,
+) -> i32 {
+    if client.is_null() || quorum_hash.is_null() || public_key_out.is_null() {
+        set_last_error("Invalid null pointer provided");
+        return 0;
+    }
+
+    let client = unsafe { &*client };
+    
+    if let Some(ref spv_client) = *client.inner.lock().unwrap() {
+        // Copy quorum hash from C buffer
+        let hash_slice = unsafe { std::slice::from_raw_parts(quorum_hash, 32) };
+        let mut quorum_hash_array = [0u8; 32];
+        quorum_hash_array.copy_from_slice(hash_slice);
+        
+        // Get quorum public key from specific height
+        match spv_client.get_quorum_public_key_at_height_sync(quorum_type, quorum_hash_array, height) {
+            Some(public_key) => {
+                // Copy the 48-byte public key to the output buffer
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        public_key.as_ptr(),
+                        public_key_out,
+                        48
+                    );
+                }
+                return 1;
+            }
+            None => {
+                set_last_error(&format!("Quorum not found at height {}: type={}, hash={:02x?}", 
+                                      height, quorum_type, &quorum_hash_array[..8]));
+                return 0;
+            }
+        }
+    } else {
+        set_last_error("Client not initialized");
+        return 0;
+    }
+}
+
+/// Get all available heights with masternode data.
+/// 
+/// This function returns the block heights for which the client has
+/// masternode and quorum data available.
+/// 
+/// # Arguments
+/// * `client` - Pointer to the FFI client instance
+/// * `heights_out` - Pointer to buffer for height array (will be allocated)
+/// * `count_out` - Pointer to store the number of heights
+/// 
+/// # Returns
+/// 1 if successful, 0 otherwise
+/// 
+/// # Safety
+/// - `client` must be a valid pointer to an initialized FFIDashSpvClient
+/// - `heights_out` must be a valid pointer to a u32 pointer
+/// - `count_out` must be a valid pointer to a usize
+/// - Caller must call `dash_spv_ffi_heights_destroy` to free the returned array
+#[no_mangle]
+pub extern "C" fn dash_spv_ffi_client_get_available_masternode_heights(
+    client: *const FFIDashSpvClient,
+    heights_out: *mut *mut u32,
+    count_out: *mut usize,
+) -> i32 {
+    if client.is_null() || heights_out.is_null() || count_out.is_null() {
+        set_last_error("Invalid null pointer provided");
+        return 0;
+    }
+
+    let client = unsafe { &*client };
+    
+    if let Some(ref spv_client) = *client.inner.lock().unwrap() {
+        let heights = spv_client.get_available_masternode_heights();
+        let count = heights.len();
+        
+        if count == 0 {
+            unsafe {
+                *heights_out = std::ptr::null_mut();
+                *count_out = 0;
+            }
+            return 1;
+        }
+        
+        // Allocate memory for the heights array
+        let heights_ptr = unsafe {
+            libc::malloc(count * std::mem::size_of::<u32>()) as *mut u32
+        };
+        
+        if heights_ptr.is_null() {
+            set_last_error("Failed to allocate memory for heights array");
+            return 0;
+        }
+        
+        // Copy heights to the allocated array
+        unsafe {
+            for (i, &height) in heights.iter().enumerate() {
+                *heights_ptr.add(i) = height;
+            }
+            *heights_out = heights_ptr;
+            *count_out = count;
+        }
+        
+        return 1;
+    } else {
+        set_last_error("Client not initialized");
+        return 0;
+    }
+}
+
+/// Free the heights array returned by `dash_spv_ffi_client_get_available_masternode_heights`.
+/// 
+/// # Arguments
+/// * `heights` - Pointer to the heights array to free
+/// 
+/// # Safety
+/// - `heights` must be a pointer returned by `dash_spv_ffi_client_get_available_masternode_heights`
+/// - Must not be called more than once on the same pointer
+#[no_mangle]
+pub extern "C" fn dash_spv_ffi_heights_destroy(heights: *mut u32) {
+    if !heights.is_null() {
+        unsafe {
+            libc::free(heights as *mut libc::c_void);
+        }
+    }
+}
+
+/// Get synchronous quorum cache statistics.
+/// Returns information about the cached quorum data.
+/// 
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `total_quorums_out` - Output for total number of cached quorums
+/// * `current_height_out` - Output for current height of cached data
+/// * `last_updated_out` - Output for timestamp of last cache update
+/// 
+/// # Returns
+/// 1 if successful, 0 if failed
+#[no_mangle]
+pub extern "C" fn dash_spv_ffi_client_get_sync_cache_stats(
+    client: *const FFIDashSpvClient,
+    total_quorums_out: *mut u32,
+    current_height_out: *mut u32,
+    last_updated_out: *mut u64,
+) -> i32 {
+    null_check!(client, 0);
+    null_check!(total_quorums_out, 0);
+    null_check!(current_height_out, 0);
+    null_check!(last_updated_out, 0);
+
+    let ffi_client = unsafe { &*client };
+
+    // Access the SPV client
+    let client_guard = match ffi_client.inner.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_last_error("Failed to acquire client lock");
+            return 0;
+        }
+    };
+
+    if let Some(spv_client) = &*client_guard {
+        if let Some(stats) = spv_client.get_sync_quorum_cache_stats() {
+            unsafe {
+                *total_quorums_out = stats.total_quorums as u32;
+                *current_height_out = stats.current_height;
+                *last_updated_out = stats.last_updated;
+            }
+            return 1; // Success
+        } else {
+            set_last_error("Failed to get cache stats");
+            return 0;
+        }
+    } else {
+        set_last_error("Client not initialized");
+        return 0;
     }
 }

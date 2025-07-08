@@ -108,6 +108,9 @@ pub enum ValidationError {
     #[error("Masternode verification failed: {0}")]
     MasternodeVerification(String),
 
+    #[error("Invalid quorum hash: {0}")]
+    InvalidQuorumHash(String),
+
     #[error("Storage error: {0}")]
     StorageError(#[from] StorageError),
 }

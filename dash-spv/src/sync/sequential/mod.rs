@@ -270,6 +270,11 @@ impl SequentialSyncManager {
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
+        tracing::debug!(
+            "SequentialSyncManager handling {:?} message in phase: {}", 
+            std::mem::discriminant(&message),
+            self.current_phase.name()
+        );
         // Special handling for blocks - they can arrive at any time due to filter matches
         if let NetworkMessage::Block(block) = message {
             // Always handle blocks when they arrive, regardless of phase
@@ -304,6 +309,14 @@ impl SequentialSyncManager {
             (SyncPhase::DownloadingHeaders { .. }, NetworkMessage::Headers(headers)) => {
                 self.handle_headers_message(headers, network, storage).await?;
             }
+            
+            (SyncPhase::DownloadingHeaders { .. }, NetworkMessage::Headers2(headers2)) => {
+                // Headers2 messages should not be expected during header download phase
+                // because we're not requesting them (we use GetHeaders, not GetHeaders2)
+                tracing::warn!("📋 Unexpected Headers2 message with {} compressed headers during header download", headers2.headers.len());
+                tracing::warn!("This suggests the peer is sending Headers2 in response to GetHeaders, which is non-standard");
+                // Skip processing for now
+            }
 
             (SyncPhase::DownloadingMnList { .. }, NetworkMessage::MnListDiff(diff)) => {
                 self.handle_mnlistdiff_message(diff, network, storage).await?;
@@ -320,6 +333,13 @@ impl SequentialSyncManager {
             // Handle headers when fully synced (from new block announcements)
             (SyncPhase::FullySynced { .. }, NetworkMessage::Headers(headers)) => {
                 self.handle_new_headers(headers, network, storage).await?;
+            }
+            
+            // Handle headers2 when fully synced (from new block announcements)
+            (SyncPhase::FullySynced { .. }, NetworkMessage::Headers2(headers2)) => {
+                tracing::info!("📋 Processing Headers2 message (post-sync) with {} compressed headers", headers2.headers.len());
+                tracing::warn!("⚠️ Headers2 decompression not yet implemented for post-sync");
+                // TODO: Implement Headers2 decompression for new block announcements
             }
             
             // Handle filter headers when fully synced
@@ -526,6 +546,18 @@ impl SequentialSyncManager {
     pub fn masternode_list_engine(&self) -> Option<&dashcore::sml::masternode_list_engine::MasternodeListEngine> {
         self.masternode_sync.engine()
     }
+    
+    /// Get a mutable reference to the masternode sync manager.
+    /// This allows callers to configure the masternode sync manager (e.g., set callbacks).
+    pub fn masternode_sync_manager_mut(&mut self) -> &mut MasternodeSyncManager {
+        &mut self.masternode_sync
+    }
+
+    /// Get a reference to the masternode sync manager.
+    /// This allows callers to query historical quorum data.
+    pub fn masternode_sync_manager(&self) -> &MasternodeSyncManager {
+        &self.masternode_sync
+    }
 
     // Private helper methods
 
@@ -533,12 +565,14 @@ impl SequentialSyncManager {
     fn is_message_expected_in_phase(&self, message: &NetworkMessage) -> bool {
         match (&self.current_phase, message) {
             (SyncPhase::DownloadingHeaders { .. }, NetworkMessage::Headers(_)) => true,
+            (SyncPhase::DownloadingHeaders { .. }, NetworkMessage::Headers2(_)) => true, // Support compressed headers
             (SyncPhase::DownloadingMnList { .. }, NetworkMessage::MnListDiff(_)) => true,
             (SyncPhase::DownloadingCFHeaders { .. }, NetworkMessage::CFHeaders(_)) => true,
             (SyncPhase::DownloadingFilters { .. }, NetworkMessage::CFilter(_)) => true,
             (SyncPhase::DownloadingBlocks { .. }, NetworkMessage::Block(_)) => true,
             // During FullySynced phase, we need to accept sync maintenance messages
             (SyncPhase::FullySynced { .. }, NetworkMessage::Headers(_)) => true,
+            (SyncPhase::FullySynced { .. }, NetworkMessage::Headers2(_)) => true, // Support compressed headers
             (SyncPhase::FullySynced { .. }, NetworkMessage::CFHeaders(_)) => true,
             (SyncPhase::FullySynced { .. }, NetworkMessage::CFilter(_)) => true,
             (SyncPhase::FullySynced { .. }, NetworkMessage::MnListDiff(_)) => true,
@@ -552,6 +586,9 @@ impl SequentialSyncManager {
         storage: &mut dyn StorageManager,
         reason: &str,
     ) -> SyncResult<()> {
+        tracing::debug!("transition_to_next_phase called from {}, reason: {}", 
+                       self.current_phase.name(), reason);
+        
         // Get the next phase
         let next_phase = self
             .transition_manager
@@ -559,17 +596,26 @@ impl SequentialSyncManager {
             .await?;
 
         if let Some(next) = next_phase {
+            tracing::debug!("Attempting transition from {} to {}", 
+                           self.current_phase.name(), next.name());
+            
             // Check if transition is allowed
-            if !self
+            let can_transition = self
                 .transition_manager
                 .can_transition_to(&self.current_phase, &next, storage)
-                .await?
-            {
+                .await?;
+                
+            if !can_transition {
+                tracing::warn!("Transition from {} to {} not allowed", 
+                              self.current_phase.name(), next.name());
                 return Err(SyncError::SyncFailed(format!(
                     "Invalid phase transition from {} to {}",
                     self.current_phase.name(),
                     next.name()
                 )));
+            } else {
+                tracing::info!("✅ Transition approved from {} to {}", 
+                              self.current_phase.name(), next.name());
             }
 
             // Create transition record
@@ -689,10 +735,14 @@ impl SequentialSyncManager {
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
+        tracing::debug!("handle_headers_message: received {} headers", headers.len());
+        
         let continue_sync = self
             .header_sync
             .handle_headers_message(headers.clone(), storage, network)
             .await?;
+
+        tracing::debug!("handle_headers_message: continue_sync={}", continue_sync);
 
         // Update phase state and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingHeaders {
@@ -708,6 +758,7 @@ impl SequentialSyncManager {
             // Update current height
             if let Ok(Some(tip)) = storage.get_tip_height().await {
                 *current_height = tip;
+                tracing::debug!("Updated current_height to {}", current_height);
             }
 
             // Update progress
@@ -720,23 +771,35 @@ impl SequentialSyncManager {
             // Check if we received empty response (sync complete)
             if headers.is_empty() {
                 *received_empty_response = true;
+                tracing::info!("📥 Received empty headers response - setting received_empty_response=true");
+            } else {
+                tracing::debug!("Received {} non-empty headers, received_empty_response={}",
+                               headers.len(), *received_empty_response);
             }
 
             // Update progress time
             *last_progress = Instant::now();
             
             // Check if phase is complete
-            !continue_sync || *received_empty_response
+            let phase_complete = !continue_sync || *received_empty_response;
+            tracing::debug!("Phase completion check: continue_sync={}, received_empty_response={}, phase_complete={}",
+                           continue_sync, *received_empty_response, phase_complete);
+            phase_complete
         } else {
+            tracing::warn!("handle_headers_message called but not in DownloadingHeaders phase: {}", 
+                          self.current_phase.name());
             false
         };
 
         if should_transition {
+            tracing::info!("🔄 Headers sync complete, transitioning to next phase");
             self.transition_to_next_phase(storage, "Headers sync complete")
                 .await?;
             
             // Execute the next phase
             self.execute_current_phase(network, storage).await?;
+        } else {
+            tracing::debug!("No transition needed: should_transition={}", should_transition);
         }
 
         Ok(())

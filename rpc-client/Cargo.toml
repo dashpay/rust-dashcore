@@ -22,7 +22,7 @@ path = "src/lib.rs"
 dashcore-rpc-json = { path = "../rpc-json" }
 
 log = "0.4.27"
-jsonrpc = "0.18.0"
+jsonrpc = { version = "0.18.0", default-features = false, features = ["minreq_http"] }
 
 # Used for deserialization of JSON.
 serde = { version = "1.0.219", features = ["derive"] }

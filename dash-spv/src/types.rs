@@ -1,5 +1,6 @@
 //! Common type definitions for the Dash SPV client.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime};
 
 use dashcore::{
@@ -161,6 +162,15 @@ pub struct ChainState {
 
     /// Last masternode diff height processed.
     pub last_masternode_diff_height: Option<u32>,
+    
+    /// The actual blockchain tip height when using partial header storage.
+    /// This allows us to track the real chain height even when we only
+    /// store a subset of headers in memory.
+    pub storage_tip_height: Option<u32>,
+    
+    /// The starting height of headers stored in memory.
+    /// When using partial storage, headers[0] corresponds to this height.
+    pub storage_start_height: u32,
 }
 
 impl Default for ChainState {
@@ -173,6 +183,8 @@ impl Default for ChainState {
             current_filter_tip: None,
             masternode_engine: None,
             last_masternode_diff_height: None,
+            storage_tip_height: None,
+            storage_start_height: 0,
         }
     }
 }
@@ -221,21 +233,50 @@ impl ChainState {
 
     /// Get the current tip height.
     pub fn tip_height(&self) -> u32 {
-        self.headers.len().saturating_sub(1) as u32
+        // If we have a storage tip height set (partial storage mode), use that
+        if let Some(storage_tip) = self.storage_tip_height {
+            storage_tip
+        } else {
+            // Otherwise, calculate from headers vector (full storage mode)
+            if self.headers.is_empty() {
+                0
+            } else {
+                self.storage_start_height + self.headers.len() as u32 - 1
+            }
+        }
     }
 
     /// Get the current tip hash.
     pub fn tip_hash(&self) -> Option<BlockHash> {
+        // In partial storage mode with no headers loaded yet, we can't return a hash
+        if self.storage_tip_height.is_some() && self.headers.is_empty() {
+            // We know the tip height but don't have the actual header
+            // This is a limitation of partial storage - we need at least the tip header
+            tracing::warn!(
+                "tip_hash() called with partial storage enabled but no headers loaded. Height: {}",
+                self.tip_height()
+            );
+            return None;
+        }
+        
         self.headers.last().map(|h| h.block_hash())
     }
 
     /// Get header at the given height.
     pub fn header_at_height(&self, height: u32) -> Option<&BlockHeader> {
-        self.headers.get(height as usize)
+        // Check if the height is within our stored range
+        if height < self.storage_start_height {
+            return None; // Height is before our stored range
+        }
+        
+        let index = (height - self.storage_start_height) as usize;
+        self.headers.get(index)
     }
 
     /// Get filter header at the given height.
     pub fn filter_header_at_height(&self, height: u32) -> Option<&FilterHeader> {
+        // For now, filter headers still use full indexing
+        // TODO: Implement partial storage for filter headers if needed
         self.filter_headers.get(height as usize)
     }
 
@@ -265,11 +306,36 @@ impl ChainState {
     /// Add a single header
     pub fn add_header(&mut self, header: BlockHeader) {
         self.headers.push(header);
+        
+        // Don't update storage_tip_height here - it should be set explicitly
+        // when enabling partial storage mode. The headers we're adding might
+        // not represent the actual chain tip.
     }
     
     /// Remove the tip header (for reorgs)
     pub fn remove_tip(&mut self) -> Option<BlockHeader> {
-        self.headers.pop()
+        let removed = self.headers.pop();
+        
+        // If we're in partial storage mode and removed a header, decrement the storage tip
+        if let Some(ref mut storage_tip) = self.storage_tip_height {
+            if removed.is_some() {
+                *storage_tip = storage_tip.saturating_sub(1);
+            }
+        }
+        
+        removed
+    }
+    
+    /// Enable partial storage mode with the given parameters
+    pub fn enable_partial_storage(&mut self, storage_tip_height: u32, storage_start_height: u32) {
+        self.storage_tip_height = Some(storage_tip_height);
+        self.storage_start_height = storage_start_height;
+        tracing::info!(
+            "Enabled partial storage mode: tip_height={}, start_height={}, headers_in_memory={}",
+            storage_tip_height,
+            storage_start_height,
+            self.headers.len()
+        );
     }
     
     /// Update chain lock status
@@ -1085,4 +1151,305 @@ impl MempoolState {
     pub fn total_pending_balance(&self) -> i64 {
         self.pending_balance + self.pending_instant_balance
     }
+}
+
+/// Information about a quorum.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuorumInfo {
+    /// Quorum hash (hex string).
+    pub quorum_hash: String,
+    /// Quorum type (1=ChainLock, 2=InstantSend, etc.).
+    pub quorum_type: u8,
+    /// Number of members in the quorum.
+    pub member_count: u32,
+    /// Threshold for valid signatures.
+    pub threshold: u32,
+    /// Whether the quorum is verified.
+    pub is_verified: bool,
+    /// Block height where quorum was created.
+    pub block_height: u32,
+    /// Verification vector hash (hex string).
+    pub verification_vector_hash: String,
+}
+
+/// Information about a masternode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MasternodeInfo {
+    /// ProTx hash (hex string).
+    pub pro_tx_hash: String,
+    /// Service address (IP:port).
+    pub service_address: String,
+    /// Whether the masternode is valid.
+    pub is_valid: bool,
+    /// Masternode type (0=Regular, 1=HighPerformance).
+    pub masternode_type: u8,
+    /// Platform node ID (hex string).
+    pub platform_node_id: String,
+}
+
+/// Historical quorum data for a specific block height.
+#[derive(Debug, Clone)]
+pub struct QuorumHeightData {
+    /// Quorum public keys indexed by (quorum_type, quorum_hash)
+    pub quorum_keys: HashMap<(u8, [u8; 32]), [u8; 48]>,
+    /// Number of quorums at this height
+    pub quorum_count: usize,
+    /// Timestamp when this height data was cached
+    pub cached_at: u64,
+}
+
+/// Synchronous cache for historical quorum data to support Platform queries.
+/// 
+/// This cache stores quorum public keys from multiple block heights in a synchronous structure
+/// to avoid async/sync deadlocks when Platform queries need quorum verification.
+/// Platform proofs can reference historical quorums, so we maintain a rolling window
+/// of quorum data from recent heights.
+#[derive(Debug, Clone)]
+pub struct SyncQuorumCache {
+    /// Historical quorum data indexed by block height
+    /// Maintains a rolling window of recent heights
+    pub historical_data: HashMap<u32, QuorumHeightData>,
+    
+    /// Current (latest) quorum keys for fast lookup
+    /// This is a flattened view of the most recent height
+    pub current_quorum_keys: HashMap<(u8, [u8; 32]), [u8; 48]>,
+    
+    /// Current (highest) block height of cached data
+    pub current_height: u32,
+    
+    /// Number of historical heights to retain (default: 100)
+    pub retention_height_count: u32,
+    
+    /// Timestamp of last cache update
+    pub last_updated: u64,
+}
+
+impl SyncQuorumCache {
+    /// Create a new empty cache with default retention (100 heights).
+    pub fn new() -> Self {
+        Self::with_retention(100)
+    }
+    
+    /// Create a new empty cache with specified retention count.
+    /// 
+    /// # Arguments
+    /// * `retention_height_count` - Number of historical heights to retain
+    pub fn with_retention(retention_height_count: u32) -> Self {
+        Self {
+            historical_data: HashMap::new(),
+            current_quorum_keys: HashMap::new(),
+            current_height: 0,
+            retention_height_count,
+            last_updated: 0,
+        }
+    }
+    
+    /// Get a quorum public key synchronously from any cached height.
+    /// 
+    /// # Arguments
+    /// * `quorum_type` - Type of quorum (1=InstantSend, 2=ChainLock, etc.)
+    /// * `quorum_hash` - Hash of the quorum as 32 bytes
+    /// 
+    /// # Returns
+    /// The 48-byte compressed BLS public key if found, None otherwise
+    /// 
+    /// This method first checks the current quorum keys for fast lookup,
+    /// then searches through historical data if not found.
+    pub fn get_quorum_public_key(&self, quorum_type: u8, quorum_hash: [u8; 32]) -> Option<[u8; 48]> {
+        // First check current (latest) quorum keys for fast lookup
+        if let Some(key) = self.current_quorum_keys.get(&(quorum_type, quorum_hash)) {
+            return Some(*key);
+        }
+        
+        // Search through historical data (most recent first)
+        let mut heights: Vec<u32> = self.historical_data.keys().copied().collect();
+        heights.sort_by(|a, b| b.cmp(a)); // Sort descending (newest first)
+        
+        for height in heights {
+            if let Some(height_data) = self.historical_data.get(&height) {
+                if let Some(key) = height_data.quorum_keys.get(&(quorum_type, quorum_hash)) {
+                    return Some(*key);
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// Get a quorum public key from a specific block height.
+    /// 
+    /// # Arguments
+    /// * `quorum_type` - Type of quorum (1=InstantSend, 2=ChainLock, etc.)
+    /// * `quorum_hash` - Hash of the quorum as 32 bytes
+    /// * `height` - Specific block height to search
+    /// 
+    /// # Returns
+    /// The 48-byte compressed BLS public key if found at that height, None otherwise
+    pub fn get_quorum_public_key_at_height(&self, quorum_type: u8, quorum_hash: [u8; 32], height: u32) -> Option<[u8; 48]> {
+        // Check if it's the current height
+        if height == self.current_height {
+            return self.current_quorum_keys.get(&(quorum_type, quorum_hash)).copied();
+        }
+        
+        // Check historical data for specific height
+        self.historical_data
+            .get(&height)?
+            .quorum_keys
+            .get(&(quorum_type, quorum_hash))
+            .copied()
+    }
+    
+    /// Update the cache with new quorum data for a specific height.
+    /// 
+    /// # Arguments
+    /// * `quorum_type` - Type of quorum
+    /// * `quorum_hash` - Hash of the quorum
+    /// * `public_key` - 48-byte compressed BLS public key
+    /// * `height` - Block height of this quorum data
+    pub fn update_quorum_key(&mut self, quorum_type: u8, quorum_hash: [u8; 32], public_key: [u8; 48], height: u32) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        
+        // Get or create height data
+        let height_data = self.historical_data.entry(height).or_insert_with(|| QuorumHeightData {
+            quorum_keys: HashMap::new(),
+            quorum_count: 0,
+            cached_at: now,
+        });
+        
+        // Add quorum to height data
+        let was_new = height_data.quorum_keys.insert((quorum_type, quorum_hash), public_key).is_none();
+        if was_new {
+            height_data.quorum_count += 1;
+        }
+        
+        // Update current height tracking
+        if height >= self.current_height {
+            self.current_height = height;
+            // Update current quorum keys (flattened view)
+            self.current_quorum_keys.insert((quorum_type, quorum_hash), public_key);
+        }
+        
+        self.last_updated = now;
+        
+        // Clean up old data if we exceed retention
+        self.cleanup_old_data();
+    }
+    
+    /// Get all available quorum data for a specific height.
+    /// 
+    /// # Arguments
+    /// * `height` - Block height to query
+    /// 
+    /// # Returns
+    /// Reference to quorum data at that height, None if not cached
+    pub fn get_height_data(&self, height: u32) -> Option<&QuorumHeightData> {
+        if height == self.current_height {
+            // For current height, we could reconstruct from current_quorum_keys,
+            // but it's better to use the historical_data entry
+        }
+        self.historical_data.get(&height)
+    }
+    
+    /// Get all cached heights in descending order (newest first).
+    pub fn get_cached_heights(&self) -> Vec<u32> {
+        let mut heights: Vec<u32> = self.historical_data.keys().copied().collect();
+        heights.sort_by(|a, b| b.cmp(a)); // Sort descending
+        heights
+    }
+    
+    /// Clear old quorum data beyond the retention window.
+    /// 
+    /// Automatically called when new data is added, but can be called manually.
+    pub fn cleanup_old_data(&mut self) {
+        if self.historical_data.len() <= self.retention_height_count as usize {
+            return; // Nothing to clean up
+        }
+        
+        // Get all heights and sort them
+        let mut heights: Vec<u32> = self.historical_data.keys().copied().collect();
+        heights.sort_by(|a, b| b.cmp(a)); // Sort descending (newest first)
+        
+        // Keep only the most recent retention_height_count heights
+        let to_remove: Vec<u32> = heights.into_iter()
+            .skip(self.retention_height_count as usize)
+            .collect();
+        
+        for height in to_remove {
+            self.historical_data.remove(&height);
+        }
+        
+        // Also clean up current_quorum_keys if current_height was removed
+        if !self.historical_data.contains_key(&self.current_height) && self.current_height > 0 {
+            // Find the new highest height
+            if let Some(&new_current_height) = self.historical_data.keys().max() {
+                self.current_height = new_current_height;
+                // Rebuild current_quorum_keys from the new current height
+                self.rebuild_current_quorum_keys();
+            } else {
+                // No data left
+                self.current_height = 0;
+                self.current_quorum_keys.clear();
+            }
+        }
+    }
+    
+    /// Rebuild the current_quorum_keys from the current_height data.
+    fn rebuild_current_quorum_keys(&mut self) {
+        self.current_quorum_keys.clear();
+        if let Some(height_data) = self.historical_data.get(&self.current_height) {
+            self.current_quorum_keys = height_data.quorum_keys.clone();
+        }
+    }
+    
+    /// Get cache statistics.
+    pub fn stats(&self) -> SyncQuorumCacheStats {
+        let total_quorums = self.historical_data.values()
+            .map(|data| data.quorum_count)
+            .sum();
+            
+        let cached_heights = self.historical_data.len();
+        let height_range = if cached_heights > 0 {
+            let heights: Vec<u32> = self.historical_data.keys().copied().collect();
+            let min_height = *heights.iter().min().unwrap_or(&0);
+            let max_height = *heights.iter().max().unwrap_or(&0);
+            Some((min_height, max_height))
+        } else {
+            None
+        };
+        
+        SyncQuorumCacheStats {
+            total_quorums,
+            current_height: self.current_height,
+            last_updated: self.last_updated,
+            cached_heights,
+            retention_height_count: self.retention_height_count,
+            height_range,
+        }
+    }
+}
+
+impl Default for SyncQuorumCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Statistics about the synchronous quorum cache.
+#[derive(Debug, Clone)]
+pub struct SyncQuorumCacheStats {
+    /// Total number of cached quorum keys across all heights
+    pub total_quorums: usize,
+    /// Current (highest) block height of cached data
+    pub current_height: u32,
+    /// Timestamp of last update
+    pub last_updated: u64,
+    /// Number of cached heights
+    pub cached_heights: usize,
+    /// Retention height count setting
+    pub retention_height_count: u32,
+    /// Height range (min, max) if any data is cached
+    pub height_range: Option<(u32, u32)>,
 }

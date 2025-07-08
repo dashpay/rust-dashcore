@@ -64,7 +64,7 @@ pub mod wallet;
 pub use client::{ClientConfig, DashSpvClient};
 pub use error::{NetworkError, SpvError, StorageError, SyncError, ValidationError};
 pub use types::{
-    ChainState, FilterMatch, PeerInfo, SpvStats, SyncProgress, ValidationMode, WatchItem,
+    ChainState, FilterMatch, MasternodeInfo, PeerInfo, QuorumInfo, SpvStats, SyncProgress, SyncQuorumCache, SyncQuorumCacheStats, ValidationMode, WatchItem,
 };
 pub use wallet::{
     AddressStats, Balance, BlockResult, TransactionProcessor, TransactionResult, Utxo, Wallet,

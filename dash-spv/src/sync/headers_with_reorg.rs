@@ -55,14 +55,22 @@ pub struct HeaderSyncManagerWithReorg {
     chain_state: ChainState,
     wallet_state: WalletState,
     total_headers_synced: u32,
+    headers_received: u32,
     last_progress_log: Option<std::time::Instant>,
     syncing_headers: bool,
+    /// Temporary storage for orphan headers that don't connect yet
+    orphan_headers: Vec<BlockHeader>,
     last_sync_progress: std::time::Instant,
+    /// Debug ID to track different instances
+    instance_id: u32,
 }
 
 impl HeaderSyncManagerWithReorg {
     /// Create a new header sync manager with reorg support
     pub fn new(config: &ClientConfig, reorg_config: ReorgConfig) -> Self {
+        static INSTANCE_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let instance_id = INSTANCE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        
         let chain_state = ChainState::new_for_network(config.network);
         let wallet_state = WalletState::new(config.network);
         
@@ -73,6 +81,11 @@ impl HeaderSyncManagerWithReorg {
             _ => Vec::new(), // No checkpoints for other networks
         };
         let checkpoint_manager = CheckpointManager::new(checkpoints);
+        
+        tracing::info!(
+            "Creating HeaderSyncManagerWithReorg instance #{} with genesis only", 
+            instance_id
+        );
         
         Self {
             config: config.clone(),
@@ -88,29 +101,56 @@ impl HeaderSyncManagerWithReorg {
             chain_state,
             wallet_state,
             total_headers_synced: 0,
+            headers_received: 0,
             last_progress_log: None,
             syncing_headers: false,
+            orphan_headers: Vec::new(),
             last_sync_progress: std::time::Instant::now(),
+            instance_id,
         }
     }
     
     /// Load headers from storage into the chain state
     pub async fn load_headers_from_storage(&mut self, storage: &dyn StorageManager) -> SyncResult<u32> {
+        tracing::error!(
+            "[Instance #{}] load_headers_from_storage called - current chain_state tip: {}, headers.len(): {}",
+            self.instance_id,
+            self.chain_state.tip_height(),
+            self.chain_state.headers.len()
+        );
+        
         // Get the current tip height from storage
         let tip_height = storage.get_tip_height().await
             .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?;
             
         let Some(tip_height) = tip_height else {
-            tracing::debug!("No headers found in storage");
+            tracing::error!("[Instance #{}] No headers found in storage - returning", self.instance_id);
             return Ok(0);
         };
         
+        tracing::error!(
+            "[Instance #{}] Storage tip height: {}",
+            self.instance_id,
+            tip_height
+        );
+        
         if tip_height == 0 {
-            tracing::debug!("Only genesis block in storage");
+            tracing::error!("[Instance #{}] Only genesis block in storage - returning", self.instance_id);
             return Ok(0);
         }
         
-        tracing::info!("Loading {} headers from storage into HeaderSyncManager", tip_height);
+        tracing::info!(
+            "[Instance #{}] Loading {} headers from storage into HeaderSyncManager", 
+            self.instance_id,
+            tip_height
+        );
+        tracing::info!(
+            "[Instance #{}] Initial chain state - tip_height: {}, headers.len(): {}", 
+            self.instance_id,
+            self.chain_state.tip_height(), 
+            self.chain_state.headers.len()
+        );
+        
         let start_time = std::time::Instant::now();
         
         // Load headers in batches
@@ -118,8 +158,61 @@ impl HeaderSyncManagerWithReorg {
         let mut loaded_count = 0u32;
         let mut current_height = 1u32; // Start from 1 (genesis already in chain state)
         
+        // Check current state before loading
+        tracing::info!(
+            "Before loading: chain_state has {} headers, tip_height: {}",
+            self.chain_state.headers.len(),
+            self.chain_state.tip_height()
+        );
+        
+        // For very large chains, use partial storage mode
+        const MAX_HEADERS_IN_MEMORY: u32 = 100_000; // Keep last 100k headers in memory
+        
+        if tip_height > MAX_HEADERS_IN_MEMORY {
+            tracing::info!(
+                "Chain has {} headers. Using partial storage mode with last {} headers in memory.",
+                tip_height,
+                MAX_HEADERS_IN_MEMORY
+            );
+            
+            // Calculate the starting height for headers we'll keep in memory
+            let start_height = tip_height - MAX_HEADERS_IN_MEMORY + 1;
+            
+            // Clear headers first
+            self.chain_state.headers.clear();
+            
+            // Skip to the start height for loading
+            current_height = start_height;
+            
+            // Enable partial storage mode AFTER clearing headers but BEFORE loading
+            self.chain_state.enable_partial_storage(tip_height, start_height);
+            
+            // Verify partial storage is working
+            tracing::info!(
+                "After enabling partial storage - tip_height(): {}, storage_tip_height: {:?}, start_height: {}, headers.len(): {}",
+                self.chain_state.tip_height(),
+                self.chain_state.storage_tip_height,
+                self.chain_state.storage_start_height,
+                self.chain_state.headers.len()
+            );
+        }
+        
+        tracing::info!(
+            "Starting header loading loop - current_height: {}, tip_height: {}, will load {} headers",
+            current_height,
+            tip_height,
+            tip_height - current_height + 1
+        );
+        
         while current_height <= tip_height {
             let end_height = (current_height + BATCH_SIZE - 1).min(tip_height);
+            
+            tracing::debug!(
+                "Loading batch {}-{} (batch size: {})",
+                current_height,
+                end_height,
+                end_height - current_height + 1
+            );
             
             // Load batch from storage
             let headers = storage.load_headers(current_height..end_height + 1).await
@@ -132,18 +225,33 @@ impl HeaderSyncManagerWithReorg {
             }
             
             // Add headers to chain state
+            let batch_count = headers.len() as u32;
+            tracing::debug!(
+                "Adding {} headers to chain_state (before: {} headers, tip_height: {})",
+                batch_count,
+                self.chain_state.headers.len(),
+                self.chain_state.tip_height()
+            );
+            
             for header in headers {
                 self.chain_state.add_header(header);
-                loaded_count += 1;
             }
+            loaded_count += batch_count;
             
-            // Progress logging
-            if loaded_count % 50_000 == 0 || loaded_count == tip_height {
+            tracing::debug!(
+                "After adding batch - chain_state has {} headers, tip_height: {}",
+                self.chain_state.headers.len(),
+                self.chain_state.tip_height()
+            );
+            
+            // Progress logging  
+            if loaded_count % 50_000 == 0 || current_height >= tip_height {
                 let elapsed = start_time.elapsed();
                 let headers_per_sec = loaded_count as f64 / elapsed.as_secs_f64();
+                let actual_chain_height = self.chain_state.tip_height();
                 tracing::info!(
-                    "Loaded {}/{} headers ({:.0} headers/sec)",
-                    loaded_count, tip_height, headers_per_sec
+                    "Loaded {} headers ({:.0} headers/sec), chain state height: {}",
+                    loaded_count, headers_per_sec, actual_chain_height
                 );
             }
             
@@ -160,6 +268,32 @@ impl HeaderSyncManagerWithReorg {
             loaded_count as f64 / elapsed.as_secs_f64()
         );
         
+        // Verify chain state after loading
+        let actual_tip_height = self.chain_state.tip_height();
+        let actual_tip_hash = self.chain_state.tip_hash();
+        tracing::info!(
+            "📊 Chain state after loading - tip_height: {}, expected: {}, tip_hash: {:?}, headers.len(): {}, storage_tip_height: {:?}",
+            actual_tip_height,
+            tip_height,
+            actual_tip_hash,
+            self.chain_state.headers.len(),
+            self.chain_state.storage_tip_height
+        );
+        
+        if actual_tip_height != tip_height {
+            tracing::error!(
+                "❌ Chain state mismatch! Expected tip height {} but chain_state shows {}",
+                tip_height,
+                actual_tip_height
+            );
+            tracing::error!(
+                "Debug info - storage_tip_height: {:?}, storage_start_height: {}, headers.len(): {}",
+                self.chain_state.storage_tip_height,
+                self.chain_state.storage_start_height,
+                self.chain_state.headers.len()
+            );
+        }
+        
         Ok(loaded_count)
     }
 
@@ -171,12 +305,15 @@ impl HeaderSyncManagerWithReorg {
         network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
         tracing::info!(
-            "🔍 Handle headers message with {} headers (reorg-aware)",
+            "[Instance #{}] 🔍 Handle headers message with {} headers (reorg-aware). Current chain state: {} headers, tip height: {}",
+            self.instance_id,
             headers.len(),
+            self.chain_state.headers.len(),
+            self.chain_state.tip_height()
         );
 
         if headers.is_empty() {
-            tracing::info!("📊 Header sync complete - no more headers from peers");
+            tracing::info!("[Instance #{}] 📊 Header sync complete - no more headers from peers", self.instance_id);
             self.syncing_headers = false;
             return Ok(false);
         }
@@ -184,12 +321,77 @@ impl HeaderSyncManagerWithReorg {
         self.last_sync_progress = std::time::Instant::now();
         self.total_headers_synced += headers.len() as u32;
 
+        // Check if we have a gap scenario: first header doesn't connect to our tip
+        // This commonly happens when resuming from saved state
+        if let Some(first_header) = headers.first() {
+            let current_tip_height = self.chain_state.tip_height();
+            let current_tip_hash = self.chain_state.tip_hash();
+            
+            // Special case: If we're using partial storage and headers aren't loaded yet
+            if self.chain_state.storage_tip_height.is_some() && self.chain_state.headers.is_empty() {
+                tracing::error!(
+                    "[Instance #{}] CRITICAL: Headers received but chain_state headers not loaded yet (partial storage mode). Tip height: {}, storage_tip_height: {:?}",
+                    self.instance_id,
+                    current_tip_height,
+                    self.chain_state.storage_tip_height
+                );
+                // Skip these headers - we need to load our stored headers first
+                return Ok(true);
+            }
+            
+            // Check if the first header's prev_hash connects to our tip
+            if let Some(tip_hash) = current_tip_hash {
+                if first_header.prev_blockhash != tip_hash {
+                    // We have a gap - check if these headers are ahead of our tip
+                    // by looking at the header timestamps and other heuristics
+                    tracing::info!(
+                        "[Instance #{}] 📊 Detected potential gap: first header prev_hash {} doesn't match our tip {} at height {}",
+                        self.instance_id,
+                        first_header.prev_blockhash, tip_hash, current_tip_height
+                    );
+                    
+                    // If all headers have timestamps after our tip, they're likely extending the chain
+                    if let Some(tip_header) = self.chain_state.get_tip_header() {
+                        if headers.iter().all(|h| h.time >= tip_header.time) {
+                            tracing::info!(
+                                "🔗 Headers appear to be ahead of our chain (all timestamps >= tip time {})",
+                                tip_header.time
+                            );
+                            
+                            // Request the missing headers to fill the gap
+                            tracing::info!("📤 Requesting missing headers to fill gap from height {}", current_tip_height);
+                            
+                            // Build a proper block locator to help the peer understand what we need
+                            let genesis_hash = self.config.network.known_genesis_block_hash()
+                                .ok_or_else(|| SyncError::SyncFailed("No genesis hash for network".to_string()))?;
+                            let block_locator = build_block_locator(storage, genesis_hash).await?;
+                            
+                            // Request headers using the block locator
+                            let stop_hash = BlockHash::from_byte_array([0; 32]);
+                            let getheaders_msg = GetHeadersMessage::new(block_locator, stop_hash);
+                            
+                            network
+                                .send_message(NetworkMessage::GetHeaders(getheaders_msg))
+                                .await
+                                .map_err(|e| SyncError::SyncFailed(format!("Failed to send GetHeaders: {}", e)))?;
+                            
+                            // Store these headers temporarily for later processing once gap is filled
+                            // For now, we'll just skip processing them
+                            tracing::info!("⏸️ Skipping {} headers until gap is filled", headers.len());
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+
         // Process each header with fork detection
         for header in &headers {
             match self.process_header_with_fork_detection(header, storage).await? {
                 HeaderProcessResult::ExtendedMainChain => {
                     // Normal case - header extends the main chain
                     tracing::trace!("Header {} extends main chain", header.block_hash());
+                    self.headers_received += 1;
                 }
                 HeaderProcessResult::CreatedFork => {
                     // Note: Actual fork height is logged in process_header_with_fork_detection
@@ -200,6 +402,13 @@ impl HeaderSyncManagerWithReorg {
                 }
                 HeaderProcessResult::Orphan => {
                     tracing::debug!("Orphan header received: {}", header.block_hash());
+                    // Store orphan for later processing
+                    self.orphan_headers.push(*header);
+                    
+                    // Limit orphan pool size to prevent memory issues
+                    if self.orphan_headers.len() > 100 {
+                        self.orphan_headers.remove(0);
+                    }
                 }
                 HeaderProcessResult::TriggeredReorg(depth) => {
                     tracing::warn!("🔄 Chain reorganization triggered - depth: {}", depth);
@@ -210,6 +419,11 @@ impl HeaderSyncManagerWithReorg {
         // Check if any fork is now stronger than the main chain
         self.check_for_reorg(storage).await?;
 
+        // Try to process any orphan headers that might now connect
+        if !self.orphan_headers.is_empty() {
+            self.process_orphan_headers(storage).await?;
+        }
+
         if self.syncing_headers {
             // During sync mode - request next batch
             if let Some(tip) = self.chain_state.get_tip_header() {
@@ -218,6 +432,45 @@ impl HeaderSyncManagerWithReorg {
         }
 
         Ok(true)
+    }
+
+    /// Try to process orphan headers that might now connect to the chain
+    async fn process_orphan_headers(&mut self, storage: &mut dyn StorageManager) -> SyncResult<()> {
+        let mut connected_count = 0;
+        let mut remaining_orphans = Vec::new();
+        
+        // Take ownership of orphan headers to avoid borrow issues
+        let orphans = std::mem::take(&mut self.orphan_headers);
+        
+        // Try to connect each orphan header
+        for orphan in orphans {
+            match self.process_header_with_fork_detection(&orphan, storage).await? {
+                HeaderProcessResult::ExtendedMainChain => {
+                    connected_count += 1;
+                    tracing::info!("✅ Orphan header {} now extends main chain", orphan.block_hash());
+                }
+                HeaderProcessResult::CreatedFork | HeaderProcessResult::ExtendedFork => {
+                    connected_count += 1;
+                    tracing::info!("🔀 Orphan header {} now part of fork", orphan.block_hash());
+                }
+                HeaderProcessResult::Orphan => {
+                    // Still an orphan, keep it
+                    remaining_orphans.push(orphan);
+                }
+                HeaderProcessResult::TriggeredReorg(_) => {
+                    connected_count += 1;
+                    tracing::warn!("⚠️ Orphan header {} triggered reorg", orphan.block_hash());
+                }
+            }
+        }
+        
+        self.orphan_headers = remaining_orphans;
+        
+        if connected_count > 0 {
+            tracing::info!("🔗 Connected {} orphan headers to the chain", connected_count);
+        }
+        
+        Ok(())
     }
 
     /// Process a single header with fork detection
@@ -443,7 +696,8 @@ impl HeaderSyncManagerWithReorg {
             return Err(SyncError::SyncInProgress);
         }
 
-        tracing::info!("Preparing header synchronization with reorg support");
+        tracing::info!("[Instance #{}] Preparing header synchronization with reorg support. Current chain state: {} headers, tip height: {}", 
+                      self.instance_id, self.chain_state.headers.len(), self.chain_state.tip_height());
 
         // Get current tip from storage
         let current_tip_height = storage

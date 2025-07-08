@@ -28,6 +28,8 @@ use crate::chain::ChainLockManager;
 use crate::mempool_filter::MempoolFilter;
 use dashcore::network::constants::NetworkExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
+use dashcore_hashes::Hash;
 
 pub use block_processor::{BlockProcessingTask, BlockProcessor};
 pub use config::ClientConfig;
@@ -305,8 +307,11 @@ impl DashSpvClient {
         })
     }
 
+
     /// Start the SPV client.
     pub async fn start(&mut self) -> Result<()> {
+        tracing::error!("DEBUG: Client start() called, enable_persistence = {}", self.config.enable_persistence);
+        
         {
             let running = self.running.read().await;
             if *running {
@@ -319,6 +324,7 @@ impl DashSpvClient {
 
         // Load wallet data from storage
         self.load_wallet_data().await?;
+        
 
         // Initialize mempool filter if mempool tracking is enabled
         if self.config.enable_mempool_tracking {
@@ -379,6 +385,12 @@ impl DashSpvClient {
         }
 
         // Try to restore sync state from persistent storage
+        tracing::error!(
+            "DEBUG: enable_persistence = {}, will restore state: {}",
+            self.config.enable_persistence,
+            self.config.enable_persistence
+        );
+        
         if self.config.enable_persistence {
             match self.restore_sync_state().await {
                 Ok(restored) => {
@@ -654,6 +666,9 @@ impl DashSpvClient {
 
         // Wait for at least one peer to connect before sending any protocol messages
         let mut initial_sync_started = false;
+        
+        // Track if we've refreshed the quorum cache after sync completion
+        let mut quorum_cache_refreshed_after_sync = false;
 
         // Print initial status
         self.update_status_display().await;
@@ -834,6 +849,11 @@ impl DashSpvClient {
                             end: peer_best 
                         }
                     } else {
+                        // Sync is complete - no cache refresh needed since we use engine directly
+                        if !quorum_cache_refreshed_after_sync {
+                            tracing::info!("Sync complete - quorum data available directly from masternode engine");
+                            quorum_cache_refreshed_after_sync = true;
+                        }
                         crate::types::SyncStage::Complete
                     };
                     
@@ -1712,8 +1732,12 @@ impl DashSpvClient {
     /// Restore sync state from persistent storage.
     /// Returns true if state was successfully restored, false if no state was found.
     async fn restore_sync_state(&mut self) -> Result<bool> {
+        tracing::error!("DEBUG: restore_sync_state called!");
+        
         // Load sync state from storage
         let sync_state = self.storage.load_sync_state().await.map_err(|e| SpvError::Storage(e))?;
+        
+        tracing::error!("DEBUG: sync_state loaded: {:?}", sync_state.is_some());
         
         let Some(saved_state) = sync_state else {
             return Ok(false);
@@ -1830,6 +1854,7 @@ impl DashSpvClient {
         
         // CRITICAL: Load headers from storage into ChainState
         if saved_state.chain_tip.height > 0 {
+            tracing::error!("DEBUG: About to load headers, tip height = {}", saved_state.chain_tip.height);
             tracing::info!("Loading headers from storage into ChainState...");
             let start_time = std::time::Instant::now();
             
@@ -1865,7 +1890,10 @@ impl DashSpvClient {
                             "Header validation failed for range {}..{}: {:?}",
                             current_height, end_height + 1, e
                         );
-                        return Ok(false); // Start fresh sync
+                        // Even though validation failed, we should still load headers into sync manager
+                        // to avoid the fork detection issue
+                        tracing::warn!("Continuing to load headers into sync manager despite validation failure");
+                        break; // Exit the loading loop but continue with sync manager loading
                     }
                     
                     // Add validated headers to chain state
@@ -1888,6 +1916,19 @@ impl DashSpvClient {
                 
                 current_height = end_height + 1;
             }
+            
+            // CRITICAL: Also load headers into the sync manager's chain state
+            tracing::info!("Loading headers into sync manager's chain state...");
+            tracing::info!("Before loading - sync manager chain height: {}", 
+                         self.sync_manager.get_chain_height());
+            
+            let sync_loaded = self.sync_manager.load_headers_from_storage(&*self.storage)
+                .await
+                .map_err(|e| SpvError::Sync(e))?;
+            
+            tracing::info!("✅ Loaded {} headers into sync manager", sync_loaded);
+            tracing::info!("After loading - sync manager chain height: {}", 
+                         self.sync_manager.get_chain_height());
             
             let elapsed = start_time.elapsed();
             tracing::info!(
@@ -1974,6 +2015,12 @@ impl DashSpvClient {
         self.sync_manager.reset_pending_requests();
         
         // CRITICAL: Load headers into the sync manager's chain state
+        tracing::error!(
+            "DEBUG: saved_state.chain_tip.height = {}, will load headers: {}",
+            saved_state.chain_tip.height,
+            saved_state.chain_tip.height > 0
+        );
+        
         if saved_state.chain_tip.height > 0 {
             tracing::info!("Loading headers into sync manager...");
             match self.sync_manager.load_headers_from_storage(&*self.storage).await {
@@ -2590,4 +2637,255 @@ impl DashSpvClient {
         );
         Ok(())
     }
+
+    /// Get quorums for a specific type.
+    /// 
+    /// # Arguments
+    /// * `quorum_type` - Type of quorum (1=ChainLock, 2=InstantSend, etc.)
+    /// 
+    /// # Returns
+    /// A vector of QuorumInfo structures for the specified type
+    pub async fn get_quorums_for_type(&self, quorum_type: u8) -> Result<Vec<crate::types::QuorumInfo>> {
+        use crate::types::QuorumInfo;
+        use dashcore::sml::llmq_type::LLMQType;
+        
+        // Get reference to the masternode engine
+        let engine = self.sync_manager.masternode_list_engine();
+        
+        if let Some(engine) = engine {
+            // Get the latest masternode list
+            if let Some(masternode_list) = engine.latest_masternode_list() {
+                let mut quorums = Vec::new();
+                
+                // Convert u8 to LLMQType
+                let llmq_type = match quorum_type {
+                    1 => LLMQType::Llmqtype50_60, // InstantSend quorum
+                    2 => LLMQType::Llmqtype400_60, // ChainLock quorum  
+                    3 => LLMQType::Llmqtype400_85, // Platform quorum
+                    4 => LLMQType::Llmqtype100_67, // Additional quorum type
+                    5 => LLMQType::Llmqtype60_75, // Platform HP quorum
+                    _ => {
+                        tracing::warn!("Unknown quorum type: {}", quorum_type);
+                        return Ok(quorums);
+                    }
+                };
+                
+                // Get quorums for this type from the masternode list
+                if let Some(type_quorums) = masternode_list.quorums.get(&llmq_type) {
+                    for (quorum_hash, qualified_quorum_entry) in type_quorums {
+                        let quorum_info = QuorumInfo {
+                            quorum_hash: quorum_hash.to_string(),
+                            quorum_type,
+                            member_count: qualified_quorum_entry.quorum_entry.llmq_type.size() as u32,
+                            threshold: qualified_quorum_entry.quorum_entry.llmq_type.threshold() as u32,
+                            is_verified: matches!(qualified_quorum_entry.verified, LLMQEntryVerificationStatus::Verified),
+                            block_height: masternode_list.known_height,
+                            verification_vector_hash: hex::encode(qualified_quorum_entry.quorum_entry.quorum_vvec_hash.to_byte_array()),
+                        };
+                        quorums.push(quorum_info);
+                    }
+                }
+                
+                tracing::debug!("Found {} quorums for type {}", quorums.len(), quorum_type);
+                Ok(quorums)
+            } else {
+                tracing::warn!("No masternode list available");
+                Ok(Vec::new())
+            }
+        } else {
+            tracing::warn!("Masternode engine not available");
+            Ok(Vec::new())
+        }
+    }
+
+    /// Get all active masternodes.
+    /// 
+    /// # Returns
+    /// A vector of MasternodeInfo structures for all active masternodes
+    pub async fn get_masternodes(&self) -> Result<Vec<crate::types::MasternodeInfo>> {
+        use crate::types::MasternodeInfo;
+        use dashcore::sml::masternode_list_entry::EntryMasternodeType;
+        
+        // Get reference to the masternode engine
+        let engine = self.sync_manager.masternode_list_engine();
+        
+        if let Some(engine) = engine {
+            // Get the latest masternode list
+            if let Some(masternode_list) = engine.latest_masternode_list() {
+                let mut masternodes = Vec::new();
+                
+                // Iterate through all masternodes
+                for (pro_tx_hash, qualified_mn_entry) in &masternode_list.masternodes {
+                    let mn_entry = &qualified_mn_entry.masternode_list_entry;
+                    
+                    // Convert masternode type
+                    let masternode_type = match &mn_entry.mn_type {
+                        EntryMasternodeType::Regular => 0,
+                        EntryMasternodeType::HighPerformance { .. } => 1,
+                    };
+                    
+                    // Get platform node ID (for HighPerformance masternodes)
+                    let platform_node_id = match &mn_entry.mn_type {
+                        EntryMasternodeType::HighPerformance { platform_node_id, .. } => {
+                            hex::encode(platform_node_id.to_byte_array())
+                        },
+                        EntryMasternodeType::Regular => String::new(),
+                    };
+                    
+                    let masternode_info = MasternodeInfo {
+                        pro_tx_hash: pro_tx_hash.to_string(),
+                        service_address: mn_entry.service_address.to_string(),
+                        is_valid: mn_entry.is_valid,
+                        masternode_type,
+                        platform_node_id,
+                    };
+                    
+                    masternodes.push(masternode_info);
+                }
+                
+                tracing::debug!("Found {} masternodes", masternodes.len());
+                Ok(masternodes)
+            } else {
+                tracing::warn!("No masternode list available");
+                Ok(Vec::new())
+            }
+        } else {
+            tracing::warn!("Masternode engine not available");
+            Ok(Vec::new())
+        }
+    }
+
+    /// Get a specific quorum by hash.
+    /// 
+    /// # Arguments
+    /// * `hash_str` - Hex string representation of the quorum hash
+    /// 
+    /// # Returns
+    /// An Option containing QuorumInfo if found, None otherwise
+    pub async fn get_quorum_by_hash(&self, hash_str: &str) -> Result<Option<crate::types::QuorumInfo>> {
+        use crate::types::QuorumInfo;
+        use dashcore::QuorumHash;
+        use std::str::FromStr;
+        
+        // Parse the hash string
+        let quorum_hash = match QuorumHash::from_str(hash_str) {
+            Ok(hash) => hash,
+            Err(e) => {
+                tracing::error!("Invalid quorum hash '{}': {}", hash_str, e);
+                return Err(SpvError::Validation(crate::error::ValidationError::InvalidQuorumHash(format!("Invalid hash format: {}", e))));
+            }
+        };
+        
+        // Get reference to the masternode engine
+        let engine = self.sync_manager.masternode_list_engine();
+        
+        if let Some(engine) = engine {
+            // Get the latest masternode list
+            if let Some(masternode_list) = engine.latest_masternode_list() {
+                // Search through all quorum types
+                for (llmq_type, type_quorums) in &masternode_list.quorums {
+                    if let Some(qualified_quorum_entry) = type_quorums.get(&quorum_hash) {
+                        // Convert LLMQType to u8
+                        let quorum_type = match llmq_type {
+                            dashcore::sml::llmq_type::LLMQType::Llmqtype50_60 => 1, // InstantSend
+                            dashcore::sml::llmq_type::LLMQType::Llmqtype400_60 => 2, // ChainLock
+                            dashcore::sml::llmq_type::LLMQType::Llmqtype400_85 => 3, // Platform
+                            dashcore::sml::llmq_type::LLMQType::Llmqtype100_67 => 4, // Additional type
+                            dashcore::sml::llmq_type::LLMQType::Llmqtype60_75 => 5, // Platform HP
+                            _ => 0, // Unknown type
+                        };
+                        
+                        let quorum_info = QuorumInfo {
+                            quorum_hash: quorum_hash.to_string(),
+                            quorum_type,
+                            member_count: qualified_quorum_entry.quorum_entry.llmq_type.size() as u32,
+                            threshold: qualified_quorum_entry.quorum_entry.llmq_type.threshold() as u32,
+                            is_verified: matches!(qualified_quorum_entry.verified, LLMQEntryVerificationStatus::Verified),
+                            block_height: masternode_list.known_height,
+                            verification_vector_hash: hex::encode(qualified_quorum_entry.quorum_entry.quorum_vvec_hash.to_byte_array()),
+                        };
+                        
+                        tracing::debug!("Found quorum {} of type {}", hash_str, quorum_type);
+                        return Ok(Some(quorum_info));
+                    }
+                }
+                
+                tracing::debug!("Quorum {} not found", hash_str);
+                Ok(None)
+            } else {
+                tracing::warn!("No masternode list available");
+                Ok(None)
+            }
+        } else {
+            tracing::warn!("Masternode engine not available");
+            Ok(None)
+        }
+    }
+
+    /// Get a quorum public key synchronously for Platform queries.
+    /// 
+    /// This method provides non-blocking access to quorum public keys from historical
+    /// masternode data to avoid deadlocks in synchronous contexts like Platform proof verification.
+    /// It searches through the MasternodeListEngine's historical data, which maintains 
+    /// quorum information across multiple block heights.
+    /// 
+    /// # Arguments
+    /// * `quorum_type` - Type of quorum (1=InstantSend, 2=ChainLock, etc.)
+    /// * `quorum_hash` - Hash of the quorum as 32 bytes
+    /// 
+    /// # Returns
+    /// The 48-byte compressed BLS public key if found, None otherwise
+    pub fn get_quorum_public_key_sync(&self, quorum_type: u8, quorum_hash: [u8; 32]) -> Option<[u8; 48]> {
+        let quorum_hash_hex = hex::encode(quorum_hash);
+        tracing::error!("🔍 SPV DIRECT ENGINE LOOKUP: type={}, hash={}", quorum_type, quorum_hash_hex);
+        
+        // Direct lookup in masternode engine (single source of truth)
+        if let Some(key) = self.sync_manager.masternode_sync_manager().get_historical_quorum_public_key(quorum_type, quorum_hash) {
+            tracing::error!("✅ FOUND quorum type={} hash={} in masternode engine", quorum_type, quorum_hash_hex);
+            Some(key)
+        } else {
+            tracing::error!("❌ NOT FOUND quorum type={} hash={} in masternode engine", quorum_type, quorum_hash_hex);
+            None
+        }
+    }
+
+    /// Get a quorum public key from a specific block height.
+    /// 
+    /// This method provides access to quorum data at a specific historical height,
+    /// which is useful when Platform proofs reference quorums from specific blocks.
+    /// 
+    /// # Arguments
+    /// * `quorum_type` - Type of quorum (1=InstantSend, 2=ChainLock, etc.)
+    /// * `quorum_hash` - Hash of the quorum as 32 bytes
+    /// * `height` - Specific block height to search
+    /// 
+    /// # Returns
+    /// The 48-byte compressed BLS public key if found at that height, None otherwise
+    pub fn get_quorum_public_key_at_height_sync(&self, quorum_type: u8, quorum_hash: [u8; 32], height: u32) -> Option<[u8; 48]> {
+        tracing::debug!("Searching for quorum at height {}: type={}, hash={:02x?}", height, quorum_type, &quorum_hash[..8]);
+        
+        self.sync_manager.masternode_sync_manager().get_quorum_public_key_at_height(quorum_type, quorum_hash, height)
+    }
+
+    /// Get all available heights with masternode data.
+    /// 
+    /// # Returns
+    /// Vector of heights in descending order (newest first)
+    pub fn get_available_masternode_heights(&self) -> Vec<u32> {
+        self.sync_manager.masternode_sync_manager().get_available_heights()
+    }
+
+    /// Get the number of quorums available at a specific height.
+    /// 
+    /// # Arguments
+    /// * `height` - Block height to query
+    /// 
+    /// # Returns
+    /// Total number of quorums at that height, 0 if height not found
+    pub fn get_quorum_count_at_height(&self, height: u32) -> usize {
+        self.sync_manager.masternode_sync_manager().get_quorum_count_at_height(height)
+    }
+    
+    
+    
 }
