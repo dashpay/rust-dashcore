@@ -60,12 +60,51 @@ impl<'a> StatusDisplay<'a> {
             }
         } else {
             // Normal sync from genesis
-            state.tip_height()
+            // Check if headers are in storage but not loaded into memory yet
+            if state.headers.is_empty() {
+                // Headers might be in storage but not loaded into ChainState yet
+                if let Ok(Some(storage_tip)) = self.storage.get_tip_height().await {
+                    storage_tip
+                } else {
+                    // No headers in storage or ChainState
+                    0
+                }
+            } else {
+                // Headers are loaded in ChainState, use tip_height()
+                state.tip_height()
+            }
+        };
+
+        // Calculate filter header height considering checkpoint sync
+        let filter_header_height = if state.synced_from_checkpoint && state.sync_base_height > 0 {
+            // Get the actual number of filter headers in storage
+            if let Ok(Some(storage_height)) = self.storage.get_filter_tip_height().await {
+                // The blockchain height is sync_base_height + storage_height
+                state.sync_base_height + storage_height
+            } else {
+                // No filter headers in storage yet, use the checkpoint height
+                state.sync_base_height
+            }
+        } else {
+            // Normal sync from genesis
+            // Check if filter headers are in storage but not loaded into memory yet
+            if state.filter_headers.is_empty() {
+                // Filter headers might be in storage but not loaded into ChainState yet
+                if let Ok(Some(storage_height)) = self.storage.get_filter_tip_height().await {
+                    storage_height
+                } else {
+                    // No filter headers in storage or ChainState
+                    0
+                }
+            } else {
+                // Filter headers are loaded in ChainState
+                state.filter_headers.len().saturating_sub(1) as u32
+            }
         };
 
         Ok(SyncProgress {
             header_height,
-            filter_header_height: state.filter_headers.len().saturating_sub(1) as u32,
+            filter_header_height,
             masternode_height: state.last_masternode_diff_height.unwrap_or(0),
             peer_count: 1,                // TODO: Get from network manager
             headers_synced: false,        // TODO: Implement
@@ -116,19 +155,45 @@ impl<'a> StatusDisplay<'a> {
                     }
                 } else {
                     // Normal sync from genesis
-                    let tip = state.tip_height();
-                    tracing::debug!(
-                        "Status display (normal sync): chain state has {} headers, tip_height={}", 
-                        state.headers.len(), tip
-                    );
-                    tip
+                    // Check if headers are in storage but not loaded into memory yet
+                    if state.headers.is_empty() {
+                        // Headers might be in storage but not loaded into ChainState yet
+                        if let Ok(Some(storage_tip)) = self.storage.get_tip_height().await {
+                            tracing::debug!(
+                                "Status display (normal sync): ChainState empty but storage has {} headers",
+                                storage_tip
+                            );
+                            storage_tip
+                        } else {
+                            // No headers in storage or ChainState
+                            0
+                        }
+                    } else {
+                        // Headers are loaded in ChainState, use tip_height()
+                        let tip = state.tip_height();
+                        tracing::debug!(
+                            "Status display (normal sync): chain state has {} headers, tip_height={}", 
+                            state.headers.len(), tip
+                        );
+                        tip
+                    }
                 }
             };
 
-            // Get filter header height
-            let filter_height = match self.storage.get_filter_tip_height().await {
-                Ok(Some(height)) => height,
-                _ => 0,
+            // Get filter header height - convert from storage height to blockchain height
+            let filter_height = {
+                let state = self.state.read().await;
+                match self.storage.get_filter_tip_height().await {
+                    Ok(Some(storage_height)) => {
+                        // If syncing from checkpoint, convert storage height to blockchain height
+                        if state.synced_from_checkpoint && state.sync_base_height > 0 && storage_height > 0 {
+                            state.sync_base_height + storage_height
+                        } else {
+                            storage_height
+                        }
+                    }
+                    _ => 0,
+                }
             };
 
             // Get latest chainlock height from state
@@ -192,18 +257,45 @@ impl<'a> StatusDisplay<'a> {
                     }
                 } else {
                     // Normal sync from genesis
-                    let tip = state.tip_height();
-                    tracing::debug!(
-                        "Status display (normal sync): chain state has {} headers, tip_height={}", 
-                        state.headers.len(), tip
-                    );
-                    tip
+                    // Check if headers are in storage but not loaded into memory yet
+                    if state.headers.is_empty() {
+                        // Headers might be in storage but not loaded into ChainState yet
+                        if let Ok(Some(storage_tip)) = self.storage.get_tip_height().await {
+                            tracing::debug!(
+                                "Status display (normal sync): ChainState empty but storage has {} headers",
+                                storage_tip
+                            );
+                            storage_tip
+                        } else {
+                            // No headers in storage or ChainState
+                            0
+                        }
+                    } else {
+                        // Headers are loaded in ChainState, use tip_height()
+                        let tip = state.tip_height();
+                        tracing::debug!(
+                            "Status display (normal sync): chain state has {} headers, tip_height={}", 
+                            state.headers.len(), tip
+                        );
+                        tip
+                    }
                 }
             };
 
-            let filter_height = match self.storage.get_filter_tip_height().await {
-                Ok(Some(height)) => height,
-                _ => 0,
+            // Get filter header height - convert from storage height to blockchain height
+            let filter_height = {
+                let state = self.state.read().await;
+                match self.storage.get_filter_tip_height().await {
+                    Ok(Some(storage_height)) => {
+                        // If syncing from checkpoint, convert storage height to blockchain height
+                        if state.synced_from_checkpoint && state.sync_base_height > 0 && storage_height > 0 {
+                            state.sync_base_height + storage_height
+                        } else {
+                            storage_height
+                        }
+                    }
+                    _ => 0,
+                }
             };
 
             let chainlock_height = {
