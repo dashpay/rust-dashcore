@@ -2440,8 +2440,6 @@ impl DashSpvClient {
                     
                     // Initialize chain state with checkpoint
                     let mut chain_state = self.state.write().await;
-                    chain_state.sync_base_height = checkpoint.height;
-                    chain_state.synced_from_checkpoint = true;
                     
                     // Build header from checkpoint
                     let checkpoint_header = dashcore::block::Header {
@@ -2467,10 +2465,12 @@ impl DashSpvClient {
                             calculated_hash
                         );
                     } else {
-                        // When syncing from checkpoint, don't add headers to the array
-                        // The tip_height calculation relies on sync_base_height + headers.len() - 1
-                        // So we keep headers empty and let sync_base_height represent our starting point
-                        chain_state.headers.clear(); // Ensure no genesis header
+                        // Initialize chain state from checkpoint
+                        chain_state.init_from_checkpoint(
+                            checkpoint.height,
+                            checkpoint_header,
+                            self.config.network,
+                        );
                         
                         // Clone the chain state for storage
                         let chain_state_for_storage = chain_state.clone();
