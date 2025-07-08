@@ -427,7 +427,7 @@ impl Encodable for RawNetworkMessage {
             NetworkMessage::QRInfo(ref dat) => serialize(dat),
             NetworkMessage::CLSig(ref dat) => serialize(dat),
             NetworkMessage::ISLock(ref dat) => serialize(dat),
-            NetworkMessage::SendDsq(wants_dsq) => serialize(&(*wants_dsq as u8)),
+            NetworkMessage::SendDsq(wants_dsq) => serialize(&(wants_dsq as u8)),
         })
         .consensus_encode(w)?;
         Ok(len)
