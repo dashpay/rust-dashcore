@@ -1,5 +1,6 @@
 //! Address generation and encoding
 
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 use core::str::FromStr;
@@ -82,6 +83,20 @@ impl Address {
         }
     }
 
+    /// Encode the address as a string
+    pub fn to_string(&self) -> String {
+        let version = match self.address_type {
+            AddressType::P2PKH => self.network.p2pkh_version(),
+            AddressType::P2SH => self.network.p2sh_version(),
+        };
+
+        let mut data = Vec::with_capacity(21);
+        data.push(version);
+        data.extend_from_slice(&self.hash[..]);
+
+        base58ck::encode_check(&data)
+    }
+
     /// Parse an address from a string (network is inferred from version byte)
     pub fn from_string(s: &str) -> Result<Self> {
         s.parse()
@@ -127,18 +142,21 @@ impl FromStr for Address {
         let hash = hash160::Hash::from_slice(&data[1..])
             .map_err(|_| Error::InvalidAddress("Invalid hash".into()))?;
 
-        // Determine network and address type from version byte
+        // Infer network and address type from version byte
         let (network, address_type) = match version {
-            // Mainnet
-            76 => (Network::Dash, AddressType::P2PKH), // 0x4c
-            16 => (Network::Dash, AddressType::P2SH),  // 0x10
-            // Testnet/Regtest (same version bytes)
-            140 => (Network::Testnet, AddressType::P2PKH), // 0x8c
-            19 => (Network::Testnet, AddressType::P2SH),   // 0x13
-            // Devnet
-            142 => (Network::Devnet, AddressType::P2PKH), // 0x8e
-            21 => (Network::Devnet, AddressType::P2SH),   // 0x15
-            _ => return Err(Error::InvalidAddress("Unknown address version".into())),
+            76 => (Network::Dash, AddressType::P2PKH), // Dash mainnet P2PKH
+            16 => (Network::Dash, AddressType::P2SH),  // Dash mainnet P2SH
+            140 => {
+                // Could be testnet, devnet, or regtest P2PKH
+                // Default to testnet, but this is ambiguous
+                (Network::Testnet, AddressType::P2PKH)
+            }
+            19 => {
+                // Could be testnet, devnet, or regtest P2SH
+                // Default to testnet, but this is ambiguous
+                (Network::Testnet, AddressType::P2SH)
+            }
+            _ => return Err(Error::InvalidAddress(format!("Unknown version byte: {}", version))),
         };
 
         Ok(Self {
@@ -151,16 +169,7 @@ impl FromStr for Address {
 
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let version = match self.address_type {
-            AddressType::P2PKH => self.network.p2pkh_version(),
-            AddressType::P2SH => self.network.p2sh_version(),
-        };
-
-        let mut data = Vec::with_capacity(21);
-        data.push(version);
-        data.extend_from_slice(&self.hash[..]);
-
-        write!(f, "{}", base58ck::encode_check(&data))
+        write!(f, "{}", self.to_string())
     }
 }
 
