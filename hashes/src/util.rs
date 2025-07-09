@@ -18,8 +18,8 @@ macro_rules! hex_fmt_impl(
     ($reverse:expr, $ty:ident) => (
         $crate::hex_fmt_impl!($reverse, $ty, );
     );
-    ($reverse:expr, $ty:ident, $($gen:ident: $gent:ident),*) => (
-        impl<$($gen: $gent),*> $crate::_export::_core::fmt::LowerHex for $ty<$($gen),*> {
+    ($reverse:expr, $ty:ident, $($generator:ident: $gent:ident),*) => (
+        impl<$($generator: $gent),*> $crate::_export::_core::fmt::LowerHex for $ty<$($generator),*> {
             #[inline]
             fn fmt(&self, f: &mut $crate::_export::_core::fmt::Formatter) -> $crate::_export::_core::fmt::Result {
                 if $reverse {
@@ -30,7 +30,7 @@ macro_rules! hex_fmt_impl(
             }
         }
 
-        impl<$($gen: $gent),*> $crate::_export::_core::fmt::UpperHex for $ty<$($gen),*> {
+        impl<$($generator: $gent),*> $crate::_export::_core::fmt::UpperHex for $ty<$($generator),*> {
             #[inline]
             fn fmt(&self, f: &mut $crate::_export::_core::fmt::Formatter) -> $crate::_export::_core::fmt::Result {
                 if $reverse {
@@ -41,14 +41,14 @@ macro_rules! hex_fmt_impl(
             }
         }
 
-        impl<$($gen: $gent),*> $crate::_export::_core::fmt::Display for $ty<$($gen),*> {
+        impl<$($generator: $gent),*> $crate::_export::_core::fmt::Display for $ty<$($generator),*> {
             #[inline]
             fn fmt(&self, f: &mut $crate::_export::_core::fmt::Formatter) -> $crate::_export::_core::fmt::Result {
                 $crate::_export::_core::fmt::LowerHex::fmt(&self, f)
             }
         }
 
-        impl<$($gen: $gent),*> $crate::_export::_core::fmt::Debug for $ty<$($gen),*> {
+        impl<$($generator: $gent),*> $crate::_export::_core::fmt::Debug for $ty<$($generator),*> {
             #[inline]
             fn fmt(&self, f: &mut $crate::_export::_core::fmt::Formatter) -> $crate::_export::_core::fmt::Result {
                 write!(f, "{:#}", self)
@@ -63,14 +63,14 @@ macro_rules! borrow_slice_impl(
     ($ty:ident) => (
         $crate::borrow_slice_impl!($ty, );
     );
-    ($ty:ident, $($gen:ident: $gent:ident),*) => (
-        impl<$($gen: $gent),*> $crate::_export::_core::borrow::Borrow<[u8]> for $ty<$($gen),*>  {
+    ($ty:ident, $($generator:ident: $gent:ident),*) => (
+        impl<$($generator: $gent),*> $crate::_export::_core::borrow::Borrow<[u8]> for $ty<$($generator),*>  {
             fn borrow(&self) -> &[u8] {
                 &self[..]
             }
         }
 
-        impl<$($gen: $gent),*> $crate::_export::_core::convert::AsRef<[u8]> for $ty<$($gen),*>  {
+        impl<$($generator: $gent),*> $crate::_export::_core::convert::AsRef<[u8]> for $ty<$($generator),*>  {
             fn as_ref(&self) -> &[u8] {
                 &self[..]
             }
@@ -588,8 +588,8 @@ pub mod json_hex_string {
     use schemars::schema::{Schema, SchemaObject};
     macro_rules! define_custom_hex {
         ($name:ident, $len:expr) => {
-            pub fn $name(gen: &mut SchemaGenerator) -> Schema {
-                let mut schema: SchemaObject = <String>::json_schema(gen).into();
+            pub fn $name(generator: &mut SchemaGenerator) -> Schema {
+                let mut schema: SchemaObject = <String>::json_schema(generator).into();
                 schema.string = Some(Box::new(schemars::schema::StringValidation {
                     max_length: Some($len * 2),
                     min_length: Some($len * 2),
