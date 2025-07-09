@@ -264,6 +264,8 @@ pub enum NetworkMessage {
     CLSig(ChainLock),
     /// `isdlock`
     ISLock(InstantLock),
+    /// `senddsq` - Notify peer whether to send CoinJoin queue messages
+    SendDsq(bool),
     /// Any other message.
     Unknown {
         /// The command of this message.
@@ -323,6 +325,7 @@ impl NetworkMessage {
             NetworkMessage::QRInfo(_) => "qrinfo",
             NetworkMessage::CLSig(_) => "clsig",
             NetworkMessage::ISLock(_) => "isdlock",
+            NetworkMessage::SendDsq(_) => "senddsq",
             NetworkMessage::Unknown {
                 ..
             } => "unknown",
@@ -424,6 +427,7 @@ impl Encodable for RawNetworkMessage {
             NetworkMessage::QRInfo(ref dat) => serialize(dat),
             NetworkMessage::CLSig(ref dat) => serialize(dat),
             NetworkMessage::ISLock(ref dat) => serialize(dat),
+            NetworkMessage::SendDsq(wants_dsq) => serialize(&(wants_dsq as u8)),
         })
         .consensus_encode(w)?;
         Ok(len)
@@ -600,6 +604,10 @@ impl Decodable for RawNetworkMessage {
             }
             "isdlock" => {
                 NetworkMessage::ISLock(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
+            }
+            "senddsq" => {
+                let byte: u8 = Decodable::consensus_decode_from_finite_reader(&mut mem_d)?;
+                NetworkMessage::SendDsq(byte != 0)
             }
             _ => NetworkMessage::Unknown {
                 command: cmd,
@@ -946,5 +954,56 @@ mod test {
         } else {
             panic!("Wrong message type");
         }
+    }
+
+    #[test]
+    fn test_senddsq_message_encode_decode() {
+        // Test encoding and decoding SendDsq(true)
+        let msg_true = NetworkMessage::SendDsq(true);
+        let raw_msg = RawNetworkMessage {
+            magic: crate::Network::Dash.magic(),
+            payload: msg_true,
+        };
+        
+        // Encode
+        let encoded = serialize(&raw_msg);
+        
+        // Decode
+        let decoded: RawNetworkMessage = deserialize(&encoded).unwrap();
+        
+        // Verify
+        match decoded.payload {
+            NetworkMessage::SendDsq(wants_dsq) => {
+                assert_eq!(wants_dsq, true);
+            }
+            _ => panic!("Expected SendDsq message"),
+        }
+        
+        // Test encoding and decoding SendDsq(false)
+        let msg_false = NetworkMessage::SendDsq(false);
+        let raw_msg = RawNetworkMessage {
+            magic: crate::Network::Dash.magic(),
+            payload: msg_false,
+        };
+        
+        // Encode
+        let encoded = serialize(&raw_msg);
+        
+        // Decode
+        let decoded: RawNetworkMessage = deserialize(&encoded).unwrap();
+        
+        // Verify
+        match decoded.payload {
+            NetworkMessage::SendDsq(wants_dsq) => {
+                assert_eq!(wants_dsq, false);
+            }
+            _ => panic!("Expected SendDsq message"),
+        }
+    }
+    
+    #[test]
+    fn test_senddsq_command_string() {
+        let msg = NetworkMessage::SendDsq(true);
+        assert_eq!(msg.cmd(), "senddsq");
     }
 }
