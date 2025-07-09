@@ -163,6 +163,10 @@ pub struct ClientConfig {
     /// Start syncing from a specific block height.
     /// The client will use the nearest checkpoint at or before this height.
     pub start_from_height: Option<u32>,
+
+    /// Wallet creation time as Unix timestamp.
+    /// Used to determine appropriate checkpoint for sync.
+    pub wallet_creation_time: Option<u32>,
 }
 
 impl Default for ClientConfig {
@@ -216,6 +220,7 @@ impl Default for ClientConfig {
             filters_request_rate_limit: None,
             blocks_request_rate_limit: None,
             start_from_height: None,
+            wallet_creation_time: None,
         }
     }
 }

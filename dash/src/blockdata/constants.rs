@@ -108,50 +108,10 @@ fn dash_genesis_tx() -> Transaction {
     ret
 }
 
-/// Constructs and returns the coinbase (and only) transaction of the Bitcoin genesis block (used by devnet).
-fn bitcoin_genesis_tx() -> Transaction {
-    // Base
-    let mut ret = Transaction {
-        version: 1,
-        lock_time: absolute::LockTime::ZERO.to_consensus_u32(),
-        input: vec![],
-        output: vec![],
-        special_transaction_payload: None,
-    };
-
-    // Inputs
-    let in_script = script::ScriptBuf::from(hex!(
-        "04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73"
-    ).to_vec());
-    ret.input.push(TxIn {
-        previous_output: OutPoint::null(),
-        script_sig: in_script,
-        sequence: 0xFFFFFFFF,
-        witness: Witness::default(),
-    });
-
-    // Outputs
-    let script_bytes = hex!(
-        "040184710fa689ad5023690c80f3a49c8f13f8d45b8c857fbcbc8bc4a8e4d3eb4b10f4d4604fa08dce601aaf0f470216fe1b51850b4acf21b179c45070ac7b03a9"
-    );
-    let out_script =
-        script::Builder::new().push_slice(script_bytes).push_opcode(OP_CHECKSIG).into_script();
-    ret.output.push(TxOut {
-        value: 50 * COIN_VALUE,
-        script_pubkey: out_script,
-    });
-
-    // end
-    ret
-}
-
 
 /// Constructs and returns the genesis block.
 pub fn genesis_block(network: Network) -> Block {
-    let txdata = match network {
-        Network::Devnet => vec![bitcoin_genesis_tx()],
-        _ => vec![dash_genesis_tx()],
-    };
+    let txdata = vec![dash_genesis_tx()];
 
     match network {
         Network::Dash => {
@@ -189,9 +149,9 @@ pub fn genesis_block(network: Network) -> Block {
             }
         }
         Network::Devnet => {
-            // Devnet merkle root - Note: bytes are reversed for internal representation
+            // Devnet merkle root (same as mainnet/testnet - all use Dash genesis tx) - Note: bytes are reversed for internal representation
             let merkle_bytes =
-                hex!("3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a");
+                hex!("c762a6567f3cc092f0684bb62b7e00a84890b990f07cc71a6bb58d64b98e02e0");
             let merkle_root = sha256d::Hash::from_slice(&merkle_bytes).unwrap().into();
             Block {
                 header: block::Header {
@@ -247,9 +207,9 @@ impl ChainHash {
     ]);
     /// `ChainHash` for devnet dash.
     pub const DEVNET: Self = Self([
-        0xa4, 0x77, 0x55, 0xbe, 0x79, 0x25, 0x96, 0x6f, 0x83, 0xb5, 0xb1, 0xa4, 0xcc, 0xd1, 0xca,
-        0x69, 0x1d, 0xc5, 0xeb, 0xf0, 0xfa, 0xb3, 0xe0, 0x06, 0x2e, 0xee, 0x28, 0x88, 0x17, 0xd7,
-        0x0c, 0x58,
+        0x4e, 0x5f, 0x93, 0x0c, 0x5d, 0x73, 0xa8, 0x79, 0x2f, 0xa6, 0x81, 0xba, 0x8c, 0x5e, 0xaf,
+        0x74, 0xaa, 0x63, 0x97, 0x4a, 0x5b, 0x1f, 0x59, 0x8d, 0xd5, 0x08, 0x02, 0x9a, 0xee, 0x70,
+        0x16, 0x7b,
     ]);
     /// `ChainHash` for regtest dash.
     pub const REGTEST: Self = Self([
@@ -357,14 +317,14 @@ mod test {
         assert_eq!(genesis_block.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
             genesis_block.header.merkle_root.to_string(),
-            "4a5e1e4baab89f3a3251a88a38bc1fc87f618f76673e2cc77ab2127b7afdeda3"
+            "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
         );
         assert_eq!(genesis_block.header.time, 1598918400);
         assert_eq!(genesis_block.header.bits, CompactTarget::from_consensus(0x1e0377ae));
         assert_eq!(genesis_block.header.nonce, 52613770);
         assert_eq!(
             genesis_block.header.block_hash().to_string(),
-            "a47755be7925966f83b5b1a4ccd1ca691dc5ebf0fab3e0062eee288817d70c58"
+            "4e5f930c5d73a8792fa681ba8c5eaf74aa63974a5b1f598dd508029aee70167b"
         );
     }
 
