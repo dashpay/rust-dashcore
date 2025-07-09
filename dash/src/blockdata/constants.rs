@@ -266,14 +266,11 @@ mod test {
         assert_eq!(genesis_tx.output[0].value, 50 * COIN_VALUE);
         assert_eq!(genesis_tx.lock_time, 0);
 
-        // The wtxid is expected to match this specific value
+        // The wtxid should be deterministic for the coinbase transaction
         let wtxid_str = genesis_tx.wtxid().to_string();
-        assert!(
-            wtxid_str == "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7" ||
-            wtxid_str == "00babeaa0bf3af03c0f12d94da95c7f28168be22087a16fb207e7abda4ae654ee3" ||
-            wtxid_str == "babeaa0bf3af03c0f12d94da95c7f28168be22087a16fb207e7abda4ae654ee3",
-            "Unexpected wtxid: {}",
-            wtxid_str
+        assert_eq!(
+            wtxid_str,
+            "babeaa0bf3af03c0f12d94da95c7f28168be22087a16fb207e7abda4ae654ee3"
         );
     }
 
