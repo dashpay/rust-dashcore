@@ -160,7 +160,6 @@ macro_rules! hash_trait_impls {
         #[cfg(feature = "bincode")]
         impl<'de, $($gen: $gent),*> bincode::BorrowDecode<'de> for Hash<$($gen),*> {
             fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
-                use crate::Hash;
                 use std::convert::TryInto;
                 // Decode a borrowed reference to a byte slice
                 let bytes: &[u8] = bincode::BorrowDecode::borrow_decode(decoder)?;
