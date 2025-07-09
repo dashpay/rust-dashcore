@@ -3,6 +3,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
+use core::str::FromStr;
 
 use bitcoin_hashes::{hash160, Hash};
 use secp256k1::{PublicKey, Secp256k1};
@@ -97,7 +98,39 @@ impl Address {
     }
 
     /// Parse an address from a string (network is inferred from version byte)
-    pub fn from_str(s: &str) -> Result<Self> {
+    pub fn from_string(s: &str) -> Result<Self> {
+        s.parse()
+    }
+
+    /// Get the script pubkey for this address
+    pub fn script_pubkey(&self) -> Vec<u8> {
+        match self.address_type {
+            AddressType::P2PKH => {
+                let mut script = Vec::with_capacity(25);
+                script.push(0x76); // OP_DUP
+                script.push(0xa9); // OP_HASH160
+                script.push(0x14); // Push 20 bytes
+                script.extend_from_slice(&self.hash[..]);
+                script.push(0x88); // OP_EQUALVERIFY
+                script.push(0xac); // OP_CHECKSIG
+                script
+            }
+            AddressType::P2SH => {
+                let mut script = Vec::with_capacity(23);
+                script.push(0xa9); // OP_HASH160
+                script.push(0x14); // Push 20 bytes
+                script.extend_from_slice(&self.hash[..]);
+                script.push(0x87); // OP_EQUAL
+                script
+            }
+        }
+    }
+}
+
+impl FromStr for Address {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
         let data = base58ck::decode_check(s)
             .map_err(|_| Error::InvalidAddress("Invalid base58 encoding".into()))?;
 
@@ -131,30 +164,6 @@ impl Address {
             address_type,
             hash,
         })
-    }
-
-    /// Get the script pubkey for this address
-    pub fn script_pubkey(&self) -> Vec<u8> {
-        match self.address_type {
-            AddressType::P2PKH => {
-                let mut script = Vec::with_capacity(25);
-                script.push(0x76); // OP_DUP
-                script.push(0xa9); // OP_HASH160
-                script.push(0x14); // Push 20 bytes
-                script.extend_from_slice(&self.hash[..]);
-                script.push(0x88); // OP_EQUALVERIFY
-                script.push(0xac); // OP_CHECKSIG
-                script
-            }
-            AddressType::P2SH => {
-                let mut script = Vec::with_capacity(23);
-                script.push(0xa9); // OP_HASH160
-                script.push(0x14); // Push 20 bytes
-                script.extend_from_slice(&self.hash[..]);
-                script.push(0x87); // OP_EQUAL
-                script
-            }
-        }
     }
 }
 

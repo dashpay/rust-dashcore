@@ -1,5 +1,6 @@
 //! Address tests
 
+use std::str::FromStr;
 use bitcoin_hashes::{hash160, Hash};
 use key_wallet::address::{Address, AddressGenerator, AddressType};
 use key_wallet::derivation::HDWallet;
@@ -98,7 +99,6 @@ fn test_address_generator() {
     let wallet = HDWallet::from_seed(&seed, Network::Dash).unwrap();
 
     // Get account public key
-    let account = wallet.bip44_account(0).unwrap();
     let path = key_wallet::DerivationPath::from(vec![
         key_wallet::ChildNumber::from_hardened_idx(44).unwrap(),
         key_wallet::ChildNumber::from_hardened_idx(5).unwrap(),
