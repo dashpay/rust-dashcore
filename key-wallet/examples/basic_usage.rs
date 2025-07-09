@@ -36,7 +36,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
 
     // 5. Create account derivation
     println!("\n5. Deriving addresses...");
-    let account_derivation = AccountDerivation::new(account.clone());
+    let account_derivation = AccountDerivation::new(account);
 
     // Derive first 5 receive addresses
     println!("   Receive addresses:");

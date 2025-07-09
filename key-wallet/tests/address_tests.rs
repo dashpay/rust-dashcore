@@ -1,11 +1,11 @@
 //! Address tests
 
-use std::str::FromStr;
 use bitcoin_hashes::{hash160, Hash};
 use key_wallet::address::{Address, AddressGenerator, AddressType};
 use key_wallet::derivation::HDWallet;
 use key_wallet::Network;
 use secp256k1::{PublicKey, Secp256k1};
+use std::str::FromStr;
 
 #[test]
 fn test_p2pkh_address_creation() {

@@ -75,7 +75,7 @@ impl<const N: usize> IndexConstPath<N> {
 
     pub fn append(&self, child_number: ChildNumber) -> DerivationPath {
         let root_derivation_path = DerivationPath::from(self.indexes.as_ref());
-        root_derivation_path.extend(&[child_number]);
+        root_derivation_path.extend([child_number]);
         root_derivation_path
     }
 
