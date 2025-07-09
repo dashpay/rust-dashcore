@@ -62,6 +62,8 @@ pub struct FilterSyncManager {
     syncing_filter_headers: bool,
     /// Current height being synced for filter headers
     current_sync_height: u32,
+    /// Base height for sync (typically from checkpoint)
+    sync_base_height: u32,
     /// Expected stop hash for current batch
     expected_stop_hash: Option<BlockHash>,
     /// Last time sync progress was made (for timeout detection)
@@ -144,6 +146,7 @@ impl FilterSyncManager {
             _config: config.clone(),
             syncing_filter_headers: false,
             current_sync_height: 0,
+            sync_base_height: 0,
             expected_stop_hash: None,
             last_sync_progress: std::time::Instant::now(),
             last_stability_check: std::time::Instant::now(),
@@ -168,6 +171,11 @@ impl FilterSyncManager {
             gap_restart_failure_count: 0,
             max_gap_restart_attempts: config.max_cfheader_gap_restart_attempts,
         }
+    }
+
+    /// Set the base height for sync (typically from checkpoint)
+    pub fn set_sync_base_height(&mut self, height: u32) {
+        self.sync_base_height = height;
     }
 
     /// Enable flow control for filter downloads.

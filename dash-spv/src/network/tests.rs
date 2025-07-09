@@ -59,6 +59,7 @@ mod multi_peer_tests {
             cfheaders_request_rate_limit: None,
             filters_request_rate_limit: None,
             blocks_request_rate_limit: None,
+            start_from_height: None,
             wallet_creation_time: None,
         }
     }
