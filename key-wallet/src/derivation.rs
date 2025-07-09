@@ -158,8 +158,7 @@ impl AccountDerivation {
         let path = format!("m/0/{}", index)
             .parse::<DerivationPath>()
             .map_err(|e| Error::InvalidDerivationPath(e.to_string()))?;
-        let priv_key = self.account_key.derive_priv(&self.secp, &path)
-            .map_err(Error::Bip32)?;
+        let priv_key = self.account_key.derive_priv(&self.secp, &path).map_err(Error::Bip32)?;
         Ok(ExtendedPubKey::from_priv(&self.secp, &priv_key))
     }
 
@@ -168,8 +167,7 @@ impl AccountDerivation {
         let path = format!("m/1/{}", index)
             .parse::<DerivationPath>()
             .map_err(|e| Error::InvalidDerivationPath(e.to_string()))?;
-        let priv_key = self.account_key.derive_priv(&self.secp, &path)
-            .map_err(Error::Bip32)?;
+        let priv_key = self.account_key.derive_priv(&self.secp, &path).map_err(Error::Bip32)?;
         Ok(ExtendedPubKey::from_priv(&self.secp, &priv_key))
     }
 }
