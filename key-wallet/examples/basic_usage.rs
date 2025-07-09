@@ -67,7 +67,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     // 8. Address parsing example
     println!("\n8. Address parsing...");
     let test_address = "XyPvhVmhWKDgvMJLwfFfMwhxpxGgd3TBxq";
-    match key_wallet::address::Address::from_str(test_address) {
+    match test_address.parse::<key_wallet::address::Address>() {
         Ok(parsed) => {
             println!("   Parsed address: {}", parsed);
             println!("   Type: {:?}", parsed.address_type);
@@ -84,7 +84,6 @@ fn demonstrate_address_generation() -> core::result::Result<(), Box<dyn std::err
     // This demonstrates bulk address generation
     let seed = [0u8; 64];
     let wallet = HDWallet::from_seed(&seed, Network::Dash)?;
-    let account = wallet.bip44_account(0)?;
     let path = key_wallet::DerivationPath::from(vec![
         key_wallet::ChildNumber::from_hardened_idx(44).unwrap(),
         key_wallet::ChildNumber::from_hardened_idx(5).unwrap(),

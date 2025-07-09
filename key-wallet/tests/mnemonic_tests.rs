@@ -1,7 +1,7 @@
 //! Mnemonic tests
 
 use key_wallet::mnemonic::{Language, Mnemonic};
-use key_wallet::{ExtendedPrivKey, Network};
+use key_wallet::Network;
 
 #[test]
 fn test_mnemonic_validation() {

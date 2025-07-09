@@ -28,7 +28,7 @@ impl KeyDerivation for ExtendedPrivKey {
         secp: &Secp256k1<C>,
         path: &DerivationPath,
     ) -> Result<ExtendedPrivKey> {
-        self.derive_priv(secp, path).map_err(Into::into)
+        self.derive_priv(secp, path).map_err(Error::Bip32)
     }
 
     fn derive_pub<C: secp256k1::Signing>(
@@ -74,7 +74,7 @@ impl HDWallet {
 
     /// Derive a key at the given path
     pub fn derive(&self, path: &DerivationPath) -> Result<ExtendedPrivKey> {
-        self.master_key.derive_priv(&self.secp, path).map_err(Into::into)
+        self.master_key.derive_priv(&self.secp, path).map_err(Error::Bip32)
     }
 
     /// Derive a public key at the given path
@@ -158,7 +158,9 @@ impl AccountDerivation {
         let path = format!("m/0/{}", index)
             .parse::<DerivationPath>()
             .map_err(|e| Error::InvalidDerivationPath(e.to_string()))?;
-        self.account_key.derive_pub(&self.secp, &path).map_err(Into::into)
+        let priv_key = self.account_key.derive_priv(&self.secp, &path)
+            .map_err(Error::Bip32)?;
+        Ok(ExtendedPubKey::from_priv(&self.secp, &priv_key))
     }
 
     /// Derive an internal (change) address at index
@@ -166,7 +168,9 @@ impl AccountDerivation {
         let path = format!("m/1/{}", index)
             .parse::<DerivationPath>()
             .map_err(|e| Error::InvalidDerivationPath(e.to_string()))?;
-        self.account_key.derive_pub(&self.secp, &path).map_err(Into::into)
+        let priv_key = self.account_key.derive_priv(&self.secp, &path)
+            .map_err(Error::Bip32)?;
+        Ok(ExtendedPubKey::from_priv(&self.secp, &priv_key))
     }
 }
 
