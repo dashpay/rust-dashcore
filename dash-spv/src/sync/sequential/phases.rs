@@ -10,6 +10,22 @@ use dashcore::BlockHash;
 pub enum SyncPhase {
     /// Not currently syncing
     Idle,
+    
+    /// Monitoring for new headers after initial sync
+    MonitoringHeaders {
+        /// When we last sent a GetHeaders request
+        last_request_time: Instant,
+        /// Current chain height
+        current_height: u32,
+        /// Interval between GetHeaders requests
+        check_interval: Duration,
+        /// Whether we're in catch-up mode (behind chain tip)
+        catch_up_mode: bool,
+        /// Number of consecutive empty responses
+        consecutive_empty_responses: u32,
+        /// Last known peer best height
+        peer_best_height: Option<u32>,
+    },
 
     /// Phase 1: Downloading block headers
     DownloadingHeaders {
@@ -117,6 +133,7 @@ impl SyncPhase {
     pub fn name(&self) -> &'static str {
         match self {
             SyncPhase::Idle => "Idle",
+            SyncPhase::MonitoringHeaders { .. } => "Monitoring Headers",
             SyncPhase::DownloadingHeaders { .. } => "Downloading Headers",
             SyncPhase::DownloadingMnList { .. } => "Downloading Masternode Lists",
             SyncPhase::DownloadingCFHeaders { .. } => "Downloading Filter Headers",
@@ -128,7 +145,7 @@ impl SyncPhase {
 
     /// Check if this phase is actively syncing
     pub fn is_syncing(&self) -> bool {
-        !matches!(self, SyncPhase::Idle | SyncPhase::FullySynced { .. })
+        !matches!(self, SyncPhase::Idle | SyncPhase::FullySynced { .. } | SyncPhase::MonitoringHeaders { .. })
     }
 
     /// Get the last progress time for timeout detection
@@ -139,6 +156,7 @@ impl SyncPhase {
             SyncPhase::DownloadingCFHeaders { last_progress, .. } => Some(*last_progress),
             SyncPhase::DownloadingFilters { last_progress, .. } => Some(*last_progress),
             SyncPhase::DownloadingBlocks { last_progress, .. } => Some(*last_progress),
+            SyncPhase::MonitoringHeaders { last_request_time, .. } => Some(*last_request_time),
             _ => None,
         }
     }
@@ -152,6 +170,7 @@ impl SyncPhase {
             SyncPhase::DownloadingCFHeaders { last_progress, .. } => *last_progress = now,
             SyncPhase::DownloadingFilters { last_progress, .. } => *last_progress = now,
             SyncPhase::DownloadingBlocks { last_progress, .. } => *last_progress = now,
+            SyncPhase::MonitoringHeaders { last_request_time, .. } => *last_request_time = now,
             _ => {}
         }
     }
@@ -165,6 +184,7 @@ impl SyncPhase {
             SyncPhase::DownloadingFilters { start_time, .. } => Some(start_time.elapsed()),
             SyncPhase::DownloadingBlocks { start_time, .. } => Some(start_time.elapsed()),
             SyncPhase::FullySynced { total_sync_time, .. } => Some(*total_sync_time),
+            SyncPhase::MonitoringHeaders { .. } => None, // Monitoring doesn't have a meaningful elapsed time
             SyncPhase::Idle => None,
         }
     }
@@ -346,6 +366,24 @@ impl SyncPhase {
                 }
             }
 
+            SyncPhase::MonitoringHeaders { current_height, catch_up_mode, peer_best_height, .. } => PhaseProgress {
+                phase_name: self.name(),
+                items_completed: *current_height,
+                items_total: *peer_best_height,
+                percentage: if let Some(peer_height) = peer_best_height {
+                    if *peer_height > 0 {
+                        (*current_height as f64 / *peer_height as f64) * 100.0
+                    } else {
+                        100.0
+                    }
+                } else {
+                    100.0
+                },
+                rate: 0.0,
+                eta: None,
+                elapsed: Duration::from_secs(0),
+            },
+            
             _ => PhaseProgress {
                 phase_name: self.name(),
                 items_completed: 0,

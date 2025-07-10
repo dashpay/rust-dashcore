@@ -28,15 +28,6 @@ use crate::network::NetworkManager;
 use crate::storage::{MasternodeState, StorageManager};
 use crate::sync::terminal_blocks::TerminalBlockManager;
 
-/// Callback function type for updating the sync quorum cache when masternode data changes.
-/// 
-/// Parameters:
-/// - quorum_type: Type of quorum (1=InstantSend, 2=ChainLock, etc.)
-/// - quorum_hash: 32-byte hash of the quorum
-/// - public_key: 48-byte compressed BLS public key
-/// - height: Block height of this quorum data
-pub type QuorumCacheUpdateCallback = Box<dyn Fn(u8, [u8; 32], [u8; 48], u32) + Send + Sync>;
-
 /// Manages masternode list synchronization.
 pub struct MasternodeSyncManager {
     config: ClientConfig,
@@ -46,8 +37,6 @@ pub struct MasternodeSyncManager {
     last_sync_progress: std::time::Instant,
     /// Terminal block manager for optimized sync
     terminal_block_manager: TerminalBlockManager,
-    /// Callback for updating the sync quorum cache when new quorum data is processed
-    quorum_cache_callback: Option<QuorumCacheUpdateCallback>,
 }
 
 impl MasternodeSyncManager {
@@ -70,62 +59,12 @@ impl MasternodeSyncManager {
             engine,
             last_sync_progress: std::time::Instant::now(),
             terminal_block_manager: TerminalBlockManager::new(config.network),
-            quorum_cache_callback: None,
         }
     }
-
-    /// Set the callback for updating the sync quorum cache.
-    /// 
-    /// This callback will be called whenever new quorum data is processed during masternode sync.
-    pub fn set_quorum_cache_callback(&mut self, callback: QuorumCacheUpdateCallback) {
-        self.quorum_cache_callback = Some(callback);
-    }
-
-    /// Update the sync quorum cache with data from the masternode list engine.
-    /// 
-    /// This method extracts all quorum public keys from the current masternode list
-    /// and calls the cache update callback for each one.
-    fn update_sync_cache_from_engine(&self, height: u32) {
-        if let Some(ref callback) = self.quorum_cache_callback {
-            if let Some(engine) = &self.engine {
-                if let Some(masternode_list) = engine.latest_masternode_list() {
-                    let mut updated_count = 0;
-                    
-                    // Extract all quorum public keys from the masternode list
-                    for (llmq_type, type_quorums) in &masternode_list.quorums {
-                        // Convert LLMQType to u8
-                        let quorum_type = match llmq_type {
-                            dashcore::sml::llmq_type::LLMQType::Llmqtype50_60 => 1,
-                            dashcore::sml::llmq_type::LLMQType::Llmqtype400_60 => 2,
-                            dashcore::sml::llmq_type::LLMQType::Llmqtype400_85 => 3,
-                            dashcore::sml::llmq_type::LLMQType::Llmqtype100_67 => 4,
-                            dashcore::sml::llmq_type::LLMQType::Llmqtype60_75 => 5,
-                            _ => continue, // Skip unknown types
-                        };
-                        
-                        for (quorum_hash, qualified_quorum_entry) in type_quorums {
-                            // Extract the BLS public key (already in compressed format)
-                            let public_key_bytes: [u8; 48] = *qualified_quorum_entry.quorum_entry.quorum_public_key.as_ref();
-                            
-                            // Convert quorum hash to bytes
-                            let quorum_hash_bytes = quorum_hash.to_byte_array();
-                            
-                            // Call the callback to update the cache
-                            callback(quorum_type, quorum_hash_bytes, public_key_bytes, height);
-                            updated_count += 1;
-                        }
-                    }
-                    
-                    if updated_count > 0 {
-                        tracing::debug!("Updated sync cache with {} quorum keys at height {}", updated_count, height);
-                    }
-                } else {
-                    tracing::debug!("No masternode list available for cache update");
-                }
-            } else {
-                tracing::debug!("No masternode engine available for cache update");
-            }
-        }
+    
+    /// Check if masternode sync is currently in progress
+    pub fn is_syncing(&self) -> bool {
+        self.sync_in_progress
     }
 
     /// Validate a terminal block against the chain and return its height if valid.
@@ -752,8 +691,6 @@ impl MasternodeSyncManager {
                 .unwrap_or(0)
         };
 
-        // Update the sync quorum cache with the new masternode data
-        self.update_sync_cache_from_engine(target_height);
 
         // Validate terminal block if this is one
         if self.terminal_block_manager.is_terminal_block_height(target_height) {
@@ -821,7 +758,13 @@ impl MasternodeSyncManager {
     /// 
     /// This method searches through the engine's historical masternode lists
     /// to find the requested quorum, checking from newest to oldest.
+    /// 
+    /// IMPORTANT: The quorum_hash must be in big-endian format (Dash Core convention).
+    /// If you have a little-endian hash from Platform, reverse the bytes first!
     pub fn get_historical_quorum_public_key(&self, quorum_type: u8, quorum_hash: [u8; 32]) -> Option<[u8; 48]> {
+        let quorum_hash_hex = hex::encode(quorum_hash);
+        tracing::debug!("🔍 Looking for quorum: type={}, hash={}", quorum_type, quorum_hash_hex);
+        
         let engine = self.engine.as_ref()?;
         
         // Convert quorum_type to LLMQType
@@ -831,7 +774,10 @@ impl MasternodeSyncManager {
             3 => dashcore::sml::llmq_type::LLMQType::Llmqtype400_85,
             4 => dashcore::sml::llmq_type::LLMQType::Llmqtype100_67,
             5 => dashcore::sml::llmq_type::LLMQType::Llmqtype60_75,
-            _ => return None,
+            _ => {
+                tracing::warn!("Unknown quorum type: {}", quorum_type);
+                return None;
+            }
         };
         
         // Convert quorum_hash to QuorumHash
@@ -841,20 +787,40 @@ impl MasternodeSyncManager {
         let mut heights: Vec<_> = engine.masternode_lists.keys().collect();
         heights.sort_by(|a, b| b.cmp(a)); // Sort descending (newest first)
         
-        for &height in heights {
+        tracing::debug!("Available masternode list heights: {:?} (total: {})", 
+            heights.iter().take(10).collect::<Vec<_>>(), 
+            heights.len()
+        );
+        
+        for &height in &heights {
             if let Some(masternode_list) = engine.masternode_lists.get(&height) {
                 // Check if this height has quorums of the requested type
                 if let Some(type_quorums) = masternode_list.quorums.get(&llmq_type) {
+                    tracing::trace!("Height {} has {} quorums of type {:?}", 
+                        height, type_quorums.len(), llmq_type);
+                    
+                    // Log all quorum hashes at this height for debugging
+                    let quorum_hashes: Vec<String> = type_quorums.keys()
+                        .map(|h| hex::encode(h.as_byte_array()))
+                        .collect();
+                    tracing::trace!("Quorum hashes at height {}: {:?}", height, quorum_hashes);
+                    
                     // Look for the specific quorum hash
                     if let Some(qualified_quorum_entry) = type_quorums.get(&quorum_hash_obj) {
                         // Extract the BLS public key (already in compressed format)
                         let public_key_bytes: [u8; 48] = *qualified_quorum_entry.quorum_entry.quorum_public_key.as_ref();
+                        tracing::info!("✅ Found quorum at height {}: type={}, hash={}", 
+                            height, quorum_type, quorum_hash_hex);
                         return Some(public_key_bytes);
                     }
+                } else {
+                    tracing::trace!("Height {} has no quorums of type {:?}", height, llmq_type);
                 }
             }
         }
         
+        tracing::warn!("❌ Quorum not found after searching {} heights: type={}, hash={}", 
+            heights.len(), quorum_type, quorum_hash_hex);
         None
     }
 
@@ -902,11 +868,21 @@ impl MasternodeSyncManager {
     /// # Returns
     /// Vector of heights in descending order (newest first)
     pub fn get_available_heights(&self) -> Vec<u32> {
+        println!("DEBUG: MasternodeSyncManager::get_available_heights() called");
+        tracing::error!("📍 get_available_heights() called");
         if let Some(engine) = &self.engine {
+            println!("DEBUG: Engine exists, getting masternode list keys...");
+            tracing::error!("📍 Engine exists, getting masternode list keys...");
             let mut heights: Vec<u32> = engine.masternode_lists.keys().copied().collect();
+            println!("DEBUG: Found {} heights, sorting...", heights.len());
+            tracing::error!("📍 Found {} heights, sorting...", heights.len());
             heights.sort_by(|a, b| b.cmp(a)); // Sort descending
+            println!("DEBUG: Returning sorted heights");
+            tracing::error!("📍 Returning sorted heights");
             heights
         } else {
+            println!("DEBUG: Engine is None, returning empty vec");
+            tracing::error!("📍 Engine is None, returning empty vec");
             Vec::new()
         }
     }
@@ -923,6 +899,56 @@ impl MasternodeSyncManager {
             .and_then(|engine| engine.masternode_lists.get(&height))
             .map(|list| list.quorums.values().map(|type_quorums| type_quorums.len()).sum())
             .unwrap_or(0)
+    }
+    
+    /// Debug method to print quorums at a specific height for a given type.
+    /// 
+    /// # Arguments
+    /// * `height` - Block height to examine
+    /// * `quorum_type` - Type of quorum to display (1-5)
+    pub fn debug_print_quorums_at_height(&self, height: u32, quorum_type: u8) {
+        let Some(engine) = self.engine.as_ref() else {
+            tracing::warn!("Engine not initialized");
+            return;
+        };
+        
+        let Some(masternode_list) = engine.masternode_lists.get(&height) else {
+            tracing::warn!("No masternode list at height {}", height);
+            return;
+        };
+        
+        // Convert quorum_type to LLMQType
+        let llmq_type = match quorum_type {
+            1 => dashcore::sml::llmq_type::LLMQType::Llmqtype50_60,
+            2 => dashcore::sml::llmq_type::LLMQType::Llmqtype400_60,
+            3 => dashcore::sml::llmq_type::LLMQType::Llmqtype400_85,
+            4 => dashcore::sml::llmq_type::LLMQType::Llmqtype100_67,
+            5 => dashcore::sml::llmq_type::LLMQType::Llmqtype60_75,
+            _ => {
+                tracing::warn!("Unknown quorum type: {}", quorum_type);
+                return;
+            }
+        };
+        
+        if let Some(type_quorums) = masternode_list.quorums.get(&llmq_type) {
+            tracing::info!("  Type {} quorums at height {}: {} quorums", quorum_type, height, type_quorums.len());
+            
+            // Print first few quorum hashes
+            let quorum_hashes: Vec<String> = type_quorums.keys()
+                .take(5)
+                .map(|h| hex::encode(h.as_byte_array()))
+                .collect();
+            
+            for hash in quorum_hashes {
+                tracing::info!("    - {}", hash);
+            }
+            
+            if type_quorums.len() > 5 {
+                tracing::info!("    ... and {} more", type_quorums.len() - 5);
+            }
+        } else {
+            tracing::info!("  No type {} quorums at height {}", quorum_type, height);
+        }
     }
 
     /// Get a reference to the terminal block manager.

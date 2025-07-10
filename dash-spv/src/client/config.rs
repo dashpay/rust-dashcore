@@ -159,6 +159,11 @@ pub struct ClientConfig {
 
     /// Rate limit for block requests per second (default: 10.0).
     pub blocks_request_rate_limit: Option<f64>,
+    
+    /// Interval for continuous header sync after reaching chain tip.
+    /// If None, continuous sync is disabled (default).
+    /// If Some, SPV will periodically check for new headers at this interval.
+    pub continuous_sync_interval: Option<Duration>,
 }
 
 impl Default for ClientConfig {
@@ -211,6 +216,7 @@ impl Default for ClientConfig {
             cfheaders_request_rate_limit: None,
             filters_request_rate_limit: None,
             blocks_request_rate_limit: None,
+            continuous_sync_interval: None, // Disabled by default
         }
     }
 }

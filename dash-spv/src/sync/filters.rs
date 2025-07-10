@@ -170,6 +170,11 @@ impl FilterSyncManager {
         }
     }
     
+    /// Check if filter header sync is currently in progress
+    pub fn is_syncing_headers(&self) -> bool {
+        self.syncing_filter_headers
+    }
+    
     /// Enable flow control for filter downloads.
     pub fn enable_flow_control(&mut self) {
         self.flow_control_enabled = true;

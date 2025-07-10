@@ -320,6 +320,16 @@ impl ProgressTracker {
             SyncPhase::FullySynced { .. } => {
                 format!("Fully synchronized ({:.1}% complete)", overall_percentage)
             }
+            
+            SyncPhase::MonitoringHeaders { catch_up_mode, current_height, peer_best_height, .. } => {
+                if *catch_up_mode {
+                    let blocks_behind = peer_best_height.unwrap_or(*current_height).saturating_sub(*current_height);
+                    format!("⚡ Catching up: {} blocks behind (height {} → {})", 
+                           blocks_behind, current_height, peer_best_height.unwrap_or(*current_height))
+                } else {
+                    format!("Monitoring for new headers at height {}", current_height)
+                }
+            }
         }
     }
 }

@@ -2836,15 +2836,35 @@ impl DashSpvClient {
     /// # Returns
     /// The 48-byte compressed BLS public key if found, None otherwise
     pub fn get_quorum_public_key_sync(&self, quorum_type: u8, quorum_hash: [u8; 32]) -> Option<[u8; 48]> {
+        // Use both println and tracing to ensure we see output
         let quorum_hash_hex = hex::encode(quorum_hash);
-        tracing::error!("🔍 SPV DIRECT ENGINE LOOKUP: type={}, hash={}", quorum_type, quorum_hash_hex);
+        println!("DEBUG: get_quorum_public_key_sync CALLED - type={}, hash={}", quorum_type, quorum_hash_hex);
+        tracing::error!("📍 SPV get_quorum_public_key_sync CALLED: type={}, hash={}", quorum_type, quorum_hash_hex);
+        
+        // First check if we have any masternode lists available
+        println!("DEBUG: About to call get_available_heights()...");
+        tracing::error!("📍 About to call get_available_heights()...");
+        let available_heights = self.sync_manager.masternode_sync_manager().get_available_heights();
+        println!("DEBUG: get_available_heights() returned {} heights", available_heights.len());
+        tracing::error!("📍 get_available_heights() returned {} heights", available_heights.len());
+        
+        if available_heights.is_empty() {
+            tracing::warn!("⚠️ No masternode lists available yet - sync may still be in progress");
+            return None;
+        }
+        
+        tracing::info!("Masternode lists available at {} heights: {:?}", 
+            available_heights.len(),
+            available_heights.iter().take(5).collect::<Vec<_>>()
+        );
         
         // Direct lookup in masternode engine (single source of truth)
+        tracing::error!("📍 About to call get_historical_quorum_public_key()...");
         if let Some(key) = self.sync_manager.masternode_sync_manager().get_historical_quorum_public_key(quorum_type, quorum_hash) {
-            tracing::error!("✅ FOUND quorum type={} hash={} in masternode engine", quorum_type, quorum_hash_hex);
+            tracing::info!("✅ FOUND quorum type={} hash={} in masternode engine", quorum_type, quorum_hash_hex);
             Some(key)
         } else {
-            tracing::error!("❌ NOT FOUND quorum type={} hash={} in masternode engine", quorum_type, quorum_hash_hex);
+            tracing::warn!("❌ NOT FOUND quorum type={} hash={} in masternode engine", quorum_type, quorum_hash_hex);
             None
         }
     }
@@ -2886,6 +2906,345 @@ impl DashSpvClient {
         self.sync_manager.masternode_sync_manager().get_quorum_count_at_height(height)
     }
     
+    /// Process network messages for a limited duration without blocking indefinitely.
+    /// This is a non-blocking alternative to monitor_network() that allows the caller
+    /// to manage lock contention by processing messages in smaller chunks.
+    /// 
+    /// # Arguments
+    /// * `max_duration` - Maximum time to spend processing messages
+    /// 
+    /// # Returns
+    /// * `Ok(true)` if more messages may be available
+    /// * `Ok(false)` if the client should stop
+    /// * `Err` on network errors
+    pub async fn process_network_messages(&mut self, max_duration: Duration) -> Result<bool> {
+        let start_time = Instant::now();
+        
+        // Check if we should stop
+        let running = self.running.read().await;
+        if !*running {
+            return Ok(false);
+        }
+        drop(running);
+        
+        // Process messages until timeout
+        while start_time.elapsed() < max_duration {
+            // Check for network messages with a short timeout
+            match tokio::time::timeout(
+                Duration::from_millis(100),
+                self.network.receive_message()
+            ).await {
+                Ok(Ok(Some(message))) => {
+                    // Handle the message
+                    if let Err(e) = self.handle_network_message(message).await {
+                        tracing::error!("Error handling network message: {}", e);
+                        // Continue processing despite errors
+                    }
+                }
+                Ok(Ok(None)) => {
+                    // No message available, brief pause
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Ok(Err(e)) => {
+                    tracing::error!("Network error: {}", e);
+                    return Err(SpvError::Network(e));
+                }
+                Err(_) => {
+                    // Timeout - check if we should continue
+                    if start_time.elapsed() >= max_duration {
+                        break;
+                    }
+                }
+            }
+            
+            // Check if we should stop
+            let running = self.running.read().await;
+            if !*running {
+                return Ok(false);
+            }
+            drop(running);
+        }
+        
+        Ok(true)
+    }
     
+    /// Initialize sync operations without blocking.
+    /// This should be called once when peers are first connected.
+    /// 
+    /// # Returns
+    /// * `Ok(true)` if sync was started successfully
+    /// * `Ok(false)` if sync was already started or not needed
+    /// * `Err` on sync initialization errors
+    pub async fn initialize_sync(&mut self) -> Result<bool> {
+        // Check if we have peers
+        if self.network.peer_count() == 0 {
+            return Ok(false);
+        }
+        
+        // Check if sync is already in progress
+        if self.sync_manager.is_sync_in_progress() {
+            return Ok(false);
+        }
+        
+        tracing::info!("🚀 Initializing sync operations...");
+        
+        // Start initial sync
+        match self.sync_manager.start_sync(&mut *self.network, &mut *self.storage).await {
+            Ok(started) => {
+                if started {
+                    // Send initial requests
+                    if let Err(e) = self.sync_manager.send_initial_requests(&mut *self.network, &mut *self.storage).await {
+                        tracing::error!("Failed to send initial sync requests: {}", e);
+                        self.sync_manager.reset_pending_requests();
+                        return Err(e.into());
+                    }
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to start sync: {}", e);
+                Err(e.into())
+            }
+        }
+    }
+    
+    /// Perform periodic maintenance tasks without blocking.
+    /// This includes ping management, timeout checks, and state saves.
+    /// 
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err` on critical errors
+    pub async fn perform_maintenance(&mut self) -> Result<()> {
+        // Send ping if needed
+        if self.network.should_ping() {
+            if let Err(e) = self.network.send_ping().await {
+                tracing::error!("Failed to send ping: {}", e);
+            }
+        }
+        
+        // Clean up old pings
+        self.network.cleanup_old_pings();
+        
+        // Check for timeouts
+        let _ = self.sync_manager.check_timeout(&mut *self.network, &mut *self.storage).await;
+        
+        // Save sync state periodically
+        let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+        let last_save = *self.last_sync_state_save.read().await;
+        
+        if current_time - last_save >= 30 {
+            if let Err(e) = self.save_sync_state().await {
+                tracing::warn!("Failed to save sync state: {}", e);
+            } else {
+                *self.last_sync_state_save.write().await = current_time;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Reset sync to a specific checkpoint height.
+    /// This is useful when the current sync state is corrupted or when peers don't serve old blocks.
+    /// 
+    /// # Arguments
+    /// * `checkpoint_height` - The height to reset to (must have headers up to this height)
+    /// 
+    /// # Returns
+    /// * `Ok(())` if reset was successful
+    /// * `Err` if the checkpoint is invalid or reset failed
+    pub async fn reset_to_checkpoint(&mut self, checkpoint_height: u32) -> Result<()> {
+        tracing::info!("Resetting sync to checkpoint height {}", checkpoint_height);
+        
+        // Verify we have headers up to this height
+        let current_height = self.storage.get_tip_height()
+            .await
+            .map_err(|e| SpvError::Storage(e))?
+            .unwrap_or(0);
+            
+        if checkpoint_height > current_height {
+            return Err(SpvError::Config(format!(
+                "Cannot reset to height {} when current height is only {}",
+                checkpoint_height, current_height
+            )));
+        }
+        
+        // Get the header at checkpoint height
+        let checkpoint_header = self.storage.get_header(checkpoint_height)
+            .await
+            .map_err(|e| SpvError::Storage(e))?
+            .ok_or_else(|| SpvError::Config(format!(
+                "No header found at checkpoint height {}",
+                checkpoint_height
+            )))?;
+        
+        // Create new sync state
+        let new_sync_state = crate::storage::PersistentSyncState {
+            version: 1,
+            network: self.config.network,
+            chain_tip: crate::storage::sync_state::ChainTip {
+                height: checkpoint_height,
+                hash: checkpoint_header.block_hash(),
+                prev_hash: checkpoint_header.prev_blockhash,
+                time: checkpoint_header.time,
+            },
+            sync_progress: crate::types::SyncProgress {
+                header_height: checkpoint_height,
+                filter_header_height: 0,
+                masternode_height: 0,
+                peer_count: 0,
+                headers_synced: true,
+                filter_headers_synced: false,
+                masternodes_synced: false,
+                filter_sync_available: false,
+                filters_downloaded: 0,
+                last_synced_filter_height: None,
+                sync_start: SystemTime::now(),
+                last_update: SystemTime::now(),
+            },
+            checkpoints: vec![crate::storage::sync_state::SyncCheckpoint {
+                height: checkpoint_height,
+                block_hash: checkpoint_header.block_hash(),
+                filter_header: None,
+                validated: true,
+                created_at: SystemTime::now(),
+            }],
+            masternode_sync: crate::storage::sync_state::MasternodeSyncState {
+                last_synced_height: Some(0),
+                is_synced: false,
+                masternode_count: 0,
+                last_diff_height: None,
+            },
+            filter_sync: crate::storage::sync_state::FilterSyncState {
+                filter_header_height: 0,
+                filter_height: 0,
+                filters_downloaded: 0,
+                matched_heights: vec![],
+                filter_sync_available: false,
+            },
+            saved_at: SystemTime::now(),
+            chain_work: "0".to_string(), // Simplified for now
+        };
+        
+        // Save the new sync state
+        self.storage.store_sync_state(&new_sync_state)
+            .await
+            .map_err(|e| SpvError::Storage(e))?;
+        
+        // Update chain state by rebuilding it
+        let mut state = self.state.write().await;
+        // Clear the existing state and rebuild with checkpoint
+        state.headers.clear();
+        state.headers.push(checkpoint_header.clone());
+        state.storage_tip_height = Some(checkpoint_height);
+        state.storage_start_height = checkpoint_height;
+        drop(state);
+        
+        // Reset sync managers to start from checkpoint
+        self.sync_manager.reset_pending_requests();
+        
+        tracing::info!(
+            "Successfully reset sync to checkpoint height {} (hash: {})",
+            checkpoint_height,
+            checkpoint_header.block_hash()
+        );
+        
+        Ok(())
+    }
+    
+    /// Get current sync diagnostics for debugging.
+    /// Returns detailed information about the current sync state and any issues.
+    pub async fn get_sync_diagnostics(&self) -> String {
+        let mut diagnostics = String::new();
+        
+        // Get current heights
+        let header_height = self.storage.get_tip_height()
+            .await
+            .unwrap_or(Some(0))
+            .unwrap_or(0);
+            
+        let state = self.state.read().await;
+        let chain_height = state.get_height();
+        drop(state);
+        
+        // Get sync state
+        let sync_state = self.storage.load_sync_state()
+            .await
+            .unwrap_or(None);
+            
+        diagnostics.push_str(&format!("=== SPV Sync Diagnostics ===\n"));
+        diagnostics.push_str(&format!("Storage header height: {}\n", header_height));
+        diagnostics.push_str(&format!("Chain state height: {}\n", chain_height));
+        
+        if let Some(sync_state) = sync_state {
+            diagnostics.push_str(&format!("\nSync State:\n"));
+            diagnostics.push_str(&format!("  Chain tip height: {}\n", sync_state.chain_tip.height));
+            diagnostics.push_str(&format!("  Headers synced: {}\n", sync_state.sync_progress.header_height));
+            diagnostics.push_str(&format!("  Filter headers synced: {}\n", sync_state.sync_progress.filter_header_height));
+            diagnostics.push_str(&format!("  Filters synced: {}\n", sync_state.filter_sync.filter_height));
+            diagnostics.push_str(&format!("  Checkpoints: {} (heights: {:?})\n", 
+                sync_state.checkpoints.len(),
+                sync_state.checkpoints.iter().map(|c| c.height).collect::<Vec<_>>()
+            ));
+            
+            // Validate sync state
+            let validation = sync_state.validate(self.config.network);
+            if !validation.is_valid {
+                diagnostics.push_str(&format!("\nValidation Errors:\n"));
+                for error in validation.errors {
+                    diagnostics.push_str(&format!("  - {}\n", error));
+                }
+            }
+        } else {
+            diagnostics.push_str(&format!("\nNo sync state found\n"));
+        }
+        
+        // Get peer info
+        diagnostics.push_str(&format!("\nNetwork:\n"));
+        diagnostics.push_str(&format!("  Connected peers: {}\n", self.network.peer_count()));
+        
+        // Get masternode info
+        let available_heights = self.sync_manager.masternode_sync_manager().get_available_heights();
+        diagnostics.push_str(&format!("\nMasternode Lists:\n"));
+        diagnostics.push_str(&format!("  Available heights: {} (first 5: {:?})\n", 
+            available_heights.len(),
+            available_heights.iter().take(5).collect::<Vec<_>>()
+        ));
+        
+        diagnostics
+    }
+    
+    /// Debug method to print all available quorums in the masternode lists.
+    /// This is useful for troubleshooting quorum lookup issues.
+    /// 
+    /// # Arguments
+    /// * `quorum_type` - Optional quorum type to filter by (1-5), or None for all types
+    /// * `limit` - Maximum number of heights to display
+    pub fn debug_print_available_quorums(&self, quorum_type: Option<u8>, limit: usize) {
+        let heights = self.sync_manager.masternode_sync_manager().get_available_heights();
+        
+        if heights.is_empty() {
+            tracing::warn!("No masternode lists available");
+            return;
+        }
+        
+        tracing::info!("=== Available Quorums Debug Info ===");
+        tracing::info!("Total masternode list heights: {}", heights.len());
+        
+        let limited_heights: Vec<_> = heights.iter().take(limit).copied().collect();
+        
+        for height in limited_heights {
+            let count = self.sync_manager.masternode_sync_manager().get_quorum_count_at_height(height);
+            tracing::info!("Height {}: {} total quorums", height, count);
+            
+            // If specific type requested, show detailed info
+            if let Some(requested_type) = quorum_type {
+                self.sync_manager.masternode_sync_manager().debug_print_quorums_at_height(height, requested_type);
+            }
+        }
+        
+        tracing::info!("=== End Debug Info ===");
+    }
     
 }

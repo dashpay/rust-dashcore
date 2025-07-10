@@ -62,6 +62,11 @@ pub struct SequentialSyncManager {
 
     /// Current retry count for the active phase
     current_phase_retries: u32,
+    
+    /// Background sync phases that run in parallel with header monitoring
+    /// These are initialized when we transition to MonitoringHeaders
+    background_masternode_sync_active: bool,
+    background_filter_sync_active: bool,
 }
 
 impl SequentialSyncManager {
@@ -86,6 +91,8 @@ impl SequentialSyncManager {
             phase_timeout: Duration::from_secs(60), // 1 minute default timeout per phase
             max_phase_retries: 3,
             current_phase_retries: 0,
+            background_masternode_sync_active: false,
+            background_filter_sync_active: false,
         }
     }
     
@@ -185,6 +192,11 @@ impl SequentialSyncManager {
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
         match &self.current_phase {
+            SyncPhase::MonitoringHeaders { .. } => {
+                tracing::debug!("📡 MonitoringHeaders phase - checking if request needed");
+                // Handled in check_timeout method to respect the check_interval
+            }
+            
             SyncPhase::DownloadingHeaders { .. } => {
                 tracing::info!("📥 Starting header download phase");
                 // Don't call start_sync if already prepared - just send the request
@@ -306,6 +318,70 @@ impl SequentialSyncManager {
 
         // Route to appropriate handler based on current phase
         match (&mut self.current_phase, message) {
+            // Handle headers in MonitoringHeaders phase
+            (SyncPhase::MonitoringHeaders { consecutive_empty_responses, current_height, .. }, NetworkMessage::Headers(headers)) => {
+                if headers.is_empty() {
+                    *consecutive_empty_responses += 1;
+                    tracing::debug!("📭 Empty headers response #{} in MonitoringHeaders phase - chain tip unchanged at height {}", 
+                                  consecutive_empty_responses, current_height);
+                } else {
+                    *consecutive_empty_responses = 0;
+                    tracing::info!("📦 New headers detected while monitoring! Count: {} (from height {})", 
+                                 headers.len(), current_height);
+                    
+                    // Store the new height before transitioning
+                    let new_height = *current_height + headers.len() as u32;
+                    
+                    // Transition back to DownloadingHeaders to sync the new headers
+                    self.transition_to_downloading_headers(storage).await?;
+                    // Process the headers in the new phase
+                    self.handle_headers_message(headers, network, storage).await?;
+                    
+                    // Immediately trigger masternode sync for new headers if enabled
+                    if self.background_masternode_sync_active {
+                        tracing::info!("🔄 Immediately syncing masternodes for new headers up to height {}", new_height);
+                        
+                        // Get current masternode height
+                        let mn_height = match storage.load_masternode_state().await {
+                            Ok(Some(state)) => state.last_height,
+                            _ => 0,
+                        };
+                        
+                        if mn_height < new_height {
+                            // Start masternode sync if not already running
+                            if !self.masternode_sync.is_syncing() {
+                                self.masternode_sync.start_sync(network, storage).await?;
+                            }
+                            
+                            // Force an immediate sync attempt
+                            self.masternode_sync.check_sync_timeout(storage, network).await?;
+                        }
+                    }
+                }
+            }
+            
+            // Handle background sync messages during MonitoringHeaders phase
+            (SyncPhase::MonitoringHeaders { .. }, NetworkMessage::MnListDiff(diff)) => {
+                if self.background_masternode_sync_active {
+                    tracing::debug!("📨 Processing MnListDiff in background during MonitoringHeaders");
+                    self.masternode_sync.handle_mnlistdiff_message(diff, storage, network).await?;
+                }
+            }
+            
+            (SyncPhase::MonitoringHeaders { .. }, NetworkMessage::CFHeaders(cfheaders)) => {
+                if self.background_filter_sync_active {
+                    tracing::debug!("📨 Processing CFHeaders in background during MonitoringHeaders");
+                    self.filter_sync.handle_cfheaders_message(cfheaders, storage, network).await?;
+                }
+            }
+            
+            (SyncPhase::MonitoringHeaders { .. }, NetworkMessage::CFilter(cfilter)) => {
+                if self.background_filter_sync_active {
+                    tracing::debug!("📨 Processing CFilter in background during MonitoringHeaders");
+                    self.handle_cfilter_message(cfilter, network, storage).await?;
+                }
+            }
+            
             (SyncPhase::DownloadingHeaders { .. }, NetworkMessage::Headers(headers)) => {
                 self.handle_headers_message(headers, network, storage).await?;
             }
@@ -380,6 +456,121 @@ impl SequentialSyncManager {
         }
 
         // Also check phase-specific timeouts
+        match &mut self.current_phase {
+            SyncPhase::MonitoringHeaders { 
+                last_request_time, 
+                check_interval, 
+                catch_up_mode,
+                consecutive_empty_responses,
+                peer_best_height,
+                current_height,
+                .. 
+            } => {
+                // Get peer best height
+                if let Ok(Some(peer_height)) = network.get_peer_best_height().await {
+                    if peer_height > 0 {
+                        *peer_best_height = Some(peer_height);
+                    }
+                }
+                
+                // Extract values to avoid borrowing issues
+                let current_height_val = *current_height;
+                let peer_best_height_val = *peer_best_height;
+                let check_interval_val = *check_interval;
+                let catch_up_mode_val = *catch_up_mode;
+                let consecutive_empty_val = *consecutive_empty_responses;
+                
+                // Determine if we're behind
+                let blocks_behind = peer_best_height_val.unwrap_or(current_height_val).saturating_sub(current_height_val);
+                
+                // Enter catch-up mode if we're more than 1 block behind
+                if blocks_behind > 1 {
+                    if !catch_up_mode_val {
+                        tracing::warn!("⚡ Entering catch-up mode: {} blocks behind (current: {}, peer: {:?})", 
+                                     blocks_behind, current_height_val, peer_best_height_val);
+                    }
+                    *catch_up_mode = true;
+                    *consecutive_empty_responses = 0;
+                } else if consecutive_empty_val >= 3 {
+                    // Exit catch-up mode after 3 consecutive empty responses
+                    if catch_up_mode_val {
+                        tracing::info!("✅ Exiting catch-up mode: caught up to chain tip");
+                    }
+                    *catch_up_mode = false;
+                }
+                
+                // Determine check interval based on mode
+                let effective_interval = if *catch_up_mode {
+                    // Aggressive interval when catching up (2 seconds)
+                    Duration::from_secs(2)
+                } else {
+                    // Normal interval when synced
+                    check_interval_val
+                };
+                
+                // Check if it's time to send another GetHeaders request
+                let elapsed = last_request_time.elapsed();
+                let should_send_request = elapsed >= effective_interval;
+                let should_send_parallel = *catch_up_mode && blocks_behind > 5;
+                
+                if should_send_request {
+                    tracing::debug!("⏰ Checking for new headers (mode: {}, interval: {:?}, blocks_behind: {})", 
+                                  if *catch_up_mode { "catch-up" } else { "normal" },
+                                  effective_interval,
+                                  blocks_behind);
+                    
+                    // Update last request time first
+                    *last_request_time = Instant::now();
+                }
+            }
+            _ => {}
+        }
+        
+        // Handle MonitoringHeaders specific logic outside the match to avoid borrowing issues
+        if let SyncPhase::MonitoringHeaders { catch_up_mode, current_height, .. } = &self.current_phase {
+            let current_height_val = *current_height;
+            let catch_up_mode_val = *catch_up_mode;
+            
+            // Send GetHeaders if needed
+            if matches!(&self.current_phase, SyncPhase::MonitoringHeaders { last_request_time, check_interval, .. } 
+                       if last_request_time.elapsed() >= if catch_up_mode_val { Duration::from_secs(2) } else { *check_interval }) {
+                
+                // Get the current best block hash to use as base
+                let base_hash = self.get_base_hash_from_storage(storage).await?;
+                
+                // Send GetHeaders request to check for new blocks
+                tracing::info!("📡 Sending GetHeaders from base {:?} (height {})", 
+                             base_hash, current_height_val);
+                self.header_sync.request_headers(network, base_hash, storage).await?;
+                
+                // In catch-up mode, send parallel requests to multiple peers
+                if catch_up_mode_val {
+                    if let SyncPhase::MonitoringHeaders { peer_best_height, .. } = &self.current_phase {
+                        let blocks_behind = peer_best_height.unwrap_or(current_height_val).saturating_sub(current_height_val);
+                        if blocks_behind > 5 {
+                            tracing::info!("⚡ Sending parallel GetHeaders to catch up faster");
+                            // Send another request with a slight offset
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            self.header_sync.request_headers(network, base_hash, storage).await?;
+                        }
+                    }
+                }
+            }
+            
+            // Execute background sync tasks
+            self.execute_background_sync(network, storage).await?;
+            
+            // Check timeouts for background sync
+            if self.background_masternode_sync_active {
+                self.masternode_sync.check_sync_timeout(storage, network).await?;
+            }
+            
+            if self.background_filter_sync_active {
+                self.filter_sync.check_sync_timeout(storage, network).await?;
+            }
+        }
+        
+        // Handle other phase-specific timeouts
         match &self.current_phase {
             SyncPhase::DownloadingHeaders { .. } => {
                 self.header_sync.check_sync_timeout(storage, network).await?;
@@ -558,12 +749,23 @@ impl SequentialSyncManager {
     pub fn masternode_sync_manager(&self) -> &MasternodeSyncManager {
         &self.masternode_sync
     }
+    
+    /// Check if sync is currently in progress.
+    pub fn is_sync_in_progress(&self) -> bool {
+        !matches!(self.current_phase, SyncPhase::Idle)
+    }
 
     // Private helper methods
 
     /// Check if a message is expected in the current phase
     fn is_message_expected_in_phase(&self, message: &NetworkMessage) -> bool {
         match (&self.current_phase, message) {
+            (SyncPhase::MonitoringHeaders { .. }, NetworkMessage::Headers(_)) => true,
+            (SyncPhase::MonitoringHeaders { .. }, NetworkMessage::Headers2(_)) => true,
+            // Accept background sync messages during monitoring
+            (SyncPhase::MonitoringHeaders { .. }, NetworkMessage::MnListDiff(_)) => self.background_masternode_sync_active,
+            (SyncPhase::MonitoringHeaders { .. }, NetworkMessage::CFHeaders(_)) => self.background_filter_sync_active,
+            (SyncPhase::MonitoringHeaders { .. }, NetworkMessage::CFilter(_)) => self.background_filter_sync_active,
             (SyncPhase::DownloadingHeaders { .. }, NetworkMessage::Headers(_)) => true,
             (SyncPhase::DownloadingHeaders { .. }, NetworkMessage::Headers2(_)) => true, // Support compressed headers
             (SyncPhase::DownloadingMnList { .. }, NetworkMessage::MnListDiff(_)) => true,
@@ -644,6 +846,23 @@ impl SequentialSyncManager {
             }
 
             self.phase_history.push(transition);
+            
+            // Check if we're transitioning to MonitoringHeaders
+            if let SyncPhase::MonitoringHeaders { .. } = &next {
+                tracing::info!("📡 Entering MonitoringHeaders phase - starting background sync tasks");
+                
+                // Mark background sync as active if features are enabled
+                if self.config.enable_masternodes {
+                    self.background_masternode_sync_active = true;
+                    tracing::info!("✅ Background masternode sync enabled");
+                }
+                
+                if self.config.enable_filters {
+                    self.background_filter_sync_active = true;
+                    tracing::info!("✅ Background filter sync enabled");
+                }
+            }
+            
             self.current_phase = next;
             self.current_phase_retries = 0;
 
@@ -678,6 +897,102 @@ impl SequentialSyncManager {
             }
         }
 
+        Ok(())
+    }
+    
+    /// Execute background sync tasks while in MonitoringHeaders phase
+    pub async fn execute_background_sync(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<()> {
+        // Only run if we're in MonitoringHeaders phase
+        if !matches!(self.current_phase, SyncPhase::MonitoringHeaders { .. }) {
+            return Ok(());
+        }
+        
+        // Execute masternode sync if needed
+        if self.background_masternode_sync_active && self.config.enable_masternodes {
+            // Check if masternodes need syncing
+            let header_tip = storage.get_tip_height().await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get header tip: {}", e)))?
+                .unwrap_or(0);
+                
+            let mn_height = match storage.load_masternode_state().await {
+                Ok(Some(state)) => state.last_height,
+                _ => 0,
+            };
+            
+            let blocks_behind = header_tip.saturating_sub(mn_height);
+            
+            if blocks_behind > 0 {
+                tracing::info!("🔄 Background masternode sync: {} blocks behind (current={}, target={})", 
+                             blocks_behind, mn_height, header_tip);
+                
+                // Start masternode sync if not already started
+                if !self.masternode_sync.is_syncing() {
+                    tracing::info!("📊 Starting masternode sync to catch up");
+                    self.masternode_sync.start_sync(network, storage).await?;
+                } else {
+                    // Force progress check if we're behind
+                    if blocks_behind > 1 {
+                        tracing::debug!("⚡ Forcing masternode sync progress check");
+                        self.masternode_sync.check_sync_timeout(storage, network).await?;
+                    }
+                }
+            }
+        }
+        
+        // Execute filter sync if needed
+        if self.background_filter_sync_active && self.config.enable_filters {
+            // Check if filters need syncing
+            let header_tip = storage.get_tip_height().await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get header tip: {}", e)))?
+                .unwrap_or(0);
+                
+            let filter_tip = storage.get_filter_tip_height().await
+                .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip: {}", e)))?
+                .unwrap_or(0);
+            
+            if filter_tip < header_tip {
+                tracing::debug!("Background filter sync: current={}, target={}", filter_tip, header_tip);
+                
+                // Start filter header sync if not already started
+                if !self.filter_sync.is_syncing_headers() {
+                    self.filter_sync.start_sync_headers(network, storage).await?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Transition from MonitoringHeaders back to DownloadingHeaders when new headers are detected
+    async fn transition_to_downloading_headers(
+        &mut self,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<()> {
+        if let SyncPhase::MonitoringHeaders { current_height, peer_best_height, .. } = &self.current_phase {
+            let start_height = *current_height;
+            
+            tracing::info!("🔄 Transitioning from MonitoringHeaders to DownloadingHeaders to sync new blocks");
+            
+            // Create a new DownloadingHeaders phase
+            self.current_phase = SyncPhase::DownloadingHeaders {
+                start_time: Instant::now(),
+                start_height,
+                current_height: start_height,
+                target_height: *peer_best_height,
+                last_progress: Instant::now(),
+                headers_downloaded: 0,
+                headers_per_second: 0.0,
+                received_empty_response: false,
+            };
+            
+            // Reset pending requests to prepare for new sync
+            self.header_sync.reset_pending_requests();
+        }
+        
         Ok(())
     }
 
@@ -793,11 +1108,36 @@ impl SequentialSyncManager {
 
         if should_transition {
             tracing::info!("🔄 Headers sync complete, transitioning to next phase");
-            self.transition_to_next_phase(storage, "Headers sync complete")
-                .await?;
             
-            // Execute the next phase
-            self.execute_current_phase(network, storage).await?;
+            // Check if we were in MonitoringHeaders before (background sync active)
+            let should_return_to_monitoring = self.background_masternode_sync_active || 
+                                            self.background_filter_sync_active;
+            
+            if should_return_to_monitoring && self.config.continuous_sync_interval.is_some() {
+                // Return to MonitoringHeaders with updated height
+                let new_height = storage.get_tip_height().await
+                    .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+                    .unwrap_or(0);
+                    
+                let interval = self.config.continuous_sync_interval.unwrap_or(Duration::from_secs(30));
+                
+                tracing::info!("📡 Returning to MonitoringHeaders at height {} after syncing new headers", new_height);
+                
+                self.current_phase = SyncPhase::MonitoringHeaders {
+                    last_request_time: Instant::now(),
+                    current_height: new_height,
+                    check_interval: interval,
+                    catch_up_mode: false,
+                    consecutive_empty_responses: 0,
+                    peer_best_height: None,
+                };
+            } else {
+                self.transition_to_next_phase(storage, "Headers sync complete")
+                    .await?;
+                
+                // Execute the next phase
+                self.execute_current_phase(network, storage).await?;
+            }
         } else {
             tracing::debug!("No transition needed: should_transition={}", should_transition);
         }

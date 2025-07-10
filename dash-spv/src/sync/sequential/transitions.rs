@@ -36,6 +36,9 @@ impl TransitionManager {
         match (current_phase, target_phase) {
             // From Idle, can only go to DownloadingHeaders
             (SyncPhase::Idle, SyncPhase::DownloadingHeaders { .. }) => Ok(true),
+            
+            // From MonitoringHeaders, can go back to DownloadingHeaders
+            (SyncPhase::MonitoringHeaders { .. }, SyncPhase::DownloadingHeaders { .. }) => Ok(true),
 
             // From DownloadingHeaders, check completion
             (SyncPhase::DownloadingHeaders { .. }, next_phase) => {
@@ -48,22 +51,29 @@ impl TransitionManager {
 
                 // Can go to MnList if enabled, or skip to CFHeaders
                 let result = match next_phase {
+                    SyncPhase::MonitoringHeaders { .. } => {
+                        // Can transition to monitoring if continuous sync is enabled
+                        let can_transition = self.config.continuous_sync_interval.is_some();
+                        tracing::debug!("Transition to MonitoringHeaders: continuous_sync_enabled={}, can_transition={}", 
+                                       self.config.continuous_sync_interval.is_some(), can_transition);
+                        Ok(can_transition)
+                    }
                     SyncPhase::DownloadingMnList { .. } => {
-                        let can_transition = self.config.enable_masternodes;
-                        tracing::debug!("Transition to DownloadingMnList: enable_masternodes={}, can_transition={}", 
-                                       self.config.enable_masternodes, can_transition);
+                        let can_transition = self.config.enable_masternodes && self.config.continuous_sync_interval.is_none();
+                        tracing::debug!("Transition to DownloadingMnList: enable_masternodes={}, continuous_sync={}, can_transition={}", 
+                                       self.config.enable_masternodes, self.config.continuous_sync_interval.is_some(), can_transition);
                         Ok(can_transition)
                     }
                     SyncPhase::DownloadingCFHeaders { .. } => {
-                        let can_transition = !self.config.enable_masternodes && self.config.enable_filters;
-                        tracing::debug!("Transition to DownloadingCFHeaders: enable_masternodes={}, enable_filters={}, can_transition={}", 
-                                       self.config.enable_masternodes, self.config.enable_filters, can_transition);
+                        let can_transition = !self.config.enable_masternodes && self.config.enable_filters && self.config.continuous_sync_interval.is_none();
+                        tracing::debug!("Transition to DownloadingCFHeaders: enable_masternodes={}, enable_filters={}, continuous_sync={}, can_transition={}", 
+                                       self.config.enable_masternodes, self.config.enable_filters, self.config.continuous_sync_interval.is_some(), can_transition);
                         Ok(can_transition)
                     }
                     SyncPhase::FullySynced { .. } => {
-                        let can_transition = !self.config.enable_masternodes && !self.config.enable_filters;
-                        tracing::debug!("Transition to FullySynced: enable_masternodes={}, enable_filters={}, can_transition={}", 
-                                       self.config.enable_masternodes, self.config.enable_filters, can_transition);
+                        let can_transition = !self.config.enable_masternodes && !self.config.enable_filters && self.config.continuous_sync_interval.is_none();
+                        tracing::debug!("Transition to FullySynced: enable_masternodes={}, enable_filters={}, continuous_sync={}, can_transition={}", 
+                                       self.config.enable_masternodes, self.config.enable_filters, self.config.continuous_sync_interval.is_some(), can_transition);
                         Ok(can_transition)
                     }
                     _ => {
@@ -160,8 +170,32 @@ impl TransitionManager {
             }
 
             SyncPhase::DownloadingHeaders { .. } => {
-                tracing::debug!("get_next_phase from DownloadingHeaders: enable_masternodes={}, enable_filters={}", 
-                              self.config.enable_masternodes, self.config.enable_filters);
+                tracing::debug!("get_next_phase from DownloadingHeaders: enable_masternodes={}, enable_filters={}, continuous_sync={}", 
+                              self.config.enable_masternodes, self.config.enable_filters, self.config.continuous_sync_interval.is_some());
+                
+                // If continuous sync is enabled, ALWAYS transition to monitoring after headers
+                // This ensures headers stay current even if other sync phases are slow
+                if self.config.continuous_sync_interval.is_some() {
+                    let current_height = storage
+                        .get_tip_height()
+                        .await
+                        .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+                        .unwrap_or(0);
+                        
+                    let interval = self.config.continuous_sync_interval.unwrap_or(Duration::from_secs(30));
+                    
+                    tracing::info!("🔄 Continuous sync enabled - transitioning to MonitoringHeaders phase with {}s interval", interval.as_secs());
+                    tracing::info!("📌 Other sync phases (masternodes, filters) will continue in background");
+                    
+                    return Ok(Some(SyncPhase::MonitoringHeaders {
+                        last_request_time: Instant::now(),
+                        current_height,
+                        check_interval: interval,
+                        catch_up_mode: false,
+                        consecutive_empty_responses: 0,
+                        peer_best_height: None,
+                    }));
+                }
                 
                 if self.config.enable_masternodes {
                     let header_tip = storage
@@ -239,6 +273,11 @@ impl TransitionManager {
             }
 
             SyncPhase::DownloadingBlocks { .. } => self.create_fully_synced_phase(storage).await,
+            
+            SyncPhase::MonitoringHeaders { .. } => {
+                // Stay in monitoring phase - no automatic transition
+                Ok(None)
+            }
 
             SyncPhase::FullySynced { .. } => Ok(None), // Already synced
         }
