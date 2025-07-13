@@ -183,7 +183,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!("Will start syncing from the latest available checkpoint");
         } else {
             let start_height = start_height_str.parse::<u32>()
-                .expect("Invalid start height");
+                .map_err(|e| format!("Invalid start height '{}': {}", start_height_str, e))?;
             config.start_from_height = Some(start_height);
             tracing::info!("Will start syncing from height: {}", start_height);
         }
