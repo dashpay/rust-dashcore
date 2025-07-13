@@ -137,7 +137,10 @@ impl BloomFilterManager {
     /// Add an address to the filter
     pub async fn add_address(&self, address: &Address) -> Result<Option<FilterAdd>, SpvError> {
         // Add to tracked addresses
-        self.addresses.write().await.push(address.clone());
+        {
+            let mut addresses = self.addresses.write().await;
+            addresses.push(address.clone());
+        } // Explicitly drop the lock here
 
         // Update filter if it exists
         if let Some(ref mut filter) = *self.filter.write().await {
@@ -164,7 +167,10 @@ impl BloomFilterManager {
     /// Add an outpoint to the filter
     pub async fn add_outpoint(&self, outpoint: &OutPoint) -> Result<Option<FilterAdd>, SpvError> {
         // Add to tracked outpoints
-        self.outpoints.write().await.push(*outpoint);
+        {
+            let mut outpoints = self.outpoints.write().await;
+            outpoints.push(*outpoint);
+        } // Explicitly drop the lock here
 
         // Update filter if it exists
         if let Some(ref mut filter) = *self.filter.write().await {
@@ -187,7 +193,10 @@ impl BloomFilterManager {
     /// Add arbitrary data to the filter
     pub async fn add_data(&self, data: Vec<u8>) -> Result<Option<FilterAdd>, SpvError> {
         // Add to tracked data
-        self.data_elements.write().await.push(data.clone());
+        {
+            let mut data_elements = self.data_elements.write().await;
+            data_elements.push(data.clone());
+        } // Explicitly drop the lock here
 
         // Update filter if it exists
         if let Some(ref mut filter) = *self.filter.write().await {
@@ -266,11 +275,26 @@ impl BloomFilterManager {
 
     /// Clear the filter
     pub async fn clear(&self) {
-        *self.filter.write().await = None;
-        self.addresses.write().await.clear();
-        self.outpoints.write().await.clear();
-        self.data_elements.write().await.clear();
-        *self.stats.write().await = BloomFilterStats::default();
+        {
+            let mut filter = self.filter.write().await;
+            *filter = None;
+        }
+        {
+            let mut addresses = self.addresses.write().await;
+            addresses.clear();
+        }
+        {
+            let mut outpoints = self.outpoints.write().await;
+            outpoints.clear();
+        }
+        {
+            let mut data_elements = self.data_elements.write().await;
+            data_elements.clear();
+        }
+        {
+            let mut stats = self.stats.write().await;
+            *stats = BloomFilterStats::default();
+        }
     }
 
     /// Helper to add address to filter
