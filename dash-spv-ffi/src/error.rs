@@ -18,6 +18,7 @@ pub enum FFIErrorCode {
     WalletError = 7,
     ConfigError = 8,
     RuntimeError = 9,
+    NotImplemented = 10,
     Unknown = 99,
 }
 

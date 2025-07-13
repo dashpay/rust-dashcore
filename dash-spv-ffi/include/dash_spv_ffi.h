@@ -514,13 +514,15 @@ void ffi_dash_spv_release_core_handle(struct CoreSDKHandle *handle);
  * This function is unsafe because:
  * - The caller must ensure all pointers are valid
  * - quorum_hash must point to a 32-byte array
- * - out_pubkey must point to a 48-byte buffer
+ * - out_pubkey must point to a buffer of at least out_pubkey_size bytes
+ * - out_pubkey_size must be at least 48 bytes
  */
 struct FFIResult ffi_dash_spv_get_quorum_public_key(struct FFIDashSpvClient *client,
                                                     uint32_t _quorum_type,
                                                     const uint8_t *quorum_hash,
                                                     uint32_t _core_chain_locked_height,
-                                                    uint8_t *out_pubkey);
+                                                    uint8_t *out_pubkey,
+                                                    uintptr_t out_pubkey_size);
 
 /**
  * Gets the platform activation height from the Core chain
