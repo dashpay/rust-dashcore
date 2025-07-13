@@ -11,6 +11,7 @@ use crate::wallet::WalletState;
 use dashcore::{BlockHash, Header as BlockHeader, Transaction, Txid};
 use dashcore_hashes::Hash;
 use std::sync::Arc;
+use tracing;
 
 /// Event emitted when a reorganization occurs
 #[derive(Debug, Clone)]
@@ -212,50 +213,91 @@ impl ReorgManager {
         reorg_data: ReorgData,
         storage_manager: &mut dyn StorageManager,
     ) -> Result<ReorgEvent, String> {
-        // Use UTXO rollback if available
-        if wallet_state.rollback_manager().is_some() {
-            // Rollback wallet state to common ancestor height
-            wallet_state
-                .rollback_to_height(reorg_data.common_height, storage_manager)
-                .await
-                .map_err(|e| format!("Failed to rollback wallet state: {:?}", e))?;
-        }
-
-        // Disconnect blocks from the old chain
-        for header in &reorg_data.disconnected_headers {
-            // Mark transactions as unconfirmed if rollback manager not available
-            if wallet_state.rollback_manager().is_none() {
-                for txid in &reorg_data.affected_tx_ids {
-                    wallet_state.mark_transaction_unconfirmed(txid);
-                }
+        // Create a checkpoint of the current chain state before making any changes
+        let chain_state_checkpoint = chain_state.clone();
+        
+        // Track headers that were successfully stored for potential rollback
+        let mut stored_headers: Vec<BlockHeader> = Vec::new();
+        
+        // Perform all operations in a single atomic-like block
+        let result = async {
+            // Step 1: Rollback wallet state if UTXO rollback is available
+            if wallet_state.rollback_manager().is_some() {
+                wallet_state
+                    .rollback_to_height(reorg_data.common_height, storage_manager)
+                    .await
+                    .map_err(|e| format!("Failed to rollback wallet state: {:?}", e))?;
             }
 
-            // Remove header from chain state
-            chain_state.remove_tip();
+            // Step 2: Disconnect blocks from the old chain
+            for header in &reorg_data.disconnected_headers {
+                // Mark transactions as unconfirmed if rollback manager not available
+                if wallet_state.rollback_manager().is_none() {
+                    for txid in &reorg_data.affected_tx_ids {
+                        wallet_state.mark_transaction_unconfirmed(txid);
+                    }
+                }
+
+                // Remove header from chain state
+                chain_state.remove_tip();
+            }
+
+            // Step 3: Connect blocks from the new chain and store them
+            let mut current_height = reorg_data.common_height;
+            for header in &fork.headers {
+                current_height += 1;
+
+                // Add header to chain state
+                chain_state.add_header(*header);
+
+                // Store the header - if this fails, we need to rollback everything
+                storage_manager
+                    .store_headers(&[*header])
+                    .await
+                    .map_err(|e| {
+                        format!("Failed to store header at height {}: {:?}", current_height, e)
+                    })?;
+                    
+                // Only record successfully stored headers
+                stored_headers.push(*header);
+            }
+
+            Ok::<ReorgEvent, String>(ReorgEvent {
+                common_ancestor: reorg_data.common_ancestor,
+                common_height: reorg_data.common_height,
+                disconnected_headers: reorg_data.disconnected_headers,
+                connected_headers: fork.headers.clone(),
+                affected_transactions: reorg_data.affected_transactions,
+            })
+        }.await;
+
+        // If any operation failed, attempt to restore the chain state
+        match result {
+            Ok(event) => Ok(event),
+            Err(e) => {
+                // Restore the chain state to its original state
+                *chain_state = chain_state_checkpoint;
+                
+                // Log the rollback attempt
+                tracing::error!(
+                    "Reorg failed, restored chain state. Error: {}. \
+                    Successfully stored {} headers before failure.",
+                    e,
+                    stored_headers.len()
+                );
+                
+                // Note: We cannot easily rollback the wallet state or storage operations
+                // that have already been committed. This is a limitation of not having
+                // true database transactions. The error message will indicate this partial
+                // state to the caller.
+                Err(format!(
+                    "Reorg failed after partial application. Chain state restored, \
+                    but wallet/storage may be in inconsistent state. Error: {}. \
+                    Consider resyncing from a checkpoint.",
+                    e
+                ))
+            }
         }
-
-        // Connect blocks from the new chain
-        let mut current_height = reorg_data.common_height;
-        for header in &fork.headers {
-            current_height += 1;
-
-            // Add header to chain state
-            chain_state.add_header(*header);
-
-            // Store the header
-            storage_manager
-                .store_headers(&[*header])
-                .await
-                .map_err(|e| format!("Failed to store header: {:?}", e))?;
-        }
-
-        Ok(ReorgEvent {
-            common_ancestor: reorg_data.common_ancestor,
-            common_height: reorg_data.common_height,
-            disconnected_headers: reorg_data.disconnected_headers,
-            connected_headers: fork.headers.clone(),
-            affected_transactions: reorg_data.affected_transactions,
-        })
     }
 
     /// Find the common ancestor between current chain and a fork
