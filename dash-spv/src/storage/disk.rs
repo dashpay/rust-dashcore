@@ -1055,8 +1055,11 @@ impl StorageManager for DiskStorageManager {
                         segment.headers.resize(offset + 1, sentinel_header);
                     }
                     segment.headers[offset] = *header;
-                    // Update valid_count to track the highest valid index + 1
-                    segment.valid_count = segment.valid_count.max(offset + 1);
+                    // Only increment valid_count when offset equals the current valid_count
+                    // This ensures valid_count represents contiguous valid headers without gaps
+                    if offset == segment.valid_count {
+                        segment.valid_count += 1;
+                    }
                     // Transition to Dirty state (from Clean, Dirty, or Saving)
                     segment.state = SegmentState::Dirty;
                     segment.last_accessed = Instant::now();
