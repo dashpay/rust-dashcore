@@ -155,7 +155,11 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
     null_check!(config, std::ptr::null_mut());
 
     let config = &(*config);
-    let runtime = match Runtime::new() {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .thread_name("dash-spv-worker")
+        .worker_threads(1)  // Reduce threads for mobile
+        .enable_all()
+        .build() {
         Ok(rt) => Arc::new(rt),
         Err(e) => {
             set_last_error(&format!("Failed to create runtime: {}", e));
