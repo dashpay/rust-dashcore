@@ -2,7 +2,6 @@
 mod tests {
     use crate::types::FFIDetailedSyncProgress;
     use crate::*;
-    use crate::callbacks::{BlockCallback, TransactionCallback};
     use serial_test::serial;
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_void};
@@ -238,14 +237,26 @@ mod tests {
             let (client, config, _temp_dir) = create_test_client();
             assert!(!client.is_null());
 
+            // Test data for tracking reentrancy behavior
             let reentrancy_count = Arc::new(AtomicU32::new(0));
+            let reentrancy_detected = Arc::new(AtomicBool::new(false));
+            let callback_active = Arc::new(AtomicBool::new(false));
+            let deadlock_detected = Arc::new(AtomicBool::new(false));
 
             struct ReentrantData {
                 count: Arc<AtomicU32>,
+                reentrancy_detected: Arc<AtomicBool>,
+                callback_active: Arc<AtomicBool>,
+                deadlock_detected: Arc<AtomicBool>,
+                client: *mut FFIDashSpvClient,
             }
 
             let reentrant_data = ReentrantData {
                 count: reentrancy_count.clone(),
+                reentrancy_detected: reentrancy_detected.clone(),
+                callback_active: callback_active.clone(),
+                deadlock_detected: deadlock_detected.clone(),
+                client,
             };
 
             extern "C" fn reentrant_callback(
@@ -255,25 +266,237 @@ mod tests {
             ) {
                 let data = unsafe { &*(user_data as *const ReentrantData) };
                 let count = data.count.fetch_add(1, Ordering::SeqCst);
+                
+                // Check if callback is already active (reentrancy detection)
+                if data.callback_active.swap(true, Ordering::SeqCst) {
+                    data.reentrancy_detected.store(true, Ordering::SeqCst);
+                    println!("Reentrancy detected! Count: {}", count);
+                    return;
+                }
 
-                // Just track that the callback was called
-                // Don't try to call other FFI functions from within the callback
-                // as that could cause runtime-within-runtime issues
                 println!("Callback invoked, count: {}", count);
+
+                // Test 1: Try to make a reentrant call (should be safely handled)
+                if count == 0 {
+                    // Attempt to start another sync operation from within callback
+                    // This tests that the FFI layer properly handles reentrancy
+                    let start_time = Instant::now();
+                    
+                    // Try to call test_sync which is a simpler operation
+                    let test_result = unsafe { dash_spv_ffi_client_test_sync(data.client) };
+                    let elapsed = start_time.elapsed();
+                    
+                    // If this takes too long, it might indicate a deadlock
+                    if elapsed > Duration::from_secs(1) {
+                        data.deadlock_detected.store(true, Ordering::SeqCst);
+                    }
+                    
+                    if test_result != 0 {
+                        println!("Reentrant call failed with error code: {}", test_result);
+                    }
+                }
+
+                // Mark callback as no longer active
+                data.callback_active.store(false, Ordering::SeqCst);
             }
 
-            // Don't call sync_to_tip on unstarted client as it will hang
-            // Just test that callback tracking works
-            println!("Testing callback reentrancy safety without network operations");
+            // Test with actual async operation
+            println!("Testing callback reentrancy safety with actual FFI operations");
 
-            // Simulate a callback invocation
-            reentrant_callback(false, std::ptr::null(), &reentrant_data as *const _ as *mut c_void);
+            // First, start the client to enable operations
+            let start_result = dash_spv_ffi_client_start(client);
+            assert_eq!(start_result, 0);
 
-            // Verify the callback was invoked at least once
+            // Give client time to initialize
             thread::sleep(Duration::from_millis(100));
-            let final_count = reentrancy_count.load(Ordering::SeqCst);
-            println!("Callback was invoked {} times", final_count);
 
+            // Now test reentrancy by invoking callback directly and through FFI
+            reentrant_callback(true, std::ptr::null(), &reentrant_data as *const _ as *mut c_void);
+
+            // Also test with a real async operation using sync_to_tip
+            let _sync_result = dash_spv_ffi_client_sync_to_tip(
+                client,
+                Some(reentrant_callback),
+                &reentrant_data as *const _ as *mut c_void,
+            );
+            
+            // Wait for operations to complete
+            thread::sleep(Duration::from_millis(500));
+
+            // Verify results
+            let final_count = reentrancy_count.load(Ordering::SeqCst);
+            let reentrancy_occurred = reentrancy_detected.load(Ordering::SeqCst);
+            let deadlock_occurred = deadlock_detected.load(Ordering::SeqCst);
+
+            println!("Final callback count: {}", final_count);
+            println!("Reentrancy detected: {}", reentrancy_occurred);
+            println!("Deadlock detected: {}", deadlock_occurred);
+
+            // Assertions
+            assert!(final_count >= 1, "Callback should have been invoked at least once");
+            assert!(!deadlock_occurred, "No deadlock should occur during reentrancy");
+
+            // Clean up
+            dash_spv_ffi_client_stop(client);
+            dash_spv_ffi_client_destroy(client);
+            dash_spv_ffi_config_destroy(config);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_callback_thread_safety() {
+        unsafe {
+            let (client, config, _temp_dir) = create_test_client();
+            assert!(!client.is_null());
+
+            // Shared state for thread safety testing
+            let callback_count = Arc::new(AtomicU32::new(0));
+            let race_conditions = Arc::new(AtomicU32::new(0));
+            let concurrent_callbacks = Arc::new(AtomicU32::new(0));
+            let max_concurrent = Arc::new(AtomicU32::new(0));
+            let barrier = Arc::new(Barrier::new(3)); // For 3 threads
+
+            struct ThreadSafetyData {
+                count: Arc<AtomicU32>,
+                race_conditions: Arc<AtomicU32>,
+                concurrent_callbacks: Arc<AtomicU32>,
+                max_concurrent: Arc<AtomicU32>,
+                barrier: Arc<Barrier>,
+                shared_state: Arc<Mutex<Vec<u32>>>,
+            }
+
+            let thread_data = ThreadSafetyData {
+                count: callback_count.clone(),
+                race_conditions: race_conditions.clone(),
+                concurrent_callbacks: concurrent_callbacks.clone(),
+                max_concurrent: max_concurrent.clone(),
+                barrier: barrier.clone(),
+                shared_state: Arc::new(Mutex::new(Vec::new())),
+            };
+
+            extern "C" fn thread_safe_callback(
+                _success: bool,
+                _error: *const c_char,
+                user_data: *mut c_void,
+            ) {
+                let data = unsafe { &*(user_data as *const ThreadSafetyData) };
+                
+                // Increment concurrent callback count
+                let current_concurrent = data.concurrent_callbacks.fetch_add(1, Ordering::SeqCst) + 1;
+                
+                // Update max concurrent callbacks
+                loop {
+                    let max = data.max_concurrent.load(Ordering::SeqCst);
+                    if current_concurrent <= max || 
+                       data.max_concurrent.compare_exchange(max, current_concurrent, 
+                                                          Ordering::SeqCst, 
+                                                          Ordering::SeqCst).is_ok() {
+                        break;
+                    }
+                }
+
+                // Test shared state access (potential race condition)
+                let count = data.count.fetch_add(1, Ordering::SeqCst);
+                
+                // Try to detect race conditions by accessing shared state
+                {
+                    let mut state = match data.shared_state.try_lock() {
+                        Ok(guard) => guard,
+                        Err(_) => {
+                            // Lock contention detected
+                            data.race_conditions.fetch_add(1, Ordering::SeqCst);
+                            data.concurrent_callbacks.fetch_sub(1, Ordering::SeqCst);
+                            return;
+                        }
+                    };
+                    state.push(count);
+                }
+
+                // Simulate some work
+                thread::sleep(Duration::from_micros(100));
+                
+                // Decrement concurrent callback count
+                data.concurrent_callbacks.fetch_sub(1, Ordering::SeqCst);
+            }
+
+            println!("Testing callback thread safety with concurrent invocations");
+
+            // Start the client
+            let start_result = dash_spv_ffi_client_start(client);
+            assert_eq!(start_result, 0);
+            thread::sleep(Duration::from_millis(100));
+
+            // Create thread-safe wrapper for the data
+            let thread_data_arc = Arc::new(thread_data);
+            
+            // Spawn multiple threads that will trigger callbacks
+            let handles: Vec<_> = (0..3).map(|i| {
+                let thread_data_clone = thread_data_arc.clone();
+                let barrier_clone = barrier.clone();
+                
+                thread::spawn(move || {
+                    // Synchronize thread start
+                    barrier_clone.wait();
+                    
+                    // Each thread performs multiple operations
+                    for j in 0..5 {
+                        println!("Thread {} iteration {}", i, j);
+                        
+                        // Invoke callback directly
+                        thread_safe_callback(
+                            true, 
+                            std::ptr::null(), 
+                            &*thread_data_clone as *const ThreadSafetyData as *mut c_void
+                        );
+                        
+                        // Note: We can't safely pass client pointers across threads
+                        // so we'll focus on testing concurrent callback invocations
+                        
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                })
+            }).collect();
+
+            // Wait for all threads to complete
+            for handle in handles {
+                handle.join().unwrap();
+            }
+
+            // Additional wait for any pending callbacks
+            thread::sleep(Duration::from_millis(500));
+
+            // Verify results
+            let total_callbacks = callback_count.load(Ordering::SeqCst);
+            let race_count = race_conditions.load(Ordering::SeqCst);
+            let max_concurrent_count = max_concurrent.load(Ordering::SeqCst);
+
+            println!("Total callbacks: {}", total_callbacks);
+            println!("Race conditions detected: {}", race_count);
+            println!("Max concurrent callbacks: {}", max_concurrent_count);
+
+            // Verify shared state consistency
+            let state = thread_data_arc.shared_state.lock().unwrap();
+            let mut sorted_state = state.clone();
+            sorted_state.sort();
+            
+            // Check for duplicates (would indicate race condition)
+            let mut duplicates = 0;
+            for i in 1..sorted_state.len() {
+                if sorted_state[i] == sorted_state[i-1] {
+                    duplicates += 1;
+                }
+            }
+
+            println!("Duplicate values in shared state: {}", duplicates);
+
+            // Assertions
+            assert!(total_callbacks >= 15, "Should have processed multiple callbacks");
+            assert_eq!(duplicates, 0, "No duplicate values should exist (no race conditions)");
+            assert!(max_concurrent_count > 1, "Should have had concurrent callbacks");
+
+            // Clean up
+            dash_spv_ffi_client_stop(client);
             dash_spv_ffi_client_destroy(client);
             dash_spv_ffi_config_destroy(config);
         }
