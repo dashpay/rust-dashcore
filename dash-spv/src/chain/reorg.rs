@@ -85,13 +85,63 @@ impl ReorgManager {
         fork: &Fork,
         storage: &dyn ChainStorage,
     ) -> Result<bool, String> {
+        self.should_reorganize_with_chain_state(current_tip, fork, storage, None)
+    }
+
+    /// Check if a fork has more work than the current chain and should trigger a reorg
+    /// This version is checkpoint-aware when chain_state is provided
+    pub fn should_reorganize_with_chain_state(
+        &self,
+        current_tip: &ChainTip,
+        fork: &Fork,
+        storage: &dyn ChainStorage,
+        chain_state: Option<&ChainState>,
+    ) -> Result<bool, String> {
         // Check if fork has more work
         if fork.chain_work <= current_tip.chain_work {
             return Ok(false);
         }
 
-        // Check reorg depth
-        let reorg_depth = current_tip.height.saturating_sub(fork.fork_height);
+        // Check reorg depth - account for checkpoint sync
+        let reorg_depth = if let Some(state) = chain_state {
+            if state.synced_from_checkpoint && state.sync_base_height > 0 {
+                // During checkpoint sync, both current_tip.height and fork.fork_height
+                // should be interpreted relative to sync_base_height
+                
+                // For checkpoint sync:
+                // - current_tip.height is absolute blockchain height
+                // - fork.fork_height might be from genesis-based headers
+                // We need to compare relative depths only
+                
+                // If the fork is from headers that started at genesis, 
+                // we shouldn't compare against the full checkpoint height
+                if fork.fork_height < state.sync_base_height {
+                    // This fork is from before our checkpoint - likely from genesis-based headers
+                    // This scenario should be rejected at header validation level, not here
+                    tracing::warn!(
+                        "Fork detected from height {} which is before checkpoint base height {}. \
+                        This suggests headers from genesis were received during checkpoint sync.",
+                        fork.fork_height, state.sync_base_height
+                    );
+                    
+                    // For now, reject forks that would reorg past the checkpoint
+                    return Err(format!(
+                        "Cannot reorg past checkpoint: fork height {} < checkpoint base {}",
+                        fork.fork_height, state.sync_base_height
+                    ));
+                } else {
+                    // Normal case: both heights are relative to checkpoint
+                    current_tip.height.saturating_sub(fork.fork_height)
+                }
+            } else {
+                // Normal sync mode
+                current_tip.height.saturating_sub(fork.fork_height)
+            }
+        } else {
+            // Fallback to original logic when no chain state provided
+            current_tip.height.saturating_sub(fork.fork_height)
+        };
+
         if reorg_depth > self.max_reorg_depth {
             return Err(format!(
                 "Reorg depth {} exceeds maximum {}",

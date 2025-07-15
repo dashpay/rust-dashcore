@@ -934,6 +934,9 @@ impl SequentialSyncManager {
             Err(e) => return Err(e),
         };
 
+        // Calculate blockchain height before borrowing self.current_phase
+        let blockchain_height = self.get_blockchain_height_from_storage(storage).await.unwrap_or(0);
+
         // Update phase state and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingHeaders {
             current_height,
@@ -945,10 +948,8 @@ impl SequentialSyncManager {
             ..
         } = &mut self.current_phase
         {
-            // Update current height
-            if let Ok(Some(tip)) = storage.get_tip_height().await {
-                *current_height = tip;
-            }
+            // Update current height - use blockchain height for checkpoint awareness
+            *current_height = blockchain_height;
 
             // Note: We can't easily track headers_downloaded for compressed headers
             // without decompressing first, so we rely on the header sync manager's internal stats
@@ -981,6 +982,9 @@ impl SequentialSyncManager {
         let continue_sync =
             self.header_sync.handle_headers_message(headers.clone(), storage, network).await?;
 
+        // Calculate blockchain height before borrowing self.current_phase
+        let blockchain_height = self.get_blockchain_height_from_storage(storage).await.unwrap_or(0);
+
         // Update phase state and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingHeaders {
             current_height,
@@ -992,10 +996,8 @@ impl SequentialSyncManager {
             ..
         } = &mut self.current_phase
         {
-            // Update current height
-            if let Ok(Some(tip)) = storage.get_tip_height().await {
-                *current_height = tip;
-            }
+            // Update current height - use blockchain height for checkpoint awareness
+            *current_height = blockchain_height;
 
             // Update progress
             *headers_downloaded += headers.len() as u32;
@@ -1738,5 +1740,27 @@ impl SequentialSyncManager {
     #[cfg(test)]
     pub fn masternode_sync_mut(&mut self) -> &mut MasternodeSyncManager {
         &mut self.masternode_sync
+    }
+
+    /// Get the actual blockchain height from storage height, accounting for checkpoints
+    pub(crate) async fn get_blockchain_height_from_storage(
+        &self,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<u32> {
+        let storage_height = storage
+            .get_tip_height()
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
+            .unwrap_or(0);
+
+        // Check if we're syncing from a checkpoint
+        let chain_state = self.header_sync.get_chain_state();
+        if chain_state.synced_from_checkpoint && chain_state.sync_base_height > 0 {
+            // For checkpoint sync, blockchain height = sync_base_height + storage_height
+            Ok(chain_state.sync_base_height + storage_height)
+        } else {
+            // Normal sync: storage height IS the blockchain height
+            Ok(storage_height)
+        }
     }
 }

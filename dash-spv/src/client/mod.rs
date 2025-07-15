@@ -3098,7 +3098,7 @@ mod tests {
         // We'll create a minimal DashSpvClient structure for testing
         
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
-        let storage: Arc<RwLock<dyn StorageManager>> = Arc::new(RwLock::new(MemoryStorageManager::new()));
+        let storage: Arc<RwLock<dyn StorageManager>> = Arc::new(RwLock::new(MemoryStorageManager::new().await.expect("Failed to create memory storage")));
         let wallet = Arc::new(crate::wallet::Wallet::new(storage.clone()));
         
         // Test address

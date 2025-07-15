@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 // Connection limits
-pub const MIN_PEERS: usize = 3;
-pub const TARGET_PEERS: usize = 8;
-pub const MAX_PEERS: usize = 12;
+pub const MIN_PEERS: usize = 1;
+pub const TARGET_PEERS: usize = 3;
+pub const MAX_PEERS: usize = 3;
 
 // Compile-time check to ensure proper peer count relationships
 const _: () = assert!(MIN_PEERS <= TARGET_PEERS, "MIN_PEERS must be <= TARGET_PEERS");
@@ -28,7 +28,7 @@ pub const MAINNET_DNS_SEEDS: &[&str] = &[
 ];
 
 // DNS seeds for Dash testnet
-pub const TESTNET_DNS_SEEDS: &[&str] = &["testnet-seed.dashdot.io", "test.dnsseed.masternode.io"];
+pub const TESTNET_DNS_SEEDS: &[&str] = &["testnet-seed.dashdot.io"];
 
 // Peer exchange
 pub const MAX_ADDR_TO_SEND: usize = 1000;

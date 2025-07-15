@@ -233,11 +233,18 @@ impl HeaderSyncManagerWithReorg {
             if let Some(first_header) = headers.first() {
                 // Check if this might be a genesis or very early block
                 // Genesis block has all zero prev_blockhash
-                if first_header.prev_blockhash == BlockHash::from_byte_array([0; 32]) {
+                // Also check for early blocks based on difficulty and timestamp
+                let is_genesis = first_header.prev_blockhash == BlockHash::from_byte_array([0; 32]);
+                let is_early_block = first_header.bits.to_consensus() == 0x1e0ffff0 || first_header.time < 1400000000;
+                
+                if is_genesis || is_early_block {
                     tracing::warn!(
-                        "⚠️ Received headers starting from genesis while syncing from checkpoint at height {}. \
-                        Peer may not have the checkpoint block.",
-                        self.chain_state.sync_base_height
+                        "⚠️ Received headers starting from genesis/early blocks while syncing from checkpoint at height {}. \
+                        Header details: prev_hash={}, bits={:x}, time={}. Peer may not have the checkpoint block.",
+                        self.chain_state.sync_base_height,
+                        first_header.prev_blockhash,
+                        first_header.bits.to_consensus(),
+                        first_header.time
                     );
                     // The peer doesn't have our checkpoint in their chain
                     // This could mean:
@@ -436,7 +443,7 @@ impl HeaderSyncManagerWithReorg {
                 let should_reorg = {
                     let sync_storage = SyncStorageAdapter::new(storage);
                     self.reorg_manager
-                        .should_reorganize(current_tip, strongest_fork, &sync_storage)
+                        .should_reorganize_with_chain_state(current_tip, strongest_fork, &sync_storage, Some(&self.chain_state))
                         .map_err(|e| SyncError::Validation(format!("Reorg check failed: {}", e)))?
                 };
 
@@ -513,17 +520,15 @@ impl HeaderSyncManagerWithReorg {
                 // When syncing from a checkpoint, we need to create a proper locator
                 // that helps the peer understand we want headers AFTER this point
                 if self.chain_state.synced_from_checkpoint && self.chain_state.sync_base_height > 0 {
-                    // For checkpoint sync, include the checkpoint hash and genesis
-                    // This tells the peer we have the checkpoint block and want headers after it
-                    let genesis_hash = self.config.network.known_genesis_block_hash()
-                        .unwrap_or(BlockHash::from_byte_array([0; 32]));
+                    // For checkpoint sync, only include the checkpoint hash
+                    // Including genesis would allow peers to fall back to sending headers from genesis
+                    // if they don't recognize the checkpoint, which is exactly what we want to avoid
                     tracing::info!(
-                        "📍 Using checkpoint locator for height {}: [{}, genesis ({})]",
+                        "📍 Using checkpoint-only locator for height {}: [{}]",
                         self.chain_state.sync_base_height,
-                        hash,
-                        genesis_hash
+                        hash
                     );
-                    vec![hash, genesis_hash]
+                    vec![hash]
                 } else if network.has_headers2_peer().await && !self.headers2_failed {
                     // Check if this is genesis and we're using headers2
                     let genesis_hash = self.config.network.known_genesis_block_hash();
@@ -1162,6 +1167,11 @@ impl HeaderSyncManagerWithReorg {
     /// Get the sync base height (used when syncing from checkpoint)
     pub fn get_sync_base_height(&self) -> u32 {
         self.chain_state.sync_base_height
+    }
+
+    /// Get the chain state for checkpoint-aware operations
+    pub fn get_chain_state(&self) -> &ChainState {
+        &self.chain_state
     }
 }
 

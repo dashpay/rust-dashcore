@@ -162,7 +162,7 @@ impl NetworkManager for TcpNetworkManager {
         let peer_addr = self.config.peers[0];
 
         let mut connection =
-            TcpConnection::new(peer_addr, self.config.connection_timeout, self.config.network);
+            TcpConnection::new(peer_addr, self.config.connection_timeout, self.config.read_timeout, self.config.network);
         connection.connect_instance().await?;
 
         // Perform handshake

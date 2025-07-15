@@ -132,13 +132,22 @@ impl MultiPeerNetworkManager {
                 self.initial_peers.len()
             );
         } else {
-            // Load saved peers only if no specific peers were configured
+            // Load saved peers from disk
             let saved_peers = self.peer_store.load_peers().await.unwrap_or_default();
             peer_addresses.extend(saved_peers);
-            log::info!(
-                "Starting with {} peers from config/disk (skipping DNS for now)",
-                peer_addresses.len()
-            );
+            
+            // If we still have no peers, immediately discover via DNS
+            if peer_addresses.is_empty() {
+                log::info!("No peers configured, performing immediate DNS discovery for {:?}", self.network);
+                let dns_peers = self.discovery.discover_peers(self.network).await;
+                peer_addresses.extend(dns_peers.iter().take(TARGET_PEERS));
+                log::info!("DNS discovery found {} peers, using {} for startup", dns_peers.len(), peer_addresses.len());
+            } else {
+                log::info!(
+                    "Starting with {} peers from disk (DNS discovery will be used later if needed)",
+                    peer_addresses.len()
+                );
+            }
         }
 
         // Connect to peers (all in exclusive mode, or up to TARGET_PEERS in normal mode)

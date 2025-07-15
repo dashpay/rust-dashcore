@@ -121,7 +121,8 @@ mod connection_tests {
     fn test_tcp_connection_creation() {
         let addr = "127.0.0.1:9999".parse().unwrap();
         let timeout = Duration::from_secs(30);
-        let conn = TcpConnection::new(addr, timeout, Network::Dash);
+        let read_timeout = Duration::from_millis(100);
+        let conn = TcpConnection::new(addr, timeout, read_timeout, Network::Dash);
 
         assert!(!conn.is_connected());
         assert_eq!(conn.peer_info().address, addr);
