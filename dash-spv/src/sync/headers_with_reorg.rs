@@ -317,6 +317,17 @@ impl HeaderSyncManagerWithReorg {
 
         // Process each header with fork detection
         for header in &headers {
+            // Skip headers we've already processed to avoid duplicate processing
+            let header_hash = header.block_hash();
+            if let Some(existing_height) = storage
+                .get_header_height_by_hash(&header_hash)
+                .await
+                .map_err(|e| SyncError::Storage(format!("Failed to check header existence: {}", e)))?
+            {
+                tracing::debug!("⏭️ Skipping already processed header {} at height {}", header_hash, existing_height);
+                continue;
+            }
+
             match self.process_header_with_fork_detection(header, storage).await? {
                 HeaderProcessResult::ExtendedMainChain => {
                     // Normal case - header extends the main chain
