@@ -472,6 +472,16 @@ impl SequentialSyncManager {
                 self.handle_post_sync_cfilter(cfilter, network, storage).await?;
             }
 
+            // Handle masternode diffs when fully synced (for ChainLock validation)
+            (
+                SyncPhase::FullySynced {
+                    ..
+                },
+                NetworkMessage::MnListDiff(diff),
+            ) => {
+                self.handle_post_sync_mnlistdiff(diff, network, storage).await?;
+            }
+
             _ => {
                 tracing::debug!("Message type not handled in current phase");
             }
@@ -1056,6 +1066,20 @@ impl SequentialSyncManager {
 
             // Check if phase is complete
             if !continue_sync {
+                // Masternode sync has completed - ensure phase state reflects this
+                // by updating target_height to match current_height before transition
+                if let SyncPhase::DownloadingMnList {
+                    current_height,
+                    target_height,
+                    ..
+                } = &mut self.current_phase
+                {
+                    // Force completion state by ensuring current >= target
+                    if *current_height < *target_height {
+                        *target_height = *current_height;
+                    }
+                }
+
                 self.transition_to_next_phase(storage, "Masternode sync complete").await?;
 
                 // Execute the next phase
@@ -1525,6 +1549,71 @@ impl SequentialSyncManager {
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to store headers: {}", e)))?;
 
+        // First, check if we need to catch up on masternode lists for ChainLock validation
+        if self.config.enable_masternodes && !headers.is_empty() {
+            // Get the current masternode state to check for gaps
+            let mn_state = storage.load_masternode_state().await
+                .map_err(|e| SyncError::Storage(format!("Failed to load masternode state: {}", e)))?;
+            
+            if let Some(state) = mn_state {
+                // Get the height of the first new header
+                let first_height = storage
+                    .get_header_height_by_hash(&headers[0].block_hash())
+                    .await
+                    .map_err(|e| SyncError::Storage(format!("Failed to get block height: {}", e)))?
+                    .ok_or(SyncError::InvalidState("Failed to get block height".to_string()))?;
+                
+                // Check if we have a gap (masternode lists are more than 1 block behind)
+                if state.last_height + 1 < first_height {
+                    let gap_size = first_height - state.last_height - 1;
+                    tracing::warn!(
+                        "⚠️ Detected gap in masternode lists: last height {} vs new block {}, gap of {} blocks",
+                        state.last_height,
+                        first_height,
+                        gap_size
+                    );
+                    
+                    // Request catch-up masternode diff for the gap
+                    // We need to ensure we have lists for at least the last 8 blocks for ChainLock validation
+                    let catch_up_start = state.last_height;
+                    let catch_up_end = first_height.saturating_sub(1);
+                    
+                    if catch_up_end > catch_up_start {
+                        let base_hash = storage
+                            .get_header_by_height(catch_up_start)
+                            .await
+                            .map_err(|e| SyncError::Storage(format!("Failed to get catch-up base block: {}", e)))?
+                            .map(|h| h.block_hash())
+                            .ok_or(SyncError::InvalidState("Catch-up base block not found".to_string()))?;
+                        
+                        let stop_hash = storage
+                            .get_header_by_height(catch_up_end)
+                            .await
+                            .map_err(|e| SyncError::Storage(format!("Failed to get catch-up stop block: {}", e)))?
+                            .map(|h| h.block_hash())
+                            .ok_or(SyncError::InvalidState("Catch-up stop block not found".to_string()))?;
+                        
+                        tracing::info!(
+                            "📋 Requesting catch-up masternode diff from height {} to {} to fill gap",
+                            catch_up_start,
+                            catch_up_end
+                        );
+                        
+                        let catch_up_request = dashcore::network::message::NetworkMessage::GetMnListDiff(
+                            dashcore::network::message_sml::GetMnListDiff {
+                                base_block_hash: base_hash,
+                                block_hash: stop_hash,
+                            },
+                        );
+                        
+                        network.send_message(catch_up_request).await.map_err(|e| {
+                            SyncError::Network(format!("Failed to request catch-up masternode diff: {}", e))
+                        })?;
+                    }
+                }
+            }
+        }
+
         for header in &headers {
             let height = storage
                 .get_header_height_by_hash(&header.block_hash())
@@ -1533,6 +1622,42 @@ impl SequentialSyncManager {
                 .ok_or(SyncError::InvalidState("Failed to get block height".to_string()))?;
 
             tracing::info!("📦 New block at height {}: {}", height, header.block_hash());
+
+            // If we have masternodes enabled, request masternode list updates for ChainLock validation
+            if self.config.enable_masternodes {
+                // For ChainLock validation, we need masternode lists at (block_height - 8)
+                // So we request the masternode diff for this new block to maintain our rolling window
+                let base_block_hash = if height > 0 {
+                    // Get the previous block hash
+                    storage
+                        .get_header_by_height(height - 1)
+                        .await
+                        .map_err(|e| SyncError::Storage(format!("Failed to get previous block: {}", e)))?
+                        .map(|h| h.block_hash())
+                        .ok_or(SyncError::InvalidState("Previous block not found".to_string()))?
+                } else {
+                    // Genesis block case
+                    dashcore::blockdata::constants::genesis_block(self.config.network.into()).block_hash()
+                };
+
+                tracing::info!(
+                    "📋 Requesting masternode list diff for block at height {} to maintain ChainLock validation window",
+                    height
+                );
+
+                let getmnlistdiff = dashcore::network::message::NetworkMessage::GetMnListDiff(
+                    dashcore::network::message_sml::GetMnListDiff {
+                        base_block_hash,
+                        block_hash: header.block_hash(),
+                    },
+                );
+
+                network.send_message(getmnlistdiff).await.map_err(|e| {
+                    SyncError::Network(format!("Failed to request masternode diff: {}", e))
+                })?;
+
+                // The masternode diff will arrive via handle_message and be processed by masternode_sync
+            }
 
             // If we have filters enabled, request filter headers for the new blocks
             if self.config.enable_filters {
@@ -1686,6 +1811,62 @@ impl SequentialSyncManager {
             }
         } else {
             tracing::warn!("No watch items available for post-sync filter check");
+        }
+
+        Ok(())
+    }
+
+    /// Handle masternode list diffs that arrive after initial sync (for ChainLock validation)
+    async fn handle_post_sync_mnlistdiff(
+        &mut self,
+        diff: dashcore::network::message_sml::MnListDiff,
+        network: &mut dyn NetworkManager,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<()> {
+        // Get block heights for better logging
+        let base_height = storage
+            .get_header_height_by_hash(&diff.base_block_hash)
+            .await
+            .ok()
+            .flatten();
+        let target_height = storage
+            .get_header_height_by_hash(&diff.block_hash)
+            .await
+            .ok()
+            .flatten();
+
+        tracing::info!(
+            "📥 Processing post-sync masternode diff for block {} at height {:?} (base: {} at height {:?})",
+            diff.block_hash,
+            target_height,
+            diff.base_block_hash,
+            base_height
+        );
+
+        // Process the diff through the masternode sync manager
+        // This will update the masternode engine's state
+        self.masternode_sync.handle_mnlistdiff_message(diff, storage, network).await?;
+
+        // Log the current masternode state after update
+        if let Ok(Some(mn_state)) = storage.load_masternode_state().await {
+            tracing::debug!(
+                "📊 Masternode state after update: last height = {}, can validate ChainLocks up to height {}",
+                mn_state.last_height,
+                mn_state.last_height + 8
+            );
+        }
+
+        // After processing the diff, check if we have any pending ChainLocks that can now be validated
+        if let Ok(Some(chain_manager)) = storage.load_chain_manager().await {
+            if chain_manager.has_pending_chainlocks() {
+                tracing::info!(
+                    "🔒 Checking {} pending ChainLocks after masternode list update",
+                    chain_manager.pending_chainlocks_count()
+                );
+                
+                // The chain manager will handle validation of pending ChainLocks
+                // when it receives the next ChainLock or during periodic validation
+            }
         }
 
         Ok(())
