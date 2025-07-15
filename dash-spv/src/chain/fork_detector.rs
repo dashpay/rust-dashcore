@@ -107,6 +107,18 @@ impl ForkDetector {
 
         // Check if this connects to the main chain (creates new fork)
         if let Ok(Some(height)) = storage.get_header_height(&prev_hash) {
+            // Check if this would create a fork from before our checkpoint
+            if chain_state.synced_from_checkpoint && chain_state.sync_base_height > 0 {
+                if height < chain_state.sync_base_height {
+                    tracing::warn!(
+                        "Rejecting header that would create fork from height {} (before checkpoint base {}). \
+                        This likely indicates headers from genesis were received during checkpoint sync.",
+                        height, chain_state.sync_base_height
+                    );
+                    return ForkDetectionResult::Orphan;
+                }
+            }
+            
             // Found connection point - this creates a new fork
             let fork_height = height;
             let fork = Fork {
@@ -126,6 +138,13 @@ impl ForkDetector {
         // This helps when storage might be out of sync with chain_state
         for (height, state_header) in chain_state.headers.iter().enumerate() {
             if prev_hash == state_header.block_hash() {
+                // Calculate the actual blockchain height for this index
+                let actual_height = if chain_state.synced_from_checkpoint {
+                    chain_state.sync_base_height + (height as u32)
+                } else {
+                    height as u32
+                };
+                
                 // This connects to a header in chain state but not in storage
                 // Treat it as extending main chain if it's the tip
                 if height == chain_state.headers.len() - 1 {
@@ -134,11 +153,11 @@ impl ForkDetector {
                     // Creates a fork from an earlier point
                     let fork = Fork {
                         fork_point: prev_hash,
-                        fork_height: height as u32,
+                        fork_height: actual_height,
                         tip_hash: header_hash,
-                        tip_height: (height as u32) + 1,
+                        tip_height: actual_height + 1,
                         headers: vec![*header],
-                        chain_work: ChainWork::from_height_and_header(height as u32, header),
+                        chain_work: ChainWork::from_height_and_header(actual_height, header),
                     };
 
                     self.add_fork(fork.clone());

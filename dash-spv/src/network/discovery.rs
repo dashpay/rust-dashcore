@@ -81,6 +81,12 @@ mod tests {
         let discovery = DnsDiscovery::new().await.expect("Failed to create DNS discovery for test");
         let peers = discovery.discover_peers(Network::Dash).await;
 
+        // Print discovered peers for debugging
+        println!("Discovered {} mainnet peers:", peers.len());
+        for peer in &peers {
+            println!("  {}", peer);
+        }
+
         // Should find at least some peers
         assert!(!peers.is_empty());
 
@@ -95,6 +101,12 @@ mod tests {
     async fn test_dns_discovery_testnet() {
         let discovery = DnsDiscovery::new().await.expect("Failed to create DNS discovery for test");
         let peers = discovery.discover_peers(Network::Testnet).await;
+
+        // Print discovered peers for debugging
+        println!("Discovered {} testnet peers:", peers.len());
+        for peer in &peers {
+            println!("  {}", peer);
+        }
 
         // Should find at least some peers
         assert!(!peers.is_empty());

@@ -368,9 +368,7 @@ impl ClientConfig {
 
     /// Validate the configuration.
     pub fn validate(&self) -> Result<(), String> {
-        if self.peers.is_empty() {
-            return Err("No peers specified".to_string());
-        }
+        // Note: Empty peers list is now valid - DNS discovery will be used automatically
 
         if self.max_headers_per_message == 0 {
             return Err("max_headers_per_message must be > 0".to_string());
@@ -412,27 +410,22 @@ impl ClientConfig {
     }
 
     /// Get default peers for a network.
+    /// Returns empty vector to enable immediate DNS discovery on startup.
+    /// Explicit peers can still be added via add_peer() or configuration.
     fn default_peers_for_network(network: Network) -> Vec<SocketAddr> {
         match network {
-            Network::Dash => vec![
-                // Use well-known IP addresses instead of DNS names for reliability
-                "104.248.113.204:9999".parse::<SocketAddr>(),
-                "149.28.22.65:9999".parse::<SocketAddr>(),
-            ]
-            .into_iter()
-            .filter_map(Result::ok)
-            .collect(),
-            Network::Testnet => vec![
-                "174.138.35.118:19999".parse::<SocketAddr>(),
-                "149.28.22.65:19999".parse::<SocketAddr>(),
-            ]
-            .into_iter()
-            .filter_map(Result::ok)
-            .collect(),
-            Network::Regtest => vec!["127.0.0.1:19899".parse::<SocketAddr>()]
-                .into_iter()
-                .filter_map(Result::ok)
-                .collect(),
+            Network::Dash | Network::Testnet => {
+                // Return empty to trigger immediate DNS discovery
+                // DNS seeds will be used: dnsseed.dash.org (mainnet), testnet-seed.dashdot.io (testnet)
+                vec![]
+            }
+            Network::Regtest => {
+                // Regtest typically uses local peers
+                vec!["127.0.0.1:19899".parse::<SocketAddr>()]
+                    .into_iter()
+                    .filter_map(Result::ok)
+                    .collect()
+            }
             _ => vec![],
         }
     }

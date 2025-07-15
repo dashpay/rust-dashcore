@@ -28,6 +28,7 @@ pub struct TcpConnection {
     // This ensures no concurrent access to the underlying socket
     state: Option<Arc<Mutex<ConnectionState>>>,
     timeout: Duration,
+    read_timeout: Duration,
     connected_at: Option<SystemTime>,
     bytes_sent: u64,
     network: Network,
@@ -47,11 +48,12 @@ pub struct TcpConnection {
 
 impl TcpConnection {
     /// Create a new TCP connection to the given address.
-    pub fn new(address: SocketAddr, timeout: Duration, network: Network) -> Self {
+    pub fn new(address: SocketAddr, timeout: Duration, read_timeout: Duration, network: Network) -> Self {
         Self {
             address,
             state: None,
             timeout,
+            read_timeout,
             connected_at: None,
             bytes_sent: 0,
             network,
@@ -85,9 +87,14 @@ impl TcpConnection {
             NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
         })?;
 
+        // CRITICAL: Read timeout configuration affects message integrity
+        // 
+        // WARNING: Timeout values below 100ms risk TCP partial reads causing
+        // corrupted message framing and checksum validation failures.
+        // See git commit 16d55f09 for historical context.
+        //
         // Set a read timeout instead of non-blocking mode
         // This allows us to return None when no data is available
-        // Using configurable timeout for optimal balance of performance and reliability
         stream.set_read_timeout(Some(read_timeout)).map_err(|e| {
             NetworkError::ConnectionFailed(format!("Failed to set read timeout: {}", e))
         })?;
@@ -106,6 +113,7 @@ impl TcpConnection {
             address,
             state: Some(Arc::new(Mutex::new(state))),
             timeout,
+            read_timeout,
             connected_at: Some(SystemTime::now()),
             bytes_sent: 0,
             network,
@@ -136,10 +144,24 @@ impl TcpConnection {
             NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
         })?;
 
+        // CRITICAL: Read timeout configuration affects message integrity
+        // 
+        // WARNING: DO NOT MODIFY TIMEOUT VALUES WITHOUT UNDERSTANDING THE IMPLICATIONS
+        // 
+        // Previous bug (git commit 16d55f09): 15ms timeout caused TCP partial reads
+        // leading to corrupted message framing and checksum validation failures
+        // with debug output like: "CHECKSUM DEBUG: len=2, checksum=[15, 1d, fc, 66]"
+        //
+        // The timeout must be long enough to receive complete network messages
+        // but short enough to maintain responsiveness. 100ms is the tested value
+        // that balances performance with correctness.
+        //
+        // TODO: Future refactor should eliminate this duplication by having
+        // connect_instance() delegate to connect() or use a shared connection setup method
+        //
         // Set a read timeout instead of non-blocking mode
         // This allows us to return None when no data is available
-        // Using 15ms timeout for optimal balance of performance and reliability
-        stream.set_read_timeout(Some(Duration::from_millis(15))).map_err(|e| {
+        stream.set_read_timeout(Some(self.read_timeout)).map_err(|e| {
             NetworkError::ConnectionFailed(format!("Failed to set read timeout: {}", e))
         })?;
 
