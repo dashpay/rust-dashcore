@@ -177,8 +177,10 @@ impl ChainLockManager {
                     // Check if the error is due to missing masternode lists
                     let error_string = e.to_string();
                     if error_string.contains("No masternode lists in engine") {
-                        warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {}, queueing ChainLock for later validation", 
-                            chain_lock.block_height);
+                        // ChainLock validation requires masternode list at (block_height - 8)
+                        let required_height = chain_lock.block_height.saturating_sub(8);
+                        warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {} (needs list at height {} for ChainLock validation), queueing ChainLock for later validation", 
+                            chain_lock.block_height, required_height);
                         drop(engine_guard); // Release the read lock before acquiring write lock
                         self.queue_pending_chainlock(chain_lock.clone())
                             .map_err(|e| ValidationError::InvalidChainLock(
