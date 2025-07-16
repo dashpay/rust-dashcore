@@ -34,15 +34,11 @@ let package = Package(
                 .headerSearchPath("include"),
             ],
             linkerSettings: [
+                // Link to static library
                 .linkedLibrary("dash_spv_ffi"),
                 .unsafeFlags([
-                    "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk/Sources/DashSPVFFI",
-                    "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk/Examples/DashHDWalletExample",
-                    "-L/Users/quantum/src/rust-dashcore/swift-dash-core-sdk",
-                    "-L/Users/quantum/src/rust-dashcore/target/aarch64-apple-ios-sim/release",
-                    "-L/Users/quantum/src/rust-dashcore/target/x86_64-apple-ios/release",
-                    "-L/Users/quantum/src/rust-dashcore/target/ios-simulator-universal/release",
-                    "-L/Users/quantum/src/rust-dashcore/target/release"
+                    "-L/Users/quantum/src/rust-dashcore/dash-spv-ffi/target/aarch64-apple-ios-sim/release",
+                    "-L/Users/quantum/src/rust-dashcore/dash-spv-ffi/target/aarch64-apple-ios/release"
                 ])
             ]
         ),
