@@ -315,3 +315,29 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_strategy(
     let config = &(*config).inner;
     config.mempool_strategy.into()
 }
+
+// Checkpoint sync configuration functions
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_start_from_height(
+    config: *mut FFIClientConfig,
+    height: u32,
+) -> i32 {
+    null_check!(config);
+
+    let config = &mut (*config).inner;
+    config.start_from_height = Some(height);
+    FFIErrorCode::Success as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_wallet_creation_time(
+    config: *mut FFIClientConfig,
+    timestamp: u32,
+) -> i32 {
+    null_check!(config);
+
+    let config = &mut (*config).inner;
+    config.wallet_creation_time = Some(timestamp);
+    FFIErrorCode::Success as i32
+}

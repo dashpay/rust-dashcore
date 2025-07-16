@@ -768,6 +768,94 @@ impl DiskStorageManager {
         .map_err(|e| StorageError::ReadFailed(format!("Task join error: {}", e)))?
     }
 
+    /// Store headers starting from a specific height (used for checkpoint sync)
+    pub async fn store_headers_from_height(&mut self, headers: &[BlockHeader], start_height: u32) -> StorageResult<()> {
+        // Early return if no headers to store
+        if headers.is_empty() {
+            tracing::trace!("DiskStorage: no headers to store");
+            return Ok(());
+        }
+        
+        // Acquire write locks for the entire operation to prevent race conditions
+        let mut cached_tip = self.cached_tip_height.write().await;
+        let mut reverse_index = self.header_hash_index.write().await;
+
+        let mut next_height = start_height;
+        let initial_height = next_height;
+
+        tracing::info!(
+            "DiskStorage: storing {} headers starting at height {} (checkpoint sync)",
+            headers.len(),
+            initial_height
+        );
+
+        // Process each header
+        for header in headers {
+            let segment_id = Self::get_segment_id(next_height);
+            let offset = Self::get_segment_offset(next_height);
+
+            // Ensure segment is loaded
+            self.ensure_segment_loaded(segment_id).await?;
+
+            // Update segment
+            {
+                let mut segments = self.active_segments.write().await;
+                if let Some(segment) = segments.get_mut(&segment_id) {
+                    // Ensure we have space in the segment
+                    if offset >= segment.headers.len() {
+                        // Fill with sentinel headers up to the offset
+                        let sentinel_header = create_sentinel_header();
+                        segment.headers.resize(offset + 1, sentinel_header);
+                    }
+                    segment.headers[offset] = *header;
+                    // Only increment valid_count when offset equals the current valid_count
+                    // This ensures valid_count represents contiguous valid headers without gaps
+                    if offset == segment.valid_count {
+                        segment.valid_count += 1;
+                    }
+                    // Transition to Dirty state (from Clean, Dirty, or Saving)
+                    segment.state = SegmentState::Dirty;
+                    segment.last_accessed = Instant::now();
+                }
+            }
+
+            // Update reverse index
+            reverse_index.insert(header.block_hash(), next_height);
+
+            next_height += 1;
+        }
+
+        // Update cached tip height atomically with reverse index
+        // Only update if we actually stored headers
+        if !headers.is_empty() {
+            *cached_tip = Some(next_height - 1);
+        }
+
+        let final_height = if next_height > 0 {
+            next_height - 1
+        } else {
+            0  // No headers were stored
+        };
+
+        tracing::info!(
+            "DiskStorage: stored {} headers from checkpoint sync. Height: {} -> {}",
+            headers.len(),
+            initial_height,
+            final_height
+        );
+
+        // Release locks before saving (to avoid deadlocks during background saves)
+        drop(reverse_index);
+        drop(cached_tip);
+
+        // Save dirty segments periodically (every 1000 headers)
+        if headers.len() >= 1000 || next_height % 1000 == 0 {
+            self.save_dirty_segments().await?;
+        }
+
+        Ok(())
+    }
+
     /// Shutdown the storage manager.
     pub async fn shutdown(&mut self) -> StorageResult<()> {
         // Save all dirty segments
@@ -999,6 +1087,7 @@ async fn save_utxo_cache_to_disk(
     .map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
 }
 
+
 #[async_trait]
 impl StorageManager for DiskStorageManager {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
@@ -1120,6 +1209,7 @@ impl StorageManager for DiskStorageManager {
 
         Ok(())
     }
+
 
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
         let mut headers = Vec::new();
@@ -1337,7 +1427,13 @@ impl StorageManager for DiskStorageManager {
 
     async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {
         // First store all headers
-        self.store_headers(&state.headers).await?;
+        // For checkpoint sync, we need to store headers starting from the checkpoint height
+        if state.synced_from_checkpoint && state.sync_base_height > 0 && !state.headers.is_empty() {
+            // Store headers starting from the checkpoint height
+            self.store_headers_from_height(&state.headers, state.sync_base_height).await?;
+        } else {
+            self.store_headers(&state.headers).await?;
+        }
 
         // Store filter headers
         self.store_filter_headers(&state.filter_headers).await?;

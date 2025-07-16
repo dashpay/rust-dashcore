@@ -14,6 +14,8 @@ public final class SPVClientConfiguration {
     public var dustRelayFee: UInt64 = 3000
     public var mempoolConfig: MempoolConfig = .disabled
     public var logLevel: String = "info"  // Options: "error", "warn", "info", "debug", "trace"
+    public var startFromHeight: UInt32? = nil  // Start syncing from a specific block height (uses nearest checkpoint)
+    public var walletCreationTime: UInt32? = nil  // Wallet creation time as Unix timestamp (for checkpoint selection)
     
     public init() {
         setupDefaultDataDirectory()
@@ -119,6 +121,17 @@ public final class SPVClientConfiguration {
             try FFIBridge.checkError(result)
         }
         
+        // Configure checkpoint sync if specified
+        if let height = startFromHeight {
+            result = dash_spv_ffi_config_set_start_from_height(config, height)
+            try FFIBridge.checkError(result)
+        }
+        
+        if let timestamp = walletCreationTime {
+            result = dash_spv_ffi_config_set_wallet_creation_time(config, timestamp)
+            try FFIBridge.checkError(result)
+        }
+        
         return UnsafeMutableRawPointer(config)
     }
 }
@@ -147,5 +160,32 @@ extension SPVClientConfiguration {
         let config = SPVClientConfiguration()
         config.network = .devnet
         return config
+    }
+    
+    /// Configure the SPV client to use checkpoint sync for faster initial synchronization.
+    /// For testnet, this will sync from the latest checkpoint at height 1088640 instead of genesis.
+    /// For mainnet, this will sync from the latest checkpoint at height 1100000 instead of genesis.
+    public func enableCheckpointSync() {
+        switch network {
+        case .testnet:
+            startFromHeight = 1088640  // Testnet checkpoint
+        case .mainnet:
+            startFromHeight = 1100000  // Mainnet checkpoint
+        case .devnet, .regtest:
+            // No checkpoints for devnet/regtest
+            break
+        }
+    }
+    
+    /// Configure checkpoint sync for a specific wallet creation time.
+    /// The client will automatically select the appropriate checkpoint.
+    public func setWalletCreationTime(_ timestamp: UInt32) {
+        walletCreationTime = timestamp
+    }
+    
+    /// Configure checkpoint sync to start from a specific height.
+    /// The client will use the nearest checkpoint at or before this height.
+    public func setStartFromHeight(_ height: UInt32) {
+        startFromHeight = height
     }
 }

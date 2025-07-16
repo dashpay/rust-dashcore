@@ -905,6 +905,23 @@ impl MasternodeSyncManager {
                 current_height, sync_base_height
             )));
         };
+        
+        // Verify the storage height actually exists
+        let storage_tip = storage.get_tip_height().await
+            .map_err(|e| SyncError::Storage(format!("Failed to get storage tip: {}", e)))?
+            .unwrap_or(0);
+        
+        if storage_current_height > storage_tip {
+            return Err(SyncError::InvalidState(format!(
+                "Requested storage height {} exceeds storage tip {} (blockchain height {} with sync base {})",
+                storage_current_height, storage_tip, current_height, sync_base_height
+            )));
+        }
+        
+        tracing::debug!(
+            "MnListDiff request heights - blockchain: {}-{}, storage: {}-{}, tip: {}",
+            base_height, current_height, storage_base_height, storage_current_height, storage_tip
+        );
 
         // Get base block hash
         let base_block_hash = if base_height == 0 {
@@ -1105,22 +1122,37 @@ impl MasternodeSyncManager {
             }
 
             // Feed base block hash
-            if let Some(base_height) = storage
-                .get_header_height_by_hash(&base_block_hash)
-                .await
-                .map_err(|e| SyncError::Storage(format!("Failed to lookup base hash: {}", e)))?
-            {
-                engine.feed_block_height(base_height, base_block_hash);
-                tracing::debug!(
-                    "Fed base block hash {} at height {}",
-                    base_block_hash,
-                    base_height
-                );
+            // Special case for genesis block to avoid checkpoint-related lookup issues
+            if base_block_hash == self.config.network.known_genesis_block_hash().ok_or_else(|| {
+                SyncError::Network("No genesis hash for network".to_string())
+            })? {
+                // Genesis is always at height 0
+                engine.feed_block_height(0, base_block_hash);
+                tracing::debug!("Fed genesis block hash {} at height 0", base_block_hash);
+            } else {
+                // For non-genesis blocks, look up the height
+                if let Some(base_height) = storage
+                    .get_header_height_by_hash(&base_block_hash)
+                    .await
+                    .map_err(|e| SyncError::Storage(format!("Failed to lookup base hash: {}", e)))?
+                {
+                    engine.feed_block_height(base_height, base_block_hash);
+                    tracing::debug!(
+                        "Fed base block hash {} at height {}",
+                        base_block_hash,
+                        base_height
+                    );
+                }
             }
 
             // Calculate start_height for filtering redundant submissions
             // Feed last 1000 headers or from base height, whichever is more recent
-            let start_height = if let Some(base_height) = storage
+            let start_height = if base_block_hash == self.config.network.known_genesis_block_hash().ok_or_else(|| {
+                SyncError::Network("No genesis hash for network".to_string())
+            })? {
+                // For genesis, start from 0 (but limited by what's in storage)
+                0
+            } else if let Some(base_height) = storage
                 .get_header_height_by_hash(&base_block_hash)
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to lookup base hash: {}", e)))?
