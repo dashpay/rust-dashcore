@@ -1580,14 +1580,14 @@ impl SequentialSyncManager {
                     
                     if catch_up_end > catch_up_start {
                         let base_hash = storage
-                            .get_header_by_height(catch_up_start)
+                            .get_header(catch_up_start)
                             .await
                             .map_err(|e| SyncError::Storage(format!("Failed to get catch-up base block: {}", e)))?
                             .map(|h| h.block_hash())
                             .ok_or(SyncError::InvalidState("Catch-up base block not found".to_string()))?;
                         
                         let stop_hash = storage
-                            .get_header_by_height(catch_up_end)
+                            .get_header(catch_up_end)
                             .await
                             .map_err(|e| SyncError::Storage(format!("Failed to get catch-up stop block: {}", e)))?
                             .map(|h| h.block_hash())
@@ -1599,7 +1599,7 @@ impl SequentialSyncManager {
                             catch_up_end
                         );
                         
-                        let catch_up_request = dashcore::network::message::NetworkMessage::GetMnListDiff(
+                        let catch_up_request = dashcore::network::message::NetworkMessage::GetMnListD(
                             dashcore::network::message_sml::GetMnListDiff {
                                 base_block_hash: base_hash,
                                 block_hash: stop_hash,
@@ -1630,7 +1630,7 @@ impl SequentialSyncManager {
                 let base_block_hash = if height > 0 {
                     // Get the previous block hash
                     storage
-                        .get_header_by_height(height - 1)
+                        .get_header(height - 1)
                         .await
                         .map_err(|e| SyncError::Storage(format!("Failed to get previous block: {}", e)))?
                         .map(|h| h.block_hash())
@@ -1645,7 +1645,7 @@ impl SequentialSyncManager {
                     height
                 );
 
-                let getmnlistdiff = dashcore::network::message::NetworkMessage::GetMnListDiff(
+                let getmnlistdiff = dashcore::network::message::NetworkMessage::GetMnListD(
                     dashcore::network::message_sml::GetMnListDiff {
                         base_block_hash,
                         block_hash: header.block_hash(),
@@ -1857,17 +1857,18 @@ impl SequentialSyncManager {
         }
 
         // After processing the diff, check if we have any pending ChainLocks that can now be validated
-        if let Ok(Some(chain_manager)) = storage.load_chain_manager().await {
-            if chain_manager.has_pending_chainlocks() {
-                tracing::info!(
-                    "🔒 Checking {} pending ChainLocks after masternode list update",
-                    chain_manager.pending_chainlocks_count()
-                );
-                
-                // The chain manager will handle validation of pending ChainLocks
-                // when it receives the next ChainLock or during periodic validation
-            }
-        }
+        // TODO: Implement chain manager functionality for pending ChainLocks
+        // if let Ok(Some(chain_manager)) = storage.load_chain_manager().await {
+        //     if chain_manager.has_pending_chainlocks() {
+        //         tracing::info!(
+        //             "🔒 Checking {} pending ChainLocks after masternode list update",
+        //             chain_manager.pending_chainlocks_count()
+        //         );
+        //         
+        //         // The chain manager will handle validation of pending ChainLocks
+        //         // when it receives the next ChainLock or during periodic validation
+        //     }
+        // }
 
         Ok(())
     }
