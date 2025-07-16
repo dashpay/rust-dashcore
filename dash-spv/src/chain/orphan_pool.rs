@@ -71,19 +71,20 @@ impl OrphanPool {
 
         // Create orphan entry
         let orphan = OrphanBlock {
-            header: header.clone(),
+            header,
             received_at: Instant::now(),
             process_attempts: 0,
         };
 
         // Index by previous block
-        self.orphans_by_prev.entry(header.prev_blockhash).or_default().push(orphan.clone());
+        let prev_blockhash = orphan.header.prev_blockhash;
+        self.orphans_by_prev.entry(prev_blockhash).or_default().push(orphan.clone());
 
         // Index by hash
         self.orphans_by_hash.insert(block_hash, orphan);
         self.eviction_queue.push_back(block_hash);
 
-        debug!("Added orphan block {} (prev: {})", block_hash, header.prev_blockhash);
+        debug!("Added orphan block {} (prev: {})", block_hash, prev_blockhash);
 
         true
     }

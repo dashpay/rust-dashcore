@@ -13,6 +13,9 @@ use crate::error::{StorageError, StorageResult, ValidationError, ValidationResul
 use crate::storage::StorageManager;
 use crate::types::ChainState;
 
+/// Maximum number of pending ChainLocks to queue
+const MAX_PENDING_CHAINLOCKS: usize = 100;
+
 /// ChainLock storage entry
 #[derive(Debug, Clone)]
 pub struct ChainLockEntry {
@@ -70,6 +73,16 @@ impl ChainLockManager {
     pub fn queue_pending_chainlock(&self, chain_lock: ChainLock) -> StorageResult<()> {
         let mut pending = self.pending_chainlocks.write()
             .map_err(|_| StorageError::LockPoisoned("pending_chainlocks".to_string()))?;
+        
+        // If at capacity, drop the oldest ChainLock
+        if pending.len() >= MAX_PENDING_CHAINLOCKS {
+            let dropped = pending.remove(0);
+            warn!(
+                "Pending ChainLocks queue at capacity ({}), dropping oldest ChainLock at height {}",
+                MAX_PENDING_CHAINLOCKS, dropped.block_height
+            );
+        }
+        
         pending.push(chain_lock);
         debug!("Queued ChainLock for pending validation, total pending: {}", pending.len());
         Ok(())

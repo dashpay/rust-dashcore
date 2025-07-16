@@ -181,7 +181,7 @@ impl ChainTipManager {
             self.tips.remove(&hash);
             Ok(())
         } else {
-            Err("Cannot evict: all tips are active")
+            Err("Cannot evict: the only tip present is active")
         }
     }
 

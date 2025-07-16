@@ -77,14 +77,26 @@ def fetch_terminal_block_data(network, height, genesis_hash):
     # Extract relevant data
     masternode_list = []
     for mn in diff_result.get("mnList", []):
-        masternode_list.append({
-            "pro_tx_hash": mn["proRegTxHash"],
-            "service": mn["service"],
-            "pub_key_operator": mn["pubKeyOperator"],
-            "voting_address": mn["votingAddress"],
-            "is_valid": mn["isValid"],
-            "n_type": mn.get("nType", 0),
-        })
+        try:
+            # Check for required fields and skip entry if any are missing
+            required_fields = ["proRegTxHash", "service", "pubKeyOperator", "votingAddress", "isValid"]
+            missing_fields = [field for field in required_fields if field not in mn]
+            
+            if missing_fields:
+                print(f"Warning: Masternode entry missing required fields: {missing_fields}. Skipping entry.")
+                continue
+            
+            masternode_list.append({
+                "pro_tx_hash": mn["proRegTxHash"],
+                "service": mn["service"],
+                "pub_key_operator": mn["pubKeyOperator"],
+                "voting_address": mn["votingAddress"],
+                "is_valid": mn["isValid"],
+                "n_type": mn.get("nType", 0),  # Default to 0 if not present
+            })
+        except Exception as e:
+            print(f"Error processing masternode entry: {e}. Skipping entry.")
+            continue
     
     return {
         "height": height,
@@ -150,12 +162,12 @@ def main():
                 json_file = output_dir / f"terminal_block_{height}.json"
                 if json_file.exists():
                     f.write(f'    // Terminal block {height}\n')
-                    f.write(f'    {{\n')
+                    f.write('    {\n')
                     f.write(f'        let data = include_str!("terminal_block_{height}.json");\n')
-                    f.write(f'        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {{\n')
-                    f.write(f'            manager.add_state(state);\n')
-                    f.write(f'        }}\n')
-                    f.write(f'    }}\n\n')
+                    f.write('        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {\n')
+                    f.write('            manager.add_state(state);\n')
+                    f.write('        }\n')
+                    f.write('    }\n\n')
             
             f.write("}\n")
         

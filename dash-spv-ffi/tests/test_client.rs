@@ -233,7 +233,7 @@ mod tests {
                 println!("Warning: Failed to start client, error code: {}", start_result);
                 let error = dash_spv_ffi_get_last_error();
                 if !error.is_null() {
-                    let error_str = CString::from_raw(error as *mut _);
+                    let error_str = std::ffi::CStr::from_ptr(error);
                     println!("Error message: {:?}", error_str);
                 }
             }
