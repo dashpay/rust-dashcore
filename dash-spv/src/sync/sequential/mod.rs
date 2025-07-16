@@ -265,7 +265,17 @@ impl SequentialSyncManager {
                     self.filter_sync.set_sync_base_height(sync_base_height);
                 }
                 
-                self.filter_sync.start_sync_headers(network, storage).await?;
+                // Check if filter sync actually started
+                let sync_started = self.filter_sync.start_sync_headers(network, storage).await?;
+                
+                if !sync_started {
+                    // No peers support compact filters or already up to date
+                    tracing::info!("Filter header sync not started (no peers support filters or already synced)");
+                    // Transition to next phase immediately
+                    self.transition_to_next_phase(storage, "Filter sync skipped - no peer support").await?;
+                    // Return early to let the main sync loop execute the next phase
+                    return Ok(());
+                }
             }
 
             SyncPhase::DownloadingFilters {
@@ -496,6 +506,13 @@ impl SequentialSyncManager {
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
+        // First check if the current phase needs to be executed (e.g., after a transition)
+        if self.current_phase_needs_execution() {
+            tracing::info!("Executing phase {} after transition", self.current_phase.name());
+            self.execute_current_phase(network, storage).await?;
+            return Ok(());
+        }
+
         if let Some(last_progress) = self.current_phase.last_progress_time() {
             if last_progress.elapsed() > self.phase_timeout {
                 tracing::warn!(
@@ -685,6 +702,22 @@ impl SequentialSyncManager {
     /// Check if sync is complete
     pub fn is_synced(&self) -> bool {
         matches!(self.current_phase, SyncPhase::FullySynced { .. })
+    }
+
+    /// Check if the current phase needs to be executed
+    /// This is true for phases that haven't been started yet
+    fn current_phase_needs_execution(&self) -> bool {
+        match &self.current_phase {
+            SyncPhase::DownloadingCFHeaders { .. } => {
+                // Check if filter sync hasn't started yet (no progress time)
+                self.current_phase.last_progress_time().is_none()
+            }
+            SyncPhase::DownloadingFilters { .. } => {
+                // Check if filter download hasn't started yet
+                self.current_phase.last_progress_time().is_none()
+            }
+            _ => false, // Other phases are started by messages or initial sync
+        }
     }
 
     /// Check if currently in the downloading blocks phase
