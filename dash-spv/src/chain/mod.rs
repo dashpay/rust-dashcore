@@ -17,6 +17,12 @@ pub mod reorg;
 
 #[cfg(test)]
 mod reorg_test;
+#[cfg(test)]
+mod fork_detector_test;
+#[cfg(test)]
+mod orphan_pool_test;
+#[cfg(test)]
+mod checkpoint_test;
 
 pub use chain_tip::{ChainTip, ChainTipManager};
 pub use chain_work::ChainWork;

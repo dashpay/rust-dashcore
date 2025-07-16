@@ -81,3 +81,7 @@ impl ValidationManager {
         self.header_validator.set_mode(mode);
     }
 }
+
+#[cfg(test)]
+#[path = "manager_test.rs"]
+mod manager_test;
