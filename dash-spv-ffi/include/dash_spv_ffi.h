@@ -480,6 +480,11 @@ bool dash_spv_ffi_config_get_mempool_tracking(const struct FFIClientConfig *conf
 
 enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const struct FFIClientConfig *config);
 
+int32_t dash_spv_ffi_config_set_start_from_height(struct FFIClientConfig *config, uint32_t height);
+
+int32_t dash_spv_ffi_config_set_wallet_creation_time(struct FFIClientConfig *config,
+                                                     uint32_t timestamp);
+
 const char *dash_spv_ffi_get_last_error(void);
 
 void dash_spv_ffi_clear_error(void);

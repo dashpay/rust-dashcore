@@ -159,23 +159,36 @@ impl HeaderSyncManagerWithReorg {
             let end_storage_index = (current_storage_index + BATCH_SIZE - 1).min(tip_height);
 
             // Load batch from storage
-            let headers = storage
+            let headers_result = storage
                 .load_headers(current_storage_index..end_storage_index + 1)
-                .await
-                .map_err(|e| SyncError::Storage(format!("Failed to load headers: {}", e)))?;
-
-            if headers.is_empty() {
-                return Err(SyncError::Storage(format!(
-                    "No headers found for range {}..{}",
-                    current_storage_index,
-                    end_storage_index + 1
-                )));
-            }
-
-            // Add headers to chain state
-            for header in headers {
-                self.chain_state.add_header(header);
-                loaded_count += 1;
+                .await;
+            
+            match headers_result {
+                Ok(headers) if !headers.is_empty() => {
+                    // Add headers to chain state
+                    for header in headers {
+                        self.chain_state.add_header(header);
+                        loaded_count += 1;
+                    }
+                },
+                Ok(_) => {
+                    // Empty headers - this can happen for checkpoint sync with minimal headers
+                    tracing::debug!(
+                        "No headers found for range {}..{} - continuing",
+                        current_storage_index,
+                        end_storage_index + 1
+                    );
+                    // Break out of the loop since we've reached the end of available headers
+                    break;
+                },
+                Err(e) => {
+                    // For checkpoint sync with only 1 header stored, this is expected
+                    if self.chain_state.synced_from_checkpoint && loaded_count == 0 && tip_height == 0 {
+                        tracing::info!("No additional headers to load for checkpoint sync - this is expected");
+                        return Ok(0);
+                    }
+                    return Err(SyncError::Storage(format!("Failed to load headers: {}", e)));
+                }
             }
 
             // Progress logging
