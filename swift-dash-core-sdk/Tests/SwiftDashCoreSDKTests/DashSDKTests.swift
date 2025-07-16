@@ -11,7 +11,7 @@ final class DashSDKTests: XCTestCase {
         config.network = .testnet
         config.validationMode = .basic
         
-        sdk = try DashSDK(configuration: config)
+        sdk = try await DashSDK(configuration: config)
     }
     
     override func tearDown() async throws {
@@ -27,7 +27,7 @@ final class DashSDKTests: XCTestCase {
         let config = SPVClientConfiguration.default
         XCTAssertEqual(config.network, .mainnet)
         XCTAssertEqual(config.validationMode, .basic)
-        XCTAssertEqual(config.maxPeers, 8)
+        XCTAssertEqual(config.maxPeers, 12)
         XCTAssertTrue(config.enableFilterLoad)
     }
     
@@ -212,7 +212,7 @@ final class StorageIntegrationTests: XCTestCase {
     var storage: StorageManager!
     
     override func setUp() async throws {
-        storage = try StorageManager()
+        storage = try await StorageManager()
     }
     
     override func tearDown() async throws {
