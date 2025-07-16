@@ -1459,7 +1459,7 @@ impl FilterSyncManager {
         &mut self,
         range: (u32, u32),
         _network: &mut dyn NetworkManager,
-        _storage: &dyn StorageManager,
+        storage: &dyn StorageManager,
     ) -> SyncResult<()> {
         let (start, end) = range;
         let retry_count = self.filter_retry_counts.get(&range).copied().unwrap_or(0);
@@ -1478,7 +1478,7 @@ impl FilterSyncManager {
         }
 
         // Calculate stop hash for retry
-        match _storage.get_header(end).await {
+        match storage.get_header(end).await {
             Ok(Some(header)) => {
                 let stop_hash = header.block_hash();
 
