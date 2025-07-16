@@ -3074,6 +3074,21 @@ impl DashSpvClient {
 }
 
 #[cfg(test)]
+mod config_test;
+
+#[cfg(test)]
+mod watch_manager_test;
+
+#[cfg(test)]
+mod block_processor_test;
+
+#[cfg(test)]
+mod consistency_test;
+
+#[cfg(test)]
+mod message_handler_test;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use dashcore::{Transaction, TxIn, TxOut, OutPoint, Amount};
