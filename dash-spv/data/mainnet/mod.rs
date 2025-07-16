@@ -3,166 +3,6 @@
 use super::*;
 
 pub fn load_mainnet_terminal_blocks(manager: &mut TerminalBlockDataManager) {
-    // Terminal block 1088640
-    {
-        let data = include_str!("terminal_block_1088640.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1100000
-    {
-        let data = include_str!("terminal_block_1100000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1150000
-    {
-        let data = include_str!("terminal_block_1150000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1200000
-    {
-        let data = include_str!("terminal_block_1200000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1250000
-    {
-        let data = include_str!("terminal_block_1250000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1300000
-    {
-        let data = include_str!("terminal_block_1300000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1350000
-    {
-        let data = include_str!("terminal_block_1350000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1400000
-    {
-        let data = include_str!("terminal_block_1400000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1450000
-    {
-        let data = include_str!("terminal_block_1450000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1500000
-    {
-        let data = include_str!("terminal_block_1500000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1550000
-    {
-        let data = include_str!("terminal_block_1550000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1600000
-    {
-        let data = include_str!("terminal_block_1600000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1650000
-    {
-        let data = include_str!("terminal_block_1650000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1700000
-    {
-        let data = include_str!("terminal_block_1700000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1720000
-    {
-        let data = include_str!("terminal_block_1720000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1750000
-    {
-        let data = include_str!("terminal_block_1750000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1800000
-    {
-        let data = include_str!("terminal_block_1800000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1850000
-    {
-        let data = include_str!("terminal_block_1850000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1900000
-    {
-        let data = include_str!("terminal_block_1900000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
-    // Terminal block 1950000
-    {
-        let data = include_str!("terminal_block_1950000.json");
-        if let Ok(state) = serde_json::from_str::<TerminalBlockMasternodeState>(data) {
-            manager.add_state(state);
-        }
-    }
-
     // Terminal block 2000000
     {
         let data = include_str!("terminal_block_2000000.json");
@@ -170,5 +10,78 @@ pub fn load_mainnet_terminal_blocks(manager: &mut TerminalBlockDataManager) {
             manager.add_state(state);
         }
     }
+}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::Path;
+
+    #[test]
+    fn test_all_json_files_parse_correctly() {
+        let mainnet_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("mainnet");
+
+        // Read all JSON files in the directory
+        let entries = fs::read_dir(&mainnet_dir)
+            .expect("Failed to read mainnet directory");
+
+        let mut json_count = 0;
+        for entry in entries {
+            let entry = entry.expect("Failed to read directory entry");
+            let path = entry.path();
+            
+            // Only check .json files
+            if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                json_count += 1;
+                let file_name = path.file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown");
+                
+                // Read and parse the JSON file
+                let content = fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("Failed to read {}: {}", file_name, e));
+                
+                // Try to parse as TerminalBlockMasternodeState
+                let result: Result<TerminalBlockMasternodeState, _> = serde_json::from_str(&content);
+                
+                assert!(
+                    result.is_ok(),
+                    "Failed to parse JSON file {}: {:?}",
+                    file_name,
+                    result.err()
+                );
+                
+                // Additional validation
+                let state = result.unwrap();
+                assert!(state.height > 0, "Invalid height in {}", file_name);
+                assert!(!state.block_hash.is_empty(), "Empty block hash in {}", file_name);
+            }
+        }
+        
+        // Ensure we found at least one JSON file
+        assert!(json_count > 0, "No JSON files found in mainnet directory");
+        println!("Successfully validated {} JSON files", json_count);
+    }
+
+    #[test]
+    fn test_load_mainnet_terminal_blocks() {
+        let mut manager = TerminalBlockDataManager::new();
+        
+        // Should start empty
+        assert_eq!(manager.states.len(), 0);
+        
+        // Load terminal blocks
+        load_mainnet_terminal_blocks(&mut manager);
+        
+        // Should have at least one block loaded
+        assert!(manager.states.len() > 0, "No terminal blocks were loaded");
+        
+        // Verify the loaded block
+        let state = manager.states.first().expect("Should have at least one state");
+        assert_eq!(state.height, 2000000);
+        assert!(!state.block_hash.is_empty());
+    }
 }
