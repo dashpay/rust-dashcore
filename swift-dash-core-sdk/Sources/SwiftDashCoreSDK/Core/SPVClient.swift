@@ -539,7 +539,7 @@ private let eventMempoolTransactionRemovedCallback: MempoolRemovedCallback = { t
 
 @Observable
 public final class SPVClient {
-    private var client: OpaquePointer?
+    private var client: UnsafeMutablePointer<FFIDashSpvClient>?
     public let configuration: SPVClientConfiguration
     private let asyncBridge = AsyncBridge()
     private var eventCallbacksSet = false

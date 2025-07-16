@@ -30,6 +30,8 @@ Supports (or should support)
 * PSBT creation, manipulation, merging and finalization
 * Pay-to-contract support as in Appendix A of the [Blockstream sidechains whitepaper](https://www.blockstream.com/sidechains.pdf)
 * JSONRPC interaction with Dash Core
+* FFI bindings for C/Swift integration (dash-spv-ffi, key-wallet-ffi)
+* [Unified SDK](UNIFIED_SDK.md) option for iOS that combines Core and Platform functionality
 
 # Known limitations
 

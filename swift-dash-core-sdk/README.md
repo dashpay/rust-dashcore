@@ -2,6 +2,8 @@
 
 A pure Swift SDK for integrating Dash SPV (Simplified Payment Verification) functionality into iOS, macOS, tvOS, and watchOS applications. Built on top of the rust-dashcore `dash-spv-ffi` library with SwiftData persistence.
 
+> **Note**: This SDK is compatible with the Unified SDK architecture. When used in projects with DashUnifiedSDK.xcframework, it automatically uses the unified binary which includes both Core and Platform functionality.
+
 ## Features
 
 - 🚀 **Modern Swift**: Built with async/await, actors, and structured concurrency
@@ -21,9 +23,21 @@ A pure Swift SDK for integrating Dash SPV (Simplified Payment Verification) func
 
 ## Installation
 
-### Building dash-spv-ffi
+### Option 1: Using Unified SDK (Recommended)
 
-First, build the required Rust library:
+When using the Unified SDK, the Core functionality is already included:
+
+```swift
+dependencies: [
+    .package(path: "../swift-dash-core-sdk")
+]
+```
+
+The SDK will automatically use symbols from DashUnifiedSDK.xcframework when available.
+
+### Option 2: Standalone Usage
+
+For standalone usage, build the required Rust library:
 
 ```bash
 cd ../dash-spv-ffi
