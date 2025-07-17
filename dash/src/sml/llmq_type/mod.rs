@@ -78,7 +78,7 @@ pub const DKG_400_85: DKGParams = DKGParams {
     bad_votes_threshold: 300,
 };
 pub const DKG_100_67: DKGParams = DKGParams {
-    interval: 2,
+    interval: 24,
     phase_blocks: 2,
     mining_window_start: 10,
     mining_window_end: 18,
