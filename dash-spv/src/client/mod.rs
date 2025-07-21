@@ -1813,7 +1813,6 @@ impl DashSpvClient {
             // Clone the engine for the ChainLockManager
             let engine_arc = Arc::new(engine.clone());
             self.chainlock_manager.set_masternode_engine(engine_arc).await;
-
             info!("Updated ChainLockManager with masternode engine for full validation");
 
             // Note: Pending ChainLocks will be validated when they are next processed

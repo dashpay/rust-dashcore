@@ -452,7 +452,7 @@ impl HeaderSyncManagerWithReorg {
                     }
 
                     // Header is in storage but NOT in chain state - we need to process it
-                    tracing::info!("📥 Header {} exists in storage at height {} but NOT in chain state (chain_state_height: {}), will add it", 
+                    tracing::info!("📥 Header {} exists in storage at height {} but NOT in chain state (chain_state_height: {}), will add it",
                         header_hash, existing_height, chain_state_height);
                 } else {
                     tracing::info!("🆕 Header {} is new (not in storage)", header_hash);

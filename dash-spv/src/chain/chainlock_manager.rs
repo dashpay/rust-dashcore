@@ -67,7 +67,6 @@ impl ChainLockManager {
     /// Queue a ChainLock for validation when masternode data is available
     pub async fn queue_pending_chainlock(&self, chain_lock: ChainLock) -> StorageResult<()> {
         let mut pending = self.pending_chainlocks.write().await;
-
         // If at capacity, drop the oldest ChainLock
         if pending.len() >= MAX_PENDING_CHAINLOCKS {
             let dropped = pending.remove(0);
@@ -174,7 +173,6 @@ impl ChainLockManager {
 
         // Full validation with masternode engine if available
         let engine_guard = self.masternode_engine.read().await;
-
         let mut validated = false;
 
         if let Some(engine) = engine_guard.as_ref() {
@@ -196,7 +194,8 @@ impl ChainLockManager {
                         warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {} (needs list at height {} for ChainLock validation), queueing ChainLock for later validation", 
                             chain_lock.block_height, required_height);
                         drop(engine_guard); // Release the read lock before acquiring write lock
-                        self.queue_pending_chainlock(chain_lock.clone()).await.map_err(|e| {
+                        self.queue_pending_chainlock(chain_lock.clone()).await
+                            .map_err(|e| {
                             ValidationError::InvalidChainLock(format!(
                                 "Failed to queue pending ChainLock: {}",
                                 e
@@ -214,7 +213,8 @@ impl ChainLockManager {
             // Queue for later validation when engine becomes available
             warn!("⚠️ Masternode engine not available, queueing ChainLock for later validation");
             drop(engine_guard); // Release the read lock before acquiring write lock
-            self.queue_pending_chainlock(chain_lock.clone()).await.map_err(|e| {
+            self.queue_pending_chainlock(chain_lock.clone()).await
+                .map_err(|e| {
                 ValidationError::InvalidChainLock(format!(
                     "Failed to queue pending ChainLock: {}",
                     e
