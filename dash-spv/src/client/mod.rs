@@ -42,6 +42,7 @@ pub use status_display::StatusDisplay;
 pub use wallet_utils::{WalletSummary, WalletUtils};
 pub use watch_manager::{WatchItemUpdateSender, WatchManager};
 
+
 /// Main Dash SPV client.
 pub struct DashSpvClient {
     config: ClientConfig,
@@ -3289,4 +3290,57 @@ mod tests {
         // We should detect 40000 satoshis incoming regardless of the net_amount sign
         assert_eq!(address_balance_change, 40000);
     }
+}
+
+impl DashSpvClient {
+    /// Get diagnostic information about chain state vs storage synchronization
+    pub async fn get_sync_diagnostics(&self) -> Result<SyncDiagnostics> {
+        let storage_tip_height = self.storage
+            .get_tip_height()
+            .await
+            .map_err(|e| SpvError::Storage(e))?
+            .unwrap_or(0);
+        
+        let chain_state = self.chain_state().await;
+        let chain_state_height = chain_state.get_height();
+        let chain_state_headers_count = chain_state.headers.len() as u32;
+        
+        // Get sync manager's chain state - we need to access it differently
+        // The sync manager has its own internal chain state
+        let sync_progress = self.sync_manager.get_progress();
+        let sync_manager_height = sync_progress.header_height;
+        let sync_manager_headers_count = sync_progress.header_height + 1; // Approximate since we can't access internal state directly
+        
+        let diagnostics = SyncDiagnostics {
+            storage_tip_height,
+            chain_state_height,
+            chain_state_headers_count,
+            sync_manager_height,
+            sync_manager_headers_count,
+            sync_base_height: chain_state.sync_base_height,
+            synced_from_checkpoint: chain_state.synced_from_checkpoint,
+            headers_mismatch: storage_tip_height != chain_state_height,
+            sync_manager_mismatch: sync_manager_height != chain_state_height,
+        };
+        
+        if diagnostics.headers_mismatch || diagnostics.sync_manager_mismatch {
+            tracing::warn!("⚠️ Sync state mismatch detected: {:?}", diagnostics);
+        }
+        
+        Ok(diagnostics)
+    }
+}
+
+/// Diagnostic information about sync state
+#[derive(Debug, Clone)]
+pub struct SyncDiagnostics {
+    pub storage_tip_height: u32,
+    pub chain_state_height: u32,
+    pub chain_state_headers_count: u32,
+    pub sync_manager_height: u32,
+    pub sync_manager_headers_count: u32,
+    pub sync_base_height: u32,
+    pub synced_from_checkpoint: bool,
+    pub headers_mismatch: bool,
+    pub sync_manager_mismatch: bool,
 }
