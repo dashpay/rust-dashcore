@@ -306,13 +306,23 @@ impl HeaderSyncManagerWithReorg {
         if !headers.is_empty() {
             let first = headers.first().unwrap();
             let last = headers.last().unwrap();
-            tracing::debug!(
+            tracing::info!(
                 "Received headers batch: first.prev_hash={}, first.hash={}, last.hash={}, count={}",
                 first.prev_blockhash,
                 first.block_hash(),
                 last.block_hash(),
                 headers.len()
             );
+            
+            // Check if the first header connects to our tip
+            if let Some(tip) = self.chain_state.get_tip_header() {
+                if first.prev_blockhash == tip.block_hash() {
+                    tracing::info!("✅ First header correctly extends our tip");
+                } else {
+                    tracing::warn!("⚠️ First header does NOT extend our tip. Expected prev_hash: {}, got: {}", 
+                        tip.block_hash(), first.prev_blockhash);
+                }
+            }
             
             // If we're syncing from checkpoint, log if headers appear to be from wrong height
             if self.chain_state.synced_from_checkpoint {
@@ -328,40 +338,131 @@ impl HeaderSyncManagerWithReorg {
             }
         }
 
+        // Track how many headers we actually process (not skip)
+        let mut headers_processed = 0u32;
+
         // Process each header with fork detection
         for header in &headers {
-            // Skip headers we've already processed to avoid duplicate processing
+            // Check if this header is already in our chain state
             let header_hash = header.block_hash();
-            if let Some(existing_height) = storage
-                .get_header_height_by_hash(&header_hash)
-                .await
-                .map_err(|e| SyncError::Storage(format!("Failed to check header existence: {}", e)))?
-            {
-                tracing::debug!("⏭️ Skipping already processed header {} at height {}", header_hash, existing_height);
-                continue;
+            
+            // First check if it's already in chain state by checking if we can find it at any height
+            let mut header_in_chain_state = false;
+            
+            // Check if this header extends our current tip
+            if let Some(tip) = self.chain_state.get_tip_header() {
+                if header.prev_blockhash == tip.block_hash() {
+                    // This header extends our tip, so it's not in chain state yet
+                    header_in_chain_state = false;
+                } else if header_hash == tip.block_hash() {
+                    // This IS our current tip
+                    header_in_chain_state = true;
+                }
+            }
+            
+            // If not extending tip, check if it's already in storage AND chain state
+            if !header_in_chain_state {
+                if let Some(existing_height) = storage
+                    .get_header_height_by_hash(&header_hash)
+                    .await
+                    .map_err(|e| SyncError::Storage(format!("Failed to check header existence: {}", e)))?
+                {
+                    // Header exists in storage - check if it's also in chain state
+                    let chain_state_height = if self.chain_state.synced_from_checkpoint && existing_height >= self.chain_state.sync_base_height {
+                        // Adjust for checkpoint sync
+                        existing_height - self.chain_state.sync_base_height
+                    } else if !self.chain_state.synced_from_checkpoint {
+                        existing_height
+                    } else {
+                        // Height is before our checkpoint, can't be in chain state
+                        tracing::debug!("Header {} at height {} is before our checkpoint base {}", 
+                            header_hash, existing_height, self.chain_state.sync_base_height);
+                        continue;
+                    };
+                    
+                    // Check if chain state has a header at this height
+                    if let Some(chain_header) = self.chain_state.header_at_height(chain_state_height) {
+                        if chain_header.block_hash() == header_hash {
+                            // Header is already in both storage and chain state
+                            tracing::debug!("⏭️ Skipping header {} already in chain state at height {}", 
+                                header_hash, existing_height);
+                            continue;
+                        }
+                    }
+                    
+                    // Header is in storage but NOT in chain state - we need to process it
+                    tracing::info!("📥 Header {} exists in storage at height {} but not in chain state, adding it", 
+                        header_hash, existing_height);
+                }
             }
 
             match self.process_header_with_fork_detection(header, storage).await? {
                 HeaderProcessResult::ExtendedMainChain => {
                     // Normal case - header extends the main chain
+                    headers_processed += 1;
                 }
                 HeaderProcessResult::CreatedFork => {
                     tracing::warn!("⚠️ Fork detected at height {}", self.chain_state.get_height());
+                    headers_processed += 1;
                 }
                 HeaderProcessResult::ExtendedFork => {
                     tracing::debug!("Fork extended");
+                    headers_processed += 1;
                 }
                 HeaderProcessResult::Orphan => {
                     tracing::debug!("Orphan header received: {}", header.block_hash());
+                    // Don't count orphans as processed
                 }
                 HeaderProcessResult::TriggeredReorg(depth) => {
                     tracing::warn!("🔄 Chain reorganization triggered - depth: {}", depth);
+                    headers_processed += 1;
                 }
             }
         }
 
         // Check if any fork is now stronger than the main chain
         self.check_for_reorg(storage).await?;
+
+        // Log summary of what was processed
+        tracing::info!(
+            "📊 Header batch processing complete: {} processed, {} skipped out of {} total",
+            headers_processed,
+            headers.len() - headers_processed as usize,
+            headers.len()
+        );
+
+        // Check if we made progress
+        if headers_processed == 0 && !headers.is_empty() {
+            tracing::warn!(
+                "⚠️ All {} headers were skipped (already in chain state). This may happen during sync recovery.",
+                headers.len()
+            );
+            
+            // Check if the last header in the batch matches our tip
+            if let Some(last_header) = headers.last() {
+                if let Some(tip) = self.chain_state.get_tip_header() {
+                    if last_header.block_hash() == tip.block_hash() {
+                        tracing::info!(
+                            "📊 Last header in batch matches our tip at height {}. Sync appears to be complete.",
+                            self.chain_state.get_height()
+                        );
+                        // If we received headers up to our tip and processed none, we're synced
+                        self.syncing_headers = false;
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        
+        // Additional check: if we received fewer headers than expected, we might be at the tip
+        if headers.len() < 2000 && headers_processed == 0 {
+            tracing::info!(
+                "📊 Received partial batch ({} headers) with no new headers. Likely at chain tip.",
+                headers.len()
+            );
+            self.syncing_headers = false;
+            return Ok(false);
+        }
 
         if self.syncing_headers {
             // During sync mode - request next batch
@@ -533,6 +634,78 @@ impl HeaderSyncManagerWithReorg {
         Ok(())
     }
 
+    /// Build a proper block locator following the Bitcoin protocol
+    /// Returns a vector of block hashes with exponentially increasing steps
+    fn build_block_locator_from_hash(&self, tip_hash: BlockHash, include_genesis: bool) -> Vec<BlockHash> {
+        let mut locator = Vec::new();
+        
+        // Always include the tip
+        locator.push(tip_hash);
+        
+        // Get the current height
+        let tip_height = self.chain_state.tip_height();
+        if tip_height == 0 {
+            return locator; // Only genesis, nothing more to add
+        }
+        
+        // Build exponentially spaced block locator
+        // Steps: 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, ...
+        let mut step = 1u32;
+        let mut current_height = tip_height;
+        
+        while current_height > self.chain_state.sync_base_height {
+            // Calculate the next height to include
+            let next_height = current_height.saturating_sub(step);
+            
+            // Don't go below sync base height
+            if next_height < self.chain_state.sync_base_height {
+                break;
+            }
+            
+            // Get header at this height
+            if let Some(header) = self.chain_state.header_at_height(next_height) {
+                locator.push(header.block_hash());
+                current_height = next_height;
+                
+                // Double the step for exponential spacing
+                step = step.saturating_mul(2);
+                
+                // Limit the locator size to prevent it from getting too large
+                if locator.len() >= 10 {
+                    break;
+                }
+            } else {
+                // If we can't find the header, try the next step
+                break;
+            }
+        }
+        
+        // Add checkpoint/base hash if we haven't reached it yet
+        if current_height > self.chain_state.sync_base_height && self.chain_state.sync_base_height > 0 {
+            if let Some(base_header) = self.chain_state.header_at_height(self.chain_state.sync_base_height) {
+                locator.push(base_header.block_hash());
+            }
+        }
+        
+        // Optionally add genesis
+        if include_genesis && self.chain_state.sync_base_height == 0 {
+            if let Some(genesis_hash) = self.config.network.known_genesis_block_hash() {
+                // Only add genesis if it's not already in the locator
+                if !locator.contains(&genesis_hash) {
+                    locator.push(genesis_hash);
+                }
+            }
+        }
+        
+        tracing::debug!(
+            "Built block locator with {} hashes: {:?}", 
+            locator.len(),
+            locator.iter().take(5).collect::<Vec<_>>() // Show first 5 for debugging
+        );
+        
+        locator
+    }
+
     /// Request headers from the network
     pub async fn request_headers(
         &mut self,
@@ -544,15 +717,13 @@ impl HeaderSyncManagerWithReorg {
                 // When syncing from a checkpoint, we need to create a proper locator
                 // that helps the peer understand we want headers AFTER this point
                 if self.chain_state.synced_from_checkpoint && self.chain_state.sync_base_height > 0 {
-                    // For checkpoint sync, only include the checkpoint hash
-                    // Including genesis would allow peers to fall back to sending headers from genesis
-                    // if they don't recognize the checkpoint, which is exactly what we want to avoid
+                    // For checkpoint sync, build a proper locator but don't include genesis
+                    // to avoid peers falling back to sending headers from genesis
                     tracing::info!(
-                        "📍 Using checkpoint-only locator for height {}: [{}]",
-                        self.chain_state.sync_base_height,
-                        hash
+                        "📍 Building checkpoint-based locator starting from height {}",
+                        self.chain_state.sync_base_height
                     );
-                    vec![hash]
+                    self.build_block_locator_from_hash(hash, false)
                 } else if network.has_headers2_peer().await && !self.headers2_failed {
                     // Check if this is genesis and we're using headers2
                     let genesis_hash = self.config.network.known_genesis_block_hash();
@@ -560,10 +731,12 @@ impl HeaderSyncManagerWithReorg {
                         tracing::info!("📍 Using empty locator for headers2 genesis sync");
                         vec![]
                     } else {
-                        vec![hash]
+                        // Build a proper locator for non-genesis headers2 requests
+                        self.build_block_locator_from_hash(hash, true)
                     }
                 } else {
-                    vec![hash]
+                    // Build a proper locator for regular requests
+                    self.build_block_locator_from_hash(hash, true)
                 }
             },
             None => {
@@ -916,7 +1089,8 @@ impl HeaderSyncManagerWithReorg {
             // More aggressive timeout when no peers
             std::time::Duration::from_secs(5)
         } else {
-            std::time::Duration::from_millis(500)
+            // Give peers reasonable time to respond (10 seconds)
+            std::time::Duration::from_secs(10)
         };
 
         if self.last_sync_progress.elapsed() > timeout_duration {
