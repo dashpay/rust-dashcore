@@ -29,10 +29,10 @@ mod tests {
         assert!(result.is_ok(), "ChainLock processing should succeed");
 
         // Verify it was stored
-        assert!(chainlock_manager.has_chain_lock_at_height(1000));
+        assert!(chainlock_manager.has_chain_lock_at_height(1000).await);
 
         // Verify we can retrieve it
-        let entry = chainlock_manager.get_chain_lock_by_height(1000)
+        let entry = chainlock_manager.get_chain_lock_by_height(1000).await
             .expect("ChainLock should be retrievable after storing");
         assert_eq!(entry.chain_lock.block_height, 1000);
         assert_eq!(entry.chain_lock.block_hash, chainlock.block_hash);
@@ -67,11 +67,11 @@ mod tests {
             .expect("Second ChainLock should process successfully");
 
         // Verify both are stored
-        assert!(chainlock_manager.has_chain_lock_at_height(1000));
-        assert!(chainlock_manager.has_chain_lock_at_height(2000));
+        assert!(chainlock_manager.has_chain_lock_at_height(1000).await);
+        assert!(chainlock_manager.has_chain_lock_at_height(2000).await);
 
         // Get highest ChainLock
-        let highest = chainlock_manager.get_highest_chain_locked_height();
+        let highest = chainlock_manager.get_highest_chain_locked_height().await;
         assert_eq!(highest, Some(2000));
     }
 
@@ -97,8 +97,8 @@ mod tests {
         }
 
         // Test reorganization protection
-        assert!(!chainlock_manager.would_violate_chain_lock(500, 999)); // Before ChainLocks - OK
-        assert!(chainlock_manager.would_violate_chain_lock(1500, 2500)); // Would reorg ChainLock at 2000
-        assert!(!chainlock_manager.would_violate_chain_lock(3001, 4000)); // After ChainLocks - OK
+        assert!(!chainlock_manager.would_violate_chain_lock(500, 999).await); // Before ChainLocks - OK
+        assert!(chainlock_manager.would_violate_chain_lock(1500, 2500).await); // Would reorg ChainLock at 2000
+        assert!(!chainlock_manager.would_violate_chain_lock(3001, 4000).await); // After ChainLocks - OK
     }
 }

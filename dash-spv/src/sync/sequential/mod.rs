@@ -177,7 +177,9 @@ impl SequentialSyncManager {
                     let base_hash = self.get_base_hash_from_storage(storage).await?;
 
                     // Request headers starting from our current tip
+                    tracing::info!("📤 [DEBUG] Sequential sync requesting headers with base_hash: {:?}", base_hash);
                     self.header_sync.request_headers(network, base_hash).await?;
+                    tracing::info!("✅ [DEBUG] Header request sent successfully");
                 } else {
                     // Otherwise start sync normally
                     self.header_sync.start_sync(network, storage).await?;

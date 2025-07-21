@@ -306,6 +306,29 @@ impl TcpConnection {
             .as_ref()
             .ok_or_else(|| NetworkError::ConnectionFailed("Not connected".to_string()))?;
 
+        // Enhanced logging for GetHeaders debugging
+        match &message {
+            NetworkMessage::GetHeaders(gh) => {
+                tracing::info!(
+                    "📤 [DEBUG] Sending GetHeaders to {} - version: {}, locator: {:?}, stop: {}",
+                    self.address,
+                    gh.version,
+                    gh.locator_hashes,
+                    gh.stop_hash
+                );
+            }
+            NetworkMessage::GetHeaders2(gh2) => {
+                tracing::info!(
+                    "📤 [DEBUG] Sending GetHeaders2 to {} - version: {}, locator: {:?}, stop: {}",
+                    self.address,
+                    gh2.version,
+                    gh2.locator_hashes,
+                    gh2.stop_hash
+                );
+            }
+            _ => {}
+        }
+
         let raw_message = RawNetworkMessage {
             magic: self.network.magic(),
             payload: message,

@@ -467,7 +467,7 @@ impl HeaderSyncManagerWithReorg {
                 let should_reorg = {
                     let sync_storage = SyncStorageAdapter::new(storage);
                     self.reorg_manager
-                        .should_reorganize_with_chain_state(current_tip, strongest_fork, &sync_storage, Some(&self.chain_state))
+                        .should_reorganize_with_chain_state(current_tip, strongest_fork, &sync_storage, Some(&self.chain_state)).await
                         .map_err(|e| SyncError::Validation(format!("Reorg check failed: {}", e)))?
                 };
 
