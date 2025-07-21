@@ -818,7 +818,18 @@ impl DashSpvClient {
 
             // Check if we have connected peers and start initial sync operations (once)
             if !initial_sync_started && self.network.peer_count() > 0 {
-                tracing::info!("🚀 Peers connected, starting initial sync operations...");
+                tracing::info!("🚀 Peers connected (count: {}), starting initial sync operations...", self.network.peer_count());
+                
+                // Log peer info
+                let peer_info = self.network.peer_info();
+                for (i, peer) in peer_info.iter().enumerate() {
+                    tracing::info!("  Peer {}: {} (version: {}, height: {:?})", 
+                        i + 1, 
+                        peer.address, 
+                        peer.version.unwrap_or(0),
+                        peer.best_height
+                    );
+                }
 
                 // Start initial sync with sequential sync manager
                 match self.sync_manager.start_sync(&mut *self.network, &mut *self.storage).await {
@@ -1050,7 +1061,7 @@ impl DashSpvClient {
             // Check if masternode sync has completed and update ChainLock validation
             if !masternode_engine_updated && self.config.enable_masternodes {
                 // Check if we have a masternode engine available now
-                if let Ok(has_engine) = self.update_chainlock_validation() {
+                if let Ok(has_engine) = self.update_chainlock_validation().await {
                     if has_engine {
                         masternode_engine_updated = true;
                         info!("✅ Masternode sync complete - ChainLock validation enabled");
@@ -1682,12 +1693,12 @@ impl DashSpvClient {
     /// Update ChainLock validation with masternode engine after sync completes.
     /// This should be called when masternode sync finishes to enable full validation.
     /// Returns true if the engine was successfully set.
-    pub fn update_chainlock_validation(&self) -> Result<bool> {
+    pub async fn update_chainlock_validation(&self) -> Result<bool> {
         // Check if masternode sync has an engine available
         if let Some(engine) = self.sync_manager.get_masternode_engine() {
             // Clone the engine for the ChainLockManager
             let engine_arc = Arc::new(engine.clone());
-            self.chainlock_manager.set_masternode_engine(engine_arc);
+            self.chainlock_manager.set_masternode_engine(engine_arc).await;
             
             info!("Updated ChainLockManager with masternode engine for full validation");
             

@@ -36,6 +36,8 @@ pub struct Checkpoint {
     pub protocol_version: Option<u32>,
     /// Nonce value for the block
     pub nonce: u32,
+    /// Block version
+    pub version: u32,
 }
 
 impl Checkpoint {
@@ -433,6 +435,17 @@ fn create_checkpoint(
     nonce: u32,
     masternode_list: Option<&str>,
 ) -> Checkpoint {
+    // Determine version based on height
+    let version = if height == 0 {
+        1 // Genesis block version
+    } else if height < 750000 {
+        2 // Pre-v0.12 blocks
+    } else if height < 1700000 {
+        536870912 // v0.12+ blocks (0x20000000)
+    } else {
+        536870912 // v0.14+ blocks (0x20000000)
+    };
+    
     Checkpoint {
         height,
         block_hash: parse_block_hash_safe(hash),
@@ -448,6 +461,7 @@ fn create_checkpoint(
             ml.split("__").nth(1).and_then(|s| s.parse().ok())
         }),
         nonce,
+        version,
     }
 }
 

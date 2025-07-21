@@ -33,7 +33,7 @@ async fn main() {
     }
 }
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
+async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let matches = Command::new("dash-spv")
         .version(dash_spv::VERSION)
         .about("Dash SPV (Simplified Payment Verification) client")
