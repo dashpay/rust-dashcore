@@ -1,4 +1,7 @@
 use crate::{set_last_error, FFIDashSpvClient, FFIErrorCode};
+use dashcore::sml::llmq_type::LLMQType;
+use dashcore::QuorumHash;
+use dashcore::hashes::Hash;
 use std::os::raw::c_char;
 use std::ptr;
 
@@ -127,24 +130,51 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
     let mut hash_array = [0u8; 32];
     hash_array.copy_from_slice(quorum_hash_bytes);
     
-    // Get the quorum from the masternode list at the specified height
-    match spv_client.get_quorum_at_height(core_chain_locked_height, quorum_type as u8, &hash_array) {
-        Some(qualified_quorum_entry) => {
-            // Get the public key bytes
-            let pubkey = &qualified_quorum_entry.quorum_entry.quorum_public_key;
-            
-            // BLSPublicKey is 48 bytes
-            const PUBKEY_SIZE: usize = 48;
-            if out_pubkey_size < PUBKEY_SIZE {
+    // Convert quorum type and hash for engine lookup
+    let llmq_type = match LLMQType::try_from(quorum_type as u8) {
+        Ok(t) => t,
+        Err(_) => {
+            return FFIResult::error(
+                FFIErrorCode::InvalidArgument,
+                &format!("Invalid quorum type: {}", quorum_type),
+            );
+        }
+    };
+    let quorum_hash = QuorumHash::from_byte_array(hash_array);
+
+    // Get the masternode list engine directly for efficient access
+    let engine = match spv_client.masternode_list_engine() {
+        Some(engine) => engine,
+        None => {
+            return FFIResult::error(
+                FFIErrorCode::RuntimeError,
+                "Masternode list engine not initialized. Core SDK may still be syncing.",
+            );
+        }
+    };
+
+    // Use the global quorum status index for efficient lookup
+    match engine.quorum_statuses
+        .get(&llmq_type)
+        .and_then(|type_map| type_map.get(&quorum_hash))
+    {
+        Some((heights, public_key, _status)) => {
+            // Check if the requested height is one of the heights where this quorum exists
+            if !heights.contains(&core_chain_locked_height) {
+                // Quorum exists but not at requested height - provide helpful info
+                let height_list: Vec<u32> = heights.iter().copied().collect();
                 return FFIResult::error(
-                    FFIErrorCode::InvalidArgument,
-                    &format!("Buffer too small: {} bytes provided, {} bytes required", out_pubkey_size, PUBKEY_SIZE),
+                    FFIErrorCode::ValidationError,
+                    &format!(
+                        "Quorum type {} with hash {:x} exists but not at height {}. Available at heights: {:?}",
+                        quorum_type, quorum_hash, core_chain_locked_height, height_list
+                    ),
                 );
             }
             
-            // Copy the public key bytes using unsafe transmute
-            let pubkey_ptr = pubkey as *const _ as *const u8;
-            std::ptr::copy_nonoverlapping(pubkey_ptr, out_pubkey, PUBKEY_SIZE);
+            // Copy the public key directly from the global index
+            let pubkey_ptr = public_key as *const _ as *const u8;
+            std::ptr::copy_nonoverlapping(pubkey_ptr, out_pubkey, QUORUM_PUBKEY_SIZE);
             
             // Return success
             FFIResult {
@@ -153,45 +183,23 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
             }
         }
         None => {
-            // Check if this is due to missing masternode list to provide better error message
-            let has_mn_list = spv_client.get_masternode_list_at_height(core_chain_locked_height).is_some();
-            
-            if !has_mn_list {
-                // Get the masternode list engine to check available heights
-                let available_info = if let Some(engine) = spv_client.masternode_list_engine() {
-                    let total_lists = engine.masternode_lists.len();
-                    let min_height = engine.masternode_lists.keys().min().copied().unwrap_or(0);
-                    let max_height = engine.masternode_lists.keys().max().copied().unwrap_or(0);
-                    format!(
-                        " Core SDK has {} masternode lists ranging from height {} to {}.",
-                        total_lists,
-                        min_height,
-                        max_height
-                    )
-                } else {
-                    String::from(" Core SDK masternode engine not initialized.")
-                };
-                
-                FFIResult::error(
-                    FFIErrorCode::ValidationError,
-                    &format!(
-                        "Masternode list not available at height {}.{} The Core SDK may still be syncing masternode lists. Please ensure Core SDK has completed masternode sync before querying quorum public keys.",
-                        core_chain_locked_height,
-                        available_info
-                    ),
-                )
+            // Quorum not found in global index - provide diagnostic info
+            let total_lists = engine.masternode_lists.len();
+            let (min_height, max_height) = if total_lists > 0 {
+                let min = engine.masternode_lists.keys().min().copied().unwrap_or(0);
+                let max = engine.masternode_lists.keys().max().copied().unwrap_or(0);
+                (min, max)
             } else {
-                // Masternode list exists but quorum not found
-                FFIResult::error(
-                    FFIErrorCode::ValidationError,
-                    &format!(
-                        "Quorum not found for type {} at height {} with hash {}. The masternode list exists at this height but does not contain the requested quorum.",
-                        quorum_type,
-                        core_chain_locked_height,
-                        hex::encode(quorum_hash_bytes)
-                    ),
-                )
-            }
+                (0, 0)
+            };
+
+            FFIResult::error(
+                FFIErrorCode::ValidationError,
+                &format!(
+                    "Quorum not found: type={}, hash={:x}. Core SDK has {} masternode lists ranging from height {} to {}. The quorum may not exist or the Core SDK may still be syncing.",
+                    quorum_type, quorum_hash, total_lists, min_height, max_height
+                ),
+            )
         }
     }
 }
