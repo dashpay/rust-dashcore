@@ -70,9 +70,9 @@ pub unsafe extern "C" fn ffi_dash_spv_release_core_handle(handle: *mut CoreSDKHa
 #[no_mangle]
 pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
     client: *mut FFIDashSpvClient,
-    _quorum_type: u32,
+    quorum_type: u32,
     quorum_hash: *const u8,
-    _core_chain_locked_height: u32,
+    core_chain_locked_height: u32,
     out_pubkey: *mut u8,
     out_pubkey_size: usize,
 ) -> FFIResult {
@@ -128,7 +128,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
     hash_array.copy_from_slice(quorum_hash_bytes);
     
     // Get the quorum from the masternode list at the specified height
-    match spv_client.get_quorum_at_height(_core_chain_locked_height, _quorum_type as u8, &hash_array) {
+    match spv_client.get_quorum_at_height(core_chain_locked_height, quorum_type as u8, &hash_array) {
         Some(qualified_quorum_entry) => {
             // Get the public key bytes
             let pubkey = &qualified_quorum_entry.quorum_entry.quorum_public_key;
@@ -154,7 +154,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
         }
         None => {
             // Check if this is due to missing masternode list to provide better error message
-            let has_mn_list = spv_client.get_masternode_list_at_height(_core_chain_locked_height).is_some();
+            let has_mn_list = spv_client.get_masternode_list_at_height(core_chain_locked_height).is_some();
             
             if !has_mn_list {
                 // Get the masternode list engine to check available heights
@@ -176,7 +176,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
                     FFIErrorCode::ValidationError,
                     &format!(
                         "Masternode list not available at height {}.{} The Core SDK may still be syncing masternode lists. Please ensure Core SDK has completed masternode sync before querying quorum public keys.",
-                        _core_chain_locked_height,
+                        core_chain_locked_height,
                         available_info
                     ),
                 )
@@ -186,8 +186,8 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
                     FFIErrorCode::ValidationError,
                     &format!(
                         "Quorum not found for type {} at height {} with hash {}. The masternode list exists at this height but does not contain the requested quorum.",
-                        _quorum_type,
-                        _core_chain_locked_height,
+                        quorum_type,
+                        core_chain_locked_height,
                         hex::encode(quorum_hash_bytes)
                     ),
                 )
