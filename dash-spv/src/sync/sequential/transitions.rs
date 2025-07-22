@@ -2,7 +2,9 @@
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
+use crate::network::NetworkManager;
 use crate::storage::StorageManager;
+use dashcore::network::constants::ServiceFlags;
 
 use super::phases::{PhaseTransition, SyncPhase};
 use std::time::Instant;
@@ -99,15 +101,21 @@ impl TransitionManager {
                 },
                 next_phase,
             ) => {
-                // CFHeaders must be complete
-                if !self.are_cfheaders_complete(current_phase, storage).await? {
-                    return Ok(false);
-                }
-
                 match next_phase {
                     SyncPhase::DownloadingFilters {
                         ..
-                    } => Ok(true), // Always download filters after cfheaders
+                    } => {
+                        // Normal case: download filters after cfheaders
+                        // CFHeaders must be complete
+                        Ok(self.are_cfheaders_complete(current_phase, storage).await?)
+                    }
+                    SyncPhase::FullySynced {
+                        ..
+                    } => {
+                        // Allow skipping to FullySynced if no peers support filters
+                        // Don't require cfheaders to be complete in this case
+                        Ok(true)
+                    }
                     _ => Ok(false),
                 }
             }
@@ -164,6 +172,7 @@ impl TransitionManager {
         &self,
         current_phase: &SyncPhase,
         storage: &dyn StorageManager,
+        network: &dyn NetworkManager,
     ) -> SyncResult<Option<SyncPhase>> {
         match current_phase {
             SyncPhase::Idle => {
@@ -231,16 +240,23 @@ impl TransitionManager {
             SyncPhase::DownloadingCFHeaders {
                 ..
             } => {
-                // After CFHeaders, we need to determine what filters to download
-                // For now, we'll create a filters phase that will be populated later
-                Ok(Some(SyncPhase::DownloadingFilters {
-                    start_time: Instant::now(),
-                    requested_ranges: std::collections::HashMap::new(),
-                    completed_heights: std::collections::HashSet::new(),
-                    total_filters: 0, // Will be determined based on watch items
-                    last_progress: Instant::now(),
-                    batches_processed: 0,
-                }))
+                // Check if any peer supports compact filters
+                if !network.has_peer_with_service(ServiceFlags::COMPACT_FILTERS).await {
+                    tracing::info!("No peers support compact filters, skipping filter download phase");
+                    // Skip directly to fully synced since we can't download filters
+                    self.create_fully_synced_phase(storage).await
+                } else {
+                    // After CFHeaders, we need to determine what filters to download
+                    // For now, we'll create a filters phase that will be populated later
+                    Ok(Some(SyncPhase::DownloadingFilters {
+                        start_time: Instant::now(),
+                        requested_ranges: std::collections::HashMap::new(),
+                        completed_heights: std::collections::HashSet::new(),
+                        total_filters: 0, // Will be determined based on watch items
+                        last_progress: Instant::now(),
+                        batches_processed: 0,
+                    }))
+                }
             }
 
             SyncPhase::DownloadingFilters {

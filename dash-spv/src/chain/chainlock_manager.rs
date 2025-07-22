@@ -16,6 +16,11 @@ use crate::types::ChainState;
 /// Maximum number of pending ChainLocks to queue
 const MAX_PENDING_CHAINLOCKS: usize = 100;
 
+/// Number of blocks back from a ChainLock's block height where we need the masternode list
+/// for validation. ChainLock signatures are created by the masternode quorum that existed
+/// 8 blocks before the ChainLock's block.
+const CHAINLOCK_VALIDATION_MASTERNODE_OFFSET: u32 = 8;
+
 /// ChainLock storage entry
 #[derive(Debug, Clone)]
 pub struct ChainLockEntry {
@@ -190,8 +195,8 @@ impl ChainLockManager {
                     // Check if the error is due to missing masternode lists
                     let error_string = e.to_string();
                     if error_string.contains("No masternode lists in engine") {
-                        // ChainLock validation requires masternode list at (block_height - 8)
-                        let required_height = chain_lock.block_height.saturating_sub(8);
+                        // ChainLock validation requires masternode list at (block_height - CHAINLOCK_VALIDATION_MASTERNODE_OFFSET)
+                        let required_height = chain_lock.block_height.saturating_sub(CHAINLOCK_VALIDATION_MASTERNODE_OFFSET);
                         warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {} (needs list at height {} for ChainLock validation), queueing ChainLock for later validation", 
                             chain_lock.block_height, required_height);
                         drop(engine_guard); // Release the read lock before acquiring write lock

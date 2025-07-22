@@ -8,6 +8,7 @@ use dashcore::{
     network::message::NetworkMessage,
     network::message_sml::{GetMnListDiff, MnListDiff},
     sml::{
+        llmq_type::{LLMQType, DKGWindow},
         masternode_list::MasternodeList,
         masternode_list_engine::MasternodeListEngine,
         masternode_list_entry::{
@@ -18,7 +19,7 @@ use dashcore::{
     BlockHash, ProTxHash, PubkeyHash,
 };
 use dashcore_hashes::Hash;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::net::SocketAddr;
 use std::str::FromStr;
 
@@ -27,6 +28,44 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::{MasternodeState, StorageManager};
 use crate::sync::terminal_blocks::TerminalBlockManager;
+
+/// Number of recent masternode lists to maintain individually.
+/// Set to 40,000 to ensure we have lists for Platform queries going back ~40 days.
+/// This is a temporary solution until we implement on-demand fetching.
+const MASTERNODE_LIST_BUFFER_SIZE: u32 = 40_000;
+
+/// Tracks the state of smart DKG-based masternode diff fetching
+#[derive(Debug, Clone)]
+struct DKGFetchState {
+    /// DKG windows we haven't started checking yet
+    /// Grouped by mining_start height for efficient processing
+    pending_windows: BTreeMap<u32, Vec<DKGWindow>>,
+    
+    /// Windows we're currently checking
+    /// Each entry is (window, current_height_to_check)
+    active_windows: Vec<(DKGWindow, u32)>,
+    
+    /// Cycles we've finished checking (either found quorum or exhausted window)
+    /// Key is (quorum_type, cycle_start) to uniquely identify each DKG cycle
+    completed_cycles: BTreeSet<(LLMQType, u32)>,
+    
+    /// Heights we've already requested MnListDiffs for to avoid duplicates
+    requested_blocks: BTreeSet<u32>,
+    
+    /// Track if we found expected quorums for reporting
+    quorums_found: usize,
+    windows_exhausted: usize,
+}
+
+/// Actions to take on a DKG window after processing a diff
+enum WindowAction {
+    /// Continue checking at the specified next block
+    Advance(u32),
+    /// Window is complete - quorum was found
+    Complete,
+    /// Window exhausted without finding quorum (reached end of mining window)
+    Exhaust,
+}
 
 /// Manages masternode list synchronization.
 pub struct MasternodeSyncManager {
@@ -47,6 +86,13 @@ pub struct MasternodeSyncManager {
     pending_individual_diffs: Option<(u32, u32)>,
     /// Sync base height (when syncing from checkpoint)
     sync_base_height: u32,
+    /// Range for smart fetch after bulk completes
+    smart_fetch_range: Option<(u32, u32)>,
+    /// DKG-based fetch state
+    dkg_fetch_state: Option<DKGFetchState>,
+    /// Map of requested heights to track which blocks we're expecting
+    /// This helps us identify when server returns a different height than requested
+    smart_requested_heights: HashSet<u32>,
 }
 
 impl MasternodeSyncManager {
@@ -74,6 +120,9 @@ impl MasternodeSyncManager {
             bulk_diff_target_height: None,
             pending_individual_diffs: None,
             sync_base_height: 0,
+            smart_fetch_range: None,
+            dkg_fetch_state: None,
+            smart_requested_heights: HashSet::new(),
         }
     }
 
@@ -207,11 +256,58 @@ impl MasternodeSyncManager {
         }
 
         self.last_sync_progress = std::time::Instant::now();
+        
+        // Store diff data before moving diff
+        let diff_block_hash = diff.block_hash;
+        let (diff_height, new_quorums) = {
+            let storage_height = storage
+                .get_header_height_by_hash(&diff_block_hash)
+                .await
+                .map_err(|e| SyncError::Storage(format!("Failed to get diff height: {}", e)))?
+                .ok_or_else(|| SyncError::Storage("Diff block not found".to_string()))?;
+            
+            // The height from storage is already the absolute blockchain height
+            let blockchain_height = storage_height;
+            
+            tracing::debug!(
+                "MnListDiff height: blockchain_height={} (from storage)",
+                blockchain_height
+            );
+            
+            let quorums: Vec<LLMQType> = diff.new_quorums.iter()
+                .map(|q| q.llmq_type)
+                .collect();
+            
+            (blockchain_height, quorums)
+        };
 
         // Process the diff with fallback to genesis if incremental diff fails
         match self.process_masternode_diff(diff, storage).await {
             Ok(()) => {
                 // Success - diff applied
+                // Handle smart fetch processing if needed
+                if self.dkg_fetch_state.is_some() {
+                    if let Some((start, end)) = self.smart_fetch_range {
+                        if diff_height >= start && diff_height <= end {
+                            // Check if this diff is for a height we specifically requested
+                            if self.smart_requested_heights.contains(&diff_height) {
+                                tracing::debug!("Received expected smart fetch diff for height {}", diff_height);
+                                // Remove from requested set
+                                self.smart_requested_heights.remove(&diff_height);
+                                // Update smart fetch state based on quorums found
+                                self.update_smart_fetch_state(diff_height, &new_quorums, storage, network).await?;
+                            } else {
+                                tracing::warn!(
+                                    "Received diff for height {} but we didn't request it (requested: {:?})",
+                                    diff_height,
+                                    self.smart_requested_heights
+                                );
+                                // Don't update smart fetch state for unrequested diffs
+                                // This prevents the loop where we keep getting the same bulk height
+                            }
+                        }
+                    }
+                }
             }
             Err(e) if e.to_string().contains("MissingStartMasternodeList") => {
                 tracing::warn!("Incremental masternode diff failed with MissingStartMasternodeList, retrying from genesis");
@@ -223,9 +319,13 @@ impl MasternodeSyncManager {
                 self.received_diffs_count = 0;
                 self.bulk_diff_target_height = None;
                 self.pending_individual_diffs = None;
+                // Reset smart fetch state to prevent infinite loop
+                self.smart_fetch_range = None;
+                self.dkg_fetch_state = None;
+                self.smart_requested_heights.clear();
 
-                // Get current height again
-                let current_height = storage
+                // Get current height again - storage returns storage height, need blockchain height
+                let storage_height = storage
                     .get_tip_height()
                     .await
                     .map_err(|e| {
@@ -235,11 +335,16 @@ impl MasternodeSyncManager {
                         ))
                     })?
                     .unwrap_or(0);
+                
+                // The height from storage is already the absolute blockchain height
+                let current_height = storage_height;
 
                 // Request full diffs from genesis with last 8 blocks individually
                 tracing::info!(
-                    "Requesting fallback masternode diffs from genesis to height {}",
-                    current_height
+                    "Requesting fallback masternode diffs from genesis to height {} (storage height {} + sync base {})",
+                    current_height,
+                    storage_height,
+                    self.sync_base_height
                 );
                 self.request_masternode_diffs_for_chainlock_validation(network, storage, 0, current_height).await?;
 
@@ -257,44 +362,128 @@ impl MasternodeSyncManager {
         
         // Check if we've received all expected diffs
         if self.expected_diffs_count > 0 && self.received_diffs_count >= self.expected_diffs_count {
-            // Check if this was the bulk diff and we have pending individual diffs
-            if let Some((start_height, end_height)) = self.pending_individual_diffs.take() {
-                // Reset counters for individual diffs
-                self.received_diffs_count = 0;
-                self.expected_diffs_count = end_height - start_height;
-                self.bulk_diff_target_height = None;
-                
-                // Request the individual diffs now that bulk is complete
-                // Note: start_height and end_height are blockchain heights, not storage heights
-                // Each iteration requests diff from height to height+1
-                if self.sync_base_height > 0 {
-                    // Using checkpoint-based sync - heights are blockchain heights
-                    for blockchain_height in start_height..end_height {
-                        tracing::debug!(
-                            "Requesting individual diff {} of {}: from {} to {}",
-                            blockchain_height - start_height + 1,
-                            end_height - start_height,
-                            blockchain_height,
-                            blockchain_height + 1
-                        );
-                        self.request_masternode_diff_with_base(network, storage, blockchain_height, blockchain_height + 1, self.sync_base_height).await?;
-                    }
-                } else {
-                    // Normal sync - heights are storage heights (same as blockchain heights when sync_base_height = 0)
-                    for height in start_height..end_height {
-                        self.request_masternode_diff(network, storage, height, height + 1).await?;
-                    }
-                }
-                
-                tracing::info!(
-                    "Bulk diff complete, now requesting {} individual masternode diffs from blockchain heights {} to {}",
-                    self.expected_diffs_count,
-                    start_height,
-                    end_height
+            // If we're in smart fetch mode, don't complete sync here - let smart fetch handle its own completion
+            if self.dkg_fetch_state.is_some() {
+                tracing::debug!(
+                    "In smart fetch mode - received {}/{} expected diffs, continuing with DKG-based fetch",
+                    self.received_diffs_count, self.expected_diffs_count
                 );
-                
-                Ok(true)  // Continue waiting for individual diffs
-            } else {
+                // Reset counters for next batch but keep sync in progress
+                self.expected_diffs_count = 0;
+                self.received_diffs_count = 0;
+                return Ok(true); // Continue with smart fetch
+            }
+            
+            // Handle transition from bulk to smart fetch
+            if let Some(bulk_target) = self.bulk_diff_target_height {
+                if diff_height == bulk_target {
+                    // Bulk fetch complete, start smart fetch
+                    if let Some((start, end)) = self.smart_fetch_range {
+                        tracing::info!("Bulk fetch complete at height {}, starting smart fetch for range {}-{}", 
+                            diff_height, start, end);
+                        
+                        // Log engine state before transitioning to smart fetch
+                        if let Some(engine) = &self.engine {
+                            tracing::info!("Engine state before smart fetch transition:");
+                            tracing::info!("  - Block container size: {}", engine.block_container.known_block_count());
+                            tracing::info!("  - Masternode lists count: {}", engine.masternode_lists.len());
+                            if let Some(latest_list) = engine.latest_masternode_list() {
+                                tracing::info!("  - Latest masternode list height: {}", 
+                                    engine.masternode_lists.last_key_value()
+                                        .map(|(h, _)| *h)
+                                        .unwrap_or(0)
+                                );
+                            }
+                            
+                            // Check if the bulk fetch target height is in the engine
+                            // diff_height is already the blockchain height, get_header expects storage index
+                            let storage_index = if diff_height >= self.sync_base_height {
+                                diff_height - self.sync_base_height
+                            } else {
+                                0
+                            };
+                            if let Some(header) = storage.get_header(storage_index).await
+                                .map_err(|e| SyncError::Storage(format!("Failed to get bulk header: {}", e)))? 
+                            {
+                                let bulk_hash = header.block_hash();
+                                if let Some(engine_height) = engine.block_container.get_height(&bulk_hash) {
+                                    tracing::info!("  - Bulk target hash {} found at engine height {}", bulk_hash, engine_height);
+                                } else {
+                                    tracing::warn!("  - Bulk target hash {} NOT found in engine block container!", bulk_hash);
+                                }
+                            }
+                        }
+                        
+                        use dashcore::sml::llmq_type::network::NetworkLLMQExt;
+                        tracing::debug!("Calculating DKG windows for blockchain height range {}-{} (sync base: {})", 
+                            start, end, self.sync_base_height);
+                        let mut all_windows = self.config.network.get_all_dkg_windows(start, end);
+                        
+                        // Filter out windows that would require masternode lists from before the bulk endpoint
+                        let original_window_count: usize = all_windows.values().map(|v| v.len()).sum();
+                        
+                        // Remove windows where any block in the mining range is below start
+                        all_windows.retain(|mining_start, windows| {
+                            // Keep only if the mining_start is at or after our bulk endpoint
+                            let keep = *mining_start >= start;
+                            if !keep {
+                                tracing::debug!(
+                                    "Filtering out {} DKG windows at mining_start {} (before bulk endpoint {})",
+                                    windows.len(), mining_start, start
+                                );
+                            }
+                            keep
+                        });
+                        
+                        // Also filter individual windows within each group
+                        for windows in all_windows.values_mut() {
+                            windows.retain(|window| {
+                                // Keep only if all blocks in the mining window are >= start
+                                let keep = window.mining_start >= start;
+                                if !keep {
+                                    tracing::debug!(
+                                        "Filtering out {} DKG window with mining range {}-{} (before bulk endpoint {})",
+                                        window.llmq_type, window.mining_start, window.mining_end, start
+                                    );
+                                }
+                                keep
+                            });
+                        }
+                        
+                        let filtered_window_count: usize = all_windows.values().map(|v| v.len()).sum();
+                        if filtered_window_count < original_window_count {
+                            tracing::info!(
+                                "Filtered DKG windows from {} to {} (removed {} that would require pre-bulk data)",
+                                original_window_count, filtered_window_count, 
+                                original_window_count - filtered_window_count
+                            );
+                        }
+                        
+                        tracing::info!("Calculated {} DKG windows for smart fetch range {}-{}", 
+                            filtered_window_count, start, end);
+                        
+                        self.dkg_fetch_state = Some(DKGFetchState {
+                            pending_windows: all_windows,
+                            active_windows: Vec::new(),
+                            completed_cycles: BTreeSet::new(),
+                            requested_blocks: BTreeSet::new(),
+                            quorums_found: 0,
+                            windows_exhausted: 0,
+                        });
+                        self.fetch_next_dkg_blocks(network, storage).await?;
+                        
+                        // Reset counters for smart fetch
+                        self.expected_diffs_count = 0;
+                        self.received_diffs_count = 0;
+                        return Ok(true); // Continue with smart fetch
+                    }
+                    self.bulk_diff_target_height = None;
+                }
+            }
+            
+            // With smart algorithm, pending_individual_diffs is no longer used
+            // The smart fetch will be handled in smart_fetch_range
+            {
                 tracing::info!("Received all expected masternode diffs ({}/{}), completing sync", 
                     self.received_diffs_count, self.expected_diffs_count);
                 self.sync_in_progress = false;
@@ -308,10 +497,17 @@ impl MasternodeSyncManager {
                 self.received_diffs_count, self.expected_diffs_count);
             Ok(true)  // Continue waiting for more diffs
         } else {
-            // Legacy behavior: single diff completes sync
-            tracing::info!("Masternode sync complete (single diff mode)");
-            self.sync_in_progress = false;
-            Ok(false)
+            // Check if smart fetch is active before completing sync
+            if self.dkg_fetch_state.is_some() {
+                // Smart fetch is active, don't complete sync yet
+                tracing::debug!("Smart fetch active, continuing sync");
+                Ok(true)
+            } else {
+                // Legacy behavior: single diff completes sync
+                tracing::info!("Masternode sync complete (single diff mode)");
+                self.sync_in_progress = false;
+                Ok(false)
+            }
         }
     }
 
@@ -328,12 +524,20 @@ impl MasternodeSyncManager {
         if self.last_sync_progress.elapsed() > std::time::Duration::from_secs(10) {
             tracing::warn!("📊 No masternode sync progress for 10+ seconds, re-sending request");
 
-            // Get current header height for recovery request
-            let current_height = storage
+            // Get current storage height
+            let storage_height = storage
                 .get_tip_height()
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to get current height: {}", e)))?
                 .unwrap_or(0);
+
+            // The height from storage is already the absolute blockchain height
+            let current_blockchain_height = storage_height;
+            
+            tracing::debug!(
+                "Timeout recovery: blockchain_height={} (from storage)",
+                current_blockchain_height
+            );
 
             let last_masternode_height =
                 match storage.load_masternode_state().await.map_err(|e| {
@@ -343,7 +547,7 @@ impl MasternodeSyncManager {
                     None => 0,
                 };
 
-            self.request_masternode_diffs_for_chainlock_validation(network, storage, last_masternode_height, current_height)
+            self.request_masternode_diffs_for_chainlock_validation(network, storage, last_masternode_height, current_blockchain_height)
                 .await?;
             self.last_sync_progress = std::time::Instant::now();
 
@@ -537,11 +741,12 @@ impl MasternodeSyncManager {
                 self.terminal_block_manager.find_best_base_terminal_block(current_height)
             {
                 // No pre-calculated data, but we have a terminal block reference
-                self.validate_terminal_block(
+                self.validate_terminal_block_with_base(
                     storage,
                     terminal_block.height,
                     terminal_block.block_hash,
                     false,
+                    self.sync_base_height,
                 )
                 .await?
             } else {
@@ -743,27 +948,47 @@ impl MasternodeSyncManager {
         base_height: u32,
         current_height: u32,
     ) -> SyncResult<()> {
+        // When syncing from a checkpoint, we need to convert blockchain heights to storage heights
+        let sync_base = self.sync_base_height;
+        
         // Get base block hash
         let base_block_hash = if base_height == 0 {
+            // Always use genesis hash for height 0, regardless of sync base
             self.config
                 .network
                 .known_genesis_block_hash()
                 .ok_or_else(|| SyncError::Network("No genesis hash for network".to_string()))?
+        } else if base_height < sync_base {
+            // Base height is before our sync checkpoint - we can't fetch it from storage
+            return Err(SyncError::Storage(format!(
+                "Cannot request diff with base height {} - it's before sync checkpoint {}",
+                base_height, sync_base
+            )));
         } else {
+            // Convert blockchain height to storage height
+            let storage_base_height = base_height - sync_base;
             storage
-                .get_header(base_height)
+                .get_header(storage_base_height)
                 .await
-                .map_err(|e| SyncError::Storage(format!("Failed to get base header: {}", e)))?
-                .ok_or_else(|| SyncError::Storage("Base header not found".to_string()))?
+                .map_err(|e| SyncError::Storage(format!("Failed to get base header at blockchain height {} (storage height {}): {}", base_height, storage_base_height, e)))?
+                .ok_or_else(|| SyncError::Storage(format!("Base header not found at blockchain height {} (storage height {})", base_height, storage_base_height)))?
                 .block_hash()
         };
 
         // Get current block hash
+        if current_height < sync_base {
+            return Err(SyncError::Storage(format!(
+                "Cannot request diff with current height {} - it's before sync checkpoint {}",
+                current_height, sync_base
+            )));
+        }
+        
+        let storage_current_height = current_height - sync_base;
         let current_block_hash = storage
-            .get_header(current_height)
+            .get_header(storage_current_height)
             .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get current header: {}", e)))?
-            .ok_or_else(|| SyncError::Storage("Current header not found".to_string()))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get current header at blockchain height {} (storage height {}): {}", current_height, storage_current_height, e)))?
+            .ok_or_else(|| SyncError::Storage(format!("Current header not found at blockchain height {} (storage height {})", current_height, storage_current_height)))?
             .block_hash();
 
         let get_mn_list_diff = GetMnListDiff {
@@ -786,7 +1011,11 @@ impl MasternodeSyncManager {
     }
 
     /// Request masternode diffs to ensure we have lists needed for ChainLock validation.
-    /// This requests multiple diffs to populate masternode lists at the last 8 heights.
+    /// This requests multiple diffs to populate masternode lists at recent heights.
+    /// 
+    /// # Arguments
+    /// * `base_height` - Starting blockchain height (not storage height)
+    /// * `target_height` - Target blockchain height (not storage height)
     async fn request_masternode_diffs_for_chainlock_validation(
         &mut self,
         network: &mut dyn NetworkManager,
@@ -794,91 +1023,8 @@ impl MasternodeSyncManager {
         base_height: u32,
         target_height: u32,
     ) -> SyncResult<()> {
-        // ChainLocks need masternode lists at (block_height - 8)
-        // To ensure we can validate any recent ChainLock, we need lists for the last 8 blocks
-        
-        if target_height <= base_height {
-            return Ok(());
-        }
-        
-        // Reset diff counters
-        self.received_diffs_count = 0;
-        
-        // If the range is small (8 or fewer blocks), request individual diffs for each block
-        let blocks_to_sync = target_height - base_height;
-        if blocks_to_sync <= 8 {
-            // Set expected count
-            self.expected_diffs_count = blocks_to_sync;
-            
-            // Request a diff for each block individually
-            for height in base_height..target_height {
-                self.request_masternode_diff(network, storage, height, height + 1).await?;
-            }
-            tracing::info!(
-                "Requested {} individual masternode diffs from {} to {}",
-                blocks_to_sync,
-                base_height,
-                target_height
-            );
-        } else {
-            // For larger ranges, optimize by:
-            // 1. Request bulk diff to (target_height - 8) first
-            // 2. Request individual diffs for the last 8 blocks AFTER bulk completes
-            
-            let bulk_end_height = target_height.saturating_sub(8);
-            
-            // Only request bulk if there's something to sync
-            if bulk_end_height > base_height {
-                self.request_masternode_diff(network, storage, base_height, bulk_end_height).await?;
-                self.expected_diffs_count = 1; // Only expecting the bulk diff initially
-                self.bulk_diff_target_height = Some(bulk_end_height);
-                
-                // Store the individual diff request for later (using blockchain heights)
-                // Individual diffs should start after the bulk diff ends
-                let individual_start = bulk_end_height; // Bulk ends at this height
-                if target_height > individual_start {
-                    // Store range for individual diffs  
-                    // We'll request diffs FROM bulk_end_height TO bulk_end_height+1, etc.
-                    self.pending_individual_diffs = Some((individual_start, target_height));
-                }
-                
-                tracing::info!(
-                    "Requested bulk masternode diff from {} to {}",
-                    base_height,
-                    bulk_end_height
-                );
-                let individual_count = if target_height > bulk_end_height {
-                    target_height - bulk_end_height
-                } else {
-                    0
-                };
-                tracing::info!(
-                    "Will request {} individual diffs after bulk completes (heights {} to {})",
-                    individual_count,
-                    bulk_end_height + 1,
-                    target_height
-                );
-            } else {
-                // No bulk needed, just individual diffs
-                let individual_count = target_height - base_height;
-                self.expected_diffs_count = individual_count;
-                
-                for height in base_height..target_height {
-                    self.request_masternode_diff(network, storage, height, height + 1).await?;
-                }
-                
-                if individual_count > 0 {
-                    tracing::info!(
-                        "Requested {} individual masternode diffs from {} to {}",
-                        individual_count,
-                        base_height,
-                        target_height
-                    );
-                }
-            }
-        }
-        
-        Ok(())
+        // Now uses smart algorithm for ALL ranges
+        self.request_masternode_diffs_smart(network, storage, base_height, target_height).await
     }
 
     /// Request masternode list diff with checkpoint base height support.
@@ -976,91 +1122,11 @@ impl MasternodeSyncManager {
         target_height: u32,
         sync_base_height: u32,
     ) -> SyncResult<()> {
-        // ChainLocks need masternode lists at (block_height - 8)
-        // To ensure we can validate any recent ChainLock, we need lists for the last 8 blocks
+        // Store sync base height for later use
+        self.sync_base_height = sync_base_height;
         
-        if target_height <= base_height {
-            return Ok(());
-        }
-        
-        // Reset diff counters
-        self.received_diffs_count = 0;
-        
-        // If the range is small (8 or fewer blocks), request individual diffs for each block
-        let blocks_to_sync = target_height - base_height;
-        if blocks_to_sync <= 8 {
-            // Set expected count
-            self.expected_diffs_count = blocks_to_sync;
-            
-            // Request a diff for each block individually
-            for height in base_height..target_height {
-                self.request_masternode_diff_with_base(network, storage, height, height + 1, sync_base_height).await?;
-            }
-            tracing::info!(
-                "Requested {} individual masternode diffs from {} to {}",
-                blocks_to_sync,
-                base_height,
-                target_height
-            );
-        } else {
-            // For larger ranges, optimize by:
-            // 1. Request bulk diff to (target_height - 8) first
-            // 2. Request individual diffs for the last 8 blocks AFTER bulk completes
-            
-            let bulk_end_height = target_height.saturating_sub(8);
-            
-            // Only request bulk if there's something to sync
-            if bulk_end_height > base_height {
-                self.request_masternode_diff_with_base(network, storage, base_height, bulk_end_height, sync_base_height).await?;
-                self.expected_diffs_count = 1; // Only expecting the bulk diff initially
-                self.bulk_diff_target_height = Some(bulk_end_height);
-                
-                // Store the individual diff request for later (using blockchain heights)
-                // Individual diffs should start after the bulk diff ends
-                let individual_start = bulk_end_height; // Bulk ends at this height
-                if target_height > individual_start {
-                    // Store range for individual diffs  
-                    // We'll request diffs FROM bulk_end_height TO bulk_end_height+1, etc.
-                    self.pending_individual_diffs = Some((individual_start, target_height));
-                }
-                
-                tracing::info!(
-                    "Requested bulk masternode diff from {} to {}",
-                    base_height,
-                    bulk_end_height
-                );
-                let individual_count = if target_height > bulk_end_height {
-                    target_height - bulk_end_height
-                } else {
-                    0
-                };
-                tracing::info!(
-                    "Will request {} individual diffs after bulk completes (heights {} to {})",
-                    individual_count,
-                    bulk_end_height + 1,
-                    target_height
-                );
-            } else {
-                // No bulk needed, just individual diffs
-                let individual_count = target_height - base_height;
-                self.expected_diffs_count = individual_count;
-                
-                for height in base_height..target_height {
-                    self.request_masternode_diff_with_base(network, storage, height, height + 1, sync_base_height).await?;
-                }
-                
-                if individual_count > 0 {
-                    tracing::info!(
-                        "Requested {} individual masternode diffs from {} to {}",
-                        individual_count,
-                        base_height,
-                        target_height
-                    );
-                }
-            }
-        }
-        
-        Ok(())
+        // Use the smart algorithm for all ranges
+        self.request_masternode_diffs_smart(network, storage, base_height, target_height).await
     }
 
     /// Process received masternode list diff.
@@ -1077,6 +1143,23 @@ impl MasternodeSyncManager {
             diff.new_masternodes.len(),
             diff.deleted_masternodes.len()
         );
+        
+        // Additional logging for smart fetch debugging
+        if self.dkg_fetch_state.is_some() && self.smart_fetch_range.is_some() {
+            tracing::debug!("Smart fetch diff processing - checking engine state for base hash");
+            if let Some(engine) = &self.engine {
+                if let Some(base_height) = engine.block_container.get_height(&diff.base_block_hash) {
+                    tracing::debug!("  - Base block hash {} found in engine at height {}", diff.base_block_hash, base_height);
+                    if engine.masternode_lists.contains_key(&base_height) {
+                        tracing::debug!("  - Masternode list exists at base height {}", base_height);
+                    } else {
+                        tracing::warn!("  - Masternode list NOT found at base height {}!", base_height);
+                    }
+                } else {
+                    tracing::warn!("  - Base block hash {} NOT found in engine block container!", diff.base_block_hash);
+                }
+            }
+        }
         
         let engine = self.engine.as_mut().ok_or_else(|| {
             SyncError::Validation("Masternode engine not initialized".to_string())
@@ -1103,16 +1186,19 @@ impl MasternodeSyncManager {
             tracing::debug!("Target block hash is zero - likely empty masternode list in regtest");
         } else {
             // Feed target block hash
-            if let Some(target_height) = storage
+            if let Some(storage_height) = storage
                 .get_header_height_by_hash(&target_block_hash)
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to lookup target hash: {}", e)))?
             {
-                engine.feed_block_height(target_height, target_block_hash);
+                // The height from storage is already the absolute blockchain height
+                let blockchain_height = storage_height;
+                engine.feed_block_height(blockchain_height, target_block_hash);
                 tracing::debug!(
-                    "Fed target block hash {} at height {}",
+                    "Fed target block hash {} at blockchain height {} (storage height {})",
                     target_block_hash,
-                    target_height
+                    blockchain_height,
+                    storage_height
                 );
             } else {
                 return Err(SyncError::Storage(format!(
@@ -1131,16 +1217,19 @@ impl MasternodeSyncManager {
                 tracing::debug!("Fed genesis block hash {} at height 0", base_block_hash);
             } else {
                 // For non-genesis blocks, look up the height
-                if let Some(base_height) = storage
+                if let Some(storage_height) = storage
                     .get_header_height_by_hash(&base_block_hash)
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to lookup base hash: {}", e)))?
                 {
-                    engine.feed_block_height(base_height, base_block_hash);
+                    // The height from storage is already the absolute blockchain height
+                    let blockchain_height = storage_height;
+                    engine.feed_block_height(blockchain_height, base_block_hash);
                     tracing::debug!(
-                        "Fed base block hash {} at height {}",
+                        "Fed base block hash {} at blockchain height {} (storage height {})",
                         base_block_hash,
-                        base_height
+                        blockchain_height,
+                        storage_height
                     );
                 }
             }
@@ -1152,12 +1241,12 @@ impl MasternodeSyncManager {
             })? {
                 // For genesis, start from 0 (but limited by what's in storage)
                 0
-            } else if let Some(base_height) = storage
+            } else if let Some(storage_base_height) = storage
                 .get_header_height_by_hash(&base_block_hash)
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to lookup base hash: {}", e)))?
             {
-                base_height.saturating_sub(100) // Include some headers before base
+                storage_base_height.saturating_sub(100) // Include some headers before base (storage height)
             } else {
                 tip_height.saturating_sub(1000)
             };
@@ -1165,24 +1254,27 @@ impl MasternodeSyncManager {
             // Feed any quorum hashes from new_quorums that are block hashes
             for quorum in &diff.new_quorums {
                 // Note: quorum_hash is not necessarily a block hash, so we check if it exists
-                if let Some(quorum_height) =
+                if let Some(storage_quorum_height) =
                     storage.get_header_height_by_hash(&quorum.quorum_hash).await.map_err(|e| {
                         SyncError::Storage(format!("Failed to lookup quorum hash: {}", e))
                     })?
                 {
                     // Only feed blocks at or after start_height to avoid redundant submissions
-                    if quorum_height >= start_height {
-                        engine.feed_block_height(quorum_height, quorum.quorum_hash);
+                    if storage_quorum_height >= start_height {
+                        // The height from storage is already the absolute blockchain height
+                        let blockchain_quorum_height = storage_quorum_height;
+                        engine.feed_block_height(blockchain_quorum_height, quorum.quorum_hash);
                         tracing::debug!(
-                            "Fed quorum hash {} at height {}",
+                            "Fed quorum hash {} at blockchain height {} (storage height {})",
                             quorum.quorum_hash,
-                            quorum_height
+                            blockchain_quorum_height,
+                            storage_quorum_height
                         );
                     } else {
                         tracing::trace!(
-                            "Skipping quorum hash {} at height {} (before start_height {})",
+                            "Skipping quorum hash {} at storage height {} (before start_height {})",
                             quorum.quorum_hash,
-                            quorum_height,
+                            storage_quorum_height,
                             start_height
                         );
                     }
@@ -1203,8 +1295,10 @@ impl MasternodeSyncManager {
                         SyncError::Storage(format!("Failed to batch load headers: {}", e))
                     })?;
 
-                for (height, header) in headers {
-                    engine.feed_block_height(height, header.block_hash());
+                for (storage_height, header) in headers {
+                    // The height from storage is already the absolute blockchain height
+                    let blockchain_height = storage_height;
+                    engine.feed_block_height(blockchain_height, header.block_hash());
                 }
             }
         }
@@ -1237,8 +1331,31 @@ impl MasternodeSyncManager {
             }
         }
 
-        // Apply the diff to our engine
-        engine.apply_diff(diff, None, true, None)
+        // Calculate the target blockchain height before applying the diff
+        let target_blockchain_height = if let Some(height) = storage
+            .get_header_height_by_hash(&diff.block_hash)
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to lookup target block height: {}", e)))?
+        {
+            height
+        } else {
+            return Err(SyncError::Storage(format!(
+                "Target block hash {} not found in storage before applying diff",
+                diff.block_hash
+            )));
+        };
+
+        tracing::debug!(
+            "Applying masternode diff with explicit target height: blockchain_height={}, block_hash={}",
+            target_blockchain_height,
+            diff.block_hash
+        );
+
+        // Store the diff block hash for later use
+        let diff_block_hash = diff.block_hash;
+
+        // Apply the diff to our engine with explicit height
+        engine.apply_diff(diff, Some(target_blockchain_height), true, None)
             .map_err(|e| {
                 // Provide more context for IncompleteMnListDiff in regtest
                 if self.config.network == dashcore::Network::Regtest && e.to_string().contains("IncompleteMnListDiff") {
@@ -1250,57 +1367,47 @@ impl MasternodeSyncManager {
                 }
             })?;
 
+        // Ensure the target block hash is registered in the engine's block container
+        // This is critical for smart fetch to find the base masternode list
+        engine.feed_block_height(target_blockchain_height, diff_block_hash);
+        tracing::debug!(
+            "Ensured target block hash {} is registered at blockchain height {} for future lookups",
+            diff_block_hash,
+            target_blockchain_height
+        );
+
         tracing::info!("Successfully applied masternode list diff");
 
-        // Find the height of the target block
-        let target_height = if let Some(height) =
-            storage.get_header_height_by_hash(&target_block_hash).await.map_err(|e| {
-                SyncError::Storage(format!("Failed to lookup target block height: {}", e))
-            })? {
-            height
-        } else {
-            // Fallback to tip height if we can't find the specific block
-            storage
-                .get_tip_height()
-                .await
-                .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
-                .unwrap_or(0)
-        };
-
-        // Validate terminal block if this is one
-        if self.terminal_block_manager.is_terminal_block_height(target_height) {
+        // Validate terminal block if this is one (use blockchain height for terminal block check)
+        if self.terminal_block_manager.is_terminal_block_height(target_blockchain_height) {
+            // Use blockchain height for validation since terminal blocks are defined by blockchain height
             let is_valid = self
                 .terminal_block_manager
-                .validate_terminal_block(target_height, &target_block_hash, storage)
+                .validate_terminal_block(target_blockchain_height, &diff_block_hash, storage)
                 .await?;
 
             if !is_valid {
                 return Err(SyncError::Validation(format!(
-                    "Terminal block validation failed at height {}",
-                    target_height
+                    "Terminal block validation failed at blockchain height {}",
+                    target_blockchain_height
                 )));
             }
 
-            tracing::info!("✅ Terminal block validated at height {}", target_height);
+            tracing::info!("✅ Terminal block validated at blockchain height {}", 
+                target_blockchain_height);
         }
 
         // Store the updated masternode state
         let terminal_block_hash =
-            if self.terminal_block_manager.is_terminal_block_height(target_height) {
-                Some(target_block_hash.to_byte_array())
+            if self.terminal_block_manager.is_terminal_block_height(target_blockchain_height) {
+                Some(diff_block_hash.to_byte_array())
             } else {
                 None
             };
 
-        // Convert storage height back to blockchain height for masternode state
-        let blockchain_height = if self.sync_base_height > 0 {
-            target_height + self.sync_base_height
-        } else {
-            target_height
-        };
-
+        // Store the blockchain height (not storage height) in the masternode state
         let masternode_state = MasternodeState {
-            last_height: blockchain_height,
+            last_height: target_blockchain_height,
             engine_state: Vec::new(), // TODO: Serialize engine state
             last_update: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1314,9 +1421,378 @@ impl MasternodeSyncManager {
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to store masternode state: {}", e)))?;
 
-        tracing::info!("Updated masternode list sync height to {}", blockchain_height);
+        tracing::info!(
+            "Updated masternode list sync height to {}", 
+            target_blockchain_height
+        );
 
         Ok(())
+    }
+
+    /// Request masternode diffs using smart DKG window-based algorithm
+    /// 
+    /// The algorithm works as follows:
+    /// 1. For large ranges, do a bulk fetch first to get close to target
+    /// 2. For the recent blocks, calculate DKG windows for all active quorum types
+    /// 3. Start checking the first block of each mining window
+    /// 4. If quorum not found, check next block in window (adaptive search)
+    /// 5. Stop checking a window once quorum is found or window is exhausted
+    ///
+    /// # Arguments
+    /// * `base_height` - Starting blockchain height (not storage height)
+    /// * `target_height` - Target blockchain height (not storage height)
+    async fn request_masternode_diffs_smart(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        storage: &dyn StorageManager,
+        base_height: u32,
+        target_height: u32,
+    ) -> SyncResult<()> {
+        use dashcore::sml::llmq_type::network::NetworkLLMQExt;
+        
+        if target_height <= base_height {
+            return Ok(());
+        }
+        
+        // Step 1: For very large ranges, do bulk fetch to get most of the way
+        // This avoids checking thousands of DKG windows
+        let bulk_end = target_height.saturating_sub(MASTERNODE_LIST_BUFFER_SIZE);
+        if bulk_end > base_height {
+                tracing::info!(
+                    "Large range detected: bulk fetching {} to {}, then smart fetch {} to {}",
+                    base_height, bulk_end, bulk_end, target_height
+                );
+                
+                self.request_masternode_diff(network, storage, base_height, bulk_end).await?;
+                self.expected_diffs_count = 1;
+                self.bulk_diff_target_height = Some(bulk_end);
+                self.smart_fetch_range = Some((bulk_end, target_height));
+                
+                // Don't initialize dkg_fetch_state here - wait until bulk completes
+                // to avoid premature completion in update_smart_fetch_state
+                
+                return Ok(());
+            }
+        
+        // Step 2: Calculate all DKG windows for the range
+        tracing::debug!("Direct smart fetch: calculating DKG windows for blockchain height range {}-{} (sync base: {})", 
+            base_height, target_height, self.sync_base_height);
+        let all_windows = self.config.network.get_all_dkg_windows(base_height, target_height);
+        
+        // Initialize fetch state
+        let fetch_state = DKGFetchState {
+            pending_windows: all_windows,
+            active_windows: Vec::new(),
+            completed_cycles: BTreeSet::new(),
+            requested_blocks: BTreeSet::new(),
+            quorums_found: 0,
+            windows_exhausted: 0,
+        };
+        
+        // Calculate estimates for logging
+        let total_windows: usize = fetch_state.pending_windows.values()
+            .map(|v| v.len())
+            .sum();
+        let total_possible_blocks: usize = fetch_state.pending_windows.values()
+            .flat_map(|windows| windows.iter())
+            .map(|w| (w.mining_end - w.mining_start + 1) as usize)
+            .sum();
+        
+        tracing::info!(
+            "Smart masternode sync: checking {} DKG windows ({} possible blocks) out of {} total blocks",
+            total_windows,
+            total_possible_blocks,
+            target_height - base_height
+        );
+        
+        if total_windows == 0 {
+            tracing::error!(
+                "No DKG windows calculated for range {}-{}! This suggests an issue with window calculation.",
+                base_height, target_height
+            );
+            // Log some debug info
+            tracing::debug!("Network: {:?}", self.config.network);
+            tracing::debug!("Base height: {}, Target height: {}", base_height, target_height);
+        }
+        
+        self.dkg_fetch_state = Some(fetch_state);
+        
+        // Step 3: Start fetching
+        self.fetch_next_dkg_blocks(network, storage).await?;
+        
+        Ok(())
+    }
+    
+    /// Fetch the next batch of blocks based on DKG window state
+    /// 
+    /// This function:
+    /// 1. Moves pending windows to active (up to MAX_ACTIVE_WINDOWS)
+    /// 2. For each active window, requests the current block being checked
+    /// 3. Batches requests for efficiency (up to MAX_REQUESTS_PER_BATCH)
+    /// 
+    /// Note: We await here because we're making network requests
+    async fn fetch_next_dkg_blocks(
+        &mut self,
+        network: &mut dyn NetworkManager,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<()> {
+        // Early return if no state
+        if self.dkg_fetch_state.is_none() {
+            return Ok(());
+        }
+        
+        // Now we can safely borrow state
+        let state = self.dkg_fetch_state.as_mut().unwrap();
+        
+        tracing::debug!(
+            "fetch_next_dkg_blocks: pending_windows={}, active_windows={}, completed_cycles={}, quorums_found={}",
+            state.pending_windows.len(),
+            state.active_windows.len(),
+            state.completed_cycles.len(),
+            state.quorums_found
+        );
+        
+        // Step 1: Activate pending windows if we have capacity
+        // MAX_ACTIVE_WINDOWS: Limits how many DKG windows we're tracking simultaneously
+        // This prevents memory bloat and helps us focus on completing windows before starting new ones
+        const MAX_ACTIVE_WINDOWS: usize = 10;
+        let mut activated = 0;
+        while state.active_windows.len() < MAX_ACTIVE_WINDOWS {
+            if let Some((mining_start, windows)) = state.pending_windows.pop_first() {
+                // Start each window at its mining_start block
+                for window in windows {
+                    tracing::debug!(
+                        "Activating {} window: cycle {} (mining {}-{})",
+                        window.llmq_type,
+                        window.cycle_start,
+                        window.mining_start,
+                        window.mining_end
+                    );
+                    state.active_windows.push((window, mining_start));
+                    activated += 1;
+                }
+            } else {
+                if activated == 0 && state.active_windows.is_empty() {
+                    tracing::warn!("No windows to activate! pending={}, active={}", 
+                        state.pending_windows.len(), state.active_windows.len());
+                }
+                break; // No more pending windows
+            }
+        }
+        
+        if activated > 0 {
+            tracing::info!("Activated {} DKG windows, now tracking {} active windows",
+                activated, state.active_windows.len());
+        }
+        
+        // Step 2: Request blocks for active windows
+        let mut requests_made = 0;
+        // MAX_REQUESTS_PER_BATCH: Limits network requests per call to avoid overwhelming peers
+        // Different from MAX_ACTIVE_WINDOWS - we may have 10 active windows but only request 5 blocks at once
+        const MAX_REQUESTS_PER_BATCH: usize = 5;
+        
+        // Collect blocks to request first to avoid borrow issues
+        // Use a set to track heights we're already planning to request in this batch
+        let mut blocks_to_request = Vec::new();
+        let mut heights_in_batch = std::collections::HashSet::new();
+        
+        for (window, current_block) in &state.active_windows {
+            if blocks_to_request.len() >= MAX_REQUESTS_PER_BATCH {
+                break;
+            }
+            
+            // Only request if:
+            // 1. We're still within the mining window
+            // 2. We haven't already requested this height
+            // 3. We're not already requesting this height in this batch
+            if *current_block <= window.mining_end 
+                && !state.requested_blocks.contains(current_block)
+                && !heights_in_batch.contains(current_block) {
+                
+                blocks_to_request.push((*current_block, window.llmq_type, window.cycle_start, window.mining_start, window.mining_end));
+                heights_in_batch.insert(*current_block);
+            } else if *current_block <= window.mining_end && heights_in_batch.contains(current_block) {
+                tracing::debug!(
+                    "Skipping duplicate request for height {} (already in batch for another quorum)",
+                    current_block
+                );
+            }
+        }
+        
+        // Get the last synced masternode height to use as base for diffs
+        let last_masternode_height = match storage.load_masternode_state().await
+            .map_err(|e| SyncError::Storage(format!("Failed to load masternode state: {}", e)))? {
+            Some(state) => state.last_height,
+            None => 0,
+        };
+        
+        // Now make the actual requests - request MnListDiffs instead of blocks
+        for (block_height, llmq_type, cycle_start, mining_start, mining_end) in blocks_to_request {
+            // Skip DKG windows that are at or below our last synced masternode height
+            // We can't request diffs for heights we already have or that would require
+            // base masternode lists we don't possess
+            if block_height <= last_masternode_height {
+                tracing::debug!(
+                    "Skipping DKG window at height {} (at or below last masternode height {})",
+                    block_height,
+                    last_masternode_height
+                );
+                
+                // Still mark as requested to avoid re-processing
+                if let Some(state) = &mut self.dkg_fetch_state {
+                    state.requested_blocks.insert(block_height);
+                }
+                continue;
+            }
+            
+            tracing::info!(
+                "Requesting MnListDiff at height {} for {} quorum (cycle {}, window {}-{})",
+                block_height,
+                llmq_type,
+                cycle_start,
+                mining_start,
+                mining_end
+            );
+            
+            // For smart fetch, we request MnListDiff from the last known height to this DKG window height
+            // This will give us any masternode/quorum changes up to this point
+            let base_height = last_masternode_height;
+            
+            tracing::debug!(
+                "Smart fetch diff request: base_height={} -> target_height={} (last_masternode_height={})",
+                base_height, block_height, last_masternode_height
+            );
+            
+            // Request the MnListDiff
+            self.request_masternode_diff(network, storage, base_height, block_height).await?;
+            
+            // Mark height as requested
+            if let Some(state) = &mut self.dkg_fetch_state {
+                state.requested_blocks.insert(block_height);
+            }
+            
+            // Track this as a smart fetch request
+            self.smart_requested_heights.insert(block_height);
+            requests_made += 1;
+        }
+        
+        if requests_made > 0 {
+            tracing::info!("Requested {} MnListDiffs for DKG window checking", requests_made);
+        } else {
+            tracing::debug!("No MnListDiffs to request in this batch");
+        }
+        
+        self.expected_diffs_count += requests_made as u32;
+        
+        Ok(())
+    }
+    
+    /// Update smart fetch state based on quorums found in a diff
+    async fn update_smart_fetch_state(
+        &mut self,
+        diff_height: u32,
+        new_quorums: &[LLMQType],
+        storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<()> {
+        // Early return if no state
+        if self.dkg_fetch_state.is_none() {
+            return Ok(());
+        }
+        
+        // Check which windows are affected by this diff
+        let mut windows_to_update = Vec::new();
+        {
+            let state = self.dkg_fetch_state.as_ref().unwrap();
+            // Find windows that were waiting for this block
+            for (i, (window, current_block)) in state.active_windows.iter().enumerate() {
+                if *current_block == diff_height {
+                    // This is a block we were checking
+                    let found_quorum = new_quorums.contains(&window.llmq_type);
+                    
+                    if found_quorum {
+                        windows_to_update.push((i, WindowAction::Complete));
+                    } else if diff_height < window.mining_end {
+                        windows_to_update.push((i, WindowAction::Advance(diff_height + 1)));
+                    } else {
+                        windows_to_update.push((i, WindowAction::Exhaust));
+                    }
+                }
+            }
+        }
+        
+        // Apply updates
+        let state = self.dkg_fetch_state.as_mut().unwrap();
+        Self::apply_window_updates(windows_to_update, state);
+        
+        // Continue fetching if we have more work
+        let has_more_work = !state.pending_windows.is_empty() || !state.active_windows.is_empty();
+        
+        // Safety check: Don't complete if we haven't requested any heights yet
+        // This prevents premature completion when update is called before windows are activated
+        let heights_requested = state.requested_blocks.len();
+        if has_more_work || heights_requested == 0 {
+            self.fetch_next_dkg_blocks(network, storage).await?;
+        } else {
+            // All done! Log summary
+            tracing::info!(
+                "Smart masternode sync complete: found {} quorums, exhausted {} windows, requested {} MnListDiffs",
+                state.quorums_found,
+                state.windows_exhausted,
+                heights_requested
+            );
+            self.dkg_fetch_state = None;
+            // Mark sync as complete since smart fetch is done
+            self.sync_in_progress = false;
+            self.smart_requested_heights.clear();
+        }
+        
+        Ok(())
+    }
+    
+    /// Apply window updates from check_diff_against_active_windows
+    fn apply_window_updates(
+        updates: Vec<(usize, WindowAction)>,
+        state: &mut DKGFetchState,
+    ) {
+        // Process in reverse order to maintain indices
+        for (i, action) in updates.iter().rev() {
+            match action {
+                WindowAction::Advance(next_block) => {
+                    // Update to check next block
+                    state.active_windows[*i].1 = *next_block;
+                }
+                WindowAction::Complete => {
+                    // Remove from active and mark as complete
+                    let (window, _) = state.active_windows.remove(*i);
+                    state.completed_cycles.insert((window.llmq_type, window.cycle_start));
+                    state.quorums_found += 1;
+                    
+                    tracing::debug!(
+                        "Found {} quorum at cycle {} after checking {} blocks",
+                        window.llmq_type,
+                        window.cycle_start,
+                        state.requested_blocks.iter()
+                            .filter(|&&b| b >= window.mining_start && b <= window.mining_end)
+                            .count()
+                    );
+                }
+                WindowAction::Exhaust => {
+                    // Remove from active, window exhausted
+                    let (window, _) = state.active_windows.remove(*i);
+                    state.completed_cycles.insert((window.llmq_type, window.cycle_start));
+                    state.windows_exhausted += 1;
+                    
+                    tracing::debug!(
+                        "No {} quorum found in cycle {} mining window ({}-{})",
+                        window.llmq_type,
+                        window.cycle_start,
+                        window.mining_start,
+                        window.mining_end
+                    );
+                }
+            }
+        }
     }
 
     /// Reset sync state.
@@ -1326,6 +1802,9 @@ impl MasternodeSyncManager {
         self.received_diffs_count = 0;
         self.bulk_diff_target_height = None;
         self.pending_individual_diffs = None;
+        self.smart_fetch_range = None;
+        self.dkg_fetch_state = None;
+        self.smart_requested_heights.clear();
         if let Some(_engine) = &mut self.engine {
             // TODO: Reset engine state if needed
         }
@@ -1361,5 +1840,64 @@ impl MasternodeSyncManager {
             };
 
         Ok(self.terminal_block_manager.get_next_terminal_block(current_height))
+    }
+
+    /// Process a block received during smart DKG fetch
+    /// 
+    /// This checks if the block contains quorum commitments for active DKG windows
+    pub async fn process_dkg_block(
+        &mut self,
+        block: &dashcore::Block,
+        storage: &mut dyn StorageManager,
+        network: &mut dyn NetworkManager,
+    ) -> SyncResult<()> {
+        // Only process if we're in smart fetch mode
+        if self.dkg_fetch_state.is_none() {
+            return Ok(());
+        }
+
+        // Get block height from storage
+        let block_height = storage
+            .get_header_height_by_hash(&block.block_hash())
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to get block height: {}", e)))?
+            .ok_or_else(|| SyncError::InvalidState("Block height not found in storage".to_string()))?;
+
+        // Check if this was a requested block
+        if !self.smart_requested_heights.contains(&block_height) {
+            tracing::debug!("Received unrequested block {} - ignoring", block_height);
+            return Ok(());
+        }
+
+        tracing::info!("Processing block {} for DKG window checking", block_height);
+
+        // Extract quorum commitments from the block
+        let mut found_quorums = Vec::new();
+        for tx in &block.txdata {
+            // Check if transaction is a special transaction
+            if tx.tx_type() != dashcore::blockdata::transaction::special_transaction::TransactionType::Classic {
+                // Check for quorum commitment (type 6)
+                if let Some(payload) = &tx.special_transaction_payload {
+                    if payload.get_type() == dashcore::blockdata::transaction::special_transaction::TransactionType::QuorumCommitment {
+                        // This is a quorum commitment
+                        // Extract LLMQ type from the payload
+                        // Note: This is simplified - actual implementation would parse the commitment
+                        tracing::info!("Found quorum commitment in block {}", block_height);
+                        // For now, assume it's a valid quorum - in production this would parse the commitment
+                        found_quorums.push(dashcore::sml::llmq_type::LLMQType::Llmqtype50_60);
+                    }
+                }
+            }
+        }
+
+        // Update smart fetch state based on found quorums
+        if !found_quorums.is_empty() || self.dkg_fetch_state.is_some() {
+            self.update_smart_fetch_state(block_height, &found_quorums, storage, network).await?;
+        }
+
+        // Remove from requested heights
+        self.smart_requested_heights.remove(&block_height);
+
+        Ok(())
     }
 }
