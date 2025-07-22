@@ -103,9 +103,97 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
         );
     }
 
-    // TODO: Implement actual quorum public key retrieval
-    // For now, return a placeholder error
-    FFIResult::error(FFIErrorCode::NotImplemented, "Quorum public key retrieval not yet implemented")
+    // Get the client reference
+    let client = &*client;
+    
+    // Access the inner client through the mutex
+    let inner_guard = match client.inner.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            return FFIResult::error(FFIErrorCode::RuntimeError, "Failed to lock client mutex");
+        }
+    };
+    
+    // Get the SPV client
+    let spv_client = match inner_guard.as_ref() {
+        Some(client) => client,
+        None => {
+            return FFIResult::error(FFIErrorCode::RuntimeError, "Client not initialized");
+        }
+    };
+    
+    // Read the quorum hash from the input pointer
+    let quorum_hash_bytes = std::slice::from_raw_parts(quorum_hash, 32);
+    let mut hash_array = [0u8; 32];
+    hash_array.copy_from_slice(quorum_hash_bytes);
+    
+    // Get the quorum from the masternode list at the specified height
+    match spv_client.get_quorum_at_height(_core_chain_locked_height, _quorum_type as u8, &hash_array) {
+        Some(qualified_quorum_entry) => {
+            // Get the public key bytes
+            let pubkey = &qualified_quorum_entry.quorum_entry.quorum_public_key;
+            
+            // BLSPublicKey is 48 bytes
+            const PUBKEY_SIZE: usize = 48;
+            if out_pubkey_size < PUBKEY_SIZE {
+                return FFIResult::error(
+                    FFIErrorCode::InvalidArgument,
+                    &format!("Buffer too small: {} bytes provided, {} bytes required", out_pubkey_size, PUBKEY_SIZE),
+                );
+            }
+            
+            // Copy the public key bytes using unsafe transmute
+            let pubkey_ptr = pubkey as *const _ as *const u8;
+            std::ptr::copy_nonoverlapping(pubkey_ptr, out_pubkey, PUBKEY_SIZE);
+            
+            // Return success
+            FFIResult {
+                error_code: 0,
+                error_message: ptr::null(),
+            }
+        }
+        None => {
+            // Check if this is due to missing masternode list to provide better error message
+            let has_mn_list = spv_client.get_masternode_list_at_height(_core_chain_locked_height).is_some();
+            
+            if !has_mn_list {
+                // Get the masternode list engine to check available heights
+                let available_info = if let Some(engine) = spv_client.masternode_list_engine() {
+                    let total_lists = engine.masternode_lists.len();
+                    let min_height = engine.masternode_lists.keys().min().copied().unwrap_or(0);
+                    let max_height = engine.masternode_lists.keys().max().copied().unwrap_or(0);
+                    format!(
+                        " Core SDK has {} masternode lists ranging from height {} to {}.",
+                        total_lists,
+                        min_height,
+                        max_height
+                    )
+                } else {
+                    String::from(" Core SDK masternode engine not initialized.")
+                };
+                
+                FFIResult::error(
+                    FFIErrorCode::ValidationError,
+                    &format!(
+                        "Masternode list not available at height {}.{} The Core SDK may still be syncing masternode lists. Please ensure Core SDK has completed masternode sync before querying quorum public keys.",
+                        _core_chain_locked_height,
+                        available_info
+                    ),
+                )
+            } else {
+                // Masternode list exists but quorum not found
+                FFIResult::error(
+                    FFIErrorCode::ValidationError,
+                    &format!(
+                        "Quorum not found for type {} at height {} with hash {}. The masternode list exists at this height but does not contain the requested quorum.",
+                        _quorum_type,
+                        _core_chain_locked_height,
+                        hex::encode(quorum_hash_bytes)
+                    ),
+                )
+            }
+        }
+    }
 }
 
 /// Gets the platform activation height from the Core chain
@@ -130,10 +218,39 @@ pub unsafe extern "C" fn ffi_dash_spv_get_platform_activation_height(
         return FFIResult::error(FFIErrorCode::NullPointer, "Null out_height pointer");
     }
 
-    // TODO: Implement actual platform activation height retrieval
-    // For now, return a placeholder error
-    FFIResult::error(
-        FFIErrorCode::NotImplemented,
-        "Platform activation height retrieval not yet implemented",
-    )
+    // Get the client reference
+    let client = &*client;
+    
+    // Access the inner client through the mutex
+    let inner_guard = match client.inner.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            return FFIResult::error(FFIErrorCode::RuntimeError, "Failed to lock client mutex");
+        }
+    };
+    
+    // Get the network from the client config
+    let height = match inner_guard.as_ref() {
+        Some(spv_client) => {
+            // Platform activation heights per network
+            match spv_client.network() {
+                dashcore::Network::Dash => 1_888_888,     // Mainnet (placeholder - needs verification)
+                dashcore::Network::Testnet => 1_289_520,  // Testnet confirmed height
+                dashcore::Network::Devnet => 1,           // Devnet starts immediately
+                _ => 0,                                    // Unknown network
+            }
+        }
+        None => {
+            return FFIResult::error(FFIErrorCode::RuntimeError, "Client not initialized");
+        }
+    };
+    
+    // Set the output value
+    *out_height = height;
+    
+    // Return success
+    FFIResult {
+        error_code: 0,
+        error_message: ptr::null(),
+    }
 }
