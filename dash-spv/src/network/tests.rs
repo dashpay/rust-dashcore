@@ -1,6 +1,107 @@
 //! Unit tests for network module
 
 #[cfg(test)]
+mod qrinfo_tests {
+    use crate::network::message_handler::{MessageHandler, MessageHandleResult};
+    use dashcore::network::message::NetworkMessage;
+    use dashcore::network::message_qrinfo::{QRInfo, QuorumSnapshot, MNSkipListMode};
+    use dashcore::network::message_sml::MnListDiff;
+    use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
+    use dashcore::sml::llmq_type::LLMQType;
+    use dashcore::BlockHash;
+
+    fn create_test_qr_info() -> QRInfo {
+        let create_snapshot = || QuorumSnapshot {
+            skip_list_mode: MNSkipListMode::NoSkipping,
+            active_quorum_members: vec![true; 10],
+            skip_list: vec![],
+        };
+
+        let create_diff = || MnListDiff {
+            base_block_hash: BlockHash::all_zeros(),
+            block_hash: BlockHash::all_zeros(),
+            cb_tx_merkle_tree: vec![],
+            cb_tx: None,
+            deleted_mns: vec![],
+            mn_list: vec![],
+            deleted_quorums: vec![],
+            new_quorums: vec![],
+        };
+
+        QRInfo {
+            quorum_snapshot_at_h_minus_c: create_snapshot(),
+            quorum_snapshot_at_h_minus_2c: create_snapshot(),
+            quorum_snapshot_at_h_minus_3c: create_snapshot(),
+            mn_list_diff_tip: create_diff(),
+            mn_list_diff_h: create_diff(),
+            mn_list_diff_at_h_minus_c: create_diff(),
+            mn_list_diff_at_h_minus_2c: create_diff(),
+            mn_list_diff_at_h_minus_3c: create_diff(),
+            quorum_snapshot_and_mn_list_diff_at_h_minus_4c: None,
+            last_commitment_per_index: vec![],
+            quorum_snapshot_list: vec![],
+            mn_list_diff_list: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_qrinfo_message() {
+        let mut handler = MessageHandler::new();
+        let qr_info = create_test_qr_info();
+        
+        let result = handler.handle_message(NetworkMessage::QRInfo(qr_info.clone())).await;
+        
+        match result {
+            MessageHandleResult::QRInfo(received) => {
+                assert_eq!(received.last_commitment_per_index.len(), qr_info.last_commitment_per_index.len());
+            }
+            _ => panic!("Expected QRInfo result"),
+        }
+        
+        // Check stats were updated
+        assert_eq!(handler.stats().qrinfo_messages, 1);
+        assert_eq!(handler.stats().messages_received, 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_get_qrinfo_message() {
+        use dashcore::network::message_qrinfo::GetQRInfo;
+        
+        let mut handler = MessageHandler::new();
+        let get_qr_info = GetQRInfo {
+            base_block_hashes: vec![BlockHash::all_zeros()],
+            block_request_hash: BlockHash::all_zeros(),
+            extra_share: true,
+        };
+        
+        let result = handler.handle_message(NetworkMessage::GetQRInfo(get_qr_info)).await;
+        
+        // Should be handled as unhandled since we don't serve QRInfo requests
+        match result {
+            MessageHandleResult::Unhandled(_) => {
+                // Expected behavior
+            }
+            _ => panic!("Expected Unhandled result for GetQRInfo"),
+        }
+        
+        // Check stats
+        assert_eq!(handler.stats().other_messages, 1);
+        assert_eq!(handler.stats().qrinfo_messages, 0);
+    }
+
+    #[test]
+    fn test_message_stats_qrinfo_field() {
+        let stats = crate::network::message_handler::MessageStats::default();
+        assert_eq!(stats.qrinfo_messages, 0);
+        
+        // Create new stats and verify all fields initialize to 0
+        let mut stats = crate::network::message_handler::MessageStats::default();
+        stats.qrinfo_messages = 5;
+        assert_eq!(stats.qrinfo_messages, 5);
+    }
+}
+
+#[cfg(test)]
 mod multi_peer_tests {
     use crate::client::ClientConfig;
     use crate::network::multi_peer::MultiPeerNetworkManager;
@@ -61,6 +162,11 @@ mod multi_peer_tests {
             blocks_request_rate_limit: None,
             start_from_height: None,
             wallet_creation_time: None,
+            // QRInfo fields
+            enable_qr_info: true,
+            qr_info_fallback: true,
+            qr_info_extra_share: true,
+            qr_info_timeout: Duration::from_secs(30),
         }
     }
 

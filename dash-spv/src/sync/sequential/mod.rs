@@ -506,6 +506,26 @@ impl SequentialSyncManager {
                 self.handle_post_sync_mnlistdiff(diff, network, storage).await?;
             }
 
+            // Handle QRInfo in masternode downloading phase
+            (
+                SyncPhase::DownloadingMnList {
+                    ..
+                },
+                NetworkMessage::QRInfo(qr_info),
+            ) => {
+                self.handle_qrinfo_message(qr_info, network, storage).await?;
+            }
+
+            // Handle QRInfo when fully synced
+            (
+                SyncPhase::FullySynced {
+                    ..
+                },
+                NetworkMessage::QRInfo(qr_info),
+            ) => {
+                self.handle_qrinfo_message(qr_info, network, storage).await?;
+            }
+
             _ => {
                 tracing::debug!("Message type not handled in current phase");
             }
@@ -790,6 +810,12 @@ impl SequentialSyncManager {
                 SyncPhase::DownloadingMnList {
                     ..
                 },
+                NetworkMessage::QRInfo(_),
+            ) => true, // Allow QRInfo during masternode sync
+            (
+                SyncPhase::DownloadingMnList {
+                    ..
+                },
                 NetworkMessage::Block(_),
             ) => true, // Allow blocks during masternode sync for DKG window checking
             (
@@ -841,6 +867,12 @@ impl SequentialSyncManager {
                 },
                 NetworkMessage::MnListDiff(_),
             ) => true,
+            (
+                SyncPhase::FullySynced {
+                    ..
+                },
+                NetworkMessage::QRInfo(_),
+            ) => true, // Allow QRInfo when fully synced
             _ => false,
         }
     }
@@ -1147,6 +1179,36 @@ impl SequentialSyncManager {
             }
         }
 
+        Ok(())
+    }
+
+    async fn handle_qrinfo_message(
+        &mut self,
+        qr_info: dashcore::network::message_qrinfo::QRInfo,
+        network: &mut dyn NetworkManager,
+        storage: &mut dyn StorageManager,
+    ) -> SyncResult<()> {
+        // Process QRInfo through masternode sync manager
+        self.masternode_sync.handle_qr_info(qr_info, storage).await?;
+        
+        // Update phase state
+        if let SyncPhase::DownloadingMnList {
+            current_height,
+            diffs_processed,
+            ..
+        } = &mut self.current_phase
+        {
+            // Update current height from storage
+            if let Ok(Some(state)) = storage.load_masternode_state().await {
+                *current_height = state.last_height;
+            }
+            *diffs_processed += 1;
+            self.current_phase.update_progress();
+            
+            // Note: QRInfo processing doesn't necessarily complete the phase
+            // as it may be one of many diffs/info messages needed
+        }
+        
         Ok(())
     }
 

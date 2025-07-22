@@ -3,6 +3,7 @@
 pub mod addrv2;
 pub mod connection;
 pub mod constants;
+pub mod correlation;
 pub mod discovery;
 pub mod handshake;
 pub mod message_handler;
@@ -23,6 +24,7 @@ use tokio::sync::mpsc;
 
 use crate::error::{NetworkError, NetworkResult};
 use dashcore::network::message::NetworkMessage;
+use dashcore::BlockHash;
 
 pub use connection::TcpConnection;
 pub use handshake::{HandshakeManager, HandshakeState};
@@ -111,6 +113,40 @@ pub trait NetworkManager: Send + Sync {
     /// Check if the current peer has sent us Headers2 messages.
     async fn peer_has_sent_headers2(&self) -> bool {
         false // Default implementation
+    }
+    
+    /// Request QRInfo from the network.
+    /// 
+    /// # Arguments
+    /// * `base_block_hashes` - Array of base block hashes for the masternode lists the light client already knows
+    /// * `block_request_hash` - Hash of the block for which the masternode list diff is requested
+    /// * `extra_share` - Optional flag to indicate if an extra share is requested
+    async fn request_qr_info(
+        &mut self,
+        base_block_hashes: Vec<BlockHash>,
+        block_request_hash: BlockHash,
+        extra_share: bool,
+    ) -> NetworkResult<()> {
+        use dashcore::network::message_qrinfo::GetQRInfo;
+        
+        let get_qr_info = GetQRInfo {
+            base_block_hashes: base_block_hashes.clone(),
+            block_request_hash,
+            extra_share,
+        };
+        
+        let base_hashes_count = get_qr_info.base_block_hashes.len();
+        
+        self.send_message(NetworkMessage::GetQRInfo(get_qr_info)).await?;
+        
+        tracing::debug!(
+            "Requested QRInfo with {} base hashes for block {}, extra_share={}",
+            base_hashes_count,
+            block_request_hash,
+            extra_share
+        );
+        
+        Ok(())
     }
 }
 
