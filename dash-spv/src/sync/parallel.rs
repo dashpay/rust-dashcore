@@ -13,7 +13,7 @@ use tokio::task::JoinSet;
 use tokio::time::timeout;
 
 use crate::error::{NetworkError, SyncError, SyncResult};
-use crate::network::NetworkManager;
+use crate::network::{NetworkManager, correlation::QRInfoCorrelationManager};
 use crate::sync::discovery::QRInfoRequest;
 
 /// Progress information for QRInfo synchronization.
@@ -49,6 +49,8 @@ pub struct ParallelQRInfoExecutor {
     request_timeout: Duration,
     /// Progress reporting channel.
     progress_tx: Option<mpsc::UnboundedSender<QRInfoSyncProgress>>,
+    /// Correlation manager for matching requests and responses.
+    correlation_manager: Arc<Mutex<QRInfoCorrelationManager>>,
 }
 
 impl ParallelQRInfoExecutor {
@@ -59,6 +61,7 @@ impl ParallelQRInfoExecutor {
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
             request_timeout,
             progress_tx: None,
+            correlation_manager: Arc::new(Mutex::new(QRInfoCorrelationManager::new())),
         }
     }
 
@@ -69,6 +72,11 @@ impl ParallelQRInfoExecutor {
     ) -> Self {
         self.progress_tx = Some(tx);
         self
+    }
+    
+    /// Get a reference to the correlation manager for handling responses.
+    pub fn correlation_manager(&self) -> Arc<Mutex<QRInfoCorrelationManager>> {
+        self.correlation_manager.clone()
     }
 
     /// Execute multiple QRInfo requests in parallel with controlled concurrency.
@@ -137,9 +145,12 @@ impl ParallelQRInfoExecutor {
                     }
 
                     // Wait for and process response
-                    // Note: In a real implementation, this would use the correlation manager
-                    // For now, we'll use a placeholder
-                    let qr_info = Self::wait_for_qr_info_response(&request).await?;
+                    let correlation_mgr = self.correlation_manager.clone();
+                    let qr_info = Self::wait_for_qr_info_response(
+                        correlation_mgr,
+                        &request,
+                        timeout_duration,
+                    ).await?;
 
                     {
                         let mut proc = processor.lock().await;
@@ -204,7 +215,7 @@ impl ParallelQRInfoExecutor {
                             request,
                             success: false,
                             processing_time: Instant::now(),
-                            error: Some(ParallelExecutionError::Timeout),
+                            error: Some(ParallelExecutionError::RequestTimeout),
                         }
                     }
                 }
@@ -243,13 +254,29 @@ impl ParallelQRInfoExecutor {
 
     /// Wait for QRInfo response for a specific request.
     async fn wait_for_qr_info_response(
-        _request: &QRInfoRequest,
+        correlation_manager: Arc<Mutex<QRInfoCorrelationManager>>,
+        request: &QRInfoRequest,
+        timeout_duration: Duration,
     ) -> Result<dashcore::network::message_qrinfo::QRInfo, ParallelExecutionError> {
-        // TODO: Implement QRInfo response correlation and waiting
-        // This will be implemented once the correlation manager is in place
-        Err(ParallelExecutionError::NotImplemented(
-            "QRInfo response correlation not yet implemented".to_string(),
-        ))
+        // Register the request and get the response receiver
+        let response_rx = {
+            let mut manager = correlation_manager.lock().await;
+            let (_request_id, rx) = manager.register_request(request.base_hash, request.tip_hash);
+            rx
+        };
+        
+        // Wait for the response with timeout
+        match timeout(timeout_duration, response_rx).await {
+            Ok(Ok(Ok(qr_info))) => Ok(qr_info),
+            Ok(Ok(Err(e))) => Err(ParallelExecutionError::CorrelationError(e.to_string())),
+            Ok(Err(_)) => Err(ParallelExecutionError::ChannelClosed),
+            Err(_) => {
+                // Timeout occurred, clean up expired requests
+                let mut manager = correlation_manager.lock().await;
+                manager.cleanup_expired_requests(timeout_duration);
+                Err(ParallelExecutionError::RequestTimeout)
+            }
+        }
     }
 
     fn estimate_remaining_time(completed: usize, total: usize, avg_time: Duration) -> Duration {
@@ -291,6 +318,12 @@ pub enum ParallelExecutionError {
     TaskError(String),
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+    #[error("Request timeout")]
+    RequestTimeout,
+    #[error("Correlation error: {0}")]
+    CorrelationError(String),
+    #[error("Channel closed")]
+    ChannelClosed,
 }
 
 impl From<NetworkError> for ParallelExecutionError {

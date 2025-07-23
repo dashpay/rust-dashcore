@@ -4,6 +4,7 @@
 //! Headers first, then filter headers, then filters on-demand
 
 pub mod batching;
+pub mod chainlock_validation;
 pub mod discovery;
 pub mod filters;
 pub mod headers;
@@ -17,6 +18,11 @@ pub mod sequential;
 pub mod state;
 pub mod terminal_block_data;
 pub mod terminal_blocks;
+pub mod validation;
+pub mod validation_state;
+
+#[cfg(test)]
+mod validation_test;
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};

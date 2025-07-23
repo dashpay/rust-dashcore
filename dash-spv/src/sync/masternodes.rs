@@ -32,6 +32,9 @@ use crate::storage::{MasternodeState, StorageManager};
 use crate::sync::terminal_blocks::TerminalBlockManager;
 use crate::sync::discovery::{MasternodeDiscoveryService, DiscoveryResult, QRInfoRequest};
 use crate::sync::batching::{QRInfoBatchingStrategy, NetworkConditions};
+use crate::sync::validation::{ValidationEngine, ValidationConfig, ValidationResult, ValidationSummary};
+use crate::sync::chainlock_validation::{ChainLockValidator, ChainLockValidationConfig};
+use crate::sync::validation_state::{ValidationStateManager, ValidationType};
 use std::time::Duration;
 
 /// Number of recent masternode lists to maintain individually.
@@ -100,6 +103,12 @@ pub struct MasternodeSyncManager {
     smart_requested_heights: HashSet<u32>,
     /// QRInfo timeout duration
     qr_info_timeout: Duration,
+    /// Validation engine for comprehensive validation
+    validation_engine: Option<ValidationEngine>,
+    /// Chain lock validator
+    chain_lock_validator: Option<ChainLockValidator>,
+    /// Validation state manager
+    validation_state: ValidationStateManager,
 }
 
 impl MasternodeSyncManager {
@@ -116,6 +125,19 @@ impl MasternodeSyncManager {
             None
         };
 
+        // Create validation components if validation is enabled
+        let (validation_engine, chain_lock_validator) = if config.validation_mode != crate::types::ValidationMode::None {
+            let validation_config = ValidationConfig::default();
+            let chain_lock_config = ChainLockValidationConfig::default();
+            
+            (
+                Some(ValidationEngine::new(validation_config)),
+                Some(ChainLockValidator::new(chain_lock_config)),
+            )
+        } else {
+            (None, None)
+        };
+        
         Self {
             config: config.clone(),
             sync_in_progress: false,
@@ -131,6 +153,9 @@ impl MasternodeSyncManager {
             dkg_fetch_state: None,
             smart_requested_heights: HashSet::new(),
             qr_info_timeout: Duration::from_secs(30),
+            validation_engine,
+            chain_lock_validator,
+            validation_state: ValidationStateManager::new(),
         }
     }
 
@@ -1921,6 +1946,52 @@ impl MasternodeSyncManager {
             qr_info.quorum_snapshot_list.len()
         );
         
+        // Create a snapshot before processing for potential rollback
+        let snapshot_id = Some(self.validation_state.create_snapshot("Before QRInfo processing"));
+        
+        // Perform comprehensive validation if enabled
+        if let Some(validation_engine) = &mut self.validation_engine {
+            // Get engine for validation
+            let engine = self.engine.as_ref().ok_or_else(|| {
+                SyncError::InvalidState("Masternode engine not initialized".to_string())
+            })?;
+            
+            let validation_result = validation_engine.validate_qr_info(&qr_info, engine)?;
+            
+            if !validation_result.success {
+                tracing::error!(
+                    "QRInfo validation failed with {} errors",
+                    validation_result.errors.len()
+                );
+                
+                // Record validation failures
+                for error in &validation_result.errors {
+                    self.validation_state.record_validation_failure(
+                        0, // Use 0 as we don't have a specific height
+                        ValidationType::QRInfo,
+                        error.to_string(),
+                        true, // QRInfo failures are recoverable
+                    );
+                }
+                
+                // Rollback state
+                if let Some(snap_id) = snapshot_id {
+                    self.validation_state.rollback_to_snapshot(snap_id)?;
+                }
+                
+                return Err(SyncError::Validation(format!(
+                    "QRInfo validation failed: {} errors",
+                    validation_result.errors.len()
+                )));
+            }
+            
+            tracing::info!(
+                "QRInfo validation successful: {} items validated in {:?}",
+                validation_result.items_validated,
+                validation_result.duration
+            );
+        }
+        
         // Get engine or return early
         let engine = self.engine.as_mut().ok_or_else(|| {
             SyncError::InvalidState("Masternode engine not initialized".to_string())
@@ -1935,6 +2006,11 @@ impl MasternodeSyncManager {
             true,  // verify_rotated_quorums  
             None   // No block height fetcher - engine should have the heights it needs
         ).map_err(|e| SyncError::Validation(format!("QRInfo processing failed: {}", e)))?;
+        
+        // Mark validation as complete
+        if self.validation_engine.is_some() {
+            self.validation_state.complete_validation(0);
+        }
         
         tracing::info!("Successfully processed QRInfo");
         Ok(())
@@ -2276,6 +2352,53 @@ impl MasternodeSyncManager {
         } else {
             self.estimate_sync_time(missing)
         }
+    }
+    
+    /// Get validation summary for reporting.
+    pub fn get_validation_summary(&self) -> Option<ValidationSummary> {
+        self.validation_engine.as_ref().map(|engine| ValidationSummary::from_engine(engine))
+    }
+    
+    /// Enable or disable validation.
+    pub fn set_validation_enabled(&mut self, enabled: bool) {
+        if enabled && self.validation_engine.is_none() {
+            // Create validation components
+            let validation_config = ValidationConfig::default();
+            let chain_lock_config = ChainLockValidationConfig::default();
+            
+            self.validation_engine = Some(ValidationEngine::new(validation_config));
+            self.chain_lock_validator = Some(ChainLockValidator::new(chain_lock_config));
+        } else if !enabled {
+            // Disable validation
+            self.validation_engine = None;
+            self.chain_lock_validator = None;
+        }
+    }
+    
+    /// Validate chain locks for a range of heights.
+    pub async fn validate_chain_locks(
+        &mut self,
+        start_height: u32,
+        end_height: u32,
+        storage: &dyn StorageManager,
+    ) -> SyncResult<Vec<crate::sync::chainlock_validation::ChainLockValidationResult>> {
+        if let Some(validator) = &mut self.chain_lock_validator {
+            let engine = self.engine.as_ref().ok_or_else(|| {
+                SyncError::InvalidState("Masternode engine not initialized".to_string())
+            })?;
+            
+            validator.validate_historical_chain_locks(start_height, end_height, engine, storage).await
+        } else {
+            Ok(Vec::new())
+        }
+    }
+    
+    /// Reset validation state and error counts.
+    pub fn reset_validation_state(&mut self) {
+        if let Some(engine) = &mut self.validation_engine {
+            engine.reset_error_count();
+        }
+        self.validation_state = ValidationStateManager::new();
     }
 }
 

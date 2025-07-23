@@ -4,7 +4,7 @@
 //! network condition adaptation, and retry with exponential backoff.
 
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -323,6 +323,9 @@ impl RateLimiter {
 struct NetworkConditionMonitor {
     last_measurement: Arc<Mutex<Option<(NetworkConditions, Instant)>>>,
     measurement_interval: Duration,
+    recent_latencies: Arc<Mutex<VecDeque<Duration>>>,
+    recent_failures: Arc<AtomicUsize>,
+    total_requests: Arc<AtomicUsize>,
 }
 
 impl NetworkConditionMonitor {
@@ -330,6 +333,9 @@ impl NetworkConditionMonitor {
         Self {
             last_measurement: Arc::new(Mutex::new(None)),
             measurement_interval: Duration::from_secs(30),
+            recent_latencies: Arc::new(Mutex::new(VecDeque::with_capacity(100))),
+            recent_failures: Arc::new(AtomicUsize::new(0)),
+            total_requests: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -349,13 +355,54 @@ impl NetworkConditionMonitor {
     }
 
     async fn measure_network_conditions(&self) -> NetworkConditions {
-        // TODO: Implement actual network condition measurement
-        // For now, return optimal conditions
+        // Calculate average latency from recent requests
+        let avg_latency = {
+            let latencies = self.recent_latencies.lock().await;
+            if latencies.is_empty() {
+                Duration::from_millis(100) // Default estimate
+            } else {
+                let sum: Duration = latencies.iter().sum();
+                sum / latencies.len() as u32
+            }
+        };
+        
+        // Calculate failure rate
+        let total = self.total_requests.load(Ordering::Relaxed);
+        let failures = self.recent_failures.load(Ordering::Relaxed);
+        let failure_rate = if total > 0 {
+            failures as f32 / total as f32
+        } else {
+            0.0
+        };
+        
+        // Determine network conditions based on metrics
         NetworkConditions {
-            high_latency: false,
-            low_bandwidth: false,
-            unstable_connection: false,
+            high_latency: avg_latency > Duration::from_secs(2),
+            low_bandwidth: avg_latency > Duration::from_secs(5), // Very high latency suggests bandwidth issues
+            unstable_connection: failure_rate > 0.1, // More than 10% failure rate
         }
+    }
+    
+    /// Record a successful request with its latency.
+    pub async fn record_success(&self, latency: Duration) {
+        let mut latencies = self.recent_latencies.lock().await;
+        latencies.push_back(latency);
+        if latencies.len() > 100 {
+            latencies.pop_front();
+        }
+        self.total_requests.fetch_add(1, Ordering::Relaxed);
+    }
+    
+    /// Record a failed request.
+    pub fn record_failure(&self) {
+        self.recent_failures.fetch_add(1, Ordering::Relaxed);
+        self.total_requests.fetch_add(1, Ordering::Relaxed);
+    }
+    
+    /// Reset statistics periodically to keep them fresh.
+    pub fn reset_statistics(&self) {
+        self.recent_failures.store(0, Ordering::Relaxed);
+        self.total_requests.store(0, Ordering::Relaxed);
     }
 }
 

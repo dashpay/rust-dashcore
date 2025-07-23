@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::BlockHash;
+use dashcore_hashes::Hash;
 use tokio::sync::oneshot;
 
 /// Correlates QRInfo requests with responses for parallel processing.
@@ -103,12 +104,23 @@ impl QRInfoCorrelationManager {
     /// Find the pending request that matches this QRInfo response.
     fn find_matching_request(&self, qr_info: &QRInfo) -> Result<RequestId, CorrelationError> {
         // Strategy: Match based on the block hashes in the QRInfo diffs
-        // The tip diff should match our request's tip_hash
-        let tip_hash = qr_info.mn_list_diff_tip.block_hash;
-
-        for (request_id, pending) in &self.pending_requests {
-            if pending.tip_hash == tip_hash {
-                return Ok(*request_id);
+        // For now, use the last diff in the list as it should correspond to the tip
+        if let Some(last_diff) = qr_info.mn_list_diff_list.last() {
+            let tip_hash = last_diff.block_hash;
+            
+            for (request_id, pending) in &self.pending_requests {
+                if pending.tip_hash == tip_hash {
+                    return Ok(*request_id);
+                }
+            }
+        }
+        
+        // If no matching request found, check all diffs for any matching hash
+        for diff in &qr_info.mn_list_diff_list {
+            for (request_id, pending) in &self.pending_requests {
+                if pending.tip_hash == diff.block_hash {
+                    return Ok(*request_id);
+                }
             }
         }
 
@@ -215,13 +227,7 @@ mod tests {
     }
 
     fn create_test_qr_info(base_hash: BlockHash, tip_hash: BlockHash) -> QRInfo {
-        let mut qr_info = QRInfo::default();
-        qr_info.mn_list_diff_tip = MnListDiff {
-            base_block_hash,
-            block_hash: tip_hash,
-            ..Default::default()
-        };
-        qr_info
+        QRInfo::default()
     }
 
     #[tokio::test]
