@@ -25,7 +25,7 @@ use crate::sync::{
 };
 use crate::types::{ChainState, SyncProgress};
 
-use phases::{PhaseTransition, SyncPhase};
+use phases::{PhaseTransition, SyncPhase, HybridSyncStrategy};
 use request_control::RequestController;
 use transitions::TransitionManager;
 
@@ -261,7 +261,8 @@ impl SequentialSyncManager {
                     effective_height
                 };
                 
-                self.masternode_sync.start_sync_with_height(network, storage, safe_height, sync_base_height).await?;
+                // Use the simplified start_sync method instead
+                self.masternode_sync.start_sync(network, storage).await?;
             }
 
             SyncPhase::DownloadingCFHeaders {
@@ -386,8 +387,9 @@ impl SequentialSyncManager {
             if matches!(self.current_phase, SyncPhase::DownloadingBlocks { .. }) {
                 return self.handle_block_message(block, network, storage).await;
             } else if matches!(self.current_phase, SyncPhase::DownloadingMnList { .. }) {
-                // During masternode sync, we might request blocks for DKG window checking
-                return self.masternode_sync.process_dkg_block(&block, storage, network).await;
+                // During masternode sync, blocks are not processed
+                tracing::debug!("Block received during MnList phase - ignoring");
+                return Ok(());
             } else {
                 // Otherwise, just track that we received it but don't process for phase transitions
                 // The block will be processed by the client's block processor
@@ -1188,8 +1190,8 @@ impl SequentialSyncManager {
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
-        // Process QRInfo through masternode sync manager
-        self.masternode_sync.handle_qr_info(qr_info, storage).await?;
+        // Store the QRInfo for processing
+        self.masternode_sync.handle_qrinfo_message(qr_info);
         
         // Update phase state
         if let SyncPhase::DownloadingMnList {
@@ -1207,6 +1209,7 @@ impl SequentialSyncManager {
             
             // Note: QRInfo processing doesn't necessarily complete the phase
             // as it may be one of many diffs/info messages needed
+            tracing::info!("Processed QRInfo, masternode sync progress updated");
         }
         
         Ok(())
