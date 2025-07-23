@@ -291,7 +291,7 @@ impl ValidationEngine {
     fn perform_mn_list_diff_validation(
         &self,
         diff: &MnListDiff,
-        engine: &MasternodeListEngine,
+        _engine: &MasternodeListEngine,
     ) -> SyncResult<bool> {
         // Check if we have the base list
         // Note: We can't check by height as MnListDiff doesn't contain block height
@@ -418,26 +418,26 @@ impl ValidationEngine {
         _engine: &MasternodeListEngine,
     ) -> SyncResult<bool> {
         // Verify basic quorum properties
-        if entry.llmq_type != *quorum_type {
+        if entry.quorum_entry.llmq_type != *quorum_type {
             tracing::warn!(
                 "Quorum type mismatch: expected {:?}, got {:?}",
                 quorum_type,
-                entry.llmq_type
+                entry.quorum_entry.llmq_type
             );
             return Ok(false);
         }
         
-        if entry.quorum_hash != *quorum_hash {
+        if entry.quorum_entry.quorum_hash != *quorum_hash {
             tracing::warn!(
                 "Quorum hash mismatch: expected {:x}, got {:x}",
                 quorum_hash,
-                entry.quorum_hash
+                entry.quorum_entry.quorum_hash
             );
             return Ok(false);
         }
         
         // Check if the quorum public key is valid (non-zero)
-        if entry.quorum_public_key.is_zeroed() {
+        if entry.quorum_entry.quorum_public_key.is_zeroed() {
             tracing::warn!(
                 "Invalid quorum public key (all zeros) for quorum {:x}",
                 quorum_hash

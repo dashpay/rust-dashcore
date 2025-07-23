@@ -108,6 +108,7 @@ impl ParallelQRInfoExecutor {
             let completed = completed.clone();
             let progress_tx = self.progress_tx.clone();
             let timeout_duration = self.request_timeout;
+            let correlation_manager = self.correlation_manager.clone();
 
             let task = async move {
                 // Acquire semaphore permit for concurrency control
@@ -145,9 +146,8 @@ impl ParallelQRInfoExecutor {
                     }
 
                     // Wait for and process response
-                    let correlation_mgr = self.correlation_manager.clone();
                     let qr_info = Self::wait_for_qr_info_response(
-                        correlation_mgr,
+                        correlation_manager,
                         &request,
                         timeout_duration,
                     ).await?;

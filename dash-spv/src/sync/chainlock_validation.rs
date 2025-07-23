@@ -218,7 +218,7 @@ impl ChainLockValidator {
                     // Get the most recent quorum
                     if let Some((quorum_hash, entry)) = quorums.iter().next() {
                         // Get public key from the quorum entry
-                        return Ok(Some((*quorum_hash, entry.quorum_public_key)));
+                        return Ok(Some((*quorum_hash, entry.quorum_entry.quorum_public_key)));
                     }
                 }
             }
