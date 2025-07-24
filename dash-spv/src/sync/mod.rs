@@ -3,7 +3,6 @@
 //! This module provides sequential sync strategy:
 //! Headers first, then filter headers, then filters on-demand
 
-pub mod batching;
 pub mod chainlock_validation;
 pub mod discovery;
 pub mod filters;
@@ -12,9 +11,6 @@ pub mod headers2_state;
 pub mod headers_with_reorg;
 pub mod masternodes_old;
 pub mod masternodes;
-pub mod parallel;
-pub mod recovery;
-pub mod scheduler;
 pub mod sequential;
 pub mod state;
 pub mod terminal_block_data;

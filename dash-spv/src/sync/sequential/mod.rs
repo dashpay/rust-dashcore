@@ -261,8 +261,16 @@ impl SequentialSyncManager {
                     effective_height
                 };
                 
-                // Use the simplified start_sync method instead
-                self.masternode_sync.start_sync(network, storage).await?;
+                // Start masternode sync (unified processing)
+                match self.masternode_sync.start_sync(network, storage).await {
+                    Ok(_) => {
+                        tracing::info!("🚀 Masternode sync initiated successfully, will complete when QRInfo arrives");
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Failed to start masternode sync: {}", e);
+                        return Err(e);
+                    }
+                }
             }
 
             SyncPhase::DownloadingCFHeaders {
@@ -1190,10 +1198,22 @@ impl SequentialSyncManager {
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
-        // Store the QRInfo for processing
-        self.masternode_sync.handle_qrinfo_message(qr_info);
+        tracing::info!("🔄 Sequential sync manager handling QRInfo message (unified processing)");
+
+        // Get sync base height for height conversion
+        let sync_base_height = self.header_sync.get_sync_base_height();
+        tracing::debug!("Using sync_base_height={} for masternode validation height conversion", sync_base_height);
+
+        // Process QRInfo with full block height feeding and comprehensive processing
+        self.masternode_sync.handle_qrinfo_message(qr_info.clone(), storage, network, sync_base_height).await;
         
-        // Update phase state
+        // Check if QRInfo processing completed successfully
+        if let Some(error) = self.masternode_sync.last_error() {
+            tracing::error!("❌ QRInfo processing failed: {}", error);
+            return Err(SyncError::Validation(error.to_string()));
+        }
+
+        // Update phase state - QRInfo processing should complete the masternode sync phase
         if let SyncPhase::DownloadingMnList {
             current_height,
             diffs_processed,
@@ -1207,9 +1227,10 @@ impl SequentialSyncManager {
             *diffs_processed += 1;
             self.current_phase.update_progress();
             
-            // Note: QRInfo processing doesn't necessarily complete the phase
-            // as it may be one of many diffs/info messages needed
-            tracing::info!("Processed QRInfo, masternode sync progress updated");
+            tracing::info!("✅ QRInfo processing completed, masternode sync phase finished");
+
+            // Transition to next phase (filter headers)
+            self.transition_to_next_phase(storage, network, "QRInfo processing completed").await?;
         }
         
         Ok(())
@@ -1951,32 +1972,20 @@ impl SequentialSyncManager {
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
-        // Get block heights for better logging
-        let base_storage_height = storage
+        // Get block heights for better logging (get_header_height_by_hash returns blockchain heights)
+        let base_blockchain_height = storage
             .get_header_height_by_hash(&diff.base_block_hash)
             .await
             .ok()
             .flatten();
-        let target_storage_height = storage
+        let target_blockchain_height = storage
             .get_header_height_by_hash(&diff.block_hash)
             .await
             .ok()
             .flatten();
 
-        // Convert storage heights to blockchain heights if syncing from checkpoint
+        // Get chain state for masternode height conversion (used later)
         let chain_state = self.header_sync.get_chain_state();
-        let convert_height = |storage_height: Option<u32>| -> Option<u32> {
-            storage_height.map(|h| {
-                if chain_state.synced_from_checkpoint && chain_state.sync_base_height > 0 {
-                    chain_state.sync_base_height + h
-                } else {
-                    h
-                }
-            })
-        };
-
-        let base_blockchain_height = convert_height(base_storage_height);
-        let target_blockchain_height = convert_height(target_storage_height);
 
         tracing::info!(
             "📥 Processing post-sync masternode diff for block {} at height {:?} (base: {} at height {:?})",
