@@ -3,7 +3,6 @@
 pub mod addrv2;
 pub mod connection;
 pub mod constants;
-pub mod correlation;
 pub mod discovery;
 pub mod handshake;
 pub mod message_handler;
