@@ -220,9 +220,9 @@ impl HeaderSyncManager {
 
         let timeout_duration = if network.peer_count() == 0 {
             // More aggressive timeout when no peers
-            std::time::Duration::from_secs(5)
+            std::time::Duration::from_secs(10)
         } else {
-            std::time::Duration::from_millis(500)
+            std::time::Duration::from_secs(5)
         };
 
         if self.last_sync_progress.elapsed() > timeout_duration {

@@ -545,7 +545,7 @@ impl HeaderSyncManagerWithReorg {
                     // For checkpoint sync, only include the checkpoint hash
                     // Including genesis would allow peers to fall back to sending headers from genesis
                     // if they don't recognize the checkpoint, which is exactly what we want to avoid
-                    tracing::info!(
+                    tracing::debug!(
                         "📍 Using checkpoint-only locator for height {}: [{}]",
                         self.chain_state.sync_base_height,
                         hash
@@ -937,9 +937,9 @@ impl HeaderSyncManagerWithReorg {
 
         let timeout_duration = if network.peer_count() == 0 {
             // More aggressive timeout when no peers
-            std::time::Duration::from_secs(5)
+            std::time::Duration::from_secs(10)
         } else {
-            std::time::Duration::from_millis(500)
+            std::time::Duration::from_secs(5)
         };
 
         if self.last_sync_progress.elapsed() > timeout_duration {
