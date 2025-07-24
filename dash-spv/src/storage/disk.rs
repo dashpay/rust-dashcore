@@ -1285,6 +1285,9 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
+        // TODO: This method currently expects storage-relative heights (0-based from sync_base_height).
+        // Consider refactoring to accept blockchain heights and handle conversion internally for better UX.
+
         // First check if this height is within our known range
         let tip_height = self.cached_tip_height.read().await;
         if let Some(tip) = *tip_height {
