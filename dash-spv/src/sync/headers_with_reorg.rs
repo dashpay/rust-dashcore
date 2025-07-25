@@ -410,7 +410,21 @@ impl HeaderSyncManagerWithReorg {
                     headers_processed += 1;
                 }
                 HeaderProcessResult::Orphan => {
-                    tracing::debug!("Orphan header received: {}", header.block_hash());
+                    tracing::warn!("⚠️ Orphan header received: {} with prev_hash: {}", 
+                        header.block_hash(), header.prev_blockhash);
+                    // Log more details about why it's an orphan
+                    if let Some(tip) = self.chain_state.get_tip_header() {
+                        tracing::warn!("  Current tip: {} at height {}", 
+                            tip.block_hash(), self.chain_state.get_height());
+                    }
+                    // Check if the parent exists in storage
+                    if let Ok(parent_height) = storage.get_header_height_by_hash(&header.prev_blockhash).await {
+                        if let Some(height) = parent_height {
+                            tracing::warn!("  Parent header EXISTS in storage at height {}", height);
+                        } else {
+                            tracing::warn!("  Parent header NOT FOUND in storage");
+                        }
+                    }
                     // Don't count orphans as processed
                 }
                 HeaderProcessResult::TriggeredReorg(depth) => {
@@ -424,12 +438,31 @@ impl HeaderSyncManagerWithReorg {
         self.check_for_reorg(storage).await?;
 
         // Log summary of what was processed
+        let skipped = headers.len() - headers_processed as usize;
         tracing::info!(
             "📊 Header batch processing complete: {} processed, {} skipped out of {} total",
             headers_processed,
-            headers.len() - headers_processed as usize,
+            skipped,
             headers.len()
         );
+        
+        // If headers were skipped, log more details
+        if skipped > 0 {
+            if let Some(last_processed) = self.chain_state.get_tip_header() {
+                tracing::info!("  Last processed header: {} at height {}", 
+                    last_processed.block_hash(), self.chain_state.get_height());
+            }
+            // Check storage for the last header in the batch
+            if let Some(last_header) = headers.last() {
+                if let Ok(Some(height)) = storage.get_header_height_by_hash(&last_header.block_hash()).await {
+                    tracing::info!("  Last header in batch {} IS in storage at height {}", 
+                        last_header.block_hash(), height);
+                } else {
+                    tracing::info!("  Last header in batch {} is NOT in storage", 
+                        last_header.block_hash());
+                }
+            }
+        }
 
         // Check if we made progress
         if headers_processed == 0 && !headers.is_empty() {
@@ -465,7 +498,40 @@ impl HeaderSyncManagerWithReorg {
         if self.syncing_headers {
             // During sync mode - request next batch
             if let Some(tip) = self.chain_state.get_tip_header() {
-                self.request_headers(network, Some(tip.block_hash())).await?;
+                // Add retry logic for network failures
+                let mut retry_count = 0;
+                const MAX_RETRIES: u32 = 3;
+                const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+                
+                loop {
+                    match self.request_headers(network, Some(tip.block_hash())).await {
+                        Ok(_) => break,
+                        Err(e) => {
+                            retry_count += 1;
+                            tracing::warn!(
+                                "⚠️ Failed to request headers (attempt {}/{}): {}",
+                                retry_count, MAX_RETRIES, e
+                            );
+                            
+                            if retry_count >= MAX_RETRIES {
+                                tracing::error!(
+                                    "❌ Failed to request headers after {} attempts",
+                                    MAX_RETRIES
+                                );
+                                return Err(e);
+                            }
+                            
+                            // Check if we have any connected peers
+                            if network.peer_count() == 0 {
+                                tracing::warn!("No connected peers, waiting for connections...");
+                                // Wait a bit longer when no peers
+                                tokio::time::sleep(RETRY_DELAY * 2).await;
+                            } else {
+                                tokio::time::sleep(RETRY_DELAY).await;
+                            }
+                        }
+                    }
+                }
             }
         }
 
