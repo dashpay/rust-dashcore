@@ -47,6 +47,8 @@ pub struct MasternodeSyncManager {
     pending_individual_diffs: Option<(u32, u32)>,
     /// Sync base height (when syncing from checkpoint)
     sync_base_height: u32,
+    /// Track if we're retrying from genesis to ignore stale diffs
+    retrying_from_genesis: bool,
 }
 
 impl MasternodeSyncManager {
@@ -74,6 +76,7 @@ impl MasternodeSyncManager {
             bulk_diff_target_height: None,
             pending_individual_diffs: None,
             sync_base_height: 0,
+            retrying_from_genesis: false,
         }
     }
 
@@ -205,6 +208,22 @@ impl MasternodeSyncManager {
             );
             return Ok(true);
         }
+        
+        // Check if we should ignore this diff due to retry
+        if self.retrying_from_genesis {
+            // Only process genesis diffs when retrying
+            let genesis_hash = self.config.network.known_genesis_block_hash()
+                .unwrap_or_else(BlockHash::all_zeros);
+            if diff.base_block_hash != genesis_hash {
+                tracing::debug!(
+                    "Ignoring non-genesis diff while retrying from genesis: base_block_hash={}",
+                    diff.base_block_hash
+                );
+                return Ok(true);
+            }
+            // This is the genesis diff we're waiting for
+            self.retrying_from_genesis = false;
+        }
 
         self.last_sync_progress = std::time::Instant::now();
 
@@ -219,10 +238,11 @@ impl MasternodeSyncManager {
                 // Reset sync state but keep in progress
                 self.last_sync_progress = std::time::Instant::now();
                 // Reset counters since we're starting over
-                self.expected_diffs_count = 0;
                 self.received_diffs_count = 0;
                 self.bulk_diff_target_height = None;
                 self.pending_individual_diffs = None;
+                // Mark that we're retrying from genesis
+                self.retrying_from_genesis = true;
 
                 // Get current height again
                 let current_height = storage
@@ -411,6 +431,7 @@ impl MasternodeSyncManager {
         self.received_diffs_count = 0;
         self.bulk_diff_target_height = None;
         self.pending_individual_diffs = None;
+        self.retrying_from_genesis = false;
 
         // Check if we can use a terminal block as a base for optimization
         let base_height = if last_masternode_height > 0 {
@@ -514,6 +535,7 @@ impl MasternodeSyncManager {
         self.received_diffs_count = 0;
         self.bulk_diff_target_height = None;
         self.pending_individual_diffs = None;
+        self.retrying_from_genesis = false;
 
         // Check if we can use a terminal block as a base for optimization
         let base_height = if last_masternode_height > 0 {
@@ -1388,6 +1410,7 @@ impl MasternodeSyncManager {
         self.received_diffs_count = 0;
         self.bulk_diff_target_height = None;
         self.pending_individual_diffs = None;
+        self.retrying_from_genesis = false;
         if let Some(_engine) = &mut self.engine {
             // TODO: Reset engine state if needed
         }
