@@ -454,12 +454,10 @@ impl HeaderSyncManagerWithReorg {
             }
         }
         
-        // Additional check: if we received fewer headers than expected, we might be at the tip
-        if headers.len() < 2000 && headers_processed == 0 {
-            tracing::info!(
-                "📊 Received partial batch ({} headers) with no new headers. Likely at chain tip.",
-                headers.len()
-            );
+        // Check if we're truly at the tip by verifying we received an empty response
+        // Don't stop sync just because headers were skipped - they might be in chain state but peers have more
+        if headers.is_empty() {
+            tracing::info!("📊 Received empty headers response. Chain sync complete.");
             self.syncing_headers = false;
             return Ok(false);
         }
@@ -811,11 +809,19 @@ impl HeaderSyncManagerWithReorg {
             }
         } else {
             tracing::info!("📤 Sending GetHeaders message (uncompressed headers)");
-            // Send regular GetHeaders message
-            network
-                .send_message(NetworkMessage::GetHeaders(getheaders_msg))
-                .await
-                .map_err(|e| SyncError::Network(format!("Failed to send GetHeaders: {}", e)))?;
+            tracing::debug!("About to call network.send_message with GetHeaders");
+            
+            // Just send it normally - the real fix needs to be architectural
+            let msg = NetworkMessage::GetHeaders(getheaders_msg);
+            match network.send_message(msg).await {
+                Ok(_) => {
+                    tracing::info!("✅ GetHeaders message sent successfully");
+                }
+                Err(e) => {
+                    tracing::error!("❌ Failed to send GetHeaders message: {}", e);
+                    return Err(SyncError::Network(format!("Failed to send GetHeaders: {}", e)));
+                }
+            }
         }
 
         Ok(())

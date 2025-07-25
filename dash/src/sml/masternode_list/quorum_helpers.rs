@@ -95,7 +95,33 @@ impl MasternodeList {
         llmq_type: LLMQType,
         quorum_hash: QuorumHash,
     ) -> Option<&QualifiedQuorumEntry> {
-        self.quorums.get(&llmq_type)?.get(&quorum_hash)
+        // Debug logging to see all stored hashes for this quorum type
+        if let Some(quorums_of_type) = self.quorums.get(&llmq_type) {
+            tracing::debug!(
+                "Looking for quorum hash {} in {} quorums of type {:?}",
+                quorum_hash,
+                quorums_of_type.len(),
+                llmq_type
+            );
+            
+            // Log all stored hashes for comparison
+            for (stored_hash, _) in quorums_of_type {
+                tracing::debug!(
+                    "  Stored quorum hash: {} (matches: {})",
+                    stored_hash,
+                    stored_hash == &quorum_hash
+                );
+            }
+            
+            quorums_of_type.get(&quorum_hash)
+        } else {
+            tracing::debug!(
+                "No quorums found for type {:?} (available types: {:?})",
+                llmq_type,
+                self.quorums.keys().collect::<Vec<_>>()
+            );
+            None
+        }
     }
 
     /// Retrieves a mutable reference to a quorum entry of a specific type for a given quorum hash.
