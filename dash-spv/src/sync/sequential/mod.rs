@@ -121,7 +121,7 @@ impl SequentialSyncManager {
     /// Start the sequential sync process
     pub async fn start_sync(
         &mut self,
-        _network: &mut dyn NetworkManager,
+        network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<bool> {
         if self.current_phase.is_syncing() {
@@ -131,6 +131,56 @@ impl SequentialSyncManager {
         tracing::info!("🚀 Starting sequential sync process");
         tracing::info!("📊 Current phase: {}", self.current_phase.name());
         self.sync_start_time = Some(Instant::now());
+
+        // Check if we actually need to sync more headers
+        let current_height = self.header_sync.get_chain_height();
+        let peer_best_height = network.get_peer_best_height().await
+            .map_err(|e| SyncError::Network(format!("Failed to get peer height: {}", e)))?
+            .unwrap_or(current_height);
+        
+        tracing::info!(
+            "🔍 Checking sync status - current height: {}, peer best height: {}",
+            current_height,
+            peer_best_height
+        );
+        
+        // If we're already synced to peer height and have headers, transition directly to FullySynced
+        if current_height >= peer_best_height && current_height > 0 {
+            tracing::info!(
+                "✅ Already synced to peer height {} - transitioning directly to FullySynced",
+                current_height
+            );
+            
+            // Calculate sync stats for already-synced state
+            let headers_synced = current_height;
+            let filters_synced = storage.get_filter_tip_height().await
+                .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?
+                .unwrap_or(0);
+            
+            self.current_phase = SyncPhase::FullySynced {
+                sync_completed_at: Instant::now(),
+                total_sync_time: Duration::from_secs(0), // No actual sync time since we were already synced
+                headers_synced,
+                filters_synced,
+                blocks_downloaded: 0,
+            };
+            
+            tracing::info!(
+                "🎉 Sync state updated to FullySynced (headers: {}, filters: {})",
+                headers_synced,
+                filters_synced
+            );
+            
+            return Ok(true);
+        }
+
+        // We need to sync more headers, proceed with normal sync
+        tracing::info!(
+            "📥 Need to sync {} more headers from {} to {}",
+            peer_best_height.saturating_sub(current_height),
+            current_height,
+            peer_best_height
+        );
 
         // Transition from Idle to first phase
         self.transition_to_next_phase(storage, "Starting sync").await?;
@@ -148,6 +198,12 @@ impl SequentialSyncManager {
                 // Prepare the header sync without sending requests
                 let base_hash = self.header_sync.prepare_sync(storage).await?;
                 tracing::debug!("Starting from base hash: {:?}", base_hash);
+                
+                // Ensure the header sync knows it needs to continue syncing
+                if peer_best_height > current_height {
+                    tracing::info!("📡 Header sync needs to fetch {} more headers", peer_best_height - current_height);
+                    // The header sync manager's syncing_headers flag is already set by prepare_sync
+                }
             }
             _ => {
                 // If we're not in headers phase, something is wrong
@@ -178,8 +234,15 @@ impl SequentialSyncManager {
 
                     // Request headers starting from our current tip
                     tracing::info!("📤 [DEBUG] Sequential sync requesting headers with base_hash: {:?}", base_hash);
-                    self.header_sync.request_headers(network, base_hash).await?;
-                    tracing::info!("✅ [DEBUG] Header request sent successfully");
+                    match self.header_sync.request_headers(network, base_hash).await {
+                        Ok(_) => {
+                            tracing::info!("✅ [DEBUG] Header request sent successfully");
+                        }
+                        Err(e) => {
+                            tracing::error!("❌ [DEBUG] Failed to request headers: {}", e);
+                            return Err(e);
+                        }
+                    }
                 } else {
                     // Otherwise start sync normally
                     self.header_sync.start_sync(network, storage).await?;

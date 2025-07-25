@@ -1188,3 +1188,83 @@ impl MempoolState {
         self.pending_balance + self.pending_instant_balance
     }
 }
+
+/// Network and sync events emitted by the SPV client during operation
+#[derive(Debug, Clone)]
+pub enum NetworkEvent {
+    // Network events
+    PeerConnected { 
+        address: std::net::SocketAddr, 
+        height: Option<u32>,
+        version: u32,
+    },
+    PeerDisconnected { 
+        address: std::net::SocketAddr 
+    },
+    
+    // Sync events
+    SyncStarted {
+        starting_height: u32,
+        target_height: Option<u32>,
+    },
+    HeadersReceived { 
+        count: usize, 
+        tip_height: u32,
+        progress_percent: f64,
+    },
+    FilterHeadersReceived {
+        count: usize,
+        tip_height: u32,
+    },
+    SyncProgress { 
+        headers: u32, 
+        filter_headers: u32,
+        filters: u32,
+        progress_percent: f64,
+    },
+    SyncCompleted {
+        final_height: u32,
+    },
+    
+    // Chain events
+    NewChainLock { 
+        height: u32, 
+        block_hash: dashcore::BlockHash,
+    },
+    NewBlock { 
+        height: u32, 
+        block_hash: dashcore::BlockHash,
+        matched_addresses: Vec<dashcore::Address>,
+    },
+    InstantLock {
+        txid: dashcore::Txid,
+    },
+    
+    // Masternode events
+    MasternodeListUpdated {
+        height: u32,
+        masternode_count: usize,
+    },
+    
+    // Wallet events
+    AddressMatch {
+        address: dashcore::Address,
+        txid: dashcore::Txid,
+        amount: u64,
+        is_spent: bool,
+    },
+    
+    // Error events
+    NetworkError {
+        peer: Option<std::net::SocketAddr>,
+        error: String,
+    },
+    SyncError {
+        phase: String,
+        error: String,
+    },
+    ValidationError {
+        height: u32,
+        error: String,
+    },
+}
