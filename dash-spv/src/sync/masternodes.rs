@@ -241,7 +241,7 @@ impl MasternodeSyncManager {
                     "Requesting fallback masternode diffs from genesis to height {}",
                     current_height
                 );
-                self.request_masternode_diffs_for_chainlock_validation(network, storage, 0, current_height).await?;
+                self.request_masternode_diffs_for_chainlock_validation_with_base(network, storage, 0, current_height, self.sync_base_height).await?;
 
                 // Return true to continue waiting for the new response
                 return Ok(true);
@@ -343,7 +343,7 @@ impl MasternodeSyncManager {
                     None => 0,
                 };
 
-            self.request_masternode_diffs_for_chainlock_validation(network, storage, last_masternode_height, current_height)
+            self.request_masternode_diffs_for_chainlock_validation_with_base(network, storage, last_masternode_height, current_height, self.sync_base_height)
                 .await?;
             self.last_sync_progress = std::time::Instant::now();
 
@@ -554,7 +554,7 @@ impl MasternodeSyncManager {
         };
 
         // Request masternode list diffs to ensure we have lists for ChainLock validation
-        self.request_masternode_diffs_for_chainlock_validation(network, storage, base_height, current_height).await?;
+        self.request_masternode_diffs_for_chainlock_validation_with_base(network, storage, base_height, current_height, self.sync_base_height).await?;
 
         Ok(true) // Sync started
     }
@@ -1103,16 +1103,19 @@ impl MasternodeSyncManager {
             tracing::debug!("Target block hash is zero - likely empty masternode list in regtest");
         } else {
             // Feed target block hash
-            if let Some(target_height) = storage
+            if let Some(storage_target_height) = storage
                 .get_header_height_by_hash(&target_block_hash)
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to lookup target hash: {}", e)))?
             {
-                engine.feed_block_height(target_height, target_block_hash);
+                // Convert storage height to blockchain height
+                let blockchain_target_height = storage_target_height + self.sync_base_height;
+                engine.feed_block_height(blockchain_target_height, target_block_hash);
                 tracing::debug!(
-                    "Fed target block hash {} at height {}",
+                    "Fed target block hash {} at blockchain height {} (storage height {})",
                     target_block_hash,
-                    target_height
+                    blockchain_target_height,
+                    storage_target_height
                 );
             } else {
                 return Err(SyncError::Storage(format!(
@@ -1131,33 +1134,36 @@ impl MasternodeSyncManager {
                 tracing::debug!("Fed genesis block hash {} at height 0", base_block_hash);
             } else {
                 // For non-genesis blocks, look up the height
-                if let Some(base_height) = storage
+                if let Some(storage_base_height) = storage
                     .get_header_height_by_hash(&base_block_hash)
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to lookup base hash: {}", e)))?
                 {
-                    engine.feed_block_height(base_height, base_block_hash);
+                    // Convert storage height to blockchain height
+                    let blockchain_base_height = storage_base_height + self.sync_base_height;
+                    engine.feed_block_height(blockchain_base_height, base_block_hash);
                     tracing::debug!(
-                        "Fed base block hash {} at height {}",
+                        "Fed base block hash {} at blockchain height {} (storage height {})",
                         base_block_hash,
-                        base_height
+                        blockchain_base_height,
+                        storage_base_height
                     );
                 }
             }
 
             // Calculate start_height for filtering redundant submissions
             // Feed last 1000 headers or from base height, whichever is more recent
-            let start_height = if base_block_hash == self.config.network.known_genesis_block_hash().ok_or_else(|| {
+            let storage_start_height = if base_block_hash == self.config.network.known_genesis_block_hash().ok_or_else(|| {
                 SyncError::Network("No genesis hash for network".to_string())
             })? {
                 // For genesis, start from 0 (but limited by what's in storage)
                 0
-            } else if let Some(base_height) = storage
+            } else if let Some(storage_base_height) = storage
                 .get_header_height_by_hash(&base_block_hash)
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to lookup base hash: {}", e)))?
             {
-                base_height.saturating_sub(100) // Include some headers before base
+                storage_base_height.saturating_sub(100) // Include some headers before base
             } else {
                 tip_height.saturating_sub(1000)
             };
@@ -1165,25 +1171,38 @@ impl MasternodeSyncManager {
             // Feed any quorum hashes from new_quorums that are block hashes
             for quorum in &diff.new_quorums {
                 // Note: quorum_hash is not necessarily a block hash, so we check if it exists
-                if let Some(quorum_height) =
+                if let Some(storage_quorum_height) =
                     storage.get_header_height_by_hash(&quorum.quorum_hash).await.map_err(|e| {
                         SyncError::Storage(format!("Failed to lookup quorum hash: {}", e))
                     })?
                 {
                     // Only feed blocks at or after start_height to avoid redundant submissions
-                    if quorum_height >= start_height {
-                        engine.feed_block_height(quorum_height, quorum.quorum_hash);
-                        tracing::debug!(
-                            "Fed quorum hash {} at height {}",
-                            quorum.quorum_hash,
-                            quorum_height
-                        );
+                    if storage_quorum_height >= storage_start_height {
+                        // Convert storage height to blockchain height
+                        let blockchain_quorum_height = storage_quorum_height + self.sync_base_height;
+                        
+                        // Check if this block hash is already known to avoid duplicate feeds
+                        if !engine.block_container.contains_hash(&quorum.quorum_hash) {
+                            engine.feed_block_height(blockchain_quorum_height, quorum.quorum_hash);
+                            tracing::debug!(
+                                "Fed quorum hash {} at blockchain height {} (storage height {})",
+                                quorum.quorum_hash,
+                                blockchain_quorum_height,
+                                storage_quorum_height
+                            );
+                        } else {
+                            tracing::trace!(
+                                "Skipping already known quorum hash {} at blockchain height {}",
+                                quorum.quorum_hash,
+                                blockchain_quorum_height
+                            );
+                        }
                     } else {
                         tracing::trace!(
-                            "Skipping quorum hash {} at height {} (before start_height {})",
+                            "Skipping quorum hash {} at storage height {} (before start_height {})",
                             quorum.quorum_hash,
-                            quorum_height,
-                            start_height
+                            storage_quorum_height,
+                            storage_start_height
                         );
                     }
                 }
@@ -1192,19 +1211,26 @@ impl MasternodeSyncManager {
             // Feed a reasonable range of recent headers for validation purposes
             // The engine may need recent headers for various validations
 
-            if start_height < tip_height {
+            if storage_start_height < tip_height {
                 tracing::debug!(
-                    "Feeding headers from {} to {} to masternode engine",
-                    start_height,
+                    "Feeding headers from storage height {} to {} to masternode engine",
+                    storage_start_height,
                     tip_height
                 );
                 let headers =
-                    storage.get_headers_batch(start_height, tip_height).await.map_err(|e| {
+                    storage.get_headers_batch(storage_start_height, tip_height).await.map_err(|e| {
                         SyncError::Storage(format!("Failed to batch load headers: {}", e))
                     })?;
 
-                for (height, header) in headers {
-                    engine.feed_block_height(height, header.block_hash());
+                for (storage_height, header) in headers {
+                    // Convert storage height to blockchain height
+                    let blockchain_height = storage_height + self.sync_base_height;
+                    let block_hash = header.block_hash();
+                    
+                    // Only feed if not already known
+                    if !engine.block_container.contains_hash(&block_hash) {
+                        engine.feed_block_height(blockchain_height, block_hash);
+                    }
                 }
             }
         }
@@ -1238,17 +1264,53 @@ impl MasternodeSyncManager {
         }
 
         // Apply the diff to our engine
-        engine.apply_diff(diff, None, true, None)
-            .map_err(|e| {
-                // Provide more context for IncompleteMnListDiff in regtest
-                if self.config.network == dashcore::Network::Regtest && e.to_string().contains("IncompleteMnListDiff") {
-                    SyncError::SyncFailed(format!(
-                        "Failed to apply masternode diff in regtest (this is normal if no masternodes are configured): {:?}", e
-                    ))
+        let apply_result = engine.apply_diff(diff.clone(), None, true, None);
+        
+        // Handle specific error cases
+        match apply_result {
+            Ok(_) => {
+                // Success - diff applied
+            }
+            Err(e) if e.to_string().contains("MissingStartMasternodeList") => {
+                // If this is a genesis diff and we still get MissingStartMasternodeList,
+                // it means the engine needs to be reset
+                if diff.base_block_hash == self.config.network.known_genesis_block_hash().ok_or_else(|| {
+                    SyncError::Network("No genesis hash for network".to_string())
+                })? {
+                    tracing::warn!("Genesis diff failed with MissingStartMasternodeList - resetting engine state");
+                    
+                    // Reset the engine to a clean state
+                    engine.masternode_lists.clear();
+                    engine.known_snapshots.clear();
+                    engine.rotated_quorums_per_cycle.clear();
+                    engine.quorum_statuses.clear();
+                    
+                    // Re-feed genesis block
+                    if let Some(genesis_hash) = self.config.network.known_genesis_block_hash() {
+                        engine.feed_block_height(0, genesis_hash);
+                    }
+                    
+                    // Try applying the diff again
+                    engine.apply_diff(diff, None, true, None)
+                        .map_err(|e| SyncError::Validation(format!("Failed to apply genesis masternode diff after reset: {:?}", e)))?;
+                    
+                    tracing::info!("Successfully applied genesis masternode diff after engine reset");
                 } else {
-                    SyncError::Validation(format!("Failed to apply masternode diff: {:?}", e))
+                    // Non-genesis diff failed - this will trigger a retry from genesis
+                    return Err(SyncError::Validation(format!("Failed to apply masternode diff: {:?}", e)));
                 }
-            })?;
+            }
+            Err(e) => {
+                // Other errors
+                if self.config.network == dashcore::Network::Regtest && e.to_string().contains("IncompleteMnListDiff") {
+                    return Err(SyncError::SyncFailed(format!(
+                        "Failed to apply masternode diff in regtest (this is normal if no masternodes are configured): {:?}", e
+                    )));
+                } else {
+                    return Err(SyncError::Validation(format!("Failed to apply masternode diff: {:?}", e)));
+                }
+            }
+        }
 
         tracing::info!("Successfully applied masternode list diff");
 
