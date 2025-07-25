@@ -1164,24 +1164,38 @@ impl SequentialSyncManager {
 
             // Check if phase is complete
             if !continue_sync {
-                // Masternode sync has completed - ensure phase state reflects this
-                // by updating target_height to match current_height before transition
+                // Masternode sync reports complete - verify we've actually reached the target
                 if let SyncPhase::DownloadingMnList {
                     current_height,
                     target_height,
                     ..
-                } = &mut self.current_phase
+                } = &self.current_phase
                 {
-                    // Force completion state by ensuring current >= target
-                    if *current_height < *target_height {
-                        *target_height = *current_height;
+                    if *current_height >= *target_height {
+                        // We've reached or exceeded the target height
+                        self.transition_to_next_phase(storage, "Masternode sync complete").await?;
+                        // Execute the next phase
+                        self.execute_current_phase(network, storage).await?;
+                    } else {
+                        // Masternode sync thinks it's done but we haven't reached target
+                        // This can happen after a genesis sync that only gets us partway
+                        tracing::info!(
+                            "Masternode sync reports complete but only at height {} of target {}. Continuing sync...",
+                            *current_height, *target_height
+                        );
+                        
+                        // Re-start the masternode sync to continue from current height
+                        let effective_height = self.header_sync.get_chain_height();
+                        let sync_base_height = self.header_sync.get_sync_base_height();
+                        
+                        self.masternode_sync.start_sync_with_height(
+                            network,
+                            storage,
+                            effective_height,
+                            sync_base_height,
+                        ).await?;
                     }
                 }
-
-                self.transition_to_next_phase(storage, "Masternode sync complete").await?;
-
-                // Execute the next phase
-                self.execute_current_phase(network, storage).await?;
             }
         }
 
