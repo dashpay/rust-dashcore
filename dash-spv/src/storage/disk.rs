@@ -848,8 +848,22 @@ impl DiskStorageManager {
         drop(reverse_index);
         drop(cached_tip);
 
-        // Save dirty segments periodically (every 1000 headers)
-        if headers.len() >= 1000 || next_height % 1000 == 0 {
+        // Save dirty segments periodically
+        // - Every 100 headers when storing small batches (common during sync)
+        // - Every 1000 headers when storing large batches
+        // - At multiples of 1000 for checkpoint saves
+        let should_save = if headers.len() <= 10 {
+            // For small batches (1-10 headers), save every 100 headers
+            next_height % 100 == 0
+        } else if headers.len() >= 1000 {
+            // For large batches, always save
+            true
+        } else {
+            // For medium batches, save at 1000 boundaries
+            next_height % 1000 == 0
+        };
+        
+        if should_save {
             self.save_dirty_segments().await?;
         }
 
@@ -1130,6 +1144,11 @@ impl StorageManager for DiskStorageManager {
             let segment_id = Self::get_segment_id(next_height);
             let offset = Self::get_segment_offset(next_height);
 
+            // Debug logging for hang investigation
+            if next_height == 2310663 {
+                tracing::warn!("🔍 Processing header at critical height 2310663 - segment_id: {}, offset: {}", segment_id, offset);
+            }
+
             // Ensure segment is loaded
             self.ensure_segment_loaded(segment_id).await?;
 
@@ -1202,8 +1221,22 @@ impl StorageManager for DiskStorageManager {
         drop(reverse_index);
         drop(cached_tip);
 
-        // Save dirty segments periodically (every 1000 headers)
-        if headers.len() >= 1000 || next_height % 1000 == 0 {
+        // Save dirty segments periodically
+        // - Every 100 headers when storing small batches (common during sync)
+        // - Every 1000 headers when storing large batches
+        // - At multiples of 1000 for checkpoint saves
+        let should_save = if headers.len() <= 10 {
+            // For small batches (1-10 headers), save every 100 headers
+            next_height % 100 == 0
+        } else if headers.len() >= 1000 {
+            // For large batches, always save
+            true
+        } else {
+            // For medium batches, save at 1000 boundaries
+            next_height % 1000 == 0
+        };
+        
+        if should_save {
             self.save_dirty_segments().await?;
         }
 
