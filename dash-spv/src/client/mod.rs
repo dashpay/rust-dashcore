@@ -1,6 +1,7 @@
 //! High-level client API for the Dash SPV client.
 
 pub mod block_processor;
+pub mod builder;
 pub mod config;
 pub mod consistency;
 pub mod filter_sync;
@@ -94,6 +95,10 @@ pub struct DashSpvClient {
     mempool_state: Arc<RwLock<MempoolState>>,
     mempool_filter: Option<Arc<MempoolFilter>>,
     last_sync_state_save: Arc<RwLock<u64>>,
+    /// Cached sync progress to avoid flooding storage service
+    cached_sync_progress: Arc<RwLock<(SyncProgress, std::time::Instant)>>,
+    /// Cached stats to avoid flooding storage service
+    cached_stats: Arc<RwLock<(SpvStats, std::time::Instant)>>,
 }
 
 impl DashSpvClient {
@@ -124,12 +129,13 @@ impl DashSpvClient {
 
     /// Helper to create a StatusDisplay instance.
     async fn create_status_display(&self) -> StatusDisplay {
-        StatusDisplay::new(
+        StatusDisplay::new_with_sync_manager(
             &self.state,
             &self.stats,
             &*self.storage,
             &self.terminal_ui,
             &self.config,
+            &self.sync_manager,
         )
     }
 
@@ -246,97 +252,10 @@ impl DashSpvClient {
 
     /// Create a new SPV client with the given configuration.
     pub async fn new(config: ClientConfig) -> Result<Self> {
-        // Validate configuration
-        config.validate().map_err(|e| SpvError::Config(e))?;
-
-        // Initialize state for the network
-        let state = Arc::new(RwLock::new(ChainState::new_for_network(config.network)));
-        let stats = Arc::new(RwLock::new(SpvStats::default()));
-
-        // Create network manager (use multi-peer by default)
-        let network = crate::network::multi_peer::MultiPeerNetworkManager::new(&config).await?;
-
-        // Create storage manager
-        let storage: Box<dyn StorageManager> = if config.enable_persistence {
-            if let Some(path) = &config.storage_path {
-                Box::new(
-                    crate::storage::DiskStorageManager::new(path.clone())
-                        .await
-                        .map_err(|e| SpvError::Storage(e))?,
-                )
-            } else {
-                Box::new(
-                    crate::storage::MemoryStorageManager::new()
-                        .await
-                        .map_err(|e| SpvError::Storage(e))?,
-                )
-            }
-        } else {
-            Box::new(
-                crate::storage::MemoryStorageManager::new()
-                    .await
-                    .map_err(|e| SpvError::Storage(e))?,
-            )
-        };
-
-        // Create shared data structures
-        let watch_items = Arc::new(RwLock::new(HashSet::new()));
-
-        // Create sync manager
-        let received_filter_heights = stats.read().await.received_filter_heights.clone();
-        tracing::info!("Creating sequential sync manager");
-        let sync_manager = SequentialSyncManager::new(&config, received_filter_heights)
-            .map_err(|e| SpvError::Sync(e))?;
-
-        // Create validation manager
-        let validation = ValidationManager::new(config.validation_mode);
-
-        // Create ChainLock manager
-        let chainlock_manager = Arc::new(ChainLockManager::new(true));
-
-        // Create block processing channel
-        let (block_processor_tx, _block_processor_rx) = mpsc::unbounded_channel();
-
-        // Create a placeholder wallet - will be properly initialized in start()
-        let placeholder_storage = Arc::new(RwLock::new(
-            crate::storage::MemoryStorageManager::new().await.map_err(|e| SpvError::Storage(e))?,
-        ));
-        let wallet = Arc::new(RwLock::new(crate::wallet::Wallet::new(placeholder_storage)));
-
-        // Create progress channels
-        let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
-
-        // Create event channels
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-
-        // Create mempool state
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
-
-        Ok(Self {
-            config,
-            state,
-            stats,
-            network: Box::new(network),
-            storage,
-            wallet,
-            sync_manager,
-            validation: validation,
-            chainlock_manager,
-            running: Arc::new(RwLock::new(false)),
-            watch_items,
-            event_queue: Arc::new(RwLock::new(Vec::new())),
-            terminal_ui: None,
-            filter_processor: None,
-            watch_item_updater: None,
-            block_processor_tx,
-            progress_sender: Some(progress_sender),
-            progress_receiver: Some(progress_receiver),
-            event_tx,
-            event_rx: Some(event_rx),
-            mempool_state,
-            mempool_filter: None,
-            last_sync_state_save: Arc::new(RwLock::new(0)),
-        })
+        // Use the builder to create the client
+        builder::DashSpvClientBuilder::new(config)
+            .build()
+            .await
     }
 
     /// Start the SPV client.
@@ -1892,9 +1811,29 @@ impl DashSpvClient {
     }
 
     /// Get current sync progress.
+    /// Uses a cache to avoid flooding the storage service with requests.
     pub async fn sync_progress(&self) -> Result<SyncProgress> {
+        // Check if we have a recent cached value (less than 1 second old)
+        {
+            let cache = self.cached_sync_progress.read().await;
+            if cache.1.elapsed() < std::time::Duration::from_secs(1) {
+                tracing::trace!("Using cached sync progress (age: {:?})", cache.1.elapsed());
+                return Ok(cache.0.clone());
+            }
+        }
+        
+        // Cache is stale, get fresh data
+        tracing::debug!("Sync progress cache miss - fetching fresh data from storage");
         let display = self.create_status_display().await;
-        display.sync_progress().await
+        let progress = display.sync_progress().await?;
+        
+        // Update cache
+        {
+            let mut cache = self.cached_sync_progress.write().await;
+            *cache = (progress.clone(), std::time::Instant::now());
+        }
+        
+        Ok(progress)
     }
 
     /// Add a watch item.
@@ -2679,6 +2618,13 @@ impl DashSpvClient {
 
         // Get current chain state
         let chain_state = self.state.read().await;
+        
+        // Save the chain state itself (headers, etc.)
+        if let Err(e) = self.storage.store_chain_state(&*chain_state).await {
+            tracing::error!("Failed to save chain state: {}", e);
+            return Err(SpvError::Storage(e));
+        }
+        tracing::debug!("Saved chain state with {} headers", chain_state.headers.len());
 
         // Create persistent sync state
         let persistent_state = crate::storage::PersistentSyncState::from_chain_state(
@@ -3172,7 +3118,17 @@ impl DashSpvClient {
     }
 
     /// Get current statistics.
+    /// Uses a cache to avoid flooding the storage service with requests.
     pub async fn stats(&self) -> Result<SpvStats> {
+        // Check if we have a recent cached value (less than 1 second old)
+        {
+            let cache = self.cached_stats.read().await;
+            if cache.1.elapsed() < std::time::Duration::from_secs(1) {
+                return Ok(cache.0.clone());
+            }
+        }
+        
+        // Cache is stale, get fresh data
         let display = self.create_status_display().await;
         let mut stats = display.stats().await?;
         
@@ -3187,6 +3143,12 @@ impl DashSpvClient {
         
         if let Ok(Some(filter_height)) = self.storage.get_filter_tip_height().await {
             stats.filter_height = filter_height;
+        }
+        
+        // Update cache
+        {
+            let mut cache = self.cached_stats.write().await;
+            *cache = (stats.clone(), std::time::Instant::now());
         }
         
         Ok(stats)

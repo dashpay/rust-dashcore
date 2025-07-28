@@ -338,35 +338,73 @@ impl HeaderSyncManagerWithReorg {
             }
         }
 
+        // Log current chain state info
+        tracing::info!(
+            "📊 Chain state before processing: tip_height={}, headers_count={}, sync_base_height={}, synced_from_checkpoint={}",
+            self.chain_state.tip_height(),
+            self.chain_state.headers.len(),
+            self.chain_state.sync_base_height,
+            self.chain_state.synced_from_checkpoint
+        );
+        
         // Track how many headers we actually process (not skip)
         let mut headers_processed = 0u32;
+        let mut orphans_found = 0u32;
+        let mut headers_stored = 0u32;
 
         // Process each header with fork detection
-        for header in &headers {
+        for (idx, header) in headers.iter().enumerate() {
             // Check if this header is already in our chain state
             let header_hash = header.block_hash();
+            
+            tracing::info!(
+                "🔄 [DEBUG] Processing header {}/{}: {} (prev: {})",
+                idx + 1,
+                headers.len(),
+                header_hash,
+                header.prev_blockhash
+            );
             
             // First check if it's already in chain state by checking if we can find it at any height
             let mut header_in_chain_state = false;
             
             // Check if this header extends our current tip
+            let mut extends_tip = false;
             if let Some(tip) = self.chain_state.get_tip_header() {
-                if header.prev_blockhash == tip.block_hash() {
+                let tip_hash = tip.block_hash();
+                tracing::debug!(
+                    "Checking header {} against tip {}",
+                    header_hash,
+                    tip_hash
+                );
+                
+                if header.prev_blockhash == tip_hash {
                     // This header extends our tip, so it's not in chain state yet
                     header_in_chain_state = false;
-                } else if header_hash == tip.block_hash() {
+                    extends_tip = true;
+                    tracing::info!("✅ Header {} extends tip {}, will process it", header_hash, tip_hash);
+                } else if header_hash == tip_hash {
                     // This IS our current tip
                     header_in_chain_state = true;
+                    tracing::info!("📍 Header {} IS our current tip, skipping", header_hash);
                 }
             }
             
-            // If not extending tip, check if it's already in storage AND chain state
-            if !header_in_chain_state {
+            // If header is already in chain state, skip it
+            if header_in_chain_state {
+                tracing::info!("📌 Header {} is already in chain state, skipping", header_hash);
+                continue;
+            }
+            
+            // If not extending tip, check if it's already in storage
+            if !extends_tip {
                 if let Some(existing_height) = storage
                     .get_header_height_by_hash(&header_hash)
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to check header existence: {}", e)))?
                 {
+                    tracing::info!("📋 Header {} already exists in storage at height {}", header_hash, existing_height);
+                    
                     // Header exists in storage - check if it's also in chain state
                     let chain_state_height = if self.chain_state.synced_from_checkpoint && existing_height >= self.chain_state.sync_base_height {
                         // Adjust for checkpoint sync
@@ -384,22 +422,36 @@ impl HeaderSyncManagerWithReorg {
                     if let Some(chain_header) = self.chain_state.header_at_height(chain_state_height) {
                         if chain_header.block_hash() == header_hash {
                             // Header is already in both storage and chain state
-                            tracing::debug!("⏭️ Skipping header {} already in chain state at height {}", 
+                            tracing::info!("⏭️ Skipping header {} already in chain state at height {}", 
                                 header_hash, existing_height);
                             continue;
                         }
                     }
                     
                     // Header is in storage but NOT in chain state - we need to process it
-                    tracing::info!("📥 Header {} exists in storage at height {} but not in chain state, adding it", 
-                        header_hash, existing_height);
+                    tracing::info!("📥 Header {} exists in storage at height {} but NOT in chain state (chain_state_height: {}), will add it", 
+                        header_hash, existing_height, chain_state_height);
+                } else {
+                    tracing::info!("🆕 Header {} is new (not in storage)", header_hash);
                 }
             }
 
-            match self.process_header_with_fork_detection(header, storage).await? {
+            tracing::info!("[HANG DEBUG] About to call process_header_with_fork_detection for header {}/{}", idx + 1, headers.len());
+            let process_result = self.process_header_with_fork_detection(header, storage).await?;
+            tracing::info!("[HANG DEBUG] process_header_with_fork_detection returned: {:?}", process_result);
+            
+            match process_result {
                 HeaderProcessResult::ExtendedMainChain => {
                     // Normal case - header extends the main chain
                     headers_processed += 1;
+                    headers_stored += 1;
+                    tracing::info!(
+                        "✅ [DEBUG] Header {}/{} extended main chain at height {}",
+                        idx + 1,
+                        headers.len(),
+                        self.chain_state.get_height()
+                    );
+                    tracing::info!("[HANG DEBUG] Finished processing ExtendedMainChain case");
                 }
                 HeaderProcessResult::CreatedFork => {
                     tracing::warn!("⚠️ Fork detected at height {}", self.chain_state.get_height());
@@ -426,13 +478,28 @@ impl HeaderSyncManagerWithReorg {
                         }
                     }
                     // Don't count orphans as processed
+                    orphans_found += 1;
+                    
+                    // If we hit an orphan, the rest of the headers in this batch are likely orphans too
+                    if orphans_found == 1 {
+                        tracing::warn!(
+                            "⚠️ Found orphan at position {}/{}. Remaining {} headers likely orphans too.",
+                            idx + 1,
+                            headers.len(),
+                            headers.len() - idx - 1
+                        );
+                    }
                 }
                 HeaderProcessResult::TriggeredReorg(depth) => {
                     tracing::warn!("🔄 Chain reorganization triggered - depth: {}", depth);
                     headers_processed += 1;
                 }
             }
+            
+            tracing::info!("🔄 [DEBUG] Finished processing header {}/{}", idx + 1, headers.len());
         }
+        
+        tracing::info!("🏁 [DEBUG] Finished header processing loop - processed {} headers", headers_processed);
 
         // Check if any fork is now stronger than the main chain
         self.check_for_reorg(storage).await?;
@@ -440,9 +507,11 @@ impl HeaderSyncManagerWithReorg {
         // Log summary of what was processed
         let skipped = headers.len() - headers_processed as usize;
         tracing::info!(
-            "📊 Header batch processing complete: {} processed, {} skipped out of {} total",
+            "📊 Header batch processing complete: {} processed ({} stored), {} skipped ({} orphans) out of {} total",
             headers_processed,
+            headers_stored,
             skipped,
+            orphans_found,
             headers.len()
         );
         
@@ -464,6 +533,25 @@ impl HeaderSyncManagerWithReorg {
             }
         }
 
+        // Log summary of what happened
+        tracing::info!(
+            "📊 Header processing summary: received={}, processed={}, stored={}, orphans={}, skipped={}",
+            headers.len(),
+            headers_processed,
+            headers_stored,
+            orphans_found,
+            headers.len() as u32 - headers_processed - orphans_found
+        );
+        
+        // Log chain state after processing
+        tracing::info!(
+            "📊 Chain state after processing: tip_height={}, headers_count={}, sync_base_height={}, tip_hash={:?}",
+            self.chain_state.tip_height(),
+            self.chain_state.headers.len(),
+            self.chain_state.sync_base_height,
+            self.chain_state.tip_hash()
+        );
+        
         // Check if we made progress
         if headers_processed == 0 && !headers.is_empty() {
             tracing::warn!(
@@ -471,20 +559,9 @@ impl HeaderSyncManagerWithReorg {
                 headers.len()
             );
             
-            // Check if the last header in the batch matches our tip
-            if let Some(last_header) = headers.last() {
-                if let Some(tip) = self.chain_state.get_tip_header() {
-                    if last_header.block_hash() == tip.block_hash() {
-                        tracing::info!(
-                            "📊 Last header in batch matches our tip at height {}. Sync appears to be complete.",
-                            self.chain_state.get_height()
-                        );
-                        // If we received headers up to our tip and processed none, we're synced
-                        self.syncing_headers = false;
-                        return Ok(false);
-                    }
-                }
-            }
+            // Don't assume we're synced just because headers were skipped
+            // The peer might have more headers beyond this batch
+            // Only an empty response indicates we're truly synced
         }
         
         // Check if we're truly at the tip by verifying we received an empty response
@@ -498,6 +575,12 @@ impl HeaderSyncManagerWithReorg {
         if self.syncing_headers {
             // During sync mode - request next batch
             if let Some(tip) = self.chain_state.get_tip_header() {
+                tracing::info!(
+                    "📤 [DEBUG] Requesting next batch of headers from tip: {} at height {}",
+                    tip.block_hash(),
+                    self.chain_state.get_height()
+                );
+                
                 // Add retry logic for network failures
                 let mut retry_count = 0;
                 const MAX_RETRIES: u32 = 3;
@@ -505,7 +588,10 @@ impl HeaderSyncManagerWithReorg {
                 
                 loop {
                     match self.request_headers(network, Some(tip.block_hash())).await {
-                        Ok(_) => break,
+                        Ok(_) => {
+                            tracing::info!("✅ [DEBUG] Successfully requested next batch of headers");
+                            break;
+                        }
                         Err(e) => {
                             retry_count += 1;
                             tracing::warn!(
@@ -535,6 +621,7 @@ impl HeaderSyncManagerWithReorg {
             }
         }
 
+        tracing::info!("🔄 [DEBUG] handle_headers_message returning true (continue sync)");
         Ok(true)
     }
 
@@ -573,10 +660,25 @@ impl HeaderSyncManagerWithReorg {
                 }
 
                 // Store in async storage
-                storage
+                let header_hash = header.block_hash();
+                tracing::info!("🔧 [HANG DEBUG] About to store header {} at height {} in storage", header_hash, height);
+                
+                let store_start = std::time::Instant::now();
+                tracing::debug!("[HANG DEBUG] Calling storage.store_headers with single header at height {}", height);
+                
+                let store_result = storage
                     .store_headers(&[*header])
-                    .await
-                    .map_err(|e| SyncError::Storage(format!("Failed to store header: {}", e)))?;
+                    .await;
+                    
+                tracing::info!("[HANG DEBUG] storage.store_headers returned for height {}: {:?}", height, store_result.is_ok());
+                
+                store_result.map_err(|e| {
+                        tracing::error!("❌ Failed to store header at height {}: {}", height, e);
+                        SyncError::Storage(format!("Failed to store header: {}", e))
+                    })?;
+                
+                let store_duration = store_start.elapsed();
+                tracing::info!("✅ [HANG DEBUG] Successfully stored header {} at height {} (took {:?})", header_hash, height, store_duration);
 
                 // Update chain tip manager
                 let chain_work = ChainWork::from_height_and_header(height, header);
@@ -585,6 +687,7 @@ impl HeaderSyncManagerWithReorg {
                     .add_tip(tip)
                     .map_err(|e| SyncError::Storage(format!("Failed to update tip: {}", e)))?;
 
+                tracing::info!("✅ [DEBUG] Successfully processed header, returning ExtendedMainChain");
                 Ok(HeaderProcessResult::ExtendedMainChain)
             }
             ForkDetectionResult::CreatesNewFork(fork) => {
@@ -619,6 +722,7 @@ impl HeaderSyncManagerWithReorg {
             }
             ForkDetectionResult::Orphan => {
                 // TODO: Add to orphan pool for later processing
+                // For now, just track that we received an orphan
                 Ok(HeaderProcessResult::Orphan)
             }
         }
@@ -776,6 +880,10 @@ impl HeaderSyncManagerWithReorg {
         network: &mut dyn NetworkManager,
         base_hash: Option<BlockHash>,
     ) -> SyncResult<()> {
+        tracing::info!(
+            "📤 [TRACE] request_headers called with base_hash: {:?}",
+            base_hash
+        );
         let block_locator = match base_hash {
             Some(hash) => {
                 // When syncing from a checkpoint, we need to create a proper locator
@@ -1446,6 +1554,7 @@ impl HeaderSyncManagerWithReorg {
 }
 
 /// Result of processing a header
+#[derive(Debug)]
 enum HeaderProcessResult {
     ExtendedMainChain,
     CreatedFork,

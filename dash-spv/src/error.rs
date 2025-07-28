@@ -110,6 +110,12 @@ pub enum StorageError {
 
     #[error("Lock poisoned: {0}")]
     LockPoisoned(String),
+    
+    #[error("Storage service unavailable")]
+    ServiceUnavailable,
+    
+    #[error("Not implemented: {0}")]
+    NotImplemented(&'static str),
 }
 
 /// Validation-related errors.
