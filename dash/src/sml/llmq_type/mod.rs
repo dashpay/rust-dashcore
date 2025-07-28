@@ -208,7 +208,7 @@ pub const LLMQ_400_60: LLMQParams = LLMQParams {
     recovery_members: 100,
 };
 pub const LLMQ_400_85: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::Llmqtype400_60,
+    quorum_type: LLMQType::Llmqtype400_85,
     name: "llmq_400_85",
     size: 400,
     min_size: 350,
@@ -376,6 +376,7 @@ impl From<u8> for LLMQType {
             104 => LLMQType::LlmqtypeTestInstantSend,
             105 => LLMQType::LlmqtypeDevnetDIP0024,
             106 => LLMQType::LlmqtypeTestnetPlatform,
+            107 => LLMQType::LlmqtypeDevnetPlatform,
             _ => LLMQType::LlmqtypeUnknown,
         }
     }

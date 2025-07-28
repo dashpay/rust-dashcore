@@ -9,6 +9,34 @@ use dashcore::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Information about the current synchronization phase.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncPhaseInfo {
+    /// Name of the current phase.
+    pub phase_name: String,
+    
+    /// Progress percentage (0-100).
+    pub progress_percentage: f64,
+    
+    /// Items completed in this phase.
+    pub items_completed: u32,
+    
+    /// Total items expected in this phase (if known).
+    pub items_total: Option<u32>,
+    
+    /// Processing rate (items per second).
+    pub rate: f64,
+    
+    /// Estimated time remaining in this phase.
+    pub eta_seconds: Option<u64>,
+    
+    /// Time elapsed in this phase (seconds).
+    pub elapsed_seconds: u64,
+    
+    /// Additional phase-specific details.
+    pub details: Option<String>,
+}
+
 /// Unique identifier for a peer connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PeerId(pub u64);
@@ -20,7 +48,7 @@ impl std::fmt::Display for PeerId {
 }
 
 /// Sync progress information.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SyncProgress {
     /// Current height of synchronized headers.
     pub header_height: u32,
@@ -57,6 +85,9 @@ pub struct SyncProgress {
 
     /// Last update time.
     pub last_update: SystemTime,
+
+    /// Current synchronization phase and its details.
+    pub current_phase: Option<SyncPhaseInfo>,
 }
 
 impl Default for SyncProgress {
@@ -75,6 +106,7 @@ impl Default for SyncProgress {
             last_synced_filter_height: None,
             sync_start: now,
             last_update: now,
+            current_phase: None,
         }
     }
 }

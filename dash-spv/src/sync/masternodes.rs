@@ -87,6 +87,7 @@ impl MasternodeSyncManager {
         }
         
         // Load masternode state from storage
+        tracing::debug!("Loading masternode state from storage");
         if let Some(state) = storage.load_masternode_state().await.map_err(|e| {
             SyncError::Storage(format!("Failed to load masternode state: {}", e))
         })? {
@@ -473,11 +474,12 @@ impl MasternodeSyncManager {
 
         // If we're already up to date, no need to sync
         if last_masternode_height >= current_height {
-            tracing::warn!(
-                "⚠️ Masternode list already synced to current height (last: {}, current: {}) - THIS WILL SKIP MASTERNODE SYNC!",
+            tracing::info!(
+                "✅ Masternode list already synced to current height (last: {}, current: {})",
                 last_masternode_height,
                 current_height
             );
+            tracing::info!("📊 [DEBUG] Returning false to indicate masternode sync is already complete");
             return Ok(false);
         }
 
@@ -588,11 +590,12 @@ impl MasternodeSyncManager {
 
         // If we're already up to date, no need to sync
         if last_masternode_height >= current_height {
-            tracing::warn!(
-                "⚠️ Masternode list already synced to current height (last: {}, current: {}) - THIS WILL SKIP MASTERNODE SYNC!",
+            tracing::info!(
+                "✅ Masternode list already synced to current height (last: {}, current: {})",
                 last_masternode_height,
                 current_height
             );
+            tracing::info!("📊 [DEBUG] Returning false to indicate masternode sync is already complete");
             return Ok(false);
         }
 

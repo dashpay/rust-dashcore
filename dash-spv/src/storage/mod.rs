@@ -1,7 +1,11 @@
 //! Storage abstraction for the Dash SPV client.
 
+pub mod compat;
 pub mod disk;
+pub mod disk_backend;
 pub mod memory;
+pub mod memory_backend;
+pub mod service;
 pub mod sync_state;
 pub mod sync_storage;
 pub mod types;
