@@ -189,6 +189,12 @@ impl TransitionManager {
             SyncPhase::DownloadingHeaders {
                 ..
             } => {
+                tracing::info!(
+                    "🔍 [DEBUG] Determining next phase after headers. Config: enable_masternodes={}, enable_filters={}",
+                    self.config.enable_masternodes,
+                    self.config.enable_filters
+                );
+                
                 if self.config.enable_masternodes {
                     let header_tip = storage
                         .get_tip_height()
@@ -198,10 +204,18 @@ impl TransitionManager {
                         })?
                         .unwrap_or(0);
 
-                    let mn_height = match storage.load_masternode_state().await {
+                    let mn_state = storage.load_masternode_state().await;
+                    let mn_height = match &mn_state {
                         Ok(Some(state)) => state.last_height,
                         _ => 0,
                     };
+                    
+                    tracing::info!(
+                        "🔍 [DEBUG] Creating MnList phase: header_tip={}, mn_height={}, mn_state={:?}",
+                        header_tip,
+                        mn_height,
+                        mn_state.is_ok()
+                    );
 
                     Ok(Some(SyncPhase::DownloadingMnList {
                         start_time: Instant::now(),
@@ -307,9 +321,18 @@ impl TransitionManager {
     ) -> SyncResult<bool> {
         if let SyncPhase::DownloadingHeaders {
             received_empty_response,
+            current_height,
+            target_height,
             ..
         } = phase
         {
+            tracing::info!(
+                "🔍 [DEBUG] Checking headers complete: received_empty_response={}, current_height={}, target_height={:?}",
+                received_empty_response,
+                current_height,
+                target_height
+            );
+            
             // Headers are complete when we receive an empty response
             Ok(*received_empty_response)
         } else {

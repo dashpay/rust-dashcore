@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 use crate::client::ClientConfig;
 use crate::error::Result;
 use crate::storage::StorageManager;
+use crate::sync::sequential::SequentialSyncManager;
 use crate::terminal::TerminalUI;
 use crate::types::{ChainState, SpvStats, SyncProgress};
 
@@ -16,6 +17,7 @@ pub struct StatusDisplay<'a> {
     storage: &'a dyn StorageManager,
     terminal_ui: &'a Option<Arc<TerminalUI>>,
     config: &'a ClientConfig,
+    sync_manager: Option<&'a SequentialSyncManager>,
 }
 
 impl<'a> StatusDisplay<'a> {
@@ -33,6 +35,26 @@ impl<'a> StatusDisplay<'a> {
             storage,
             terminal_ui,
             config,
+            sync_manager: None,
+        }
+    }
+
+    /// Create a new status display manager with sync manager reference.
+    pub fn new_with_sync_manager(
+        state: &'a Arc<RwLock<ChainState>>,
+        stats: &'a Arc<RwLock<SpvStats>>,
+        storage: &'a dyn StorageManager,
+        terminal_ui: &'a Option<Arc<TerminalUI>>,
+        config: &'a ClientConfig,
+        sync_manager: &'a SequentialSyncManager,
+    ) -> Self {
+        Self {
+            state,
+            stats,
+            storage,
+            terminal_ui,
+            config,
+            sync_manager: Some(sync_manager),
         }
     }
 
@@ -110,20 +132,37 @@ impl<'a> StatusDisplay<'a> {
         // Calculate filter header height considering checkpoint sync
         let filter_header_height = self.calculate_filter_header_height(&state).await;
 
-        Ok(SyncProgress {
-            header_height,
-            filter_header_height,
-            masternode_height: state.last_masternode_diff_height.unwrap_or(0),
-            peer_count: 1,                // TODO: Get from network manager
-            headers_synced: false,        // TODO: Implement
-            filter_headers_synced: false, // TODO: Implement
-            masternodes_synced: false,    // TODO: Implement
-            filter_sync_available: false, // TODO: Get from network manager
-            filters_downloaded: stats.filters_received,
-            last_synced_filter_height,
-            sync_start: std::time::SystemTime::now(), // TODO: Track properly
-            last_update: std::time::SystemTime::now(),
-        })
+        // Get sync progress from sync manager if available
+        let progress = if let Some(sync_mgr) = self.sync_manager {
+            let mut progress = sync_mgr.get_progress();
+            // Populate the actual values
+            progress.header_height = header_height;
+            progress.filter_header_height = filter_header_height;
+            progress.masternode_height = state.last_masternode_diff_height.unwrap_or(0);
+            progress.peer_count = 1; // TODO: Get from network manager
+            progress.filters_downloaded = stats.filters_received;
+            progress.last_synced_filter_height = last_synced_filter_height;
+            progress
+        } else {
+            // Fallback when sync manager is not available
+            SyncProgress {
+                header_height,
+                filter_header_height,
+                masternode_height: state.last_masternode_diff_height.unwrap_or(0),
+                peer_count: 1,                // TODO: Get from network manager
+                headers_synced: false,        // TODO: Implement
+                filter_headers_synced: false, // TODO: Implement
+                masternodes_synced: false,    // TODO: Implement
+                filter_sync_available: false, // TODO: Get from network manager
+                filters_downloaded: stats.filters_received,
+                last_synced_filter_height,
+                sync_start: std::time::SystemTime::now(), // TODO: Track properly
+                last_update: std::time::SystemTime::now(),
+                current_phase: None,
+            }
+        };
+
+        Ok(progress)
     }
 
     /// Get current statistics.
