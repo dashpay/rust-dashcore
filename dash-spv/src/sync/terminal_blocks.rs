@@ -316,7 +316,10 @@ mod tests {
         assert_eq!(block.height, height);
         assert_eq!(block.block_hash, hash);
         assert!(block.masternode_list_merkle_root.is_some());
-        assert_eq!(block.masternode_list_merkle_root.expect("merkle root should be present"), merkle_root);
+        assert_eq!(
+            block.masternode_list_merkle_root.expect("merkle root should be present"),
+            merkle_root
+        );
     }
 
     #[test]
@@ -416,14 +419,26 @@ mod tests {
 
         assert_eq!(manager.terminal_blocks.len(), 1);
         assert!(manager.get_terminal_block(1000).is_some());
-        assert_eq!(manager.get_highest_terminal_block().expect("highest terminal block should exist").height, 1000);
+        assert_eq!(
+            manager
+                .get_highest_terminal_block()
+                .expect("highest terminal block should exist")
+                .height,
+            1000
+        );
 
         // Add another higher block
         let block2 = TerminalBlock::new(2000, BlockHash::all_zeros());
         manager.add_terminal_block(block2);
 
         assert_eq!(manager.terminal_blocks.len(), 2);
-        assert_eq!(manager.get_highest_terminal_block().expect("highest terminal block should exist").height, 2000);
+        assert_eq!(
+            manager
+                .get_highest_terminal_block()
+                .expect("highest terminal block should exist")
+                .height,
+            2000
+        );
     }
 
     #[test]

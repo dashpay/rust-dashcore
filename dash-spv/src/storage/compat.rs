@@ -5,19 +5,19 @@
 
 use super::{
     service::StorageClient,
-    StorageManager, StorageResult, StorageError, StorageStats,
-    types::{MasternodeState, StoredTerminalBlock},
     sync_state::{PersistentSyncState, SyncCheckpoint},
+    types::{MasternodeState, StoredTerminalBlock},
+    StorageError, StorageManager, StorageResult, StorageStats,
 };
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 use crate::wallet::Utxo;
+use async_trait::async_trait;
 use dashcore::{
-    block::Header as BlockHeader, hash_types::FilterHeader, 
-    Address, BlockHash, OutPoint, Txid, ChainLock, InstantLock,
+    block::Header as BlockHeader, hash_types::FilterHeader, Address, BlockHash, ChainLock,
+    InstantLock, OutPoint, Txid,
 };
 use std::collections::HashMap;
 use std::ops::Range;
-use async_trait::async_trait;
 
 /// A wrapper that implements the old StorageManager trait using the new StorageClient
 ///
@@ -30,7 +30,9 @@ pub struct StorageManagerCompat {
 impl StorageManagerCompat {
     /// Create a new compatibility wrapper around a StorageClient
     pub fn new(client: StorageClient) -> Self {
-        Self { client }
+        Self {
+            client,
+        }
     }
 }
 
@@ -41,98 +43,43 @@ impl StorageManager for StorageManagerCompat {
     }
 
     async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
-        // Store headers one by one with their heights
-        // Get initial tip height and increment locally to avoid excessive async calls
-        let initial_tip_height = self.client.get_tip_height().await?.unwrap_or(0);
-        
-        tracing::debug!(
-            "StorageManagerCompat::store_headers - storing {} headers starting from height {}",
-            headers.len(),
-            initial_tip_height + 1
-        );
-        
-        let start_time = std::time::Instant::now();
-        
-        for (i, header) in headers.iter().enumerate() {
-            let height = initial_tip_height + i as u32 + 1;
-            let hash = header.block_hash();
-            
-            tracing::trace!(
-                "StorageManagerCompat - storing header {}/{} at height {}: {}",
-                i + 1,
-                headers.len(),
-                height,
-                hash
-            );
-            
-            let store_start = std::time::Instant::now();
-            tracing::debug!(
-                "StorageManagerCompat - storing header {}/{} at height {}",
-                i + 1,
-                headers.len(),
-                height
-            );
-            
-            tracing::debug!("[HANG DEBUG] About to call client.store_header for height {}", height);
-            
-            // Spawn the storage operation in its own task to prevent cancellation
-            let client = self.client.clone();
-            let header = *header;
-            let result = tokio::spawn(async move {
-                tracing::debug!("[HANG DEBUG] Inside spawned task for height {}", height);
-                let res = client.store_header(&header, height).await;
-                tracing::debug!("[HANG DEBUG] Spawned task completed for height {}: {:?}", height, res.is_ok());
-                res
-            }).await
-                .map_err(|e| {
-                    tracing::error!("[HANG DEBUG] Task join error: {:?}", e);
-                    StorageError::ServiceUnavailable
-                })?;
-            
-            tracing::info!("[HANG DEBUG] client.store_header returned for height {}: {:?}", height, result.is_ok());
-            
-            if let Err(ref e) = result {
-                tracing::error!("[HANG DEBUG] store_header failed for height {}: {:?}", height, e);
-                return Err(StorageError::ServiceUnavailable);
-            }
-            
-            result?;
-            let store_duration = store_start.elapsed();
-            
-            tracing::trace!(
-                "StorageManagerCompat - successfully stored header {}/{} at height {} (took {:?})",
-                i + 1,
-                headers.len(),
-                height,
-                store_duration
-            );
-            
-            // Log if a single store operation takes too long
-            if store_duration.as_millis() > 100 {
-                tracing::warn!(
-                    "Slow header store operation: header {}/{} took {:?}",
-                    i + 1,
-                    headers.len(),
-                    store_duration
-                );
-            }
+        if headers.is_empty() {
+            return Ok(());
         }
-        
+
+        tracing::debug!(
+            "StorageManagerCompat::store_headers - storing {} headers as a batch",
+            headers.len()
+        );
+
+        let start_time = std::time::Instant::now();
+
+        // Use the new batch storage method in a spawned task to prevent cancellation
+        let client = self.client.clone();
+        let headers_vec = headers.to_vec();
+        let result = tokio::spawn(async move { client.store_headers(&headers_vec).await })
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to spawn store_headers task: {:?}", e);
+                StorageError::ServiceUnavailable
+            })?;
+
+        result?;
+
         let total_duration = start_time.elapsed();
         let headers_per_second = if total_duration.as_secs_f64() > 0.0 {
             headers.len() as f64 / total_duration.as_secs_f64()
         } else {
             0.0
         };
-        
+
         tracing::debug!(
             "StorageManagerCompat::store_headers - stored {} headers in {:?} ({:.1} headers/sec)",
             headers.len(),
             total_duration,
             headers_per_second
         );
-        
-        tracing::info!("[HANG DEBUG] StorageManagerCompat::store_headers completed successfully for {} headers", headers.len());
+
         Ok(())
     }
 
@@ -151,24 +98,24 @@ impl StorageManager for StorageManagerCompat {
     async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
         // Store filter headers one by one with their heights
         let tip_height = self.client.get_filter_tip_height().await?.unwrap_or(0);
-        
+
         for (i, header) in headers.iter().enumerate() {
             let height = tip_height + i as u32 + 1;
             self.client.store_filter_header(header, height).await?;
         }
-        
+
         Ok(())
     }
 
     async fn load_filter_headers(&self, range: Range<u32>) -> StorageResult<Vec<FilterHeader>> {
         let mut headers = Vec::new();
-        
+
         for height in range {
             if let Some(header) = self.client.get_filter_header(height).await? {
                 headers.push(header);
             }
         }
-        
+
         Ok(headers)
     }
 
@@ -234,13 +181,13 @@ impl StorageManager for StorageManagerCompat {
         end_height: u32,
     ) -> StorageResult<Vec<(u32, BlockHeader)>> {
         let mut results = Vec::new();
-        
+
         for height in start_height..=end_height {
             if let Some(header) = self.client.get_header(height).await? {
                 results.push((height, header));
             }
         }
-        
+
         Ok(results)
     }
 
@@ -324,7 +271,9 @@ impl StorageManager for StorageManagerCompat {
         _instant_lock: &InstantLock,
     ) -> StorageResult<()> {
         // TODO: Implement InstantLock storage in StorageClient
-        Err(StorageError::NotImplemented("InstantLock storage not yet implemented in StorageClient"))
+        Err(StorageError::NotImplemented(
+            "InstantLock storage not yet implemented in StorageClient",
+        ))
     }
 
     async fn load_instant_lock(&self, _txid: Txid) -> StorageResult<Option<InstantLock>> {
@@ -334,10 +283,15 @@ impl StorageManager for StorageManagerCompat {
 
     async fn store_terminal_block(&mut self, _block: &StoredTerminalBlock) -> StorageResult<()> {
         // TODO: Implement terminal block storage in StorageClient
-        Err(StorageError::NotImplemented("Terminal block storage not yet implemented in StorageClient"))
+        Err(StorageError::NotImplemented(
+            "Terminal block storage not yet implemented in StorageClient",
+        ))
     }
 
-    async fn load_terminal_block(&self, _height: u32) -> StorageResult<Option<StoredTerminalBlock>> {
+    async fn load_terminal_block(
+        &self,
+        _height: u32,
+    ) -> StorageResult<Option<StoredTerminalBlock>> {
         // TODO: Implement terminal block storage in StorageClient
         Ok(None)
     }

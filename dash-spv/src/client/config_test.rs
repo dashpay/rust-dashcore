@@ -13,7 +13,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = ClientConfig::default();
-        
+
         assert_eq!(config.network, Network::Dash);
         assert!(config.peers.is_empty());
         assert_eq!(config.validation_mode, ValidationMode::Full);
@@ -32,7 +32,7 @@ mod tests {
         assert_eq!(config.max_concurrent_filter_requests, 16);
         assert!(config.enable_filter_flow_control);
         assert_eq!(config.filter_request_delay_ms, 0);
-        
+
         // Mempool defaults
         assert!(!config.enable_mempool_tracking);
         assert_eq!(config.mempool_strategy, MempoolStrategy::Selective);
@@ -63,7 +63,7 @@ mod tests {
     fn test_builder_pattern() {
         let path = PathBuf::from("/test/storage");
         let addr: SocketAddr = "1.2.3.4:9999".parse().unwrap();
-        
+
         let config = ClientConfig::mainnet()
             .with_storage_path(path.clone())
             .with_validation_mode(ValidationMode::CheckpointsOnly)
@@ -89,7 +89,7 @@ mod tests {
         assert_eq!(config.max_concurrent_filter_requests, 32);
         assert!(!config.enable_filter_flow_control);
         assert_eq!(config.filter_request_delay_ms, 100);
-        
+
         // Mempool settings
         assert!(config.enable_mempool_tracking);
         assert_eq!(config.mempool_strategy, MempoolStrategy::BloomFilter);
@@ -105,10 +105,10 @@ mod tests {
         let mut config = ClientConfig::default();
         let addr1: SocketAddr = "1.2.3.4:9999".parse().unwrap();
         let addr2: SocketAddr = "5.6.7.8:9999".parse().unwrap();
-        
+
         config.add_peer(addr1);
         config.add_peer(addr2);
-        
+
         assert_eq!(config.peers.len(), 2);
         assert_eq!(config.peers[0], addr1);
         assert_eq!(config.peers[1], addr2);
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn test_watch_items() {
         let mut config = ClientConfig::default();
-        
+
         // Note: We need a valid address string for the network
         // Using a dummy P2PKH address format for testing
         let addr_str = "XeNTGz5bVjPNZVPpwTRz6SnLbZGxLqJUg4"; // Example Dash mainnet address
@@ -125,7 +125,7 @@ mod tests {
             config = config.watch_address(address.assume_checked());
             assert_eq!(config.watch_items.len(), 1);
         }
-        
+
         let script = dashcore::ScriptBuf::new();
         config = config.watch_script(script);
         assert_eq!(config.watch_items.len(), 2);
@@ -133,10 +133,8 @@ mod tests {
 
     #[test]
     fn test_disable_features() {
-        let config = ClientConfig::default()
-            .without_filters()
-            .without_masternodes();
-        
+        let config = ClientConfig::default().without_filters().without_masternodes();
+
         assert!(!config.enable_filters);
         assert!(!config.enable_masternodes);
     }
@@ -151,7 +149,7 @@ mod tests {
     fn test_validation_invalid_max_headers() {
         let mut config = ClientConfig::default();
         config.max_headers_per_message = 0;
-        
+
         let result = config.validate();
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "max_headers_per_message must be > 0");
@@ -161,7 +159,7 @@ mod tests {
     fn test_validation_invalid_filter_checkpoint_interval() {
         let mut config = ClientConfig::default();
         config.filter_checkpoint_interval = 0;
-        
+
         let result = config.validate();
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "filter_checkpoint_interval must be > 0");
@@ -171,7 +169,7 @@ mod tests {
     fn test_validation_invalid_max_peers() {
         let mut config = ClientConfig::default();
         config.max_peers = 0;
-        
+
         let result = config.validate();
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "max_peers must be > 0");
@@ -181,7 +179,7 @@ mod tests {
     fn test_validation_invalid_max_concurrent_filter_requests() {
         let mut config = ClientConfig::default();
         config.max_concurrent_filter_requests = 0;
-        
+
         let result = config.validate();
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "max_concurrent_filter_requests must be > 0");
@@ -192,7 +190,7 @@ mod tests {
         let mut config = ClientConfig::default();
         config.enable_mempool_tracking = true;
         config.max_mempool_transactions = 0;
-        
+
         let result = config.validate();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("max_mempool_transactions must be > 0"));
@@ -203,7 +201,7 @@ mod tests {
         let mut config = ClientConfig::default();
         config.enable_mempool_tracking = true;
         config.mempool_timeout_secs = 0;
-        
+
         let result = config.validate();
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "mempool_timeout_secs must be > 0");
@@ -215,16 +213,19 @@ mod tests {
         config.enable_mempool_tracking = true;
         config.mempool_strategy = MempoolStrategy::Selective;
         config.recent_send_window_secs = 0;
-        
+
         let result = config.validate();
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "recent_send_window_secs must be > 0 for Selective strategy");
+        assert_eq!(
+            result.unwrap_err(),
+            "recent_send_window_secs must be > 0 for Selective strategy"
+        );
     }
 
     #[test]
     fn test_cfheader_gap_settings() {
         let config = ClientConfig::default();
-        
+
         assert!(config.enable_cfheader_gap_restart);
         assert_eq!(config.cfheader_gap_check_interval_secs, 15);
         assert_eq!(config.cfheader_gap_restart_cooldown_secs, 30);
@@ -234,7 +235,7 @@ mod tests {
     #[test]
     fn test_filter_gap_settings() {
         let config = ClientConfig::default();
-        
+
         assert!(config.enable_filter_gap_restart);
         assert_eq!(config.filter_gap_check_interval_secs, 20);
         assert_eq!(config.min_filter_gap_size, 10);
@@ -246,7 +247,7 @@ mod tests {
     #[test]
     fn test_request_control_defaults() {
         let config = ClientConfig::default();
-        
+
         assert!(config.max_concurrent_headers_requests.is_none());
         assert!(config.max_concurrent_mnlist_requests.is_none());
         assert!(config.max_concurrent_cfheaders_requests.is_none());
@@ -262,18 +263,16 @@ mod tests {
     fn test_wallet_creation_time() {
         let mut config = ClientConfig::default();
         config.wallet_creation_time = Some(1234567890);
-        
+
         assert_eq!(config.wallet_creation_time, Some(1234567890));
     }
 
     #[test]
     fn test_clone_config() {
-        let original = ClientConfig::mainnet()
-            .with_max_peers(16)
-            .with_log_level("debug");
-        
+        let original = ClientConfig::mainnet().with_max_peers(16).with_log_level("debug");
+
         let cloned = original.clone();
-        
+
         assert_eq!(cloned.network, original.network);
         assert_eq!(cloned.max_peers, original.max_peers);
         assert_eq!(cloned.log_level, original.log_level);

@@ -60,7 +60,11 @@ impl<'a> StatusDisplay<'a> {
 
     /// Calculate the header height based on the current state and storage.
     /// This handles both checkpoint sync and normal sync scenarios.
-    async fn calculate_header_height_with_logging(&self, state: &ChainState, with_logging: bool) -> u32 {
+    async fn calculate_header_height_with_logging(
+        &self,
+        state: &ChainState,
+        with_logging: bool,
+    ) -> u32 {
         if state.synced_from_checkpoint && state.sync_base_height > 0 {
             // Get the actual number of headers in storage
             if let Ok(Some(storage_tip)) = self.storage.get_tip_height().await {
@@ -99,8 +103,9 @@ impl<'a> StatusDisplay<'a> {
                 let tip = state.tip_height();
                 if with_logging {
                     tracing::debug!(
-                        "Status display (normal sync): chain state has {} headers, tip_height={}", 
-                        state.headers.len(), tip
+                        "Status display (normal sync): chain state has {} headers, tip_height={}",
+                        state.headers.len(),
+                        tip
                     );
                 }
                 tip
@@ -272,7 +277,7 @@ impl<'a> StatusDisplay<'a> {
     }
 
     /// Calculate the filter header height considering checkpoint sync.
-    /// 
+    ///
     /// This helper method encapsulates the logic for determining the current filter header height,
     /// taking into account whether we're syncing from a checkpoint or from genesis.
     async fn calculate_filter_header_height(&self, state: &ChainState) -> u32 {

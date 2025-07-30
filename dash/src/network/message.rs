@@ -983,13 +983,13 @@ mod test {
             magic: crate::Network::Dash.magic(),
             payload: msg_true,
         };
-        
+
         // Encode
         let encoded = serialize(&raw_msg);
-        
+
         // Decode
         let decoded: RawNetworkMessage = deserialize(&encoded).unwrap();
-        
+
         // Verify
         match decoded.payload {
             NetworkMessage::SendDsq(wants_dsq) => {
@@ -997,20 +997,20 @@ mod test {
             }
             _ => panic!("Expected SendDsq message"),
         }
-        
+
         // Test encoding and decoding SendDsq(false)
         let msg_false = NetworkMessage::SendDsq(false);
         let raw_msg = RawNetworkMessage {
             magic: crate::Network::Dash.magic(),
             payload: msg_false,
         };
-        
+
         // Encode
         let encoded = serialize(&raw_msg);
-        
+
         // Decode
         let decoded: RawNetworkMessage = deserialize(&encoded).unwrap();
-        
+
         // Verify
         match decoded.payload {
             NetworkMessage::SendDsq(wants_dsq) => {
@@ -1019,7 +1019,7 @@ mod test {
             _ => panic!("Expected SendDsq message"),
         }
     }
-    
+
     #[test]
     fn test_senddsq_command_string() {
         let msg = NetworkMessage::SendDsq(true);

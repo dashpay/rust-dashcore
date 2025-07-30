@@ -67,11 +67,7 @@ impl ConnectionPool {
         let removed = connections.remove(addr);
         if removed.is_some() {
             let remaining = connections.len();
-            log::info!(
-                "🔴 Removed connection to {}, {} peers remaining",
-                addr,
-                remaining
-            );
+            log::info!("🔴 Removed connection to {}, {} peers remaining", addr, remaining);
         }
         removed
     }

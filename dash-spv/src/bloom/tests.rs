@@ -11,8 +11,8 @@ mod tests {
     use crate::error::SpvError;
     use dashcore::{
         address::{Address, Payload},
-        bloom::{BloomFilter, BloomFlags},
         blockdata::script::{Script, ScriptBuf},
+        bloom::{BloomFilter, BloomFlags},
         hash_types::PubkeyHash,
         OutPoint, Txid,
     };
@@ -66,7 +66,7 @@ mod tests {
         let builder = BloomFilterBuilder::new().add_address(address.clone());
 
         let filter = builder.build().unwrap();
-        
+
         // Verify filter contains the address
         let script = address.script_pubkey();
         assert!(filter.contains(script.as_bytes()));
@@ -76,15 +76,12 @@ mod tests {
     fn test_builder_add_multiple_addresses() {
         let addresses = vec![
             test_address(),
-            Address::new(
-                dashcore::Network::Dash,
-                Payload::PubkeyHash(PubkeyHash::from([1u8; 20])),
-            ),
+            Address::new(dashcore::Network::Dash, Payload::PubkeyHash(PubkeyHash::from([1u8; 20]))),
         ];
         let builder = BloomFilterBuilder::new().add_addresses(addresses.clone());
 
         let filter = builder.build().unwrap();
-        
+
         // Verify filter contains all addresses
         for address in addresses {
             let script = address.script_pubkey();
@@ -103,12 +100,11 @@ mod tests {
             vout: 1,
         };
 
-        let builder = BloomFilterBuilder::new()
-            .add_outpoint(outpoint1)
-            .add_outpoints(vec![outpoint2]);
+        let builder =
+            BloomFilterBuilder::new().add_outpoint(outpoint1).add_outpoints(vec![outpoint2]);
 
         let filter = builder.build().unwrap();
-        
+
         // Verify filter contains outpoints
         let outpoint1_bytes = utils::outpoint_to_bytes(&outpoint1);
         let outpoint2_bytes = utils::outpoint_to_bytes(&outpoint2);
@@ -121,12 +117,10 @@ mod tests {
         let data1 = vec![1, 2, 3, 4];
         let data2 = vec![5, 6, 7, 8];
 
-        let builder = BloomFilterBuilder::new()
-            .add_data(data1.clone())
-            .add_data(data2.clone());
+        let builder = BloomFilterBuilder::new().add_data(data1.clone()).add_data(data2.clone());
 
         let filter = builder.build().unwrap();
-        
+
         // Verify filter contains data
         assert!(filter.contains(&data1));
         assert!(filter.contains(&data2));
@@ -576,13 +570,18 @@ mod tests {
 
     #[test]
     fn test_outpoint_to_bytes_different_vouts() {
-        let txid = Txid::from_hex(
-            "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234",
-        )
-        .unwrap();
+        let txid =
+            Txid::from_hex("abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234")
+                .unwrap();
 
-        let outpoint1 = OutPoint { txid, vout: 0 };
-        let outpoint2 = OutPoint { txid, vout: 1 };
+        let outpoint1 = OutPoint {
+            txid,
+            vout: 0,
+        };
+        let outpoint2 = OutPoint {
+            txid,
+            vout: 1,
+        };
         let outpoint3 = OutPoint {
             txid,
             vout: u32::MAX,
@@ -622,9 +621,7 @@ mod tests {
 
     #[test]
     fn test_builder_very_high_false_positive_rate() {
-        let builder = BloomFilterBuilder::new()
-            .false_positive_rate(0.99)
-            .add_data(vec![1, 2, 3]);
+        let builder = BloomFilterBuilder::new().false_positive_rate(0.99).add_data(vec![1, 2, 3]);
 
         let filter = builder.build().unwrap();
         // Filter should still be created, though not very useful
@@ -712,7 +709,7 @@ mod tests {
         // Should only keep last 1000 queries in the internal buffer
         let stats = tracker.get_stats();
         assert_eq!(stats.basic.queries, 2000);
-        
+
         // The average should be calculated from the recent queries
         // For queries 1001-2000, the average should be 1500.5
         assert!((stats.query_performance.avg_query_time_us - 1500.5).abs() < 1.0);
@@ -746,11 +743,9 @@ mod tests {
         assert!(manager.process_transaction(&tx).await);
 
         // Create a transaction that doesn't involve us
-        tx.output[0].script_pubkey = Address::new(
-            dashcore::Network::Dash,
-            Payload::PubkeyHash(PubkeyHash::from([2u8; 20])),
-        )
-        .script_pubkey();
+        tx.output[0].script_pubkey =
+            Address::new(dashcore::Network::Dash, Payload::PubkeyHash(PubkeyHash::from([2u8; 20])))
+                .script_pubkey();
 
         // Should not match
         assert!(!manager.process_transaction(&tx).await);

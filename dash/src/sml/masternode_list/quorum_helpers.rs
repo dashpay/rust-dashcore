@@ -103,7 +103,7 @@ impl MasternodeList {
                 quorums_of_type.len(),
                 llmq_type
             );
-            
+
             // Log all stored hashes for comparison
             for (stored_hash, _) in quorums_of_type {
                 tracing::debug!(
@@ -112,7 +112,7 @@ impl MasternodeList {
                     stored_hash == &quorum_hash
                 );
             }
-            
+
             quorums_of_type.get(&quorum_hash)
         } else {
             tracing::debug!(

@@ -108,7 +108,6 @@ fn dash_genesis_tx() -> Transaction {
     ret
 }
 
-
 /// Constructs and returns the genesis block.
 pub fn genesis_block(network: Network) -> Block {
     let txdata = vec![dash_genesis_tx()];

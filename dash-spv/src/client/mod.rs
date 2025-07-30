@@ -27,8 +27,8 @@ use crate::storage::StorageManager;
 use crate::sync::filters::FilterNotificationSender;
 use crate::sync::sequential::SequentialSyncManager;
 use crate::types::{
-    AddressBalance, ChainState, DetailedSyncProgress, MempoolState, NetworkEvent, SpvEvent, SpvStats,
-    SyncProgress, WatchItem,
+    AddressBalance, ChainState, DetailedSyncProgress, MempoolState, NetworkEvent, SpvEvent,
+    SpvStats, SyncProgress, WatchItem,
 };
 use crate::validation::ValidationManager;
 use dashcore::network::constants::NetworkExt;
@@ -42,7 +42,6 @@ pub use message_handler::MessageHandler;
 pub use status_display::StatusDisplay;
 pub use wallet_utils::{WalletSummary, WalletUtils};
 pub use watch_manager::{WatchItemUpdateSender, WatchManager};
-
 
 /// Main Dash SPV client.
 pub struct DashSpvClient {
@@ -253,9 +252,7 @@ impl DashSpvClient {
     /// Create a new SPV client with the given configuration.
     pub async fn new(config: ClientConfig) -> Result<Self> {
         // Use the builder to create the client
-        builder::DashSpvClientBuilder::new(config)
-            .build()
-            .await
+        builder::DashSpvClientBuilder::new(config).build().await
     }
 
     /// Start the SPV client.
@@ -358,22 +355,23 @@ impl DashSpvClient {
 
         // Initialize genesis block if not already present
         self.initialize_genesis_block().await?;
-        
+
         // Load headers from storage if they exist
         // This ensures the ChainState has headers loaded for both checkpoint and normal sync
-        let tip_height = self.storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0);
+        let tip_height =
+            self.storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0);
         if tip_height > 0 {
             tracing::info!("Found {} headers in storage, loading into sync manager...", tip_height);
             match self.sync_manager.load_headers_from_storage(&*self.storage).await {
                 Ok(loaded_count) => {
                     tracing::info!("✅ Sync manager loaded {} headers from storage", loaded_count);
-                    
+
                     // IMPORTANT: Also load headers into the client's ChainState for normal sync
                     // This is needed because the status display reads from the client's ChainState
                     let state = self.state.read().await;
                     let is_normal_sync = !state.synced_from_checkpoint;
                     drop(state); // Release the lock before loading headers
-                    
+
                     if is_normal_sync && loaded_count > 0 {
                         tracing::info!("Loading headers into client ChainState for normal sync...");
                         if let Err(e) = self.load_headers_into_client_state(tip_height).await {
@@ -381,15 +379,15 @@ impl DashSpvClient {
                             // This is not critical for normal sync, continue anyway
                         }
                     }
-                    
+
                     // Check if any peer has more headers than we do
                     // This will be used by the sync manager to determine if sync is needed
                     match self.network.get_peer_best_height().await {
                         Ok(Some(peer_best_height)) if peer_best_height > tip_height => {
                             tracing::info!(
-                                "🔍 Peers have {} more headers than storage (our height: {}, peer height: {})", 
-                                peer_best_height - tip_height, 
-                                tip_height, 
+                                "🔍 Peers have {} more headers than storage (our height: {}, peer height: {})",
+                                peer_best_height - tip_height,
+                                tip_height,
                                 peer_best_height
                             );
                             tracing::info!("📡 Sync manager should detect this and continue syncing when start_sync is called");
@@ -402,7 +400,9 @@ impl DashSpvClient {
                             );
                         }
                         Ok(None) => {
-                            tracing::debug!("No peer height available yet - will check during sync");
+                            tracing::debug!(
+                                "No peer height available yet - will check during sync"
+                            );
                         }
                         Err(e) => {
                             tracing::warn!("Failed to get peer best height: {}", e);
@@ -524,7 +524,9 @@ impl DashSpvClient {
 
                 // Check outputs to this address (incoming funds)
                 for output in &tx.transaction.output {
-                    if let Ok(out_addr) = dashcore::Address::from_script(&output.script_pubkey, wallet.network()) {
+                    if let Ok(out_addr) =
+                        dashcore::Address::from_script(&output.script_pubkey, wallet.network())
+                    {
                         if &out_addr == address {
                             address_balance_change += output.value as i64;
                         }
@@ -543,7 +545,7 @@ impl DashSpvClient {
                     // For outgoing transactions, net_amount should be negative if we're spending
                     // For incoming transactions, net_amount should be positive if we're receiving
                     // Mixed transactions (both sending and receiving) should have the net effect
-                    
+
                     // Apply the validated balance change
                     if tx.is_instant_send {
                         pending_instant += address_balance_change;
@@ -561,8 +563,16 @@ impl DashSpvClient {
         }
 
         // Convert to unsigned values, ensuring no negative balances
-        let pending_sats = if pending < 0 { 0 } else { pending as u64 };
-        let pending_instant_sats = if pending_instant < 0 { 0 } else { pending_instant as u64 };
+        let pending_sats = if pending < 0 {
+            0
+        } else {
+            pending as u64
+        };
+        let pending_instant_sats = if pending_instant < 0 {
+            0
+        } else {
+            pending_instant as u64
+        };
 
         Ok(crate::types::MempoolBalance {
             pending: dashcore::Amount::from_sat(pending_sats),
@@ -610,13 +620,14 @@ impl DashSpvClient {
 
     /// Get the best height reported by connected peers.
     pub async fn get_peer_best_height(&self) -> Result<Option<u32>> {
-        self.network.get_peer_best_height().await
-            .map_err(|e| SpvError::Network(e))
+        self.network.get_peer_best_height().await.map_err(|e| SpvError::Network(e))
     }
 
     /// Get the current chain height from storage.
     pub async fn chain_height(&self) -> Result<u32> {
-        self.storage.get_tip_height().await
+        self.storage
+            .get_tip_height()
+            .await
             .map_err(|e| SpvError::Storage(e))
             .map(|h| h.unwrap_or(0))
     }
@@ -657,10 +668,13 @@ impl DashSpvClient {
                 Ok(started) => {
                     if started {
                         tracing::info!("✅ Sync started successfully");
-                        
+
                         // Send initial requests
-                        let send_result = self.sync_manager.send_initial_requests(&mut *self.network, &mut *self.storage).await;
-                        
+                        let send_result = self
+                            .sync_manager
+                            .send_initial_requests(&mut *self.network, &mut *self.storage)
+                            .await;
+
                         match send_result {
                             Ok(_) => {
                                 tracing::info!("✅ Initial sync requests sent");
@@ -684,7 +698,7 @@ impl DashSpvClient {
                 current_height,
                 peer_best_height
             );
-            
+
             // Update sync manager state to FullySynced
             let _ = self.sync_manager.start_sync(&mut *self.network, &mut *self.storage).await;
             Ok(false)
@@ -825,7 +839,7 @@ impl DashSpvClient {
         let mut headers_this_second = 0u32;
         let mut last_rate_calc = Instant::now();
         let total_bytes_downloaded = 0u64;
-        
+
         // Track masternode sync completion for ChainLock validation
         let mut masternode_engine_updated = false;
 
@@ -855,19 +869,23 @@ impl DashSpvClient {
 
             // Check if we have connected peers and need to start/resume sync
             if !initial_sync_started && self.network.peer_count() > 0 {
-                tracing::info!("🚀 Peers connected (count: {}), checking sync status...", self.network.peer_count());
-                
+                tracing::info!(
+                    "🚀 Peers connected (count: {}), checking sync status...",
+                    self.network.peer_count()
+                );
+
                 // Log peer info
                 let peer_info = self.network.peer_info();
                 for (i, peer) in peer_info.iter().enumerate() {
-                    tracing::info!("  Peer {}: {} (version: {}, height: {:?})", 
-                        i + 1, 
-                        peer.address, 
+                    tracing::info!(
+                        "  Peer {}: {} (version: {}, height: {:?})",
+                        i + 1,
+                        peer.address,
                         peer.version.unwrap_or(0),
                         peer.best_height
                     );
                 }
-                
+
                 // Check if we need to sync based on peer heights
                 let should_start_sync = {
                     let current_height = self.sync_manager.get_chain_height();
@@ -878,11 +896,14 @@ impl DashSpvClient {
                             current_height + 1 // Force sync to start
                         }
                         Err(e) => {
-                            tracing::warn!("Failed to get peer height: {}, will start sync anyway", e);
+                            tracing::warn!(
+                                "Failed to get peer height: {}, will start sync anyway",
+                                e
+                            );
                             current_height + 1 // Force sync to start
                         }
                     };
-                    
+
                     if current_height < peer_best_height {
                         tracing::info!(
                             "📊 Need to sync: current height {} < peer height {}",
@@ -902,25 +923,30 @@ impl DashSpvClient {
                         false
                     }
                 };
-                
+
                 if should_start_sync {
                     // Start initial sync with sequential sync manager
-                    match self.sync_manager.start_sync(&mut *self.network, &mut *self.storage).await {
+                    match self.sync_manager.start_sync(&mut *self.network, &mut *self.storage).await
+                    {
                         Ok(started) => {
                             tracing::info!("✅ Sequential sync start_sync returned: {}", started);
-                            
+
                             // Send initial requests after starting sync
                             // The sequential sync's start_sync only prepares the state
                             tracing::info!("📤 Sending initial sync requests...");
-                            
+
                             // Ensure this completes even if monitor_network is interrupted
-                            let send_result = self.sync_manager.send_initial_requests(&mut *self.network, &mut *self.storage).await;
-                            
+                            let send_result = self
+                                .sync_manager
+                                .send_initial_requests(&mut *self.network, &mut *self.storage)
+                                .await;
+
                             match send_result {
                                 Ok(_) => {
                                     tracing::info!("✅ Initial sync requests sent successfully");
                                     // Give the network layer time to actually send the message
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(100))
+                                        .await;
                                 }
                                 Err(e) => {
                                     tracing::error!("Failed to send initial sync requests: {}", e);
@@ -935,7 +961,8 @@ impl DashSpvClient {
                     // Already synced, just update the sync manager state
                     tracing::info!("📊 No sync needed, updating sync manager to FullySynced state");
                     // The sync manager's start_sync will handle this case
-                    let _ = self.sync_manager.start_sync(&mut *self.network, &mut *self.storage).await;
+                    let _ =
+                        self.sync_manager.start_sync(&mut *self.network, &mut *self.storage).await;
                 }
 
                 initial_sync_started = true;
@@ -1139,7 +1166,7 @@ impl DashSpvClient {
                 }
                 last_filter_gap_check = Instant::now();
             }
-            
+
             // Check if masternode sync has completed and update ChainLock validation
             if !masternode_engine_updated && self.config.enable_masternodes {
                 // Check if we have a masternode engine available now
@@ -1147,17 +1174,22 @@ impl DashSpvClient {
                     if has_engine {
                         masternode_engine_updated = true;
                         info!("✅ Masternode sync complete - ChainLock validation enabled");
-                        
+
                         // Validate any pending ChainLocks
                         if let Err(e) = self.validate_pending_chainlocks().await {
-                            error!("Failed to validate pending ChainLocks after masternode sync: {}", e);
+                            error!(
+                                "Failed to validate pending ChainLocks after masternode sync: {}",
+                                e
+                            );
                         }
                     }
                 }
             }
-            
+
             // Periodically retry validation of pending ChainLocks
-            if masternode_engine_updated && last_chainlock_validation_check.elapsed() >= chainlock_validation_interval {
+            if masternode_engine_updated
+                && last_chainlock_validation_check.elapsed() >= chainlock_validation_interval
+            {
                 debug!("Checking for pending ChainLocks to validate...");
                 if let Err(e) = self.validate_pending_chainlocks().await {
                     debug!("Periodic pending ChainLock validation check failed: {}", e);
@@ -1776,13 +1808,13 @@ impl DashSpvClient {
             // Clone the engine for the ChainLockManager
             let engine_arc = Arc::new(engine.clone());
             self.chainlock_manager.set_masternode_engine(engine_arc).await;
-            
+
             info!("Updated ChainLockManager with masternode engine for full validation");
-            
+
             // Note: Pending ChainLocks will be validated when they are next processed
             // or can be triggered by calling validate_pending_chainlocks separately
             // when mutable access to storage is available
-            
+
             Ok(true)
         } else {
             warn!("Masternode engine not available for ChainLock validation update");
@@ -1794,11 +1826,12 @@ impl DashSpvClient {
     /// This requires mutable access to self for storage access.
     pub async fn validate_pending_chainlocks(&mut self) -> Result<()> {
         let chain_state = self.state.read().await;
-        
-        match self.chainlock_manager.validate_pending_chainlocks(
-            &*chain_state,
-            &mut *self.storage,
-        ).await {
+
+        match self
+            .chainlock_manager
+            .validate_pending_chainlocks(&*chain_state, &mut *self.storage)
+            .await
+        {
             Ok(_) => {
                 info!("Successfully validated pending ChainLocks");
                 Ok(())
@@ -1821,18 +1854,18 @@ impl DashSpvClient {
                 return Ok(cache.0.clone());
             }
         }
-        
+
         // Cache is stale, get fresh data
         tracing::debug!("Sync progress cache miss - fetching fresh data from storage");
         let display = self.create_status_display().await;
         let progress = display.sync_progress().await?;
-        
+
         // Update cache
         {
             let mut cache = self.cached_sync_progress.write().await;
             *cache = (progress.clone(), std::time::Instant::now());
         }
-        
+
         Ok(progress)
     }
 
@@ -1988,7 +2021,7 @@ impl DashSpvClient {
     /// Returns None if masternode sync is not enabled in config or if sync hasn't completed.
     pub fn masternode_list_engine(&self) -> Option<&MasternodeListEngine> {
         let engine = self.sync_manager.masternode_list_engine()?;
-        
+
         // Check if the engine has any masternode lists
         if engine.masternode_lists.is_empty() {
             tracing::debug!(
@@ -2003,15 +2036,16 @@ impl DashSpvClient {
             Some(engine)
         }
     }
-    
+
     /// Check if masternode sync has completed and has data available.
     /// Returns true if masternode lists are available for querying.
     pub fn is_masternode_sync_complete(&self) -> bool {
         if !self.config.enable_masternodes {
             return false;
         }
-        
-        self.sync_manager.masternode_list_engine()
+
+        self.sync_manager
+            .masternode_list_engine()
             .map(|engine| !engine.masternode_lists.is_empty())
             .unwrap_or(false)
     }
@@ -2157,12 +2191,8 @@ impl DashSpvClient {
         }
 
         // Get current height from storage to validate against
-        let current_height = self
-            .storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SpvError::Storage(e))?
-            .unwrap_or(0);
+        let current_height =
+            self.storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0);
 
         if height > current_height {
             tracing::error!(
@@ -2196,12 +2226,8 @@ impl DashSpvClient {
         }
 
         // Check if checkpoint height is reasonable (not in the future)
-        let current_height = self
-            .storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SpvError::Storage(e))?
-            .unwrap_or(0);
+        let current_height =
+            self.storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0);
 
         if current_height > 0 && height > current_height {
             tracing::error!(
@@ -2618,7 +2644,7 @@ impl DashSpvClient {
 
         // Get current chain state
         let chain_state = self.state.read().await;
-        
+
         // Save the chain state itself (headers, etc.)
         if let Err(e) = self.storage.store_chain_state(&*chain_state).await {
             tracing::error!("Failed to save chain state: {}", e);
@@ -2681,33 +2707,36 @@ impl DashSpvClient {
 
             // Create checkpoint manager
             let checkpoint_manager = crate::chain::checkpoints::CheckpointManager::new(checkpoints);
-            
+
             // Find the best checkpoint at or before the requested height
-            if let Some(checkpoint) = checkpoint_manager.best_checkpoint_at_or_before_height(start_height) {
+            if let Some(checkpoint) =
+                checkpoint_manager.best_checkpoint_at_or_before_height(start_height)
+            {
                 if checkpoint.height > 0 {
                     tracing::info!(
                         "🚀 Starting sync from checkpoint at height {} instead of genesis (requested start height: {})",
                         checkpoint.height,
                         start_height
                     );
-                    
+
                     // Initialize chain state with checkpoint
                     let mut chain_state = self.state.write().await;
-                    
+
                     // Build header from checkpoint
                     let checkpoint_header = dashcore::block::Header {
                         version: dashcore::block::Version::from_consensus(536870912), // Version 0x20000000 is common for modern blocks
                         prev_blockhash: checkpoint.prev_blockhash,
-                        merkle_root: checkpoint.merkle_root
+                        merkle_root: checkpoint
+                            .merkle_root
                             .map(|h| dashcore::TxMerkleNode::from_byte_array(*h.as_byte_array()))
                             .unwrap_or_else(|| dashcore::TxMerkleNode::all_zeros()),
                         time: checkpoint.timestamp,
                         bits: dashcore::pow::CompactTarget::from_consensus(
-                            checkpoint.target.to_compact_lossy().to_consensus()
+                            checkpoint.target.to_compact_lossy().to_consensus(),
                         ),
                         nonce: checkpoint.nonce,
                     };
-                    
+
                     // Verify hash matches
                     let calculated_hash = checkpoint_header.block_hash();
                     if calculated_hash != checkpoint.block_hash {
@@ -2724,24 +2753,26 @@ impl DashSpvClient {
                             checkpoint_header,
                             self.config.network,
                         );
-                        
+
                         // Clone the chain state for storage
                         let chain_state_for_storage = chain_state.clone();
                         drop(chain_state);
-                        
+
                         // Update storage with chain state including sync_base_height
-                        self.storage.store_chain_state(&chain_state_for_storage).await
+                        self.storage
+                            .store_chain_state(&chain_state_for_storage)
+                            .await
                             .map_err(|e| SpvError::Storage(e))?;
-                        
+
                         // Don't store the checkpoint header itself - we'll request headers from peers
                         // starting from this checkpoint
-                        
+
                         tracing::info!(
                             "✅ Initialized from checkpoint at height {}, skipping {} headers",
                             checkpoint.height,
                             checkpoint.height
                         );
-                        
+
                         return Ok(());
                     }
                 }
@@ -3127,30 +3158,30 @@ impl DashSpvClient {
                 return Ok(cache.0.clone());
             }
         }
-        
+
         // Cache is stale, get fresh data
         let display = self.create_status_display().await;
         let mut stats = display.stats().await?;
-        
+
         // Add real-time peer count and heights
         stats.connected_peers = self.network.peer_count() as u32;
         stats.total_peers = self.network.peer_count() as u32; // TODO: Track total discovered peers
-        
+
         // Get current heights from storage
         if let Ok(Some(header_height)) = self.storage.get_tip_height().await {
             stats.header_height = header_height;
         }
-        
+
         if let Ok(Some(filter_height)) = self.storage.get_filter_tip_height().await {
             stats.filter_height = filter_height;
         }
-        
+
         // Update cache
         {
             let mut cache = self.cached_stats.write().await;
             *cache = (stats.clone(), std::time::Instant::now());
         }
-        
+
         Ok(stats)
     }
 
@@ -3281,7 +3312,8 @@ impl DashSpvClient {
         // Process any pending network messages
         if let Some(message) = self.network.receive_message().await? {
             // Handle the message through the sync manager
-            let result = self.sync_manager
+            let result = self
+                .sync_manager
                 .handle_message(message.clone(), &mut *self.network, &mut *self.storage)
                 .await;
 
@@ -3291,7 +3323,9 @@ impl DashSpvClient {
                     if !headers.is_empty() && result.is_ok() {
                         let state = self.state.read().await;
                         let tip_height = state.tip_height();
-                        let progress = if let Ok(Some(peer_height)) = self.network.get_peer_best_height().await {
+                        let progress = if let Ok(Some(peer_height)) =
+                            self.network.get_peer_best_height().await
+                        {
                             ((tip_height as f64 / peer_height as f64) * 100.0).min(100.0)
                         } else {
                             0.0
@@ -3336,8 +3370,14 @@ impl DashSpvClient {
                     // Check for new blocks
                     for item in inv {
                         if let dashcore::network::message_blockdata::Inventory::Block(hash) = item {
-                            if let Some(_height) = self.storage.get_header_height_by_hash(hash).await.map_err(|e| SpvError::Storage(e))? {
-                                let height = self.find_height_for_block_hash(*hash).await.unwrap_or(0);
+                            if let Some(_height) = self
+                                .storage
+                                .get_header_height_by_hash(hash)
+                                .await
+                                .map_err(|e| SpvError::Storage(e))?
+                            {
+                                let height =
+                                    self.find_height_for_block_hash(*hash).await.unwrap_or(0);
                                 let event = NetworkEvent::NewBlock {
                                     height,
                                     block_hash: *hash,
@@ -3351,15 +3391,21 @@ impl DashSpvClient {
                 dashcore::network::message::NetworkMessage::MnListDiff(diff) => {
                     if result.is_ok() {
                         // Get height from the block hash
-                        let height = if let Some(h) = self.storage.get_header_height_by_hash(&diff.block_hash).await.map_err(|e| SpvError::Storage(e))? {
+                        let height = if let Some(h) = self
+                            .storage
+                            .get_header_height_by_hash(&diff.block_hash)
+                            .await
+                            .map_err(|e| SpvError::Storage(e))?
+                        {
                             h
                         } else {
                             0 // Default if we can't find the height
                         };
-                        
+
                         let event = NetworkEvent::MasternodeListUpdated {
                             height,
-                            masternode_count: diff.new_masternodes.len() + diff.deleted_masternodes.len(),
+                            masternode_count: diff.new_masternodes.len()
+                                + diff.deleted_masternodes.len(),
                         };
                         self.event_queue.write().await.push(event);
                     }
@@ -3425,15 +3471,15 @@ mod message_handler_test;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::{Transaction, TxIn, TxOut, OutPoint, Amount};
-    use dashcore::blockdata::script::ScriptBuf;
-    use dashcore_hashes::Hash;
-    use crate::types::{UnconfirmedTransaction, MempoolState};
     use crate::storage::{memory::MemoryStorageManager, StorageManager};
+    use crate::types::{MempoolState, UnconfirmedTransaction};
     use crate::wallet::Wallet;
+    use dashcore::blockdata::script::ScriptBuf;
+    use dashcore::{Amount, OutPoint, Transaction, TxIn, TxOut};
+    use dashcore_hashes::Hash;
+    use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
-    use std::str::FromStr;
 
     // Tests for get_mempool_balance function
     // These tests validate that the balance calculation correctly handles:
@@ -3445,16 +3491,18 @@ mod tests {
     async fn test_get_mempool_balance_logic() {
         // Create a simple test scenario to validate the balance calculation logic
         // We'll create a minimal DashSpvClient structure for testing
-        
+
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
-        let storage: Arc<RwLock<dyn StorageManager>> = Arc::new(RwLock::new(MemoryStorageManager::new().await.expect("Failed to create memory storage")));
+        let storage: Arc<RwLock<dyn StorageManager>> = Arc::new(RwLock::new(
+            MemoryStorageManager::new().await.expect("Failed to create memory storage"),
+        ));
         let wallet = Arc::new(crate::wallet::Wallet::new(storage.clone()));
-        
+
         // Test address
         let address = dashcore::Address::from_str("yYZqVQcvnDVrPt9fMTxBVLJNr6yL8YFtez")
             .unwrap()
             .assume_checked();
-        
+
         // Test 1: Simple incoming transaction
         let tx1 = Transaction {
             version: 2,
@@ -3466,7 +3514,7 @@ mod tests {
             }],
             special_transaction_payload: None,
         };
-        
+
         let unconfirmed_tx1 = UnconfirmedTransaction::new(
             tx1.clone(),
             Amount::from_sat(100),
@@ -3475,34 +3523,36 @@ mod tests {
             vec![address.clone()],
             50000, // positive net amount
         );
-        
+
         mempool_state.write().await.add_transaction(unconfirmed_tx1);
-        
+
         // Now we need to create a minimal client structure to test
         // Since we can't easily create a full DashSpvClient, we'll test the logic directly
-        
+
         // The key logic from get_mempool_balance is:
         // 1. Check outputs to the address (incoming funds)
         // 2. Check inputs from the address (outgoing funds) - requires UTXO knowledge
         // 3. Apply the calculated balance change
-        
+
         let mempool = mempool_state.read().await;
         let mut pending = 0i64;
         let mut pending_instant = 0i64;
-        
+
         for tx in mempool.transactions.values() {
             if tx.addresses.contains(&address) {
                 let mut address_balance_change = 0i64;
-                
+
                 // Check outputs to this address
                 for output in &tx.transaction.output {
-                    if let Ok(out_addr) = dashcore::Address::from_script(&output.script_pubkey, wallet.network()) {
+                    if let Ok(out_addr) =
+                        dashcore::Address::from_script(&output.script_pubkey, wallet.network())
+                    {
                         if out_addr == address {
                             address_balance_change += output.value as i64;
                         }
                     }
                 }
-                
+
                 // Apply the balance change
                 if address_balance_change != 0 {
                     if tx.is_instant_send {
@@ -3513,10 +3563,10 @@ mod tests {
                 }
             }
         }
-        
+
         assert_eq!(pending, 50000);
         assert_eq!(pending_instant, 0);
-        
+
         // Test 2: InstantSend transaction
         let tx2 = Transaction {
             version: 2,
@@ -3528,7 +3578,7 @@ mod tests {
             }],
             special_transaction_payload: None,
         };
-        
+
         let unconfirmed_tx2 = UnconfirmedTransaction::new(
             tx2.clone(),
             Amount::from_sat(100),
@@ -3537,27 +3587,29 @@ mod tests {
             vec![address.clone()],
             30000,
         );
-        
+
         drop(mempool);
         mempool_state.write().await.add_transaction(unconfirmed_tx2);
-        
+
         // Recalculate
         let mempool = mempool_state.read().await;
         pending = 0;
         pending_instant = 0;
-        
+
         for tx in mempool.transactions.values() {
             if tx.addresses.contains(&address) {
                 let mut address_balance_change = 0i64;
-                
+
                 for output in &tx.transaction.output {
-                    if let Ok(out_addr) = dashcore::Address::from_script(&output.script_pubkey, wallet.network()) {
+                    if let Ok(out_addr) =
+                        dashcore::Address::from_script(&output.script_pubkey, wallet.network())
+                    {
                         if out_addr == address {
                             address_balance_change += output.value as i64;
                         }
                     }
                 }
-                
+
                 if address_balance_change != 0 {
                     if tx.is_instant_send {
                         pending_instant += address_balance_change;
@@ -3567,10 +3619,10 @@ mod tests {
                 }
             }
         }
-        
+
         assert_eq!(pending, 50000);
         assert_eq!(pending_instant, 30000);
-        
+
         // Test 3: Transaction with conflicting signs
         // This tests that we use actual outputs rather than just trusting net_amount
         let tx3 = Transaction {
@@ -3583,32 +3635,34 @@ mod tests {
             }],
             special_transaction_payload: None,
         };
-        
+
         let unconfirmed_tx3 = UnconfirmedTransaction::new(
             tx3.clone(),
             Amount::from_sat(100),
             false,
-            true,  // marked as outgoing (incorrect)
+            true, // marked as outgoing (incorrect)
             vec![address.clone()],
             -40000, // negative net amount (incorrect for receiving)
         );
-        
+
         drop(mempool);
         mempool_state.write().await.add_transaction(unconfirmed_tx3);
-        
+
         // The logic should detect we're actually receiving 40000
         let mempool = mempool_state.read().await;
         let tx = mempool.transactions.values().find(|t| t.transaction == tx3).unwrap();
-        
+
         let mut address_balance_change = 0i64;
         for output in &tx.transaction.output {
-            if let Ok(out_addr) = dashcore::Address::from_script(&output.script_pubkey, wallet.network()) {
+            if let Ok(out_addr) =
+                dashcore::Address::from_script(&output.script_pubkey, wallet.network())
+            {
                 if out_addr == address {
                     address_balance_change += output.value as i64;
                 }
             }
         }
-        
+
         // We should detect 40000 satoshis incoming regardless of the net_amount sign
         assert_eq!(address_balance_change, 40000);
     }
@@ -3617,22 +3671,19 @@ mod tests {
 impl DashSpvClient {
     /// Get diagnostic information about chain state vs storage synchronization
     pub async fn get_sync_diagnostics(&self) -> Result<SyncDiagnostics> {
-        let storage_tip_height = self.storage
-            .get_tip_height()
-            .await
-            .map_err(|e| SpvError::Storage(e))?
-            .unwrap_or(0);
-        
+        let storage_tip_height =
+            self.storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0);
+
         let chain_state = self.chain_state().await;
         let chain_state_height = chain_state.get_height();
         let chain_state_headers_count = chain_state.headers.len() as u32;
-        
+
         // Get sync manager's chain state - we need to access it differently
         // The sync manager has its own internal chain state
         let sync_progress = self.sync_manager.get_progress();
         let sync_manager_height = sync_progress.header_height;
         let sync_manager_headers_count = sync_progress.header_height + 1; // Approximate since we can't access internal state directly
-        
+
         let diagnostics = SyncDiagnostics {
             storage_tip_height,
             chain_state_height,
@@ -3644,11 +3695,11 @@ impl DashSpvClient {
             headers_mismatch: storage_tip_height != chain_state_height,
             sync_manager_mismatch: sync_manager_height != chain_state_height,
         };
-        
+
         if diagnostics.headers_mismatch || diagnostics.sync_manager_mismatch {
             tracing::warn!("⚠️ Sync state mismatch detected: {:?}", diagnostics);
         }
-        
+
         Ok(diagnostics)
     }
 }

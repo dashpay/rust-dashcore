@@ -212,9 +212,11 @@ mod tests {
         // Create a simple P2PKH address for testing
         use dashcore::{Address, Network, PubkeyHash, ScriptBuf};
         use dashcore_hashes::Hash;
-        let pubkey_hash = PubkeyHash::from_slice(&[1u8; 20]).expect("Valid 20-byte slice for pubkey hash");
+        let pubkey_hash =
+            PubkeyHash::from_slice(&[1u8; 20]).expect("Valid 20-byte slice for pubkey hash");
         let script = ScriptBuf::new_p2pkh(&pubkey_hash);
-        let address = Address::from_script(&script, Network::Testnet).expect("Valid P2PKH script should produce valid address");
+        let address = Address::from_script(&script, Network::Testnet)
+            .expect("Valid P2PKH script should produce valid address");
 
         Utxo::new(outpoint, txout, address, 100, false)
     }
@@ -275,9 +277,11 @@ mod tests {
         // Create a simple P2PKH address for testing
         use dashcore::{Address, Network, PubkeyHash, ScriptBuf};
         use dashcore_hashes::Hash;
-        let pubkey_hash = PubkeyHash::from_slice(&[2u8; 20]).expect("Valid 20-byte slice for pubkey hash");
+        let pubkey_hash =
+            PubkeyHash::from_slice(&[2u8; 20]).expect("Valid 20-byte slice for pubkey hash");
         let script = ScriptBuf::new_p2pkh(&pubkey_hash);
-        let address = Address::from_script(&script, Network::Testnet).expect("Valid P2PKH script should produce valid address");
+        let address = Address::from_script(&script, Network::Testnet)
+            .expect("Valid P2PKH script should produce valid address");
 
         let utxo = Utxo::new(outpoint, txout, address, 100, true);
 
@@ -293,8 +297,10 @@ mod tests {
         let utxo = create_test_utxo();
 
         // Test serialization/deserialization with serde_json since we have custom impl
-        let serialized = serde_json::to_string(&utxo).expect("Should serialize UTXO to JSON successfully");
-        let deserialized: Utxo = serde_json::from_str(&serialized).expect("Should deserialize UTXO from JSON successfully");
+        let serialized =
+            serde_json::to_string(&utxo).expect("Should serialize UTXO to JSON successfully");
+        let deserialized: Utxo = serde_json::from_str(&serialized)
+            .expect("Should deserialize UTXO from JSON successfully");
 
         assert_eq!(utxo, deserialized);
     }

@@ -446,7 +446,9 @@ mod tests {
         let block_hash = BlockHash::from_byte_array([1u8; 32]);
         let changes = vec![UTXOChange::Created(create_test_utxo(OutPoint::null(), 100000, 100))];
 
-        manager.create_snapshot(100, block_hash, changes, HashMap::new()).expect("Should create snapshot successfully");
+        manager
+            .create_snapshot(100, block_hash, changes, HashMap::new())
+            .expect("Should create snapshot successfully");
 
         assert_eq!(manager.snapshots.len(), 1);
         let snapshot = manager.get_latest_snapshot().expect("Should have at least one snapshot");
@@ -461,7 +463,9 @@ mod tests {
         // Create more snapshots than the limit
         for i in 0..10 {
             let block_hash = BlockHash::from_byte_array([i as u8; 32]);
-            manager.create_snapshot(i, block_hash, vec![], HashMap::new()).expect("Should create snapshot successfully");
+            manager
+                .create_snapshot(i, block_hash, vec![], HashMap::new())
+                .expect("Should create snapshot successfully");
         }
 
         // Should only keep the last 5
@@ -492,7 +496,9 @@ mod tests {
     async fn test_rollback_basic() {
         let mut manager = create_test_manager().await;
         let mut wallet_state = WalletState::new(dashcore::Network::Testnet);
-        let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage manager for test");
+        let mut storage = MemoryStorageManager::new()
+            .await
+            .expect("Failed to create memory storage manager for test");
 
         // Create snapshots at heights 100, 110, 120
         for height in [100, 110, 120] {
@@ -506,15 +512,19 @@ mod tests {
             manager.utxo_index.insert(outpoint, utxo.clone());
 
             let changes = vec![UTXOChange::Created(utxo)];
-            manager.create_snapshot(height, block_hash, changes, HashMap::new()).expect("Should create snapshot successfully");
+            manager
+                .create_snapshot(height, block_hash, changes, HashMap::new())
+                .expect("Should create snapshot successfully");
         }
 
         assert_eq!(manager.snapshots.len(), 3);
         assert_eq!(manager.utxo_index.len(), 3);
 
         // Rollback to height 105 (should remove snapshots at 110 and 120)
-        let rolled_back =
-            manager.rollback_to_height(105, &mut wallet_state, &mut storage).await.expect("Should rollback to height 105 successfully");
+        let rolled_back = manager
+            .rollback_to_height(105, &mut wallet_state, &mut storage)
+            .await
+            .expect("Should rollback to height 105 successfully");
 
         assert_eq!(rolled_back.len(), 2);
         assert_eq!(manager.snapshots.len(), 1);
