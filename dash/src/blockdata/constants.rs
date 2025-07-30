@@ -108,7 +108,6 @@ fn dash_genesis_tx() -> Transaction {
     ret
 }
 
-
 /// Constructs and returns the genesis block.
 pub fn genesis_block(network: Network) -> Block {
     let txdata = vec![dash_genesis_tx()];
@@ -268,10 +267,7 @@ mod test {
 
         // The wtxid should be deterministic for the coinbase transaction
         let wtxid_str = genesis_tx.wtxid().to_string();
-        assert_eq!(
-            wtxid_str,
-            "babeaa0bf3af03c0f12d94da95c7f28168be22087a16fb207e7abda4ae654ee3"
-        );
+        assert_eq!(wtxid_str, "babeaa0bf3af03c0f12d94da95c7f28168be22087a16fb207e7abda4ae654ee3");
     }
 
     #[test]
