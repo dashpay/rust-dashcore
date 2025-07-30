@@ -373,14 +373,6 @@ impl HeaderSyncManagerWithReorg {
             // Check if this header is already in our chain state
             let header_hash = header.block_hash();
 
-            tracing::info!(
-                "🔄 [DEBUG] Processing header {}/{}: {} (prev: {})",
-                idx + 1,
-                headers.len(),
-                header_hash,
-                header.prev_blockhash
-            );
-
             // First check if it's already in chain state by checking if we can find it at any height
             let mut header_in_chain_state = false;
 
@@ -476,12 +468,6 @@ impl HeaderSyncManagerWithReorg {
                     headers_processed += 1;
                     let height = self.chain_state.get_height();
                     headers_to_store.push((*header, height));
-                    tracing::info!(
-                        "✅ [DEBUG] Header {}/{} extended main chain at height {}",
-                        idx + 1,
-                        headers.len(),
-                        height
-                    );
                 }
                 HeaderProcessResult::CreatedFork => {
                     tracing::warn!("⚠️ Fork detected at height {}", self.chain_state.get_height());
@@ -537,14 +523,7 @@ impl HeaderSyncManagerWithReorg {
                     headers_processed += 1;
                 }
             }
-
-            tracing::info!("🔄 [DEBUG] Finished processing header {}/{}", idx + 1, headers.len());
         }
-
-        tracing::info!(
-            "🏁 [DEBUG] Finished header processing loop - processed {} headers",
-            headers_processed
-        );
 
         // Now store all headers that extend the main chain in a single batch
         if !headers_to_store.is_empty() {
@@ -667,12 +646,6 @@ impl HeaderSyncManagerWithReorg {
         if self.syncing_headers {
             // During sync mode - request next batch
             if let Some(tip) = self.chain_state.get_tip_header() {
-                tracing::info!(
-                    "📤 [DEBUG] Requesting next batch of headers from tip: {} at height {}",
-                    tip.block_hash(),
-                    self.chain_state.get_height()
-                );
-
                 // Add retry logic for network failures
                 let mut retry_count = 0;
                 const MAX_RETRIES: u32 = 3;
@@ -681,9 +654,6 @@ impl HeaderSyncManagerWithReorg {
                 loop {
                     match self.request_headers(network, Some(tip.block_hash())).await {
                         Ok(_) => {
-                            tracing::info!(
-                                "✅ [DEBUG] Successfully requested next batch of headers"
-                            );
                             break;
                         }
                         Err(e) => {
@@ -717,7 +687,6 @@ impl HeaderSyncManagerWithReorg {
             }
         }
 
-        tracing::info!("🔄 [DEBUG] handle_headers_message returning true (continue sync)");
         Ok(true)
     }
 
@@ -867,9 +836,6 @@ impl HeaderSyncManagerWithReorg {
                     .add_tip(tip)
                     .map_err(|e| SyncError::Storage(format!("Failed to update tip: {}", e)))?;
 
-                tracing::info!(
-                    "✅ [DEBUG] Successfully processed header, returning ExtendedMainChain"
-                );
                 Ok(HeaderProcessResult::ExtendedMainChain)
             }
             ForkDetectionResult::CreatesNewFork(fork) => {
