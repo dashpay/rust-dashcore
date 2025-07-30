@@ -196,26 +196,33 @@ impl MasternodeListEngine {
     }
 
     /// Debug method to find a quorum by hash across all masternode lists and log available quorums
-    pub fn find_quorum_by_hash_debug(&self, target_hash: &QuorumHash) -> Option<(u32, LLMQType, &QualifiedQuorumEntry)> {
+    pub fn find_quorum_by_hash_debug(
+        &self,
+        target_hash: &QuorumHash,
+    ) -> Option<(u32, LLMQType, &QualifiedQuorumEntry)> {
         tracing::debug!("Searching for quorum hash: {}", target_hash);
-        
+
         // Search through all masternode lists
         for (height, list) in &self.masternode_lists {
             tracing::debug!("Checking masternode list at height {}", height);
-            
+
             for (llmq_type, quorums) in &list.quorums {
                 tracing::debug!("  Type {:?} has {} quorums", llmq_type, quorums.len());
-                
+
                 for (hash, entry) in quorums {
                     tracing::debug!("    Quorum hash: {}", hash);
                     if hash == target_hash {
-                        tracing::debug!("    ✅ FOUND! At height {} with type {:?}", height, llmq_type);
+                        tracing::debug!(
+                            "    ✅ FOUND! At height {} with type {:?}",
+                            height,
+                            llmq_type
+                        );
                         return Some((*height, *llmq_type, entry));
                     }
                 }
             }
         }
-        
+
         tracing::debug!("❌ Quorum hash {} not found in any masternode list", target_hash);
         None
     }

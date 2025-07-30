@@ -128,11 +128,14 @@ mod tests {
         let store = PeerStore::new(Network::Dash, temp_dir.path().to_path_buf());
 
         // Create test peer messages
-        let addr: std::net::SocketAddr = "192.168.1.1:9999".parse().expect("Failed to parse test address");
+        let addr: std::net::SocketAddr =
+            "192.168.1.1:9999".parse().expect("Failed to parse test address");
         let msg = AddrV2Message {
             time: 1234567890,
             services: ServiceFlags::from(1),
-            addr: AddrV2::Ipv4(addr.ip().to_string().parse().expect("Failed to parse IPv4 address")),
+            addr: AddrV2::Ipv4(
+                addr.ip().to_string().parse().expect("Failed to parse IPv4 address"),
+            ),
             port: addr.port(),
         };
 

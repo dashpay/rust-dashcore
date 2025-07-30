@@ -3,27 +3,27 @@
 //! This module provides a flexible way to create SPV clients with either
 //! the traditional storage manager or the new event-driven storage service.
 
-use super::{DashSpvClient, ClientConfig};
+use super::{ClientConfig, DashSpvClient};
 use crate::{
+    chain::ChainLockManager,
+    error::{Result, SpvError},
+    network::{multi_peer::MultiPeerNetworkManager, NetworkManager},
     storage::{
-        StorageManager, DiskStorageManager, MemoryStorageManager,
-        service::{StorageService, StorageClient},
+        compat::StorageManagerCompat,
         disk_backend::DiskStorageBackend,
         memory_backend::MemoryStorageBackend,
-        compat::StorageManagerCompat,
+        service::{StorageClient, StorageService},
+        DiskStorageManager, MemoryStorageManager, StorageManager,
     },
-    network::{NetworkManager, multi_peer::MultiPeerNetworkManager},
     sync::sequential::SequentialSyncManager,
+    types::{ChainState, MempoolState, SpvStats, SyncProgress},
     validation::ValidationManager,
-    chain::ChainLockManager,
     wallet::Wallet,
-    types::{ChainState, SpvStats, MempoolState, SyncProgress},
-    error::{Result, SpvError},
 };
-use std::sync::Arc;
 use std::collections::HashSet;
-use tokio::sync::{RwLock, mpsc};
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock};
 
 /// Builder for creating a DashSpvClient with customizable components
 pub struct DashSpvClientBuilder {
@@ -41,27 +41,27 @@ impl DashSpvClientBuilder {
             storage_path: None,
         }
     }
-    
+
     /// Use the new event-driven storage service (recommended)
     pub fn with_storage_service(mut self) -> Self {
         self.use_storage_service = true;
         self
     }
-    
+
     /// Set a custom storage path (only used with storage service)
     pub fn with_storage_path(mut self, path: PathBuf) -> Self {
         self.storage_path = Some(path);
         self
     }
-    
+
     /// Build the DashSpvClient
     pub async fn build(self) -> Result<DashSpvClient> {
         // Validate configuration
         self.config.validate().map_err(|e| SpvError::Config(e))?;
-        
+
         // Initialize stats
         let stats = Arc::new(RwLock::new(SpvStats::default()));
-        
+
         // Create storage manager first so we can load chain state
         let mut storage: Box<dyn StorageManager> = if self.use_storage_service {
             // Use the new storage service architecture
@@ -77,12 +77,12 @@ impl DashSpvClientBuilder {
                 let backend = Box::new(MemoryStorageBackend::new());
                 StorageService::new(backend)
             };
-            
+
             // Spawn the storage service
             tokio::spawn(async move {
                 service.run().await;
             });
-            
+
             // Wrap the client in the compatibility layer
             Box::new(StorageManagerCompat::new(client))
         } else {
@@ -95,21 +95,13 @@ impl DashSpvClientBuilder {
                             .map_err(|e| SpvError::Storage(e))?,
                     )
                 } else {
-                    Box::new(
-                        MemoryStorageManager::new()
-                            .await
-                            .map_err(|e| SpvError::Storage(e))?,
-                    )
+                    Box::new(MemoryStorageManager::new().await.map_err(|e| SpvError::Storage(e))?)
                 }
             } else {
-                Box::new(
-                    MemoryStorageManager::new()
-                        .await
-                        .map_err(|e| SpvError::Storage(e))?,
-                )
+                Box::new(MemoryStorageManager::new().await.map_err(|e| SpvError::Storage(e))?)
             }
         };
-        
+
         // Load or create chain state
         let state = match storage.load_chain_state().await {
             Ok(Some(loaded_state)) => {
@@ -122,7 +114,10 @@ impl DashSpvClientBuilder {
                 Arc::new(RwLock::new(loaded_state))
             }
             Ok(None) => {
-                tracing::info!("🆕 No existing chain state found, creating new state for network: {:?}", self.config.network);
+                tracing::info!(
+                    "🆕 No existing chain state found, creating new state for network: {:?}",
+                    self.config.network
+                );
                 Arc::new(RwLock::new(ChainState::new_for_network(self.config.network)))
             }
             Err(e) => {
@@ -130,41 +125,38 @@ impl DashSpvClientBuilder {
                 Arc::new(RwLock::new(ChainState::new_for_network(self.config.network)))
             }
         };
-        
+
         // Create network manager
-        let network: Box<dyn NetworkManager> = Box::new(
-            MultiPeerNetworkManager::new(&self.config).await?
-        );
-        
+        let network: Box<dyn NetworkManager> =
+            Box::new(MultiPeerNetworkManager::new(&self.config).await?);
+
         // Create wallet
         let wallet_storage = Arc::new(RwLock::new(
-            MemoryStorageManager::new()
-                .await
-                .map_err(|e| SpvError::Storage(e))?,
+            MemoryStorageManager::new().await.map_err(|e| SpvError::Storage(e))?,
         ));
         let wallet = Arc::new(RwLock::new(Wallet::new(wallet_storage)));
-        
+
         // Create managers
         let validation = ValidationManager::new(self.config.validation_mode);
         let chainlock_manager = Arc::new(ChainLockManager::new(true));
-        
+
         // Create sequential sync manager
         let received_filter_heights = stats.read().await.received_filter_heights.clone();
         let sync_manager = SequentialSyncManager::new(&self.config, received_filter_heights)
             .map_err(|e| SpvError::Sync(e))?;
-        
+
         // Create channels for block processing
         let (block_processor_tx, block_processor_rx) = mpsc::unbounded_channel();
-        
+
         // Create channels for progress updates
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
-        
+
         // Create channels for events
         let (event_tx, event_rx) = mpsc::unbounded_channel();
-        
+
         // Create mempool state
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
-        
+
         // Create the client
         let client = DashSpvClient {
             config: self.config,
@@ -192,16 +184,18 @@ impl DashSpvClientBuilder {
             last_sync_state_save: Arc::new(RwLock::new(0)),
             cached_sync_progress: Arc::new(RwLock::new((
                 SyncProgress::default(),
-                std::time::Instant::now().checked_sub(std::time::Duration::from_secs(60))
+                std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_secs(60))
                     .unwrap_or_else(std::time::Instant::now),
             ))),
             cached_stats: Arc::new(RwLock::new((
                 SpvStats::default(),
-                std::time::Instant::now().checked_sub(std::time::Duration::from_secs(60))
+                std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_secs(60))
                     .unwrap_or_else(std::time::Instant::now),
             ))),
         };
-        
+
         // Spawn the block processor
         let block_processor = crate::client::block_processor::BlockProcessor::new(
             block_processor_rx,
@@ -210,26 +204,23 @@ impl DashSpvClientBuilder {
             stats,
             client.event_tx.clone(),
         );
-        
+
         tokio::spawn(async move {
             tracing::info!("🏭 Starting block processor worker task");
             block_processor.run().await;
             tracing::info!("🏭 Block processor worker task completed");
         });
-        
+
         Ok(client)
     }
 }
 
 impl DashSpvClient {
     /// Create a new SPV client using the storage service (recommended)
-    /// 
+    ///
     /// This creates a client that uses the new event-driven storage architecture
     /// which prevents deadlocks and improves concurrency.
     pub async fn new_with_storage_service(config: ClientConfig) -> Result<Self> {
-        DashSpvClientBuilder::new(config)
-            .with_storage_service()
-            .build()
-            .await
+        DashSpvClientBuilder::new(config).with_storage_service().build().await
     }
 }

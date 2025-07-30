@@ -130,12 +130,12 @@ pub struct DiskStorageManager {
 /// This header has invalid values that cannot be mistaken for valid blocks.
 fn create_sentinel_header() -> BlockHeader {
     BlockHeader {
-        version: Version::from_consensus(i32::MAX),  // Invalid version
-        prev_blockhash: BlockHash::from_byte_array([0xFF; 32]),  // All 0xFF pattern
+        version: Version::from_consensus(i32::MAX), // Invalid version
+        prev_blockhash: BlockHash::from_byte_array([0xFF; 32]), // All 0xFF pattern
         merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
-        time: u32::MAX,  // Far future timestamp
-        bits: CompactTarget::from_consensus(0xFFFFFFFF),  // Invalid difficulty
-        nonce: u32::MAX,  // Max nonce value
+        time: u32::MAX,                                  // Far future timestamp
+        bits: CompactTarget::from_consensus(0xFFFFFFFF), // Invalid difficulty
+        nonce: u32::MAX,                                 // Max nonce value
     }
 }
 
@@ -380,25 +380,19 @@ impl DiskStorageManager {
 
     /// Ensure a segment is loaded in memory.
     async fn ensure_segment_loaded(&self, segment_id: u32) -> StorageResult<()> {
-        tracing::debug!("[HANG DEBUG] ensure_segment_loaded called for segment {}", segment_id);
-        
         // Process background worker notifications to clear save_pending flags
         self.process_worker_notifications().await;
 
-        tracing::debug!("[HANG DEBUG] About to acquire active_segments write lock for segment {}", segment_id);
         let mut segments = self.active_segments.write().await;
-        tracing::debug!("[HANG DEBUG] Acquired active_segments write lock for segment {}", segment_id);
 
         if segments.contains_key(&segment_id) {
             // Update last accessed time
             if let Some(segment) = segments.get_mut(&segment_id) {
                 segment.last_accessed = Instant::now();
             }
-            tracing::debug!("[HANG DEBUG] Segment {} already loaded, returning", segment_id);
             return Ok(());
         }
 
-        tracing::debug!("[HANG DEBUG] Segment {} not in cache, loading from disk", segment_id);
         // Load segment from disk
         let segment_path = self.base_path.join(format!("headers/segment_{:04}.dat", segment_id));
         let mut headers = if segment_path.exists() {
@@ -437,7 +431,6 @@ impl DiskStorageManager {
             },
         );
 
-        tracing::debug!("[HANG DEBUG] ensure_segment_loaded completed for segment {}", segment_id);
         Ok(())
     }
 
@@ -776,7 +769,11 @@ impl DiskStorageManager {
     }
 
     /// Store headers starting from a specific height (used for checkpoint sync)
-    pub async fn store_headers_from_height(&mut self, headers: &[BlockHeader], start_height: u32) -> StorageResult<()> {
+    pub async fn store_headers_from_height(
+        &mut self,
+        headers: &[BlockHeader],
+        start_height: u32,
+    ) -> StorageResult<()> {
         // Early return if no headers to store
         if headers.is_empty() {
             tracing::trace!("DiskStorage: no headers to store");
@@ -799,18 +796,14 @@ impl DiskStorageManager {
 
             // Ensure segment is loaded BEFORE acquiring locks to avoid deadlock
             self.ensure_segment_loaded(segment_id).await?;
-            
+
             // Now acquire write locks for the update operation
-            tracing::debug!("[HANG DEBUG] About to acquire cached_tip and reverse_index write locks for height {}", next_height);
             let mut cached_tip = self.cached_tip_height.write().await;
             let mut reverse_index = self.header_hash_index.write().await;
-            tracing::debug!("[HANG DEBUG] Acquired cached_tip and reverse_index write locks");
 
             // Update segment
             {
-                tracing::debug!("[HANG DEBUG] About to acquire active_segments write lock for segment update at height {}", next_height);
                 let mut segments = self.active_segments.write().await;
-                tracing::debug!("[HANG DEBUG] Acquired active_segments write lock for segment update");
                 if let Some(segment) = segments.get_mut(&segment_id) {
                     // Ensure we have space in the segment
                     if offset >= segment.headers.len() {
@@ -828,12 +821,11 @@ impl DiskStorageManager {
                     segment.state = SegmentState::Dirty;
                     segment.last_accessed = Instant::now();
                 }
-                tracing::debug!("[HANG DEBUG] Completed segment update, releasing active_segments write lock");
             }
 
             // Update reverse index
             reverse_index.insert(header.block_hash(), next_height);
-            
+
             // Update cached tip for each header to keep it current
             *cached_tip = Some(next_height);
 
@@ -847,7 +839,7 @@ impl DiskStorageManager {
         let final_height = if next_height > 0 {
             next_height - 1
         } else {
-            0  // No headers were stored
+            0 // No headers were stored
         };
 
         tracing::info!(
@@ -871,18 +863,17 @@ impl DiskStorageManager {
             // For medium batches, save at 1000 boundaries
             next_height % 1000 == 0
         };
-        
+
         tracing::debug!(
             "DiskStorage: should_save = {}, next_height = {}, headers.len() = {}",
-            should_save, next_height, headers.len()
+            should_save,
+            next_height,
+            headers.len()
         );
         if should_save {
-            tracing::debug!("[HANG DEBUG] DiskStorage: saving dirty segments after storing headers");
             self.save_dirty_segments().await?;
-            tracing::debug!("[HANG DEBUG] DiskStorage: dirty segments saved after storing headers");
         }
 
-        tracing::debug!("[HANG DEBUG] DiskStorage: finished storing headers, returning Ok");
         Ok(())
     }
 
@@ -1117,7 +1108,6 @@ async fn save_utxo_cache_to_disk(
     .map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
 }
 
-
 #[async_trait]
 impl StorageManager for DiskStorageManager {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
@@ -1129,7 +1119,7 @@ impl StorageManager for DiskStorageManager {
             tracing::trace!("DiskStorage: no headers to store");
             return Ok(());
         }
-        
+
         // Acquire write locks for the entire operation to prevent race conditions
         let mut cached_tip = self.cached_tip_height.write().await;
         let mut reverse_index = self.header_hash_index.write().await;
@@ -1162,7 +1152,11 @@ impl StorageManager for DiskStorageManager {
 
             // Debug logging for hang investigation
             if next_height == 2310663 {
-                tracing::warn!("🔍 Processing header at critical height 2310663 - segment_id: {}, offset: {}", segment_id, offset);
+                tracing::warn!(
+                    "🔍 Processing header at critical height 2310663 - segment_id: {}, offset: {}",
+                    segment_id,
+                    offset
+                );
             }
 
             // Ensure segment is loaded
@@ -1205,7 +1199,7 @@ impl StorageManager for DiskStorageManager {
         let final_height = if next_height > 0 {
             next_height - 1
         } else {
-            0  // No headers were stored
+            0 // No headers were stored
         };
 
         // Use appropriate log level based on batch size
@@ -1251,14 +1245,13 @@ impl StorageManager for DiskStorageManager {
             // For medium batches, save at 1000 boundaries
             next_height % 1000 == 0
         };
-        
+
         if should_save {
             self.save_dirty_segments().await?;
         }
 
         Ok(())
     }
-
 
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
         let mut headers = Vec::new();
@@ -1534,7 +1527,7 @@ impl StorageManager for DiskStorageManager {
             value.get("current_filter_tip").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
         state.last_masternode_diff_height =
             value.get("last_masternode_diff_height").and_then(|v| v.as_u64()).map(|h| h as u32);
-        
+
         // Load checkpoint sync fields
         state.sync_base_height =
             value.get("sync_base_height").and_then(|v| v.as_u64()).map(|h| h as u32).unwrap_or(0);

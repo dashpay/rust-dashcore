@@ -194,7 +194,7 @@ impl TransitionManager {
                     self.config.enable_masternodes,
                     self.config.enable_filters
                 );
-                
+
                 if self.config.enable_masternodes {
                     let header_tip = storage
                         .get_tip_height()
@@ -209,7 +209,7 @@ impl TransitionManager {
                         Ok(Some(state)) => state.last_height,
                         _ => 0,
                     };
-                    
+
                     tracing::info!(
                         "🔍 [DEBUG] Creating MnList phase: header_tip={}, mn_height={}, mn_state={:?}",
                         header_tip,
@@ -332,7 +332,7 @@ impl TransitionManager {
                 current_height,
                 target_height
             );
-            
+
             // Headers are complete when we receive an empty response
             Ok(*received_empty_response)
         } else {

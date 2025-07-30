@@ -135,13 +135,20 @@ impl MultiPeerNetworkManager {
             // Load saved peers from disk
             let saved_peers = self.peer_store.load_peers().await.unwrap_or_default();
             peer_addresses.extend(saved_peers);
-            
+
             // If we still have no peers, immediately discover via DNS
             if peer_addresses.is_empty() {
-                log::info!("No peers configured, performing immediate DNS discovery for {:?}", self.network);
+                log::info!(
+                    "No peers configured, performing immediate DNS discovery for {:?}",
+                    self.network
+                );
                 let dns_peers = self.discovery.discover_peers(self.network).await;
                 peer_addresses.extend(dns_peers.iter().take(TARGET_PEERS));
-                log::info!("DNS discovery found {} peers, using {} for startup", dns_peers.len(), peer_addresses.len());
+                log::info!(
+                    "DNS discovery found {} peers, using {} for startup",
+                    dns_peers.len(),
+                    peer_addresses.len()
+                );
             } else {
                 log::info!(
                     "Starting with {} peers from disk (DNS discovery will be used later if needed)",
@@ -306,7 +313,7 @@ impl MultiPeerNetworkManager {
                             break;
                         }
                     }
-                    
+
                     // Acquire write lock and receive message
                     let mut conn_guard = conn.write().await;
                     conn_guard.receive_message().await
@@ -316,7 +323,7 @@ impl MultiPeerNetworkManager {
                     Ok(Some(msg)) => {
                         // Reset the no-message counter since we got data
                         consecutive_no_message = 0;
-                        
+
                         // Log all received messages at debug level to help troubleshoot
                         log::debug!("Received {:?} from {}", msg.cmd(), addr);
 
@@ -457,18 +464,18 @@ impl MultiPeerNetworkManager {
                     Ok(None) => {
                         // No message available
                         consecutive_no_message += 1;
-                        
+
                         // CRITICAL: We must sleep to prevent lock starvation
                         // The reader loop can monopolize the write lock by acquiring it
                         // every 100ms (the socket read timeout). Use exponential backoff
                         // to give other tasks a fair chance to acquire the lock.
                         let backoff_ms = match consecutive_no_message {
                             1..=5 => 10,    // First 5: 10ms
-                            6..=10 => 50,   // Next 5: 50ms  
+                            6..=10 => 50,   // Next 5: 50ms
                             11..=20 => 100, // Next 10: 100ms
                             _ => 200,       // After 20: 200ms
                         };
-                        
+
                         tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                         continue;
                     }
@@ -685,7 +692,7 @@ impl MultiPeerNetworkManager {
                         let conn_guard = conn.read().await;
                         conn_guard.should_ping()
                     };
-                    
+
                     if should_ping {
                         // Only acquire write lock if we actually need to ping
                         let mut conn_guard = conn.write().await;
@@ -732,20 +739,17 @@ impl MultiPeerNetworkManager {
         if matches!(&message, NetworkMessage::GetHeaders(_)) {
             tracing::info!("🔍 [TRACE] send_to_single_peer called with GetHeaders");
         }
-        
+
         let connections = self.pool.get_all_connections().await;
 
         if connections.is_empty() {
-            log::warn!(
-                "⚠️ No connected peers available when trying to send {}",
-                message_cmd
-            );
+            log::warn!("⚠️ No connected peers available when trying to send {}", message_cmd);
             if matches!(&message, NetworkMessage::GetHeaders(_)) {
                 tracing::error!("🚨 [TRACE] GetHeaders failed: no connected peers!");
             }
             return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
         }
-        
+
         if matches!(&message, NetworkMessage::GetHeaders(_)) {
             tracing::info!("🔍 [TRACE] Found {} connected peers", connections.len());
             for (addr, _) in &connections {
@@ -788,7 +792,7 @@ impl MultiPeerNetworkManager {
             if matches!(&message, NetworkMessage::GetHeaders(_)) {
                 tracing::info!("🔍 [TRACE] Checking sticky sync peer for GetHeaders");
             }
-            
+
             let mut current_sync_peer = self.current_sync_peer.lock().await;
             let selected = if let Some(current_addr) = *current_sync_peer {
                 // Check if current sync peer is still connected
@@ -830,13 +834,14 @@ impl MultiPeerNetworkManager {
         if matches!(&message, NetworkMessage::GetHeaders(_)) {
             tracing::info!("🔍 [TRACE] Selected peer for GetHeaders: {}", selected_peer);
         }
-        
-        let (addr, conn) = connections
-            .iter()
-            .find(|(a, _)| *a == selected_peer)
-            .ok_or_else(|| {
+
+        let (addr, conn) =
+            connections.iter().find(|(a, _)| *a == selected_peer).ok_or_else(|| {
                 if matches!(&message, NetworkMessage::GetHeaders(_)) {
-                    tracing::error!("🚨 [TRACE] GetHeaders failed: selected peer {} not found in connections!", selected_peer);
+                    tracing::error!(
+                        "🚨 [TRACE] GetHeaders failed: selected peer {} not found in connections!",
+                        selected_peer
+                    );
                 }
                 NetworkError::ConnectionFailed("Selected peer not found".to_string())
             })?;
@@ -845,23 +850,22 @@ impl MultiPeerNetworkManager {
         let message_cmd = message.cmd();
         match &message {
             NetworkMessage::GetHeaders(gh) => {
-                tracing::info!("📤 [TRACE] About to send GetHeaders to {} - version: {}, locator: {:?}, stop: {}", 
-                    addr, 
+                tracing::info!("📤 [TRACE] About to send GetHeaders to {} - version: {}, locator: {:?}, stop: {}",
+                    addr,
                     gh.version,
                     gh.locator_hashes.iter().take(2).collect::<Vec<_>>(),
                     gh.stop_hash
                 );
             }
-            NetworkMessage::GetCFilters(_)
-            | NetworkMessage::GetCFHeaders(_) => {
+            NetworkMessage::GetCFilters(_) | NetworkMessage::GetCFHeaders(_) => {
                 log::debug!("Sending {} to {}", message_cmd, addr);
             }
             NetworkMessage::GetHeaders2(gh2) => {
-                log::info!("📤 Sending GetHeaders2 to {} - version: {}, locator_count: {}, locator: {:?}, stop: {}", 
-                    addr, 
+                log::info!("📤 Sending GetHeaders2 to {} - version: {}, locator_count: {}, locator: {:?}, stop: {}",
+                    addr,
                     gh2.version,
                     gh2.locator_hashes.len(),
-                    gh2.locator_hashes.iter().take(2).collect::<Vec<_>>(), 
+                    gh2.locator_hashes.iter().take(2).collect::<Vec<_>>(),
                     gh2.stop_hash
                 );
             }
@@ -874,31 +878,28 @@ impl MultiPeerNetworkManager {
         }
 
         let is_getheaders = matches!(&message, NetworkMessage::GetHeaders(_));
-        
+
         if is_getheaders {
             tracing::info!("🔍 [TRACE] Acquiring write lock for connection to {}", addr);
         }
-        
+
         let mut conn_guard = conn.write().await;
-        
+
         if is_getheaders {
             tracing::info!("🔍 [TRACE] Got write lock, calling send_message on connection");
         }
-        
-        let result = conn_guard
-            .send_message(message)
-            .await
-            .map_err(|e| {
-                if is_getheaders {
-                    tracing::error!("🚨 [TRACE] GetHeaders send_message failed: {}", e);
-                }
-                NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e))
-            });
-            
+
+        let result = conn_guard.send_message(message).await.map_err(|e| {
+            if is_getheaders {
+                tracing::error!("🚨 [TRACE] GetHeaders send_message failed: {}", e);
+            }
+            NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e))
+        });
+
         if is_getheaders && result.is_ok() {
             tracing::info!("✅ [TRACE] GetHeaders successfully sent to {}", addr);
         }
-        
+
         result
     }
 
@@ -1380,26 +1381,22 @@ impl NetworkManager for MultiPeerNetworkManager {
     async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()> {
         // Get the last peer that sent us a message
         let peer_id = self.get_last_message_peer_id().await;
-        
+
         if peer_id.0 == 0 {
             return Err(NetworkError::ConnectionFailed("No peer to update".to_string()));
         }
-        
+
         // Find the peer's address from the last message data
         let last_msg_peer = self.last_message_peer.lock().await;
         if let Some(addr) = &*last_msg_peer {
             // For now, just log it as we don't have a mutable peer manager
             // In a real implementation, we'd store this preference
-            tracing::info!(
-                "Updated peer {} DSQ preference to: {}",
-                addr,
-                wants_dsq
-            );
+            tracing::info!("Updated peer {} DSQ preference to: {}", addr, wants_dsq);
         }
-        
+
         Ok(())
     }
-    
+
     async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
         // Get the last peer that sent us a message
         let last_msg_peer = self.last_message_peer.lock().await;
@@ -1410,7 +1407,7 @@ impl NetworkManager for MultiPeerNetworkManager {
         }
         Ok(())
     }
-    
+
     async fn peer_has_sent_headers2(&self) -> bool {
         // Check if the current sync peer has sent us Headers2
         let current_peer = self.current_sync_peer.lock().await;

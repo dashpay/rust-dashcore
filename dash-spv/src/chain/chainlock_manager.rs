@@ -3,8 +3,8 @@
 //! This module implements ChainLock validation and management according to DIP8,
 //! providing protection against 51% attacks and securing InstantSend transactions.
 
-use dashcore::{BlockHash, ChainLock};
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+use dashcore::{BlockHash, ChainLock};
 use indexmap::IndexMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -67,7 +67,7 @@ impl ChainLockManager {
     /// Queue a ChainLock for validation when masternode data is available
     pub async fn queue_pending_chainlock(&self, chain_lock: ChainLock) -> StorageResult<()> {
         let mut pending = self.pending_chainlocks.write().await;
-        
+
         // If at capacity, drop the oldest ChainLock
         if pending.len() >= MAX_PENDING_CHAINLOCKS {
             let dropped = pending.remove(0);
@@ -76,7 +76,7 @@ impl ChainLockManager {
                 MAX_PENDING_CHAINLOCKS, dropped.block_height
             );
         }
-        
+
         pending.push(chain_lock);
         debug!("Queued ChainLock for pending validation, total pending: {}", pending.len());
         Ok(())
@@ -102,18 +102,25 @@ impl ChainLockManager {
             match self.process_chain_lock(chain_lock.clone(), chain_state, storage).await {
                 Ok(_) => {
                     validated_count += 1;
-                    debug!("Successfully validated pending ChainLock at height {}", chain_lock.block_height);
+                    debug!(
+                        "Successfully validated pending ChainLock at height {}",
+                        chain_lock.block_height
+                    );
                 }
                 Err(e) => {
                     failed_count += 1;
-                    error!("Failed to validate pending ChainLock at height {}: {}", 
-                        chain_lock.block_height, e);
+                    error!(
+                        "Failed to validate pending ChainLock at height {}: {}",
+                        chain_lock.block_height, e
+                    );
                 }
             }
         }
 
-        info!("Pending ChainLock validation complete: {} validated, {} failed", 
-            validated_count, failed_count);
+        info!(
+            "Pending ChainLock validation complete: {} validated, {} failed",
+            validated_count, failed_count
+        );
 
         Ok(())
     }
@@ -167,15 +174,17 @@ impl ChainLockManager {
 
         // Full validation with masternode engine if available
         let engine_guard = self.masternode_engine.read().await;
-        
+
         let mut validated = false;
-        
+
         if let Some(engine) = engine_guard.as_ref() {
             // Use the masternode engine's verify_chain_lock method
             match engine.verify_chain_lock(&chain_lock) {
                 Ok(()) => {
-                    info!("✅ ChainLock validated with masternode engine for height {}", 
-                        chain_lock.block_height);
+                    info!(
+                        "✅ ChainLock validated with masternode engine for height {}",
+                        chain_lock.block_height
+                    );
                     validated = true;
                 }
                 Err(e) => {
@@ -187,14 +196,17 @@ impl ChainLockManager {
                         warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {} (needs list at height {} for ChainLock validation), queueing ChainLock for later validation", 
                             chain_lock.block_height, required_height);
                         drop(engine_guard); // Release the read lock before acquiring write lock
-                        self.queue_pending_chainlock(chain_lock.clone()).await
-                            .map_err(|e| ValidationError::InvalidChainLock(
-                                format!("Failed to queue pending ChainLock: {}", e)
-                            ))?;
+                        self.queue_pending_chainlock(chain_lock.clone()).await.map_err(|e| {
+                            ValidationError::InvalidChainLock(format!(
+                                "Failed to queue pending ChainLock: {}",
+                                e
+                            ))
+                        })?;
                     } else {
-                        return Err(ValidationError::InvalidChainLock(
-                            format!("MasternodeListEngine validation failed: {:?}", e)
-                        ));
+                        return Err(ValidationError::InvalidChainLock(format!(
+                            "MasternodeListEngine validation failed: {:?}",
+                            e
+                        )));
                     }
                 }
             }
@@ -202,10 +214,12 @@ impl ChainLockManager {
             // Queue for later validation when engine becomes available
             warn!("⚠️ Masternode engine not available, queueing ChainLock for later validation");
             drop(engine_guard); // Release the read lock before acquiring write lock
-            self.queue_pending_chainlock(chain_lock.clone()).await
-                .map_err(|e| ValidationError::InvalidChainLock(
-                    format!("Failed to queue pending ChainLock: {}", e)
-                ))?;
+            self.queue_pending_chainlock(chain_lock.clone()).await.map_err(|e| {
+                ValidationError::InvalidChainLock(format!(
+                    "Failed to queue pending ChainLock: {}",
+                    e
+                ))
+            })?;
         }
 
         // Store the chain lock with appropriate validation status
@@ -215,9 +229,15 @@ impl ChainLockManager {
         self.update_chain_state_with_lock(&chain_lock, chain_state);
 
         if validated {
-            info!("Successfully processed and validated ChainLock for height {}", chain_lock.block_height);
+            info!(
+                "Successfully processed and validated ChainLock for height {}",
+                chain_lock.block_height
+            );
         } else {
-            info!("Processed ChainLock for height {} (pending full validation)", chain_lock.block_height);
+            info!(
+                "Processed ChainLock for height {} (pending full validation)",
+                chain_lock.block_height
+            );
         }
 
         Ok(())
@@ -235,7 +255,7 @@ impl ChainLockManager {
             received_at: std::time::SystemTime::now(),
             validated,
         };
-        
+
         self.store_chain_lock_internal(chain_lock, entry, storage).await
     }
 
@@ -247,7 +267,7 @@ impl ChainLockManager {
     ) -> StorageResult<()> {
         self.store_chain_lock_with_validation(chain_lock, storage, true).await
     }
-    
+
     /// Internal method to store a chain lock entry
     async fn store_chain_lock_internal(
         &self,
@@ -255,7 +275,6 @@ impl ChainLockManager {
         entry: ChainLockEntry,
         storage: &mut dyn StorageManager,
     ) -> StorageResult<()> {
-
         // Store in memory caches
         {
             let mut by_height = self.chain_locks_by_height.write().await;
@@ -333,7 +352,11 @@ impl ChainLockManager {
     }
 
     /// Check if a reorganization would violate chain locks
-    pub async fn would_violate_chain_lock(&self, reorg_from_height: u32, reorg_to_height: u32) -> bool {
+    pub async fn would_violate_chain_lock(
+        &self,
+        reorg_from_height: u32,
+        reorg_to_height: u32,
+    ) -> bool {
         if !self.enforce_chain_locks {
             return false;
         }
@@ -395,7 +418,6 @@ impl ChainLockManager {
 
         Ok(chain_locks)
     }
-
 
     /// Get chain lock statistics
     pub async fn get_stats(&self) -> ChainLockStats {

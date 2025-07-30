@@ -107,13 +107,13 @@ impl ReorgManager {
             if state.synced_from_checkpoint && state.sync_base_height > 0 {
                 // During checkpoint sync, both current_tip.height and fork.fork_height
                 // should be interpreted relative to sync_base_height
-                
+
                 // For checkpoint sync:
                 // - current_tip.height is absolute blockchain height
                 // - fork.fork_height might be from genesis-based headers
                 // We need to compare relative depths only
-                
-                // If the fork is from headers that started at genesis, 
+
+                // If the fork is from headers that started at genesis,
                 // we shouldn't compare against the full checkpoint height
                 if fork.fork_height < state.sync_base_height {
                     // This fork is from before our checkpoint - likely from genesis-based headers
@@ -121,9 +121,10 @@ impl ReorgManager {
                     tracing::warn!(
                         "Fork detected from height {} which is before checkpoint base height {}. \
                         This suggests headers from genesis were received during checkpoint sync.",
-                        fork.fork_height, state.sync_base_height
+                        fork.fork_height,
+                        state.sync_base_height
                     );
-                    
+
                     // For now, reject forks that would reorg past the checkpoint
                     return Err(format!(
                         "Cannot reorg past checkpoint: fork height {} < checkpoint base {}",
@@ -153,7 +154,10 @@ impl ReorgManager {
         if self.respect_chain_locks {
             if let Some(ref chain_lock_mgr) = self.chain_lock_manager {
                 // Check if reorg would violate chain locks
-                if chain_lock_mgr.would_violate_chain_lock(fork.fork_height, current_tip.height).await {
+                if chain_lock_mgr
+                    .would_violate_chain_lock(fork.fork_height, current_tip.height)
+                    .await
+                {
                     return Err(format!(
                         "Cannot reorg: would violate chain lock between heights {} and {}",
                         fork.fork_height, current_tip.height
@@ -265,10 +269,10 @@ impl ReorgManager {
     ) -> Result<ReorgEvent, String> {
         // Create a checkpoint of the current chain state before making any changes
         let chain_state_checkpoint = chain_state.clone();
-        
+
         // Track headers that were successfully stored for potential rollback
         let mut stored_headers: Vec<BlockHeader> = Vec::new();
-        
+
         // Perform all operations in a single atomic-like block
         let result = async {
             // Step 1: Rollback wallet state if UTXO rollback is available
@@ -301,13 +305,10 @@ impl ReorgManager {
                 chain_state.add_header(*header);
 
                 // Store the header - if this fails, we need to rollback everything
-                storage_manager
-                    .store_headers(&[*header])
-                    .await
-                    .map_err(|e| {
-                        format!("Failed to store header at height {}: {:?}", current_height, e)
-                    })?;
-                    
+                storage_manager.store_headers(&[*header]).await.map_err(|e| {
+                    format!("Failed to store header at height {}: {:?}", current_height, e)
+                })?;
+
                 // Only record successfully stored headers
                 stored_headers.push(*header);
             }
@@ -319,7 +320,8 @@ impl ReorgManager {
                 connected_headers: fork.headers.clone(),
                 affected_transactions: reorg_data.affected_transactions,
             })
-        }.await;
+        }
+        .await;
 
         // If any operation failed, attempt to restore the chain state
         match result {
@@ -327,7 +329,7 @@ impl ReorgManager {
             Err(e) => {
                 // Restore the chain state to its original state
                 *chain_state = chain_state_checkpoint;
-                
+
                 // Log the rollback attempt
                 tracing::error!(
                     "Reorg failed, restored chain state. Error: {}. \
@@ -335,7 +337,7 @@ impl ReorgManager {
                     e,
                     stored_headers.len()
                 );
-                
+
                 // Note: We cannot easily rollback the wallet state or storage operations
                 // that have already been committed. This is a limitation of not having
                 // true database transactions. The error message will indicate this partial
@@ -486,7 +488,9 @@ impl ReorgManager {
         if let Some(ref chain_lock_mgr) = self.chain_lock_manager {
             // Get the height of this header
             if let Ok(Some(height)) = storage.get_header_height(&header.block_hash()) {
-                return Ok(chain_lock_mgr.is_block_chain_locked(&header.block_hash(), height).await);
+                return Ok(chain_lock_mgr
+                    .is_block_chain_locked(&header.block_hash(), height)
+                    .await);
             }
         }
         // If no chain lock manager or height not found, assume not locked

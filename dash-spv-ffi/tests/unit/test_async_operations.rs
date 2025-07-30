@@ -266,7 +266,7 @@ mod tests {
             ) {
                 let data = unsafe { &*(user_data as *const ReentrantData) };
                 let count = data.count.fetch_add(1, Ordering::SeqCst);
-                
+
                 // Check if callback is already active (reentrancy detection)
                 if data.callback_active.swap(true, Ordering::SeqCst) {
                     data.reentrancy_detected.store(true, Ordering::SeqCst);
@@ -281,16 +281,16 @@ mod tests {
                     // Attempt to start another sync operation from within callback
                     // This tests that the FFI layer properly handles reentrancy
                     let start_time = Instant::now();
-                    
+
                     // Try to call test_sync which is a simpler operation
                     let test_result = unsafe { dash_spv_ffi_client_test_sync(data.client) };
                     let elapsed = start_time.elapsed();
-                    
+
                     // If this takes too long, it might indicate a deadlock
                     if elapsed > Duration::from_secs(1) {
                         data.deadlock_detected.store(true, Ordering::SeqCst);
                     }
-                    
+
                     if test_result != 0 {
                         println!("Reentrant call failed with error code: {}", test_result);
                     }
@@ -319,7 +319,7 @@ mod tests {
                 Some(reentrant_callback),
                 &reentrant_data as *const _ as *mut c_void,
             );
-            
+
             // Wait for operations to complete
             thread::sleep(Duration::from_millis(500));
 
@@ -381,24 +381,32 @@ mod tests {
                 user_data: *mut c_void,
             ) {
                 let data = unsafe { &*(user_data as *const ThreadSafetyData) };
-                
+
                 // Increment concurrent callback count
-                let current_concurrent = data.concurrent_callbacks.fetch_add(1, Ordering::SeqCst) + 1;
-                
+                let current_concurrent =
+                    data.concurrent_callbacks.fetch_add(1, Ordering::SeqCst) + 1;
+
                 // Update max concurrent callbacks
                 loop {
                     let max = data.max_concurrent.load(Ordering::SeqCst);
-                    if current_concurrent <= max || 
-                       data.max_concurrent.compare_exchange(max, current_concurrent, 
-                                                          Ordering::SeqCst, 
-                                                          Ordering::SeqCst).is_ok() {
+                    if current_concurrent <= max
+                        || data
+                            .max_concurrent
+                            .compare_exchange(
+                                max,
+                                current_concurrent,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                            )
+                            .is_ok()
+                    {
                         break;
                     }
                 }
 
                 // Test shared state access (potential race condition)
                 let count = data.count.fetch_add(1, Ordering::SeqCst);
-                
+
                 // Try to detect race conditions by accessing shared state
                 {
                     let mut state = match data.shared_state.try_lock() {
@@ -415,7 +423,7 @@ mod tests {
 
                 // Simulate some work
                 thread::sleep(Duration::from_micros(100));
-                
+
                 // Decrement concurrent callback count
                 data.concurrent_callbacks.fetch_sub(1, Ordering::SeqCst);
             }
@@ -429,34 +437,36 @@ mod tests {
 
             // Create thread-safe wrapper for the data
             let thread_data_arc = Arc::new(thread_data);
-            
+
             // Spawn multiple threads that will trigger callbacks
-            let handles: Vec<_> = (0..3).map(|i| {
-                let thread_data_clone = thread_data_arc.clone();
-                let barrier_clone = barrier.clone();
-                
-                thread::spawn(move || {
-                    // Synchronize thread start
-                    barrier_clone.wait();
-                    
-                    // Each thread performs multiple operations
-                    for j in 0..5 {
-                        println!("Thread {} iteration {}", i, j);
-                        
-                        // Invoke callback directly
-                        thread_safe_callback(
-                            true, 
-                            std::ptr::null(), 
-                            &*thread_data_clone as *const ThreadSafetyData as *mut c_void
-                        );
-                        
-                        // Note: We can't safely pass client pointers across threads
-                        // so we'll focus on testing concurrent callback invocations
-                        
-                        thread::sleep(Duration::from_millis(10));
-                    }
+            let handles: Vec<_> = (0..3)
+                .map(|i| {
+                    let thread_data_clone = thread_data_arc.clone();
+                    let barrier_clone = barrier.clone();
+
+                    thread::spawn(move || {
+                        // Synchronize thread start
+                        barrier_clone.wait();
+
+                        // Each thread performs multiple operations
+                        for j in 0..5 {
+                            println!("Thread {} iteration {}", i, j);
+
+                            // Invoke callback directly
+                            thread_safe_callback(
+                                true,
+                                std::ptr::null(),
+                                &*thread_data_clone as *const ThreadSafetyData as *mut c_void,
+                            );
+
+                            // Note: We can't safely pass client pointers across threads
+                            // so we'll focus on testing concurrent callback invocations
+
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                    })
                 })
-            }).collect();
+                .collect();
 
             // Wait for all threads to complete
             for handle in handles {
@@ -479,11 +489,11 @@ mod tests {
             let state = thread_data_arc.shared_state.lock().unwrap();
             let mut sorted_state = state.clone();
             sorted_state.sort();
-            
+
             // Check for duplicates (would indicate race condition)
             let mut duplicates = 0;
             for i in 1..sorted_state.len() {
-                if sorted_state[i] == sorted_state[i-1] {
+                if sorted_state[i] == sorted_state[i - 1] {
                     duplicates += 1;
                 }
             }
