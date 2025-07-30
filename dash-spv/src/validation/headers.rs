@@ -101,7 +101,7 @@ impl HeaderValidator {
         if self.mode == ValidationMode::None {
             return Ok(());
         }
-        
+
         if headers.is_empty() {
             return Ok(());
         }
@@ -128,7 +128,7 @@ impl HeaderValidator {
         if self.mode == ValidationMode::None {
             return Ok(());
         }
-        
+
         if headers.is_empty() {
             return Ok(());
         }

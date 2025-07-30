@@ -14,25 +14,25 @@ use serde::{Deserialize, Serialize};
 pub struct SyncPhaseInfo {
     /// Name of the current phase.
     pub phase_name: String,
-    
+
     /// Progress percentage (0-100).
     pub progress_percentage: f64,
-    
+
     /// Items completed in this phase.
     pub items_completed: u32,
-    
+
     /// Total items expected in this phase (if known).
     pub items_total: Option<u32>,
-    
+
     /// Processing rate (items per second).
     pub rate: f64,
-    
+
     /// Estimated time remaining in this phase.
     pub eta_seconds: Option<u64>,
-    
+
     /// Time elapsed in this phase (seconds).
     pub elapsed_seconds: u64,
-    
+
     /// Additional phase-specific details.
     pub details: Option<String>,
 }
@@ -400,21 +400,21 @@ impl ChainState {
         // Clear any existing headers
         self.headers.clear();
         self.filter_headers.clear();
-        
+
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
         self.synced_from_checkpoint = true;
-        
+
         // Add the checkpoint header as our first header
         self.headers.push(checkpoint_header);
-        
+
         tracing::info!(
             "Initialized ChainState from checkpoint - height: {}, hash: {}, network: {:?}",
             checkpoint_height,
             checkpoint_header.block_hash(),
             network
         );
-        
+
         // Initialize masternode engine for the network, starting from checkpoint
         let mut engine = MasternodeListEngine::default_for_network(network);
         engine.feed_block_height(checkpoint_height, checkpoint_header.block_hash());
@@ -496,7 +496,7 @@ pub struct PeerInfo {
 
     /// Whether this peer wants to receive DSQ (CoinJoin queue) messages.
     pub wants_dsq_messages: Option<bool>,
-    
+
     /// Whether this peer has actually sent us Headers2 messages (not just supports it).
     pub has_sent_headers2: bool,
 }
@@ -722,16 +722,16 @@ impl<'de> Deserialize<'de> for WatchItem {
 pub struct SpvStats {
     /// Number of connected peers.
     pub connected_peers: u32,
-    
+
     /// Total number of known peers.
     pub total_peers: u32,
-    
+
     /// Current blockchain height.
     pub header_height: u32,
-    
+
     /// Current filter height.
     pub filter_height: u32,
-    
+
     /// Number of headers downloaded.
     pub headers_downloaded: u64,
 
@@ -1225,22 +1225,22 @@ impl MempoolState {
 #[derive(Debug, Clone)]
 pub enum NetworkEvent {
     // Network events
-    PeerConnected { 
-        address: std::net::SocketAddr, 
+    PeerConnected {
+        address: std::net::SocketAddr,
         height: Option<u32>,
         version: u32,
     },
-    PeerDisconnected { 
-        address: std::net::SocketAddr 
+    PeerDisconnected {
+        address: std::net::SocketAddr,
     },
-    
+
     // Sync events
     SyncStarted {
         starting_height: u32,
         target_height: Option<u32>,
     },
-    HeadersReceived { 
-        count: usize, 
+    HeadersReceived {
+        count: usize,
         tip_height: u32,
         progress_percent: f64,
     },
@@ -1248,8 +1248,8 @@ pub enum NetworkEvent {
         count: usize,
         tip_height: u32,
     },
-    SyncProgress { 
-        headers: u32, 
+    SyncProgress {
+        headers: u32,
         filter_headers: u32,
         filters: u32,
         progress_percent: f64,
@@ -1257,27 +1257,27 @@ pub enum NetworkEvent {
     SyncCompleted {
         final_height: u32,
     },
-    
+
     // Chain events
-    NewChainLock { 
-        height: u32, 
+    NewChainLock {
+        height: u32,
         block_hash: dashcore::BlockHash,
     },
-    NewBlock { 
-        height: u32, 
+    NewBlock {
+        height: u32,
         block_hash: dashcore::BlockHash,
         matched_addresses: Vec<dashcore::Address>,
     },
     InstantLock {
         txid: dashcore::Txid,
     },
-    
+
     // Masternode events
     MasternodeListUpdated {
         height: u32,
         masternode_count: usize,
     },
-    
+
     // Wallet events
     AddressMatch {
         address: dashcore::Address,
@@ -1285,7 +1285,7 @@ pub enum NetworkEvent {
         amount: u64,
         is_spent: bool,
     },
-    
+
     // Error events
     NetworkError {
         peer: Option<std::net::SocketAddr>,

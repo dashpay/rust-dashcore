@@ -16,13 +16,13 @@ pub mod orphan_pool;
 pub mod reorg;
 
 #[cfg(test)]
-mod reorg_test;
+mod checkpoint_test;
 #[cfg(test)]
 mod fork_detector_test;
 #[cfg(test)]
 mod orphan_pool_test;
 #[cfg(test)]
-mod checkpoint_test;
+mod reorg_test;
 
 pub use chain_tip::{ChainTip, ChainTipManager};
 pub use chain_work::ChainWork;

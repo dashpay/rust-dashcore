@@ -82,11 +82,11 @@ pub trait ChainStorage: Send + Sync {
 /// # use tokio::sync::Mutex;
 /// # use dash_spv::storage::{StorageManager, MemoryStorageManager};
 /// # use dashcore::blockdata::block::Header as BlockHeader;
-/// # 
+/// #
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let storage: Arc<Mutex<dyn StorageManager>> = Arc::new(Mutex::new(MemoryStorageManager::new().await?));
 /// let headers: Vec<BlockHeader> = vec![]; // Your headers here
-/// 
+///
 /// // In async context:
 /// let mut guard = storage.lock().await;
 /// guard.store_headers(&headers).await?;

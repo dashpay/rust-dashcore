@@ -27,8 +27,8 @@ use tokio::sync::{mpsc, RwLock};
 use dash_spv::error::*;
 use dash_spv::network::TcpConnection;
 use dash_spv::storage::{DiskStorageManager, MemoryStorageManager, StorageManager};
-use dash_spv::sync::sequential::recovery::{RecoveryManager, RecoveryStrategy};
 use dash_spv::sync::sequential::phases::SyncPhase;
+use dash_spv::sync::sequential::recovery::{RecoveryManager, RecoveryStrategy};
 use dash_spv::types::{ChainState, MempoolState};
 use dash_spv::wallet::Utxo;
 
@@ -87,15 +87,18 @@ impl dash_spv::network::NetworkManager for MockNetworkManager {
         Ok(())
     }
 
-    async fn send_message(&mut self, _msg: dashcore::network::message::NetworkMessage) -> NetworkResult<()> {
+    async fn send_message(
+        &mut self,
+        _msg: dashcore::network::message::NetworkMessage,
+    ) -> NetworkResult<()> {
         if let Some(n) = self.disconnect_after_n_messages {
             if self.messages_sent >= n {
                 return Err(NetworkError::PeerDisconnected);
             }
         }
-        
+
         self.messages_sent += 1;
-        
+
         if self.timeout_on_message {
             Err(NetworkError::Timeout)
         } else {
@@ -103,7 +106,9 @@ impl dash_spv::network::NetworkManager for MockNetworkManager {
         }
     }
 
-    async fn receive_message(&mut self) -> NetworkResult<Option<dashcore::network::message::NetworkMessage>> {
+    async fn receive_message(
+        &mut self,
+    ) -> NetworkResult<Option<dashcore::network::message::NetworkMessage>> {
         if self.return_invalid_data {
             // Return data that will fail validation
             Err(NetworkError::ProtocolError("Invalid message format".to_string()))
@@ -219,7 +224,10 @@ impl StorageManager for MockStorageManager {
         Ok(None)
     }
 
-    async fn get_header_by_hash(&self, _hash: &BlockHash) -> StorageResult<Option<(u32, BlockHeader)>> {
+    async fn get_header_by_hash(
+        &self,
+        _hash: &BlockHash,
+    ) -> StorageResult<Option<(u32, BlockHeader)>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
         }
@@ -233,14 +241,21 @@ impl StorageManager for MockStorageManager {
         Ok(Some(0))
     }
 
-    async fn get_headers_range(&self, _range: std::ops::Range<u32>) -> StorageResult<Vec<BlockHeader>> {
+    async fn get_headers_range(
+        &self,
+        _range: std::ops::Range<u32>,
+    ) -> StorageResult<Vec<BlockHeader>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
         }
         Ok(vec![])
     }
 
-    async fn store_filter_header(&mut self, _height: u32, _filter_header: &FilterHeader) -> StorageResult<()> {
+    async fn store_filter_header(
+        &mut self,
+        _height: u32,
+        _filter_header: &FilterHeader,
+    ) -> StorageResult<()> {
         if self.fail_on_write {
             return Err(StorageError::WriteFailed("Mock write failure".to_string()));
         }
@@ -292,7 +307,10 @@ impl StorageManager for MockStorageManager {
         })
     }
 
-    async fn get_utxos_by_address(&self, _address: &Address) -> StorageResult<Vec<(OutPoint, Utxo)>> {
+    async fn get_utxos_by_address(
+        &self,
+        _address: &Address,
+    ) -> StorageResult<Vec<(OutPoint, Utxo)>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
         }
@@ -341,28 +359,38 @@ impl StorageManager for MockStorageManager {
         Ok(None)
     }
 
-    async fn store_masternode_state(&mut self, _state: &dash_spv::storage::MasternodeState) -> StorageResult<()> {
+    async fn store_masternode_state(
+        &mut self,
+        _state: &dash_spv::storage::MasternodeState,
+    ) -> StorageResult<()> {
         if self.fail_on_write {
             return Err(StorageError::WriteFailed("Mock write failure".to_string()));
         }
         Ok(())
     }
 
-    async fn get_masternode_state(&self) -> StorageResult<Option<dash_spv::storage::MasternodeState>> {
+    async fn get_masternode_state(
+        &self,
+    ) -> StorageResult<Option<dash_spv::storage::MasternodeState>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
         }
         Ok(None)
     }
 
-    async fn store_terminal_block(&mut self, _block: &dash_spv::storage::StoredTerminalBlock) -> StorageResult<()> {
+    async fn store_terminal_block(
+        &mut self,
+        _block: &dash_spv::storage::StoredTerminalBlock,
+    ) -> StorageResult<()> {
         if self.fail_on_write {
             return Err(StorageError::WriteFailed("Mock write failure".to_string()));
         }
         Ok(())
     }
 
-    async fn get_terminal_block(&self) -> StorageResult<Option<dash_spv::storage::StoredTerminalBlock>> {
+    async fn get_terminal_block(
+        &self,
+    ) -> StorageResult<Option<dash_spv::storage::StoredTerminalBlock>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
         }
@@ -382,10 +410,10 @@ impl StorageManager for MockStorageManager {
 #[tokio::test]
 async fn test_network_connection_failure() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9999);
-    
+
     // Test connection timeout
     let result = TcpConnection::connect(addr, 1, Duration::from_millis(100), Network::Dash).await;
-    
+
     match result {
         Err(NetworkError::ConnectionFailed(msg)) => {
             assert!(msg.contains("Failed to connect"));
@@ -398,7 +426,7 @@ async fn test_network_connection_failure() {
 async fn test_network_timeout_recovery() {
     let mut network = MockNetworkManager::new();
     network.set_timeout_on_message();
-    
+
     let mut recovery_manager = RecoveryManager::new();
     let phase = SyncPhase::DownloadingHeaders {
         start_time: std::time::Instant::now(),
@@ -410,12 +438,14 @@ async fn test_network_timeout_recovery() {
         received_empty_response: false,
         last_progress: std::time::Instant::now(),
     };
-    
+
     let error = SyncError::Timeout("Network request timed out".to_string());
     let strategy = recovery_manager.determine_strategy(&phase, &error);
-    
+
     match strategy {
-        RecoveryStrategy::Retry { delay } => {
+        RecoveryStrategy::Retry {
+            delay,
+        } => {
             assert!(delay.as_secs() >= 1);
         }
         _ => panic!("Expected Retry strategy for timeout error"),
@@ -426,7 +456,7 @@ async fn test_network_timeout_recovery() {
 async fn test_network_peer_disconnection() {
     let mut network = MockNetworkManager::new();
     network.set_disconnect_after_n_messages(3);
-    
+
     // Send messages until disconnection
     let mut disconnect_occurred = false;
     for i in 0..5 {
@@ -441,7 +471,7 @@ async fn test_network_peer_disconnection() {
             Err(e) => panic!("Unexpected error: {:?}", e),
         }
     }
-    
+
     assert!(disconnect_occurred, "Expected peer disconnection");
 }
 
@@ -449,7 +479,7 @@ async fn test_network_peer_disconnection() {
 async fn test_network_invalid_data_handling() {
     let mut network = MockNetworkManager::new();
     network.set_return_invalid_data();
-    
+
     match network.receive_message().await {
         Err(NetworkError::ProtocolError(msg)) => {
             assert!(msg.contains("Invalid message format"));
@@ -464,10 +494,10 @@ async fn test_network_invalid_data_handling() {
 async fn test_storage_disk_full() {
     let mut storage = MockStorageManager::new();
     storage.set_disk_full();
-    
+
     let header = create_test_header(0);
     let result = storage.store_headers(&[header]).await;
-    
+
     match result {
         Err(StorageError::WriteFailed(msg)) => {
             assert!(msg.contains("No space left on device"));
@@ -480,10 +510,10 @@ async fn test_storage_disk_full() {
 async fn test_storage_permission_denied() {
     let mut storage = MockStorageManager::new();
     storage.set_permission_denied();
-    
+
     let header = create_test_header(0);
     let result = storage.store_headers(&[header]).await;
-    
+
     match result {
         Err(StorageError::WriteFailed(msg)) => {
             assert!(msg.contains("Permission denied"));
@@ -496,9 +526,9 @@ async fn test_storage_permission_denied() {
 async fn test_storage_corruption_detection() {
     let mut storage = MockStorageManager::new();
     storage.set_corrupt_data();
-    
+
     let result = storage.get_header(0).await;
-    
+
     match result {
         Err(StorageError::Corruption(msg)) => {
             assert!(msg.contains("Mock data corruption"));
@@ -511,10 +541,10 @@ async fn test_storage_corruption_detection() {
 async fn test_storage_lock_poisoned() {
     let mut storage = MockStorageManager::new();
     storage.set_lock_poisoned();
-    
+
     let header = create_test_header(0);
     let result = storage.store_headers(&[header]).await;
-    
+
     match result {
         Err(StorageError::LockPoisoned(msg)) => {
             assert!(msg.contains("Mock lock poisoned"));
@@ -527,7 +557,7 @@ async fn test_storage_lock_poisoned() {
 async fn test_storage_recovery_strategy() {
     let mut storage = MockStorageManager::new();
     storage.set_fail_on_write();
-    
+
     let mut recovery_manager = RecoveryManager::new();
     let phase = SyncPhase::DownloadingHeaders {
         start_time: std::time::Instant::now(),
@@ -539,12 +569,14 @@ async fn test_storage_recovery_strategy() {
         received_empty_response: false,
         last_progress: std::time::Instant::now(),
     };
-    
+
     let error = SyncError::Storage("Write failed".to_string());
     let strategy = recovery_manager.determine_strategy(&phase, &error);
-    
+
     match strategy {
-        RecoveryStrategy::Abort { error } => {
+        RecoveryStrategy::Abort {
+            error,
+        } => {
             assert!(error.contains("Storage error"));
         }
         _ => panic!("Expected Abort strategy for storage error"),
@@ -557,9 +589,9 @@ async fn test_storage_recovery_strategy() {
 async fn test_validation_invalid_proof_of_work() {
     let mut header = create_test_header(0);
     header.bits = CompactTarget::from_consensus(0x00000000); // Invalid difficulty
-    
+
     let result = validate_header_pow(&header);
-    
+
     match result {
         Err(ValidationError::InvalidProofOfWork) => {
             // Expected
@@ -573,9 +605,9 @@ async fn test_validation_invalid_header_chain() {
     let header1 = create_test_header(0);
     let mut header2 = create_test_header(1);
     header2.prev_blockhash = BlockHash::from_byte_array([0xFF; 32]); // Wrong previous hash
-    
+
     let result = validate_header_chain(&header1, &header2);
-    
+
     match result {
         Err(ValidationError::InvalidHeaderChain(msg)) => {
             assert!(msg.contains("previous block hash mismatch"));
@@ -597,12 +629,14 @@ async fn test_validation_recovery_strategy() {
         received_empty_response: false,
         last_progress: std::time::Instant::now(),
     };
-    
+
     let error = SyncError::Validation("Invalid block header".to_string());
     let strategy = recovery_manager.determine_strategy(&phase, &error);
-    
+
     match strategy {
-        RecoveryStrategy::RestartPhase { checkpoint } => {
+        RecoveryStrategy::RestartPhase {
+            checkpoint,
+        } => {
             assert!(checkpoint.restart_height.is_some());
             let restart_height = checkpoint.restart_height.unwrap();
             assert!(restart_height < 500); // Should restart from earlier height
@@ -619,31 +653,31 @@ fn test_error_conversions() {
     let net_err = NetworkError::Timeout;
     let spv_err: SpvError = net_err.into();
     match spv_err {
-        SpvError::Network(NetworkError::Timeout) => {},
+        SpvError::Network(NetworkError::Timeout) => {}
         _ => panic!("Incorrect error conversion"),
     }
-    
+
     // Test StorageError -> SpvError
     let storage_err = StorageError::Corruption("test".to_string());
     let spv_err: SpvError = storage_err.into();
     match spv_err {
-        SpvError::Storage(StorageError::Corruption(_)) => {},
+        SpvError::Storage(StorageError::Corruption(_)) => {}
         _ => panic!("Incorrect error conversion"),
     }
-    
+
     // Test ValidationError -> SpvError
     let val_err = ValidationError::InvalidProofOfWork;
     let spv_err: SpvError = val_err.into();
     match spv_err {
-        SpvError::Validation(ValidationError::InvalidProofOfWork) => {},
+        SpvError::Validation(ValidationError::InvalidProofOfWork) => {}
         _ => panic!("Incorrect error conversion"),
     }
-    
+
     // Test SyncError -> SpvError
     let sync_err = SyncError::SyncInProgress;
     let spv_err: SpvError = sync_err.into();
     match spv_err {
-        SpvError::Sync(SyncError::SyncInProgress) => {},
+        SpvError::Sync(SyncError::SyncInProgress) => {}
         _ => panic!("Incorrect error conversion"),
     }
 }
@@ -652,17 +686,23 @@ fn test_error_conversions() {
 
 #[test]
 fn test_error_messages_contain_context() {
-    let err = NetworkError::ConnectionFailed("Failed to connect to 192.168.1.1:9999: Connection refused".to_string());
+    let err = NetworkError::ConnectionFailed(
+        "Failed to connect to 192.168.1.1:9999: Connection refused".to_string(),
+    );
     let msg = err.to_string();
     assert!(msg.contains("192.168.1.1:9999"));
     assert!(msg.contains("Connection refused"));
-    
-    let err = StorageError::WriteFailed("/var/dash-spv/headers/segment_5.dat: Permission denied".to_string());
+
+    let err = StorageError::WriteFailed(
+        "/var/dash-spv/headers/segment_5.dat: Permission denied".to_string(),
+    );
     let msg = err.to_string();
     assert!(msg.contains("segment_5.dat"));
     assert!(msg.contains("Permission denied"));
-    
-    let err = ValidationError::InvalidHeaderChain("Block 12345: timestamp is before previous block".to_string());
+
+    let err = ValidationError::InvalidHeaderChain(
+        "Block 12345: timestamp is before previous block".to_string(),
+    );
     let msg = err.to_string();
     assert!(msg.contains("Block 12345"));
     assert!(msg.contains("timestamp"));
@@ -683,18 +723,21 @@ async fn test_exponential_backoff() {
         received_empty_response: false,
         last_progress: std::time::Instant::now(),
     };
-    
+
     let error = SyncError::Timeout("Test timeout".to_string());
-    
+
     // Test that retry delays increase exponentially
     let mut delays = vec![];
     for _ in 0..3 {
         let strategy = recovery_manager.determine_strategy(&phase, &error);
-        if let RecoveryStrategy::Retry { delay } = strategy {
+        if let RecoveryStrategy::Retry {
+            delay,
+        } = strategy
+        {
             delays.push(delay);
         }
     }
-    
+
     assert_eq!(delays.len(), 3);
     assert!(delays[1] > delays[0]);
     assert!(delays[2] > delays[1]);
@@ -713,20 +756,23 @@ async fn test_max_retry_limit() {
         received_empty_response: false,
         last_progress: std::time::Instant::now(),
     };
-    
+
     let error = SyncError::Timeout("Test timeout".to_string());
-    
+
     // Exhaust retries
     let mut abort_occurred = false;
     for i in 0..10 {
         let strategy = recovery_manager.determine_strategy(&phase, &error);
-        if let RecoveryStrategy::Abort { .. } = strategy {
+        if let RecoveryStrategy::Abort {
+            ..
+        } = strategy
+        {
             abort_occurred = true;
             assert!(i > 3); // Should abort after some retries
             break;
         }
     }
-    
+
     assert!(abort_occurred, "Expected abort after max retries");
 }
 
@@ -743,15 +789,17 @@ async fn test_recovery_statistics() {
         received_empty_response: false,
         last_progress: std::time::Instant::now(),
     };
-    
+
     let mut network = MockNetworkManager::new();
     let mut storage = MockStorageManager::new();
-    
+
     // Execute some recoveries
     let error = SyncError::Timeout("Test".to_string());
     let strategy = recovery_manager.determine_strategy(&phase, &error);
-    let _ = recovery_manager.execute_recovery(&mut phase, strategy, &error, &mut network, &mut storage).await;
-    
+    let _ = recovery_manager
+        .execute_recovery(&mut phase, strategy, &error, &mut network, &mut storage)
+        .await;
+
     let stats = recovery_manager.get_stats();
     assert_eq!(stats.total_recoveries, 1);
     assert!(stats.recoveries_by_phase.contains_key("DownloadingHeaders"));
@@ -763,7 +811,7 @@ async fn test_recovery_statistics() {
 async fn test_error_propagation_through_layers() {
     // Create a storage error
     let storage_err = StorageError::Corruption("Database corrupted".to_string());
-    
+
     // Convert to validation error (storage errors can occur during validation)
     let val_err: ValidationError = storage_err.clone().into();
     match &val_err {
@@ -772,7 +820,7 @@ async fn test_error_propagation_through_layers() {
         }
         _ => panic!("Incorrect error propagation"),
     }
-    
+
     // Convert to SPV error
     let spv_err: SpvError = val_err.into();
     match spv_err {
@@ -790,7 +838,7 @@ fn test_wallet_error_scenarios() {
     // Test balance overflow
     let err = WalletError::BalanceOverflow;
     assert_eq!(err.to_string(), "Balance calculation overflow");
-    
+
     // Test UTXO not found
     let outpoint = OutPoint {
         txid: Txid::from_byte_array([0; 32]),
@@ -798,7 +846,7 @@ fn test_wallet_error_scenarios() {
     };
     let err = WalletError::UtxoNotFound(outpoint);
     assert!(err.to_string().contains("UTXO not found"));
-    
+
     // Test unsupported address type
     let err = WalletError::UnsupportedAddressType("P2WSH".to_string());
     assert!(err.to_string().contains("P2WSH"));
@@ -844,7 +892,7 @@ fn validate_header_pow(header: &BlockHeader) -> ValidationResult<()> {
 fn validate_header_chain(prev: &BlockHeader, current: &BlockHeader) -> ValidationResult<()> {
     if current.prev_blockhash != prev.block_hash() {
         return Err(ValidationError::InvalidHeaderChain(
-            "previous block hash mismatch".to_string()
+            "previous block hash mismatch".to_string(),
         ));
     }
     Ok(())
@@ -856,13 +904,13 @@ fn validate_header_chain(prev: &BlockHeader, current: &BlockHeader) -> Validatio
 fn test_parse_errors() {
     let err = ParseError::InvalidAddress("not_a_valid_address".to_string());
     assert!(err.to_string().contains("not_a_valid_address"));
-    
+
     let err = ParseError::InvalidNetwork("testnet3".to_string());
     assert!(err.to_string().contains("testnet3"));
-    
+
     let err = ParseError::MissingArgument("--peer".to_string());
     assert!(err.to_string().contains("--peer"));
-    
+
     let err = ParseError::InvalidArgument("port".to_string(), "abc".to_string());
     assert!(err.to_string().contains("port"));
     assert!(err.to_string().contains("abc"));
@@ -874,10 +922,10 @@ fn test_parse_errors() {
 async fn test_cascading_network_failures() {
     let mut network = MockNetworkManager::new();
     let mut recovery_manager = RecoveryManager::new();
-    
+
     // Simulate a series of network failures
     network.set_timeout_on_message();
-    
+
     let phase = SyncPhase::DownloadingHeaders {
         start_time: std::time::Instant::now(),
         start_height: 0,
@@ -888,19 +936,21 @@ async fn test_cascading_network_failures() {
         received_empty_response: false,
         last_progress: std::time::Instant::now(),
     };
-    
+
     // First few failures should trigger retries
     for i in 0..3 {
         let error = SyncError::Network(format!("Connection timeout #{}", i));
         let strategy = recovery_manager.determine_strategy(&phase, &error);
         match strategy {
-            RecoveryStrategy::Retry { .. } => {
+            RecoveryStrategy::Retry {
+                ..
+            } => {
                 // Expected
             }
             _ => panic!("Expected retry strategy for failure #{}", i),
         }
     }
-    
+
     // After multiple failures, should switch peer
     let error = SyncError::Network("Connection timeout #3".to_string());
     let strategy = recovery_manager.determine_strategy(&phase, &error);
@@ -916,31 +966,28 @@ async fn test_cascading_network_failures() {
 async fn test_storage_corruption_recovery() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_path = temp_dir.path().to_path_buf();
-    
+
     // Create real storage manager
     let mut storage = DiskStorageManager::new(storage_path.clone()).await.unwrap();
-    
+
     // Store some headers
     for i in 0..10 {
         let header = create_test_header(i);
         storage.store_headers(&[header]).await.unwrap();
     }
-    
+
     // Simulate corruption by modifying files directly
     let headers_dir = storage_path.join("headers");
     if let Ok(entries) = std::fs::read_dir(&headers_dir) {
         for entry in entries.flatten() {
             if entry.path().extension().map(|e| e == "dat").unwrap_or(false) {
                 // Truncate file to simulate corruption
-                let _ = std::fs::OpenOptions::new()
-                    .write(true)
-                    .truncate(true)
-                    .open(entry.path());
+                let _ = std::fs::OpenOptions::new().write(true).truncate(true).open(entry.path());
                 break;
             }
         }
     }
-    
+
     // Try to read headers - should fail with corruption error
     let result = storage.load_headers(0..10).await;
     assert!(result.is_err());
@@ -950,7 +997,7 @@ async fn test_storage_corruption_recovery() {
 async fn test_concurrent_error_handling() {
     let storage = Arc::new(RwLock::new(MockStorageManager::new()));
     let mut handles = vec![];
-    
+
     // Spawn multiple tasks that will encounter errors
     for i in 0..5 {
         let storage_clone = Arc::clone(&storage);
@@ -962,7 +1009,7 @@ async fn test_concurrent_error_handling() {
                 storage.set_fail_on_read();
             }
             drop(storage);
-            
+
             // Try operations
             let storage = storage_clone.read().await;
             let result = if i % 2 == 0 {
@@ -973,12 +1020,12 @@ async fn test_concurrent_error_handling() {
             } else {
                 storage.get_header(i).await.map(|_| ())
             };
-            
+
             result
         });
         handles.push(handle);
     }
-    
+
     // All tasks should complete with errors
     for handle in handles {
         let result = handle.await.unwrap();
@@ -992,7 +1039,7 @@ async fn test_concurrent_error_handling() {
 async fn test_headers2_decompression_failure() {
     let error = SyncError::Headers2DecompressionFailed("Invalid compressed data".to_string());
     assert_eq!(error.category(), "headers2");
-    
+
     let mut recovery_manager = RecoveryManager::new();
     let phase = SyncPhase::DownloadingHeaders {
         start_time: std::time::Instant::now(),
@@ -1004,7 +1051,7 @@ async fn test_headers2_decompression_failure() {
         received_empty_response: false,
         last_progress: std::time::Instant::now(),
     };
-    
+
     // Headers2 decompression failures should trigger appropriate recovery
     let strategy = recovery_manager.determine_strategy(&phase, &error);
     // The specific strategy would depend on implementation details

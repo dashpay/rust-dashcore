@@ -7,7 +7,7 @@
 //! - Bootstrap masternode lists at specific heights
 
 use dashcore::{BlockHash, CompactTarget, Target};
-use dashcore_hashes::{Hash, hex};
+use dashcore_hashes::{hex, Hash};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -445,7 +445,7 @@ fn create_checkpoint(
     } else {
         536870912 // v0.14+ blocks (0x20000000)
     };
-    
+
     Checkpoint {
         height,
         block_hash: parse_block_hash_safe(hash),
@@ -475,7 +475,8 @@ mod tests {
         let manager = CheckpointManager::new(checkpoints);
 
         // Test genesis block
-        let genesis_checkpoint = manager.get_checkpoint(0).expect("Genesis checkpoint should exist");
+        let genesis_checkpoint =
+            manager.get_checkpoint(0).expect("Genesis checkpoint should exist");
         assert_eq!(genesis_checkpoint.height, 0);
         assert_eq!(genesis_checkpoint.timestamp, 1390095618);
 
@@ -503,10 +504,22 @@ mod tests {
         let manager = CheckpointManager::new(checkpoints);
 
         // Test finding checkpoint before various heights
-        assert_eq!(manager.last_checkpoint_before_height(0).expect("Should find checkpoint").height, 0);
-        assert_eq!(manager.last_checkpoint_before_height(1000).expect("Should find checkpoint").height, 0);
-        assert_eq!(manager.last_checkpoint_before_height(5000).expect("Should find checkpoint").height, 4991);
-        assert_eq!(manager.last_checkpoint_before_height(200000).expect("Should find checkpoint").height, 107996);
+        assert_eq!(
+            manager.last_checkpoint_before_height(0).expect("Should find checkpoint").height,
+            0
+        );
+        assert_eq!(
+            manager.last_checkpoint_before_height(1000).expect("Should find checkpoint").height,
+            0
+        );
+        assert_eq!(
+            manager.last_checkpoint_before_height(5000).expect("Should find checkpoint").height,
+            4991
+        );
+        assert_eq!(
+            manager.last_checkpoint_before_height(200000).expect("Should find checkpoint").height,
+            107996
+        );
     }
 
     #[test]

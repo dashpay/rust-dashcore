@@ -14,7 +14,7 @@ use dash_spv::{ClientConfig, DashSpvClient, Network};
 async fn main() {
     if let Err(e) = run().await {
         eprintln!("Error: {}", e);
-        
+
         // Provide specific exit codes for different error types
         let exit_code = if let Some(spv_error) = e.downcast_ref::<dash_spv::SpvError>() {
             match spv_error {
@@ -28,7 +28,7 @@ async fn main() {
         } else {
             255
         };
-        
+
         process::exit(exit_code);
     }
 }
@@ -121,12 +121,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .get_matches();
 
     // Get log level (will be used after we know if terminal UI is enabled)
-    let log_level = matches.get_one::<String>("log-level")
-        .ok_or("Missing log-level argument")?;
+    let log_level = matches.get_one::<String>("log-level").ok_or("Missing log-level argument")?;
 
     // Parse network
-    let network_str = matches.get_one::<String>("network")
-        .ok_or("Missing network argument")?;
+    let network_str = matches.get_one::<String>("network").ok_or("Missing network argument")?;
     let network = match network_str.as_str() {
         "mainnet" => Network::Dash,
         "testnet" => Network::Testnet,
@@ -135,8 +133,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     // Parse validation mode
-    let validation_str = matches.get_one::<String>("validation-mode")
-        .ok_or("Missing validation-mode argument")?;
+    let validation_str =
+        matches.get_one::<String>("validation-mode").ok_or("Missing validation-mode argument")?;
     let validation_mode = match validation_str.as_str() {
         "none" => dash_spv::ValidationMode::None,
         "basic" => dash_spv::ValidationMode::Basic,
@@ -145,8 +143,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     // Create configuration
-    let data_dir_str = matches.get_one::<String>("data-dir")
-        .ok_or("Missing data-dir argument")?;
+    let data_dir_str = matches.get_one::<String>("data-dir").ok_or("Missing data-dir argument")?;
     let data_dir = PathBuf::from(data_dir_str);
     let mut config = ClientConfig::new(network)
         .with_storage_path(data_dir)
@@ -174,7 +171,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if matches.get_flag("no-masternodes") {
         config = config.without_masternodes();
     }
-    
+
     // Set start height if specified
     if let Some(start_height_str) = matches.get_one::<String>("start-height") {
         if start_height_str == "now" {
@@ -182,7 +179,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             config.start_from_height = Some(u32::MAX);
             tracing::info!("Will start syncing from the latest available checkpoint");
         } else {
-            let start_height = start_height_str.parse::<u32>()
+            let start_height = start_height_str
+                .parse::<u32>()
                 .map_err(|e| format!("Invalid start height '{}': {}", start_height_str, e))?;
             config.start_from_height = Some(start_height);
             tracing::info!("Will start syncing from height: {}", start_height);

@@ -856,7 +856,11 @@ mod tests {
     use dashcore::{Address, Network};
 
     async fn create_test_wallet() -> Wallet {
-        let storage = Arc::new(RwLock::new(MemoryStorageManager::new().await.expect("Failed to create memory storage manager for test")));
+        let storage = Arc::new(RwLock::new(
+            MemoryStorageManager::new()
+                .await
+                .expect("Failed to create memory storage manager for test"),
+        ));
         Wallet::new(storage)
     }
 
@@ -864,9 +868,11 @@ mod tests {
         // Create a simple P2PKH address for testing
         use dashcore::{Address, PubkeyHash, ScriptBuf};
         use dashcore_hashes::Hash;
-        let pubkey_hash = PubkeyHash::from_slice(&[1u8; 20]).expect("Valid 20-byte slice for pubkey hash");
+        let pubkey_hash =
+            PubkeyHash::from_slice(&[1u8; 20]).expect("Valid 20-byte slice for pubkey hash");
         let script = ScriptBuf::new_p2pkh(&pubkey_hash);
-        Address::from_script(&script, Network::Testnet).expect("Valid P2PKH script should produce valid address")
+        Address::from_script(&script, Network::Testnet)
+            .expect("Valid P2PKH script should produce valid address")
     }
 
     #[tokio::test]
@@ -888,7 +894,10 @@ mod tests {
         let address = create_test_address();
 
         // Add address
-        wallet.add_watched_address(address.clone()).await.expect("Should add watched address successfully");
+        wallet
+            .add_watched_address(address.clone())
+            .await
+            .expect("Should add watched address successfully");
 
         // Check it was added
         let addresses = wallet.get_watched_addresses().await;
@@ -905,10 +914,16 @@ mod tests {
         let address = create_test_address();
 
         // Add address
-        wallet.add_watched_address(address.clone()).await.expect("Should add watched address successfully");
+        wallet
+            .add_watched_address(address.clone())
+            .await
+            .expect("Should add watched address successfully");
 
         // Remove address
-        let removed = wallet.remove_watched_address(&address).await.expect("Should remove watched address successfully");
+        let removed = wallet
+            .remove_watched_address(&address)
+            .await
+            .expect("Should remove watched address successfully");
         assert!(removed);
 
         // Check it was removed
@@ -917,7 +932,10 @@ mod tests {
         assert!(!wallet.is_watching_address(&address).await);
 
         // Try to remove again (should return false)
-        let removed = wallet.remove_watched_address(&address).await.expect("Should remove watched address successfully");
+        let removed = wallet
+            .remove_watched_address(&address)
+            .await
+            .expect("Should remove watched address successfully");
         assert!(!removed);
     }
 
@@ -1012,7 +1030,10 @@ mod tests {
         let address = create_test_address();
 
         // Add the address to watch
-        wallet.add_watched_address(address.clone()).await.expect("Should add watched address successfully");
+        wallet
+            .add_watched_address(address.clone())
+            .await
+            .expect("Should add watched address successfully");
 
         use dashcore::{OutPoint, TxOut, Txid};
         use std::str::FromStr;
@@ -1044,7 +1065,10 @@ mod tests {
         assert_eq!(balance.total(), Amount::from_sat(1000000));
 
         // Check balance for specific address
-        let addr_balance = wallet.get_balance_for_address(&address).await.expect("Should get balance for address successfully");
+        let addr_balance = wallet
+            .get_balance_for_address(&address)
+            .await
+            .expect("Should get balance for address successfully");
         assert_eq!(addr_balance, balance);
     }
 
@@ -1055,14 +1079,22 @@ mod tests {
         let address2 = {
             use dashcore::{Address, PubkeyHash, ScriptBuf};
             use dashcore_hashes::Hash;
-            let pubkey_hash = PubkeyHash::from_slice(&[2u8; 20]).expect("Valid 20-byte slice for pubkey hash");
+            let pubkey_hash =
+                PubkeyHash::from_slice(&[2u8; 20]).expect("Valid 20-byte slice for pubkey hash");
             let script = ScriptBuf::new_p2pkh(&pubkey_hash);
-            Address::from_script(&script, dashcore::Network::Testnet).expect("Valid P2PKH script should produce valid address")
+            Address::from_script(&script, dashcore::Network::Testnet)
+                .expect("Valid P2PKH script should produce valid address")
         };
 
         // Add addresses to watch
-        wallet.add_watched_address(address1.clone()).await.expect("Should add watched address1 successfully");
-        wallet.add_watched_address(address2.clone()).await.expect("Should add watched address2 successfully");
+        wallet
+            .add_watched_address(address1.clone())
+            .await
+            .expect("Should add watched address1 successfully");
+        wallet
+            .add_watched_address(address2.clone())
+            .await
+            .expect("Should add watched address2 successfully");
 
         use dashcore::{OutPoint, TxOut, Txid};
         use std::str::FromStr;
@@ -1125,15 +1157,22 @@ mod tests {
         wallet.add_utxo(utxo3).await.expect("Should add UTXO3 successfully");
 
         // Check total balance
-        let total_balance = wallet.get_balance().await.expect("Should get total balance successfully");
+        let total_balance =
+            wallet.get_balance().await.expect("Should get total balance successfully");
         assert_eq!(total_balance.total(), Amount::from_sat(3500000));
 
         // Check balance for address1 (should have utxo1 + utxo2)
-        let addr1_balance = wallet.get_balance_for_address(&address1).await.expect("Should get balance for address1 successfully");
+        let addr1_balance = wallet
+            .get_balance_for_address(&address1)
+            .await
+            .expect("Should get balance for address1 successfully");
         assert_eq!(addr1_balance.total(), Amount::from_sat(3000000));
 
         // Check balance for address2 (should have utxo3)
-        let addr2_balance = wallet.get_balance_for_address(&address2).await.expect("Should get balance for address2 successfully");
+        let addr2_balance = wallet
+            .get_balance_for_address(&address2)
+            .await
+            .expect("Should get balance for address2 successfully");
         assert_eq!(addr2_balance.total(), Amount::from_sat(500000));
     }
 
@@ -1142,7 +1181,10 @@ mod tests {
         let wallet = create_test_wallet().await;
         let address = create_test_address();
 
-        wallet.add_watched_address(address.clone()).await.expect("Should add watched address successfully");
+        wallet
+            .add_watched_address(address.clone())
+            .await
+            .expect("Should add watched address successfully");
 
         use dashcore::{OutPoint, TxOut, Txid};
         use std::str::FromStr;
@@ -1204,7 +1246,10 @@ mod tests {
 
         // Add UTXOs to wallet
         wallet.add_utxo(confirmed_utxo).await.expect("Should add confirmed UTXO successfully");
-        wallet.add_utxo(instantlocked_utxo).await.expect("Should add instantlocked UTXO successfully");
+        wallet
+            .add_utxo(instantlocked_utxo)
+            .await
+            .expect("Should add instantlocked UTXO successfully");
         wallet.add_utxo(pending_utxo).await.expect("Should add pending UTXO successfully");
 
         // Check balance breakdown
@@ -1220,7 +1265,10 @@ mod tests {
         let wallet = create_test_wallet().await;
         let address = create_test_address();
 
-        wallet.add_watched_address(address.clone()).await.expect("Should add watched address successfully");
+        wallet
+            .add_watched_address(address.clone())
+            .await
+            .expect("Should add watched address successfully");
 
         use dashcore::{OutPoint, TxOut, Txid};
         use std::str::FromStr;
@@ -1268,11 +1316,13 @@ mod tests {
         wallet.add_utxo(utxo2).await.expect("Should add UTXO2 successfully");
 
         // Check initial balance
-        let initial_balance = wallet.get_balance().await.expect("Should get initial balance successfully");
+        let initial_balance =
+            wallet.get_balance().await.expect("Should get initial balance successfully");
         assert_eq!(initial_balance.total(), Amount::from_sat(1500000));
 
         // Spend one UTXO
-        let removed = wallet.remove_utxo(&outpoint1).await.expect("Should remove UTXO successfully");
+        let removed =
+            wallet.remove_utxo(&outpoint1).await.expect("Should remove UTXO successfully");
         assert!(removed.is_some());
 
         // Check balance after spending
@@ -1290,7 +1340,10 @@ mod tests {
         let wallet = create_test_wallet().await;
         let address = create_test_address();
 
-        wallet.add_watched_address(address.clone()).await.expect("Should add watched address successfully");
+        wallet
+            .add_watched_address(address.clone())
+            .await
+            .expect("Should add watched address successfully");
 
         use dashcore::{OutPoint, TxOut, Txid};
         use std::str::FromStr;
@@ -1320,7 +1373,10 @@ mod tests {
         assert!(!utxos[0].is_confirmed);
 
         // Update confirmation status
-        wallet.update_confirmation_status().await.expect("Should update confirmation status successfully");
+        wallet
+            .update_confirmation_status()
+            .await
+            .expect("Should update confirmation status successfully");
 
         // Check that UTXO is now confirmed (due to high mock current height)
         let updated_utxos = wallet.get_utxos().await;
