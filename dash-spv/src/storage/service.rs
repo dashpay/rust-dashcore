@@ -216,7 +216,21 @@ impl StorageService {
         tracing::info!("Storage service started");
 
         while let Some(command) = self.command_rx.recv().await {
-            tracing::debug!("StorageService: received command {:?}", command);
+            // Log command details, but avoid logging large data fields
+            match &command {
+                StorageCommand::SaveMasternodeState { .. } => {
+                    tracing::debug!("StorageService: received command SaveMasternodeState (details omitted due to large data)");
+                }
+                StorageCommand::StoreChainState { .. } => {
+                    tracing::debug!("StorageService: received command StoreChainState (details omitted due to large data)");
+                }
+                StorageCommand::StoreFilter { .. } => {
+                    tracing::debug!("StorageService: received command StoreFilter (details omitted due to large data)");
+                }
+                _ => {
+                    tracing::debug!("StorageService: received command {:?}", command);
+                }
+            }
             self.process_command(command).await;
         }
 

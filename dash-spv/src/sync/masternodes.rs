@@ -97,11 +97,6 @@ impl MasternodeSyncManager {
                 // Deserialize the engine state
                 match bincode::deserialize::<MasternodeListEngine>(&state.engine_state) {
                     Ok(engine) => {
-                        tracing::info!(
-                            "Restored masternode engine state from storage (last_height: {}, {} masternode lists)",
-                            state.last_height,
-                            engine.masternode_lists.len()
-                        );
                         self.engine = Some(engine);
                     }
                     Err(e) => {
@@ -1643,17 +1638,6 @@ impl MasternodeSyncManager {
         }
 
         tracing::info!("Successfully applied masternode list diff");
-
-        // Log the current masternode engine state after applying diff
-        if let Some(engine) = &self.engine {
-            let current_ml_height = engine.masternode_lists.keys().max().copied().unwrap_or(0);
-            tracing::info!(
-                "Masternode engine state after diff: highest ML height = {}, total MLs = {}, known snapshots = {}",
-                current_ml_height,
-                engine.masternode_lists.len(),
-                engine.known_snapshots.len()
-            );
-        }
 
         // Find the height of the target block
         let target_height = if let Some(height) =

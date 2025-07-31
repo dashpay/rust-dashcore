@@ -2029,10 +2029,6 @@ impl DashSpvClient {
             );
             None
         } else {
-            tracing::debug!(
-                "MasternodeListEngine has {} masternode lists",
-                engine.masternode_lists.len()
-            );
             Some(engine)
         }
     }
