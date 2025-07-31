@@ -1444,27 +1444,99 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
-        let path = self.base_path.join("state/masternode.json");
-        let json = serde_json::to_string_pretty(state).map_err(|e| {
+        // Store the main state info as JSON (without the large engine_state)
+        let json_path = self.base_path.join("state/masternode.json");
+        let engine_path = self.base_path.join("state/masternode_engine.bin");
+        
+        // Create a version without the engine state for JSON storage
+        let json_state = serde_json::json!({
+            "last_height": state.last_height,
+            "last_update": state.last_update,
+            "terminal_block_hash": state.terminal_block_hash,
+            "engine_state_size": state.engine_state.len()
+        });
+        
+        let json = serde_json::to_string_pretty(&json_state).map_err(|e| {
             StorageError::Serialization(format!("Failed to serialize masternode state: {}", e))
         })?;
-
-        tokio::fs::write(path, json).await?;
+        tokio::fs::write(json_path, json).await?;
+        
+        // Store the engine state as binary
+        if !state.engine_state.is_empty() {
+            tokio::fs::write(engine_path, &state.engine_state).await?;
+        }
+        
         Ok(())
     }
 
     async fn load_masternode_state(&self) -> StorageResult<Option<MasternodeState>> {
-        let path = self.base_path.join("state/masternode.json");
-        if !path.exists() {
+        let json_path = self.base_path.join("state/masternode.json");
+        let engine_path = self.base_path.join("state/masternode_engine.bin");
+        
+        if !json_path.exists() {
             return Ok(None);
         }
-
-        let content = tokio::fs::read_to_string(path).await?;
-        let state = serde_json::from_str(&content).map_err(|e| {
-            StorageError::Serialization(format!("Failed to deserialize masternode state: {}", e))
-        })?;
-
-        Ok(Some(state))
+        
+        // Try to read the file with size limit check
+        let metadata = tokio::fs::metadata(&json_path).await?;
+        if metadata.len() > 10_000_000 { // 10MB limit for JSON file
+            tracing::error!("Masternode state JSON file is too large: {} bytes. Likely corrupted.", metadata.len());
+            // Delete the corrupted file and return None to start fresh
+            let _ = tokio::fs::remove_file(&json_path).await;
+            let _ = tokio::fs::remove_file(&engine_path).await;
+            return Ok(None);
+        }
+        
+        let content = tokio::fs::read_to_string(&json_path).await?;
+        
+        // First try to parse as the new format (without engine_state in JSON)
+        if let Ok(json_state) = serde_json::from_str::<serde_json::Value>(&content) {
+            if !json_state.get("engine_state").is_some() {
+                // New format - load from separate files
+                let last_height = json_state["last_height"].as_u64()
+                    .ok_or_else(|| StorageError::Serialization("Missing last_height".to_string()))? as u32;
+                let last_update = json_state["last_update"].as_u64()
+                    .ok_or_else(|| StorageError::Serialization("Missing last_update".to_string()))?;
+                let terminal_block_hash = json_state["terminal_block_hash"].as_array()
+                    .and_then(|arr| {
+                        if arr.len() == 32 {
+                            let mut hash = [0u8; 32];
+                            for (i, v) in arr.iter().enumerate() {
+                                hash[i] = v.as_u64()? as u8;
+                            }
+                            Some(hash)
+                        } else {
+                            None
+                        }
+                    });
+                
+                // Load the engine state binary if it exists
+                let engine_state = if engine_path.exists() {
+                    tokio::fs::read(engine_path).await?
+                } else {
+                    Vec::new()
+                };
+                
+                return Ok(Some(MasternodeState {
+                    last_height,
+                    engine_state,
+                    last_update,
+                    terminal_block_hash,
+                }));
+            }
+        }
+        
+        // Fall back to old format (with engine_state in JSON) - but with size protection
+        match serde_json::from_str::<MasternodeState>(&content) {
+            Ok(state) => Ok(Some(state)),
+            Err(e) => {
+                tracing::error!("Failed to deserialize masternode state: {}. Deleting corrupted file.", e);
+                // Delete the corrupted file
+                let _ = tokio::fs::remove_file(&json_path).await;
+                let _ = tokio::fs::remove_file(&engine_path).await;
+                Ok(None)
+            }
+        }
     }
 
     async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {

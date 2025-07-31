@@ -1123,7 +1123,8 @@ impl NetworkManager for MultiPeerNetworkManager {
             NetworkMessage::GetHeaders(_)
             | NetworkMessage::GetCFHeaders(_)
             | NetworkMessage::GetCFilters(_)
-            | NetworkMessage::GetData(_) => self.send_to_single_peer(message).await,
+            | NetworkMessage::GetData(_)
+            | NetworkMessage::GetMnListD(_) => self.send_to_single_peer(message).await,
             _ => {
                 // For other messages, broadcast to all peers
                 let results = self.broadcast(message).await;
