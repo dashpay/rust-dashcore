@@ -99,15 +99,25 @@ impl TransitionManager {
                 },
                 next_phase,
             ) => {
-                // CFHeaders must be complete
-                if !self.are_cfheaders_complete(current_phase, storage).await? {
-                    return Ok(false);
-                }
-
+                // Check if we actually downloaded any filter headers
+                let filter_tip = storage
+                    .get_filter_tip_height()
+                    .await
+                    .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?;
+                
                 match next_phase {
                     SyncPhase::DownloadingFilters {
                         ..
-                    } => Ok(true), // Always download filters after cfheaders
+                    } => {
+                        // Can only go to filters if we actually downloaded cfheaders
+                        Ok(filter_tip.is_some() && filter_tip != Some(0))
+                    }
+                    SyncPhase::FullySynced {
+                        ..
+                    } => {
+                        // Can go to synced if no filter headers were downloaded (no peer support)
+                        Ok(filter_tip.is_none() || filter_tip == Some(0))
+                    }
                     _ => Ok(false),
                 }
             }
@@ -245,16 +255,29 @@ impl TransitionManager {
             SyncPhase::DownloadingCFHeaders {
                 ..
             } => {
-                // After CFHeaders, we need to determine what filters to download
-                // For now, we'll create a filters phase that will be populated later
-                Ok(Some(SyncPhase::DownloadingFilters {
-                    start_time: Instant::now(),
-                    requested_ranges: std::collections::HashMap::new(),
-                    completed_heights: std::collections::HashSet::new(),
-                    total_filters: 0, // Will be determined based on watch items
-                    last_progress: Instant::now(),
-                    batches_processed: 0,
-                }))
+                // Check if we actually downloaded any filter headers
+                let filter_tip = storage
+                    .get_filter_tip_height()
+                    .await
+                    .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?;
+                
+                if filter_tip.is_none() || filter_tip == Some(0) {
+                    // No filter headers were downloaded (no peer support)
+                    // Skip directly to fully synced
+                    tracing::info!("No filter headers downloaded, skipping to fully synced");
+                    self.create_fully_synced_phase(storage).await
+                } else {
+                    // After CFHeaders, we need to determine what filters to download
+                    // For now, we'll create a filters phase that will be populated later
+                    Ok(Some(SyncPhase::DownloadingFilters {
+                        start_time: Instant::now(),
+                        requested_ranges: std::collections::HashMap::new(),
+                        completed_heights: std::collections::HashSet::new(),
+                        total_filters: 0, // Will be determined based on watch items
+                        last_progress: Instant::now(),
+                        batches_processed: 0,
+                    }))
+                }
             }
 
             SyncPhase::DownloadingFilters {
