@@ -536,11 +536,45 @@ impl HeaderSyncManagerWithReorg {
                 headers_to_store.iter().map(|(h, _)| *h).collect();
             let store_start = std::time::Instant::now();
 
-            // Store all headers at once
-            storage.store_headers(&headers_batch).await.map_err(|e| {
-                tracing::error!("❌ Failed to store header batch: {}", e);
-                SyncError::Storage(format!("Failed to store header batch: {}", e))
-            })?;
+            // Store all headers at once with retry on ServiceUnavailable
+            tracing::debug!(
+                "📝 About to call storage.store_headers for {} headers",
+                headers_batch.len()
+            );
+
+            let mut retry_count = 0;
+            const MAX_RETRIES: u32 = 3;
+
+            loop {
+                let store_result = storage.store_headers(&headers_batch).await;
+                tracing::debug!("📝 storage.store_headers returned: {:?}", store_result.is_ok());
+
+                match store_result {
+                    Ok(_) => break, // Success!
+                    Err(ref e) if retry_count < MAX_RETRIES => {
+                        retry_count += 1;
+                        tracing::warn!(
+                            "⚠️ Storage operation failed (attempt {}/{}): {}, retrying...",
+                            retry_count,
+                            MAX_RETRIES,
+                            e
+                        );
+                        // Brief delay before retry
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "❌ Failed to store header batch after {} retries: {}",
+                            MAX_RETRIES,
+                            e
+                        );
+                        return Err(SyncError::Storage(format!(
+                            "Failed to store header batch: {}",
+                            e
+                        )));
+                    }
+                }
+            }
 
             let store_duration = store_start.elapsed();
             tracing::info!(
@@ -643,9 +677,48 @@ impl HeaderSyncManagerWithReorg {
             return Ok(false);
         }
 
+        // Log current sync state before deciding to continue
+        let current_height = self.chain_state.get_height();
+        let blockchain_height = if self.chain_state.synced_from_checkpoint {
+            self.chain_state.sync_base_height + current_height
+        } else {
+            current_height
+        };
+
+        tracing::info!(
+            "📊 After processing headers batch: height={} (blockchain: {}), syncing_headers={}, headers_processed={}, headers_stored={}",
+            current_height,
+            blockchain_height,
+            self.syncing_headers,
+            headers_processed,
+            headers_stored
+        );
+
         if self.syncing_headers {
             // During sync mode - request next batch
             if let Some(tip) = self.chain_state.get_tip_header() {
+                let tip_height = self.chain_state.get_height();
+                let blockchain_height = if self.chain_state.synced_from_checkpoint {
+                    self.chain_state.sync_base_height + tip_height
+                } else {
+                    tip_height
+                };
+                tracing::info!(
+                    "📡 Requesting more headers after processing batch. Current tip height: {} (blockchain: {}), tip hash: {}",
+                    tip_height,
+                    blockchain_height,
+                    tip.block_hash()
+                );
+
+                // Check if we're at a checkpoint
+                if blockchain_height % 100000 == 0 || blockchain_height == 1900000 {
+                    tracing::info!(
+                        "🏁 At checkpoint height {}. Requesting headers starting from: {}",
+                        blockchain_height,
+                        tip.block_hash()
+                    );
+                }
+
                 // Add retry logic for network failures
                 let mut retry_count = 0;
                 const MAX_RETRIES: u32 = 3;
@@ -654,6 +727,11 @@ impl HeaderSyncManagerWithReorg {
                 loop {
                     match self.request_headers(network, Some(tip.block_hash())).await {
                         Ok(_) => {
+                            tracing::info!(
+                                "✅ Successfully sent GetHeaders request starting from height {} ({})",
+                                blockchain_height,
+                                tip.block_hash()
+                            );
                             break;
                         }
                         Err(e) => {

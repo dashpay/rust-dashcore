@@ -70,7 +70,7 @@ impl StorageBackend for DiskStorageBackend {
     async fn store_filter_header(
         &mut self,
         header: &FilterHeader,
-        height: u32,
+        _height: u32,
     ) -> StorageResult<()> {
         self.inner.store_filter_headers(&[*header]).await
     }

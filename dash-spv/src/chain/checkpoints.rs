@@ -323,7 +323,7 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
         // Recent checkpoint with masternode list (2022)
         create_checkpoint(
             1700000,
-            "00000000000000f50e46a529f588282b62e5b2e604fe604037f6eb39c68dc58f",
+            "000000000000001d7579a371e782fd9c4480f626a62b916fa4eb97e16a49043a",
             "000000000000001a5631d781a4be0d9cda08b470ac6f108843cedf32e4dc081e",
             1641154800,
             0x193b81f5,
@@ -335,7 +335,7 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
         // Latest checkpoint with masternode list (2022/2023)
         create_checkpoint(
             1900000,
-            "00000000000000268c5f5dc9e3bdda0dc7e93cf7ebf256b45b3de75b3cc0b923",
+            "000000000000001b8187c744355da78857cca5b9aeb665c39d12f26a0e3a9af5",
             "000000000000000d41ff4e55f8ebc2e610ec74a0cbdd33e59ebbfeeb1f8a0a0d",
             1672688400,
             0x1918b7a5,

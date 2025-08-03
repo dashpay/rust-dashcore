@@ -35,6 +35,15 @@ pub struct SyncPhaseInfo {
 
     /// Additional phase-specific details.
     pub details: Option<String>,
+    
+    /// Current absolute position (e.g., current block height)
+    pub current_position: Option<u32>,
+    
+    /// Target absolute position (e.g., target block height)
+    pub target_position: Option<u32>,
+    
+    /// Units for the rate (e.g., "headers/sec", "filters/sec", "diffs/sec")
+    pub rate_units: Option<String>,
 }
 
 /// Unique identifier for a peer connection.

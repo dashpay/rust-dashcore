@@ -157,6 +157,11 @@ impl SequentialSyncManager {
             current_height,
             peer_best_height
         );
+        
+        // Update target height in the phase if we're downloading headers
+        if let SyncPhase::DownloadingHeaders { target_height, .. } = &mut self.current_phase {
+            *target_height = Some(peer_best_height);
+        }
 
         // If we're already synced to peer height and have headers, transition directly to FullySynced
         if current_height >= peer_best_height && current_height > 0 {
@@ -898,17 +903,26 @@ impl SequentialSyncManager {
             eta_seconds: phase_progress.eta.map(|d| d.as_secs()),
             elapsed_seconds: phase_progress.elapsed.as_secs(),
             details: self.get_phase_details(),
+            current_position: phase_progress.current_position,
+            target_position: phase_progress.target_position,
+            rate_units: Some(self.get_phase_rate_units()),
         });
 
         SyncProgress {
             headers_synced: matches!(
                 self.current_phase,
-                SyncPhase::DownloadingHeaders { .. } | SyncPhase::FullySynced { .. }
+                SyncPhase::DownloadingMnList { .. }
+                    | SyncPhase::DownloadingCFHeaders { .. }
+                    | SyncPhase::DownloadingFilters { .. }
+                    | SyncPhase::DownloadingBlocks { .. }
+                    | SyncPhase::FullySynced { .. }
             ),
             header_height: 0, // PLACEHOLDER: Caller MUST query storage.get_tip_height()
             filter_headers_synced: matches!(
                 self.current_phase,
-                SyncPhase::DownloadingCFHeaders { .. } | SyncPhase::FullySynced { .. }
+                SyncPhase::DownloadingFilters { .. }
+                    | SyncPhase::DownloadingBlocks { .. }
+                    | SyncPhase::FullySynced { .. }
             ),
             filter_header_height: 0, // PLACEHOLDER: Caller MUST query storage.get_filter_tip_height()
             masternodes_synced: matches!(
@@ -929,6 +943,18 @@ impl SequentialSyncManager {
     /// Check if sync is complete
     pub fn is_synced(&self) -> bool {
         matches!(self.current_phase, SyncPhase::FullySynced { .. })
+    }
+
+    /// Get rate units for the current phase
+    fn get_phase_rate_units(&self) -> String {
+        match &self.current_phase {
+            SyncPhase::DownloadingHeaders { .. } => "headers/sec".to_string(),
+            SyncPhase::DownloadingMnList { .. } => "diffs/sec".to_string(),
+            SyncPhase::DownloadingCFHeaders { .. } => "filter headers/sec".to_string(),
+            SyncPhase::DownloadingFilters { .. } => "filters/sec".to_string(),
+            SyncPhase::DownloadingBlocks { .. } => "blocks/sec".to_string(),
+            _ => "items/sec".to_string(),
+        }
     }
 
     /// Get phase-specific details for the current sync phase
@@ -979,8 +1005,7 @@ impl SequentialSyncManager {
                 blocks_downloaded,
                 ..
             } => Some(format!(
-                "Sync complete: {} headers, {} filters, {} blocks",
-                headers_synced, filters_synced, blocks_downloaded
+                "Sync complete"
             )),
         }
     }
@@ -1374,6 +1399,7 @@ impl SequentialSyncManager {
         // Update phase state and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingHeaders {
             current_height,
+            target_height,
             headers_downloaded,
             start_time,
             headers_per_second,
@@ -1448,6 +1474,7 @@ impl SequentialSyncManager {
         // Update phase state and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingHeaders {
             current_height,
+            target_height,
             headers_downloaded,
             start_time,
             headers_per_second,
@@ -1458,6 +1485,14 @@ impl SequentialSyncManager {
         {
             // Update current height - use blockchain height for checkpoint awareness
             *current_height = blockchain_height;
+            
+            // Update target height if we can get peer's best height
+            if target_height.is_none() {
+                if let Ok(Some(peer_height)) = network.get_peer_best_height().await {
+                    *target_height = Some(peer_height);
+                    tracing::debug!("Updated target height to {}", peer_height);
+                }
+            }
 
             // Update progress
             *headers_downloaded += headers.len() as u32;

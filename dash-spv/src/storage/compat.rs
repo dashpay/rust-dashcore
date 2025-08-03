@@ -54,17 +54,20 @@ impl StorageManager for StorageManagerCompat {
 
         let start_time = std::time::Instant::now();
 
-        // Use the new batch storage method in a spawned task to prevent cancellation
-        let client = self.client.clone();
-        let headers_vec = headers.to_vec();
-        let result = tokio::spawn(async move { client.store_headers(&headers_vec).await })
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to spawn store_headers task: {:?}", e);
-                StorageError::ServiceUnavailable
-            })?;
+        // Simply call the storage client directly
+        // The storage service already handles the case where the receiver is dropped
+        let result = self.client.store_headers(headers).await;
 
-        result?;
+        // Handle the storage result
+        match result {
+            Ok(_) => {
+                tracing::trace!("StorageManagerCompat: storage operation completed successfully");
+            }
+            Err(e) => {
+                tracing::error!("StorageManagerCompat: storage operation failed: {:?}", e);
+                return Err(e);
+            }
+        }
 
         let total_duration = start_time.elapsed();
         let headers_per_second = if total_duration.as_secs_f64() > 0.0 {
@@ -79,6 +82,8 @@ impl StorageManager for StorageManagerCompat {
             total_duration,
             headers_per_second
         );
+
+        tracing::trace!("StorageManagerCompat: returning Ok from store_headers");
 
         Ok(())
     }
