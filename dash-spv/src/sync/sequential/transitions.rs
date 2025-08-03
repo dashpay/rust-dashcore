@@ -104,7 +104,7 @@ impl TransitionManager {
                     .get_filter_tip_height()
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?;
-                
+
                 match next_phase {
                     SyncPhase::DownloadingFilters {
                         ..
@@ -178,16 +178,31 @@ impl TransitionManager {
         match current_phase {
             SyncPhase::Idle => {
                 // Always start with headers
-                let start_height = storage
+                let storage_height = storage
                     .get_tip_height()
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
                     .unwrap_or(0);
 
+                // For checkpoint sync, we need to get the actual blockchain height
+                // This accounts for the sync base height from checkpoints
+                let blockchain_height = if let Ok(Some(metadata)) = storage.load_metadata("sync_base_height").await {
+                    if metadata.len() >= 4 {
+                        let sync_base = u32::from_le_bytes([metadata[0], metadata[1], metadata[2], metadata[3]]);
+                        sync_base + storage_height
+                    } else {
+                        storage_height
+                    }
+                } else {
+                    storage_height
+                };
+
+                // For progress calculation, start_height should be 0 to show overall progress
+                // current_height is the actual blockchain height we're at
                 Ok(Some(SyncPhase::DownloadingHeaders {
                     start_time: Instant::now(),
-                    start_height,
-                    current_height: start_height,
+                    start_height: 0,  // Start from 0 for accurate progress calculation
+                    current_height: blockchain_height,
                     target_height: None,
                     last_progress: Instant::now(),
                     headers_downloaded: 0,
@@ -260,7 +275,7 @@ impl TransitionManager {
                     .get_filter_tip_height()
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?;
-                
+
                 if filter_tip.is_none() || filter_tip == Some(0) {
                     // No filter headers were downloaded (no peer support)
                     // Skip directly to fully synced

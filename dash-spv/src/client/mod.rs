@@ -623,6 +623,11 @@ impl DashSpvClient {
         self.network.get_peer_best_height().await.map_err(|e| SpvError::Network(e))
     }
 
+    /// Get the best height reported by connected peers (alias for compatibility).
+    pub async fn get_best_peer_height(&self) -> Option<u32> {
+        self.get_peer_best_height().await.unwrap_or(None)
+    }
+
     /// Get the current chain height from storage.
     pub async fn chain_height(&self) -> Result<u32> {
         self.storage
@@ -1849,8 +1854,7 @@ impl DashSpvClient {
         // Check if we have a recent cached value (less than 1 second old)
         {
             let cache = self.cached_sync_progress.read().await;
-            if cache.1.elapsed() < std::time::Duration::from_secs(1) {
-                tracing::trace!("Using cached sync progress (age: {:?})", cache.1.elapsed());
+            if cache.1.elapsed() < std::time::Duration::from_secs(3) {
                 return Ok(cache.0.clone());
             }
         }
@@ -3300,6 +3304,47 @@ impl DashSpvClient {
         }
 
         Ok(None)
+    }
+
+    /// Process network messages for a short duration.
+    /// This is an alternative to monitor_network() that allows periodic breaks
+    /// for handling other operations like GetSyncProgress.
+    pub async fn process_network_messages(&mut self, duration: Duration) -> Result<()> {
+        let start = Instant::now();
+
+        while start.elapsed() < duration {
+            // Check if we're still running
+            let running = self.running.read().await;
+            if !*running {
+                return Ok(());
+            }
+            drop(running);
+
+            // Process one network message with a short timeout
+            match tokio::time::timeout(Duration::from_millis(100), self.network.receive_message())
+                .await
+            {
+                Ok(Ok(Some(message))) => {
+                    // Process the message
+                    if let Err(e) = self.handle_network_message(message).await {
+                        tracing::error!("Error handling network message: {}", e);
+                    }
+                }
+                Ok(Ok(None)) => {
+                    // No message available
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Ok(Err(e)) => {
+                    tracing::error!("Network error: {}", e);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(_) => {
+                    // Timeout - continue
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Poll the network for messages and convert them to events.

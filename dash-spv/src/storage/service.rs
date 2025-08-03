@@ -259,9 +259,11 @@ impl StorageService {
 
                 let start = std::time::Instant::now();
 
+                // Perform the storage operation
                 let result = self.backend.store_headers(&headers).await;
 
                 let duration = start.elapsed();
+
                 if duration.as_millis() > 50 {
                     tracing::warn!(
                         "StorageService: slow backend store_headers operation for {} headers took {:?}",
@@ -270,7 +272,17 @@ impl StorageService {
                     );
                 }
 
-                let _ = response.send(result);
+                // Always try to send the response, even if the receiver might be dropped
+                match response.send(result) {
+                    Ok(_) => {
+                        tracing::trace!("StorageService: successfully sent StoreHeaders response");
+                    }
+                    Err(_) => {
+                        // This is now expected if the parent task was cancelled
+                        // The storage operation still completed successfully
+                        tracing::debug!("StorageService: StoreHeaders response receiver dropped (operation completed successfully)");
+                    }
+                }
             }
             StorageCommand::GetHeader {
                 height,
@@ -587,7 +599,21 @@ impl StorageClient {
         }
 
         tracing::trace!("StorageClient: waiting for StoreHeaders response");
-        rx.await.map_err(|_| StorageError::ServiceUnavailable)?
+
+        match rx.await {
+            Ok(result) => {
+                tracing::trace!("StorageClient: received StoreHeaders response");
+                result
+            }
+            Err(e) => {
+                tracing::error!(
+                    "StorageClient: Failed to receive response for StoreHeaders ({}): {:?}",
+                    headers.len(),
+                    e
+                );
+                Err(StorageError::ServiceUnavailable)
+            }
+        }
     }
 
     pub async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
