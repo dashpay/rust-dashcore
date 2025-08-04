@@ -68,8 +68,9 @@ impl<'a> StatusDisplay<'a> {
         if state.synced_from_checkpoint && state.sync_base_height > 0 {
             // Get the actual number of headers in storage
             if let Ok(Some(storage_tip)) = self.storage.get_tip_height().await {
-                // The blockchain height is sync_base_height + storage_tip
-                let blockchain_height = state.sync_base_height + storage_tip;
+                // When syncing from checkpoint, storage_tip IS the blockchain height
+                // We don't add sync_base_height because storage already stores absolute heights
+                let blockchain_height = storage_tip;
                 if with_logging {
                     tracing::debug!(
                         "Status display (checkpoint sync): storage_tip={}, sync_base={}, blockchain_height={}",
@@ -284,8 +285,9 @@ impl<'a> StatusDisplay<'a> {
         if state.synced_from_checkpoint && state.sync_base_height > 0 {
             // Get the actual number of filter headers in storage
             if let Ok(Some(storage_height)) = self.storage.get_filter_tip_height().await {
-                // The blockchain height is sync_base_height + storage_height
-                state.sync_base_height + storage_height
+                // When syncing from checkpoint, storage_height IS the blockchain height
+                // We don't add sync_base_height because storage already stores absolute heights
+                storage_height
             } else {
                 // No filter headers in storage yet, use the checkpoint height
                 state.sync_base_height
