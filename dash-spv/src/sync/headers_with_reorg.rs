@@ -1375,15 +1375,15 @@ impl HeaderSyncManagerWithReorg {
         let effective_tip_height = if self.chain_state.synced_from_checkpoint
             && current_tip_height.is_some()
         {
-            let stored_headers = current_tip_height.unwrap();
-            let actual_height = self.chain_state.sync_base_height + stored_headers;
+            // When syncing from checkpoint, current_tip_height IS the blockchain height
+            // We don't add sync_base_height because it's already the absolute height
+            let blockchain_height = current_tip_height.unwrap();
             tracing::info!(
-                "Syncing from checkpoint: sync_base_height={}, stored_headers={}, effective_height={}",
+                "Syncing from checkpoint: sync_base_height={}, blockchain_height={}",
                 self.chain_state.sync_base_height,
-                stored_headers,
-                actual_height
+                blockchain_height
             );
-            Some(actual_height)
+            Some(blockchain_height)
         } else {
             tracing::info!(
                 "Not syncing from checkpoint or no tip height. synced_from_checkpoint={}, current_tip_height={:?}",
@@ -1818,6 +1818,17 @@ impl HeaderSyncManagerWithReorg {
     /// Get the chain state for checkpoint-aware operations
     pub fn get_chain_state(&self) -> &ChainState {
         &self.chain_state
+    }
+
+    /// Update the chain state (used for checkpoint sync)
+    pub fn update_chain_state(&mut self, chain_state: ChainState) {
+        tracing::info!(
+            "Updating header sync chain state: sync_base_height={}, synced_from_checkpoint={}, headers_count={}",
+            chain_state.sync_base_height,
+            chain_state.synced_from_checkpoint,
+            chain_state.headers.len()
+        );
+        self.chain_state = chain_state;
     }
 }
 
