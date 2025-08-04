@@ -19,6 +19,7 @@ use dashcore::BlockHash;
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
+use crate::types::ChainState;
 use crate::storage::StorageManager;
 use crate::sync::{
     FilterSyncManager, HeaderSyncManagerWithReorg, MasternodeSyncManager, ReorgConfig,
@@ -128,6 +129,11 @@ impl SequentialSyncManager {
     /// Get the current chain height from the header sync manager
     pub fn get_chain_height(&self) -> u32 {
         self.header_sync.get_chain_height()
+    }
+
+    /// Update the chain state (used for checkpoint sync)
+    pub fn update_chain_state(&mut self, chain_state: ChainState) {
+        self.header_sync.update_chain_state(chain_state);
     }
 
     /// Start the sequential sync process

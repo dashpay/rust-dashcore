@@ -24,6 +24,8 @@ pub struct Checkpoint {
     pub timestamp: u32,
     /// Difficulty target
     pub target: Target,
+    /// Original bits value (compact target)
+    pub bits: u32,
     /// Merkle root (optional for older checkpoints)
     pub merkle_root: Option<BlockHash>,
     /// Cumulative chain work up to this block (as hex string)
@@ -337,9 +339,9 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
             1900000,
             "000000000000001b8187c744355da78857cca5b9aeb665c39d12f26a0e3a9af5",
             "000000000000000d41ff4e55f8ebc2e610ec74a0cbdd33e59ebbfeeb1f8a0a0d",
-            1672688400,
-            0x1918b7a5,
-            "0x0000000000000000000000000000000000000000000000b8d9eab8d9eab8d9ea",
+            1688744911,
+            0x192946fd,
+            "0x000000000000000000000000000000000000000000008798ed692b94a398aa4f",
             "3a6ff72336cf78e45b23101f755f4d7dce915b32336a8c242c33905b72b07b35",
             498598646,
             Some("ML1900000__70230"),
@@ -452,6 +454,7 @@ fn create_checkpoint(
         prev_blockhash: parse_block_hash_safe(prev_hash),
         timestamp,
         target: Target::from_compact(CompactTarget::from_consensus(bits)),
+        bits,
         merkle_root: Some(parse_block_hash_safe(merkle_root)),
         chain_work: chain_work.to_string(),
         masternode_list_name: masternode_list.map(|s| s.to_string()),
