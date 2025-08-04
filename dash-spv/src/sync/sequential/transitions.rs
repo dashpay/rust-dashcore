@@ -186,22 +186,28 @@ impl TransitionManager {
 
                 // For checkpoint sync, we need to get the actual blockchain height
                 // This accounts for the sync base height from checkpoints
-                let blockchain_height = if let Ok(Some(metadata)) = storage.load_metadata("sync_base_height").await {
-                    if metadata.len() >= 4 {
-                        let sync_base = u32::from_le_bytes([metadata[0], metadata[1], metadata[2], metadata[3]]);
-                        sync_base + storage_height
+                let blockchain_height =
+                    if let Ok(Some(metadata)) = storage.load_metadata("sync_base_height").await {
+                        if metadata.len() >= 4 {
+                            let sync_base = u32::from_le_bytes([
+                                metadata[0],
+                                metadata[1],
+                                metadata[2],
+                                metadata[3],
+                            ]);
+                            sync_base + storage_height
+                        } else {
+                            storage_height
+                        }
                     } else {
                         storage_height
-                    }
-                } else {
-                    storage_height
-                };
+                    };
 
                 // For progress calculation, start_height should be 0 to show overall progress
                 // current_height is the actual blockchain height we're at
                 Ok(Some(SyncPhase::DownloadingHeaders {
                     start_time: Instant::now(),
-                    start_height: 0,  // Start from 0 for accurate progress calculation
+                    start_height: 0, // Start from 0 for accurate progress calculation
                     current_height: blockchain_height,
                     target_height: None,
                     last_progress: Instant::now(),

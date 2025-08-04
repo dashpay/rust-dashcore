@@ -157,9 +157,13 @@ impl SequentialSyncManager {
             current_height,
             peer_best_height
         );
-        
+
         // Update target height in the phase if we're downloading headers
-        if let SyncPhase::DownloadingHeaders { target_height, .. } = &mut self.current_phase {
+        if let SyncPhase::DownloadingHeaders {
+            target_height,
+            ..
+        } = &mut self.current_phase
+        {
             *target_height = Some(peer_best_height);
         }
 
@@ -948,11 +952,21 @@ impl SequentialSyncManager {
     /// Get rate units for the current phase
     fn get_phase_rate_units(&self) -> String {
         match &self.current_phase {
-            SyncPhase::DownloadingHeaders { .. } => "headers/sec".to_string(),
-            SyncPhase::DownloadingMnList { .. } => "diffs/sec".to_string(),
-            SyncPhase::DownloadingCFHeaders { .. } => "filter headers/sec".to_string(),
-            SyncPhase::DownloadingFilters { .. } => "filters/sec".to_string(),
-            SyncPhase::DownloadingBlocks { .. } => "blocks/sec".to_string(),
+            SyncPhase::DownloadingHeaders {
+                ..
+            } => "headers/sec".to_string(),
+            SyncPhase::DownloadingMnList {
+                ..
+            } => "diffs/sec".to_string(),
+            SyncPhase::DownloadingCFHeaders {
+                ..
+            } => "filter headers/sec".to_string(),
+            SyncPhase::DownloadingFilters {
+                ..
+            } => "filters/sec".to_string(),
+            SyncPhase::DownloadingBlocks {
+                ..
+            } => "blocks/sec".to_string(),
             _ => "items/sec".to_string(),
         }
     }
@@ -1004,9 +1018,7 @@ impl SequentialSyncManager {
                 filters_synced,
                 blocks_downloaded,
                 ..
-            } => Some(format!(
-                "Sync complete"
-            )),
+            } => Some(format!("Sync complete")),
         }
     }
 
@@ -1485,7 +1497,7 @@ impl SequentialSyncManager {
         {
             // Update current height - use blockchain height for checkpoint awareness
             *current_height = blockchain_height;
-            
+
             // Update target height if we can get peer's best height
             if target_height.is_none() {
                 if let Ok(Some(peer_height)) = network.get_peer_best_height().await {

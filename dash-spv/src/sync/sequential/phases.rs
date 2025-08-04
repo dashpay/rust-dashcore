@@ -267,7 +267,7 @@ impl SyncPhase {
             } => {
                 let items_completed = current_height.saturating_sub(*start_height);
                 let items_total = target_height.map(|t| t.saturating_sub(*start_height));
-                
+
                 // Calculate percentage based on progress made in this sync session
                 let percentage = if let Some(target) = target_height {
                     if *target > *start_height {
@@ -339,8 +339,8 @@ impl SyncPhase {
 
                 PhaseProgress {
                     phase_name: self.name(),
-                    items_completed: *diffs_processed,  // Show diffs processed
-                    items_total: None,  // We don't know how many diffs total
+                    items_completed: *diffs_processed, // Show diffs processed
+                    items_total: None,                 // We don't know how many diffs total
                     percentage,
                     rate,
                     eta,

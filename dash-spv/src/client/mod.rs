@@ -2652,17 +2652,21 @@ impl DashSpvClient {
             "Skipping header save during sync state save - {} headers already persisted",
             chain_state.headers.len()
         );
-        
+
         // Save only the chain metadata (chainlocks, sync base height, etc.) without headers
         if let Some(last_chainlock_height) = chain_state.last_chainlock_height {
             let height_bytes = last_chainlock_height.to_le_bytes();
-            self.storage.store_metadata("latest_chainlock_height", &height_bytes).await
+            self.storage
+                .store_metadata("latest_chainlock_height", &height_bytes)
+                .await
                 .map_err(|e| SpvError::Storage(e))?;
         }
-        
+
         if chain_state.sync_base_height > 0 {
             let base_bytes = chain_state.sync_base_height.to_le_bytes();
-            self.storage.store_metadata("sync_base_height", &base_bytes).await
+            self.storage
+                .store_metadata("sync_base_height", &base_bytes)
+                .await
                 .map_err(|e| SpvError::Storage(e))?;
         }
 
