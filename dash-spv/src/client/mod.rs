@@ -2645,12 +2645,26 @@ impl DashSpvClient {
         // Get current chain state
         let chain_state = self.state.read().await;
 
-        // Save the chain state itself (headers, etc.)
-        if let Err(e) = self.storage.store_chain_state(&*chain_state).await {
-            tracing::error!("Failed to save chain state: {}", e);
-            return Err(SpvError::Storage(e));
+        // NOTE: We do NOT save headers here because they are already persisted
+        // as they arrive during sync. Saving them again would cause duplicates
+        // when the client restarts.
+        tracing::debug!(
+            "Skipping header save during sync state save - {} headers already persisted",
+            chain_state.headers.len()
+        );
+        
+        // Save only the chain metadata (chainlocks, sync base height, etc.) without headers
+        if let Some(last_chainlock_height) = chain_state.last_chainlock_height {
+            let height_bytes = last_chainlock_height.to_le_bytes();
+            self.storage.store_metadata("latest_chainlock_height", &height_bytes).await
+                .map_err(|e| SpvError::Storage(e))?;
         }
-        tracing::debug!("Saved chain state with {} headers", chain_state.headers.len());
+        
+        if chain_state.sync_base_height > 0 {
+            let base_bytes = chain_state.sync_base_height.to_le_bytes();
+            self.storage.store_metadata("sync_base_height", &base_bytes).await
+                .map_err(|e| SpvError::Storage(e))?;
+        }
 
         // Create persistent sync state
         let persistent_state = crate::storage::PersistentSyncState::from_chain_state(
