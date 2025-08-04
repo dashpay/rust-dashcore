@@ -195,11 +195,11 @@ impl SyncEngine {
                                         sync_triggered = true;
                                         if started {
                                             tracing::info!("📊 Sync started - client is behind peers");
-                                            
+
                                             // Get current heights
                                             let current_height = client.chain_height().await.unwrap_or(0);
                                             let target = state_writer.get_target_height().await;
-                                            
+
                                             state_writer.update(|state| {
                                                 state.current_height = current_height;
                                                 state.update_headers_progress(current_height, target);
@@ -364,9 +364,12 @@ impl SyncEngine {
                         if let Some(target) = target_height {
                             state.target_height = target;
                         }
-                        
+
                         // Update the phase info with proper details
-                        state.update_headers_progress(starting_height, target_height.unwrap_or(state.target_height));
+                        state.update_headers_progress(
+                            starting_height,
+                            target_height.unwrap_or(state.target_height),
+                        );
                     })
                     .await;
             }
@@ -387,14 +390,14 @@ impl SyncEngine {
                     .update(|state| {
                         // Update current height
                         state.current_height = tip_height;
-                        
+
                         // Recalculate progress with proper target
                         let actual_progress = if state.target_height > 0 {
                             (tip_height as f64 / state.target_height as f64 * 100.0)
                         } else {
                             progress_percent
                         };
-                        
+
                         state.update_headers_progress(tip_height, state.target_height);
 
                         if actual_progress >= 100.0 || progress_percent >= 100.0 {
