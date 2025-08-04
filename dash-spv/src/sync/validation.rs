@@ -7,15 +7,14 @@
 
 use crate::error::{SyncError, SyncResult};
 use dashcore::{
-    BlockHash,
     network::message_qrinfo::QRInfo,
     network::message_sml::MnListDiff,
     sml::{
+        llmq_entry_verification::LLMQEntryVerificationStatus, llmq_type::LLMQType,
         masternode_list_engine::MasternodeListEngine,
-        llmq_type::LLMQType,
-        llmq_entry_verification::LLMQEntryVerificationStatus,
         quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry,
     },
+    BlockHash,
 };
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -99,7 +98,7 @@ impl ValidationResult {
             items_validated,
         }
     }
-    
+
     /// Create a failed validation result
     pub fn failure(errors: Vec<ValidationError>, duration: Duration) -> Self {
         Self {
@@ -110,7 +109,7 @@ impl ValidationResult {
             items_validated: 0,
         }
     }
-    
+
     /// Add a warning to the result
     pub fn add_warning(&mut self, warning: ValidationWarning) {
         self.warnings.push(warning);
@@ -138,9 +137,15 @@ impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidChainLock(hash) => write!(f, "Invalid chain lock for block {:x}", hash),
-            Self::MissingMasternodeList(height) => write!(f, "Missing masternode list at height {}", height),
-            Self::QuorumValidationFailed(qtype, msg) => write!(f, "Quorum validation failed for type {:?}: {}", qtype, msg),
-            Self::InvalidMnListDiff(height, msg) => write!(f, "Invalid MnListDiff at height {}: {}", height, msg),
+            Self::MissingMasternodeList(height) => {
+                write!(f, "Missing masternode list at height {}", height)
+            }
+            Self::QuorumValidationFailed(qtype, msg) => {
+                write!(f, "Quorum validation failed for type {:?}: {}", qtype, msg)
+            }
+            Self::InvalidMnListDiff(height, msg) => {
+                write!(f, "Invalid MnListDiff at height {}: {}", height, msg)
+            }
             Self::StateInconsistency(msg) => write!(f, "State inconsistency: {}", msg),
             Self::ValidationTimeout(msg) => write!(f, "Validation timeout: {}", msg),
         }
@@ -205,7 +210,7 @@ impl ValidationEngine {
             error_count: 0,
         }
     }
-    
+
     /// Validate a QRInfo message comprehensively
     pub fn validate_qr_info(
         &mut self,
@@ -215,56 +220,57 @@ impl ValidationEngine {
         if !self.config.enabled {
             return Ok(ValidationResult::success(0, Duration::from_secs(0)));
         }
-        
+
         let start = Instant::now();
         let mut errors = Vec::new();
         let mut items_validated = 0;
-        
+
         tracing::debug!(
             "Starting QRInfo validation with {} diffs and {} snapshots",
             qr_info.mn_list_diff_list.len(),
             qr_info.quorum_snapshot_list.len()
         );
-        
+
         // Validate masternode list diffs
         for diff in &qr_info.mn_list_diff_list {
             match self.validate_mn_list_diff(diff, engine) {
                 Ok(true) => items_validated += 1,
                 Ok(false) => errors.push(ValidationError::InvalidMnListDiff(
                     0, // We don't have block height in MnListDiff
-                    "Validation failed".to_string()
+                    "Validation failed".to_string(),
                 )),
                 Err(e) => errors.push(ValidationError::InvalidMnListDiff(
                     0, // We don't have block height in MnListDiff
-                    e.to_string()
+                    e.to_string(),
                 )),
             }
         }
-        
+
         // Validate quorum snapshots
         for snapshot in &qr_info.quorum_snapshot_list {
             items_validated += snapshot.active_quorum_members.len();
             // TODO: Implement quorum snapshot validation
         }
-        
+
         // Check error threshold
         self.error_count += errors.len();
         if self.error_count > self.config.max_validation_errors {
-            return Err(SyncError::Validation(
-                format!("Validation error threshold exceeded: {} errors", self.error_count)
-            ));
+            return Err(SyncError::Validation(format!(
+                "Validation error threshold exceeded: {} errors",
+                self.error_count
+            )));
         }
-        
+
         let duration = start.elapsed();
         self.update_stats(errors.is_empty(), items_validated);
-        
+
         if errors.is_empty() {
             Ok(ValidationResult::success(items_validated, duration))
         } else {
             Ok(ValidationResult::failure(errors, duration))
         }
     }
-    
+
     /// Validate a masternode list diff
     fn validate_mn_list_diff(
         &mut self,
@@ -272,21 +278,21 @@ impl ValidationEngine {
         engine: &MasternodeListEngine,
     ) -> SyncResult<bool> {
         let cache_key = ValidationCacheKey::MasternodeList(0); // Use 0 as we don't have block height
-        
+
         // Check cache
         if let Some(cached) = self.get_cached_result(&cache_key) {
             return Ok(cached);
         }
-        
+
         // Perform validation
         let result = self.perform_mn_list_diff_validation(diff, engine)?;
-        
+
         // Cache result
         self.cache_result(cache_key, result);
-        
+
         Ok(result)
     }
-    
+
     /// Perform actual masternode list diff validation
     fn perform_mn_list_diff_validation(
         &self,
@@ -296,15 +302,15 @@ impl ValidationEngine {
         // Check if we have the base list
         // Note: We can't check by height as MnListDiff doesn't contain block height
         // We would need to look up the height from the block hash
-        
+
         // Validate merkle root matches
         // TODO: Implement merkle root validation
-        
+
         // Check for unusual changes
         let added_count = diff.new_masternodes.len();
         let removed_count = diff.deleted_masternodes.len();
         let updated_count = 0; // No separate updated field in MnListDiff
-        
+
         let total_changes = added_count + removed_count + updated_count;
         if total_changes > 100 {
             tracing::warn!(
@@ -313,10 +319,10 @@ impl ValidationEngine {
                 total_changes
             );
         }
-        
+
         Ok(true)
     }
-    
+
     /// Validate quorums for a specific height
     pub fn validate_quorums_at_height(
         &mut self,
@@ -326,15 +332,16 @@ impl ValidationEngine {
         if !self.config.enabled {
             return Ok(ValidationResult::success(0, Duration::from_secs(0)));
         }
-        
+
         let start = Instant::now();
         let mut errors = Vec::new();
         let mut items_validated = 0;
-        
+
         // Get masternode list at height
-        let mn_list = engine.masternode_lists.get(&height)
-            .ok_or_else(|| SyncError::Validation(format!("No masternode list at height {}", height)))?;
-        
+        let mn_list = engine.masternode_lists.get(&height).ok_or_else(|| {
+            SyncError::Validation(format!("No masternode list at height {}", height))
+        })?;
+
         // Validate each quorum type
         for (quorum_type, quorums) in &mn_list.quorums {
             if self.should_validate_quorum_type(quorum_type) {
@@ -343,37 +350,37 @@ impl ValidationEngine {
                         Ok(true) => items_validated += 1,
                         Ok(false) => errors.push(ValidationError::QuorumValidationFailed(
                             *quorum_type,
-                            format!("Quorum {:x} validation failed", quorum_hash)
+                            format!("Quorum {:x} validation failed", quorum_hash),
                         )),
                         Err(e) => errors.push(ValidationError::QuorumValidationFailed(
                             *quorum_type,
-                            e.to_string()
+                            e.to_string(),
                         )),
                     }
                 }
             }
         }
-        
+
         let duration = start.elapsed();
         self.update_stats(errors.is_empty(), items_validated);
-        
+
         if errors.is_empty() {
             Ok(ValidationResult::success(items_validated, duration))
         } else {
             Ok(ValidationResult::failure(errors, duration))
         }
     }
-    
+
     /// Check if we should validate a specific quorum type
     fn should_validate_quorum_type(&self, quorum_type: &LLMQType) -> bool {
         match quorum_type {
             LLMQType::Llmqtype50_60 | LLMQType::Llmqtype400_60 | LLMQType::Llmqtype400_85 => {
                 self.config.validate_rotating_quorums
             }
-            _ => self.config.validate_non_rotating_quorums
+            _ => self.config.validate_non_rotating_quorums,
         }
     }
-    
+
     /// Validate a single quorum entry
     fn validate_quorum_entry(
         &mut self,
@@ -383,12 +390,12 @@ impl ValidationEngine {
         engine: &MasternodeListEngine,
     ) -> SyncResult<bool> {
         let cache_key = ValidationCacheKey::Quorum(*quorum_type, *quorum_hash);
-        
+
         // Check cache
         if let Some(cached) = self.get_cached_result(&cache_key) {
             return Ok(cached);
         }
-        
+
         // Check verification status
         let is_valid = match &entry.verified {
             LLMQEntryVerificationStatus::Verified => true,
@@ -402,13 +409,13 @@ impl ValidationEngine {
                 self.verify_quorum_with_engine(quorum_type, quorum_hash, entry, engine)?
             }
         };
-        
+
         // Cache result
         self.cache_result(cache_key, is_valid);
-        
+
         Ok(is_valid)
     }
-    
+
     /// Verify a quorum using the engine
     fn verify_quorum_with_engine(
         &self,
@@ -426,7 +433,7 @@ impl ValidationEngine {
             );
             return Ok(false);
         }
-        
+
         if entry.quorum_entry.quorum_hash != *quorum_hash {
             tracing::warn!(
                 "Quorum hash mismatch: expected {:x}, got {:x}",
@@ -435,25 +442,22 @@ impl ValidationEngine {
             );
             return Ok(false);
         }
-        
+
         // Check if the quorum public key is valid (non-zero)
         if entry.quorum_entry.quorum_public_key.is_zeroed() {
-            tracing::warn!(
-                "Invalid quorum public key (all zeros) for quorum {:x}",
-                quorum_hash
-            );
+            tracing::warn!("Invalid quorum public key (all zeros) for quorum {:x}", quorum_hash);
             return Ok(false);
         }
-        
+
         // For now, we trust the engine's quorum data as it should already be validated
         // when it was added to the engine. More complex validation could include:
         // - Verifying the threshold signature shares
         // - Checking member validity against the masternode list
         // - Validating the commitment hash
-        
+
         Ok(true)
     }
-    
+
     /// Get cached validation result if still valid
     fn get_cached_result(&mut self, key: &ValidationCacheKey) -> Option<bool> {
         if let Some(cached) = self.validation_cache.get(key) {
@@ -465,28 +469,30 @@ impl ValidationEngine {
         self.stats.cache_misses += 1;
         None
     }
-    
+
     /// Cache a validation result
     fn cache_result(&mut self, key: ValidationCacheKey, result: bool) {
-        self.validation_cache.insert(key, CachedValidationResult {
-            result,
-            timestamp: Instant::now(),
-        });
-        
+        self.validation_cache.insert(
+            key,
+            CachedValidationResult {
+                result,
+                timestamp: Instant::now(),
+            },
+        );
+
         // Clean up old entries if cache is too large
         if self.validation_cache.len() > 10000 {
             self.cleanup_cache();
         }
     }
-    
+
     /// Clean up expired cache entries
     fn cleanup_cache(&mut self) {
         let now = Instant::now();
-        self.validation_cache.retain(|_, v| {
-            now.duration_since(v.timestamp) < self.config.cache_ttl
-        });
+        self.validation_cache
+            .retain(|_, v| now.duration_since(v.timestamp) < self.config.cache_ttl);
     }
-    
+
     /// Update validation statistics
     fn update_stats(&mut self, success: bool, items: usize) {
         self.stats.total_validations += items;
@@ -496,7 +502,7 @@ impl ValidationEngine {
             self.stats.failed_validations += items;
         }
     }
-    
+
     /// Get current validation statistics
     pub fn stats(&self) -> ValidationStats {
         ValidationStats {
@@ -507,7 +513,7 @@ impl ValidationEngine {
             cache_misses: self.stats.cache_misses,
         }
     }
-    
+
     /// Reset error count (e.g., after successful sync phase)
     pub fn reset_error_count(&mut self) {
         self.error_count = 0;
@@ -539,11 +545,11 @@ impl ValidationSummary {
         } else {
             0.0
         };
-        
+
         Self {
             total_validated: stats.total_validations,
             failures: stats.failed_validations,
-            warnings: 0, // TODO: Track warnings
+            warnings: 0,                        // TODO: Track warnings
             total_time: Duration::from_secs(0), // TODO: Track total time
             cache_hit_rate,
         }

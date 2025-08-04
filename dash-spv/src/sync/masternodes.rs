@@ -4,13 +4,12 @@
 //! from dash-evo-tool for simple, reliable QRInfo sync.
 
 use dashcore::{
-    network::message::NetworkMessage,
-    network::message_sml::{GetMnListDiff, MnListDiff},
-    network::message_qrinfo::{QRInfo, GetQRInfo},
     network::constants::NetworkExt,
+    network::message::NetworkMessage,
+    network::message_qrinfo::{GetQRInfo, QRInfo},
+    network::message_sml::{GetMnListDiff, MnListDiff},
     sml::masternode_list_engine::MasternodeListEngine,
-    BlockHash,
-    QuorumHash,
+    BlockHash, QuorumHash,
 };
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -24,17 +23,17 @@ use crate::storage::StorageManager;
 pub struct MasternodeSyncManager {
     config: ClientConfig,
     engine: Option<MasternodeListEngine>,
-    
+
     // Simple caches matching dash-evo-tool pattern
     mnlist_diffs: HashMap<(u32, u32), MnListDiff>,
     qr_infos: HashMap<BlockHash, QRInfo>,
-    
+
     // Track last successful QRInfo block for progressive sync
     last_qrinfo_block_hash: Option<BlockHash>,
-    
+
     // Simple error handling
     error: Option<String>,
-    
+
     // Sync state
     sync_in_progress: bool,
     last_sync_time: Option<Instant>,
@@ -74,19 +73,12 @@ impl MasternodeSyncManager {
         block_hash: BlockHash,
     ) -> Result<(), String> {
         // Step 1: Collect known block hashes from existing diffs (dash-evo-tool pattern)
-        let mut known_block_hashes: Vec<_> = self
-            .mnlist_diffs
-            .values()
-            .map(|mn_list_diff| mn_list_diff.block_hash)
-            .collect();
+        let mut known_block_hashes: Vec<_> =
+            self.mnlist_diffs.values().map(|mn_list_diff| mn_list_diff.block_hash).collect();
         known_block_hashes.push(base_block_hash);
         tracing::info!(
             "Requesting QRInfo with known_block_hashes: {}, block_request_hash: {}",
-            known_block_hashes
-                .iter()
-                .map(|bh| bh.to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
+            known_block_hashes.iter().map(|bh| bh.to_string()).collect::<Vec<_>>().join(", "),
             block_hash
         );
 
@@ -97,17 +89,24 @@ impl MasternodeSyncManager {
             return Err(error_msg);
         }
 
-        tracing::info!("📤 QRInfo request sent successfully, processing will happen when message arrives");
+        tracing::info!(
+            "📤 QRInfo request sent successfully, processing will happen when message arrives"
+        );
         Ok(())
     }
 
     /// Insert masternode list diff - direct translation of dash-evo-tool implementation
-    async fn insert_mn_list_diff(&mut self, mn_list_diff: &MnListDiff, storage: &dyn StorageManager) {
+    async fn insert_mn_list_diff(
+        &mut self,
+        mn_list_diff: &MnListDiff,
+        storage: &dyn StorageManager,
+    ) {
         let base_block_hash = mn_list_diff.base_block_hash;
         let base_height = match self.get_height_for_hash(&base_block_hash, storage).await {
             Ok(height) => height,
             Err(e) => {
-                let error_msg = format!("Failed to get height for base block hash {}: {}", base_block_hash, e);
+                let error_msg =
+                    format!("Failed to get height for base block hash {}: {}", base_block_hash, e);
                 tracing::error!("❌ MnListDiff insertion failed: {}", error_msg);
                 self.error = Some(error_msg);
                 return;
@@ -118,7 +117,8 @@ impl MasternodeSyncManager {
         let height = match self.get_height_for_hash(&block_hash, storage).await {
             Ok(height) => height,
             Err(e) => {
-                let error_msg = format!("Failed to get height for block hash {}: {}", block_hash, e);
+                let error_msg =
+                    format!("Failed to get height for block hash {}: {}", block_hash, e);
                 tracing::error!("❌ MnListDiff insertion failed: {}", error_msg);
                 self.error = Some(error_msg);
                 return;
@@ -136,7 +136,11 @@ impl MasternodeSyncManager {
     }
 
     /// Helper to get height for block hash using storage (consistent with dynamic callback)
-    async fn get_height_for_hash(&self, block_hash: &BlockHash, storage: &dyn StorageManager) -> Result<u32, String> {
+    async fn get_height_for_hash(
+        &self,
+        block_hash: &BlockHash,
+        storage: &dyn StorageManager,
+    ) -> Result<u32, String> {
         // Special case: Handle genesis block which isn't stored when syncing from checkpoints
         if let Some(genesis_hash) = self.config.network.known_genesis_block_hash() {
             if *block_hash == genesis_hash {
@@ -148,7 +152,9 @@ impl MasternodeSyncManager {
         match storage.get_header_height_by_hash(block_hash).await {
             Ok(Some(height)) => Ok(height),
             Ok(None) => Err(format!("Height not found for block hash: {}", block_hash)),
-            Err(e) => Err(format!("Storage error looking up height for block hash {}: {}", block_hash, e))
+            Err(e) => {
+                Err(format!("Storage error looking up height for block hash {}: {}", block_hash, e))
+            }
         }
     }
 
@@ -166,7 +172,9 @@ impl MasternodeSyncManager {
         });
 
         // Send request (no state coordination needed - message handler will process response)
-        network.send_message(get_qr_info_msg).await
+        network
+            .send_message(get_qr_info_msg)
+            .await
             .map_err(|e| format!("Failed to send QRInfo request: {}", e))?;
 
         tracing::info!("📤 Sent QRInfo request (unified processing)");
@@ -175,25 +183,35 @@ impl MasternodeSyncManager {
 
     /// Log detailed QRInfo statistics
     fn log_qrinfo_details(&self, qr_info: &QRInfo, prefix: &str) {
-        let h4c_count = if qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some() { 1 } else { 0 };
+        let h4c_count = if qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some() {
+            1
+        } else {
+            0
+        };
         let core_diff_count = 5 + h4c_count; // tip, h, h-c, h-2c, h-3c, plus optional h-4c
 
-        tracing::info!("{} with {} core diffs, {} additional diffs, {} additional snapshots",
+        tracing::info!(
+            "{} with {} core diffs, {} additional diffs, {} additional snapshots",
             prefix,
             core_diff_count,
             qr_info.mn_list_diff_list.len(),
-            qr_info.quorum_snapshot_list.len());
+            qr_info.quorum_snapshot_list.len()
+        );
 
-        tracing::debug!("📋 QRInfo core data: tip={}, h={}, h-c={}, h-2c={}, h-3c={}, h-4c={}, commitments={}",
+        tracing::debug!(
+            "📋 QRInfo core data: tip={}, h={}, h-c={}, h-2c={}, h-3c={}, h-4c={}, commitments={}",
             qr_info.mn_list_diff_tip.block_hash,
             qr_info.mn_list_diff_h.block_hash,
             qr_info.mn_list_diff_at_h_minus_c.block_hash,
             qr_info.mn_list_diff_at_h_minus_2c.block_hash,
             qr_info.mn_list_diff_at_h_minus_3c.block_hash,
-            qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.as_ref()
+            qr_info
+                .quorum_snapshot_and_mn_list_diff_at_h_minus_4c
+                .as_ref()
                 .map(|(_, diff)| diff.block_hash.to_string())
                 .unwrap_or_else(|| "None".to_string()),
-            qr_info.last_commitment_per_index.len());
+            qr_info.last_commitment_per_index.len()
+        );
     }
 
     /// Feed QRInfo block heights to the masternode engine (dash-evo-tool pattern)
@@ -248,7 +266,10 @@ impl MasternodeSyncManager {
                     fed_count += 1;
                     tracing::debug!("🔗 Fed height {} for block {}", height, block_hash);
                 } else {
-                    tracing::warn!("⚠️ Could not find height for block hash {} in storage", block_hash);
+                    tracing::warn!(
+                        "⚠️ Could not find height for block hash {} in storage",
+                        block_hash
+                    );
                 }
             }
 
@@ -318,11 +339,15 @@ impl MasternodeSyncManager {
         self.error = None;
 
         // Get current chain tip
-        let tip_height = storage.get_tip_height().await
+        let tip_height = storage
+            .get_tip_height()
+            .await
             .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
             .unwrap_or(0);
 
-        let tip_header = storage.get_header(tip_height).await
+        let tip_header = storage
+            .get_header(tip_height)
+            .await
             .map_err(|e| SyncError::Storage(format!("Failed to get tip header: {}", e)))?
             .ok_or_else(|| SyncError::Storage("Tip header not found".to_string()))?;
         let tip_hash = tip_header.block_hash();
@@ -336,8 +361,10 @@ impl MasternodeSyncManager {
             last_qrinfo_hash
         } else {
             // First time - use genesis block
-            let genesis_hash = self.config.network.known_genesis_block_hash()
-                .ok_or_else(|| SyncError::InvalidState("Genesis hash not available".to_string()))?;
+            let genesis_hash =
+                self.config.network.known_genesis_block_hash().ok_or_else(|| {
+                    SyncError::InvalidState("Genesis hash not available".to_string())
+                })?;
             tracing::debug!("Using genesis block as base: {}", genesis_hash);
             genesis_hash
         };
@@ -440,7 +467,10 @@ impl MasternodeSyncManager {
 
         // Feed QRInfo to engine and get additional MnListDiffs needed for quorum validation
         // This is the critical step that dash-evo-tool performs after initial QRInfo processing
-        if let Err(e) = self.feed_qrinfo_and_get_additional_diffs(&qr_info, storage, network, sync_base_height).await {
+        if let Err(e) = self
+            .feed_qrinfo_and_get_additional_diffs(&qr_info, storage, network, sync_base_height)
+            .await
+        {
             tracing::error!("❌ Failed to process QRInfo follow-up diffs: {}", e);
             self.error = Some(e);
             return;
@@ -460,7 +490,6 @@ impl MasternodeSyncManager {
         tracing::info!("✅ QRInfo processing completed successfully (unified path)");
     }
 
-
     /// Feed QRInfo to engine and fetch additional MnListDiffs for quorum validation
     /// This implements the critical follow-up step from dash-evo-tool's feed_qr_info_and_get_dmls()
     async fn feed_qrinfo_and_get_additional_diffs(
@@ -470,12 +499,17 @@ impl MasternodeSyncManager {
         network: &mut dyn NetworkManager,
         sync_base_height: u32,
     ) -> Result<(), String> {
-        tracing::info!("🔗 Feeding QRInfo to engine and getting additional diffs for quorum validation");
+        tracing::info!(
+            "🔗 Feeding QRInfo to engine and getting additional diffs for quorum validation"
+        );
 
         // Step 1: Feed QRInfo to masternode list engine with dynamic on-demand height callback
         let (quorum_hashes, rotating_quorum_hashes) = if let Some(engine) = &mut self.engine {
             // Create dynamic callback that fetches heights on-demand from storage
-            let height_lookup = |block_hash: &BlockHash| -> Result<u32, dashcore::sml::quorum_validation_error::ClientDataRetrievalError> {
+            let height_lookup = |block_hash: &BlockHash| -> Result<
+                u32,
+                dashcore::sml::quorum_validation_error::ClientDataRetrievalError,
+            > {
                 // Use block_in_place to bridge async storage call to sync callback
                 tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(async {
@@ -490,7 +524,7 @@ impl MasternodeSyncManager {
             match engine.feed_qr_info(qr_info.clone(), true, true, Some(height_lookup)) {
                 Ok(()) => {
                     tracing::info!("✅ Successfully fed QRInfo to masternode list engine");
-                },
+                }
                 Err(e) => {
                     let error_msg = format!("Failed to feed QRInfo to engine: {}", e);
                     tracing::error!("❌ {}", error_msg);
@@ -499,10 +533,14 @@ impl MasternodeSyncManager {
             }
 
             // Get quorum hashes for validation
-            let quorum_hashes = engine.latest_masternode_list_non_rotating_quorum_hashes(&[], false);
+            let quorum_hashes =
+                engine.latest_masternode_list_non_rotating_quorum_hashes(&[], false);
             let rotating_quorum_hashes = engine.latest_masternode_list_rotating_quorum_hashes(&[]);
 
-            tracing::info!("🏛️ Retrieved {} non-rotating quorum hashes for validation", quorum_hashes.len());
+            tracing::info!(
+                "🏛️ Retrieved {} non-rotating quorum hashes for validation",
+                quorum_hashes.len()
+            );
             tracing::info!("🔄 Retrieved {} rotating quorum hashes", rotating_quorum_hashes.len());
 
             (quorum_hashes, rotating_quorum_hashes)
@@ -511,8 +549,11 @@ impl MasternodeSyncManager {
         };
 
         // Step 3: Fetch additional MnListDiffs for quorum validation (avoiding borrow conflicts)
-        if let Err(e) = self.fetch_diffs_with_hashes(&quorum_hashes, storage, network, sync_base_height).await {
-            let error_msg = format!("Failed to fetch additional diffs for quorum validation: {}", e);
+        if let Err(e) =
+            self.fetch_diffs_with_hashes(&quorum_hashes, storage, network, sync_base_height).await
+        {
+            let error_msg =
+                format!("Failed to fetch additional diffs for quorum validation: {}", e);
             tracing::error!("❌ {}", error_msg);
             return Err(error_msg);
         }
@@ -522,7 +563,7 @@ impl MasternodeSyncManager {
             match engine.verify_non_rotating_masternode_list_quorums(0, &[]) {
                 Ok(()) => {
                     tracing::info!("✅ Non-rotating quorum verification completed successfully");
-                },
+                }
                 Err(e) => {
                     tracing::warn!("⚠️ Non-rotating quorum verification failed: {}", e);
                     // Don't fail completely - this might be expected in some cases
@@ -545,7 +586,10 @@ impl MasternodeSyncManager {
         use dashcore::network::message::NetworkMessage;
         use dashcore::network::message_sml::GetMnListDiff;
 
-        tracing::info!("🔍 Fetching {} additional MnListDiffs for quorum validation", quorum_hashes.len());
+        tracing::info!(
+            "🔍 Fetching {} additional MnListDiffs for quorum validation",
+            quorum_hashes.len()
+        );
 
         for quorum_hash in quorum_hashes.iter() {
             tracing::info!("🔍 Processing quorum hash: {}", quorum_hash);
@@ -556,11 +600,18 @@ impl MasternodeSyncManager {
             let quorum_height = match storage.get_header_height_by_hash(&quorum_block_hash).await {
                 Ok(Some(height)) => height,
                 Ok(None) => {
-                    tracing::warn!("⚠️ Height not found for quorum hash {} in storage, skipping", quorum_block_hash);
+                    tracing::warn!(
+                        "⚠️ Height not found for quorum hash {} in storage, skipping",
+                        quorum_block_hash
+                    );
                     continue;
-                },
+                }
                 Err(e) => {
-                    tracing::warn!("⚠️ Failed to get height for quorum hash {}: {}, skipping", quorum_block_hash, e);
+                    tracing::warn!(
+                        "⚠️ Failed to get height for quorum hash {}: {}, skipping",
+                        quorum_block_hash,
+                        e
+                    );
                     continue;
                 }
             };
@@ -569,11 +620,18 @@ impl MasternodeSyncManager {
             let validation_height = if quorum_height >= 8 {
                 quorum_height - 8
             } else {
-                tracing::warn!("⚠️ Quorum height {} is too low for validation (< 8), using height 0", quorum_height);
+                tracing::warn!(
+                    "⚠️ Quorum height {} is too low for validation (< 8), using height 0",
+                    quorum_height
+                );
                 0
             };
 
-            tracing::info!("📏 Quorum at height {}, validation height: {}", quorum_height, validation_height);
+            tracing::info!(
+                "📏 Quorum at height {}, validation height: {}",
+                quorum_height,
+                validation_height
+            );
 
             // Convert blockchain heights to storage indices for storage.get_header()
             // TODO: Consider changing storage API to accept blockchain heights instead of storage-relative heights
@@ -588,8 +646,11 @@ impl MasternodeSyncManager {
             let storage_quorum_height = if quorum_height >= sync_base_height {
                 quorum_height - sync_base_height
             } else {
-                tracing::warn!("⚠️ Quorum height {} is before sync base height {}, skipping quorum validation",
-                    quorum_height, sync_base_height);
+                tracing::warn!(
+                    "⚠️ Quorum height {} is before sync base height {}, skipping quorum validation",
+                    quorum_height,
+                    sync_base_height
+                );
                 continue;
             };
 
@@ -603,7 +664,7 @@ impl MasternodeSyncManager {
                     tracing::warn!("⚠️ Base header not found at storage height {} (blockchain height {}), skipping",
                         storage_validation_height, validation_height);
                     continue;
-                },
+                }
                 Err(e) => {
                     tracing::warn!("⚠️ Failed to get base header at storage height {} (blockchain height {}): {}, skipping",
                         storage_validation_height, validation_height, e);
@@ -619,7 +680,7 @@ impl MasternodeSyncManager {
                     tracing::warn!("⚠️ Target header not found at storage height {} (blockchain height {}), skipping",
                         storage_quorum_height, quorum_height);
                     continue;
-                },
+                }
                 Err(e) => {
                     tracing::warn!("⚠️ Failed to get target header at storage height {} (blockchain height {}): {}, skipping",
                         storage_quorum_height, quorum_height, e);
@@ -640,16 +701,27 @@ impl MasternodeSyncManager {
                 validation_height, quorum_height, base_block_hash, target_block_hash);
 
             if let Err(e) = network.send_message(network_message).await {
-                tracing::error!("❌ Failed to send MnListDiff request for quorum hash {}: {}", quorum_hash, e);
+                tracing::error!(
+                    "❌ Failed to send MnListDiff request for quorum hash {}: {}",
+                    quorum_hash,
+                    e
+                );
                 // Continue with other quorums instead of failing completely
                 continue;
             }
 
-            tracing::info!("✅ Sent MnListDiff request for quorum hash {} (base: {} -> target: {})",
-                quorum_hash, validation_height, quorum_height);
+            tracing::info!(
+                "✅ Sent MnListDiff request for quorum hash {} (base: {} -> target: {})",
+                quorum_hash,
+                validation_height,
+                quorum_height
+            );
         }
 
-        tracing::info!("📋 Completed sending {} MnListDiff requests for quorum validation", quorum_hashes.len());
+        tracing::info!(
+            "📋 Completed sending {} MnListDiff requests for quorum validation",
+            quorum_hashes.len()
+        );
         Ok(())
     }
 }

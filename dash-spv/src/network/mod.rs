@@ -103,19 +103,19 @@ pub trait NetworkManager: Send + Sync {
 
     /// Update the DSQ (CoinJoin queue) message preference for the current peer.
     async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()>;
-    
+
     /// Mark that the current peer has sent us Headers2 messages.
     async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
         Ok(()) // Default implementation
     }
-    
+
     /// Check if the current peer has sent us Headers2 messages.
     async fn peer_has_sent_headers2(&self) -> bool {
         false // Default implementation
     }
-    
+
     /// Request QRInfo from the network.
-    /// 
+    ///
     /// # Arguments
     /// * `base_block_hashes` - Array of base block hashes for the masternode lists the light client already knows
     /// * `block_request_hash` - Hash of the block for which the masternode list diff is requested
@@ -127,24 +127,24 @@ pub trait NetworkManager: Send + Sync {
         extra_share: bool,
     ) -> NetworkResult<()> {
         use dashcore::network::message_qrinfo::GetQRInfo;
-        
+
         let get_qr_info = GetQRInfo {
             base_block_hashes: base_block_hashes.clone(),
             block_request_hash,
             extra_share,
         };
-        
+
         let base_hashes_count = get_qr_info.base_block_hashes.len();
-        
+
         self.send_message(NetworkMessage::GetQRInfo(get_qr_info)).await?;
-        
+
         tracing::debug!(
             "Requested QRInfo with {} base hashes for block {}, extra_share={}",
             base_hashes_count,
             block_request_hash,
             extra_share
         );
-        
+
         Ok(())
     }
 }
@@ -175,7 +175,7 @@ impl TcpNetworkManager {
             dsq_preference: false,
         })
     }
-    
+
     /// Get the current DSQ preference state.
     pub fn get_dsq_preference(&self) -> bool {
         self.dsq_preference
@@ -196,8 +196,12 @@ impl NetworkManager for TcpNetworkManager {
         // Try to connect to the first peer for now
         let peer_addr = self.config.peers[0];
 
-        let mut connection =
-            TcpConnection::new(peer_addr, self.config.connection_timeout, self.config.read_timeout, self.config.network);
+        let mut connection = TcpConnection::new(
+            peer_addr,
+            self.config.connection_timeout,
+            self.config.read_timeout,
+            self.config.network,
+        );
         connection.connect_instance().await?;
 
         // Perform handshake
@@ -360,15 +364,11 @@ impl NetworkManager for TcpNetworkManager {
     async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()> {
         // Store the DSQ preference
         self.dsq_preference = wants_dsq;
-        
+
         // For single peer connection, update the peer info if we have one
         if let Some(connection) = &self.connection {
             let peer_info = connection.peer_info();
-            tracing::info!(
-                "Updated peer {} DSQ preference to: {}",
-                peer_info.address,
-                wants_dsq
-            );
+            tracing::info!("Updated peer {} DSQ preference to: {}", peer_info.address, wants_dsq);
         }
         Ok(())
     }

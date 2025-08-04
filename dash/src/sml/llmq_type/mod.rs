@@ -483,12 +483,12 @@ impl LLMQType {
         let interval = self.params().dkg_params.interval;
         (height / interval) * interval
     }
-    
+
     /// Get the DKG window that would contain a commitment mined at the given height
     pub fn get_dkg_window_for_height(&self, height: u32) -> DKGWindow {
         let params = self.params();
         let cycle_start = self.get_cycle_base_height(height);
-        
+
         // For rotating quorums, the mining window calculation is different
         let mining_start = if self.is_rotating_quorum_type() {
             // For rotating quorums: signingActiveQuorumCount + dkgPhaseBlocks * 5
@@ -497,9 +497,9 @@ impl LLMQType {
             // For non-rotating quorums: use the standard mining window start
             cycle_start + params.dkg_params.mining_window_start
         };
-        
+
         let mining_end = cycle_start + params.dkg_params.mining_window_end;
-        
+
         DKGWindow {
             cycle_start,
             mining_start,
@@ -507,43 +507,61 @@ impl LLMQType {
             llmq_type: *self,
         }
     }
-    
+
     /// Get all DKG windows that could have mining activity in the given range
-    /// 
+    ///
     /// Example: If range is 100-200 and DKG interval is 24:
     /// - Cycles: 96, 120, 144, 168, 192
-    /// - For each cycle, check if its mining window (e.g., cycle+10 to cycle+18) 
+    /// - For each cycle, check if its mining window (e.g., cycle+10 to cycle+18)
     ///   overlaps with our range [100, 200]
     /// - Return only windows where mining could occur within our range
     pub fn get_dkg_windows_in_range(&self, start: u32, end: u32) -> Vec<DKGWindow> {
         let params = self.params();
         let interval = params.dkg_params.interval;
-        
+
         let mut windows = Vec::new();
-        
+
         // Start from the cycle that could contain 'start'
         // Go back one full cycle to catch windows that might extend into our range
-        let first_possible_cycle = ((start.saturating_sub(params.dkg_params.mining_window_end)) / interval) * interval;
-        
-        log::trace!("get_dkg_windows_in_range for {:?}: start={}, end={}, interval={}, first_cycle={}", self, start, end, interval, first_possible_cycle);
-        
+        let first_possible_cycle =
+            ((start.saturating_sub(params.dkg_params.mining_window_end)) / interval) * interval;
+
+        log::trace!(
+            "get_dkg_windows_in_range for {:?}: start={}, end={}, interval={}, first_cycle={}",
+            self,
+            start,
+            end,
+            interval,
+            first_possible_cycle
+        );
+
         let mut cycle_start = first_possible_cycle;
         let mut _cycles_checked = 0;
         while cycle_start <= end {
             let window = self.get_dkg_window_for_height(cycle_start);
-            
+
             // Include this window if its mining period overlaps with [start, end]
             if window.mining_end >= start && window.mining_start <= end {
                 windows.push(window.clone());
-                log::trace!("  Added window: cycle={}, mining={}-{}", window.cycle_start, window.mining_start, window.mining_end);
+                log::trace!(
+                    "  Added window: cycle={}, mining={}-{}",
+                    window.cycle_start,
+                    window.mining_start,
+                    window.mining_end
+                );
             }
-            
+
             cycle_start += interval;
             _cycles_checked += 1;
         }
-        
-        log::trace!("get_dkg_windows_in_range for {:?}: checked {} cycles, found {} windows", self, _cycles_checked, windows.len());
-        
+
+        log::trace!(
+            "get_dkg_windows_in_range for {:?}: checked {} cycles, found {} windows",
+            self,
+            _cycles_checked,
+            windows.len()
+        );
+
         windows
     }
 }
@@ -551,7 +569,7 @@ impl LLMQType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_get_cycle_base_height() {
         let llmq = LLMQType::Llmqtype50_60; // interval 24
@@ -561,23 +579,23 @@ mod tests {
         assert_eq!(llmq.get_cycle_base_height(50), 48);
         assert_eq!(llmq.get_cycle_base_height(100), 96);
     }
-    
+
     #[test]
     fn test_dkg_window_for_non_rotating_quorum() {
         let llmq = LLMQType::Llmqtype50_60; // non-rotating, interval 24
         let window = llmq.get_dkg_window_for_height(48);
-        
+
         assert_eq!(window.cycle_start, 48);
         assert_eq!(window.mining_start, 58); // 48 + 10 (mining_window_start)
-        assert_eq!(window.mining_end, 66);   // 48 + 18 (mining_window_end)
+        assert_eq!(window.mining_end, 66); // 48 + 18 (mining_window_end)
         assert_eq!(window.llmq_type, LLMQType::Llmqtype50_60);
     }
-    
+
     #[test]
     fn test_dkg_window_for_rotating_quorum() {
         let llmq = LLMQType::Llmqtype60_75; // rotating quorum
         let window = llmq.get_dkg_window_for_height(288);
-        
+
         // For rotating: cycle_start + signingActiveQuorumCount + dkgPhaseBlocks * 5
         // 288 + 32 + 2 * 5 = 330
         assert_eq!(window.cycle_start, 288);
@@ -585,14 +603,14 @@ mod tests {
         assert_eq!(window.mining_end, 338); // 288 + 50 (mining_window_end)
         assert_eq!(window.llmq_type, LLMQType::Llmqtype60_75);
     }
-    
+
     #[test]
     fn test_get_dkg_windows_in_range() {
         let llmq = LLMQType::Llmqtype50_60; // interval 24
-        
+
         // Range from 100 to 200
         let windows = llmq.get_dkg_windows_in_range(100, 200);
-        
+
         // Expected cycles: 96, 120, 144, 168, 192
         // Mining windows: 96+10..96+18, 120+10..120+18, etc.
         // Windows that overlap with [100, 200]:
@@ -601,36 +619,36 @@ mod tests {
         // - 144: mining 154-162 (included)
         // - 168: mining 178-186 (included)
         // - 192: mining 202-210 (mining_start > 200, excluded)
-        
+
         assert_eq!(windows.len(), 4);
         assert_eq!(windows[0].cycle_start, 96);
         assert_eq!(windows[1].cycle_start, 120);
         assert_eq!(windows[2].cycle_start, 144);
         assert_eq!(windows[3].cycle_start, 168);
     }
-    
+
     #[test]
     fn test_get_dkg_windows_edge_cases() {
         let llmq = LLMQType::Llmqtype50_60;
-        
+
         // Empty range
         let windows = llmq.get_dkg_windows_in_range(100, 100);
         assert_eq!(windows.len(), 0);
-        
+
         // Range smaller than one interval
         let windows = llmq.get_dkg_windows_in_range(100, 110);
         assert_eq!(windows.len(), 1); // Only cycle 96 overlaps
-        
+
         // Range starting at cycle boundary
         let windows = llmq.get_dkg_windows_in_range(120, 144);
         assert_eq!(windows.len(), 1); // Only cycle 120, since 144's mining window (154-162) starts after range end
     }
-    
+
     #[test]
     fn test_platform_quorum_dkg_params() {
         let llmq = LLMQType::Llmqtype100_67; // Platform consensus
         let params = llmq.params();
-        
+
         assert_eq!(params.dkg_params.interval, 24);
         assert_eq!(params.size, 100);
         assert_eq!(params.threshold, 67);

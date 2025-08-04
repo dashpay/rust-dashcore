@@ -2068,8 +2068,10 @@ impl FilterSyncManager {
             if let Some(pos) =
                 self.pending_block_downloads.iter().position(|m| m.block_hash == block_hash)
             {
-                let mut filter_match = self.pending_block_downloads.remove(pos)
-                    .ok_or_else(|| SyncError::InvalidState("filter match should exist at position".to_string()))?;
+                let mut filter_match =
+                    self.pending_block_downloads.remove(pos).ok_or_else(|| {
+                        SyncError::InvalidState("filter match should exist at position".to_string())
+                    })?;
                 filter_match.block_requested = true;
 
                 tracing::debug!(
@@ -2084,8 +2086,9 @@ impl FilterSyncManager {
 
         // Check if this block was requested by the filter processing thread
         {
-            let mut processing_requests = self.processing_thread_requests.lock()
-                .map_err(|e| SyncError::InvalidState(format!("processing thread requests lock poisoned: {}", e)))?;
+            let mut processing_requests = self.processing_thread_requests.lock().map_err(|e| {
+                SyncError::InvalidState(format!("processing thread requests lock poisoned: {}", e))
+            })?;
             if processing_requests.remove(&block_hash) {
                 tracing::info!(
                     "📦 Received block {} requested by filter processing thread",

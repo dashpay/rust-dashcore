@@ -9,13 +9,11 @@ fn test_basic_null_checks() {
         // Test null pointer handling
         let handle = ffi_dash_spv_get_core_handle(ptr::null_mut());
         assert!(handle.is_null());
-        
+
         // Test error code
         let mut height: u32 = 0;
-        let result = ffi_dash_spv_get_platform_activation_height(
-            ptr::null_mut(),
-            &mut height as *mut u32,
-        );
+        let result =
+            ffi_dash_spv_get_platform_activation_height(ptr::null_mut(), &mut height as *mut u32);
         assert_eq!(result.error_code, FFIErrorCode::NullPointer as i32);
     }
 }

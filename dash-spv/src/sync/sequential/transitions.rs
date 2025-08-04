@@ -245,7 +245,9 @@ impl TransitionManager {
             } => {
                 // Check if any peer supports compact filters
                 if !network.has_peer_with_service(ServiceFlags::COMPACT_FILTERS).await {
-                    tracing::info!("No peers support compact filters, skipping filter download phase");
+                    tracing::info!(
+                        "No peers support compact filters, skipping filter download phase"
+                    );
                     // Skip directly to fully synced since we can't download filters
                     self.create_fully_synced_phase(storage).await
                 } else {

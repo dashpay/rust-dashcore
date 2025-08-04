@@ -1,5 +1,5 @@
 //! Masternode synchronization functionality - cleaned version.
-//! 
+//!
 //! This is a cleaned version of masternodes.rs with only essential MnListDiff methods
 //! and basic sync management, removing all obsolete sequential logic, terminal blocks,
 //! and DKG window calculations.
@@ -33,8 +33,8 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::{MasternodeState, StorageManager};
-use crate::sync::validation::{ValidationEngine, ValidationConfig};
-use crate::sync::chainlock_validation::{ChainLockValidator, ChainLockValidationConfig};
+use crate::sync::chainlock_validation::{ChainLockValidationConfig, ChainLockValidator};
+use crate::sync::validation::{ValidationConfig, ValidationEngine};
 use crate::sync::validation_state::{ValidationStateManager, ValidationType};
 
 /// Number of recent masternode lists to maintain individually.
@@ -68,18 +68,19 @@ impl MasternodeSyncManager {
         };
 
         // Create validation components if validation is enabled
-        let (validation_engine, chain_lock_validator) = if config.validation_mode != crate::types::ValidationMode::None {
-            let validation_config = ValidationConfig::default();
-            let chain_lock_config = ChainLockValidationConfig::default();
-            
-            (
-                Some(ValidationEngine::new(validation_config)),
-                Some(ChainLockValidator::new(chain_lock_config)),
-            )
-        } else {
-            (None, None)
-        };
-        
+        let (validation_engine, chain_lock_validator) =
+            if config.validation_mode != crate::types::ValidationMode::None {
+                let validation_config = ValidationConfig::default();
+                let chain_lock_config = ChainLockValidationConfig::default();
+
+                (
+                    Some(ValidationEngine::new(validation_config)),
+                    Some(ChainLockValidator::new(chain_lock_config)),
+                )
+            } else {
+                (None, None)
+            };
+
         Self {
             config: config.clone(),
             sync_in_progress: false,
@@ -100,7 +101,9 @@ impl MasternodeSyncManager {
         storage: &mut dyn StorageManager,
         network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
-        let engine = self.engine.as_mut()
+        let engine = self
+            .engine
+            .as_mut()
             .ok_or(SyncError::InvalidState("Engine not initialized".to_string()))?;
 
         tracing::debug!(
@@ -143,7 +146,7 @@ impl MasternodeSyncManager {
             .unwrap_or(0);
 
         let sync_complete = target_height >= current_tip;
-        
+
         if sync_complete {
             tracing::info!("Masternode sync complete at height {}", target_height);
             self.sync_in_progress = false;
@@ -160,11 +163,14 @@ impl MasternodeSyncManager {
         base_height: u32,
         target_height: u32,
     ) -> SyncResult<()> {
-        let engine = self.engine.as_mut()
+        let engine = self
+            .engine
+            .as_mut()
             .ok_or(SyncError::InvalidState("Engine not initialized".to_string()))?;
 
         // Apply diff to engine
-        engine.apply_diff(diff.clone(), Some(target_height), false, None)
+        engine
+            .apply_diff(diff.clone(), Some(target_height), false, None)
             .map_err(|e| SyncError::Validation(format!("Failed to apply diff: {}", e)))?;
 
         // Store the updated masternode state
@@ -188,10 +194,7 @@ impl MasternodeSyncManager {
         //     validation_engine.validate...
         // }
 
-        tracing::info!(
-            "Applied masternode diff at height {}",
-            target_height
-        );
+        tracing::info!("Applied masternode diff at height {}", target_height);
 
         Ok(())
     }
@@ -249,17 +252,21 @@ impl MasternodeSyncManager {
         let current_hash = storage
             .get_header(current_height)
             .await
-            .map_err(|e| SyncError::Storage(format!("Failed to get header at height {}: {}", current_height, e)))?
-            .ok_or_else(|| SyncError::Storage(format!("Header not found at height {}", current_height)))?
+            .map_err(|e| {
+                SyncError::Storage(format!(
+                    "Failed to get header at height {}: {}",
+                    current_height, e
+                ))
+            })?
+            .ok_or_else(|| {
+                SyncError::Storage(format!("Header not found at height {}", current_height))
+            })?
             .block_hash();
 
         // Load existing masternode state
         let base_height = match storage.load_masternode_state().await {
             Ok(Some(state)) => {
-                tracing::info!(
-                    "Resuming masternode sync from height {}",
-                    state.last_height
-                );
+                tracing::info!("Resuming masternode sync from height {}", state.last_height);
                 state.last_height
             }
             _ => {
@@ -275,8 +282,9 @@ impl MasternodeSyncManager {
 
         // Get base block hash
         let base_hash = if base_height == 0 {
-            self.config.network.known_genesis_block_hash()
-                .ok_or_else(|| SyncError::InvalidState("Genesis block hash not known".to_string()))?
+            self.config.network.known_genesis_block_hash().ok_or_else(|| {
+                SyncError::InvalidState("Genesis block hash not known".to_string())
+            })?
         } else {
             storage
                 .get_header(base_height)
@@ -313,14 +321,12 @@ impl MasternodeSyncManager {
             block_hash: tip_block_hash,
         };
 
-        network.send_message(NetworkMessage::GetMnListD(get_mn_list_diff)).await
+        network
+            .send_message(NetworkMessage::GetMnListD(get_mn_list_diff))
+            .await
             .map_err(|e| SyncError::Network(format!("Failed to request MnListDiff: {}", e)))?;
 
-        tracing::debug!(
-            "Requested MnListDiff from {} to {}",
-            base_block_hash,
-            tip_block_hash
-        );
+        tracing::debug!("Requested MnListDiff from {} to {}", base_block_hash, tip_block_hash);
 
         Ok(())
     }

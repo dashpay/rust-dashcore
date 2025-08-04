@@ -9,8 +9,8 @@ pub mod filters;
 pub mod headers;
 pub mod headers2_state;
 pub mod headers_with_reorg;
-pub mod masternodes_old;
 pub mod masternodes;
+pub mod masternodes_old;
 pub mod sequential;
 pub mod state;
 pub mod terminal_block_data;
@@ -56,8 +56,9 @@ impl SyncManager {
         let reorg_config = ReorgConfig::default();
 
         Ok(Self {
-            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config)
-                .map_err(|e| SyncError::InvalidState(format!("Failed to create header sync manager: {}", e)))?,
+            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config).map_err(|e| {
+                SyncError::InvalidState(format!("Failed to create header sync manager: {}", e))
+            })?,
             filter_sync: FilterSyncManager::new(config, received_filter_heights),
             masternode_sync: MasternodeSyncManager::new(config),
             state: SyncState::new(),

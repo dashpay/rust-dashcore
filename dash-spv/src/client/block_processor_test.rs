@@ -2,12 +2,12 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::client::block_processor::{BlockProcessor, BlockProcessingTask};
+    use crate::client::block_processor::{BlockProcessingTask, BlockProcessor};
     use crate::error::SpvError;
     use crate::types::{SpvEvent, SpvStats, WatchItem};
     use crate::wallet::Wallet;
-    use dashcore::{Block, BlockHash, Transaction, TxOut};
     use dashcore::block::Header as BlockHeader;
+    use dashcore::{Block, BlockHash, Transaction, TxOut};
     use dashcore_hashes::Hash;
     use std::collections::HashSet;
     use std::sync::Arc;
@@ -66,7 +66,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_block_task() {
-        let (processor, task_tx, _wallet, _watch_items, stats, mut event_rx) = 
+        let (processor, task_tx, _wallet, _watch_items, stats, mut event_rx) =
             setup_block_processor().await;
 
         // Start processor in background
@@ -96,7 +96,10 @@ mod tests {
 
         // Check event was sent
         match event_rx.recv().await {
-            Some(SpvEvent::BlockProcessed { block_hash: hash, .. }) => {
+            Some(SpvEvent::BlockProcessed {
+                block_hash: hash,
+                ..
+            }) => {
                 assert_eq!(hash, block_hash);
             }
             _ => panic!("Expected BlockProcessed event"),
@@ -109,7 +112,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_transaction_task() {
-        let (processor, task_tx, _wallet, _watch_items, stats, mut event_rx) = 
+        let (processor, task_tx, _wallet, _watch_items, stats, mut event_rx) =
             setup_block_processor().await;
 
         // Start processor in background
@@ -139,7 +142,10 @@ mod tests {
 
         // Check event was sent
         match event_rx.recv().await {
-            Some(SpvEvent::TransactionConfirmed { txid: id, .. }) => {
+            Some(SpvEvent::TransactionConfirmed {
+                txid: id,
+                ..
+            }) => {
                 assert_eq!(id, txid);
             }
             _ => panic!("Expected TransactionConfirmed event"),
@@ -152,13 +158,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_duplicate_block_detection() {
-        let (mut processor, task_tx, _wallet, _watch_items, _stats, _event_rx) = 
+        let (mut processor, task_tx, _wallet, _watch_items, _stats, _event_rx) =
             setup_block_processor().await;
 
         // Process a block
         let block = create_test_block();
         let block_hash = block.block_hash();
-        
+
         // Manually add to processed blocks
         processor.processed_blocks.insert(block_hash);
 
@@ -171,7 +177,10 @@ mod tests {
 
         // Process the task directly (simulating the run loop)
         match task {
-            BlockProcessingTask::ProcessBlock { block, response_tx } => {
+            BlockProcessingTask::ProcessBlock {
+                block,
+                response_tx,
+            } => {
                 if processor.processed_blocks.contains(&block.block_hash()) {
                     let _ = response_tx.send(Ok(()));
                 }
@@ -186,7 +195,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_failed_state_rejection() {
-        let (mut processor, task_tx, _wallet, _watch_items, _stats, _event_rx) = 
+        let (mut processor, task_tx, _wallet, _watch_items, _stats, _event_rx) =
             setup_block_processor().await;
 
         // Set processor to failed state
@@ -203,11 +212,13 @@ mod tests {
         };
 
         match task {
-            BlockProcessingTask::ProcessBlock { response_tx, .. } => {
+            BlockProcessingTask::ProcessBlock {
+                response_tx,
+                ..
+            } => {
                 if processor.failed {
-                    let _ = response_tx.send(Err(SpvError::Config(
-                        "Block processor has failed".to_string()
-                    )));
+                    let _ = response_tx
+                        .send(Err(SpvError::Config("Block processor has failed".to_string())));
                 }
             }
             _ => {}
@@ -221,7 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_block_with_watched_address() {
-        let (processor, task_tx, wallet, watch_items, _stats, mut event_rx) = 
+        let (processor, task_tx, wallet, watch_items, _stats, mut event_rx) =
             setup_block_processor().await;
 
         // Add a watch item
@@ -270,7 +281,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_task_processing() {
-        let (processor, task_tx, _wallet, _watch_items, stats, _event_rx) = 
+        let (processor, task_tx, _wallet, _watch_items, stats, _event_rx) =
             setup_block_processor().await;
 
         // Start processor in background
@@ -283,7 +294,7 @@ mod tests {
         for i in 0..5 {
             let mut block = create_test_block();
             block.header.nonce = i; // Make each block unique
-            
+
             let (response_tx, response_rx) = oneshot::channel();
             task_tx
                 .send(BlockProcessingTask::ProcessBlock {
@@ -311,7 +322,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_block_processing_error_recovery() {
-        let (mut processor, _task_tx, _wallet, _watch_items, _stats, _event_rx) = 
+        let (mut processor, _task_tx, _wallet, _watch_items, _stats, _event_rx) =
             setup_block_processor().await;
 
         // Process a block that causes an error
@@ -320,18 +331,20 @@ mod tests {
 
         // Simulate an error during processing
         processor.failed = true;
-        
+
         let task = BlockProcessingTask::ProcessBlock {
             block,
             response_tx,
         };
 
         match task {
-            BlockProcessingTask::ProcessBlock { response_tx, .. } => {
+            BlockProcessingTask::ProcessBlock {
+                response_tx,
+                ..
+            } => {
                 if processor.failed {
-                    let _ = response_tx.send(Err(SpvError::General(
-                        "Simulated processing error".to_string()
-                    )));
+                    let _ = response_tx
+                        .send(Err(SpvError::General("Simulated processing error".to_string())));
                 }
             }
             _ => {}
@@ -343,7 +356,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_processing_updates_wallet() {
-        let (processor, task_tx, wallet, _watch_items, _stats, _event_rx) = 
+        let (processor, task_tx, wallet, _watch_items, _stats, _event_rx) =
             setup_block_processor().await;
 
         // Start processor in background
@@ -376,7 +389,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_graceful_shutdown() {
-        let (processor, task_tx, _wallet, _watch_items, _stats, _event_rx) = 
+        let (processor, task_tx, _wallet, _watch_items, _stats, _event_rx) =
             setup_block_processor().await;
 
         // Start processor in background
@@ -394,7 +407,7 @@ mod tests {
                     response_tx,
                 })
                 .unwrap();
-            
+
             // Wait for each to complete
             let _ = response_rx.await;
         }

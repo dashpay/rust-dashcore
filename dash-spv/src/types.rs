@@ -368,21 +368,21 @@ impl ChainState {
         // Clear any existing headers
         self.headers.clear();
         self.filter_headers.clear();
-        
+
         // Set sync base height to checkpoint
         self.sync_base_height = checkpoint_height;
         self.synced_from_checkpoint = true;
-        
+
         // Add the checkpoint header as our first header
         self.headers.push(checkpoint_header);
-        
+
         tracing::info!(
             "Initialized ChainState from checkpoint - height: {}, hash: {}, network: {:?}",
             checkpoint_height,
             checkpoint_header.block_hash(),
             network
         );
-        
+
         // Initialize masternode engine for the network, starting from checkpoint
         let mut engine = MasternodeListEngine::default_for_network(network);
         engine.feed_block_height(checkpoint_height, checkpoint_header.block_hash());
@@ -464,7 +464,7 @@ pub struct PeerInfo {
 
     /// Whether this peer wants to receive DSQ (CoinJoin queue) messages.
     pub wants_dsq_messages: Option<bool>,
-    
+
     /// Whether this peer has actually sent us Headers2 messages (not just supports it).
     pub has_sent_headers2: bool,
 }
@@ -690,16 +690,16 @@ impl<'de> Deserialize<'de> for WatchItem {
 pub struct SpvStats {
     /// Number of connected peers.
     pub connected_peers: u32,
-    
+
     /// Total number of known peers.
     pub total_peers: u32,
-    
+
     /// Current blockchain height.
     pub header_height: u32,
-    
+
     /// Current filter height.
     pub filter_height: u32,
-    
+
     /// Number of headers downloaded.
     pub headers_downloaded: u64,
 

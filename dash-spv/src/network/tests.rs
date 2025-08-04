@@ -2,12 +2,12 @@
 
 #[cfg(test)]
 mod qrinfo_tests {
-    use crate::network::message_handler::{MessageHandler, MessageHandleResult};
+    use crate::network::message_handler::{MessageHandleResult, MessageHandler};
     use dashcore::network::message::NetworkMessage;
-    use dashcore::network::message_qrinfo::{QRInfo, QuorumSnapshot, MNSkipListMode};
+    use dashcore::network::message_qrinfo::{MNSkipListMode, QRInfo, QuorumSnapshot};
     use dashcore::network::message_sml::MnListDiff;
-    use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
     use dashcore::sml::llmq_type::LLMQType;
+    use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
     use dashcore::BlockHash;
 
     fn create_test_qr_info() -> QRInfo {
@@ -48,16 +48,19 @@ mod qrinfo_tests {
     async fn test_handle_qrinfo_message() {
         let mut handler = MessageHandler::new();
         let qr_info = create_test_qr_info();
-        
+
         let result = handler.handle_message(NetworkMessage::QRInfo(qr_info.clone())).await;
-        
+
         match result {
             MessageHandleResult::QRInfo(received) => {
-                assert_eq!(received.last_commitment_per_index.len(), qr_info.last_commitment_per_index.len());
+                assert_eq!(
+                    received.last_commitment_per_index.len(),
+                    qr_info.last_commitment_per_index.len()
+                );
             }
             _ => panic!("Expected QRInfo result"),
         }
-        
+
         // Check stats were updated
         assert_eq!(handler.stats().qrinfo_messages, 1);
         assert_eq!(handler.stats().messages_received, 1);
@@ -66,16 +69,16 @@ mod qrinfo_tests {
     #[tokio::test]
     async fn test_handle_get_qrinfo_message() {
         use dashcore::network::message_qrinfo::GetQRInfo;
-        
+
         let mut handler = MessageHandler::new();
         let get_qr_info = GetQRInfo {
             base_block_hashes: vec![BlockHash::all_zeros()],
             block_request_hash: BlockHash::all_zeros(),
             extra_share: true,
         };
-        
+
         let result = handler.handle_message(NetworkMessage::GetQRInfo(get_qr_info)).await;
-        
+
         // Should be handled as unhandled since we don't serve QRInfo requests
         match result {
             MessageHandleResult::Unhandled(_) => {
@@ -83,7 +86,7 @@ mod qrinfo_tests {
             }
             _ => panic!("Expected Unhandled result for GetQRInfo"),
         }
-        
+
         // Check stats
         assert_eq!(handler.stats().other_messages, 1);
         assert_eq!(handler.stats().qrinfo_messages, 0);
@@ -93,7 +96,7 @@ mod qrinfo_tests {
     fn test_message_stats_qrinfo_field() {
         let stats = crate::network::message_handler::MessageStats::default();
         assert_eq!(stats.qrinfo_messages, 0);
-        
+
         // Create new stats and verify all fields initialize to 0
         let mut stats = crate::network::message_handler::MessageStats::default();
         stats.qrinfo_messages = 5;
@@ -203,14 +206,14 @@ mod tcp_network_manager_tests {
     async fn test_dsq_preference_storage() {
         let config = ClientConfig::default();
         let mut network_manager = TcpNetworkManager::new(&config).await.unwrap();
-        
+
         // Initial state should be false
         assert_eq!(network_manager.get_dsq_preference(), false);
-        
+
         // Update to true
         network_manager.update_peer_dsq_preference(true).await.unwrap();
         assert_eq!(network_manager.get_dsq_preference(), true);
-        
+
         // Update back to false
         network_manager.update_peer_dsq_preference(false).await.unwrap();
         assert_eq!(network_manager.get_dsq_preference(), false);
