@@ -127,7 +127,14 @@ impl MasternodeSyncManager {
         // Check if the terminal block exists in our chain
         match storage.get_header(terminal_height).await {
             Ok(Some(header)) => {
-                if header.block_hash() == expected_hash {
+                let actual_hash = header.block_hash();
+                tracing::info!(
+                    "Terminal block validation at height {}: expected hash {}, actual hash {}",
+                    terminal_height,
+                    expected_hash,
+                    actual_hash
+                );
+                if actual_hash == expected_hash {
                     if has_precalculated_data {
                         tracing::info!(
                             "Using terminal block at height {} with pre-calculated masternode data as base for sync",
@@ -184,34 +191,40 @@ impl MasternodeSyncManager {
             return Ok(0);
         }
 
-        // Convert blockchain height to storage height
-        let storage_height = terminal_height - sync_base_height;
+        // When syncing from checkpoint, storage uses absolute blockchain heights
+        // No need to convert - just use terminal_height directly
+        let storage_height = terminal_height;
 
         // Check if the terminal block exists in our chain
         match storage.get_header(storage_height).await {
             Ok(Some(header)) => {
-                if header.block_hash() == expected_hash {
+                let actual_hash = header.block_hash();
+                tracing::info!(
+                    "Terminal block validation at height {}: expected hash {}, actual hash {}",
+                    terminal_height,
+                    expected_hash,
+                    actual_hash
+                );
+                if actual_hash == expected_hash {
                     if has_precalculated_data {
                         tracing::info!(
-                            "Using terminal block at blockchain height {} (storage height {}) with pre-calculated masternode data as base for sync",
-                            terminal_height,
-                            storage_height
+                            "Using terminal block at height {} with pre-calculated masternode data as base for sync",
+                            terminal_height
                         );
                     } else {
                         tracing::info!(
-                            "Using terminal block at blockchain height {} (storage height {}) as base for masternode sync (no pre-calculated data)",
-                            terminal_height,
-                            storage_height
+                            "Using terminal block at height {} as base for masternode sync (no pre-calculated data)",
+                            terminal_height
                         );
                     }
                     Ok(terminal_height)
                 } else {
                     let msg = if has_precalculated_data {
-                        "Terminal block hash mismatch at blockchain height {} (storage height {}) (with pre-calculated data) - falling back to genesis"
+                        "Terminal block hash mismatch at height {} (with pre-calculated data) - falling back to genesis"
                     } else {
-                        "Terminal block hash mismatch at blockchain height {} (storage height {}) (without pre-calculated data) - falling back to genesis"
+                        "Terminal block hash mismatch at height {} (without pre-calculated data) - falling back to genesis"
                     };
-                    tracing::warn!(msg, terminal_height, storage_height);
+                    tracing::warn!(msg, terminal_height);
                     Ok(0)
                 }
             }
@@ -1053,21 +1066,10 @@ impl MasternodeSyncManager {
         current_height: u32,
         sync_base_height: u32,
     ) -> SyncResult<()> {
-        // Convert blockchain heights to storage heights
-        let storage_base_height = if base_height >= sync_base_height {
-            base_height - sync_base_height
-        } else {
-            0
-        };
-
-        let storage_current_height = if current_height >= sync_base_height {
-            current_height - sync_base_height
-        } else {
-            return Err(SyncError::InvalidState(format!(
-                "Current height {} is less than sync base height {}",
-                current_height, sync_base_height
-            )));
-        };
+        // When syncing from checkpoint, storage uses absolute blockchain heights
+        // No need to convert
+        let storage_base_height = base_height;
+        let storage_current_height = current_height;
 
         // Verify the storage height actually exists
         let storage_tip = storage
@@ -1086,7 +1088,7 @@ impl MasternodeSyncManager {
 
             // Use the storage tip as the current height
             let adjusted_storage_height = storage_tip;
-            let adjusted_blockchain_height = storage_tip + sync_base_height;
+            let adjusted_blockchain_height = storage_tip; // Storage already uses blockchain heights
 
             // Update the heights to use what's actually available
             // Don't recurse - just continue with adjusted values
@@ -1402,8 +1404,8 @@ impl MasternodeSyncManager {
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to lookup target hash: {}", e)))?
             {
-                // Convert storage height to blockchain height
-                let blockchain_target_height = storage_target_height + self.sync_base_height;
+                // Storage already uses blockchain heights when syncing from checkpoint
+                let blockchain_target_height = storage_target_height;
                 engine.feed_block_height(blockchain_target_height, target_block_hash);
                 tracing::debug!(
                     "Fed target block hash {} at blockchain height {} (storage height {})",
@@ -1437,8 +1439,8 @@ impl MasternodeSyncManager {
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to lookup base hash: {}", e)))?
                 {
-                    // Convert storage height to blockchain height
-                    let blockchain_base_height = storage_base_height + self.sync_base_height;
+                    // Storage already uses blockchain heights when syncing from checkpoint
+                    let blockchain_base_height = storage_base_height;
                     engine.feed_block_height(blockchain_base_height, base_block_hash);
                     tracing::debug!(
                         "Fed base block hash {} at blockchain height {} (storage height {})",
@@ -1479,9 +1481,8 @@ impl MasternodeSyncManager {
                 {
                     // Only feed blocks at or after start_height to avoid redundant submissions
                     if storage_quorum_height >= storage_start_height {
-                        // Convert storage height to blockchain height
-                        let blockchain_quorum_height =
-                            storage_quorum_height + self.sync_base_height;
+                        // Storage already uses blockchain heights when syncing from checkpoint
+                        let blockchain_quorum_height = storage_quorum_height;
 
                         // Check if this block hash is already known to avoid duplicate feeds
                         if !engine.block_container.contains_hash(&quorum.quorum_hash) {
@@ -1525,8 +1526,8 @@ impl MasternodeSyncManager {
                     )?;
 
                 for (storage_height, header) in headers {
-                    // Convert storage height to blockchain height
-                    let blockchain_height = storage_height + self.sync_base_height;
+                    // Storage already uses blockchain heights when syncing from checkpoint
+                    let blockchain_height = storage_height;
                     let block_hash = header.block_hash();
 
                     // Only feed if not already known

@@ -52,6 +52,8 @@ impl TerminalBlockMasternodeState {
         let bytes = hex::decode(&self.block_hash)?;
         let mut hash_array = [0u8; 32];
         hash_array.copy_from_slice(&bytes);
+        // Reverse bytes for little-endian format
+        hash_array.reverse();
         Ok(BlockHash::from_byte_array(hash_array))
     }
 
