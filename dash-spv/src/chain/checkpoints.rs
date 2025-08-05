@@ -286,55 +286,31 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
             28917698,
             None,
         ),
-        // Early network checkpoint (1 week after genesis)
-        create_checkpoint(
-            4991,
-            "000000003b01809551952460744d5dbb8fcbd6cbae3c220267bf7fa43f837367",
-            "000000001263f3327dd2f6bc445b47beb82fb8807a62e252ba064e2d2b6f91a6",
-            1390163520,
-            0x1e0fffff,
-            "0x00000000000000000000000000000000000000000000000000000000271027f0",
-            "7faff642d9e914716c50e3406df522b2b9a10ea3df4fef4e2229997367a6cab1",
-            357631712,
-            None,
-        ),
-        // 3 months checkpoint
-        create_checkpoint(
-            107996,
-            "00000000000a23840ac16115407488267aa3da2b9bc843e301185b7d17e4dc40",
-            "000000000006fe4020a310786bd34e17aa7681c86a20a2e121e0e3dd599800e8",
-            1395522898,
-            0x1b04864c,
-            "0x0000000000000000000000000000000000000000000000000056bf9caa56bf9d",
-            "15c3852f9e71a6cbc0cfa96d88202746cfeae6fc645ccc878580bc29daeff193",
-            10049236,
-            None,
-        ),
-        // 2017 checkpoint
+        // Block 750000 (2017) 
         create_checkpoint(
             750000,
             "00000000000000b4181bbbdddbae464ce11fede5d0292fb63fdede1e7c8ab21c",
             "00000000000001e115237541be8dd91bce2653edd712429d11371842f85bd3e1",
-            1491953700,
-            0x1a075a02,
-            "0x00000000000000000000000000000000000000000000000485f01ee9f01ee9f8",
+            1507424630,
+            0x1a027884,
+            "0x0000000000000000000000000000000000000000000000172210fe351643b3f1",
             "0ce99835e2de1240e230b5075024817aace2b03b3944967a88af079744d0aa62",
             2199533779,
             None,
         ),
-        // Recent checkpoint with masternode list (2022)
+        // Block 1700000 (2022) with masternode list
         create_checkpoint(
             1700000,
             "000000000000001d7579a371e782fd9c4480f626a62b916fa4eb97e16a49043a",
             "000000000000001a5631d781a4be0d9cda08b470ac6f108843cedf32e4dc081e",
-            1641154800,
-            0x193b81f5,
-            "0x0000000000000000000000000000000000000000000000a1c2b3a1c2b3a1c2b3",
+            1657142113,
+            0x1927e30e,
+            "0x000000000000000000000000000000000000000000007562df93a26b81386288",
             "dafe57cefc3bc265dfe8416e2f2e3a22af268fd587a48f36affd404bec738305",
             3820512540,
             Some("ML1700000__70227"),
         ),
-        // Latest checkpoint with masternode list (2022/2023)
+        // Block 1900000 (2023) with masternode list
         create_checkpoint(
             1900000,
             "000000000000001b8187c744355da78857cca5b9aeb665c39d12f26a0e3a9af5",
@@ -345,6 +321,18 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
             "3a6ff72336cf78e45b23101f755f4d7dce915b32336a8c242c33905b72b07b35",
             498598646,
             Some("ML1900000__70230"),
+        ),
+        // Block 2300000 (2025) - recent checkpoint
+        create_checkpoint(
+            2300000,
+            "00000000000000186f9f2fde843be3d66b8ae317cabb7d43dbde943d02a4b4d7",
+            "000000000000000d51caa0307836ca3eabe93068a9007515ac128a43d6addd4e",
+            1751767455,
+            0x1938df46,
+            "0x00000000000000000000000000000000000000000000aa3859b6456688a3fb53",
+            "b026649607d72d486480c0cef823dba6b28d0884a0d86f5a8b9e5a7919545cef",
+            972444458,
+            Some("ML2300000__70232"),  // Has masternode list with protocol version 70232
         ),
     ]
 }

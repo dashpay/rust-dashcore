@@ -458,17 +458,49 @@ impl TransitionManager {
         &self,
         storage: &dyn StorageManager,
     ) -> SyncResult<Option<SyncPhase>> {
-        let header_tip = storage
+        let header_tip_storage = storage
             .get_tip_height()
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to get header tip: {}", e)))?
             .unwrap_or(0);
 
-        let filter_tip = storage
+        let filter_tip_storage = storage
             .get_filter_tip_height()
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?
             .unwrap_or(0);
+
+        // For checkpoint sync, convert storage heights to blockchain heights
+        let sync_base_height = if let Ok(Some(metadata)) = storage.load_metadata("sync_base_height").await {
+            if metadata.len() >= 4 {
+                u32::from_le_bytes([metadata[0], metadata[1], metadata[2], metadata[3]])
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        let header_tip = if sync_base_height > 0 {
+            sync_base_height + header_tip_storage
+        } else {
+            header_tip_storage
+        };
+
+        let filter_tip = if sync_base_height > 0 && filter_tip_storage > 0 {
+            sync_base_height + filter_tip_storage
+        } else {
+            filter_tip_storage
+        };
+
+        tracing::info!(
+            "🔍 [DEBUG] Creating CFHeaders phase: filter_tip={} (storage={}), header_tip={} (storage={}), sync_base={}",
+            filter_tip,
+            filter_tip_storage,
+            header_tip,
+            header_tip_storage,
+            sync_base_height
+        );
 
         Ok(Some(SyncPhase::DownloadingCFHeaders {
             start_time: Instant::now(),
