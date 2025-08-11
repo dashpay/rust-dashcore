@@ -16,11 +16,13 @@ extern crate std;
 mod test_macros;
 
 #[cfg(test)]
-mod wallet_comprehensive_tests;
+mod address_metadata_tests;
+#[cfg(all(test, feature = "bip38"))]
+mod bip38_tests;
 #[cfg(test)]
 mod mnemonic_tests;
 #[cfg(test)]
-mod address_metadata_tests;
+mod wallet_comprehensive_tests;
 
 pub mod account;
 pub mod address;
@@ -33,6 +35,7 @@ pub mod dip9;
 pub mod error;
 pub mod gap_limit;
 pub mod mnemonic;
+pub mod seed;
 pub(crate) mod utils;
 pub mod wallet;
 pub mod watch_only;
@@ -42,15 +45,16 @@ pub use address::{Address, AddressType, NetworkExt};
 pub use address_pool::{AddressInfo, AddressPool, KeySource, PoolStats};
 pub use bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 #[cfg(feature = "bip38")]
-pub use bip38::{Bip38EncryptedKey, Bip38Mode, encrypt_private_key, generate_intermediate_code};
+pub use bip38::{encrypt_private_key, generate_intermediate_code, Bip38EncryptedKey, Bip38Mode};
 pub use dash_network::Network;
-pub use derivation::{KeyDerivation, DerivationPathBuilder, DerivationStrategy};
+pub use derivation::{DerivationPathBuilder, DerivationStrategy, KeyDerivation};
 pub use dip9::{DerivationPathReference, DerivationPathType};
 pub use error::{Error, Result};
 pub use gap_limit::{GapLimit, GapLimitManager, GapLimitStage};
 pub use mnemonic::Mnemonic;
-pub use wallet::{Wallet, WalletBalance, WalletConfig};
-pub use watch_only::{WatchOnlyWallet, WatchOnlyWalletBuilder, ScanResult};
+pub use seed::Seed;
+pub use wallet::{config::WalletConfig, Wallet};
+pub use watch_only::{ScanResult, WatchOnlyWallet, WatchOnlyWalletBuilder};
 
 /// Re-export commonly used types
 pub mod prelude {

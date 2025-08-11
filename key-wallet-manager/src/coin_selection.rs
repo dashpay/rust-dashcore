@@ -6,8 +6,8 @@
 use alloc::vec::Vec;
 use core::cmp::Reverse;
 
-use crate::utxo::Utxo;
 use crate::fee::FeeRate;
+use crate::utxo::Utxo;
 
 /// UTXO selection strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +94,8 @@ impl CoinSelector {
             .filter(|u| {
                 u.is_spendable(current_height)
                     && (self.include_unconfirmed || u.is_confirmed || u.is_instantlocked)
-                    && (current_height.saturating_sub(u.height) >= self.min_confirmations || u.height == 0)
+                    && (current_height.saturating_sub(u.height) >= self.min_confirmations
+                        || u.height == 0)
             })
             .cloned()
             .collect();
@@ -130,9 +131,7 @@ impl CoinSelector {
                 // For now, just use as-is
                 self.accumulate_coins(&available, target_amount, fee_rate)
             }
-            SelectionStrategy::Manual => {
-                Err(SelectionError::ManualSelectionRequired)
-            }
+            SelectionStrategy::Manual => Err(SelectionError::ManualSelectionRequired),
         }
     }
 
@@ -145,25 +144,25 @@ impl CoinSelector {
     ) -> Result<SelectionResult, SelectionError> {
         let mut selected = Vec::new();
         let mut total_value = 0u64;
-        
+
         // Estimate initial size (rough approximation)
         // 10 bytes for version, locktime, counts
         // 34 bytes per P2PKH output (assume 2: target + change)
         let base_size = 10 + (34 * 2);
         let input_size = 148; // Approximate size per P2PKH input
-        
+
         for utxo in utxos {
             selected.push(utxo.clone());
             total_value += utxo.value();
-            
+
             // Calculate size with current inputs
             let estimated_size = base_size + (input_size * selected.len());
             let estimated_fee = fee_rate.calculate_fee(estimated_size);
             let required_amount = target_amount + estimated_fee;
-            
+
             if total_value >= required_amount {
                 let change_amount = total_value - required_amount;
-                
+
                 // Check if change is dust
                 let (final_change, exact_match) = if change_amount < self.dust_threshold {
                     // Add dust to fee
@@ -171,7 +170,7 @@ impl CoinSelector {
                 } else {
                     (change_amount, false)
                 };
-                
+
                 return Ok(SelectionResult {
                     selected,
                     total_value,
@@ -187,7 +186,7 @@ impl CoinSelector {
                 });
             }
         }
-        
+
         Err(SelectionError::InsufficientFunds {
             available: total_value,
             required: target_amount,
@@ -204,11 +203,11 @@ impl CoinSelector {
         // Sort UTXOs by value (descending) for better pruning
         let mut sorted: Vec<Utxo> = utxos.to_vec();
         sorted.sort_by_key(|u| Reverse(u.value()));
-        
+
         // Try to find an exact match first
         let base_size = 10 + (34 * 1); // No change output needed for exact match
         let input_size = 148;
-        
+
         // Use a simple recursive approach with memoization
         let result = self.find_exact_match(
             &sorted,
@@ -220,11 +219,11 @@ impl CoinSelector {
             Vec::new(),
             0,
         );
-        
+
         if let Some((selected, total)) = result {
             let estimated_size = base_size + (input_size * selected.len());
             let estimated_fee = fee_rate.calculate_fee(estimated_size);
-            
+
             return Ok(SelectionResult {
                 selected,
                 total_value: total,
@@ -235,7 +234,7 @@ impl CoinSelector {
                 exact_match: true,
             });
         }
-        
+
         // Fall back to accumulation if no exact match found
         self.accumulate_coins(&sorted, target_amount, fee_rate)
     }
@@ -256,28 +255,28 @@ impl CoinSelector {
         let estimated_size = base_size + (input_size * (current.len() + 1));
         let estimated_fee = fee_rate.calculate_fee(estimated_size);
         let required = target + estimated_fee;
-        
+
         // Check if we've found an exact match
         if current_total == required {
             return Some((current, current_total));
         }
-        
+
         // Prune if we've exceeded the target
         if current_total > required + self.dust_threshold {
             return None;
         }
-        
+
         // Try remaining UTXOs
         for i in index..utxos.len() {
             let new_total = current_total + utxos[i].value();
-            
+
             // Skip if this would exceed our target by too much
             if new_total > required + self.dust_threshold * 10 {
                 continue;
             }
-            
+
             current.push(utxos[i].clone());
-            
+
             if let Some(result) = self.find_exact_match(
                 utxos,
                 target,
@@ -290,10 +289,10 @@ impl CoinSelector {
             ) {
                 return Some(result);
             }
-            
+
             current.pop();
         }
-        
+
         None
     }
 }
@@ -318,7 +317,10 @@ impl core::fmt::Display for SelectionError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::NoUtxosAvailable => write!(f, "No UTXOs available for selection"),
-            Self::InsufficientFunds { available, required } => {
+            Self::InsufficientFunds {
+                available,
+                required,
+            } => {
                 write!(f, "Insufficient funds: available {}, required {}", available, required)
             }
             Self::ManualSelectionRequired => write!(f, "Manual UTXO selection required"),
@@ -334,10 +336,10 @@ impl std::error::Error for SelectionError {}
 mod tests {
     use super::*;
     use crate::utxo::Utxo;
-    use dashcore::blockdata::transaction::{OutPoint, TxOut};
-    use dashcore::blockdata::script::ScriptBuf;
-    use dashcore::hash_types::Txid;
     use bitcoin_hashes::Hash;
+    use dashcore::blockdata::script::ScriptBuf;
+    use dashcore::blockdata::transaction::{OutPoint, TxOut};
+    use dashcore::hash_types::Txid;
     use key_wallet::{Address, Network};
 
     fn test_utxo(value: u64, confirmed: bool) -> Utxo {
@@ -345,22 +347,22 @@ mod tests {
             txid: Txid::from_slice(&[1u8; 32]).unwrap(),
             vout: 0,
         };
-        
+
         let txout = TxOut {
             value,
             script_pubkey: ScriptBuf::new(),
         };
-        
+
         let address = Address::p2pkh(
             &secp256k1::PublicKey::from_slice(&[
-                0x02, 0x50, 0x86, 0x3a, 0xd6, 0x4a, 0x87, 0xae, 0x8a,
-                0x2f, 0xe8, 0x3c, 0x1a, 0xf1, 0xa8, 0x40, 0x3c, 0xb5,
-                0x3f, 0x53, 0xe4, 0x86, 0xd8, 0x51, 0x1d, 0xad, 0x8a,
-                0x04, 0x88, 0x7e, 0x5b, 0x23, 0x52,
-            ]).unwrap(),
+                0x02, 0x50, 0x86, 0x3a, 0xd6, 0x4a, 0x87, 0xae, 0x8a, 0x2f, 0xe8, 0x3c, 0x1a, 0xf1,
+                0xa8, 0x40, 0x3c, 0xb5, 0x3f, 0x53, 0xe4, 0x86, 0xd8, 0x51, 0x1d, 0xad, 0x8a, 0x04,
+                0x88, 0x7e, 0x5b, 0x23, 0x52,
+            ])
+            .unwrap(),
             Network::Testnet,
         );
-        
+
         let mut utxo = Utxo::new(outpoint, txout, address, 100, false);
         utxo.is_confirmed = confirmed;
         utxo
@@ -374,15 +376,10 @@ mod tests {
             test_utxo(30000, true),
             test_utxo(40000, true),
         ];
-        
+
         let selector = CoinSelector::new(SelectionStrategy::SmallestFirst);
-        let result = selector.select_coins(
-            &utxos,
-            25000,
-            FeeRate::new(1000),
-            200,
-        ).unwrap();
-        
+        let result = selector.select_coins(&utxos, 25000, FeeRate::new(1000), 200).unwrap();
+
         assert_eq!(result.selected.len(), 3); // Should select 10k + 20k + 30k
         assert_eq!(result.total_value, 60000);
         assert!(result.change_amount > 0);
@@ -396,15 +393,10 @@ mod tests {
             test_utxo(30000, true),
             test_utxo(40000, true),
         ];
-        
+
         let selector = CoinSelector::new(SelectionStrategy::LargestFirst);
-        let result = selector.select_coins(
-            &utxos,
-            25000,
-            FeeRate::new(1000),
-            200,
-        ).unwrap();
-        
+        let result = selector.select_coins(&utxos, 25000, FeeRate::new(1000), 200).unwrap();
+
         assert_eq!(result.selected.len(), 1); // Should select just 40k
         assert_eq!(result.total_value, 40000);
         assert!(result.change_amount > 0);
@@ -412,19 +404,11 @@ mod tests {
 
     #[test]
     fn test_insufficient_funds() {
-        let utxos = vec![
-            test_utxo(10000, true),
-            test_utxo(20000, true),
-        ];
-        
+        let utxos = vec![test_utxo(10000, true), test_utxo(20000, true)];
+
         let selector = CoinSelector::new(SelectionStrategy::LargestFirst);
-        let result = selector.select_coins(
-            &utxos,
-            50000,
-            FeeRate::new(1000),
-            200,
-        );
-        
+        let result = selector.select_coins(&utxos, 50000, FeeRate::new(1000), 200);
+
         assert!(matches!(result, Err(SelectionError::InsufficientFunds { .. })));
     }
 }
