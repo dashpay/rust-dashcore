@@ -11,7 +11,8 @@ license = "CC0-1.0"
 [features]
 default = ["std"]
 std = ["bitcoin_hashes/std", "secp256k1/std", "bip39/std", "getrandom", "dash-network/std"]
-serde = ["dep:serde", "bitcoin_hashes/serde", "secp256k1/serde", "dash-network/serde"]
+serde = ["dep:serde", "bitcoin_hashes/serde", "secp256k1/serde", "dash-network/serde", "bincode", "bincode_derive"]
+bip38 = ["scrypt", "aes", "sha2", "bs58", "rand"]
 
 [dependencies]
 bitcoin_hashes = { version = "0.14.0", default-features = false }
@@ -22,6 +23,15 @@ base58ck = { version = "0.1.0", default-features = false }
 bitflags = { version = "2.6", default-features = false }
 getrandom = { version = "0.2", optional = true }
 dash-network = { path = "../dash-network", default-features = false }
+# BIP38 dependencies (optional)
+scrypt = { version = "0.11", default-features = false, optional = true }
+aes = { version = "0.8", default-features = false, optional = true }
+sha2 = { version = "0.10", default-features = false, optional = true }
+bs58 = { version = "0.5", default-features = false, features = ["check"], optional = true }
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"], optional = true }
+# Serialization
+bincode = { version = "=2.0.0-rc.3", default-features = false, optional = true }
+bincode_derive = { version = "=2.0.0-rc.3", optional = true }
 
 [dev-dependencies]
 hex = "0.4"

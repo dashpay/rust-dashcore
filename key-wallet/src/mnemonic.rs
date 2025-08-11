@@ -41,6 +41,7 @@ impl From<Language> for bip39_crate::Language {
 }
 
 /// BIP39 Mnemonic phrase
+#[derive(Debug, Clone)]
 pub struct Mnemonic {
     inner: bip39_crate::Mnemonic,
 }

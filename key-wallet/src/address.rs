@@ -12,7 +12,7 @@ use crate::error::{Error, Result};
 use dash_network::Network;
 
 /// Address types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AddressType {
     /// Pay to public key hash (P2PKH)
     P2PKH,
@@ -53,7 +53,7 @@ impl NetworkExt for Network {
 }
 
 /// A Dash address
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Address {
     /// The network this address is valid for
     pub network: Network,
