@@ -20,7 +20,8 @@ impl Wallet {
         // Check if account already exists in either collection for this network
         let account_exists = match account_type {
             AccountType::CoinJoin => self.coinjoin_accounts.contains_key(network, index),
-            _ => self.standard_accounts.contains_key(network, index),
+            AccountType::Standard => self.standard_accounts.contains_key(network, index),
+            _ => false,
         };
 
         if account_exists {
@@ -36,18 +37,13 @@ impl Wallet {
                 let master_key = root_key.to_extended_priv_key(network);
                 let hd_wallet = HDWallet::new(master_key);
                 let account_key = hd_wallet.bip44_account(index)?;
-                let mut account = Account::new(
+                let account = Account::new(
                     index,
                     account_key,
                     network,
-                    self.config.external_gap_limit,
-                    self.config.internal_gap_limit,
+                    self.config.account_default_external_gap_limit,
+                    self.config.account_default_internal_gap_limit,
                 )?;
-
-                if self.config.enable_coinjoin {
-                    account.enable_coinjoin(self.config.coinjoin_gap_limit)?;
-                }
-
                 account
             }
             AccountType::CoinJoin => {
@@ -59,8 +55,8 @@ impl Wallet {
                     index,
                     account_key,
                     network,
-                    self.config.external_gap_limit,
-                    self.config.internal_gap_limit,
+                    self.config.account_default_external_gap_limit,
+                    self.config.account_default_internal_gap_limit,
                 )?;
                 account.account_type = AccountType::CoinJoin;
                 account
@@ -116,8 +112,8 @@ impl Wallet {
                     index,
                     account_key,
                     network,
-                    self.config.external_gap_limit,
-                    self.config.internal_gap_limit,
+                    self.config.account_default_external_gap_limit,
+                    self.config.account_default_internal_gap_limit,
                 )?;
                 account.account_type = AccountType::SpecialPurpose(purpose);
                 return Ok(account);

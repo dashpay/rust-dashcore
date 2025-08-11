@@ -13,10 +13,10 @@ use secp256k1::Secp256k1;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::address::{Address, AddressType};
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::error::{Error, Result};
 use crate::Network;
+use dashcore::{Address, AddressType};
 
 /// Key source for address derivation
 #[derive(Debug, Clone, Copy)]
@@ -162,7 +162,7 @@ impl AddressPool {
             highest_generated: None,
             highest_used: None,
             lookahead_size: gap_limit * 2,
-            address_type: AddressType::P2PKH,
+            address_type: AddressType::P2pkh,
         }
     }
 
@@ -204,12 +204,14 @@ impl AddressPool {
         let pubkey = key_source.derive_at_path(&full_path)?;
 
         // Generate the address
+        let dash_pubkey = dashcore::PublicKey::new(pubkey.public_key);
+        let network = dashcore::Network::from(self.network);
         let address = match self.address_type {
-            AddressType::P2PKH => Address::p2pkh(&pubkey.public_key, self.network),
-            AddressType::P2SH => {
+            AddressType::P2pkh => Address::p2pkh(&dash_pubkey, network),
+            AddressType::P2sh => {
                 // For P2SH, we'd need script information
                 // For now, default to P2PKH
-                Address::p2pkh(&pubkey.public_key, self.network)
+                Address::p2pkh(&dash_pubkey, network)
             }
         };
 
@@ -564,7 +566,7 @@ impl AddressPoolBuilder {
             gap_limit: 20,
             network: Network::Dash,
             lookahead_size: 40,
-            address_type: AddressType::P2PKH,
+            address_type: AddressType::P2pkh,
         }
     }
 

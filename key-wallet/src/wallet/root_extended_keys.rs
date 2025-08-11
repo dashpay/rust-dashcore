@@ -1,8 +1,9 @@
 use crate::bip32::{ChainCode, ChildNumber, ExtendedPrivKey, ExtendedPubKey};
-use crate::Network;
+use crate::{Error, Network, Wallet};
 use secp256k1::Secp256k1;
 use serde::{Deserialize, Serialize};
 
+use crate::wallet::WalletType;
 #[cfg(feature = "bincode")]
 use bincode::{BorrowDecode, Decode, Encode};
 use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
@@ -264,6 +265,70 @@ impl FromOnNetwork<RootExtendedPubKey> for ExtendedPubKey {
             child_number: ChildNumber::from(0),
             public_key: value.root_public_key,
             chain_code: value.root_chain_code,
+        }
+    }
+}
+
+impl Wallet {
+    /// Get the root extended private key from the wallet type
+    pub(crate) fn root_extended_priv_key(&self) -> crate::Result<&RootExtendedPrivKey> {
+        match &self.wallet_type {
+            WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => Ok(root_extended_private_key),
+            WalletType::MnemonicWithPassphrase {
+                ..
+            } => Err(Error::InvalidParameter(
+                "Mnemonic with passphrase requires passphrase to derive private key".into(),
+            )),
+            WalletType::Seed {
+                root_extended_private_key,
+                ..
+            } => Ok(root_extended_private_key),
+            WalletType::ExtendedPrivKey(key) => Ok(key),
+            WalletType::ExternalSignable(_) => {
+                Err(Error::InvalidParameter("External signable wallet has no private key".into()))
+            }
+            WalletType::WatchOnly(_) => {
+                Err(Error::InvalidParameter("Watch-only wallet has no private key".into()))
+            }
+        }
+    }
+
+    /// Get the root extended private key with passphrase callback for MnemonicWithPassphrase
+    pub fn root_extended_priv_key_with_callback<F>(
+        &self,
+        passphrase_callback: F,
+    ) -> crate::Result<RootExtendedPrivKey>
+    where
+        F: FnOnce() -> Result<String, Error>,
+    {
+        match &self.wallet_type {
+            WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => Ok(root_extended_private_key.clone()),
+            WalletType::MnemonicWithPassphrase {
+                mnemonic,
+                ..
+            } => {
+                // Request passphrase via callback
+                let passphrase = passphrase_callback()?;
+                let seed = mnemonic.to_seed(&passphrase);
+                Ok(RootExtendedPrivKey::new_master(&seed)?)
+            }
+            WalletType::Seed {
+                root_extended_private_key,
+                ..
+            } => Ok(root_extended_private_key.clone()),
+            WalletType::ExtendedPrivKey(key) => Ok(key.clone()),
+            WalletType::ExternalSignable(_) => {
+                Err(Error::InvalidParameter("External signable wallet has no private key".into()))
+            }
+            WalletType::WatchOnly(_) => {
+                Err(Error::InvalidParameter("Watch-only wallet has no private key".into()))
+            }
         }
     }
 }
