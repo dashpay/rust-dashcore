@@ -26,6 +26,10 @@ coordination.md
 
 # Build artifacts
 **/*.rs.bk
+*.a
+*.so
+*.dylib
+*.dll
 
 # Test and coverage
 tarpaulin-report.html

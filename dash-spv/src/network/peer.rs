@@ -35,6 +35,8 @@ impl PeerManager {
             services: None,
             user_agent: None,
             best_height: None,
+            wants_dsq_messages: None,
+            has_sent_headers2: false,
         };
 
         self.peers.insert(address, peer_info);
@@ -74,7 +76,7 @@ impl PeerManager {
     }
 
     /// Get the best height among connected peers.
-    pub fn best_height(&self) -> Option<i32> {
+    pub fn best_height(&self) -> Option<u32> {
         self.peers.values().filter(|p| p.connected).filter_map(|p| p.best_height).max()
     }
 
@@ -85,7 +87,7 @@ impl PeerManager {
         version: u32,
         services: u64,
         user_agent: String,
-        best_height: i32,
+        best_height: u32,
     ) {
         self.update_peer(address, |peer| {
             peer.connected = true;

@@ -5,27 +5,33 @@ use tokio::sync::RwLock;
 
 use crate::client::ClientConfig;
 use crate::error::{Result, SpvError};
+use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::filters::FilterNotificationSender;
-use crate::sync::SyncManager;
-use crate::types::SpvStats;
+use crate::sync::sequential::SequentialSyncManager;
+use crate::types::{MempoolState, SpvEvent, SpvStats};
+use crate::wallet::Wallet;
 
 /// Network message handler for processing incoming Dash protocol messages.
 pub struct MessageHandler<'a> {
-    sync_manager: &'a mut SyncManager,
+    sync_manager: &'a mut SequentialSyncManager,
     storage: &'a mut dyn StorageManager,
     network: &'a mut dyn NetworkManager,
     config: &'a ClientConfig,
     stats: &'a Arc<RwLock<SpvStats>>,
     filter_processor: &'a Option<FilterNotificationSender>,
     block_processor_tx: &'a tokio::sync::mpsc::UnboundedSender<crate::client::BlockProcessingTask>,
+    wallet: &'a Arc<RwLock<Wallet>>,
+    mempool_filter: &'a Option<Arc<MempoolFilter>>,
+    mempool_state: &'a Arc<RwLock<MempoolState>>,
+    event_tx: &'a tokio::sync::mpsc::UnboundedSender<SpvEvent>,
 }
 
 impl<'a> MessageHandler<'a> {
     /// Create a new message handler.
     pub fn new(
-        sync_manager: &'a mut SyncManager,
+        sync_manager: &'a mut SequentialSyncManager,
         storage: &'a mut dyn StorageManager,
         network: &'a mut dyn NetworkManager,
         config: &'a ClientConfig,
@@ -34,6 +40,10 @@ impl<'a> MessageHandler<'a> {
         block_processor_tx: &'a tokio::sync::mpsc::UnboundedSender<
             crate::client::BlockProcessingTask,
         >,
+        wallet: &'a Arc<RwLock<Wallet>>,
+        mempool_filter: &'a Option<Arc<MempoolFilter>>,
+        mempool_state: &'a Arc<RwLock<MempoolState>>,
+        event_tx: &'a tokio::sync::mpsc::UnboundedSender<SpvEvent>,
     ) -> Self {
         Self {
             sync_manager,
@@ -43,6 +53,10 @@ impl<'a> MessageHandler<'a> {
             stats,
             filter_processor,
             block_processor_tx,
+            wallet,
+            mempool_filter,
+            mempool_state,
+            event_tx,
         }
     }
 
@@ -55,115 +69,108 @@ impl<'a> MessageHandler<'a> {
 
         tracing::debug!("Client handling network message: {:?}", std::mem::discriminant(&message));
 
+        // First check if this is a message that ONLY the sync manager handles
+        // These messages can be moved to the sync manager without cloning
         match message {
-            NetworkMessage::Headers(headers) => {
-                // Route to header sync manager if active, otherwise process normally
-                match self
-                    .sync_manager
-                    .handle_headers_message(headers.clone(), &mut *self.storage, &mut *self.network)
-                    .await
-                {
-                    Ok(false) => {
-                        tracing::info!(
-                            "🎯 Header sync completed (handle_headers_message returned false)"
-                        );
-                        // Header sync manager has already cleared its internal syncing_headers flag
+            NetworkMessage::Headers2(ref headers2) => {
+                tracing::info!(
+                    "📋 Received Headers2 message with {} compressed headers",
+                    headers2.headers.len()
+                );
 
-                        // Auto-trigger masternode sync after header sync completion
-                        if self.config.enable_masternodes {
-                            tracing::info!("🚀 Header sync complete, starting masternode sync...");
-                            match self
-                                .sync_manager
-                                .sync_masternodes(&mut *self.network, &mut *self.storage)
-                                .await
-                            {
-                                Ok(_) => {
-                                    tracing::info!(
-                                        "✅ Masternode sync initiated after header sync completion"
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::error!(
-                                        "❌ Failed to start masternode sync after headers: {}",
-                                        e
-                                    );
-                                    // Don't fail the entire flow if masternode sync fails to start
-                                }
-                            }
-                        }
-                    }
-                    Ok(true) => {
-                        // Headers processed successfully
-                        if self.sync_manager.header_sync().is_syncing() {
-                            tracing::debug!(
-                                "🔄 Header sync continuing (handle_headers_message returned true)"
-                            );
-                        } else {
-                            // Post-sync headers received - request filter headers and filters for new blocks
-                            tracing::info!("📋 Post-sync headers received, requesting filter headers and filters");
-                            self.handle_post_sync_headers(&headers).await?;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("❌ Error handling headers: {:?}", e);
-                        return Err(e.into());
-                    }
+                // Track that this peer has sent us Headers2
+                if let Err(e) = self.network.mark_peer_sent_headers2().await {
+                    tracing::error!("Failed to mark peer sent headers2: {}", e);
                 }
+
+                // Move to sync manager without cloning
+                return self
+                    .sync_manager
+                    .handle_message(message, &mut *self.network, &mut *self.storage)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Sequential sync manager error handling message: {}", e);
+                        SpvError::Sync(e)
+                    });
             }
-            NetworkMessage::CFHeaders(cf_headers) => {
+            NetworkMessage::MnListDiff(ref diff) => {
+                tracing::info!("📨 Received MnListDiff message: {} new masternodes, {} deleted masternodes, {} quorums", 
+                              diff.new_masternodes.len(), diff.deleted_masternodes.len(), diff.new_quorums.len());
+                // Move to sync manager without cloning
+                return self
+                    .sync_manager
+                    .handle_message(message, &mut *self.network, &mut *self.storage)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Sequential sync manager error handling message: {}", e);
+                        SpvError::Sync(e)
+                    });
+            }
+            NetworkMessage::CFHeaders(ref cf_headers) => {
                 tracing::info!(
                     "📨 Client received CFHeaders message with {} filter headers",
                     cf_headers.filter_hashes.len()
                 );
-                // Route to filter sync manager if active
-                match self
+                // Move to sync manager without cloning
+                return self
                     .sync_manager
-                    .handle_cfheaders_message(cf_headers, &mut *self.storage, &mut *self.network)
+                    .handle_message(message, &mut *self.network, &mut *self.storage)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Sequential sync manager error handling message: {}", e);
+                        SpvError::Sync(e)
+                    });
+            }
+            _ => {}
+        }
+
+        // Handle messages that may need sync manager processing
+        // We optimize to avoid cloning expensive messages like blocks
+        match &message {
+            NetworkMessage::Headers(_) | NetworkMessage::CFilter(_) => {
+                // Headers and CFilters are relatively small, cloning is acceptable
+                if let Err(e) = self
+                    .sync_manager
+                    .handle_message(message.clone(), &mut *self.network, &mut *self.storage)
                     .await
                 {
-                    Ok(false) => {
-                        tracing::info!("🎯 Filter header sync completed (handle_cfheaders_message returned false)");
-                        // Properly finish the sync state
-                        self.sync_manager
-                            .sync_state_mut()
-                            .finish_sync(crate::sync::SyncComponent::FilterHeaders);
-
-                        // Note: Auto-trigger logic for filter downloading would need access to watch_items and client methods
-                        // This might need to be handled at the client level or passed as a callback
-                    }
-                    Ok(true) => {
-                        tracing::debug!("🔄 Filter header sync continuing (handle_cfheaders_message returned true)");
-                    }
-                    Err(e) => {
-                        tracing::error!("❌ Error handling CFHeaders: {:?}", e);
-                        // Don't fail the entire sync if filter header processing fails
-                    }
+                    tracing::error!("Sequential sync manager error handling message: {}", e);
                 }
             }
-            NetworkMessage::MnListDiff(diff) => {
-                tracing::info!("📨 Received MnListDiff message: {} new masternodes, {} deleted masternodes, {} quorums", 
-                              diff.new_masternodes.len(), diff.deleted_masternodes.len(), diff.new_quorums.len());
-                // Route to masternode sync manager if active
-                match self
-                    .sync_manager
-                    .handle_mnlistdiff_message(diff, &mut *self.storage, &mut *self.network)
-                    .await
-                {
-                    Ok(false) => {
-                        tracing::info!("🎯 Masternode sync completed");
-                        // Properly finish the sync state
-                        self.sync_manager
-                            .sync_state_mut()
-                            .finish_sync(crate::sync::SyncComponent::Masternodes);
+            NetworkMessage::Block(_) => {
+                // Blocks can be large - avoid cloning unless necessary
+                // Check if sync manager actually needs to process this block
+                if self.sync_manager.is_in_downloading_blocks_phase() {
+                    // Only clone if we're in the downloading blocks phase
+                    if let Err(e) = self
+                        .sync_manager
+                        .handle_message(message.clone(), &mut *self.network, &mut *self.storage)
+                        .await
+                    {
+                        tracing::error!(
+                            "Sequential sync manager error handling block message: {}",
+                            e
+                        );
                     }
-                    Ok(true) => {
-                        tracing::debug!("MnListDiff processed, sync continuing");
-                    }
-                    Err(e) => {
-                        tracing::error!("❌ Failed to process MnListDiff: {}", e);
-                    }
+                } else {
+                    // Sync manager will just log and return, no need to send it
+                    tracing::debug!("Block received outside of DownloadingBlocks phase - skipping sync manager processing");
                 }
-                // MnListDiff is only relevant during sync, so we don't process them normally
+            }
+            _ => {
+                // Other messages don't need sync manager processing in this context
+            }
+        }
+
+        // Then handle client-specific message processing
+        match message {
+            NetworkMessage::Headers(headers) => {
+                // For post-sync headers, we need special handling
+                if self.sync_manager.is_synced() && !headers.is_empty() {
+                    tracing::info!(
+                        "📋 Post-sync headers received, additional processing may be needed"
+                    );
+                }
             }
             NetworkMessage::Block(block) => {
                 let block_hash = block.header.block_hash();
@@ -186,10 +193,59 @@ impl<'a> MessageHandler<'a> {
                 self.handle_inventory(inv).await?;
             }
             NetworkMessage::Tx(tx) => {
-                tracing::debug!("Received transaction: {}", tx.txid());
-                // Check if transaction affects watched addresses/scripts
-                // This would need access to transaction processing logic
-                tracing::debug!("Transaction processing not yet implemented in message handler");
+                tracing::info!("📨 Received transaction: {}", tx.txid());
+
+                // Only process if mempool tracking is enabled
+                if let Some(filter) = self.mempool_filter {
+                    // Check if we should process this transaction
+                    let wallet = self.wallet.read().await;
+                    if let Some(unconfirmed_tx) =
+                        filter.process_transaction(tx.clone(), &wallet).await
+                    {
+                        let txid = unconfirmed_tx.txid();
+                        let amount = unconfirmed_tx.net_amount;
+                        let is_instant_send = unconfirmed_tx.is_instant_send;
+                        let addresses: Vec<String> =
+                            unconfirmed_tx.addresses.iter().map(|a| a.to_string()).collect();
+
+                        // Store in mempool
+                        let mut state = self.mempool_state.write().await;
+                        state.add_transaction(unconfirmed_tx.clone());
+                        drop(state);
+
+                        // Store in storage if persistence is enabled
+                        if self.config.persist_mempool {
+                            if let Err(e) =
+                                self.storage.store_mempool_transaction(&txid, &unconfirmed_tx).await
+                            {
+                                tracing::error!("Failed to persist mempool transaction: {}", e);
+                            }
+                        }
+
+                        // Emit event
+                        let event = SpvEvent::MempoolTransactionAdded {
+                            txid,
+                            transaction: tx,
+                            amount,
+                            addresses,
+                            is_instant_send,
+                        };
+                        let _ = self.event_tx.send(event);
+
+                        tracing::info!(
+                            "💸 Added mempool transaction {} (amount: {})",
+                            txid,
+                            amount
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Transaction {} not relevant or at capacity, ignoring",
+                            tx.txid()
+                        );
+                    }
+                } else {
+                    tracing::warn!("⚠️ Received transaction {} but mempool tracking is disabled (enable_mempool_tracking=false)", tx.txid());
+                }
             }
             NetworkMessage::CLSig(chain_lock) => {
                 tracing::info!("Received ChainLock for block {}", chain_lock.block_hash);
@@ -228,31 +284,20 @@ impl<'a> MessageHandler<'a> {
                 )
                 .await;
 
-                // Enhanced sync coordination with flow control
-                if let Err(e) = self
-                    .sync_manager
-                    .handle_cfilter_message(
-                        cfilter.block_hash,
-                        &mut *self.storage,
-                        &mut *self.network,
-                    )
-                    .await
-                {
-                    tracing::error!("Failed to handle CFilter in sync manager: {}", e);
+                // Sequential sync manager handles the filter internally
+                // For sequential sync, filter checking is done within the sync manager
+            }
+            NetworkMessage::SendDsq(wants_dsq) => {
+                tracing::info!("Received SendDsq message - peer wants DSQ messages: {}", wants_dsq);
+                // Store peer's DSQ preference
+                if let Err(e) = self.network.update_peer_dsq_preference(wants_dsq).await {
+                    tracing::error!("Failed to update peer DSQ preference: {}", e);
                 }
 
-                // Always send to filter processor for watch item checking if available
-                if let Some(filter_processor) = self.filter_processor {
-                    tracing::debug!(
-                        "Sending compact filter for block {} to processing thread",
-                        cfilter.block_hash
-                    );
-                    if let Err(e) = filter_processor.send(cfilter) {
-                        tracing::error!("Failed to send filter to processing thread: {}", e);
-                    }
-                } else {
-                    // This should not happen since we always create filter processor when filters are enabled
-                    tracing::warn!("Received CFilter for block {} but no filter processor available - filters may not be enabled", cfilter.block_hash);
+                // Send our own SendDsq(false) in response - we're an SPV client and don't want DSQ messages
+                tracing::info!("Sending SendDsq(false) to indicate we don't want DSQ messages");
+                if let Err(e) = self.network.send_message(NetworkMessage::SendDsq(false)).await {
+                    tracing::error!("Failed to send SendDsq response: {}", e);
                 }
             }
             _ => {
@@ -279,24 +324,44 @@ impl<'a> MessageHandler<'a> {
         for item in inv {
             match item {
                 Inventory::Block(block_hash) => {
-                    tracing::debug!("Inventory: New block {}", block_hash);
+                    tracing::info!("🆕 Inventory: New block announcement {}", block_hash);
                     blocks_to_request.push(item);
                 }
                 Inventory::ChainLock(chainlock_hash) => {
-                    tracing::info!("Inventory: New ChainLock {}", chainlock_hash);
+                    tracing::info!("🔒 Inventory: New ChainLock {}", chainlock_hash);
                     chainlocks_to_request.push(item);
                 }
                 Inventory::InstantSendLock(islock_hash) => {
-                    tracing::info!("Inventory: New InstantSendLock {}", islock_hash);
+                    tracing::info!("⚡ Inventory: New InstantSendLock {}", islock_hash);
                     islocks_to_request.push(item);
                 }
                 Inventory::Transaction(txid) => {
-                    tracing::debug!("Inventory: New transaction {}", txid);
-                    // Only request transactions we're interested in (watched addresses/scripts)
-                    // For now, skip transaction requests
+                    tracing::debug!("💸 Inventory: New transaction {}", txid);
+
+                    // Check if we should fetch this transaction
+                    if let Some(filter) = self.mempool_filter {
+                        if self.config.fetch_mempool_transactions
+                            && filter.should_fetch_transaction(&txid).await
+                        {
+                            tracing::info!("📥 Requesting transaction {}", txid);
+                            // Request the transaction
+                            let getdata = NetworkMessage::GetData(vec![item]);
+                            if let Err(e) = self.network.send_message(getdata).await {
+                                tracing::error!("Failed to request transaction {}: {}", txid, e);
+                            }
+                        } else {
+                            tracing::debug!("Not fetching transaction {} (fetch_mempool_transactions={}, should_fetch={})", 
+                                txid,
+                                self.config.fetch_mempool_transactions,
+                                filter.should_fetch_transaction(&txid).await
+                            );
+                        }
+                    } else {
+                        tracing::warn!("⚠️ Transaction {} announced but mempool tracking is disabled (enable_mempool_tracking=false)", txid);
+                    }
                 }
                 _ => {
-                    tracing::debug!("Inventory: Other item type");
+                    tracing::debug!("❓ Inventory: Other item type");
                 }
             }
         }
@@ -305,19 +370,22 @@ impl<'a> MessageHandler<'a> {
         if !chainlocks_to_request.is_empty() {
             tracing::info!("Requesting {} ChainLocks", chainlocks_to_request.len());
             let getdata = NetworkMessage::GetData(chainlocks_to_request);
-            self.network.send_message(getdata).await.map_err(|e| SpvError::Network(e))?;
+            self.network.send_message(getdata).await.map_err(SpvError::Network)?;
         }
 
         // Auto-request InstantLocks
         if !islocks_to_request.is_empty() {
             tracing::info!("Requesting {} InstantLocks", islocks_to_request.len());
             let getdata = NetworkMessage::GetData(islocks_to_request);
-            self.network.send_message(getdata).await.map_err(|e| SpvError::Network(e))?;
+            self.network.send_message(getdata).await.map_err(SpvError::Network)?;
         }
 
         // Process new blocks immediately when detected
         if !blocks_to_request.is_empty() {
-            tracing::info!("Processing {} new blocks", blocks_to_request.len());
+            tracing::info!(
+                "🔄 Processing {} new block announcements to stay synchronized",
+                blocks_to_request.len()
+            );
 
             // Extract block hashes
             let block_hashes: Vec<dashcore::BlockHash> = blocks_to_request
@@ -333,8 +401,9 @@ impl<'a> MessageHandler<'a> {
 
             // Process each new block
             for block_hash in block_hashes {
+                tracing::info!("📥 Requesting header for new block {}", block_hash);
                 if let Err(e) = self.process_new_block_hash(block_hash).await {
-                    tracing::error!("Failed to process new block {}: {}", block_hash, e);
+                    tracing::error!("❌ Failed to process new block {}: {}", block_hash, e);
                 }
             }
         }
@@ -351,57 +420,13 @@ impl<'a> MessageHandler<'a> {
             return Ok(());
         }
 
-        // Get the height before storing new headers
-        let initial_height =
-            self.storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0);
-
-        // Store the headers using the sync manager
-        // This will validate and store them properly
+        // For sequential sync, new headers are handled by the sync manager's message handler
+        // We just need to send them through the unified message interface
+        let headers_msg = dashcore::network::message::NetworkMessage::Headers(headers);
         self.sync_manager
-            .sync_all(&mut *self.network, &mut *self.storage)
+            .handle_message(headers_msg, &mut *self.network, &mut *self.storage)
             .await
-            .map_err(|e| SpvError::Sync(e))?;
-
-        // Check if filters are enabled and request filter headers for new blocks
-        if self.config.enable_filters {
-            // Get the new tip height after storing headers
-            let new_height =
-                self.storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0);
-
-            // If we stored new headers, request filter headers for them
-            if new_height > initial_height {
-                tracing::info!(
-                    "New headers stored from height {} to {}, requesting filter headers",
-                    initial_height + 1,
-                    new_height
-                );
-
-                // Request filter headers for each new header
-                for height in (initial_height + 1)..=new_height {
-                    if let Some(header) =
-                        self.storage.get_header(height).await.map_err(|e| SpvError::Storage(e))?
-                    {
-                        let block_hash = header.block_hash();
-                        tracing::debug!(
-                            "Requesting filter header for block {} at height {}",
-                            block_hash,
-                            height
-                        );
-
-                        // Request filter header for this block
-                        self.sync_manager
-                            .filter_sync_mut()
-                            .download_filter_header_for_block(
-                                block_hash,
-                                &mut *self.network,
-                                &mut *self.storage,
-                            )
-                            .await
-                            .map_err(|e| SpvError::Sync(e))?;
-                    }
-                }
-            }
-        }
+            .map_err(SpvError::Sync)?;
 
         Ok(())
     }
@@ -410,12 +435,12 @@ impl<'a> MessageHandler<'a> {
     pub async fn process_new_block_hash(&mut self, block_hash: dashcore::BlockHash) -> Result<()> {
         tracing::info!("🔗 Processing new block hash: {}", block_hash);
 
-        // Just request the header - filter operations will be triggered when we receive it
+        // For sequential sync, handle through inventory message
+        let inv = vec![dashcore::network::message_blockdata::Inventory::Block(block_hash)];
         self.sync_manager
-            .header_sync_mut()
-            .download_single_header(block_hash, &mut *self.network, &mut *self.storage)
+            .handle_inventory(inv, &mut *self.network, &mut *self.storage)
             .await
-            .map_err(|e| SpvError::Sync(e))?;
+            .map_err(SpvError::Sync)?;
 
         Ok(())
     }
@@ -434,12 +459,12 @@ impl<'a> MessageHandler<'a> {
             cfheaders.filter_hashes.len()
         );
 
-        // Store filter headers in storage via FilterSyncManager
+        // For sequential sync, route through the message handler
+        let cfheaders_msg = dashcore::network::message::NetworkMessage::CFHeaders(cfheaders);
         self.sync_manager
-            .filter_sync_mut()
-            .store_filter_headers(cfheaders, &mut *self.storage)
+            .handle_message(cfheaders_msg, &mut *self.network, &mut *self.storage)
             .await
-            .map_err(|e| SpvError::Sync(e))?;
+            .map_err(SpvError::Sync)?;
 
         Ok(())
     }
@@ -474,8 +499,7 @@ impl<'a> MessageHandler<'a> {
     }
 
     /// Handle new headers received after the initial sync is complete.
-    /// Request filter headers for these new blocks. Filters will be requested
-    /// automatically when the CFHeaders responses arrive.
+    /// The sequential sync manager will handle requesting filter headers internally.
     pub async fn handle_post_sync_headers(
         &mut self,
         headers: &[dashcore::block::Header],
@@ -488,39 +512,18 @@ impl<'a> MessageHandler<'a> {
             return Ok(());
         }
 
-        tracing::info!("Handling {} post-sync headers - requesting filter headers (filters will follow automatically)", headers.len());
-
-        for header in headers {
-            let block_hash = header.block_hash();
-
-            // Only request filter header for this new block
-            // The CFilter will be requested automatically when the CFHeader response arrives
-            // (this happens in the CFHeaders message handler)
-            if let Err(e) = self
-                .sync_manager
-                .filter_sync_mut()
-                .download_filter_header_for_block(
-                    block_hash,
-                    &mut *self.network,
-                    &mut *self.storage,
-                )
-                .await
-            {
-                tracing::error!(
-                    "Failed to request filter header for new block {}: {}",
-                    block_hash,
-                    e
-                );
-                continue;
-            }
-
-            tracing::debug!("Requested filter header for new block {} (filter will be requested when CFHeader arrives)", block_hash);
-        }
-
         tracing::info!(
-            "✅ Completed post-sync filter header requests for {} new blocks",
+            "Handling {} post-sync headers - sequential sync will manage filter requests",
             headers.len()
         );
+
+        // The sequential sync manager's handle_new_headers method will automatically
+        // request filter headers and filters as needed
+        self.sync_manager
+            .handle_new_headers(headers.to_vec(), &mut *self.network, &mut *self.storage)
+            .await
+            .map_err(SpvError::Sync)?;
+
         Ok(())
     }
 }

@@ -97,6 +97,11 @@ impl HeaderValidator {
 
     /// Validate a chain of headers with basic validation.
     pub fn validate_chain_basic(&self, headers: &[BlockHeader]) -> ValidationResult<()> {
+        // Respect ValidationMode::None
+        if self.mode == ValidationMode::None {
+            return Ok(());
+        }
+
         if headers.is_empty() {
             return Ok(());
         }
@@ -119,6 +124,11 @@ impl HeaderValidator {
         headers: &[BlockHeader],
         validate_pow: bool,
     ) -> ValidationResult<()> {
+        // Respect ValidationMode::None
+        if self.mode == ValidationMode::None {
+            return Ok(());
+        }
+
         if headers.is_empty() {
             return Ok(());
         }
@@ -182,3 +192,11 @@ impl HeaderValidator {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "headers_test.rs"]
+mod headers_test;
+
+#[cfg(test)]
+#[path = "headers_edge_test.rs"]
+mod headers_edge_test;

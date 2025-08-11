@@ -245,7 +245,8 @@ async fn test_concurrent_tip_header_access() {
     println!("✅ Concurrent access consistency test passed");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore] // This test creates over 2 million headers and is very slow
 async fn test_reproduce_filter_sync_bug() {
     println!("=== Attempting to reproduce the exact filter sync bug scenario ===");
 
@@ -315,6 +316,73 @@ async fn test_reproduce_filter_sync_bug() {
 
     storage.shutdown().await.unwrap();
     println!("Bug reproduction test completed");
+}
+
+#[tokio::test]
+async fn test_reproduce_filter_sync_bug_small() {
+    println!("=== Testing filter sync bug with smaller dataset ===");
+
+    let temp_dir = TempDir::new().unwrap();
+    let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await.unwrap();
+
+    // Use much smaller heights to make the test fast
+    let simulated_tip = 2283;
+    let problematic_height = 2251;
+
+    // Store headers up to a certain point, but with gaps to simulate the bug
+    println!("Storing headers with intentional gaps...");
+
+    // Store headers 0 to 2250 (just before the problematic height)
+    for batch_start in (0..problematic_height).step_by(100) {
+        let batch_end = (batch_start + 100).min(problematic_height);
+        let headers: Vec<BlockHeader> = (batch_start..batch_end).map(create_test_header).collect();
+        storage.store_headers(&headers).await.unwrap();
+    }
+
+    // Skip headers 2251 to 2282 (create a gap)
+
+    // Store only the "tip" header at 2283
+    let tip_header = vec![create_test_header(simulated_tip)];
+    storage.store_headers(&tip_header).await.unwrap();
+
+    // Now check what get_tip_height() returns
+    let reported_tip = storage.get_tip_height().await.unwrap();
+    println!("Storage reports tip height: {:?}", reported_tip);
+
+    if let Some(tip_height) = reported_tip {
+        println!("Checking if header exists at reported tip height {}...", tip_height);
+        let tip_header = storage.get_header(tip_height).await.unwrap();
+        println!("Header at tip height {}: {:?}", tip_height, tip_header.is_some());
+
+        if tip_header.is_none() {
+            println!("🎯 REPRODUCED THE BUG! get_tip_height() returned {} but get_header({}) returned None", 
+                     tip_height, tip_height);
+        }
+
+        println!("Checking if header exists at problematic height {}...", problematic_height);
+        let problematic_header = storage.get_header(problematic_height).await.unwrap();
+        println!(
+            "Header at problematic height {}: {:?}",
+            problematic_height,
+            problematic_header.is_some()
+        );
+
+        // Try the exact logic from the filter sync bug
+        if problematic_header.is_none() {
+            println!(
+                "Header not found at calculated height {}, trying fallback to tip {}",
+                problematic_height, tip_height
+            );
+
+            if tip_header.is_none() {
+                println!("🔥 BUG REPRODUCED: Fallback to tip {} also failed!", tip_height);
+                panic!("Reproduced the filter sync bug scenario");
+            }
+        }
+    }
+
+    storage.shutdown().await.unwrap();
+    println!("✅ Small dataset bug test completed");
 }
 
 #[tokio::test]
@@ -447,7 +515,75 @@ async fn test_concurrent_tip_height_access_with_eviction() {
     let temp_dir = TempDir::new().unwrap();
     let storage_path = temp_dir.path().to_path_buf();
 
-    // Store a large dataset to trigger eviction
+    // Store a dataset large enough to trigger eviction but not excessive for testing
+    // Using 150,000 headers (3 segments) instead of 600,000
+    {
+        let mut storage = DiskStorageManager::new(storage_path.clone()).await.unwrap();
+
+        // Store 150,000 headers (3 segments) to test eviction
+        let headers: Vec<BlockHeader> =
+            (0..150_000).map(|h| create_test_header(h as u32)).collect();
+
+        for chunk in headers.chunks(50_000) {
+            storage.store_headers(chunk).await.unwrap();
+        }
+
+        storage.shutdown().await.unwrap();
+    }
+
+    // Test concurrent access with reduced scale
+    let mut handles = vec![];
+
+    // Reduced from 10 to 5 concurrent tasks
+    for task_id in 0..5 {
+        let path = storage_path.clone();
+        let handle = tokio::spawn(async move {
+            let storage = DiskStorageManager::new(path).await.unwrap();
+
+            // Reduced from 50 to 20 iterations
+            for iteration in 0..20 {
+                // Get tip height
+                let tip_height = storage.get_tip_height().await.unwrap();
+
+                if let Some(height) = tip_height {
+                    // Immediately try to access the tip header
+                    let header_result = storage.get_header(height).await.unwrap();
+
+                    if header_result.is_none() {
+                        panic!("🎯 CONCURRENT RACE CONDITION REPRODUCED in task {}, iteration {}!\n   get_tip_height() = {}\n   get_header({}) = None", 
+                               task_id, iteration, height, height);
+                    }
+
+                    // Also test accessing random segments to trigger eviction
+                    let segment_height = (iteration * 50_000) % 150_000;
+                    let _ = storage.get_header(segment_height as u32).await.unwrap();
+                }
+
+                // Removed sleep to speed up test - race conditions are more likely without delays
+            }
+
+            println!("Task {} completed without detecting race condition", task_id);
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all tasks
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    println!("✅ Concurrent access test completed without reproducing race condition");
+}
+
+#[tokio::test]
+#[ignore] // Run with: cargo test -- --ignored
+async fn test_concurrent_tip_height_access_with_eviction_heavy() {
+    println!("=== Testing concurrent tip height access during segment eviction (heavy) ===");
+
+    let temp_dir = TempDir::new().unwrap();
+    let storage_path = temp_dir.path().to_path_buf();
+
+    // Store a large dataset to trigger eviction - original test with 600K headers
     {
         let mut storage = DiskStorageManager::new(storage_path.clone()).await.unwrap();
 
@@ -504,4 +640,74 @@ async fn test_concurrent_tip_height_access_with_eviction() {
     }
 
     println!("✅ Concurrent access test completed without reproducing race condition");
+}
+
+#[tokio::test]
+async fn test_tip_height_segment_boundary_race() {
+    println!("=== Testing tip height race condition at segment boundaries ===");
+
+    let temp_dir = TempDir::new().unwrap();
+    let storage_path = temp_dir.path().to_path_buf();
+
+    // Segment size is 50,000 headers
+    let segment_size = 50_000;
+
+    // Test the specific case where tip is at segment boundary
+    {
+        let mut storage = DiskStorageManager::new(storage_path.clone()).await.unwrap();
+
+        // Store exactly one segment worth of headers
+        let headers: Vec<BlockHeader> = (0..segment_size).map(create_test_header).collect();
+        storage.store_headers(&headers).await.unwrap();
+
+        // Verify tip is at segment boundary
+        let tip_height = storage.get_tip_height().await.unwrap();
+        assert_eq!(tip_height, Some((segment_size - 1) as u32));
+
+        storage.shutdown().await.unwrap();
+    }
+
+    // Now force segment eviction and check consistency
+    {
+        let mut storage = DiskStorageManager::new(storage_path.clone()).await.unwrap();
+
+        // Store headers in a different segment range to trigger eviction
+        // This simulates the case where the tip segment might get evicted
+        for i in 1..12 {
+            let start = i * segment_size;
+            let headers: Vec<BlockHeader> =
+                (start..start + segment_size).map(|h| create_test_header(h as u32)).collect();
+            storage.store_headers(&headers).await.unwrap();
+
+            // After storing each segment, verify tip consistency
+            let reported_tip = storage.get_tip_height().await.unwrap();
+            if let Some(tip) = reported_tip {
+                let header = storage.get_header(tip).await.unwrap();
+                if header.is_none() {
+                    panic!("🎯 SEGMENT BOUNDARY RACE DETECTED: After storing segment {}, tip_height={} but header is None", 
+                           i, tip);
+                }
+            }
+        }
+
+        // Final consistency check - try to access the original tip
+        let original_tip = (segment_size - 1) as u32;
+        let header_at_original_tip = storage.get_header(original_tip).await.unwrap();
+
+        // This might be None due to eviction, which is expected
+        if header_at_original_tip.is_none() {
+            println!("Original tip segment was evicted as expected");
+        }
+
+        // But the current tip should always be accessible
+        let current_tip = storage.get_tip_height().await.unwrap();
+        if let Some(tip) = current_tip {
+            let header = storage.get_header(tip).await.unwrap();
+            assert!(header.is_some(), "Current tip header must always be accessible");
+        }
+
+        storage.shutdown().await.unwrap();
+    }
+
+    println!("✅ Segment boundary race test completed");
 }

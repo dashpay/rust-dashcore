@@ -104,6 +104,7 @@ pub mod bip158;
 // Re-export bip32 from key-wallet
 pub use key_wallet::bip32;
 pub mod blockdata;
+pub mod bloom;
 pub mod consensus;
 // Private until we either make this a crate or flatten it - still to be decided.
 pub mod bls_sig_utils;

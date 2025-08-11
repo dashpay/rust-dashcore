@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
 use crate::error::{Result, SpvError};
-use crate::types::{AddressBalance, SpvStats, WatchItem};
+use crate::types::{AddressBalance, SpvEvent, SpvStats, WatchItem};
 use crate::wallet::Wallet;
 
 /// Task for the block processing worker.
@@ -27,6 +27,7 @@ pub struct BlockProcessor {
     wallet: Arc<RwLock<Wallet>>,
     watch_items: Arc<RwLock<HashSet<WatchItem>>>,
     stats: Arc<RwLock<SpvStats>>,
+    event_tx: mpsc::UnboundedSender<SpvEvent>,
     processed_blocks: HashSet<dashcore::BlockHash>,
     failed: bool,
 }
@@ -38,12 +39,14 @@ impl BlockProcessor {
         wallet: Arc<RwLock<Wallet>>,
         watch_items: Arc<RwLock<HashSet<WatchItem>>>,
         stats: Arc<RwLock<SpvStats>>,
+        event_tx: mpsc::UnboundedSender<SpvEvent>,
     ) -> Self {
         Self {
             receiver,
             wallet,
             watch_items,
             stats,
+            event_tx,
             processed_blocks: HashSet::new(),
             failed: false,
         }
@@ -161,6 +164,11 @@ impl BlockProcessor {
         let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
         if !watch_items.is_empty() {
             self.process_block_transactions(&block, &watch_items).await?;
+
+            // Update wallet confirmation statuses after processing block
+            if let Err(e) = self.wallet.write().await.update_confirmation_status().await {
+                tracing::warn!("Failed to update wallet confirmations after block: {}", e);
+            }
         }
 
         // Update chain state if needed
@@ -262,6 +270,14 @@ impl BlockProcessor {
             if !balance_changes.is_empty() {
                 self.report_balance_changes(&balance_changes, block_height).await?;
             }
+
+            // Emit block processed event
+            let _ = self.event_tx.send(SpvEvent::BlockProcessed {
+                height: block_height,
+                hash: block_hash.to_string(),
+                transactions_count: block.txdata.len(),
+                relevant_transactions,
+            });
         }
 
         Ok(())
@@ -414,6 +430,21 @@ impl BlockProcessor {
             }
         }
 
+        // Emit transaction event if relevant
+        if transaction_relevant {
+            let net_amount: i64 = tx_balance_changes.values().sum();
+            let affected_addresses: Vec<String> =
+                tx_balance_changes.keys().map(|addr| addr.to_string()).collect();
+
+            let _ = self.event_tx.send(SpvEvent::TransactionDetected {
+                txid: txid.to_string(),
+                confirmed: true, // Block transactions are confirmed
+                block_height: Some(block_height),
+                amount: net_amount,
+                addresses: affected_addresses,
+            });
+        }
+
         Ok(transaction_relevant)
     }
 
@@ -483,6 +514,19 @@ impl BlockProcessor {
             }
         }
 
+        // Emit balance update event
+        if !balance_changes.is_empty() {
+            // Calculate total wallet balance
+            let wallet = self.wallet.read().await;
+            if let Ok(wallet_balance) = wallet.get_balance().await {
+                let _ = self.event_tx.send(SpvEvent::BalanceUpdate {
+                    confirmed: wallet_balance.confirmed.to_sat(),
+                    unconfirmed: wallet_balance.pending.to_sat(),
+                    total: wallet_balance.total().to_sat(),
+                });
+            }
+        }
+
         Ok(())
     }
 
@@ -500,6 +544,8 @@ impl BlockProcessor {
         Ok(AddressBalance {
             confirmed: balance.confirmed + balance.instantlocked,
             unconfirmed: balance.pending,
+            pending: dashcore::Amount::from_sat(0),
+            pending_instant: dashcore::Amount::from_sat(0),
         })
     }
 

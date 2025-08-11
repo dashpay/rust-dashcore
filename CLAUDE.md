@@ -1,268 +1,204 @@
-# Claude Code Configuration - SPARC Development Environment
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
-This project uses the SPARC (Specification, Pseudocode, Architecture, Refinement, Completion) methodology for systematic Test-Driven Development with AI assistance through Claude-Flow orchestration.
 
-## SPARC Development Commands
+rust-dashcore is a Rust implementation of the Dash cryptocurrency protocol library. It provides:
+- Block and transaction serialization/deserialization
+- Script evaluation and address generation
+- Network protocol implementation
+- SPV (Simplified Payment Verification) client
+- HD wallet functionality (BIP32/BIP39/DIP9)
+- FFI bindings for C and Swift integration
+- JSON-RPC client for Dash Core nodes
 
-### Core SPARC Commands
-- `./claude-flow sparc modes`: List all available SPARC development modes
-- `./claude-flow sparc run <mode> "<task>"`: Execute specific SPARC mode for a task
-- `./claude-flow sparc tdd "<feature>"`: Run complete TDD workflow using SPARC methodology
-- `./claude-flow sparc info <mode>`: Get detailed information about a specific mode
+**IMPORTANT**: This library should NOT be used for consensus code. The exact behavior of the consensus-critical parts of Dash Core cannot be replicated without an exact copy of the C++ code.
 
-### Standard Build Commands
-- `npm run build`: Build the project
-- `npm run test`: Run the test suite
-- `npm run lint`: Run linter and format checks
-- `npm run typecheck`: Run TypeScript type checking
+## Repository Structure
 
-## SPARC Methodology Workflow
+### Core Libraries
+- `dash/` - Core Dash protocol implementation (blocks, transactions, scripts, addresses)
+- `hashes/` - Cryptographic hash implementations (SHA256, X11, Blake3)
+- `internals/` - Internal utilities and macros
 
-### 1. Specification Phase
+### Network & SPV
+- `dash-network/` - Network protocol abstractions
+- `dash-network-ffi/` - Network FFI bindings using UniFFI
+- `dash-spv/` - SPV client implementation
+- `dash-spv-ffi/` - C-compatible FFI bindings for SPV client
+
+### Wallet & Keys
+- `key-wallet/` - HD wallet implementation
+- `key-wallet-ffi/` - FFI bindings for wallet functionality
+
+### RPC & Integration
+- `rpc-client/` - JSON-RPC client for Dash Core nodes
+- `rpc-json/` - JSON types for RPC communication
+- `rpc-integration-test/` - Integration tests for RPC
+
+### Mobile SDK
+- `swift-dash-core-sdk/` - Swift SDK for iOS/macOS applications
+
+### Testing
+- `fuzz/` - Fuzzing tests for security testing
+
+## Build Commands
+
+### Basic Rust Build
 ```bash
-# Create detailed specifications and requirements
-./claude-flow sparc run spec-pseudocode "Define user authentication requirements"
-```
-- Define clear functional requirements
-- Document edge cases and constraints
-- Create user stories and acceptance criteria
-- Establish non-functional requirements
+# Build all workspace members
+cargo build
 
-### 2. Pseudocode Phase
-```bash
-# Develop algorithmic logic and data flows
-./claude-flow sparc run spec-pseudocode "Create authentication flow pseudocode"
-```
-- Break down complex logic into steps
-- Define data structures and interfaces
-- Plan error handling and edge cases
-- Create modular, testable components
+# Build release version
+cargo build --release
 
-### 3. Architecture Phase
-```bash
-# Design system architecture and component structure
-./claude-flow sparc run architect "Design authentication service architecture"
-```
-- Create system diagrams and component relationships
-- Define API contracts and interfaces
-- Plan database schemas and data flows
-- Establish security and scalability patterns
-
-### 4. Refinement Phase (TDD Implementation)
-```bash
-# Execute Test-Driven Development cycle
-./claude-flow sparc tdd "implement user authentication system"
-```
-
-**TDD Cycle:**
-1. **Red**: Write failing tests first
-2. **Green**: Implement minimal code to pass tests
-3. **Refactor**: Optimize and clean up code
-4. **Repeat**: Continue until feature is complete
-
-### 5. Completion Phase
-```bash
-# Integration, documentation, and validation
-./claude-flow sparc run integration "integrate authentication with user management"
-```
-- Integrate all components
-- Perform end-to-end testing
-- Create comprehensive documentation
-- Validate against original requirements
-
-## SPARC Mode Reference
-
-### Development Modes
-- **`architect`**: System design and architecture planning
-- **`code`**: Clean, modular code implementation
-- **`tdd`**: Test-driven development and testing
-- **`spec-pseudocode`**: Requirements and algorithmic planning
-- **`integration`**: System integration and coordination
-
-### Quality Assurance Modes
-- **`debug`**: Troubleshooting and bug resolution
-- **`security-review`**: Security analysis and vulnerability assessment
-- **`refinement-optimization-mode`**: Performance optimization and refactoring
-
-### Support Modes
-- **`docs-writer`**: Documentation creation and maintenance
-- **`devops`**: Deployment and infrastructure management
-- **`mcp`**: External service integration
-- **`swarm`**: Multi-agent coordination for complex tasks
-
-## Claude Code Slash Commands
-
-Claude Code slash commands are available in `.claude/commands/`:
-
-### Project Commands
-- `/sparc`: Execute SPARC methodology workflows
-- `/sparc-<mode>`: Run specific SPARC mode (e.g., /sparc-architect)
-- `/claude-flow-help`: Show all Claude-Flow commands
-- `/claude-flow-memory`: Interact with memory system
-- `/claude-flow-swarm`: Coordinate multi-agent swarms
-
-### Using Slash Commands
-1. Type `/` in Claude Code to see available commands
-2. Select a command or type its name
-3. Commands are context-aware and project-specific
-4. Custom commands can be added to `.claude/commands/`
-
-## Code Style and Best Practices
-
-### SPARC Development Principles
-- **Modular Design**: Keep files under 500 lines, break into logical components
-- **Environment Safety**: Never hardcode secrets or environment-specific values
-- **Test-First**: Always write tests before implementation (Red-Green-Refactor)
-- **Clean Architecture**: Separate concerns, use dependency injection
-- **Documentation**: Maintain clear, up-to-date documentation
-
-### Coding Standards
-- Use TypeScript for type safety and better tooling
-- Follow consistent naming conventions (camelCase for variables, PascalCase for classes)
-- Implement proper error handling and logging
-- Use async/await for asynchronous operations
-- Prefer composition over inheritance
-
-### Memory and State Management
-- Use claude-flow memory system for persistent state across sessions
-- Store progress and findings using namespaced keys
-- Query previous work before starting new tasks
-- Export/import memory for backup and sharing
-
-## SPARC Memory Integration
-
-### Memory Commands for SPARC Development
-```bash
-# Store project specifications
-./claude-flow memory store spec_auth "User authentication requirements and constraints"
-
-# Store architectural decisions
-./claude-flow memory store arch_decisions "Database schema and API design choices"
-
-# Store test results and coverage
-./claude-flow memory store test_coverage "Authentication module: 95% coverage, all tests passing"
-
-# Query previous work
-./claude-flow memory query auth_implementation
-
-# Export project memory
-./claude-flow memory export project_backup.json
+# Build specific crate
+cargo build -p dash-spv
 ```
 
-### Memory Namespaces
-- **`spec`**: Requirements and specifications
-- **`arch`**: Architecture and design decisions
-- **`impl`**: Implementation notes and code patterns
-- **`test`**: Test results and coverage reports
-- **`debug`**: Bug reports and resolution notes
-
-## Workflow Examples
-
-### Feature Development Workflow
+### FFI Library Build
 ```bash
-# 1. Start with specification
-./claude-flow sparc run spec-pseudocode "User profile management feature"
+# Build iOS libraries for key-wallet-ffi
+cd key-wallet-ffi && ./build-ios.sh
 
-# 2. Design architecture
-./claude-flow sparc run architect "Profile service architecture with data validation"
-
-# 3. Implement with TDD
-./claude-flow sparc tdd "user profile CRUD operations"
-
-# 4. Security review
-./claude-flow sparc run security-review "profile data access and validation"
-
-# 5. Integration testing
-./claude-flow sparc run integration "profile service with authentication system"
-
-# 6. Documentation
-./claude-flow sparc run docs-writer "profile service API documentation"
+# Build iOS libraries for swift-dash-core-sdk
+cd swift-dash-core-sdk && ./build-ios.sh
 ```
 
-### Bug Fix Workflow
+### iOS/macOS Targets
 ```bash
-# 1. Debug and analyze
-./claude-flow sparc run debug "authentication token expiration issue"
+# Add iOS targets
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 
-# 2. Write regression tests
-./claude-flow sparc run tdd "token refresh mechanism tests"
-
-# 3. Implement fix
-./claude-flow sparc run code "fix token refresh in authentication service"
-
-# 4. Security review
-./claude-flow sparc run security-review "token handling security implications"
+# Build for specific target
+cargo build --release --target aarch64-apple-ios
 ```
 
-## Configuration Files
+## Test Commands
 
-### Claude Code Integration
-- **`.claude/commands/`**: Claude Code slash commands for all SPARC modes
-- **`.claude/logs/`**: Conversation and session logs
-
-### SPARC Configuration
-- **`.roomodes`**: SPARC mode definitions and configurations (auto-generated)
-- **`.roo/`**: SPARC templates and workflows (auto-generated)
-
-### Claude-Flow Configuration
-- **`memory/`**: Persistent memory and session data
-- **`coordination/`**: Multi-agent coordination settings
-- **`CLAUDE.md`**: Project instructions for Claude Code
-
-## Git Workflow Integration
-
-### Commit Strategy with SPARC
-- **Specification commits**: After completing requirements analysis
-- **Architecture commits**: After design phase completion
-- **TDD commits**: After each Red-Green-Refactor cycle
-- **Integration commits**: After successful component integration
-- **Documentation commits**: After completing documentation updates
-
-### Branch Strategy
-- **`feature/sparc-<feature-name>`**: Feature development with SPARC methodology
-- **`hotfix/sparc-<issue>`**: Bug fixes using SPARC debugging workflow
-- **`refactor/sparc-<component>`**: Refactoring using optimization mode
-
-## Troubleshooting
-
-### Common SPARC Issues
-- **Mode not found**: Check `.roomodes` file exists and is valid JSON
-- **Memory persistence**: Ensure `memory/` directory has write permissions
-- **Tool access**: Verify required tools are available for the selected mode
-- **Namespace conflicts**: Use unique memory namespaces for different features
-
-### Debug Commands
+### Running Tests
 ```bash
-# Check SPARC configuration
-./claude-flow sparc modes
+# Run all tests
+cargo test
 
-# Verify memory system
-./claude-flow memory stats
+# Run tests with output
+cargo test -- --nocapture
 
-# Check system status
-./claude-flow status
+# Run specific test
+cargo test test_name
 
-# View detailed mode information
-./claude-flow sparc info <mode-name>
+# Run tests for specific crate
+cargo test -p dash-spv
+
+# Run comprehensive test suite
+./contrib/test.sh
 ```
 
-## Project Architecture
+### Environment Variables for Testing
+```bash
+# Enable coverage
+DO_COV=true ./contrib/test.sh
 
-This SPARC-enabled project follows a systematic development approach:
-- **Clear separation of concerns** through modular design
-- **Test-driven development** ensuring reliability and maintainability
-- **Iterative refinement** for continuous improvement
-- **Comprehensive documentation** for team collaboration
-- **AI-assisted development** through specialized SPARC modes
+# Enable linting
+DO_LINT=true ./contrib/test.sh
 
-## Important Notes
+# Enable formatting check
+DO_FMT=true ./contrib/test.sh
+```
 
-- Always run tests before committing (`npm run test`)
-- Use SPARC memory system to maintain context across sessions
-- Follow the Red-Green-Refactor cycle during TDD phases
-- Document architectural decisions in memory for future reference
-- Regular security reviews for any authentication or data handling code
-- Claude Code slash commands provide quick access to SPARC modes
+### Integration Tests
+```bash
+# Run with real Dash node (requires DASH_SPV_IP environment variable)
+cd dash-spv
+cargo test --test integration_real_node_test -- --nocapture
+```
 
-For more information about SPARC methodology, see: https://github.com/ruvnet/claude-code-flow/docs/sparc.md
+## Development Commands
+
+### Linting and Formatting
+```bash
+# Format code
+cargo fmt
+
+# Check formatting
+cargo fmt --check
+
+# Run clippy
+cargo clippy --all-features --all-targets -- -D warnings
+```
+
+### Documentation
+```bash
+# Build documentation
+cargo doc --all-features
+
+# Build and open documentation
+cargo doc --open
+```
+
+## Key Features
+
+### Dash-Specific Features
+- **InstantSend (IX)**: Instant transaction confirmation
+- **ChainLocks**: Additional blockchain security via LLMQ
+- **Masternodes**: Support for masternode operations
+- **Quorums**: Long-Living Masternode Quorums (LLMQ)
+- **Special Transactions**: DIP2/DIP3 special transaction types
+- **Deterministic Masternode Lists**: DIP3 masternode system
+- **X11 Mining Algorithm**: Dash's proof-of-work algorithm
+
+### Architecture Highlights
+- **Workspace-based**: Multiple crates with clear separation of concerns
+- **Async/Await**: Modern async Rust throughout
+- **FFI Support**: C and Swift bindings for cross-platform usage
+- **Comprehensive Testing**: Unit, integration, and fuzz testing
+- **MSRV**: Rust 1.80 minimum supported version
+
+## Code Style Guidelines
+
+### Important Constraints
+- **No Hardcoded Values**: Never hardcode network parameters, addresses, or keys
+- **Error Handling**: Use proper error types (thiserror) and propagate errors appropriately
+- **Async Code**: Use tokio runtime for async operations
+- **Memory Safety**: Careful handling in FFI boundaries
+- **Feature Flags**: Use conditional compilation for optional features
+
+### Testing Requirements
+- Write unit tests for new functionality
+- Integration tests for network operations
+- Test both mainnet and testnet configurations
+- Use proptest for property-based testing where appropriate
+
+### Git Workflow
+- Current development branch: `v0.40-dev`
+- Main branch: `master`
+- Recent work:
+  - Removed interleaved sync logic from dash-spv (now uses sequential sync only)
+  - Swift SDK and FFI improvements
+
+## Current Status
+
+The project is actively developing:
+- Swift SDK implementation for iOS/macOS
+- FFI bindings improvements
+- Support for Dash Core versions 0.18.0 - 0.21.0
+
+## Security Considerations
+
+- This library is NOT suitable for consensus-critical code
+- Always validate inputs from untrusted sources
+- Use secure random number generation for keys
+- Never log or expose private keys
+- Be careful with FFI memory management
+
+## API Stability
+
+The API is currently unstable (version 0.x.x). Breaking changes may occur in minor version updates. Production use requires careful version pinning.
+
+## Known Limitations
+
+- Cannot replicate exact consensus behavior of Dash Core
+- Not suitable for mining or consensus validation
+- FFI bindings have limited error propagation
+- Some Dash Core RPC methods not yet implemented

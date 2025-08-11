@@ -124,34 +124,37 @@ mod tests {
 
     #[tokio::test]
     async fn test_peer_store_save_load() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temporary directory for test");
         let store = PeerStore::new(Network::Dash, temp_dir.path().to_path_buf());
 
         // Create test peer messages
-        let addr: std::net::SocketAddr = "192.168.1.1:9999".parse().unwrap();
+        let addr: std::net::SocketAddr =
+            "192.168.1.1:9999".parse().expect("Failed to parse test address");
         let msg = AddrV2Message {
             time: 1234567890,
             services: ServiceFlags::from(1),
-            addr: AddrV2::Ipv4(addr.ip().to_string().parse().unwrap()),
+            addr: AddrV2::Ipv4(
+                addr.ip().to_string().parse().expect("Failed to parse IPv4 address"),
+            ),
             port: addr.port(),
         };
 
         // Save peers
-        store.save_peers(&[msg]).await.unwrap();
+        store.save_peers(&[msg]).await.expect("Failed to save peers in test");
 
         // Load peers
-        let loaded = store.load_peers().await.unwrap();
+        let loaded = store.load_peers().await.expect("Failed to load peers in test");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0], addr);
     }
 
     #[tokio::test]
     async fn test_peer_store_empty() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temporary directory for test");
         let store = PeerStore::new(Network::Testnet, temp_dir.path().to_path_buf());
 
         // Load from non-existent file
-        let loaded = store.load_peers().await.unwrap();
+        let loaded = store.load_peers().await.expect("Failed to load peers from empty store");
         assert!(loaded.is_empty());
     }
 }

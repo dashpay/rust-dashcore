@@ -1,36 +1,37 @@
 //! Synchronization management for the Dash SPV client.
 //!
-//! This module provides different sync strategies:
-//!
-//! 1. **Sequential sync**: Headers first, then filter headers, then filters on-demand
-//! 2. **Interleaved sync**: Headers and filter headers synchronized simultaneously
-//!    for better responsiveness and efficiency
-//!
-//! The interleaved sync mode requests filter headers immediately after each batch
-//! of headers is received and stored, providing better user experience during
-//! initial sync operations.
+//! This module provides sequential sync strategy:
+//! Headers first, then filter headers, then filters on-demand
 
 pub mod filters;
 pub mod headers;
+pub mod headers2_state;
+pub mod headers_with_reorg;
 pub mod masternodes;
+pub mod sequential;
 pub mod state;
+pub mod terminal_block_data;
+pub mod terminal_blocks;
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::types::SyncProgress;
-use dashcore::network::constants::NetworkExt;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 
 pub use filters::FilterSyncManager;
 pub use headers::HeaderSyncManager;
+pub use headers_with_reorg::{HeaderSyncManagerWithReorg, ReorgConfig};
 pub use masternodes::MasternodeSyncManager;
 pub use state::SyncState;
+pub use terminal_blocks::{TerminalBlock, TerminalBlockManager};
 
-/// Coordinates all synchronization activities.
+/// Legacy sync manager - kept for compatibility but simplified.
+/// Use SequentialSyncManager for all synchronization needs.
+#[deprecated(note = "Use SequentialSyncManager instead")]
 pub struct SyncManager {
-    header_sync: HeaderSyncManager,
+    header_sync: HeaderSyncManagerWithReorg,
     filter_sync: FilterSyncManager,
     masternode_sync: MasternodeSyncManager,
     state: SyncState,
@@ -42,88 +43,30 @@ impl SyncManager {
     pub fn new(
         config: &ClientConfig,
         received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
-    ) -> Self {
-        Self {
-            header_sync: HeaderSyncManager::new(config),
+    ) -> SyncResult<Self> {
+        // Create reorg config with sensible defaults
+        let reorg_config = ReorgConfig::default();
+
+        Ok(Self {
+            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config).map_err(|e| {
+                SyncError::InvalidState(format!("Failed to create header sync manager: {}", e))
+            })?,
             filter_sync: FilterSyncManager::new(config, received_filter_heights),
             masternode_sync: MasternodeSyncManager::new(config),
             state: SyncState::new(),
             config: config.clone(),
-        }
+        })
     }
 
     /// Handle a Headers message by routing it to the header sync manager.
-    /// If filter headers are enabled, also requests filter headers for new blocks.
     pub async fn handle_headers_message(
         &mut self,
         headers: Vec<dashcore::block::Header>,
         storage: &mut dyn StorageManager,
         network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
-        // First, let the header sync manager process the headers
-        let continue_sync =
-            self.header_sync.handle_headers_message(headers.clone(), storage, network).await?;
-
-        // If filters are enabled and we received new headers, request filter headers for them
-        if self.config.enable_filters && !headers.is_empty() {
-            // Get the height range of the newly stored headers
-            let first_header_hash = headers[0].block_hash();
-            let last_header_hash = headers.last().unwrap().block_hash();
-
-            // Find heights for these headers
-            if let Some(first_height) =
-                storage.get_header_height_by_hash(&first_header_hash).await.map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to get first header height: {}", e))
-                })?
-            {
-                if let Some(last_height) =
-                    storage.get_header_height_by_hash(&last_header_hash).await.map_err(|e| {
-                        SyncError::SyncFailed(format!("Failed to get last header height: {}", e))
-                    })?
-                {
-                    // Check if we need filter headers for this range
-                    let current_filter_tip = storage
-                        .get_filter_tip_height()
-                        .await
-                        .map_err(|e| {
-                            SyncError::SyncFailed(format!("Failed to get filter tip: {}", e))
-                        })?
-                        .unwrap_or(0);
-
-                    // Only request filter headers if we're behind by more than 1 block
-                    // (within 1 block is considered "caught up" to handle edge cases)
-                    if current_filter_tip + 1 < last_height {
-                        let start_height = (current_filter_tip + 1).max(first_height);
-                        tracing::info!(
-                            "🔄 Requesting filter headers for new blocks: heights {} to {}",
-                            start_height,
-                            last_height
-                        );
-
-                        // Always ensure filter header requests are sent for new blocks
-                        if !self.filter_sync.is_syncing_filter_headers() {
-                            tracing::debug!("Starting filter header sync to catch up with headers");
-                            if let Err(e) =
-                                self.filter_sync.start_sync_headers(network, storage).await
-                            {
-                                tracing::warn!("Failed to start filter header sync: {}", e);
-                            }
-                        } else {
-                            // Filter header sync is already active and will handle new ranges automatically
-                            // The filter sync manager's handle_cfheaders_message will request next batches
-                            tracing::debug!("Filter header sync already active, relying on automatic batch progression");
-                        }
-                    } else if current_filter_tip == last_height {
-                        tracing::debug!(
-                            "Filter headers already caught up to block headers at height {}",
-                            last_height
-                        );
-                    }
-                }
-            }
-        }
-
-        Ok(continue_sync)
+        // Simply forward to the header sync manager
+        self.header_sync.handle_headers_message(headers, storage, network).await
     }
 
     /// Handle a CFHeaders message by routing it to the filter sync manager.
@@ -199,6 +142,7 @@ impl SyncManager {
     }
 
     /// Synchronize all components to the tip.
+    /// This method is deprecated - use SequentialSyncManager instead.
     pub async fn sync_all(
         &mut self,
         network: &mut dyn NetworkManager,
@@ -206,25 +150,15 @@ impl SyncManager {
     ) -> SyncResult<SyncProgress> {
         let mut progress = SyncProgress::default();
 
-        // Step 1: Sync headers and filter headers (interleaved if both enabled)
-        if self.config.validation_mode != crate::types::ValidationMode::None
-            && self.config.enable_filters
-        {
-            // Use interleaved sync for better responsiveness and efficiency
-            progress = self.sync_headers_and_filter_headers_impl(network, storage).await?;
-        } else if self.config.validation_mode != crate::types::ValidationMode::None {
-            // Headers only
+        // Sequential sync: headers first, then filter headers, then masternodes
+        if self.config.validation_mode != crate::types::ValidationMode::None {
             progress = self.sync_headers(network, storage).await?;
-        } else if self.config.enable_filters {
-            // Filter headers only (unusual case)
-            progress = self.sync_filter_headers(network, storage).await?;
-
-            // Note: Compact filter downloading is skipped during initial sync
-            // Use sync_and_check_filters() when you have specific watch items to check
-            tracing::info!("💡 Headers and filter headers synced. Use sync_and_check_filters() to download and check specific filters");
         }
 
-        // Step 3: Sync masternode list if enabled
+        if self.config.enable_filters {
+            progress = self.sync_filter_headers(network, storage).await?;
+        }
+
         if self.config.enable_masternodes {
             progress = self.sync_masternodes(network, storage).await?;
         }
@@ -252,9 +186,7 @@ impl SyncManager {
             let final_height = storage
                 .get_tip_height()
                 .await
-                .map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to get final tip height: {}", e))
-                })?
+                .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
                 .unwrap_or(0);
 
             return Ok(SyncProgress {
@@ -274,7 +206,7 @@ impl SyncManager {
         let final_height = storage
             .get_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get final tip height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
             .unwrap_or(0);
 
         Ok(SyncProgress {
@@ -284,7 +216,8 @@ impl SyncManager {
         })
     }
 
-    /// Implementation of sequential header and filter header sync using the new state-based approach.
+    /// Implementation of sequential header and filter header sync.
+    /// This method is deprecated and only kept for compatibility.
     async fn sync_headers_and_filter_headers_impl(
         &mut self,
         network: &mut dyn NetworkManager,
@@ -296,13 +229,13 @@ impl SyncManager {
         let current_tip_height = storage
             .get_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get tip height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
             .unwrap_or(0);
 
         let current_filter_tip_height = storage
             .get_filter_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get filter tip height: {}", e)))?
             .unwrap_or(0);
 
         tracing::info!(
@@ -336,24 +269,24 @@ impl SyncManager {
         let final_header_height = storage
             .get_tip_height()
             .await
-            .map_err(|e| {
-                SyncError::SyncFailed(format!("Failed to get final header height: {}", e))
-            })?
+            .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
             .unwrap_or(0);
 
         let final_filter_height = storage
             .get_filter_tip_height()
             .await
-            .map_err(|e| {
-                SyncError::SyncFailed(format!("Failed to get final filter height: {}", e))
-            })?
+            .map_err(|e| SyncError::Storage(format!("Failed to get filter tip height: {}", e)))?
             .unwrap_or(0);
+
+        // Check filter sync availability
+        let filter_sync_available = self.filter_sync.is_filter_sync_available(network).await;
 
         Ok(SyncProgress {
             header_height: final_header_height,
             filter_header_height: final_filter_height,
             headers_synced: !header_sync_started, // If sync didn't start, we're already up to date
             filter_headers_synced: !filter_sync_started, // If sync didn't start, we're already up to date
+            filter_sync_available,
             ..SyncProgress::default()
         })
     }
@@ -380,14 +313,15 @@ impl SyncManager {
             let final_filter_height = storage
                 .get_filter_tip_height()
                 .await
-                .map_err(|e| {
-                    SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e))
-                })?
+                .map_err(|e| SyncError::Storage(format!("Failed to get filter tip height: {}", e)))?
                 .unwrap_or(0);
+
+            let filter_sync_available = self.filter_sync.is_filter_sync_available(network).await;
 
             return Ok(SyncProgress {
                 filter_header_height: final_filter_height,
                 filter_headers_synced: true,
+                filter_sync_available,
                 ..SyncProgress::default()
             });
         }
@@ -402,12 +336,15 @@ impl SyncManager {
         let final_filter_height = storage
             .get_filter_tip_height()
             .await
-            .map_err(|e| SyncError::SyncFailed(format!("Failed to get filter tip height: {}", e)))?
+            .map_err(|e| SyncError::Storage(format!("Failed to get filter tip height: {}", e)))?
             .unwrap_or(0);
+
+        let filter_sync_available = self.filter_sync.is_filter_sync_available(network).await;
 
         Ok(SyncProgress {
             filter_header_height: final_filter_height,
             filter_headers_synced: false, // Sync is in progress, will complete asynchronously
+            filter_sync_available,
             ..SyncProgress::default()
         })
     }
@@ -547,12 +484,12 @@ impl SyncManager {
     }
 
     /// Get a reference to the header sync manager.
-    pub fn header_sync(&self) -> &HeaderSyncManager {
+    pub fn header_sync(&self) -> &HeaderSyncManagerWithReorg {
         &self.header_sync
     }
 
     /// Get a mutable reference to the header sync manager.
-    pub fn header_sync_mut(&mut self) -> &mut HeaderSyncManager {
+    pub fn header_sync_mut(&mut self) -> &mut HeaderSyncManagerWithReorg {
         &mut self.header_sync
     }
 
@@ -564,93 +501,6 @@ impl SyncManager {
     /// Get a reference to the filter sync manager.
     pub fn filter_sync(&self) -> &FilterSyncManager {
         &self.filter_sync
-    }
-
-    /// Recover from sync stalls by re-sending appropriate requests based on current state.
-    async fn recover_sync_requests(
-        &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &dyn StorageManager,
-        headers_sync_completed: bool,
-        current_header_tip: u32,
-    ) -> SyncResult<()> {
-        tracing::info!(
-            "🔄 Recovering sync requests - headers_completed: {}, current_tip: {}",
-            headers_sync_completed,
-            current_header_tip
-        );
-
-        // Always try to advance headers if not complete
-        if !headers_sync_completed {
-            // Get the current tip hash to request headers after it
-            let tip_hash = if current_header_tip > 0 {
-                storage
-                    .get_header(current_header_tip)
-                    .await
-                    .map_err(|e| {
-                        SyncError::SyncFailed(format!(
-                            "Failed to get tip header for recovery: {}",
-                            e
-                        ))
-                    })?
-                    .map(|h| h.block_hash())
-            } else {
-                // Start from genesis
-                Some(
-                    self.config
-                        .network
-                        .known_genesis_block_hash()
-                        .expect("unable to get genesis block hash"),
-                )
-            };
-
-            tracing::info!("🔄 Re-requesting headers from tip: {:?}", tip_hash);
-            self.header_sync.request_headers(network, tip_hash).await?;
-        }
-
-        // Check if filter headers are lagging behind block headers and request catch-up
-        let header_height = storage
-            .get_tip_height()
-            .await
-            .map_err(|e| {
-                SyncError::SyncFailed(format!("Failed to get header tip for recovery: {}", e))
-            })?
-            .unwrap_or(0);
-        let filter_height = storage
-            .get_filter_tip_height()
-            .await
-            .map_err(|e| {
-                SyncError::SyncFailed(format!("Failed to get filter tip for recovery: {}", e))
-            })?
-            .unwrap_or(0);
-
-        tracing::info!(
-            "🔄 Sync state check - headers: {}, filter headers: {}",
-            header_height,
-            filter_height
-        );
-
-        if filter_height < header_height {
-            let start_height = filter_height + 1;
-            let batch_size = 1999; // Match existing batch size
-            let end_height = (start_height + batch_size - 1).min(header_height);
-
-            if let Some(stop_header) = storage.get_header(end_height).await.map_err(|e| {
-                SyncError::SyncFailed(format!("Failed to get stop header for recovery: {}", e))
-            })? {
-                let stop_hash = stop_header.block_hash();
-                tracing::info!(
-                    "🔄 Re-requesting filter headers from {} to {} (stop: {})",
-                    start_height,
-                    end_height,
-                    stop_hash
-                );
-
-                self.filter_sync.request_filter_headers(network, start_height, stop_hash).await?;
-            }
-        }
-
-        Ok(())
     }
 }
 

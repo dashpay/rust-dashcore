@@ -107,6 +107,32 @@ impl NetworkManager for MockNetworkManager {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         tx
     }
+
+    async fn get_peer_best_height(&self) -> dash_spv::error::NetworkResult<Option<u32>> {
+        Ok(Some(100))
+    }
+
+    async fn has_peer_with_service(
+        &self,
+        _service_flags: dashcore::network::constants::ServiceFlags,
+    ) -> bool {
+        true
+    }
+
+    async fn get_peers_with_service(
+        &self,
+        _service_flags: dashcore::network::constants::ServiceFlags,
+    ) -> Vec<dash_spv::types::PeerInfo> {
+        vec![]
+    }
+
+    async fn get_last_message_peer_id(&self) -> dash_spv::types::PeerId {
+        dash_spv::types::PeerId(1)
+    }
+
+    async fn update_peer_dsq_preference(&mut self, _wants_dsq: bool) -> NetworkResult<()> {
+        Ok(())
+    }
 }
 
 #[tokio::test]

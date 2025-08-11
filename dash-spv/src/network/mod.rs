@@ -10,9 +10,13 @@ pub mod multi_peer;
 pub mod peer;
 pub mod persist;
 pub mod pool;
+pub mod reputation;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub mod mock;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
@@ -69,6 +73,45 @@ pub trait NetworkManager: Send + Sync {
 
     /// Get a message sender channel for sending messages from other components.
     fn get_message_sender(&self) -> mpsc::Sender<NetworkMessage>;
+
+    /// Get the best block height reported by connected peers.
+    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>>;
+
+    /// Check if any connected peer supports a specific service.
+    async fn has_peer_with_service(
+        &self,
+        service_flags: dashcore::network::constants::ServiceFlags,
+    ) -> bool;
+
+    /// Get peers that support a specific service.
+    async fn get_peers_with_service(
+        &self,
+        service_flags: dashcore::network::constants::ServiceFlags,
+    ) -> Vec<crate::types::PeerInfo>;
+
+    /// Check if any connected peer supports headers2 compression.
+    async fn has_headers2_peer(&self) -> bool {
+        self.has_peer_with_service(dashcore::network::constants::NODE_HEADERS_COMPRESSED).await
+    }
+
+    /// Get the peer ID of the last peer that sent us a message.
+    /// Returns PeerId(0) if no message has been received yet.
+    async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
+        crate::types::PeerId(0) // Default implementation
+    }
+
+    /// Update the DSQ (CoinJoin queue) message preference for the current peer.
+    async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()>;
+
+    /// Mark that the current peer has sent us Headers2 messages.
+    async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
+        Ok(()) // Default implementation
+    }
+
+    /// Check if the current peer has sent us Headers2 messages.
+    async fn peer_has_sent_headers2(&self) -> bool {
+        false // Default implementation
+    }
 }
 
 /// TCP-based network manager implementation.
@@ -79,6 +122,7 @@ pub struct TcpNetworkManager {
     _message_handler: MessageHandler,
     message_sender: mpsc::Sender<NetworkMessage>,
     message_receiver: mpsc::Receiver<NetworkMessage>,
+    dsq_preference: bool,
 }
 
 impl TcpNetworkManager {
@@ -89,11 +133,17 @@ impl TcpNetworkManager {
         Ok(Self {
             config: config.clone(),
             connection: None,
-            handshake: HandshakeManager::new(config.network),
+            handshake: HandshakeManager::new(config.network, config.mempool_strategy),
             _message_handler: MessageHandler::new(),
             message_sender,
             message_receiver,
+            dsq_preference: false,
         })
+    }
+
+    /// Get the current DSQ preference state.
+    pub fn get_dsq_preference(&self) -> bool {
+        self.dsq_preference
     }
 }
 
@@ -111,8 +161,12 @@ impl NetworkManager for TcpNetworkManager {
         // Try to connect to the first peer for now
         let peer_addr = self.config.peers[0];
 
-        let mut connection =
-            TcpConnection::new(peer_addr, self.config.connection_timeout, self.config.network);
+        let mut connection = TcpConnection::new(
+            peer_addr,
+            self.config.connection_timeout,
+            self.config.read_timeout,
+            self.config.network,
+        );
         connection.connect_instance().await?;
 
         // Perform handshake
@@ -208,5 +262,79 @@ impl NetworkManager for TcpNetworkManager {
 
     fn get_message_sender(&self) -> mpsc::Sender<NetworkMessage> {
         self.message_sender.clone()
+    }
+
+    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
+        if let Some(connection) = &self.connection {
+            // For single peer connection, return the peer's best height
+            match connection.peer_info().best_height {
+                Some(height) if height > 0 => Ok(Some(height as u32)),
+                _ => Ok(None),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn has_peer_with_service(
+        &self,
+        service_flags: dashcore::network::constants::ServiceFlags,
+    ) -> bool {
+        if let Some(connection) = &self.connection {
+            let peer_info = connection.peer_info();
+            peer_info
+                .services
+                .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    }
+
+    async fn get_peers_with_service(
+        &self,
+        service_flags: dashcore::network::constants::ServiceFlags,
+    ) -> Vec<crate::types::PeerInfo> {
+        if let Some(connection) = &self.connection {
+            let peer_info = connection.peer_info();
+            if peer_info
+                .services
+                .map(|s| dashcore::network::constants::ServiceFlags::from(s).has(service_flags))
+                .unwrap_or(false)
+            {
+                vec![peer_info]
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        }
+    }
+
+    async fn has_headers2_peer(&self) -> bool {
+        // Headers2 is currently disabled due to protocol compatibility issues
+        // TODO: Fix headers2 decompression before re-enabling
+        false
+    }
+
+    async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
+        // For single peer connection, always return PeerId(1) when connected
+        if self.connection.is_some() {
+            crate::types::PeerId(1)
+        } else {
+            crate::types::PeerId(0)
+        }
+    }
+
+    async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()> {
+        // Store the DSQ preference
+        self.dsq_preference = wants_dsq;
+
+        // For single peer connection, update the peer info if we have one
+        if let Some(connection) = &self.connection {
+            let peer_info = connection.peer_info();
+            tracing::info!("Updated peer {} DSQ preference to: {}", peer_info.address, wants_dsq);
+        }
+        Ok(())
     }
 }

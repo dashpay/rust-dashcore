@@ -31,6 +31,7 @@ mod tests {
             let c_string = CString::new(special_chars.replace('\0', "")).unwrap();
             let ffi_special = FFIString {
                 ptr: c_string.as_ptr() as *mut c_char,
+                length: special_chars.replace('\0', "").len(),
             };
             
             if let Ok(recovered) = FFIString::from_ptr(ffi_special.ptr) {
@@ -63,8 +64,8 @@ mod tests {
             // Destruction functions should handle null gracefully
             dash_spv_ffi_client_destroy(ptr::null_mut());
             dash_spv_ffi_config_destroy(ptr::null_mut());
-            dash_spv_ffi_string_destroy(FFIString { ptr: ptr::null_mut() });
-            dash_spv_ffi_array_destroy(FFIArray { data: ptr::null_mut(), len: 0 });
+            dash_spv_ffi_string_destroy(FFIString { ptr: ptr::null_mut(), length: 0 });
+            dash_spv_ffi_array_destroy(FFIArray { data: ptr::null_mut(), len: 0, capacity: 0 });
         }
     }
     
@@ -113,6 +114,7 @@ mod tests {
             let huge_array = FFIArray {
                 data: ptr::null_mut(),
                 len: huge_size,
+                capacity: huge_size,
             };
             
             // Should handle large sizes safely

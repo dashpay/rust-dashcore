@@ -1,4 +1,4 @@
-use crate::{null_check, set_last_error, FFIErrorCode, FFINetwork, FFIString};
+use crate::{null_check, set_last_error, FFIErrorCode, FFIMempoolStrategy, FFINetwork, FFIString};
 use dash_spv::{ClientConfig, ValidationMode};
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -187,6 +187,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(
     if config.is_null() {
         return FFIString {
             ptr: std::ptr::null_mut(),
+            length: 0,
         };
     }
 
@@ -195,6 +196,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_get_data_dir(
         Some(dir) => FFIString::new(&dir.to_string_lossy()),
         None => FFIString {
             ptr: std::ptr::null_mut(),
+            length: 0,
         },
     }
 }
@@ -214,4 +216,128 @@ impl FFIClientConfig {
     pub fn clone_inner(&self) -> ClientConfig {
         self.inner.clone()
     }
+}
+
+// Mempool configuration functions
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_tracking(
+    config: *mut FFIClientConfig,
+    enable: bool,
+) -> i32 {
+    null_check!(config);
+
+    let config = &mut (*config).inner;
+    config.enable_mempool_tracking = enable;
+    FFIErrorCode::Success as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_strategy(
+    config: *mut FFIClientConfig,
+    strategy: FFIMempoolStrategy,
+) -> i32 {
+    null_check!(config);
+
+    let config = &mut (*config).inner;
+    config.mempool_strategy = strategy.into();
+    FFIErrorCode::Success as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_max_mempool_transactions(
+    config: *mut FFIClientConfig,
+    max_transactions: u32,
+) -> i32 {
+    null_check!(config);
+
+    let config = &mut (*config).inner;
+    config.max_mempool_transactions = max_transactions as usize;
+    FFIErrorCode::Success as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_mempool_timeout(
+    config: *mut FFIClientConfig,
+    timeout_secs: u64,
+) -> i32 {
+    null_check!(config);
+
+    let config = &mut (*config).inner;
+    config.mempool_timeout_secs = timeout_secs;
+    FFIErrorCode::Success as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_fetch_mempool_transactions(
+    config: *mut FFIClientConfig,
+    fetch: bool,
+) -> i32 {
+    null_check!(config);
+
+    let config = &mut (*config).inner;
+    config.fetch_mempool_transactions = fetch;
+    FFIErrorCode::Success as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_persist_mempool(
+    config: *mut FFIClientConfig,
+    persist: bool,
+) -> i32 {
+    null_check!(config);
+
+    let config = &mut (*config).inner;
+    config.persist_mempool = persist;
+    FFIErrorCode::Success as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_tracking(
+    config: *const FFIClientConfig,
+) -> bool {
+    if config.is_null() {
+        return false;
+    }
+
+    let config = &(*config).inner;
+    config.enable_mempool_tracking
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_get_mempool_strategy(
+    config: *const FFIClientConfig,
+) -> FFIMempoolStrategy {
+    if config.is_null() {
+        return FFIMempoolStrategy::Selective;
+    }
+
+    let config = &(*config).inner;
+    config.mempool_strategy.into()
+}
+
+// Checkpoint sync configuration functions
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_start_from_height(
+    config: *mut FFIClientConfig,
+    height: u32,
+) -> i32 {
+    null_check!(config);
+
+    let config = &mut (*config).inner;
+    config.start_from_height = Some(height);
+    FFIErrorCode::Success as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_wallet_creation_time(
+    config: *mut FFIClientConfig,
+    timestamp: u32,
+) -> i32 {
+    null_check!(config);
+
+    let config = &mut (*config).inner;
+    config.wallet_creation_time = Some(timestamp);
+    FFIErrorCode::Success as i32
 }

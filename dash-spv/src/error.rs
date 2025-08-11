@@ -23,6 +23,31 @@ pub enum SpvError {
 
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
+
+    #[error("General error: {0}")]
+    General(String),
+
+    #[error("Parse error: {0}")]
+    Parse(#[from] ParseError),
+
+    #[error("Wallet error: {0}")]
+    Wallet(#[from] WalletError),
+}
+
+/// Parse-related errors.
+#[derive(Debug, Error)]
+pub enum ParseError {
+    #[error("Invalid network address: {0}")]
+    InvalidAddress(String),
+
+    #[error("Invalid network name: {0}")]
+    InvalidNetwork(String),
+
+    #[error("Missing required argument: {0}")]
+    MissingArgument(String),
+
+    #[error("Invalid argument value for {0}: {1}")]
+    InvalidArgument(String, String),
 }
 
 /// Network-related errors.
@@ -43,11 +68,20 @@ pub enum NetworkError {
     #[error("Peer disconnected")]
     PeerDisconnected,
 
+    #[error("Not connected")]
+    NotConnected,
+
     #[error("Message serialization error: {0}")]
     Serialization(#[from] dashcore::consensus::encode::Error),
 
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
+
+    #[error("Address parse error: {0}")]
+    AddressParse(String),
+
+    #[error("System time error: {0}")]
+    SystemTime(String),
 }
 
 /// Storage-related errors.
@@ -70,6 +104,12 @@ pub enum StorageError {
 
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    #[error("Inconsistent state: {0}")]
+    InconsistentState(String),
+
+    #[error("Lock poisoned: {0}")]
+    LockPoisoned(String),
 }
 
 /// Validation-related errors.
@@ -95,25 +135,71 @@ pub enum ValidationError {
 
     #[error("Masternode verification failed: {0}")]
     MasternodeVerification(String),
+
+    #[error("Storage error: {0}")]
+    StorageError(#[from] StorageError),
 }
 
 /// Synchronization-related errors.
 #[derive(Debug, Error)]
 pub enum SyncError {
+    /// Indicates that a sync operation is already in progress
     #[error("Sync already in progress")]
     SyncInProgress,
 
-    #[error("Sync timeout")]
-    SyncTimeout,
-
+    /// Deprecated: Use specific error variants instead
+    #[deprecated(note = "Use Network, Storage, Validation, or Timeout variants instead")]
     #[error("Sync failed: {0}")]
     SyncFailed(String),
 
+    /// Indicates an invalid state in the sync process (e.g., unexpected phase transitions)
+    /// Use this for sync state machine errors, not validation errors
     #[error("Invalid sync state: {0}")]
     InvalidState(String),
 
+    /// Indicates a missing dependency required for sync (e.g., missing previous block)
     #[error("Missing dependency: {0}")]
     MissingDependency(String),
+
+    // Explicit error category variants
+    /// Timeout errors during sync operations (e.g., peer response timeout)
+    #[error("Timeout error: {0}")]
+    Timeout(String),
+
+    /// Network-related errors (e.g., connection failures, protocol errors)
+    #[error("Network error: {0}")]
+    Network(String),
+
+    /// Validation errors for data received during sync (e.g., invalid headers, invalid proofs)
+    /// Use this for data validation errors, not state errors
+    #[error("Validation error: {0}")]
+    Validation(String),
+
+    /// Storage-related errors (e.g., database failures)
+    #[error("Storage error: {0}")]
+    Storage(String),
+
+    /// Headers2 decompression failed - can trigger fallback to regular headers
+    #[error("Headers2 decompression failed: {0}")]
+    Headers2DecompressionFailed(String),
+}
+
+impl SyncError {
+    /// Returns a static string representing the error category based on the variant
+    pub fn category(&self) -> &'static str {
+        match self {
+            SyncError::SyncInProgress | SyncError::InvalidState(_) => "state",
+            SyncError::Timeout(_) => "timeout",
+            SyncError::Validation(_) => "validation",
+            SyncError::MissingDependency(_) => "dependency",
+            SyncError::Network(_) => "network",
+            SyncError::Storage(_) => "storage",
+            SyncError::Headers2DecompressionFailed(_) => "headers2",
+            // Deprecated variant - should not be used
+            #[allow(deprecated)]
+            SyncError::SyncFailed(_) => "unknown",
+        }
+    }
 }
 
 /// Type alias for Result with SpvError.
@@ -130,3 +216,72 @@ pub type ValidationResult<T> = std::result::Result<T, ValidationError>;
 
 /// Type alias for sync operation results.
 pub type SyncResult<T> = std::result::Result<T, SyncError>;
+
+/// Wallet-related errors.
+#[derive(Debug, Error)]
+pub enum WalletError {
+    #[error("Balance calculation overflow")]
+    BalanceOverflow,
+
+    #[error("Unsupported address type: {0}")]
+    UnsupportedAddressType(String),
+
+    #[error("UTXO not found: {0}")]
+    UtxoNotFound(dashcore::OutPoint),
+
+    #[error("Invalid script pubkey")]
+    InvalidScriptPubkey,
+
+    #[error("Wallet not initialized")]
+    NotInitialized,
+
+    #[error("Transaction validation failed: {0}")]
+    TransactionValidation(String),
+
+    #[error("Invalid transaction output at index {0}")]
+    InvalidOutput(usize),
+
+    #[error("Address error: {0}")]
+    AddressError(String),
+
+    #[error("Script error: {0}")]
+    ScriptError(String),
+}
+
+/// Type alias for wallet operation results.
+pub type WalletResult<T> = std::result::Result<T, WalletError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sync_error_category() {
+        // Test explicit variant categories
+        assert_eq!(SyncError::Timeout("test".to_string()).category(), "timeout");
+        assert_eq!(SyncError::Network("test".to_string()).category(), "network");
+        assert_eq!(SyncError::Validation("test".to_string()).category(), "validation");
+        assert_eq!(SyncError::Storage("test".to_string()).category(), "storage");
+
+        // Test existing variant categories
+        assert_eq!(SyncError::SyncInProgress.category(), "state");
+        assert_eq!(SyncError::InvalidState("test".to_string()).category(), "state");
+        assert_eq!(SyncError::MissingDependency("test".to_string()).category(), "dependency");
+
+        // Test deprecated SyncFailed always returns "unknown"
+        #[allow(deprecated)]
+        {
+            assert_eq!(
+                SyncError::SyncFailed("connection timeout".to_string()).category(),
+                "unknown"
+            );
+            assert_eq!(SyncError::SyncFailed("network error".to_string()).category(), "unknown");
+            assert_eq!(
+                SyncError::SyncFailed("validation failed".to_string()).category(),
+                "unknown"
+            );
+            assert_eq!(SyncError::SyncFailed("disk full".to_string()).category(), "unknown");
+            assert_eq!(SyncError::SyncFailed("something else".to_string()).category(), "unknown");
+        }
+    }
+}

@@ -47,8 +47,11 @@
 //! - **Persistent storage**: Save and restore state between runs
 //! - **Extensive logging**: Built-in tracing support for debugging
 
+pub mod bloom;
+pub mod chain;
 pub mod client;
 pub mod error;
+pub mod mempool_filter;
 pub mod network;
 pub mod storage;
 pub mod sync;

@@ -63,12 +63,8 @@ impl<'a> FilterSyncCoordinator<'a> {
 
         // Get current filter tip height to determine range (use filter headers, not block headers)
         // This ensures consistency between range calculation and progress tracking
-        let tip_height = self
-            .storage
-            .get_filter_tip_height()
-            .await
-            .map_err(|e| SpvError::Storage(e))?
-            .unwrap_or(0);
+        let tip_height =
+            self.storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
 
         // Get current watch items to determine earliest height needed
         let watch_items = self.get_watch_items().await;
@@ -113,12 +109,8 @@ impl<'a> FilterSyncCoordinator<'a> {
         count: Option<u32>,
     ) -> Result<()> {
         // Get filter tip height to determine default values
-        let filter_tip_height = self
-            .storage
-            .get_filter_tip_height()
-            .await
-            .map_err(|e| SpvError::Storage(e))?
-            .unwrap_or(0);
+        let filter_tip_height =
+            self.storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
 
         let start = start_height.unwrap_or(filter_tip_height.saturating_sub(99));
         let num_blocks = count.unwrap_or(100);
@@ -154,7 +146,7 @@ impl<'a> FilterSyncCoordinator<'a> {
                 Some(count),
             )
             .await
-            .map_err(|e| SpvError::Sync(e))?;
+            .map_err(SpvError::Sync)?;
 
         let (pending_count, active_count, flow_enabled) =
             self.sync_manager.filter_sync().get_flow_control_status();

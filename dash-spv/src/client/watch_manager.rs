@@ -6,7 +6,6 @@ use tokio::sync::RwLock;
 
 use crate::error::{Result, SpvError};
 use crate::storage::StorageManager;
-use crate::sync::filters::FilterNotificationSender;
 use crate::types::WatchItem;
 use crate::wallet::Wallet;
 
@@ -54,7 +53,11 @@ impl WatchManager {
             }
 
             // Store in persistent storage
-            let watch_list = watch_list.unwrap();
+            let watch_list = watch_list.ok_or_else(|| {
+                SpvError::General(
+                    "Internal error: watch_list should be Some when is_new is true".to_string(),
+                )
+            })?;
             let serialized = serde_json::to_vec(&watch_list)
                 .map_err(|e| SpvError::Config(format!("Failed to serialize watch items: {}", e)))?;
 
@@ -111,7 +114,11 @@ impl WatchManager {
             }
 
             // Update persistent storage
-            let watch_list = watch_list.unwrap();
+            let watch_list = watch_list.ok_or_else(|| {
+                SpvError::General(
+                    "Internal error: watch_list should be Some when removed is true".to_string(),
+                )
+            })?;
             let serialized = serde_json::to_vec(&watch_list)
                 .map_err(|e| SpvError::Config(format!("Failed to serialize watch items: {}", e)))?;
 

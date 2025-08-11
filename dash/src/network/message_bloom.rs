@@ -5,6 +5,7 @@
 
 use std::io;
 
+use crate::bloom::BloomFilter;
 use crate::consensus::{Decodable, Encodable, ReadExt, encode};
 use crate::internal_macros::impl_consensus_encoding;
 
@@ -19,6 +20,23 @@ pub struct FilterLoad {
     pub tweak: u32,
     /// Controls how matched items are added to the filter
     pub flags: BloomFlags,
+}
+
+impl FilterLoad {
+    /// Create a FilterLoad message from a BloomFilter
+    pub fn from_bloom_filter(filter: &BloomFilter) -> Self {
+        FilterLoad {
+            filter: filter.to_bytes(),
+            hash_funcs: filter.hash_funcs(),
+            tweak: filter.tweak(),
+            flags: filter.flags(),
+        }
+    }
+
+    /// Convert to a BloomFilter
+    pub fn to_bloom_filter(&self) -> Result<BloomFilter, crate::bloom::BloomError> {
+        BloomFilter::from_bytes(self.filter.clone(), self.hash_funcs, self.tweak, self.flags)
+    }
 }
 
 impl_consensus_encoding!(FilterLoad, filter, hash_funcs, tweak, flags);

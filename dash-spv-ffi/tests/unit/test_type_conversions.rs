@@ -51,6 +51,7 @@ mod tests {
             // Test destroying null (should be safe)
             dash_spv_ffi_string_destroy(FFIString {
                 ptr: std::ptr::null_mut(),
+                length: 0,
             });
         }
     }
@@ -145,6 +146,7 @@ mod tests {
             headers_synced: true,
             filter_headers_synced: true,
             masternodes_synced: true,
+            filter_sync_available: true,
             filters_downloaded: u64::MAX,
             last_synced_filter_height: Some(u32::MAX),
             sync_start: std::time::SystemTime::now(),
@@ -234,6 +236,8 @@ mod tests {
             services: None,
             user_agent: None,
             best_height: None,
+            wants_dsq_messages: None,
+            has_sent_headers2: false,
         };
 
         let ffi_info = FFIPeerInfo::from(info);

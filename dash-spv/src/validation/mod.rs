@@ -1,23 +1,22 @@
 //! Validation functionality for the Dash SPV client.
 
-pub mod chainlock;
 pub mod headers;
 pub mod instantlock;
+pub mod quorum;
 
-use dashcore::{block::Header as BlockHeader, ChainLock, InstantLock};
+use dashcore::{block::Header as BlockHeader, InstantLock};
 
 use crate::error::ValidationResult;
 use crate::types::ValidationMode;
 
-pub use chainlock::ChainLockValidator;
 pub use headers::HeaderValidator;
 pub use instantlock::InstantLockValidator;
+pub use quorum::{QuorumInfo, QuorumManager, QuorumType};
 
 /// Manages all validation operations.
 pub struct ValidationManager {
     mode: ValidationMode,
     header_validator: HeaderValidator,
-    chainlock_validator: ChainLockValidator,
     instantlock_validator: InstantLockValidator,
 }
 
@@ -27,7 +26,6 @@ impl ValidationManager {
         Self {
             mode,
             header_validator: HeaderValidator::new(mode),
-            chainlock_validator: ChainLockValidator::new(),
             instantlock_validator: InstantLockValidator::new(),
         }
     }
@@ -61,16 +59,6 @@ impl ValidationManager {
         }
     }
 
-    /// Validate a ChainLock.
-    pub fn validate_chainlock(&self, chainlock: &ChainLock) -> ValidationResult<()> {
-        match self.mode {
-            ValidationMode::None => Ok(()),
-            ValidationMode::Basic | ValidationMode::Full => {
-                self.chainlock_validator.validate(chainlock)
-            }
-        }
-    }
-
     /// Validate an InstantLock.
     pub fn validate_instantlock(&self, instantlock: &InstantLock) -> ValidationResult<()> {
         match self.mode {
@@ -92,3 +80,7 @@ impl ValidationManager {
         self.header_validator.set_mode(mode);
     }
 }
+
+#[cfg(test)]
+#[path = "manager_test.rs"]
+mod manager_test;

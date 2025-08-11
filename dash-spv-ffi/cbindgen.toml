@@ -10,7 +10,7 @@ cpp_compat = true
 
 [export]
 include = ["FFI"]
-exclude = []
+exclude = ["Option_BlockCallback", "Option_TransactionCallback", "Option_BalanceCallback"]
 prefix = "dash_spv_ffi_"
 
 [export.rename]

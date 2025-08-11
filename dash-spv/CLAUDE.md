@@ -15,6 +15,7 @@ The project follows a layered, trait-based architecture with clear separation of
 - **`network/`**: TCP connections, handshake management, message routing, and peer management
 - **`storage/`**: Storage abstraction with memory and disk backends via `StorageManager` trait
 - **`sync/`**: Synchronization coordinators for headers, filters, and masternode data
+- **`sync/sequential/`**: Sequential sync manager that handles all synchronization phases
 - **`validation/`**: Header validation, ChainLock, and InstantLock verification
 - **`wallet/`**: UTXO tracking, balance calculation, and transaction processing
 - **`types.rs`**: Common data structures (`SyncProgress`, `ValidationMode`, `WatchItem`, etc.)
@@ -23,7 +24,8 @@ The project follows a layered, trait-based architecture with clear separation of
 ### Key Design Patterns
 - **Trait-based abstractions**: `NetworkManager`, `StorageManager` for swappable implementations
 - **Async/await throughout**: Built on tokio runtime
-- **State management**: Centralized sync coordination with `SyncState` and `SyncManager`
+- **Sequential sync**: Uses `SequentialSyncManager` for organized phase-based synchronization
+- **State management**: Each sync phase tracked independently with clear state transitions
 - **Modular validation**: Configurable validation modes (None/Basic/Full)
 
 ## Development Commands
@@ -95,11 +97,14 @@ cargo check --all-features
 ## Key Concepts
 
 ### Sync Coordination
-The `SyncManager` coordinates all synchronization through a state-based approach:
-- Header sync via `HeaderSyncManager`
-- Filter header sync via `FilterSyncManager` 
-- Masternode list sync via `MasternodeSyncManager`
-- Centralized timeout handling and recovery
+The `SequentialSyncManager` coordinates all synchronization through a phase-based approach:
+- **Phase 1: Headers** - Synchronize blockchain headers
+- **Phase 2: Masternode List** - Download masternode state
+- **Phase 3: Filter Headers** - Synchronize compact filter headers
+- **Phase 4: Filters** - Download specific filters on demand
+- **Phase 5: Blocks** - Download blocks that match filters
+
+Each phase must complete before the next begins, ensuring consistency and simplifying error recovery.
 
 ### Storage Backends
 Two storage implementations via the `StorageManager` trait:
@@ -108,10 +113,13 @@ Two storage implementations via the `StorageManager` trait:
 
 ### Network Layer
 TCP-based networking with proper Dash protocol implementation:
+- **DNS-first peer discovery**: Automatically uses DNS seeds (`dnsseed.dash.org`, `testnet-seed.dashdot.io`) when no explicit peers are configured
+- **Immediate startup**: No delay for initial peer discovery (10-second delay only for subsequent searches)
+- **Exclusive mode**: When explicit peers are provided, uses only those peers (no DNS discovery)
 - Connection management via `TcpConnection`
 - Handshake handling via `HandshakeManager`
 - Message routing via `MessageHandler`
-- Multi-peer support via `PeerManager`
+- Multi-peer support via `MultiPeerManager`
 
 ### Validation Modes
 - `ValidationMode::None`: No validation (fast)
@@ -146,11 +154,12 @@ Basic wallet functionality for address monitoring:
 ## Development Workflow
 
 ### Working with Sync
-The sync system uses a monitoring loop pattern:
-1. Call `sync_*()` methods to start sync processes
-2. The monitoring loop calls `handle_*_message()` for incoming data
-3. Use `check_sync_timeouts()` for timeout recovery
-4. Sync completion is tracked via `SyncState`
+The sync system uses a sequential phase-based pattern:
+1. Create `DashSpvClient` with desired configuration
+2. Call `start()` to begin synchronization
+3. The client internally uses `SequentialSyncManager` to progress through sync phases
+4. Monitor progress via `get_sync_progress()` or progress receiver
+5. Each phase completes before the next begins
 
 ### Adding New Features
 1. Define traits for abstractions (e.g., new storage backend)

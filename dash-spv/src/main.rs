@@ -11,7 +11,29 @@ use dash_spv::terminal::TerminalGuard;
 use dash_spv::{ClientConfig, DashSpvClient, Network};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() {
+    if let Err(e) = run().await {
+        eprintln!("Error: {}", e);
+
+        // Provide specific exit codes for different error types
+        let exit_code = if let Some(spv_error) = e.downcast_ref::<dash_spv::SpvError>() {
+            match spv_error {
+                dash_spv::SpvError::Network(_) => 1,
+                dash_spv::SpvError::Storage(_) => 2,
+                dash_spv::SpvError::Validation(_) => 3,
+                dash_spv::SpvError::Config(_) => 4,
+                dash_spv::SpvError::Parse(_) => 5,
+                _ => 255,
+            }
+        } else {
+            255
+        };
+
+        process::exit(exit_code);
+    }
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let matches = Command::new("dash-spv")
         .version(dash_spv::VERSION)
         .about("Dash SPV (Simplified Payment Verification) client")
@@ -84,34 +106,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
-            Arg::new("no-terminal-ui")
-                .long("no-terminal-ui")
-                .help("Disable terminal UI status bar")
+            Arg::new("terminal-ui")
+                .long("terminal-ui")
+                .help("Enable terminal UI status bar")
                 .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("start-height")
+                .long("start-height")
+                .short('s')
+                .help("Start syncing from a specific block height using the nearest checkpoint. Use 'now' for the latest checkpoint")
+                .value_name("HEIGHT"),
         )
         .get_matches();
 
     // Get log level (will be used after we know if terminal UI is enabled)
-    let log_level = matches.get_one::<String>("log-level").unwrap();
+    let log_level = matches.get_one::<String>("log-level").ok_or("Missing log-level argument")?;
 
     // Parse network
-    let network = match matches.get_one::<String>("network").unwrap().as_str() {
+    let network_str = matches.get_one::<String>("network").ok_or("Missing network argument")?;
+    let network = match network_str.as_str() {
         "mainnet" => Network::Dash,
         "testnet" => Network::Testnet,
         "regtest" => Network::Regtest,
-        _ => unreachable!(),
+        n => return Err(format!("Invalid network: {}", n).into()),
     };
 
     // Parse validation mode
-    let validation_mode = match matches.get_one::<String>("validation-mode").unwrap().as_str() {
+    let validation_str =
+        matches.get_one::<String>("validation-mode").ok_or("Missing validation-mode argument")?;
+    let validation_mode = match validation_str.as_str() {
         "none" => dash_spv::ValidationMode::None,
         "basic" => dash_spv::ValidationMode::Basic,
         "full" => dash_spv::ValidationMode::Full,
-        _ => unreachable!(),
+        v => return Err(format!("Invalid validation mode: {}", v).into()),
     };
 
     // Create configuration
-    let data_dir = PathBuf::from(matches.get_one::<String>("data-dir").unwrap());
+    let data_dir_str = matches.get_one::<String>("data-dir").ok_or("Missing data-dir argument")?;
+    let data_dir = PathBuf::from(data_dir_str);
     let mut config = ClientConfig::new(network)
         .with_storage_path(data_dir)
         .with_validation_mode(validation_mode)
@@ -139,6 +172,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config = config.without_masternodes();
     }
 
+    // Set start height if specified
+    if let Some(start_height_str) = matches.get_one::<String>("start-height") {
+        if start_height_str == "now" {
+            // Use a very high number to get the latest checkpoint
+            config.start_from_height = Some(u32::MAX);
+            tracing::info!("Will start syncing from the latest available checkpoint");
+        } else {
+            let start_height = start_height_str
+                .parse::<u32>()
+                .map_err(|e| format!("Invalid start height '{}': {}", start_height_str, e))?;
+            config.start_from_height = Some(start_height);
+            tracing::info!("Will start syncing from height: {}", start_height);
+        }
+    }
+
     // Validate configuration
     if let Err(e) = config.validate() {
         eprintln!("Configuration error: {}", e);
@@ -147,11 +195,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("Starting Dash SPV client");
     tracing::info!("Network: {:?}", network);
-    tracing::info!("Data directory: {}", config.storage_path.as_ref().unwrap().display());
+    if let Some(path) = config.storage_path.as_ref() {
+        tracing::info!("Data directory: {}", path.display());
+    }
     tracing::info!("Validation mode: {:?}", validation_mode);
+    tracing::info!("Sync strategy: Sequential");
 
     // Check if terminal UI should be enabled
-    let enable_terminal_ui = !matches.get_flag("no-terminal-ui");
+    let enable_terminal_ui = matches.get_flag("terminal-ui");
 
     // Initialize logging first (without terminal UI)
     dash_spv::init_logging(log_level)?;
@@ -337,7 +388,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if wait_time >= MAX_WAIT_TIME {
             tracing::error!("No peers connected after {} seconds", MAX_WAIT_TIME);
-            panic!("SPV client failed to connect to any peers");
+            return Err("SPV client failed to connect to any peers".into());
         }
 
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -364,7 +415,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             tracing::error!("Synchronization startup failed: {}", e);
-            panic!("SPV client synchronization startup failed: {}", e);
+            return Err(format!("SPV client synchronization startup failed: {}", e).into());
         }
     }
 
@@ -385,11 +436,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         _ = signal::ctrl_c() => {
-            tracing::info!("Received shutdown signal");
+            tracing::info!("Received shutdown signal (Ctrl-C)");
+
+            // Stop the client immediately
+            tracing::info!("Stopping SPV client...");
+            if let Err(e) = client.stop().await {
+                tracing::error!("Error stopping client: {}", e);
+            } else {
+                tracing::info!("SPV client stopped successfully");
+            }
+            return Ok(());
         }
     }
 
-    // Stop the client
+    // Stop the client (if monitor_network exited normally)
     tracing::info!("Stopping SPV client...");
     if let Err(e) = client.stop().await {
         tracing::error!("Error stopping client: {}", e);

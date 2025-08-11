@@ -8,10 +8,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use dashcore::{
-    block::{Header as BlockHeader, Version},
-    pow::CompactTarget,
-    Address, Amount, Block, Network, OutPoint, PubkeyHash, ScriptBuf, Transaction, TxIn, TxOut,
-    Txid, Witness,
+    block::Header as BlockHeader, pow::CompactTarget, Address, Amount, Block, Network, OutPoint,
+    PubkeyHash, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use dashcore_hashes::Hash;
 
@@ -28,7 +26,7 @@ async fn create_test_wallet() -> Wallet {
 
 /// Create a deterministic test address for reproducible tests.
 fn create_test_address(seed: u8) -> Address {
-    let pubkey_hash = PubkeyHash::from_slice(&[seed; 20]).unwrap();
+    let pubkey_hash = PubkeyHash::from_byte_array([seed; 20]);
     let script = ScriptBuf::new_p2pkh(&pubkey_hash);
     Address::from_script(&script, Network::Testnet).unwrap()
 }
@@ -36,7 +34,7 @@ fn create_test_address(seed: u8) -> Address {
 /// Create a test block with given transactions.
 fn create_test_block(transactions: Vec<Transaction>, prev_hash: dashcore::BlockHash) -> Block {
     let header = BlockHeader {
-        version: Version::from_consensus(1),
+        version: dashcore::block::Version::from_consensus(1),
         prev_blockhash: prev_hash,
         merkle_root: dashcore_hashes::sha256d::Hash::all_zeros().into(),
         time: 1640995200, // Fixed timestamp for deterministic tests
@@ -58,7 +56,7 @@ fn create_coinbase_transaction(output_value: u64, output_script: ScriptBuf) -> T
         input: vec![TxIn {
             previous_output: OutPoint::null(),
             script_sig: ScriptBuf::new(),
-            sequence: u32::MAX,
+            sequence: 0xffffffff,
             witness: Witness::new(),
         }],
         output: vec![TxOut {
@@ -79,7 +77,7 @@ fn create_regular_transaction(
         .map(|outpoint| TxIn {
             previous_output: outpoint,
             script_sig: ScriptBuf::new(),
-            sequence: u32::MAX,
+            sequence: 0xffffffff,
             witness: Witness::new(),
         })
         .collect();
@@ -123,7 +121,8 @@ async fn test_wallet_discovers_payment() {
     let payment_amount = 250_000_000; // 2.5 DASH
     let coinbase_tx = create_coinbase_transaction(payment_amount, address.script_pubkey());
 
-    let block = create_test_block(vec![coinbase_tx.clone()], dashcore::BlockHash::all_zeros());
+    let block =
+        create_test_block(vec![coinbase_tx.clone()], dashcore::BlockHash::from_byte_array([0; 32]));
 
     // Process the block
     let mut storage = MemoryStorageManager::new().await.unwrap();
@@ -193,7 +192,8 @@ async fn test_wallet_tracks_spending() {
     };
 
     // Process first block with payment
-    let block1 = create_test_block(vec![coinbase_tx.clone()], dashcore::BlockHash::all_zeros());
+    let block1 =
+        create_test_block(vec![coinbase_tx.clone()], dashcore::BlockHash::from_byte_array([0; 32]));
 
     let mut storage = MemoryStorageManager::new().await.unwrap();
     processor.process_block(&block1, 100, &wallet, &mut storage).await.unwrap();
@@ -288,7 +288,7 @@ async fn test_wallet_balance_accuracy() {
         vec![(amount2, address2.script_pubkey())],
     );
 
-    let block1 = create_test_block(vec![tx1, tx2], dashcore::BlockHash::all_zeros());
+    let block1 = create_test_block(vec![tx1, tx2], dashcore::BlockHash::from_byte_array([0; 32]));
 
     let mut storage = MemoryStorageManager::new().await.unwrap();
     processor.process_block(&block1, 200, &wallet, &mut storage).await.unwrap();
@@ -364,7 +364,8 @@ async fn test_wallet_handles_reorg() {
     // Create initial chain: Genesis -> Block A -> Block B (original chain)
     let amount_a = 100_000_000; // 1 DASH in block A
     let tx_a = create_coinbase_transaction(amount_a, address.script_pubkey());
-    let block_a = create_test_block(vec![tx_a.clone()], dashcore::BlockHash::all_zeros());
+    let block_a =
+        create_test_block(vec![tx_a.clone()], dashcore::BlockHash::from_byte_array([0; 32]));
     let outpoint_a = OutPoint {
         txid: tx_a.txid(),
         vout: 0,
@@ -454,7 +455,8 @@ async fn test_wallet_comprehensive_scenario() {
     // Block 1: Alice receives payment
     let alice_initial = 500_000_000; // 5 DASH
     let tx1 = create_coinbase_transaction(alice_initial, alice_address.script_pubkey());
-    let block1 = create_test_block(vec![tx1.clone()], dashcore::BlockHash::all_zeros());
+    let block1 =
+        create_test_block(vec![tx1.clone()], dashcore::BlockHash::from_byte_array([0; 32]));
     let alice_utxo1 = OutPoint {
         txid: tx1.txid(),
         vout: 0,

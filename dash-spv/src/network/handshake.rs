@@ -1,15 +1,16 @@
 //! Network handshake management.
 
 use std::net::SocketAddr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dashcore::network::constants;
-use dashcore::network::constants::ServiceFlags;
+use dashcore::network::constants::{ServiceFlags, NODE_HEADERS_COMPRESSED};
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_network::VersionMessage;
 use dashcore::Network;
 // Hash trait not needed in current implementation
 
+use crate::client::config::MempoolStrategy;
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::connection::TcpConnection;
 
@@ -20,6 +21,10 @@ pub enum HandshakeState {
     Init,
     /// Version message sent.
     VersionSent,
+    /// Version received and verack sent.
+    VersionReceivedVerackSent,
+    /// Verack received.
+    VerackReceived,
     /// Handshake complete.
     Complete,
 }
@@ -30,16 +35,26 @@ pub struct HandshakeManager {
     state: HandshakeState,
     our_version: u32,
     peer_version: Option<u32>,
+    peer_services: Option<ServiceFlags>,
+    version_received: bool,
+    verack_received: bool,
+    version_sent: bool,
+    mempool_strategy: MempoolStrategy,
 }
 
 impl HandshakeManager {
     /// Create a new handshake manager.
-    pub fn new(network: Network) -> Self {
+    pub fn new(network: Network, mempool_strategy: MempoolStrategy) -> Self {
         Self {
             _network: network,
             state: HandshakeState::Init,
             our_version: constants::PROTOCOL_VERSION,
             peer_version: None,
+            peer_services: None,
+            version_received: false,
+            verack_received: false,
+            version_sent: false,
+            mempool_strategy,
         }
     }
 
@@ -49,7 +64,9 @@ impl HandshakeManager {
 
         // Send version message
         self.send_version(connection).await?;
+        self.version_sent = true;
         self.state = HandshakeState::VersionSent;
+        tracing::info!("Handshake initiated - version message sent to peer");
 
         // Define timeout for the entire handshake process
         const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -61,25 +78,40 @@ impl HandshakeManager {
         loop {
             // Check if we've exceeded the overall handshake timeout
             if start_time.elapsed() > HANDSHAKE_TIMEOUT {
+                tracing::error!(
+                    "Handshake timeout after {}s - version_received={}, verack_received={}",
+                    HANDSHAKE_TIMEOUT.as_secs(),
+                    self.version_received,
+                    self.verack_received
+                );
                 return Err(NetworkError::Timeout);
             }
 
             // Try to receive a message with a short timeout
             match timeout(MESSAGE_POLL_INTERVAL, connection.receive_message()).await {
                 Ok(Ok(Some(message))) => {
+                    tracing::debug!("Received message during handshake: {:?}", message.cmd());
                     match self.handle_handshake_message(connection, message).await? {
                         Some(HandshakeState::Complete) => {
                             self.state = HandshakeState::Complete;
                             break;
                         }
-                        _ => continue,
+                        _ => {
+                            // Continue immediately to check for more messages in the buffer
+                            // Don't add any delays here as multiple messages may be waiting
+                            continue;
+                        }
                     }
                 }
                 Ok(Ok(None)) => {
-                    // No message available, yield to prevent tight loop
-                    tokio::task::yield_now().await;
+                    // No message available, continue immediately
+                    // The read timeout already provides the necessary delay
+                    continue;
                 }
-                Ok(Err(e)) => return Err(e),
+                Ok(Err(e)) => {
+                    tracing::error!("Error receiving message during handshake: {}", e);
+                    return Err(e);
+                }
                 Err(_) => {
                     // Timeout on receive_message, continue to check overall timeout
                     continue;
@@ -87,7 +119,11 @@ impl HandshakeManager {
             }
         }
 
-        tracing::info!("Handshake completed successfully");
+        tracing::info!(
+            "Handshake completed successfully - version_received={}, verack_received={}",
+            self.version_received,
+            self.verack_received
+        );
         Ok(())
     }
 
@@ -95,6 +131,9 @@ impl HandshakeManager {
     pub fn reset(&mut self) {
         self.state = HandshakeState::Init;
         self.peer_version = None;
+        self.version_received = false;
+        self.verack_received = false;
+        self.version_sent = false;
     }
 
     /// Handle a handshake message.
@@ -107,6 +146,18 @@ impl HandshakeManager {
             NetworkMessage::Version(version_msg) => {
                 tracing::debug!("Received version message: {:?}", version_msg);
                 self.peer_version = Some(version_msg.version);
+                self.peer_services = Some(version_msg.services);
+                self.version_received = true;
+
+                // Update connection's peer information
+                connection.update_peer_info(&version_msg);
+
+                // If we haven't sent our version yet (peer initiated), send it now
+                if !self.version_sent {
+                    tracing::debug!("Peer initiated handshake, sending our version");
+                    self.send_version(connection).await?;
+                    self.version_sent = true;
+                }
 
                 // Send SendAddrV2 first to signal support (must be before verack!)
                 tracing::debug!("Sending sendaddrv2 to signal AddrV2 support");
@@ -115,13 +166,22 @@ impl HandshakeManager {
                 // Then send verack
                 tracing::debug!("Sending verack in response to version");
                 connection.send_message(NetworkMessage::Verack).await?;
-                tracing::debug!("Sent verack, handshake state: {:?}", self.state);
+                tracing::debug!(
+                    "Sent verack, version_received={}, verack_received={}",
+                    self.version_received,
+                    self.verack_received
+                );
 
-                // Check if handshake is complete (we've sent version and received version)
-                if self.state == HandshakeState::VersionSent {
-                    tracing::info!(
-                        "Handshake complete - sent verack in response to peer's version!"
-                    );
+                // Update state
+                self.state = HandshakeState::VersionReceivedVerackSent;
+
+                // Check if handshake is complete (both version and verack received)
+                if self.version_received && self.verack_received {
+                    tracing::info!("Handshake complete - both version and verack exchanged!");
+
+                    // Negotiate headers2 support
+                    self.negotiate_headers2(connection).await?;
+
                     return Ok(Some(HandshakeState::Complete));
                 }
 
@@ -129,13 +189,25 @@ impl HandshakeManager {
             }
             NetworkMessage::Verack => {
                 tracing::debug!("Received verack message, current state: {:?}", self.state);
+                self.verack_received = true;
+
+                // Update state
                 if self.state == HandshakeState::VersionSent {
-                    tracing::info!("Handshake complete - received peer's verack!");
+                    self.state = HandshakeState::VerackReceived;
+                }
+
+                // Check if handshake is complete (both version and verack received)
+                if self.version_received && self.verack_received {
+                    tracing::info!("Handshake complete - both version and verack exchanged!");
+
+                    // Negotiate headers2 support
+                    self.negotiate_headers2(connection).await?;
+
                     return Ok(Some(HandshakeState::Complete));
                 } else {
-                    tracing::warn!(
-                        "Received verack but state is not VersionSent: {:?}",
-                        self.state
+                    tracing::debug!(
+                        "Verack received but handshake not complete: version_received={}, verack_received={}",
+                        self.version_received, self.verack_received
                     );
                 }
                 Ok(None)
@@ -144,6 +216,11 @@ impl HandshakeManager {
                 // Respond to ping during handshake
                 tracing::debug!("Responding to ping during handshake: {}", nonce);
                 connection.send_message(NetworkMessage::Pong(nonce)).await?;
+                Ok(None)
+            }
+            NetworkMessage::SendAddrV2 => {
+                // Peer supports AddrV2
+                tracing::debug!("Peer signaled AddrV2 support");
                 Ok(None)
             }
             _ => {
@@ -156,34 +233,43 @@ impl HandshakeManager {
 
     /// Send version message.
     async fn send_version(&mut self, connection: &mut TcpConnection) -> NetworkResult<()> {
-        let version_message = self.build_version_message(connection.peer_info().address);
+        let version_message = self.build_version_message(connection.peer_info().address)?;
         connection.send_message(NetworkMessage::Version(version_message)).await?;
         tracing::debug!("Sent version message");
         Ok(())
     }
 
     /// Build version message.
-    fn build_version_message(&self, address: SocketAddr) -> VersionMessage {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    fn build_version_message(&self, address: SocketAddr) -> NetworkResult<VersionMessage> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::from_secs(0))
+            .as_secs() as i64;
 
-        let services = ServiceFlags::NONE; // SPV client doesn't provide services
+        // SPV client doesn't advertise any special services since headers2 is disabled
+        let services = ServiceFlags::NONE;
 
-        VersionMessage {
+        // Parse the local address safely
+        let local_addr = "127.0.0.1:0"
+            .parse()
+            .map_err(|_| NetworkError::AddressParse("Failed to parse local address".to_string()))?;
+
+        Ok(VersionMessage {
             version: self.our_version,
             services,
             timestamp,
             receiver: dashcore::network::address::Address::new(&address, ServiceFlags::NETWORK),
-            sender: dashcore::network::address::Address::new(
-                &"127.0.0.1:0".parse().unwrap(),
-                services,
-            ),
+            sender: dashcore::network::address::Address::new(&local_addr, services),
             nonce: rand::random(),
             user_agent: "/rust-dash-spv:0.1.0/".to_string(),
-            start_height: 0,              // SPV client starts at 0
-            relay: false,                 // We don't want transaction relay
+            start_height: 0, // SPV client starts at 0
+            relay: match self.mempool_strategy {
+                MempoolStrategy::FetchAll => true, // Want all transactions for FetchAll strategy
+                _ => false,                        // Don't want relay for other strategies
+            },
             mn_auth_challenge: [0; 32],   // Not a masternode
             masternode_connection: false, // Not connecting to masternode
-        }
+        })
     }
 
     /// Get current handshake state.
@@ -194,5 +280,19 @@ impl HandshakeManager {
     /// Get peer version if available.
     pub fn peer_version(&self) -> Option<u32> {
         self.peer_version
+    }
+
+    /// Check if peer supports headers2 compression.
+    pub fn peer_supports_headers2(&self) -> bool {
+        self.peer_services.map(|services| services.has(NODE_HEADERS_COMPRESSED)).unwrap_or(false)
+    }
+
+    /// Negotiate headers2 support with the peer after handshake completion.
+    async fn negotiate_headers2(&self, connection: &mut TcpConnection) -> NetworkResult<()> {
+        // Headers2 is currently disabled due to protocol compatibility issues
+        // Always send SendHeaders regardless of peer support
+        tracing::info!("Headers2 is disabled - sending SendHeaders only");
+        connection.send_message(NetworkMessage::SendHeaders).await?;
+        Ok(())
     }
 }

@@ -10,8 +10,11 @@ rust-version = "1.80"
 
 [dependencies]
 # Core Dash libraries
-dashcore = { path = "../dash", features = ["std", "serde", "core-block-hash-use-x11", "message_verification"] }
+dashcore = { path = "../dash", features = ["std", "serde", "core-block-hash-use-x11", "message_verification", "bls", "quorum_validation"] }
 dashcore_hashes = { path = "../hashes" }
+
+# BLS signatures
+blsful = "2.5"
 
 # CLI
 clap = { version = "4.0", features = ["derive"] }
@@ -35,6 +38,8 @@ tracing-subscriber = "0.3"
 
 # Utilities
 rand = "0.8"
+hex = "0.4"
+indexmap = "2.0"
 
 # Terminal UI
 crossterm = "0.27"
