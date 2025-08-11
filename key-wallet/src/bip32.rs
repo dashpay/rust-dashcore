@@ -28,7 +28,7 @@ use core::str::FromStr;
 #[cfg(feature = "std")]
 use std::error;
 
-use bitcoin_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
+use dashcore_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
 use secp256k1::{self, Secp256k1, XOnlyPublicKey};
 #[cfg(feature = "serde")]
 use serde;
@@ -42,6 +42,8 @@ use crate::dip9::{
 };
 use alloc::{string::String, vec::Vec};
 use base58ck;
+#[cfg(feature = "bincode")]
+use bincode_derive::{Decode, Encode};
 use dash_network::Network;
 
 /// XpubIdentifier as a hash160 result
@@ -54,6 +56,7 @@ pub use secp256k1::SecretKey as PrivateKey;
 
 /// A chain code
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct ChainCode([u8; 32]);
 
 impl ChainCode {
@@ -190,6 +193,7 @@ impl<'de> serde::Deserialize<'de> for ChainCode {
 
 /// A fingerprint
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct Fingerprint([u8; 4]);
 
 impl Fingerprint {
@@ -344,6 +348,78 @@ pub struct ExtendedPrivKey {
     /// Chain code
     pub chain_code: ChainCode,
 }
+
+#[cfg(feature = "bincode")]
+impl bincode::Encode for ExtendedPrivKey {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        self.network.encode(encoder)?;
+        self.depth.encode(encoder)?;
+        self.parent_fingerprint.encode(encoder)?;
+        self.child_number.encode(encoder)?;
+        // Encode the private key as bytes
+        self.private_key.secret_bytes().encode(encoder)?;
+        self.chain_code.encode(encoder)?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl bincode::Decode for ExtendedPrivKey {
+    fn decode<D: bincode::de::Decoder>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let network = Network::decode(decoder)?;
+        let depth = u8::decode(decoder)?;
+        let parent_fingerprint = Fingerprint::decode(decoder)?;
+        let child_number = ChildNumber::decode(decoder)?;
+        // Decode the private key from bytes
+        let private_key_bytes: [u8; 32] = <[u8; 32]>::decode(decoder)?;
+        let private_key = secp256k1::SecretKey::from_slice(&private_key_bytes).map_err(|e| {
+            bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
+        })?;
+        let chain_code = ChainCode::decode(decoder)?;
+
+        Ok(ExtendedPrivKey {
+            network,
+            depth,
+            parent_fingerprint,
+            child_number,
+            private_key,
+            chain_code,
+        })
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<'de> bincode::BorrowDecode<'de> for ExtendedPrivKey {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let network = Network::borrow_decode(decoder)?;
+        let depth = u8::borrow_decode(decoder)?;
+        let parent_fingerprint = Fingerprint::borrow_decode(decoder)?;
+        let child_number = ChildNumber::borrow_decode(decoder)?;
+        // Decode the private key from bytes
+        let private_key_bytes: [u8; 32] = <[u8; 32]>::borrow_decode(decoder)?;
+        let private_key = secp256k1::SecretKey::from_slice(&private_key_bytes).map_err(|e| {
+            bincode::error::DecodeError::OtherString(format!("Invalid private key: {}", e))
+        })?;
+        let chain_code = ChainCode::borrow_decode(decoder)?;
+
+        Ok(ExtendedPrivKey {
+            network,
+            depth,
+            parent_fingerprint,
+            child_number,
+            private_key,
+            chain_code,
+        })
+    }
+}
+
 #[cfg(feature = "serde")]
 impl serde::Serialize for ExtendedPrivKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -395,6 +471,78 @@ pub struct ExtendedPubKey {
     /// Chain code
     pub chain_code: ChainCode,
 }
+
+#[cfg(feature = "bincode")]
+impl bincode::Encode for ExtendedPubKey {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        self.network.encode(encoder)?;
+        self.depth.encode(encoder)?;
+        self.parent_fingerprint.encode(encoder)?;
+        self.child_number.encode(encoder)?;
+        // Encode the public key as bytes (33 bytes for compressed)
+        self.public_key.serialize().encode(encoder)?;
+        self.chain_code.encode(encoder)?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl bincode::Decode for ExtendedPubKey {
+    fn decode<D: bincode::de::Decoder>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let network = Network::decode(decoder)?;
+        let depth = u8::decode(decoder)?;
+        let parent_fingerprint = Fingerprint::decode(decoder)?;
+        let child_number = ChildNumber::decode(decoder)?;
+        // Decode the public key from bytes (33 bytes for compressed)
+        let public_key_bytes: [u8; 33] = <[u8; 33]>::decode(decoder)?;
+        let public_key = secp256k1::PublicKey::from_slice(&public_key_bytes).map_err(|e| {
+            bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
+        })?;
+        let chain_code = ChainCode::decode(decoder)?;
+
+        Ok(ExtendedPubKey {
+            network,
+            depth,
+            parent_fingerprint,
+            child_number,
+            public_key,
+            chain_code,
+        })
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<'de> bincode::BorrowDecode<'de> for ExtendedPubKey {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let network = Network::borrow_decode(decoder)?;
+        let depth = u8::borrow_decode(decoder)?;
+        let parent_fingerprint = Fingerprint::borrow_decode(decoder)?;
+        let child_number = ChildNumber::borrow_decode(decoder)?;
+        // Decode the public key from bytes (33 bytes for compressed)
+        let public_key_bytes: [u8; 33] = <[u8; 33]>::borrow_decode(decoder)?;
+        let public_key = secp256k1::PublicKey::from_slice(&public_key_bytes).map_err(|e| {
+            bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
+        })?;
+        let chain_code = ChainCode::borrow_decode(decoder)?;
+
+        Ok(ExtendedPubKey {
+            network,
+            depth,
+            parent_fingerprint,
+            child_number,
+            public_key,
+            chain_code,
+        })
+    }
+}
+
 #[cfg(feature = "serde")]
 impl serde::Serialize for ExtendedPubKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -418,6 +566,7 @@ impl<'de> serde::Deserialize<'de> for ExtendedPubKey {
 
 /// A child number for a derived key
 #[derive(Copy, Clone, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum ChildNumber {
     /// Non-hardened key
     Normal {
@@ -766,6 +915,34 @@ pub trait IntoDerivationPath {
 /// A BIP-32 derivation path.
 #[derive(Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub struct DerivationPath(Vec<ChildNumber>);
+
+#[cfg(feature = "bincode")]
+impl bincode::Encode for DerivationPath {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        self.0.encode(encoder)
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl bincode::Decode for DerivationPath {
+    fn decode<D: bincode::de::Decoder>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(DerivationPath(Vec::<ChildNumber>::decode(decoder)?))
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<'de> bincode::BorrowDecode<'de> for DerivationPath {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(DerivationPath(Vec::<ChildNumber>::borrow_decode(decoder)?))
+    }
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u32)]
@@ -1207,7 +1384,7 @@ pub enum Error {
     /// Base58 encoding error
     Base58(base58ck::Error),
     /// Hexadecimal decoding error
-    Hex(bitcoin_hashes::FromSliceError),
+    Hex(dashcore_hashes::hex::Error),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidPublicKeyHexLength(usize),
     /// Something is not supported based on active features
@@ -1850,7 +2027,7 @@ impl FromStr for ExtendedPubKey {
 mod tests {
     use core::str::FromStr;
 
-    use bitcoin_hashes::hex::FromHex;
+    use dashcore_hashes::hex::FromHex;
     use secp256k1::{self, Secp256k1};
 
     use super::ChildNumber::{Hardened, Normal};

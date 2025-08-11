@@ -14,10 +14,14 @@ macro_rules! test_serde_round_trip {
 #[macro_export]
 macro_rules! test_serialize_round_trip {
     ($value:expr) => {{
-        use dashcore::consensus::encode::{serialize, deserialize};
+        use dashcore::consensus::encode::{deserialize, serialize};
         let serialized = serialize(&$value);
         let deserialized: Result<_, _> = deserialize(&serialized);
-        assert_eq!($value, deserialized.expect("Failed to deserialize"), "Binary round-trip failed");
+        assert_eq!(
+            $value,
+            deserialized.expect("Failed to deserialize"),
+            "Binary round-trip failed"
+        );
     }};
 }
 
@@ -30,10 +34,7 @@ macro_rules! assert_error_contains {
             Err(e) => {
                 let error_str = format!("{}", e);
                 if !error_str.contains($expected) {
-                    panic!(
-                        "Expected error to contain '{}', but got '{}'",
-                        $expected, error_str
-                    );
+                    panic!("Expected error to contain '{}', but got '{}'", $expected, error_str);
                 }
             }
         }
@@ -60,7 +61,9 @@ macro_rules! assert_results_eq {
     ($left:expr, $right:expr) => {{
         match (&$left, &$right) {
             (Ok(l), Ok(r)) => assert_eq!(l, r, "Ok values not equal"),
-            (Err(l), Err(r)) => assert_eq!(format!("{}", l), format!("{}", r), "Error messages not equal"),
+            (Err(l), Err(r)) => {
+                assert_eq!(format!("{}", l), format!("{}", r), "Error messages not equal")
+            }
             (Ok(_), Err(e)) => panic!("Expected Ok, got Err({})", e),
             (Err(e), Ok(_)) => panic!("Expected Err({}), got Ok", e),
         }
@@ -81,32 +84,34 @@ macro_rules! measure_time {
 
 #[cfg(test)]
 mod tests {
-    use serde::{Serialize, Deserialize};
-    
+    use serde::{Deserialize, Serialize};
+
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct TestStruct {
         field: String,
     }
-    
+
     #[test]
     fn test_serde_macro() {
-        let value = TestStruct { field: "test".to_string() };
+        let value = TestStruct {
+            field: "test".to_string(),
+        };
         test_serde_round_trip!(value);
     }
-    
+
     #[test]
     fn test_error_contains_macro() {
         let result: Result<(), String> = Err("This is an error message".to_string());
         assert_error_contains!(result, "error message");
     }
-    
+
     #[test]
     #[should_panic(expected = "Expected error")]
     fn test_error_contains_macro_with_ok() {
         let result: Result<i32, String> = Ok(42);
         assert_error_contains!(result, "anything");
     }
-    
+
     parameterized_test!(
         test_addition,
         |a: i32, b: i32, expected: i32| {
@@ -116,7 +121,7 @@ mod tests {
         ("2+3", 2, 3, 5),
         ("0+0", 0, 0, 0)
     );
-    
+
     #[test]
     fn test_measure_time_macro() {
         let result = measure_time!("Test operation", {

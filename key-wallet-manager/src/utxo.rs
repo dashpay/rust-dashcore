@@ -7,8 +7,8 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 
-use dashcore::blockdata::transaction::OutPoint;
 use dashcore::blockdata::transaction::txout::TxOut;
+use dashcore::blockdata::transaction::OutPoint;
 use key_wallet::Address;
 
 #[cfg(feature = "serde")]
@@ -70,7 +70,7 @@ impl Utxo {
         if self.is_locked {
             return false;
         }
-        
+
         if !self.is_coinbase {
             // Regular UTXOs need to be confirmed or InstantLocked
             self.is_confirmed || self.is_instantlocked
@@ -148,20 +148,20 @@ impl UtxoSet {
     /// Add a UTXO to the set
     pub fn add(&mut self, utxo: Utxo) {
         let value = utxo.value();
-        
+
         // Update balances
         self.total_balance += value;
-        
+
         if utxo.is_confirmed || utxo.is_instantlocked {
             self.confirmed_balance += value;
         } else {
             self.unconfirmed_balance += value;
         }
-        
+
         if utxo.is_locked {
             self.locked_balance += value;
         }
-        
+
         self.utxos.insert(utxo.outpoint, utxo);
     }
 
@@ -169,20 +169,20 @@ impl UtxoSet {
     pub fn remove(&mut self, outpoint: &OutPoint) -> Option<Utxo> {
         if let Some(utxo) = self.utxos.remove(outpoint) {
             let value = utxo.value();
-            
+
             // Update balances
             self.total_balance = self.total_balance.saturating_sub(value);
-            
+
             if utxo.is_confirmed || utxo.is_instantlocked {
                 self.confirmed_balance = self.confirmed_balance.saturating_sub(value);
             } else {
                 self.unconfirmed_balance = self.unconfirmed_balance.saturating_sub(value);
             }
-            
+
             if utxo.is_locked {
                 self.locked_balance = self.locked_balance.saturating_sub(value);
             }
-            
+
             Some(utxo)
         } else {
             None
@@ -211,18 +211,12 @@ impl UtxoSet {
 
     /// Get all spendable UTXOs
     pub fn spendable(&self, current_height: u32) -> Vec<&Utxo> {
-        self.utxos
-            .values()
-            .filter(|utxo| utxo.is_spendable(current_height))
-            .collect()
+        self.utxos.values().filter(|utxo| utxo.is_spendable(current_height)).collect()
     }
 
     /// Get all UTXOs for a specific address
     pub fn for_address(&self, address: &Address) -> Vec<&Utxo> {
-        self.utxos
-            .values()
-            .filter(|utxo| &utxo.address == address)
-            .collect()
+        self.utxos.values().filter(|utxo| &utxo.address == address).collect()
     }
 
     /// Get total balance
@@ -247,10 +241,7 @@ impl UtxoSet {
 
     /// Get spendable balance
     pub fn spendable_balance(&self, current_height: u32) -> u64 {
-        self.spendable(current_height)
-            .iter()
-            .map(|utxo| utxo.value())
-            .sum()
+        self.spendable(current_height).iter().map(|utxo| utxo.value()).sum()
     }
 
     /// Clear all UTXOs
@@ -276,7 +267,7 @@ impl UtxoSet {
     pub fn update_confirmation(&mut self, outpoint: &OutPoint, confirmed: bool) {
         if let Some(utxo) = self.utxos.get_mut(outpoint) {
             let value = utxo.value();
-            
+
             if utxo.is_confirmed != confirmed {
                 if confirmed {
                     self.confirmed_balance += value;
@@ -324,45 +315,45 @@ impl Default for UtxoSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::hash_types::Txid;
-    use dashcore::blockdata::script::ScriptBuf;
     use bitcoin_hashes::Hash;
+    use dashcore::blockdata::script::ScriptBuf;
+    use dashcore::hash_types::Txid;
 
     fn test_utxo(value: u64, height: u32) -> Utxo {
         let outpoint = OutPoint {
             txid: Txid::from_slice(&[1u8; 32]).unwrap(),
             vout: 0,
         };
-        
+
         let txout = TxOut {
             value,
             script_pubkey: ScriptBuf::new(),
         };
-        
+
         let address = Address::p2pkh(
             &secp256k1::PublicKey::from_slice(&[
-                0x02, 0x50, 0x86, 0x3a, 0xd6, 0x4a, 0x87, 0xae, 0x8a,
-                0x2f, 0xe8, 0x3c, 0x1a, 0xf1, 0xa8, 0x40, 0x3c, 0xb5,
-                0x3f, 0x53, 0xe4, 0x86, 0xd8, 0x51, 0x1d, 0xad, 0x8a,
-                0x04, 0x88, 0x7e, 0x5b, 0x23, 0x52,
-            ]).unwrap(),
+                0x02, 0x50, 0x86, 0x3a, 0xd6, 0x4a, 0x87, 0xae, 0x8a, 0x2f, 0xe8, 0x3c, 0x1a, 0xf1,
+                0xa8, 0x40, 0x3c, 0xb5, 0x3f, 0x53, 0xe4, 0x86, 0xd8, 0x51, 0x1d, 0xad, 0x8a, 0x04,
+                0x88, 0x7e, 0x5b, 0x23, 0x52,
+            ])
+            .unwrap(),
             Network::Testnet,
         );
-        
+
         Utxo::new(outpoint, txout, address, height, false)
     }
 
     #[test]
     fn test_utxo_spendability() {
         let mut utxo = test_utxo(100000, 100);
-        
+
         // Unconfirmed UTXO should not be spendable
         assert!(!utxo.is_spendable(200));
-        
+
         // Confirmed UTXO should be spendable
         utxo.is_confirmed = true;
         assert!(utxo.is_spendable(200));
-        
+
         // Locked UTXO should not be spendable
         utxo.lock();
         assert!(!utxo.is_spendable(200));
@@ -371,23 +362,23 @@ mod tests {
     #[test]
     fn test_utxo_set_operations() {
         let mut set = UtxoSet::new();
-        
+
         let utxo1 = test_utxo(100000, 100);
         let utxo2 = test_utxo(200000, 150);
-        
+
         set.add(utxo1.clone());
         set.add(utxo2.clone());
-        
+
         assert_eq!(set.len(), 2);
         assert_eq!(set.total_balance(), 300000);
         assert_eq!(set.unconfirmed_balance(), 300000);
         assert_eq!(set.confirmed_balance(), 0);
-        
+
         // Update confirmation
         set.update_confirmation(&utxo1.outpoint, true);
         assert_eq!(set.confirmed_balance(), 100000);
         assert_eq!(set.unconfirmed_balance(), 200000);
-        
+
         // Remove UTXO
         let removed = set.remove(&utxo1.outpoint);
         assert!(removed.is_some());

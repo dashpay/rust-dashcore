@@ -1,6 +1,6 @@
 //! Address tests
 
-use bitcoin_hashes::{hash160, Hash};
+use dashcore_hashes::{hash160, Hash};
 use key_wallet::address::{Address, AddressGenerator, AddressType};
 use key_wallet::derivation::HDWallet;
 use key_wallet::Network;

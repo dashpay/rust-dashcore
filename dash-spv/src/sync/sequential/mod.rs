@@ -19,11 +19,11 @@ use dashcore::BlockHash;
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
-use crate::types::ChainState;
 use crate::storage::StorageManager;
 use crate::sync::{
     FilterSyncManager, HeaderSyncManagerWithReorg, MasternodeSyncManager, ReorgConfig,
 };
+use crate::types::ChainState;
 use crate::types::SyncProgress;
 
 use phases::{PhaseTransition, SyncPhase};
@@ -416,7 +416,7 @@ impl SequentialSyncManager {
                     current_height,
                     target_height
                 );
-                
+
                 // Get sync base height from header sync
                 let sync_base_height = self.header_sync.get_sync_base_height();
                 if sync_base_height > 0 {
@@ -426,41 +426,50 @@ impl SequentialSyncManager {
                     );
                     self.filter_sync.set_sync_base_height(sync_base_height);
                 }
-                
+
                 // Check if we need to request filter headers
                 if current_height < target_height {
                     // For checkpoint sync, we need to convert target height to storage height
                     let sync_base_height = self.header_sync.get_sync_base_height();
-                    let storage_height = if sync_base_height > 0 && *target_height > sync_base_height {
-                        target_height - sync_base_height
-                    } else {
-                        *target_height
-                    };
-                    
+                    let storage_height =
+                        if sync_base_height > 0 && *target_height > sync_base_height {
+                            target_height - sync_base_height
+                        } else {
+                            *target_height
+                        };
+
                     tracing::info!(
                         "🔍 [DEBUG] Getting header at storage height {} (blockchain height {})",
                         storage_height,
                         target_height
                     );
-                    
+
                     // Get the stop hash for the target height
-                    let stop_hash = if let Some(header) = storage.get_header(storage_height).await
-                        .map_err(|e| SyncError::Storage(format!("Failed to get header at {}: {}", storage_height, e)))? {
+                    let stop_hash = if let Some(header) =
+                        storage.get_header(storage_height).await.map_err(|e| {
+                            SyncError::Storage(format!(
+                                "Failed to get header at {}: {}",
+                                storage_height, e
+                            ))
+                        })? {
                         header.block_hash()
                     } else {
-                        tracing::error!("No header found at storage height {} (blockchain height {})", storage_height, target_height);
-                        self.transition_to_next_phase(storage, "No header at target height").await?;
+                        tracing::error!(
+                            "No header found at storage height {} (blockchain height {})",
+                            storage_height,
+                            target_height
+                        );
+                        self.transition_to_next_phase(storage, "No header at target height")
+                            .await?;
                         return Ok(true);
                     };
-                    
+
                     // Request filter headers
                     let start_height = current_height + 1;
-                    self.filter_sync.request_filter_headers(
-                        network,
-                        start_height,
-                        stop_hash,
-                    ).await?;
-                    
+                    self.filter_sync
+                        .request_filter_headers(network, start_height, stop_hash)
+                        .await?;
+
                     tracing::info!(
                         "📡 Requested filter headers from {} to {} (stop hash: {})",
                         start_height,
@@ -472,11 +481,11 @@ impl SequentialSyncManager {
                     self.transition_to_next_phase(storage, "Filter headers already synced").await?;
                     return Ok(true);
                 }
-                
+
                 // Return false to indicate we need to wait for messages
                 return Ok(false);
             }
-            
+
             SyncPhase::DownloadingFilters {
                 ..
             } => {
@@ -1089,11 +1098,13 @@ impl SequentialSyncManager {
 
             // Execute the current phase
             let continue_execution = self.execute_current_phase_internal(network, storage).await?;
-            
+
             if !continue_execution {
                 // Phase indicated it needs to wait for messages
-                tracing::info!("🔍 [DEBUG] Phase {} needs to wait for messages, breaking execute loop", 
-                    self.current_phase.name());
+                tracing::info!(
+                    "🔍 [DEBUG] Phase {} needs to wait for messages, breaking execute loop",
+                    self.current_phase.name()
+                );
                 break;
             }
 
@@ -1104,10 +1115,12 @@ impl SequentialSyncManager {
                 tracing::info!("🔍 [DEBUG] Phase didn't change, breaking execute loop");
                 break;
             }
-            
-            tracing::info!("🔍 [DEBUG] Phase changed to {}, continuing execution loop", 
-                self.current_phase.name());
-            
+
+            tracing::info!(
+                "🔍 [DEBUG] Phase changed to {}, continuing execution loop",
+                self.current_phase.name()
+            );
+
             // Continue looping to execute the new phase
         }
 

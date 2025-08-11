@@ -194,8 +194,7 @@ impl ChainLockManager {
                         warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {} (needs list at height {} for ChainLock validation), queueing ChainLock for later validation", 
                             chain_lock.block_height, required_height);
                         drop(engine_guard); // Release the read lock before acquiring write lock
-                        self.queue_pending_chainlock(chain_lock.clone()).await
-                            .map_err(|e| {
+                        self.queue_pending_chainlock(chain_lock.clone()).await.map_err(|e| {
                             ValidationError::InvalidChainLock(format!(
                                 "Failed to queue pending ChainLock: {}",
                                 e
@@ -213,8 +212,7 @@ impl ChainLockManager {
             // Queue for later validation when engine becomes available
             warn!("⚠️ Masternode engine not available, queueing ChainLock for later validation");
             drop(engine_guard); // Release the read lock before acquiring write lock
-            self.queue_pending_chainlock(chain_lock.clone()).await
-                .map_err(|e| {
+            self.queue_pending_chainlock(chain_lock.clone()).await.map_err(|e| {
                 ValidationError::InvalidChainLock(format!(
                     "Failed to queue pending ChainLock: {}",
                     e

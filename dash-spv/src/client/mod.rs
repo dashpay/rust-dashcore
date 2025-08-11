@@ -429,7 +429,7 @@ impl DashSpvClient {
         } else if just_initialized_from_checkpoint {
             tracing::info!("📍 Skipping header loading from storage - just initialized from checkpoint at height {}", 
                 self.state.read().await.sync_base_height);
-            
+
             // Update the sync manager's chain state with our checkpoint-initialized state
             let chain_state = self.state.read().await.clone();
             self.sync_manager.update_chain_state(chain_state);
@@ -2747,34 +2747,37 @@ impl DashSpvClient {
                         }
                     }
                 };
-                
+
                 if should_use_checkpoint {
-            // Get checkpoints for this network
-            let checkpoints = match self.config.network {
-                dashcore::Network::Dash => crate::chain::checkpoints::mainnet_checkpoints(),
-                dashcore::Network::Testnet => crate::chain::checkpoints::testnet_checkpoints(),
-                _ => vec![],
-            };
+                    // Get checkpoints for this network
+                    let checkpoints = match self.config.network {
+                        dashcore::Network::Dash => crate::chain::checkpoints::mainnet_checkpoints(),
+                        dashcore::Network::Testnet => {
+                            crate::chain::checkpoints::testnet_checkpoints()
+                        }
+                        _ => vec![],
+                    };
 
-            // Create checkpoint manager
-            let checkpoint_manager = crate::chain::checkpoints::CheckpointManager::new(checkpoints);
+                    // Create checkpoint manager
+                    let checkpoint_manager =
+                        crate::chain::checkpoints::CheckpointManager::new(checkpoints);
 
-            // Find the best checkpoint at or before the requested height
-            if let Some(checkpoint) =
-                checkpoint_manager.best_checkpoint_at_or_before_height(start_height)
-            {
-                if checkpoint.height > 0 {
-                    tracing::info!(
+                    // Find the best checkpoint at or before the requested height
+                    if let Some(checkpoint) =
+                        checkpoint_manager.best_checkpoint_at_or_before_height(start_height)
+                    {
+                        if checkpoint.height > 0 {
+                            tracing::info!(
                         "🚀 Starting sync from checkpoint at height {} instead of genesis (requested start height: {})",
                         checkpoint.height,
                         start_height
                     );
 
-                    // Initialize chain state with checkpoint
-                    let mut chain_state = self.state.write().await;
+                            // Initialize chain state with checkpoint
+                            let mut chain_state = self.state.write().await;
 
-                    // Build header from checkpoint
-                    tracing::debug!(
+                            // Build header from checkpoint
+                            tracing::debug!(
                         "Building checkpoint header for height {}: version={}, prev_hash={}, merkle_root={:?}, time={}, bits={:08x}, nonce={}",
                         checkpoint.height,
                         checkpoint.version,
@@ -2784,62 +2787,66 @@ impl DashSpvClient {
                         checkpoint.bits,
                         checkpoint.nonce
                     );
-                    
-                    let checkpoint_header = dashcore::block::Header {
-                        version: dashcore::block::Version::from_consensus(checkpoint.version as i32),
-                        prev_blockhash: checkpoint.prev_blockhash,
-                        merkle_root: checkpoint
-                            .merkle_root
-                            .map(|h| dashcore::TxMerkleNode::from_byte_array(*h.as_byte_array()))
-                            .unwrap_or_else(|| dashcore::TxMerkleNode::all_zeros()),
-                        time: checkpoint.timestamp,
-                        bits: dashcore::pow::CompactTarget::from_consensus(checkpoint.bits),
-                        nonce: checkpoint.nonce,
-                    };
 
-                    // Verify hash matches
-                    let calculated_hash = checkpoint_header.block_hash();
-                    if calculated_hash != checkpoint.block_hash {
-                        tracing::warn!(
+                            let checkpoint_header = dashcore::block::Header {
+                                version: dashcore::block::Version::from_consensus(
+                                    checkpoint.version as i32,
+                                ),
+                                prev_blockhash: checkpoint.prev_blockhash,
+                                merkle_root: checkpoint
+                                    .merkle_root
+                                    .map(|h| {
+                                        dashcore::TxMerkleNode::from_byte_array(*h.as_byte_array())
+                                    })
+                                    .unwrap_or_else(|| dashcore::TxMerkleNode::all_zeros()),
+                                time: checkpoint.timestamp,
+                                bits: dashcore::pow::CompactTarget::from_consensus(checkpoint.bits),
+                                nonce: checkpoint.nonce,
+                            };
+
+                            // Verify hash matches
+                            let calculated_hash = checkpoint_header.block_hash();
+                            if calculated_hash != checkpoint.block_hash {
+                                tracing::warn!(
                             "Checkpoint header hash mismatch at height {}: expected {}, calculated {}",
                             checkpoint.height,
                             checkpoint.block_hash,
                             calculated_hash
                         );
-                        
-                        // Debug the header details
-                        tracing::debug!("Header details: {:?}", checkpoint_header);
-                    } else {
-                        // Initialize chain state from checkpoint
-                        chain_state.init_from_checkpoint(
-                            checkpoint.height,
-                            checkpoint_header,
-                            self.config.network,
-                        );
 
-                        // Clone the chain state for storage
-                        let chain_state_for_storage = chain_state.clone();
-                        drop(chain_state);
+                                // Debug the header details
+                                tracing::debug!("Header details: {:?}", checkpoint_header);
+                            } else {
+                                // Initialize chain state from checkpoint
+                                chain_state.init_from_checkpoint(
+                                    checkpoint.height,
+                                    checkpoint_header,
+                                    self.config.network,
+                                );
 
-                        // Update storage with chain state including sync_base_height
-                        self.storage
-                            .store_chain_state(&chain_state_for_storage)
-                            .await
-                            .map_err(|e| SpvError::Storage(e))?;
+                                // Clone the chain state for storage
+                                let chain_state_for_storage = chain_state.clone();
+                                drop(chain_state);
 
-                        // Don't store the checkpoint header itself - we'll request headers from peers
-                        // starting from this checkpoint
+                                // Update storage with chain state including sync_base_height
+                                self.storage
+                                    .store_chain_state(&chain_state_for_storage)
+                                    .await
+                                    .map_err(|e| SpvError::Storage(e))?;
 
-                        tracing::info!(
+                                // Don't store the checkpoint header itself - we'll request headers from peers
+                                // starting from this checkpoint
+
+                                tracing::info!(
                             "✅ Initialized from checkpoint at height {}, skipping {} headers",
                             checkpoint.height,
                             checkpoint.height
                         );
 
-                        return Ok(());
+                                return Ok(());
+                            }
+                        }
                     }
-                }
-            }
                 } else {
                     // Existing headers are sufficient, continue with them
                     return Ok(());
@@ -2848,7 +2855,9 @@ impl DashSpvClient {
                 // start_height is 0, meaning start from genesis
                 // Check if we already have headers
                 if current_tip.is_some() {
-                    tracing::debug!("Headers already exist in storage, skipping genesis initialization");
+                    tracing::debug!(
+                        "Headers already exist in storage, skipping genesis initialization"
+                    );
                     return Ok(());
                 }
             }

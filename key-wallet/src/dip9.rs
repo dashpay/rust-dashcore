@@ -1,4 +1,15 @@
+use crate::bip32::{ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey};
+#[cfg(feature = "bincode")]
+use bincode_derive::{Decode, Encode};
+use bitflags::bitflags;
+use dash_network::Network;
+use secp256k1::Secp256k1;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum DerivationPathReference {
     Unknown = 0,
     BIP32 = 1,
@@ -18,12 +29,6 @@ pub enum DerivationPathReference {
     CoinJoin = 15,
     Root = 255,
 }
-
-use bitflags::bitflags;
-use secp256k1::Secp256k1;
-
-use crate::bip32::{ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey};
-use dash_network::Network;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
