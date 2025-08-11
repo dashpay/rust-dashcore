@@ -32,6 +32,7 @@ Supports (or should support)
 * JSONRPC interaction with Dash Core
 * FFI bindings for C/Swift integration (dash-spv-ffi, key-wallet-ffi)
 * [Unified SDK](UNIFIED_SDK.md) option for iOS that combines Core and Platform functionality
+* [High-level wallet management](key-wallet-manager/README.md) with transaction building and UTXO management
 
 # Known limitations
 
@@ -79,6 +80,17 @@ fn main() {
 
 See `client/examples/` for more usage examples.
 
+# Wallet Management
+
+This library provides comprehensive wallet functionality through multiple components:
+
+* **key-wallet**: Low-level cryptographic primitives for HD wallets, mnemonic generation, and key derivation
+* **[key-wallet-manager](key-wallet-manager/README.md)**: High-level wallet management with transaction building, UTXO tracking, and coin selection
+* **key-wallet-ffi**: C/Swift FFI bindings for mobile integration
+* **dash-spv**: SPV (Simplified Payment Verification) client implementation
+
+For most applications, start with [key-wallet-manager](key-wallet-manager/README.md) which provides a complete, easy-to-use interface for wallet operations.
+
 # Supported Dash Core Versions
 The following versions are officially supported and automatically tested:
 * 0.18.0
@@ -108,6 +120,11 @@ cargo update --package "byteorder" --precise "1.3.4"
 # Documentation
 
 Documentation can be found on [dashcore.readme.io/docs](https://dashcore.readme.io/docs).
+
+## Component Documentation
+
+* **[key-wallet-manager](key-wallet-manager/README.md)** - High-level wallet management guide
+* **[Unified SDK](UNIFIED_SDK.md)** - iOS SDK combining Core and Platform functionality
 
 # Contributing
 

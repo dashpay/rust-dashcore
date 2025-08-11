@@ -4,6 +4,7 @@
 
 #[cfg(all(not(feature = "std"), not(test)))]
 use alloc::vec::Vec;
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use core::fmt::{Debug, Formatter};
 use hashes::{Hash, HashEngine};
