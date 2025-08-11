@@ -342,6 +342,18 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
             498598646,
             Some("ML1900000__70230"),
         ),
+        // Block 2300000 (2025) - recent checkpoint
+        create_checkpoint(
+            2300000,
+            "00000000000000186f9f2fde843be3d66b8ae317cabb7d43dbde943d02a4b4d7",
+            "000000000000000d51caa0307836ca3eabe93068a9007515ac128a43d6addd4e",
+            1751767455,
+            0x1938df46,
+            "0x00000000000000000000000000000000000000000000aa3859b6456688a3fb53",
+            "b026649607d72d486480c0cef823dba6b28d0884a0d86f5a8b9e5a7919545cef",
+            972444458,
+            Some("ML2300000__70232"),
+        ),
     ]
 }
 
