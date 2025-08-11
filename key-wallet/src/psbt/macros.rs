@@ -28,7 +28,8 @@ macro_rules! impl_psbt_deserialize {
     ($thing:ty) => {
         impl $crate::psbt::serialize::Deserialize for $thing {
             fn deserialize(bytes: &[u8]) -> Result<Self, $crate::psbt::Error> {
-                $crate::consensus::deserialize(&bytes[..]).map_err(|e| $crate::psbt::Error::from(e))
+                $crate::dashcore::consensus::deserialize(&bytes[..])
+                    .map_err(|e| $crate::psbt::Error::from(e))
             }
         }
     };
@@ -38,7 +39,7 @@ macro_rules! impl_psbt_serialize {
     ($thing:ty) => {
         impl $crate::psbt::serialize::Serialize for $thing {
             fn serialize(&self) -> $crate::prelude::Vec<u8> {
-                $crate::consensus::serialize(self)
+                $crate::dashcore::consensus::serialize(self)
             }
         }
     };
@@ -68,7 +69,7 @@ macro_rules! impl_psbtmap_deserialize {
 macro_rules! impl_psbtmap_decoding {
     ($thing:ty) => {
         impl $thing {
-            pub(crate) fn decode<R: $crate::io::Read + ?Sized>(
+            pub(crate) fn decode<R: $crate::dashcore::io::Read + ?Sized>(
                 r: &mut R,
             ) -> Result<Self, $crate::psbt::Error> {
                 let mut rv: Self = core::default::Default::default();

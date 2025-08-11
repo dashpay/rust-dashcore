@@ -8,25 +8,27 @@
 
 use core::convert::{TryFrom, TryInto};
 
-use hashes::{Hash, hash160, ripemd160, sha256, sha256d};
+use dashcore_hashes::{hash160, ripemd160, sha256, sha256d, Hash};
 use secp256k1::{self, XOnlyPublicKey};
 
-use super::Psbt;
 use super::map::{Input, Map, Output, PsbtSighashType};
-use crate::bip32::{ChildNumber, Fingerprint, KeySource};
-use crate::blockdata::script::ScriptBuf;
-use crate::blockdata::transaction::Transaction;
-use crate::blockdata::transaction::txout::TxOut;
-use crate::blockdata::witness::Witness;
-use crate::consensus::encode::{self, Decodable, Encodable, deserialize_partial, serialize};
-use crate::crypto::key::PublicKey;
-use crate::crypto::{ecdsa, taproot};
-use crate::prelude::*;
+use super::Psbt;
+use crate::bip32::KeySource;
+use crate::bip32::{ChildNumber, Fingerprint};
 use crate::psbt::{Error, PartiallySignedTransaction};
-use crate::taproot::{
+use alloc::string::String;
+use alloc::vec::Vec;
+use dashcore::blockdata::script::ScriptBuf;
+use dashcore::blockdata::transaction::txout::TxOut;
+use dashcore::blockdata::transaction::Transaction;
+use dashcore::blockdata::witness::Witness;
+use dashcore::consensus::encode::{self, deserialize_partial, serialize, Decodable, Encodable};
+use dashcore::crypto::key::PublicKey;
+use dashcore::crypto::{ecdsa, taproot};
+use dashcore::taproot::{
     ControlBlock, LeafVersion, TapLeafHash, TapNodeHash, TapTree, TaprootBuilder,
 };
-use crate::{VarInt, io};
+use dashcore::{io, VarInt};
 /// A trait for serializing a value as raw data for insertion into PSBT
 /// key-value maps.
 pub trait Serialize {
@@ -43,7 +45,7 @@ pub trait Deserialize: Sized {
 impl PartiallySignedTransaction {
     /// Serialize a value as bytes in hex.
     pub fn serialize_hex(&self) -> String {
-        self.serialize().to_lower_hex_string()
+        hex::encode(self.serialize())
     }
 
     /// Serialize as raw binary data
@@ -75,8 +77,8 @@ impl PartiallySignedTransaction {
             return Err(Error::InvalidMagic);
         }
 
-        const PSBT_SERPARATOR: u8 = 0xff_u8;
-        if bytes.get(MAGIC_BYTES.len()) != Some(&PSBT_SERPARATOR) {
+        const PSBT_SEPARATOR: u8 = 0xff_u8;
+        if bytes.get(MAGIC_BYTES.len()) != Some(&PSBT_SEPARATOR) {
             return Err(Error::InvalidSeparator);
         }
 
@@ -86,7 +88,7 @@ impl PartiallySignedTransaction {
         global.unsigned_tx_checks()?;
 
         let inputs: Vec<Input> = {
-            let inputs_len: usize = (global.unsigned_tx.input).len();
+            let inputs_len: usize = global.unsigned_tx.input.len();
 
             let mut inputs: Vec<Input> = Vec::with_capacity(inputs_len);
 
@@ -98,7 +100,7 @@ impl PartiallySignedTransaction {
         };
 
         let outputs: Vec<Output> = {
-            let outputs_len: usize = (global.unsigned_tx.output).len();
+            let outputs_len: usize = global.unsigned_tx.output.len();
 
             let mut outputs: Vec<Output> = Vec::with_capacity(outputs_len);
 
@@ -377,7 +379,7 @@ impl Serialize for TapTree {
         for leaf_info in self.script_leaves() {
             // # Cast Safety:
             //
-            // TaprootMerkleBranch can only have len atmost 128(TAPROOT_CONTROL_MAX_NODE_COUNT).
+            // TaprootMerkleBranch can only have len at most 128(TAPROOT_CONTROL_MAX_NODE_COUNT).
             // safe to cast from usize to u8
             buf.push(leaf_info.merkle_branch().len() as u8);
             buf.push(leaf_info.version().to_consensus());
@@ -409,7 +411,7 @@ impl Deserialize for TapTree {
 
 // Helper function to compute key source len
 fn key_source_len(key_source: &KeySource) -> usize {
-    4 + 4 * (key_source.1).as_ref().len()
+    4 + 4 * key_source.1.as_ref().len()
 }
 
 #[cfg(test)]

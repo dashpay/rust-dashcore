@@ -28,7 +28,7 @@ impl Wallet {
         }
 
         let root_key = self.root_extended_priv_key()?;
-        let secret_key = root_key.root_private_key.clone();
+        let secret_key = root_key.root_private_key;
 
         encrypt_private_key(&secret_key, password, true, network)
     }
@@ -46,6 +46,7 @@ impl Wallet {
             ));
         }
 
+        // Verify account exists
         let account = self
             .standard_accounts
             .get(network, account_index)
@@ -55,13 +56,21 @@ impl Wallet {
                 account_index, network
             )))?;
 
-        if let Some(ref account_key) = account.account_key {
-            let secret_key = account_key.private_key.clone();
+        // Derive the account key from the root key
+        let root_key = self.root_extended_priv_key()?;
+        let master_key = root_key.to_extended_priv_key(network);
 
-            encrypt_private_key(&secret_key, password, true, network)
-        } else {
-            Err(Error::InvalidParameter("Account has no private key".into()))
-        }
+        use crate::account::AccountType;
+        use crate::derivation::HDWallet;
+
+        let hd_wallet = HDWallet::new(master_key);
+        let account_key = match account.account_type {
+            AccountType::CoinJoin => hd_wallet.coinjoin_account(account_index)?,
+            _ => hd_wallet.bip44_account(account_index)?,
+        };
+
+        let secret_key = account_key.private_key;
+        encrypt_private_key(&secret_key, password, true, network)
     }
 
     /// Import a BIP38 encrypted private key

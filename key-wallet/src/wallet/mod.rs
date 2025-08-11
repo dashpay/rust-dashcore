@@ -19,8 +19,8 @@ use self::account_collection::AccountCollection;
 use self::config::WalletConfig;
 use self::metadata::WalletMetadata;
 use self::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
-use crate::account::{Account, AccountType, SpecialPurposeType};
-use crate::mnemonic::{Language, Mnemonic};
+use crate::account::{Account, SpecialPurposeType};
+use crate::mnemonic::Mnemonic;
 use crate::seed::Seed;
 use crate::Network;
 use alloc::collections::BTreeMap;
@@ -172,16 +172,16 @@ mod tests {
     #[test]
     fn test_wallet_config() {
         let mut config = WalletConfig::default();
-        config.external_gap_limit = 30;
-        config.internal_gap_limit = 15;
+        config.account_default_external_gap_limit = 30;
+        config.account_default_internal_gap_limit = 15;
         config.enable_coinjoin = true;
-        config.coinjoin_gap_limit = 10;
+        config.coinjoin_default_gap_limit = 10;
 
         let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
         wallet.name = Some("Test Wallet".to_string());
 
-        assert_eq!(wallet.config.external_gap_limit, 30);
-        assert_eq!(wallet.config.internal_gap_limit, 15);
+        assert_eq!(wallet.config.account_default_external_gap_limit, 30);
+        assert_eq!(wallet.config.account_default_internal_gap_limit, 15);
         assert!(wallet.config.enable_coinjoin);
         assert_eq!(wallet.standard_accounts.len(), 1); // Only default account
     }
@@ -304,10 +304,10 @@ mod tests {
     fn test_wallet_config_defaults() {
         let config = WalletConfig::default();
 
-        assert_eq!(config.external_gap_limit, 20);
-        assert_eq!(config.internal_gap_limit, 10);
+        assert_eq!(config.account_default_external_gap_limit, 20);
+        assert_eq!(config.account_default_internal_gap_limit, 10);
         assert!(!config.enable_coinjoin);
-        assert_eq!(config.coinjoin_gap_limit, 10);
+        assert_eq!(config.coinjoin_default_gap_limit, 10);
     }
 
     // ✓ Test wallet with passphrase (from BIP39 tests)
@@ -384,15 +384,15 @@ mod tests {
     fn test_wallet_config_validation() {
         // Test config with minimum limits
         let mut config = WalletConfig::default();
-        config.external_gap_limit = 0; // Will be adjusted
-        config.internal_gap_limit = 0; // Will be adjusted
+        config.account_default_external_gap_limit = 0; // Will be adjusted
+        config.account_default_internal_gap_limit = 0; // Will be adjusted
         config.ensure_minimum_limits();
 
         let wallet = Wallet::new_random(config, Network::Testnet).unwrap();
 
         // Should use minimum safe values
-        assert!(wallet.config.external_gap_limit >= 1);
-        assert!(wallet.config.internal_gap_limit >= 1);
+        assert!(wallet.config.account_default_external_gap_limit >= 1);
+        assert!(wallet.config.account_default_internal_gap_limit >= 1);
     }
 
     // ✓ Test error conditions

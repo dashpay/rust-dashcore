@@ -2,14 +2,13 @@
 
 use core::fmt;
 
-use internals::write_err;
-
 use crate::bip32::ExtendedPubKey;
-use crate::blockdata::transaction::Transaction;
-use crate::consensus::encode;
-use crate::prelude::*;
 use crate::psbt::raw;
-use crate::{hashes, io};
+use dashcore::blockdata::transaction::Transaction;
+use dashcore::consensus::encode;
+use dashcore::io;
+use dashcore_hashes as hashes;
+use internals::write_err;
 
 /// Enum for marking psbt hash error.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -31,7 +30,7 @@ pub enum Error {
     /// The separator for a PSBT must be `0xff`.
     InvalidSeparator,
     /// Returned when output index is out of bounds in relation to the output in non-witness UTXO.
-    PsbtUtxoOutOfbounds,
+    PsbtUtxoOutOfBounds,
     /// Known keys must be according to spec.
     InvalidKey(raw::Key),
     /// Non-proprietary key type found when proprietary key was expected
@@ -58,7 +57,7 @@ pub enum Error {
     NonStandardSighashType(u32),
     /// Parsing errors from bitcoin_hashes
     HashParse(hashes::Error),
-    /// The pre-image must hash to the correponding psbt hash
+    /// The pre-image must hash to the corresponding psbt hash
     InvalidPreimageHashPair {
         /// Hash-type
         hash_type: PsbtHash,
@@ -77,24 +76,24 @@ pub enum Error {
     /// Integer overflow in fee calculation
     FeeOverflow,
     /// Parsing error indicating invalid public keys
-    InvalidPublicKey(crate::crypto::key::Error),
+    InvalidPublicKey(dashcore::crypto::key::Error),
     /// Parsing error indicating invalid secp256k1 public keys
     InvalidSecp256k1PublicKey(secp256k1::Error),
     /// Parsing error indicating invalid xonly public keys
     InvalidXOnlyPublicKey,
     /// Parsing error indicating invalid ECDSA signatures
-    InvalidEcdsaSignature(crate::crypto::ecdsa::Error),
+    InvalidEcdsaSignature(dashcore::crypto::ecdsa::Error),
     /// Parsing error indicating invalid taproot signatures
-    InvalidTaprootSignature(crate::crypto::taproot::Error),
+    InvalidTaprootSignature(dashcore::crypto::taproot::Error),
     /// Parsing error indicating invalid control block
     InvalidControlBlock,
     /// Parsing error indicating invalid leaf version
     InvalidLeafVersion,
     /// Parsing error indicating a taproot error
     Taproot(&'static str),
-    /// Taproot tree deserilaization error
-    TapTree(crate::taproot::IncompleteBuilder),
-    /// Error related to an xpub key
+    /// Taproot tree deserialization error
+    TapTree(dashcore::taproot::IncompleteBuilder),
+    /// Error related to a xpub key
     XPubKey(&'static str),
     /// Error related to PSBT version
     Version(&'static str),
@@ -110,7 +109,7 @@ impl fmt::Display for Error {
             Error::InvalidMagic => f.write_str("invalid magic"),
             Error::MissingUtxo => f.write_str("UTXO information is not present in PSBT"),
             Error::InvalidSeparator => f.write_str("invalid separator"),
-            Error::PsbtUtxoOutOfbounds => {
+            Error::PsbtUtxoOutOfBounds => {
                 f.write_str("output index is out of bounds of non witness script output array")
             }
             Error::InvalidKey(ref rkey) => write!(f, "invalid key: {}", rkey),
@@ -188,7 +187,7 @@ impl std::error::Error for Error {
             InvalidMagic
             | MissingUtxo
             | InvalidSeparator
-            | PsbtUtxoOutOfbounds
+            | PsbtUtxoOutOfBounds
             | InvalidKey(_)
             | InvalidProprietaryKey
             | DuplicateKey(_)

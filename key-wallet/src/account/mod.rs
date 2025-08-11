@@ -4,6 +4,8 @@
 //! including gap limit tracking, address pool management, and support for
 //! multiple account types (standard, CoinJoin, watch-only).
 
+pub mod address_pool;
+
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -15,12 +17,13 @@ use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::address_pool::{AddressPool, KeySource};
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::dip9::DerivationPathReference;
 use crate::error::{Error, Result};
 use crate::gap_limit::{GapLimit, GapLimitManager};
-use crate::{Address, Network};
+use crate::Network;
+use address_pool::{AddressPool, KeySource};
+use dashcore::Address;
 
 /// Account types supported by the wallet
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +56,7 @@ pub enum SpecialPurposeType {
 }
 
 /// Account metadata for organization and tracking
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct AccountMetadata {
@@ -77,22 +80,6 @@ pub struct AccountMetadata {
     pub tx_count: u32,
 }
 
-impl Default for AccountMetadata {
-    fn default() -> Self {
-        Self {
-            name: None,
-            description: None,
-            color: None,
-            tags: Vec::new(),
-            created_at: 0,
-            last_used: None,
-            total_received: 0,
-            total_sent: 0,
-            tx_count: 0,
-        }
-    }
-}
-
 /// Complete account structure with all derivation paths and address pools
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -104,9 +91,6 @@ pub struct Account {
     pub account_type: AccountType,
     /// Network this account belongs to
     pub network: Network,
-    /// Account-level extended private key (m/44'/5'/account')
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub account_key: Option<ExtendedPrivKey>,
     /// Account-level extended public key
     pub account_xpub: ExtendedPubKey,
     /// External (receive) address pool
@@ -179,7 +163,6 @@ impl Account {
             index,
             account_type: AccountType::Standard,
             network,
-            account_key: Some(account_key),
             account_xpub,
             external_addresses: AddressPool::new(
                 external_path.clone(),
@@ -233,7 +216,6 @@ impl Account {
             index,
             account_type: AccountType::Standard,
             network,
-            account_key: None,
             account_xpub,
             external_addresses: AddressPool::new(
                 external_path.clone(),
@@ -499,11 +481,8 @@ impl Account {
 
     /// Get the key source for address derivation
     fn get_key_source(&self) -> Result<KeySource> {
-        if let Some(ref key) = self.account_key {
-            Ok(KeySource::Private(*key))
-        } else {
-            Ok(KeySource::Public(self.account_xpub))
-        }
+        // Since we no longer store the private key, always use the public key
+        Ok(KeySource::Public(self.account_xpub))
     }
 
     /// Get current timestamp (placeholder - should use actual time source)
@@ -515,7 +494,6 @@ impl Account {
     /// Export account as watch-only
     pub fn to_watch_only(&self) -> Self {
         let mut watch_only = self.clone();
-        watch_only.account_key = None;
         watch_only.is_watch_only = true;
         watch_only
     }
@@ -643,7 +621,6 @@ mod tests {
             Account::from_xpub(0, account.account_xpub, Network::Testnet, 20, 10).unwrap();
 
         assert!(watch_only.is_watch_only);
-        assert!(watch_only.account_key.is_none());
         assert_eq!(watch_only.external_addresses.get_all_addresses().len(), 20);
     }
 

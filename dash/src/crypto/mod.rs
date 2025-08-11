@@ -10,4 +10,4 @@ pub mod ecdsa;
 pub mod key;
 pub mod sighash;
 // Contents re-exported in `dash::taproot`.
-pub(crate) mod taproot;
+pub mod taproot;

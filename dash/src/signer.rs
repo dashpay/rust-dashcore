@@ -139,7 +139,6 @@ pub fn ripemd160_sha256(data: &[u8]) -> Vec<u8> {
 mod test {
     use super::*;
     use crate::internal_macros::hex;
-    use crate::psbt::serialize::Serialize;
     use crate::{PublicKey, assert_error_contains};
 
     struct Keys {
@@ -157,7 +156,7 @@ mod test {
 
         let mut public_key = PublicKey::from_slice(&public_key_compressed_bytes).unwrap();
         public_key.compressed = false;
-        let public_key_uncompressed_bytes = public_key.serialize();
+        let public_key_uncompressed_bytes = public_key.to_bytes();
 
         Keys {
             private_key: private_key_bytes,

@@ -28,7 +28,7 @@ impl AccountCollection {
 
     /// Insert an account for a specific network and index
     pub fn insert(&mut self, network: Network, index: u32, account: Account) {
-        self.accounts.entry(network).or_insert_with(BTreeMap::new).insert(index, account);
+        self.accounts.entry(network).or_default().insert(index, account);
     }
 
     /// Get an account by network and index
@@ -45,7 +45,7 @@ impl AccountCollection {
     pub fn contains_key(&self, network: Network, index: u32) -> bool {
         self.accounts
             .get(&network)
-            .map_or(false, |network_accounts| network_accounts.contains_key(&index))
+            .is_some_and(|network_accounts| network_accounts.contains_key(&index))
     }
 
     /// Get all accounts for a specific network

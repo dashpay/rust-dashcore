@@ -11,12 +11,14 @@ license = "CC0-1.0"
 [features]
 default = ["std"]
 std = ["dashcore_hashes/std", "secp256k1/std", "bip39/std", "getrandom", "dash-network/std"]
-serde = ["dep:serde", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde"]
-bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dash-network/bincode", "dashcore_hashes/bincode"]
+serde = ["dep:serde", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde", "dashcore/serde"]
+bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dash-network/bincode", "dashcore_hashes/bincode", "dashcore/bincode"]
 bip38 = ["scrypt", "aes", "sha2", "bs58", "rand"]
 
 [dependencies]
+internals = { path = "../internals", package = "dashcore-private" }
 dashcore_hashes = { path = "../hashes", default-features = false }
+dashcore = { path="../dash" }
 secp256k1 = { version = "0.30.0", default-features = false, features = ["hashes", "recovery"] }
 bip39 = { version = "2.2.0", default-features = false, features = ["chinese-simplified", "chinese-traditional", "czech", "french", "italian", "japanese", "korean", "portuguese", "spanish"] }
 serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
@@ -31,8 +33,9 @@ sha2 = { version = "0.10", default-features = false, optional = true }
 bs58 = { version = "0.5", default-features = false, features = ["check", "alloc"], optional = true }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"], optional = true }
 # Serialization
-bincode = { package = "bincode", version = "=2.0.0-rc.3", optional = true }
-bincode_derive = { package = "bincode_derive", version = "=2.0.0-rc.3", optional = true }
+bincode = { version = "=2.0.0-rc.3", optional = true }
+bincode_derive = { version = "=2.0.0-rc.3", optional = true }
+base64 = { version = "0.22", optional = true }
 
 [dev-dependencies]
 hex = "0.4"

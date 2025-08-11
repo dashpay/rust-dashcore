@@ -4,24 +4,28 @@ use core::convert::TryFrom;
 use core::fmt;
 use core::str::FromStr;
 
-use hashes::{self, hash160, ripemd160, sha256, sha256d};
+use dashcore_hashes::{self as hashes, hash160, ripemd160, sha256, sha256d};
 use secp256k1::XOnlyPublicKey;
 
-use crate::bip32::KeySource;
-use crate::blockdata::script::ScriptBuf;
-use crate::blockdata::transaction::Transaction;
-use crate::blockdata::transaction::txout::TxOut;
-use crate::blockdata::witness::Witness;
-use crate::crypto::key::PublicKey;
-use crate::crypto::{ecdsa, taproot};
-use crate::prelude::*;
 use crate::psbt::map::Map;
-use crate::psbt::serialize::Deserialize;
-use crate::psbt::{self, Error, error, raw};
-use crate::sighash::{
+use crate::psbt::{error, raw, Error};
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
+use dashcore::blockdata::script::ScriptBuf;
+use dashcore::blockdata::transaction::txout::TxOut;
+use dashcore::blockdata::transaction::Transaction;
+use dashcore::blockdata::witness::Witness;
+use dashcore::crypto::key::PublicKey;
+use dashcore::crypto::{ecdsa, taproot};
+use dashcore::sighash::{
     self, EcdsaSighashType, NonStandardSighashType, SighashTypeParseError, TapSighashType,
 };
-use crate::taproot::{ControlBlock, LeafVersion, TapLeafHash, TapNodeHash};
+use dashcore::taproot::{ControlBlock, LeafVersion, TapLeafHash, TapNodeHash};
+use std::collections::btree_map;
+
+use crate::bip32::KeySource;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 /// Type: Non-Witness UTXO PSBT_IN_NON_WITNESS_UTXO = 0x00
 const PSBT_IN_NON_WITNESS_UTXO: u8 = 0x00;
@@ -68,14 +72,13 @@ const PSBT_IN_PROPRIETARY: u8 = 0xFC;
 /// transaction.
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct Input {
     /// The non-witness transaction this input spends from. Should only be
-    /// [std::option::Option::Some] for inputs which spend non-segwit outputs or
+    /// [Some] for inputs which spend non-segwit outputs or
     /// if it is unknown whether an input spends a segwit output.
     pub non_witness_utxo: Option<Transaction>,
     /// The transaction output this input spends from. Should only be
-    /// [std::option::Option::Some] for inputs which spend segwit outputs,
+    /// [Some] for inputs which spend segwit outputs,
     /// including P2SH embedded ones.
     pub witness_utxo: Option<TxOut>,
     /// A map from public keys to their corresponding signature as would be
@@ -90,7 +93,7 @@ pub struct Input {
     pub witness_script: Option<ScriptBuf>,
     /// A map from public keys needed to sign this input to their corresponding
     /// master key fingerprints and derivation paths.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq"))]
+    #[cfg_attr(feature = "serde", serde(with = "dashcore::serde_utils::btreemap_as_seq"))]
     pub bip32_derivation: BTreeMap<secp256k1::PublicKey, KeySource>,
     /// The finalized, fully-constructed scriptSig with signatures and any other
     /// scripts necessary for this input to pass validation.
@@ -100,37 +103,43 @@ pub struct Input {
     pub final_script_witness: Option<Witness>,
     /// TODO: Proof of reserves commitment
     /// RIPEMD160 hash to preimage map.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_byte_values"))]
+    #[cfg_attr(feature = "serde", serde(with = "dashcore::serde_utils::btreemap_byte_values"))]
     pub ripemd160_preimages: BTreeMap<ripemd160::Hash, Vec<u8>>,
     /// SHA256 hash to preimage map.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_byte_values"))]
+    #[cfg_attr(feature = "serde", serde(with = "dashcore::serde_utils::btreemap_byte_values"))]
     pub sha256_preimages: BTreeMap<sha256::Hash, Vec<u8>>,
-    /// HSAH160 hash to preimage map.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_byte_values"))]
+    /// HASH160 hash to preimage map.
+    #[cfg_attr(feature = "serde", serde(with = "dashcore::serde_utils::btreemap_byte_values"))]
     pub hash160_preimages: BTreeMap<hash160::Hash, Vec<u8>>,
     /// HAS256 hash to preimage map.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_byte_values"))]
+    #[cfg_attr(feature = "serde", serde(with = "dashcore::serde_utils::btreemap_byte_values"))]
     pub hash256_preimages: BTreeMap<sha256d::Hash, Vec<u8>>,
     /// Serialized taproot signature with sighash type for key spend.
     pub tap_key_sig: Option<taproot::Signature>,
     /// Map of `<xonlypubkey>|<leafhash>` with signature.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq"))]
+    #[cfg_attr(feature = "serde", serde(with = "dashcore::serde_utils::btreemap_as_seq"))]
     pub tap_script_sigs: BTreeMap<(XOnlyPublicKey, TapLeafHash), taproot::Signature>,
     /// Map of Control blocks to Script version pair.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq"))]
+    #[cfg_attr(feature = "serde", serde(with = "dashcore::serde_utils::btreemap_as_seq"))]
     pub tap_scripts: BTreeMap<ControlBlock, (ScriptBuf, LeafVersion)>,
     /// Map of tap root x only keys to origin info and leaf hashes contained in it.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq"))]
+    #[cfg_attr(feature = "serde", serde(with = "dashcore::serde_utils::btreemap_as_seq"))]
     pub tap_key_origins: BTreeMap<XOnlyPublicKey, (Vec<TapLeafHash>, KeySource)>,
     /// Taproot Internal key.
     pub tap_internal_key: Option<XOnlyPublicKey>,
     /// Taproot Merkle root.
     pub tap_merkle_root: Option<TapNodeHash>,
     /// Proprietary key-value pairs for this input.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq_byte_values"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "dashcore::serde_utils::btreemap_as_seq_byte_values")
+    )]
     pub proprietary: BTreeMap<raw::ProprietaryKey, Vec<u8>>,
     /// Unknown key-value pairs for this input.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq_byte_values"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "dashcore::serde_utils::btreemap_as_seq_byte_values")
+    )]
     pub unknown: BTreeMap<raw::Key, Vec<u8>>,
 }
 
@@ -140,7 +149,6 @@ pub struct Input {
 /// for converting to/from [`PsbtSighashType`] from/to the desired signature hash type they need.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct PsbtSighashType {
     pub(in crate::psbt) inner: u32,
 }
@@ -249,7 +257,7 @@ impl Input {
     ///
     /// # Errors
     ///
-    /// If the `sighash_type` field is set to a invalid Taproot sighash value.
+    /// If the `sighash_type` field is set to an invalid Taproot sighash value.
     pub fn taproot_hash_ty(&self) -> Result<TapSighashType, sighash::Error> {
         self.sighash_type
             .map(|sighash_type| sighash_type.taproot_hash_ty())
@@ -530,14 +538,14 @@ where
     H: hashes::Hash + Deserialize,
 {
     if raw_key.key.is_empty() {
-        return Err(psbt::Error::InvalidKey(raw_key));
+        return Err(Error::InvalidKey(raw_key));
     }
     let key_val: H = Deserialize::deserialize(&raw_key.key)?;
     match map.entry(key_val) {
         btree_map::Entry::Vacant(empty_key) => {
             let val: Vec<u8> = Deserialize::deserialize(&raw_value)?;
             if <H as hashes::Hash>::hash(&val) != key_val {
-                return Err(psbt::Error::InvalidPreimageHashPair {
+                return Err(Error::InvalidPreimageHashPair {
                     preimage: val.into_boxed_slice(),
                     hash: Box::from(key_val.borrow()),
                     hash_type,
@@ -546,7 +554,7 @@ where
             empty_key.insert(val);
             Ok(())
         }
-        btree_map::Entry::Occupied(_) => Err(psbt::Error::DuplicateKey(raw_key)),
+        btree_map::Entry::Occupied(_) => Err(Error::DuplicateKey(raw_key)),
     }
 }
 
@@ -592,7 +600,7 @@ mod test {
     }
 
     #[test]
-    fn psbt_sighash_type_notstd() {
+    fn psbt_sighash_type_not_std() {
         let nonstd = 0xdddddddd;
         let sighash = PsbtSighashType {
             inner: nonstd,
