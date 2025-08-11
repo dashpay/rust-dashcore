@@ -8,8 +8,9 @@ High-level wallet management for Dash using key-wallet primitives and dashcore t
 
 ### Architecture
 
+- **Multi-wallet management**: Manages multiple wallets, each containing multiple accounts
 - **High-level operations**: Transaction building, fee management, coin selection
-- **UTXO management**: Track and manage unspent transaction outputs
+- **UTXO management**: Track and manage unspent transaction outputs per wallet
 - **Integration layer**: Seamlessly combines `key-wallet` and `dashcore` types
 - **No circular dependencies**: Clean separation from low-level wallet primitives
 
@@ -42,23 +43,34 @@ use key_wallet_manager::{
 };
 
 // Create a new wallet manager
-let mut wallet_manager = WalletManager::new("my_wallet", Network::Testnet)?;
+let mut wallet_manager = WalletManager::new(Network::Testnet);
 
-// Add an account
-wallet_manager.create_account(0, AccountType::BIP44)?;
+// Create a wallet
+let wallet = wallet_manager.create_wallet_from_mnemonic(
+    "my_wallet".to_string(),
+    "My Main Wallet".to_string(),
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+    "", // passphrase
+    None, // use default network
+)?;
 
-// Get a receive address
-let address = wallet_manager.get_receive_address(0)?;
+// Add an account to the wallet
+wallet_manager.create_account("my_wallet", 0, AccountType::BIP44)?;
+
+// Get a receive address from the wallet and account
+let address = wallet_manager.get_receive_address("my_wallet", 0)?;
 println!("Send funds to: {}", address);
 
 // Build a transaction
 let recipient = "yNsWkgPLN1u7p1dfAXnpRPqPsWg6uqhqBr".parse()?;
 let amount = 100_000; // 0.001 DASH in duffs
 
-let tx = TransactionBuilder::new(Network::Testnet)
-    .add_recipient(recipient, amount)?
-    .set_fee_level(FeeLevel::Normal)
-    .build_and_sign(&wallet_manager, 0)?;
+let tx = wallet_manager.send_transaction(
+    "my_wallet",
+    0, // account index
+    vec![(recipient, amount)],
+    FeeLevel::Normal,
+)?;
 
 println!("Transaction built: {}", tx.txid());
 ```
@@ -67,28 +79,41 @@ println!("Transaction built: {}", tx.txid());
 
 ### WalletManager
 
-The main interface for wallet operations:
+The main interface for managing multiple wallets:
 
 ```rust
 use key_wallet_manager::WalletManager;
 
-// Create from mnemonic
-let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-let mut wallet = WalletManager::from_mnemonic(mnemonic, "password", Network::Testnet)?;
+// Create a wallet manager
+let mut wallet_manager = WalletManager::new(Network::Testnet);
 
-// Or create new random wallet
-let mut wallet = WalletManager::new("my_wallet", Network::Testnet)?;
+// Create wallet from mnemonic
+let wallet = wallet_manager.create_wallet_from_mnemonic(
+    "wallet1".to_string(),
+    "My Main Wallet".to_string(),
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+    "password",
+    None,
+)?;
+
+// Or create new empty wallet
+let wallet2 = wallet_manager.create_wallet(
+    "wallet2".to_string(),
+    "My Second Wallet".to_string(),
+    None,
+)?;
 
 // Account management
-wallet.create_account(0, AccountType::BIP44)?;
-let accounts = wallet.accounts();
+wallet_manager.create_account("wallet1", 0, AccountType::BIP44)?;
+let accounts = wallet_manager.get_accounts("wallet1")?;
 
 // Address generation
-let receive_addr = wallet.get_receive_address(0)?;
-let change_addr = wallet.get_change_address(0)?;
+let receive_addr = wallet_manager.get_receive_address("wallet1", 0)?;
+let change_addr = wallet_manager.get_change_address("wallet1", 0)?;
 
 // Transaction history
-let history = wallet.transaction_history();
+let all_history = wallet_manager.transaction_history();
+let wallet_history = wallet_manager.wallet_transaction_history("wallet1")?;
 ```
 
 ### TransactionBuilder
@@ -112,8 +137,13 @@ builder.set_fee_rate(FeeRate::from_sat_per_vb(10)?);
 // Add data (OP_RETURN)
 builder.add_data(b"Hello Dash!")?;
 
-// Build and sign
-let transaction = builder.build_and_sign(&wallet_manager, 0)?;
+// Send transaction from wallet and account
+let transaction = wallet_manager.send_transaction(
+    "wallet1",
+    0, // account index
+    vec![(recipient, amount)],
+    FeeLevel::Normal,
+)?;
 ```
 
 ### UTXO Management
@@ -127,12 +157,12 @@ use key_wallet_manager::{Utxo, UtxoSet};
 let mut utxo_set = UtxoSet::new();
 
 // Add UTXOs
-let utxo = Utxo::new(outpoint, txout, address, 100);
-utxo_set.add_utxo(utxo);
+let utxo = Utxo::new(outpoint, txout, address, 100, false);
+utxo_set.add(utxo);
 
 // Query UTXOs
-let available = utxo_set.get_available_utxos();
-let total_value = utxo_set.total_value();
+let available = utxo_set.spendable(current_height);
+let total_value = utxo_set.total_balance();
 
 // Rollback transactions
 utxo_set.rollback_to_height(12345);
@@ -148,11 +178,12 @@ use key_wallet_manager::{CoinSelector, SelectionStrategy};
 let selector = CoinSelector::new();
 
 // Different strategies
-let selection = selector.select_coins(
-    &utxo_set, 
-    100_000, // target amount
-    SelectionStrategy::SmallestFirst
-)?;
+// Get UTXOs for a wallet
+let wallet_utxos = wallet_manager.get_wallet_utxos("wallet1")?;
+
+// Add UTXOs to a wallet
+let utxo = Utxo::new(outpoint, txout, address, height, false);
+wallet_manager.add_utxo("wallet1", utxo)?;
 
 let selection = selector.select_coins(
     &utxo_set,
@@ -240,15 +271,22 @@ for i in 0..5 {
     wallet.create_account(i, AccountType::BIP44)?;
 }
 
-// Send from specific account
-let tx = TransactionBuilder::new(Network::Testnet)
-    .add_recipient(recipient, amount)?
-    .build_and_sign(&wallet, 2)?; // Use account 2
+// Send from specific wallet and account
+let tx = wallet_manager.send_transaction(
+    "wallet1",
+    2, // account index
+    vec![(recipient, amount)],
+    FeeLevel::Normal,
+)?;
 
-// Get account balances
-for account in wallet.accounts() {
-    let balance = wallet.get_account_balance(account.index())?;
-    println!("Account {}: {} DASH", account.index(), balance / 100_000_000);
+// Get wallet balance
+let balance = wallet_manager.get_wallet_balance("wallet1")?;
+println!("Wallet balance: {} DASH", balance / 100_000_000);
+
+// List all wallets
+for wallet_id in wallet_manager.list_wallets() {
+    let balance = wallet_manager.get_wallet_balance(wallet_id)?;
+    println!("Wallet {}: {} DASH", wallet_id, balance / 100_000_000);
 }
 ```
 
@@ -271,10 +309,10 @@ let parsed_tx = Transaction::deserialize(&Vec::from_hex(&hex)?)?;
 ```rust
 use key_wallet_manager::{WalletError, BuilderError};
 
-match wallet.create_account(0, AccountType::BIP44) {
-    Ok(account) => println!("Account created"),
-    Err(WalletError::AccountExists(index)) => {
-        println!("Account {} already exists", index);
+match wallet_manager.create_account("wallet1", 0, AccountType::BIP44) {
+    Ok(()) => println!("Account created"),
+    Err(WalletError::WalletNotFound(id)) => {
+        println!("Wallet {} not found", id);
     }
     Err(WalletError::InvalidNetwork) => {
         println!("Network configuration error");
@@ -282,15 +320,15 @@ match wallet.create_account(0, AccountType::BIP44) {
     Err(e) => println!("Other error: {}", e),
 }
 
-match builder.build_and_sign(&wallet, 0) {
+match wallet_manager.send_transaction("wallet1", 0, recipients, FeeLevel::Normal) {
     Ok(tx) => println!("Transaction built: {}", tx.txid()),
-    Err(BuilderError::InsufficientFunds { required, available }) => {
-        println!("Need {} duffs, only have {}", required, available);
+    Err(WalletError::WalletNotFound(id)) => {
+        println!("Wallet {} not found", id);
     }
-    Err(BuilderError::SigningFailed(msg)) => {
-        println!("Signing failed: {}", msg);
+    Err(WalletError::AccountNotFound(index)) => {
+        println!("Account {} not found", index);
     }
-    Err(e) => println!("Build error: {}", e),
+    Err(e) => println!("Transaction error: {}", e),
 }
 ```
 
@@ -313,12 +351,17 @@ match builder.build_and_sign(&wallet, 0) {
 ### Transaction Building
 
 ```rust
-// Good: Build complete transaction
-let tx = TransactionBuilder::new(Network::Testnet)
-    .add_recipient(addr1, 50_000)?
-    .add_recipient(addr2, 25_000)?
-    .set_fee_level(FeeLevel::Normal)
-    .build_and_sign(&wallet, 0)?;
+// Good: Send to multiple recipients
+let recipients = vec![
+    (addr1, 50_000),
+    (addr2, 25_000),
+];
+let tx = wallet_manager.send_transaction(
+    "wallet1",
+    0,
+    recipients,
+    FeeLevel::Normal,
+)?;
 
 // Avoid: Partial transactions that may fail to build
 ```
@@ -326,16 +369,19 @@ let tx = TransactionBuilder::new(Network::Testnet)
 ### UTXO Management
 
 ```rust
-// Update UTXO set after transactions
-utxo_set.add_transaction(&tx, block_height);
+// Add UTXOs to wallets
+wallet_manager.add_utxo("wallet1", new_utxo)?;
 
-// Regular cleanup of spent outputs  
-utxo_set.remove_spent_outputs(&tx);
+// Get wallet balances
+let total_balance = wallet_manager.get_total_balance();
+let wallet_balance = wallet_manager.get_wallet_balance("wallet1")?;
 
-// Handle chain reorganizations
-if reorg_detected {
-    utxo_set.rollback_to_height(safe_height);
-}
+// Update wallet metadata
+wallet_manager.update_wallet_metadata(
+    "wallet1",
+    Some("Updated Name".to_string()),
+    Some("Updated description".to_string()),
+)?;
 ```
 
 ## Integration Examples
@@ -392,12 +438,13 @@ See the `examples/` directory for complete working examples:
 
 | Error | Description | Common Causes |
 |-------|-------------|---------------|
-| `InsufficientFunds` | Not enough balance | UTXO set outdated, incorrect amount |
-| `InvalidAddress` | Malformed address | Wrong network, typo in address |
-| `SigningFailed` | Transaction signing error | Wrong private key, malformed transaction |
-| `InvalidNetwork` | Network mismatch | Testnet key on mainnet, etc. |
+| `WalletNotFound` | Wallet doesn't exist | Wrong wallet ID, wallet not created |
+| `WalletExists` | Wallet already exists | Duplicate wallet ID |
 | `AccountNotFound` | Account doesn't exist | Wrong index, account not created |
-| `DustAmount` | Amount too small | Below dust threshold (~546 duffs) |
+| `InvalidMnemonic` | Invalid mnemonic phrase | Wrong words, invalid checksum |
+| `InvalidNetwork` | Network mismatch | Testnet key on mainnet, etc. |
+| `AddressGeneration` | Address creation failed | Derivation error, invalid keys |
+| `TransactionBuild` | Transaction building error | Insufficient funds, invalid inputs |
 
 ## Compatibility
 

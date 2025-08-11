@@ -1,18 +1,22 @@
 //! Address generation and encoding
 
+use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
+#[cfg(feature = "bincode")]
+use bincode_derive::{Decode, Encode};
 use core::fmt;
 use core::str::FromStr;
-
-use bitcoin_hashes::{hash160, Hash};
-use secp256k1::{PublicKey, Secp256k1};
-
-use crate::error::{Error, Result};
 use dash_network::Network;
+use dashcore_hashes::{hash160, Hash};
+use secp256k1::{PublicKey, Secp256k1};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 /// Address types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum AddressType {
     /// Pay to public key hash (P2PKH)
     P2PKH,
@@ -54,6 +58,8 @@ impl NetworkExt for Network {
 
 /// A Dash address
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct Address {
     /// The network this address is valid for
     pub network: Network,

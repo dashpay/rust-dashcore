@@ -3,14 +3,15 @@
 //! This module provides comprehensive address pool management including
 //! generation, usage tracking, and discovery.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
 use alloc::string::String;
 use alloc::vec::Vec;
+#[cfg(feature = "bincode")]
+use bincode_derive::{Decode, Encode};
 use core::fmt;
-
 use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::address::{Address, AddressType};
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
@@ -19,6 +20,8 @@ use crate::Network;
 
 /// Key source for address derivation
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum KeySource {
     /// Private key for full wallet
     Private(ExtendedPrivKey),
@@ -48,6 +51,7 @@ impl KeySource {
 /// Information about a single address in the pool
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct AddressInfo {
     /// The address
     pub address: Address,
@@ -113,6 +117,7 @@ impl AddressInfo {
 /// Address pool for managing HD wallet addresses
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct AddressPool {
     /// Base derivation path for this pool
     pub base_path: DerivationPath,
@@ -128,8 +133,8 @@ pub struct AddressPool {
     address_index: HashMap<Address, u32>,
     /// Set of used address indices
     used_indices: HashSet<u32>,
-    /// Highest generated index
-    highest_generated: u32,
+    /// Highest generated index (None if no addresses generated yet)
+    highest_generated: Option<u32>,
     /// Highest used index
     highest_used: Option<u32>,
     /// Lookahead window for performance
@@ -154,7 +159,7 @@ impl AddressPool {
             addresses: BTreeMap::new(),
             address_index: HashMap::new(),
             used_indices: HashSet::new(),
-            highest_generated: 0,
+            highest_generated: None,
             highest_used: None,
             lookahead_size: gap_limit * 2,
             address_type: AddressType::P2PKH,
@@ -167,9 +172,13 @@ impl AddressPool {
     }
 
     /// Generate addresses up to the specified count
-    pub fn generate_addresses(&mut self, count: u32, key_source: &KeySource) -> Result<Vec<Address>> {
+    pub fn generate_addresses(
+        &mut self,
+        count: u32,
+        key_source: &KeySource,
+    ) -> Result<Vec<Address>> {
         let mut new_addresses = Vec::new();
-        let start_index = self.highest_generated + 1;
+        let start_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
         let end_index = start_index + count;
 
         for index in start_index..end_index {
@@ -196,9 +205,7 @@ impl AddressPool {
 
         // Generate the address
         let address = match self.address_type {
-            AddressType::P2PKH => {
-                Address::p2pkh(&pubkey.public_key, self.network)
-            }
+            AddressType::P2PKH => Address::p2pkh(&pubkey.public_key, self.network),
             AddressType::P2SH => {
                 // For P2SH, we'd need script information
                 // For now, default to P2PKH
@@ -212,8 +219,8 @@ impl AddressPool {
         self.address_index.insert(address.clone(), index);
 
         // Update highest generated
-        if index > self.highest_generated {
-            self.highest_generated = index;
+        if self.highest_generated.map(|h| index > h).unwrap_or(true) {
+            self.highest_generated = Some(index);
         }
 
         Ok(address)
@@ -222,7 +229,7 @@ impl AddressPool {
     /// Get the next unused address
     pub fn get_next_unused(&mut self, key_source: &KeySource) -> Result<Address> {
         // First, try to find an already generated unused address
-        for i in 0..=self.highest_generated {
+        for i in 0..=self.highest_generated.unwrap_or(0) {
             if let Some(info) = self.addresses.get(&i) {
                 if !info.used {
                     return Ok(info.address.clone());
@@ -231,17 +238,23 @@ impl AddressPool {
         }
 
         // Generate a new address
-        let next_index = self.highest_generated + 1;
+        let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
         self.generate_address_at_index(next_index, key_source)
     }
 
     /// Get multiple unused addresses
-    pub fn get_unused_addresses_count(&mut self, count: u32, key_source: &KeySource) -> Result<Vec<Address>> {
+    pub fn get_unused_addresses_count(
+        &mut self,
+        count: u32,
+        key_source: &KeySource,
+    ) -> Result<Vec<Address>> {
         let mut unused = Vec::new();
         let mut current_index = 0;
 
         // Collect existing unused addresses
-        while unused.len() < count as usize && current_index <= self.highest_generated {
+        while unused.len() < count as usize
+            && self.highest_generated.map(|h| current_index <= h).unwrap_or(false)
+        {
             if let Some(info) = self.addresses.get(&current_index) {
                 if !info.used {
                     unused.push(info.address.clone());
@@ -252,7 +265,8 @@ impl AddressPool {
 
         // Generate more if needed
         while unused.len() < count as usize {
-            let address = self.generate_address_at_index(self.highest_generated + 1, key_source)?;
+            let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
+            let address = self.generate_address_at_index(next_index, key_source)?;
             unused.push(address);
         }
 
@@ -266,13 +280,13 @@ impl AddressPool {
                 if !info.used {
                     info.mark_used();
                     self.used_indices.insert(index);
-                    
+
                     // Update highest used
                     self.highest_used = match self.highest_used {
                         None => Some(index),
                         Some(current) => Some(current.max(index)),
                     };
-                    
+
                     return true;
                 }
             }
@@ -286,13 +300,13 @@ impl AddressPool {
             if !info.used {
                 info.mark_used();
                 self.used_indices.insert(index);
-                
+
                 // Update highest used
                 self.highest_used = match self.highest_used {
                     None => Some(index),
                     Some(current) => Some(current.max(index)),
                 };
-                
+
                 return true;
             }
         }
@@ -305,13 +319,13 @@ impl AddressPool {
         F: Fn(&Address) -> bool,
     {
         let mut found = Vec::new();
-        
+
         for (_, info) in self.addresses.iter_mut() {
             if !info.used && check_fn(&info.address) {
                 info.mark_used();
                 self.used_indices.insert(info.index);
                 found.push(info.address.clone());
-                
+
                 // Update highest used
                 self.highest_used = match self.highest_used {
                     None => Some(info.index),
@@ -319,41 +333,33 @@ impl AddressPool {
                 };
             }
         }
-        
+
         found
     }
 
     /// Get all addresses in the pool
     pub fn get_all_addresses(&self) -> Vec<Address> {
-        self.addresses
-            .values()
-            .map(|info| info.address.clone())
-            .collect()
+        self.addresses.values().map(|info| info.address.clone()).collect()
     }
 
     /// Get only used addresses
     pub fn get_used_addresses(&self) -> Vec<Address> {
-        self.addresses
-            .values()
-            .filter(|info| info.used)
-            .map(|info| info.address.clone())
-            .collect()
+        self.addresses.values().filter(|info| info.used).map(|info| info.address.clone()).collect()
     }
 
     /// Get only unused addresses
     pub fn get_unused_addresses(&self) -> Vec<Address> {
-        self.addresses
-            .values()
-            .filter(|info| !info.used)
-            .map(|info| info.address.clone())
-            .collect()
+        self.addresses.values().filter(|info| !info.used).map(|info| info.address.clone()).collect()
+    }
+
+    /// Get address at specific index
+    pub fn get_address_at_index(&self, index: u32) -> Option<Address> {
+        self.addresses.get(&index).map(|info| info.address.clone())
     }
 
     /// Get address info by address
     pub fn get_address_info(&self, address: &Address) -> Option<&AddressInfo> {
-        self.address_index
-            .get(address)
-            .and_then(|&index| self.addresses.get(&index))
+        self.address_index.get(address).and_then(|&index| self.addresses.get(&index))
     }
 
     /// Get mutable address info by address
@@ -382,11 +388,8 @@ impl AddressPool {
 
     /// Check if we need to generate more addresses
     pub fn needs_more_addresses(&self) -> bool {
-        let unused_count = self.addresses
-            .values()
-            .filter(|info| !info.used)
-            .count() as u32;
-        
+        let unused_count = self.addresses.values().filter(|info| !info.used).count() as u32;
+
         unused_count < self.gap_limit
     }
 
@@ -396,13 +399,14 @@ impl AddressPool {
             None => self.gap_limit,
             Some(highest) => highest + self.gap_limit + 1,
         };
-        
+
         let mut new_addresses = Vec::new();
-        while self.highest_generated < target {
-            let address = self.generate_address_at_index(self.highest_generated + 1, key_source)?;
+        while self.highest_generated.unwrap_or(0) < target {
+            let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
+            let address = self.generate_address_at_index(next_index, key_source)?;
             new_addresses.push(address);
         }
-        
+
         Ok(new_addresses)
     }
 
@@ -412,13 +416,14 @@ impl AddressPool {
             None => self.lookahead_size,
             Some(highest) => highest + self.lookahead_size + 1,
         };
-        
+
         let mut new_addresses = Vec::new();
-        while self.highest_generated < target {
-            let address = self.generate_address_at_index(self.highest_generated + 1, key_source)?;
+        while self.highest_generated.unwrap_or(0) < target {
+            let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
+            let address = self.generate_address_at_index(next_index, key_source)?;
             new_addresses.push(address);
         }
-        
+
         Ok(new_addresses)
     }
 
@@ -446,7 +451,7 @@ impl AddressPool {
     pub fn stats(&self) -> PoolStats {
         let used_count = self.used_indices.len() as u32;
         let unused_count = self.addresses.len() as u32 - used_count;
-        
+
         PoolStats {
             total_generated: self.addresses.len() as u32,
             used_count,
@@ -475,28 +480,29 @@ impl AddressPool {
     /// Prune unused addresses beyond the gap limit
     pub fn prune_unused(&mut self) -> u32 {
         let keep_until = match self.highest_used {
-            None => self.gap_limit,
-            Some(highest) => highest + self.gap_limit + 1,
+            None => self.gap_limit - 1, // Keep indices 0 to gap_limit-1
+            Some(highest) => highest + self.gap_limit, // Keep up to highest + gap_limit
         };
-        
+
         let mut pruned = 0;
-        let indices_to_remove: Vec<u32> = self.addresses
+        let indices_to_remove: Vec<u32> = self
+            .addresses
             .keys()
             .filter(|&&idx| idx > keep_until && !self.used_indices.contains(&idx))
             .copied()
             .collect();
-        
+
         for idx in indices_to_remove {
             if let Some(info) = self.addresses.remove(&idx) {
                 self.address_index.remove(&info.address);
                 pruned += 1;
             }
         }
-        
+
         if let Some(&new_highest) = self.addresses.keys().max() {
-            self.highest_generated = new_highest;
+            self.highest_generated = Some(new_highest);
         }
-        
+
         pruned
     }
 }
@@ -513,8 +519,8 @@ pub struct PoolStats {
     pub unused_count: u32,
     /// Highest used index
     pub highest_used: Option<u32>,
-    /// Highest generated index
-    pub highest_generated: u32,
+    /// Highest generated index (None if no addresses generated)
+    pub highest_generated: Option<u32>,
     /// Gap limit
     pub gap_limit: u32,
     /// Whether this is an internal pool
@@ -526,7 +532,11 @@ impl fmt::Display for PoolStats {
         write!(
             f,
             "{} pool: {} addresses ({} used, {} unused), gap limit: {}",
-            if self.is_internal { "Internal" } else { "External" },
+            if self.is_internal {
+                "Internal"
+            } else {
+                "External"
+            },
             self.total_generated,
             self.used_count,
             self.unused_count,
@@ -596,12 +606,13 @@ impl AddressPoolBuilder {
 
     /// Build the address pool
     pub fn build(self) -> Result<AddressPool> {
-        let base_path = self.base_path.ok_or(Error::InvalidParameter("base_path required".into()))?;
-        
+        let base_path =
+            self.base_path.ok_or(Error::InvalidParameter("base_path required".into()))?;
+
         let mut pool = AddressPool::new(base_path, self.is_internal, self.gap_limit, self.network);
         pool.lookahead_size = self.lookahead_size;
         pool.address_type = self.address_type;
-        
+
         Ok(pool)
     }
 }
@@ -624,7 +635,7 @@ mod tests {
         ).unwrap();
         let seed = mnemonic.to_seed("");
         let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
-        
+
         let secp = Secp256k1::new();
         let path = DerivationPath::from(vec![
             ChildNumber::from_hardened_idx(44).unwrap(),
@@ -632,7 +643,7 @@ mod tests {
             ChildNumber::from_hardened_idx(0).unwrap(),
         ]);
         let account_key = master.derive_priv(&secp, &path).unwrap();
-        
+
         KeySource::Private(account_key)
     }
 
@@ -641,10 +652,10 @@ mod tests {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
         let mut pool = AddressPool::new(base_path, false, 20, Network::Testnet);
         let key_source = test_key_source();
-        
+
         let addresses = pool.generate_addresses(10, &key_source).unwrap();
         assert_eq!(addresses.len(), 10);
-        assert_eq!(pool.highest_generated, 9);
+        assert_eq!(pool.highest_generated, Some(9));
         assert_eq!(pool.addresses.len(), 10);
     }
 
@@ -653,14 +664,14 @@ mod tests {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
         let mut pool = AddressPool::new(base_path, false, 5, Network::Testnet);
         let key_source = test_key_source();
-        
+
         let addresses = pool.generate_addresses(5, &key_source).unwrap();
         let first_addr = &addresses[0];
-        
+
         assert!(pool.mark_used(first_addr));
         assert_eq!(pool.used_indices.len(), 1);
         assert_eq!(pool.highest_used, Some(0));
-        
+
         let used = pool.get_used_addresses();
         assert_eq!(used.len(), 1);
         assert_eq!(&used[0], first_addr);
@@ -671,11 +682,11 @@ mod tests {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
         let mut pool = AddressPool::new(base_path, false, 5, Network::Testnet);
         let key_source = test_key_source();
-        
+
         let addr1 = pool.get_next_unused(&key_source).unwrap();
         let addr2 = pool.get_next_unused(&key_source).unwrap();
         assert_eq!(addr1, addr2); // Should return same unused address
-        
+
         pool.mark_used(&addr1);
         let addr3 = pool.get_next_unused(&key_source).unwrap();
         assert_ne!(addr1, addr3); // Should return different address after marking used
@@ -686,14 +697,14 @@ mod tests {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
         let mut pool = AddressPool::new(base_path, false, 5, Network::Testnet);
         let key_source = test_key_source();
-        
+
         // Generate initial addresses
         pool.generate_addresses(3, &key_source).unwrap();
         pool.mark_index_used(1);
-        
+
         // Maintain gap limit
-        let new_addrs = pool.maintain_gap_limit(&key_source).unwrap();
-        assert!(pool.highest_generated >= 6); // Should have at least index 1 + gap limit 5
+        let _new_addrs = pool.maintain_gap_limit(&key_source).unwrap();
+        assert!(pool.highest_generated.unwrap_or(0) >= 6); // Should have at least index 1 + gap limit 5
     }
 
     #[test]
@@ -707,7 +718,7 @@ mod tests {
             .address_type(AddressType::P2PKH)
             .build()
             .unwrap();
-        
+
         assert!(pool.is_internal);
         assert_eq!(pool.gap_limit, 10);
         assert_eq!(pool.network, Network::Testnet);
@@ -719,14 +730,14 @@ mod tests {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
         let mut pool = AddressPool::new(base_path, false, 5, Network::Testnet);
         let key_source = test_key_source();
-        
+
         let addresses = pool.generate_addresses(10, &key_source).unwrap();
-        
+
         // Simulate checking for usage - mark addresses at indices 2, 5, 7 as used
         let check_fn = |addr: &Address| {
             addresses[2] == *addr || addresses[5] == *addr || addresses[7] == *addr
         };
-        
+
         let found = pool.scan_for_usage(check_fn);
         assert_eq!(found.len(), 3);
         assert_eq!(pool.used_indices.len(), 3);
