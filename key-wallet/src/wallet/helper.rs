@@ -7,73 +7,10 @@ use super::root_extended_keys::RootExtendedPrivKey;
 use super::{Wallet, WalletScanResult, WalletType};
 use crate::account::Account;
 use crate::error::{Error, Result};
-use crate::mnemonic::Mnemonic;
-use crate::{Address, Network};
+use crate::Network;
+use dashcore::Address;
 
 impl Wallet {
-    /// Get the root extended private key from the wallet type
-    pub(crate) fn root_extended_priv_key(&self) -> Result<&RootExtendedPrivKey> {
-        match &self.wallet_type {
-            WalletType::Mnemonic {
-                root_extended_private_key,
-                ..
-            } => Ok(root_extended_private_key),
-            WalletType::MnemonicWithPassphrase {
-                ..
-            } => Err(Error::InvalidParameter(
-                "Mnemonic with passphrase requires passphrase to derive private key".into(),
-            )),
-            WalletType::Seed {
-                root_extended_private_key,
-                ..
-            } => Ok(root_extended_private_key),
-            WalletType::ExtendedPrivKey(key) => Ok(key),
-            WalletType::ExternalSignable(_) => {
-                Err(Error::InvalidParameter("External signable wallet has no private key".into()))
-            }
-            WalletType::WatchOnly(_) => {
-                Err(Error::InvalidParameter("Watch-only wallet has no private key".into()))
-            }
-        }
-    }
-
-    /// Get the root extended private key with passphrase callback for MnemonicWithPassphrase
-    pub fn root_extended_priv_key_with_callback<F>(
-        &self,
-        network: Network,
-        passphrase_callback: F,
-    ) -> Result<RootExtendedPrivKey>
-    where
-        F: FnOnce() -> Result<String>,
-    {
-        match &self.wallet_type {
-            WalletType::Mnemonic {
-                root_extended_private_key,
-                ..
-            } => Ok(root_extended_private_key.clone()),
-            WalletType::MnemonicWithPassphrase {
-                mnemonic,
-                ..
-            } => {
-                // Request passphrase via callback
-                let passphrase = passphrase_callback()?;
-                let seed = mnemonic.to_seed(&passphrase);
-                Ok(RootExtendedPrivKey::new_master(&seed)?)
-            }
-            WalletType::Seed {
-                root_extended_private_key,
-                ..
-            } => Ok(root_extended_private_key.clone()),
-            WalletType::ExtendedPrivKey(key) => Ok(key.clone()),
-            WalletType::ExternalSignable(_) => {
-                Err(Error::InvalidParameter("External signable wallet has no private key".into()))
-            }
-            WalletType::WatchOnly(_) => {
-                Err(Error::InvalidParameter("Watch-only wallet has no private key".into()))
-            }
-        }
-    }
-
     /// Get an account by network and index (searches both standard and coinjoin accounts)
     pub fn get_account(&self, network: Network, index: u32) -> Option<&Account> {
         self.standard_accounts
@@ -285,7 +222,7 @@ impl Wallet {
                 "Account {} not found for network {:?}",
                 account_index, network
             )))?;
-        account.enable_coinjoin(self.config.coinjoin_gap_limit)
+        account.enable_coinjoin(self.config.coinjoin_default_gap_limit)
     }
 
     /// Export wallet as watch-only

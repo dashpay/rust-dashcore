@@ -8,23 +8,28 @@
 //!
 
 use core::{cmp, fmt};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
-use crate::Amount;
-use crate::Network;
-use crate::bip32::{self, ExtendedPrivKey, ExtendedPubKey, KeySource};
-use crate::blockdata::script::ScriptBuf;
-use crate::blockdata::transaction::Transaction;
-use crate::blockdata::transaction::txout::TxOut;
-use crate::crypto::ecdsa;
-use crate::crypto::key::{PrivateKey, PublicKey};
-use crate::prelude::*;
-pub use crate::sighash::Prevouts;
-use crate::sighash::{self, EcdsaSighashType, SighashCache};
-use hashes::Hash;
+use crate::bip32::KeySource;
+use crate::bip32::{self, ExtendedPrivKey, ExtendedPubKey};
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
+use core::borrow::Borrow;
+use dashcore::blockdata::script::ScriptBuf;
+use dashcore::blockdata::transaction::txout::TxOut;
+use dashcore::blockdata::transaction::Transaction;
+use dashcore::crypto::ecdsa;
+use dashcore::crypto::key::{PrivateKey, PublicKey};
+pub use dashcore::sighash::Prevouts;
+use dashcore::sighash::{self, EcdsaSighashType, SighashCache};
+use dashcore::Amount;
+use dashcore_hashes::Hash;
 use internals::write_err;
 use secp256k1::{Message, Secp256k1, Signing};
+use std::collections::{btree_map, BTreeSet};
 
 #[macro_use]
 mod macros;
@@ -43,7 +48,7 @@ pub type Psbt = PartiallySignedTransaction;
 /// A Partially Signed Transaction.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "serde", serde(crate = "serde"))]
 pub struct PartiallySignedTransaction {
     /// The unsigned transaction, scriptSigs and witnesses for each input must be empty.
     pub unsigned_tx: Transaction,
@@ -53,10 +58,16 @@ pub struct PartiallySignedTransaction {
     /// derivation path as defined by BIP 32.
     pub xpub: BTreeMap<ExtendedPubKey, KeySource>,
     /// Global proprietary key-value pairs.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq_byte_values"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "dashcore::serde_utils::btreemap_as_seq_byte_values")
+    )]
     pub proprietary: BTreeMap<raw::ProprietaryKey, Vec<u8>>,
     /// Unknown global key-value pairs.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq_byte_values"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "dashcore::serde_utils::btreemap_as_seq_byte_values")
+    )]
     pub unknown: BTreeMap<raw::Key, Vec<u8>>,
 
     /// The corresponding key-value map for each input in the unsigned transaction.
@@ -85,7 +96,7 @@ impl PartiallySignedTransaction {
                 (Some(witness_utxo), _) => Ok(witness_utxo),
                 (None, Some(non_witness_utxo)) => {
                     let vout = tx_input.previous_output.vout as usize;
-                    non_witness_utxo.output.get(vout).ok_or(Error::PsbtUtxoOutOfbounds)
+                    non_witness_utxo.output.get(vout).ok_or(Error::PsbtUtxoOutOfBounds)
                 }
                 (None, None) => Err(Error::MissingUtxo),
             }
@@ -170,7 +181,7 @@ impl PartiallySignedTransaction {
                     //    - derivation paths are of the same length, but not equal
                     //    - derivation paths has different length, but the shorter one
                     //      is not the strict suffix of the longer one
-                    // 3) choose longest derivation otherwise
+                    // 3) choose the longest derivation otherwise
 
                     let (fingerprint2, derivation2) = entry.get().clone();
 
@@ -445,7 +456,7 @@ impl PartiallySignedTransaction {
             return Ok(OutputType::Tr);
         }
 
-        // Something is wrong with the input scriptPubkey or we do not know how to sign
+        // Something is wrong with the input scriptPubkey, or we do not know how to sign
         // because there has been a new softfork that we do not yet support.
         Err(SignError::UnknownOutputType)
     }
@@ -486,7 +497,7 @@ pub enum KeyRequest {
 /// Trait to get a private key from a key request, key is then used to sign an input.
 pub trait GetKey {
     /// An error occurred while getting the key.
-    type Error: core::fmt::Debug;
+    type Error: fmt::Debug;
 
     /// Attempts to get the private key for `key_request`.
     ///
@@ -832,7 +843,7 @@ pub use self::display_from_str::PsbtParseError;
 mod tests {
     use std::collections::BTreeMap;
 
-    use hashes::{Hash, hash160, ripemd160, sha256};
+    use hashes::{hash160, ripemd160, sha256, Hash};
     use secp256k1::{self, Secp256k1};
     #[cfg(feature = "rand-std")]
     use secp256k1::{All, SecretKey};
@@ -840,10 +851,10 @@ mod tests {
     use super::*;
     use crate::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
     use crate::blockdata::script::ScriptBuf;
-    use crate::blockdata::transaction::Transaction;
     use crate::blockdata::transaction::outpoint::OutPoint;
     use crate::blockdata::transaction::txin::TxIn;
     use crate::blockdata::transaction::txout::TxOut;
+    use crate::blockdata::transaction::Transaction;
     use crate::blockdata::witness::Witness;
     use crate::internal_macros::hex;
     use crate::psbt::map::{Input, Output};
@@ -875,7 +886,7 @@ mod tests {
     fn psbt_uncompressed_key() {
         let psbt: PartiallySignedTransaction = hex_psbt!("70736274ff01003302000000010000000000000000000000000000000000000000000000000000000000000000ffffffff00ffffffff000000000000420204bb0d5d0cca36e7b9c80f63bc04c1240babb83bcd2803ef7ac8b6e2af594291daec281e856c98d210c5ab14dfd5828761f8ee7d5f45ca21ad3e4c4b41b747a3a047304402204f67e2afb76142d44fae58a2495d33a3419daa26cd0db8d04f3452b63289ac0f022010762a9fb67e94cc5cad9026f6dc99ff7f070f4278d30fbc7d0c869dd38c7fe70100").unwrap();
 
-        assert!(psbt.inputs[0].partial_sigs.len() == 1);
+        assert_eq!(psbt.inputs[0].partial_sigs.len(), 1);
         let pk = psbt.inputs[0].partial_sigs.iter().next().unwrap().0;
         assert!(!pk.compressed);
     }
@@ -1120,13 +1131,13 @@ mod tests {
 
         use super::*;
         use crate::blockdata::script::ScriptBuf;
-        use crate::blockdata::transaction::Transaction;
         use crate::blockdata::transaction::outpoint::OutPoint;
         use crate::blockdata::transaction::txin::TxIn;
         use crate::blockdata::transaction::txout::TxOut;
+        use crate::blockdata::transaction::Transaction;
         use crate::blockdata::witness::Witness;
         use crate::psbt::map::{Input, Map, Output};
-        use crate::psbt::{Error, PartiallySignedTransaction, raw};
+        use crate::psbt::{raw, Error, PartiallySignedTransaction};
         use crate::sighash::EcdsaSighashType;
 
         #[test]
@@ -1348,11 +1359,9 @@ mod tests {
             let psbt_non_witness_utxo = psbt.inputs[0].non_witness_utxo.as_ref().unwrap();
 
             assert_eq!(tx_input.previous_output.txid, psbt_non_witness_utxo.txid());
-            assert!(
-                psbt_non_witness_utxo.output[tx_input.previous_output.vout as usize]
-                    .script_pubkey
-                    .is_p2pkh()
-            );
+            assert!(psbt_non_witness_utxo.output[tx_input.previous_output.vout as usize]
+                .script_pubkey
+                .is_p2pkh());
             assert_eq!(
                 psbt.inputs[0].sighash_type.as_ref().unwrap().ecdsa_hash_ty().unwrap(),
                 EcdsaSighashType::All
@@ -1829,9 +1838,9 @@ mod tests {
     #[test]
     #[cfg(feature = "rand-std")]
     fn sign_psbt() {
-        use crate::WPubkeyHash;
         use crate::address::WitnessProgram;
         use crate::bip32::{DerivationPath, Fingerprint};
+        use crate::WPubkeyHash;
 
         let unsigned_tx = Transaction {
             version: 2,

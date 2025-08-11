@@ -81,8 +81,8 @@ impl Wallet {
                 0,
                 xpub,
                 network,
-                config.external_gap_limit,
-                config.internal_gap_limit,
+                config.account_default_external_gap_limit,
+                config.account_default_internal_gap_limit,
             )?;
             wallet.standard_accounts.insert(network, 0, account);
         }
@@ -194,5 +194,3 @@ impl Wallet {
         )
     }
 }
-
-use alloc::vec::Vec;

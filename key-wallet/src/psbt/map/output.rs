@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: CC0-1.0
 
 use core::convert::TryFrom;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use secp256k1::XOnlyPublicKey;
 use {core, secp256k1};
 
 use crate::bip32::KeySource;
-use crate::blockdata::script::ScriptBuf;
-use crate::prelude::*;
 use crate::psbt::map::Map;
-use crate::psbt::{Error, raw};
-use crate::taproot::{TapLeafHash, TapTree};
+use crate::psbt::{raw, Error};
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
+use dashcore::blockdata::script::ScriptBuf;
+use dashcore::taproot::{TapLeafHash, TapTree};
+use std::collections::btree_map;
 
 /// Type: Redeem ScriptBuf PSBT_OUT_REDEEM_SCRIPT = 0x00
 const PSBT_OUT_REDEEM_SCRIPT: u8 = 0x00;
@@ -31,7 +35,7 @@ const PSBT_OUT_PROPRIETARY: u8 = 0xFC;
 /// transaction.
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+#[cfg_attr(feature = "serde", serde(crate = "serde"))]
 pub struct Output {
     /// The redeem script for this output.
     pub redeem_script: Option<ScriptBuf>,
@@ -39,20 +43,26 @@ pub struct Output {
     pub witness_script: Option<ScriptBuf>,
     /// A map from public keys needed to spend this output to their
     /// corresponding master key fingerprints and derivation paths.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq"))]
+    #[cfg_attr(feature = "serde", serde(with = "dashcore::serde_utils::btreemap_as_seq"))]
     pub bip32_derivation: BTreeMap<secp256k1::PublicKey, KeySource>,
     /// The internal pubkey.
     pub tap_internal_key: Option<XOnlyPublicKey>,
     /// Taproot Output tree.
     pub tap_tree: Option<TapTree>,
     /// Map of tap root x only keys to origin info and leaf hashes contained in it.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq"))]
+    #[cfg_attr(feature = "serde", serde(with = "dashcore::serde_utils::btreemap_as_seq"))]
     pub tap_key_origins: BTreeMap<XOnlyPublicKey, (Vec<TapLeafHash>, KeySource)>,
     /// Proprietary key-value pairs for this output.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq_byte_values"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "dashcore::serde_utils::btreemap_as_seq_byte_values")
+    )]
     pub proprietary: BTreeMap<raw::ProprietaryKey, Vec<u8>>,
     /// Unknown key-value pairs for this output.
-    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq_byte_values"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "dashcore::serde_utils::btreemap_as_seq_byte_values")
+    )]
     pub unknown: BTreeMap<raw::Key, Vec<u8>>,
 }
 

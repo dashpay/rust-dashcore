@@ -15,9 +15,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::address::Address;
 use crate::error::{Error, Result};
 use crate::Network;
+use dashcore::Address;
 
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use sha2::{Digest, Sha256};
@@ -256,7 +256,9 @@ impl Bip38EncryptedKey {
     fn derive_address(&self, secret: &SecretKey) -> Result<Address> {
         let secp = Secp256k1::new();
         let public_key = PublicKey::from_secret_key(&secp, secret);
-        Ok(Address::p2pkh(&public_key, self.network))
+        let dash_pubkey = dashcore::PublicKey::new(public_key);
+        let network = dashcore::Network::from(self.network);
+        Ok(Address::p2pkh(&dash_pubkey, network))
     }
 }
 
@@ -269,7 +271,9 @@ pub fn encrypt_private_key(
 ) -> Result<Bip38EncryptedKey> {
     let secp = Secp256k1::new();
     let public_key = PublicKey::from_secret_key(&secp, private_key);
-    let address = Address::p2pkh(&public_key, network);
+    let dash_pubkey = dashcore::PublicKey::new(public_key);
+    let dash_network = dashcore::Network::from(network);
+    let address = Address::p2pkh(&dash_pubkey, dash_network);
     let address_hash = address_hash_from_address(&address);
 
     // Derive encryption key using scrypt
@@ -683,7 +687,9 @@ mod tests {
         .unwrap();
 
         let public_key = PublicKey::from_secret_key(&secp, &private_key);
-        let address = Address::p2pkh(&public_key, Network::Dash);
+        let dash_pubkey = dashcore::PublicKey::new(public_key);
+        let dash_network = dashcore::Network::Dash;
+        let address = Address::p2pkh(&dash_pubkey, dash_network);
         let hash = address_hash_from_address(&address);
 
         assert_eq!(hash.len(), 4);

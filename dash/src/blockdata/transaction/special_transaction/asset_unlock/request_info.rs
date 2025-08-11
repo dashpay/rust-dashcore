@@ -56,7 +56,7 @@ impl AssetUnlockRequestInfo {
         base_bytes: Vec<u8>,
         mut s: S,
     ) -> Result<usize, io::Error> {
-        s.write(base_bytes.as_slice())?;
+        s.write_all(base_bytes.as_slice())?;
         let mut len = base_bytes.len();
         len += self.consensus_encode(&mut s)?;
         Ok(len)

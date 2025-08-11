@@ -8,7 +8,6 @@ use crate::blockdata::opcodes;
 use crate::consensus::encode::{deserialize, serialize};
 use crate::crypto::key::{PublicKey, XOnlyPublicKey};
 use crate::hash_types::{PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash};
-use crate::psbt::serialize::Serialize;
 
 #[test]
 #[rustfmt::skip]
@@ -211,12 +210,12 @@ fn script_generators() {
     assert!(ScriptBuf::new_v0_p2wpkh(&wpubkey_hash).is_v0_p2wpkh());
 
     let script = Builder::new().push_opcode(OP_NUMEQUAL).push_verify().into_script();
-    let script_hash = ScriptHash::hash(&script.serialize());
+    let script_hash = ScriptHash::hash(&script.to_bytes());
     let p2sh = ScriptBuf::new_p2sh(&script_hash);
     assert!(p2sh.is_p2sh());
     assert_eq!(script.to_p2sh(), p2sh);
 
-    let wscript_hash = WScriptHash::hash(&script.serialize());
+    let wscript_hash = WScriptHash::hash(&script.to_bytes());
     let p2wsh = ScriptBuf::new_v0_p2wsh(&wscript_hash);
     assert!(p2wsh.is_v0_p2wsh());
     assert_eq!(script.to_v0_p2wsh(), p2wsh);

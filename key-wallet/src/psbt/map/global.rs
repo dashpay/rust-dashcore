@@ -3,14 +3,16 @@
 use core::convert::TryFrom;
 
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPubKey, Fingerprint};
-use crate::blockdata::transaction::Transaction;
-use crate::consensus::encode::MAX_VEC_SIZE;
-use crate::consensus::{Decodable, Encodable, encode};
-use crate::io::{self, Cursor, Read};
-use crate::prelude::*;
 use crate::psbt::map::Map;
-use crate::psbt::{Error, PartiallySignedTransaction, raw};
-use crate::transaction::special_transaction::TransactionType;
+use crate::psbt::{raw, Error, PartiallySignedTransaction};
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
+use dashcore::blockdata::transaction::Transaction;
+use dashcore::consensus::encode::MAX_VEC_SIZE;
+use dashcore::consensus::{encode, Decodable, Encodable};
+use dashcore::io::{Cursor, Read};
+use dashcore::transaction::special_transaction::TransactionType;
+use std::collections::btree_map;
 
 /// Type: Unsigned Transaction PSBT_GLOBAL_UNSIGNED_TX = 0x00
 const PSBT_GLOBAL_UNSIGNED_TX: u8 = 0x00;
@@ -94,7 +96,7 @@ impl Map for PartiallySignedTransaction {
 }
 
 impl PartiallySignedTransaction {
-    pub(crate) fn decode_global<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, Error> {
+    pub(crate) fn decode_global<R: Read + ?Sized>(r: &mut R) -> Result<Self, Error> {
         let mut r = r.take(MAX_VEC_SIZE as u64);
         let mut tx: Option<Transaction> = None;
         let mut version: Option<u32> = None;

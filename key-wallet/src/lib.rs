@@ -8,6 +8,7 @@
 
 extern crate alloc;
 
+extern crate core;
 #[cfg(feature = "std")]
 extern crate std;
 
@@ -25,8 +26,6 @@ mod mnemonic_tests;
 mod wallet_comprehensive_tests;
 
 pub mod account;
-pub mod address;
-pub mod address_pool;
 pub mod bip32;
 #[cfg(feature = "bip38")]
 pub mod bip38;
@@ -35,18 +34,21 @@ pub mod dip9;
 pub mod error;
 pub mod gap_limit;
 pub mod mnemonic;
+pub mod psbt;
 pub mod seed;
 pub(crate) mod utils;
 pub mod wallet;
 pub mod watch_only;
 
+pub use dashcore;
+
+pub use account::address_pool::{AddressInfo, AddressPool, KeySource, PoolStats};
 pub use account::{Account, AccountBalance, AccountType, SpecialPurposeType};
-pub use address::{Address, AddressType, NetworkExt};
-pub use address_pool::{AddressInfo, AddressPool, KeySource, PoolStats};
 pub use bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 #[cfg(feature = "bip38")]
 pub use bip38::{encrypt_private_key, generate_intermediate_code, Bip38EncryptedKey, Bip38Mode};
 pub use dash_network::Network;
+pub use dashcore::{Address, AddressType};
 pub use derivation::{DerivationPathBuilder, DerivationStrategy, KeyDerivation};
 pub use dip9::{DerivationPathReference, DerivationPathType};
 pub use error::{Error, Result};
@@ -62,4 +64,5 @@ pub mod prelude {
         Address, AddressType, ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey,
         KeyDerivation, Mnemonic, Result,
     };
+    pub use dashcore::prelude::*;
 }

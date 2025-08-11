@@ -42,7 +42,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     println!("   Receive addresses:");
     for i in 0..5 {
         let addr_xpub = account_derivation.receive_address(i)?;
-        let addr = key_wallet::address::Address::p2pkh(&addr_xpub.public_key, Network::Dash);
+        let addr = Address::p2pkh(&addr_xpub.public_key, Network::Dash);
         println!("     {}: {}", i, addr);
     }
 
@@ -50,7 +50,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     println!("\n   Change addresses:");
     for i in 0..2 {
         let addr_xpub = account_derivation.change_address(i)?;
-        let addr = key_wallet::address::Address::p2pkh(&addr_xpub.public_key, Network::Dash);
+        let addr = Address::p2pkh(&addr_xpub.public_key, Network::Dash);
         println!("     {}: {}", i, addr);
     }
 
@@ -67,7 +67,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     // 8. Address parsing example
     println!("\n8. Address parsing...");
     let test_address = "XyPvhVmhWKDgvMJLwfFfMwhxpxGgd3TBxq";
-    match test_address.parse::<key_wallet::address::Address>() {
+    match test_address.parse::<Address>() {
         Ok(parsed) => {
             println!("   Parsed address: {}", parsed);
             println!("   Type: {:?}", parsed.address_type);
@@ -85,9 +85,9 @@ fn demonstrate_address_generation() -> core::result::Result<(), Box<dyn std::err
     let seed = [0u8; 64];
     let wallet = HDWallet::from_seed(&seed, Network::Dash)?;
     let path = key_wallet::DerivationPath::from(vec![
-        key_wallet::ChildNumber::from_hardened_idx(44).unwrap(),
-        key_wallet::ChildNumber::from_hardened_idx(5).unwrap(),
-        key_wallet::ChildNumber::from_hardened_idx(0).unwrap(),
+        ChildNumber::from_hardened_idx(44).unwrap(),
+        ChildNumber::from_hardened_idx(5).unwrap(),
+        ChildNumber::from_hardened_idx(0).unwrap(),
     ]);
     let account_xpub = wallet.derive_pub(&path)?;
 
