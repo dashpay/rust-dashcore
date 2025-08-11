@@ -332,7 +332,7 @@ pub fn mainnet_checkpoints() -> Vec<Checkpoint> {
             "0x00000000000000000000000000000000000000000000aa3859b6456688a3fb53",
             "b026649607d72d486480c0cef823dba6b28d0884a0d86f5a8b9e5a7919545cef",
             972444458,
-            Some("ML2300000__70232"),  // Has masternode list with protocol version 70232
+            Some("ML2300000__70232"), // Has masternode list with protocol version 70232
         ),
     ]
 }

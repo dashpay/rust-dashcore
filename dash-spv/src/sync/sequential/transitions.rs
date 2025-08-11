@@ -477,15 +477,16 @@ impl TransitionManager {
             .unwrap_or(0);
 
         // For checkpoint sync, convert storage heights to blockchain heights
-        let sync_base_height = if let Ok(Some(metadata)) = storage.load_metadata("sync_base_height").await {
-            if metadata.len() >= 4 {
-                u32::from_le_bytes([metadata[0], metadata[1], metadata[2], metadata[3]])
+        let sync_base_height =
+            if let Ok(Some(metadata)) = storage.load_metadata("sync_base_height").await {
+                if metadata.len() >= 4 {
+                    u32::from_le_bytes([metadata[0], metadata[1], metadata[2], metadata[3]])
+                } else {
+                    0
+                }
             } else {
                 0
-            }
-        } else {
-            0
-        };
+            };
 
         let header_tip = if sync_base_height > 0 {
             sync_base_height + header_tip_storage
