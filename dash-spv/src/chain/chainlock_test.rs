@@ -9,7 +9,8 @@ mod tests {
     #[tokio::test]
     async fn test_chainlock_processing() {
         // Create storage and ChainLock manager
-        let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+        let mut storage =
+            MemoryStorageManager::new().await.expect("Failed to create memory storage");
         let chainlock_manager = ChainLockManager::new(true);
         let chain_state = ChainState::new_for_network(Network::Testnet);
 
@@ -32,7 +33,8 @@ mod tests {
         assert!(chainlock_manager.has_chain_lock_at_height(1000));
 
         // Verify we can retrieve it
-        let entry = chainlock_manager.get_chain_lock_by_height(1000)
+        let entry = chainlock_manager
+            .get_chain_lock_by_height(1000)
             .expect("ChainLock should be retrievable after storing");
         assert_eq!(entry.chain_lock.block_height, 1000);
         assert_eq!(entry.chain_lock.block_hash, chainlock.block_hash);
@@ -40,7 +42,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_chainlock_superseding() {
-        let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+        let mut storage =
+            MemoryStorageManager::new().await.expect("Failed to create memory storage");
         let chainlock_manager = ChainLockManager::new(true);
         let chain_state = ChainState::new_for_network(Network::Testnet);
 
@@ -79,7 +82,8 @@ mod tests {
     async fn test_reorganization_protection() {
         let chainlock_manager = ChainLockManager::new(true);
         let chain_state = ChainState::new_for_network(Network::Testnet);
-        let mut storage = MemoryStorageManager::new().await.expect("Failed to create memory storage");
+        let mut storage =
+            MemoryStorageManager::new().await.expect("Failed to create memory storage");
 
         // Add ChainLocks at heights 1000, 2000, 3000
         for height in [1000, 2000, 3000] {

@@ -130,12 +130,12 @@ pub struct DiskStorageManager {
 /// This header has invalid values that cannot be mistaken for valid blocks.
 fn create_sentinel_header() -> BlockHeader {
     BlockHeader {
-        version: Version::from_consensus(i32::MAX),  // Invalid version
-        prev_blockhash: BlockHash::from_byte_array([0xFF; 32]),  // All 0xFF pattern
+        version: Version::from_consensus(i32::MAX), // Invalid version
+        prev_blockhash: BlockHash::from_byte_array([0xFF; 32]), // All 0xFF pattern
         merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
-        time: u32::MAX,  // Far future timestamp
-        bits: CompactTarget::from_consensus(0xFFFFFFFF),  // Invalid difficulty
-        nonce: u32::MAX,  // Max nonce value
+        time: u32::MAX,                                  // Far future timestamp
+        bits: CompactTarget::from_consensus(0xFFFFFFFF), // Invalid difficulty
+        nonce: u32::MAX,                                 // Max nonce value
     }
 }
 
@@ -769,13 +769,17 @@ impl DiskStorageManager {
     }
 
     /// Store headers starting from a specific height (used for checkpoint sync)
-    pub async fn store_headers_from_height(&mut self, headers: &[BlockHeader], start_height: u32) -> StorageResult<()> {
+    pub async fn store_headers_from_height(
+        &mut self,
+        headers: &[BlockHeader],
+        start_height: u32,
+    ) -> StorageResult<()> {
         // Early return if no headers to store
         if headers.is_empty() {
             tracing::trace!("DiskStorage: no headers to store");
             return Ok(());
         }
-        
+
         // Acquire write locks for the entire operation to prevent race conditions
         let mut cached_tip = self.cached_tip_height.write().await;
         let mut reverse_index = self.header_hash_index.write().await;
@@ -834,7 +838,7 @@ impl DiskStorageManager {
         let final_height = if next_height > 0 {
             next_height - 1
         } else {
-            0  // No headers were stored
+            0 // No headers were stored
         };
 
         tracing::info!(
@@ -1087,7 +1091,6 @@ async fn save_utxo_cache_to_disk(
     .map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
 }
 
-
 #[async_trait]
 impl StorageManager for DiskStorageManager {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
@@ -1099,7 +1102,7 @@ impl StorageManager for DiskStorageManager {
             tracing::trace!("DiskStorage: no headers to store");
             return Ok(());
         }
-        
+
         // Acquire write locks for the entire operation to prevent race conditions
         let mut cached_tip = self.cached_tip_height.write().await;
         let mut reverse_index = self.header_hash_index.write().await;
@@ -1170,7 +1173,7 @@ impl StorageManager for DiskStorageManager {
         let final_height = if next_height > 0 {
             next_height - 1
         } else {
-            0  // No headers were stored
+            0 // No headers were stored
         };
 
         // Use appropriate log level based on batch size
@@ -1209,7 +1212,6 @@ impl StorageManager for DiskStorageManager {
 
         Ok(())
     }
-
 
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
         let mut headers = Vec::new();
@@ -1485,7 +1487,7 @@ impl StorageManager for DiskStorageManager {
             value.get("current_filter_tip").and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
         state.last_masternode_diff_height =
             value.get("last_masternode_diff_height").and_then(|v| v.as_u64()).map(|h| h as u32);
-        
+
         // Load checkpoint sync fields
         state.sync_base_height =
             value.get("sync_base_height").and_then(|v| v.as_u64()).map(|h| h as u32).unwrap_or(0);

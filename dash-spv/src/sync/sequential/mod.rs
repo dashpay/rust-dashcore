@@ -77,8 +77,9 @@ impl SequentialSyncManager {
             current_phase: SyncPhase::Idle,
             transition_manager: TransitionManager::new(config),
             request_controller: RequestController::new(config),
-            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config)
-                .map_err(|e| SyncError::InvalidState(format!("Failed to create header sync manager: {}", e)))?,
+            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config).map_err(|e| {
+                SyncError::InvalidState(format!("Failed to create header sync manager: {}", e))
+            })?,
             filter_sync: FilterSyncManager::new(config, received_filter_heights),
             masternode_sync: MasternodeSyncManager::new(config),
             config: config.clone(),
@@ -220,19 +221,21 @@ impl SequentialSyncManager {
                 // Get the effective chain height from header sync which accounts for checkpoint base
                 let effective_height = self.header_sync.get_chain_height();
                 let sync_base_height = self.header_sync.get_sync_base_height();
-                
+
                 // Also get the actual storage tip height to verify
-                let storage_tip = storage.get_tip_height().await
+                let storage_tip = storage
+                    .get_tip_height()
+                    .await
                     .map_err(|e| SyncError::Storage(format!("Failed to get storage tip: {}", e)))?;
-                
+
                 tracing::info!(
                     "Starting masternode sync: effective_height={}, sync_base={}, storage_tip={:?}, expected_storage_height={}",
-                    effective_height, 
+                    effective_height,
                     sync_base_height,
                     storage_tip,
                     if sync_base_height > 0 { effective_height - sync_base_height } else { effective_height }
                 );
-                
+
                 // Use the minimum of effective height and what's actually in storage
                 let safe_height = if let Some(tip) = storage_tip {
                     let storage_based_height = sync_base_height + tip;
@@ -249,22 +252,27 @@ impl SequentialSyncManager {
                 } else {
                     effective_height
                 };
-                
-                self.masternode_sync.start_sync_with_height(network, storage, safe_height, sync_base_height).await?;
+
+                self.masternode_sync
+                    .start_sync_with_height(network, storage, safe_height, sync_base_height)
+                    .await?;
             }
 
             SyncPhase::DownloadingCFHeaders {
                 ..
             } => {
                 tracing::info!("📥 Starting filter header download phase");
-                
+
                 // Get sync base height from header sync
                 let sync_base_height = self.header_sync.get_sync_base_height();
                 if sync_base_height > 0 {
-                    tracing::info!("Setting filter sync base height to {} for checkpoint sync", sync_base_height);
+                    tracing::info!(
+                        "Setting filter sync base height to {} for checkpoint sync",
+                        sync_base_height
+                    );
                     self.filter_sync.set_sync_base_height(sync_base_height);
                 }
-                
+
                 self.filter_sync.start_sync_headers(network, storage).await?;
             }
 
@@ -279,7 +287,7 @@ impl SequentialSyncManager {
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?
                     .unwrap_or(0);
-                
+
                 // Convert storage height to blockchain height for checkpoint sync
                 let sync_base_height = self.header_sync.get_sync_base_height();
                 let filter_header_tip = if sync_base_height > 0 && filter_header_tip_storage > 0 {
@@ -933,7 +941,11 @@ impl SequentialSyncManager {
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
-        let continue_sync = match self.header_sync.handle_headers2_message(headers2, peer_id, storage, network).await {
+        let continue_sync = match self
+            .header_sync
+            .handle_headers2_message(headers2, peer_id, storage, network)
+            .await
+        {
             Ok(continue_sync) => continue_sync,
             Err(SyncError::Headers2DecompressionFailed(e)) => {
                 // Headers2 decompression failed - we should fall back to regular headers
@@ -1552,9 +1564,10 @@ impl SequentialSyncManager {
         // First, check if we need to catch up on masternode lists for ChainLock validation
         if self.config.enable_masternodes && !headers.is_empty() {
             // Get the current masternode state to check for gaps
-            let mn_state = storage.load_masternode_state().await
-                .map_err(|e| SyncError::Storage(format!("Failed to load masternode state: {}", e)))?;
-            
+            let mn_state = storage.load_masternode_state().await.map_err(|e| {
+                SyncError::Storage(format!("Failed to load masternode state: {}", e))
+            })?;
+
             if let Some(state) = mn_state {
                 // Get the height of the first new header
                 let first_height = storage
@@ -1562,7 +1575,7 @@ impl SequentialSyncManager {
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to get block height: {}", e)))?
                     .ok_or(SyncError::InvalidState("Failed to get block height".to_string()))?;
-                
+
                 // Check if we have a gap (masternode lists are more than 1 block behind)
                 if state.last_height + 1 < first_height {
                     let gap_size = first_height - state.last_height - 1;
@@ -1572,42 +1585,60 @@ impl SequentialSyncManager {
                         first_height,
                         gap_size
                     );
-                    
+
                     // Request catch-up masternode diff for the gap
                     // We need to ensure we have lists for at least the last 8 blocks for ChainLock validation
                     let catch_up_start = state.last_height;
                     let catch_up_end = first_height.saturating_sub(1);
-                    
+
                     if catch_up_end > catch_up_start {
                         let base_hash = storage
                             .get_header(catch_up_start)
                             .await
-                            .map_err(|e| SyncError::Storage(format!("Failed to get catch-up base block: {}", e)))?
+                            .map_err(|e| {
+                                SyncError::Storage(format!(
+                                    "Failed to get catch-up base block: {}",
+                                    e
+                                ))
+                            })?
                             .map(|h| h.block_hash())
-                            .ok_or(SyncError::InvalidState("Catch-up base block not found".to_string()))?;
-                        
+                            .ok_or(SyncError::InvalidState(
+                                "Catch-up base block not found".to_string(),
+                            ))?;
+
                         let stop_hash = storage
                             .get_header(catch_up_end)
                             .await
-                            .map_err(|e| SyncError::Storage(format!("Failed to get catch-up stop block: {}", e)))?
+                            .map_err(|e| {
+                                SyncError::Storage(format!(
+                                    "Failed to get catch-up stop block: {}",
+                                    e
+                                ))
+                            })?
                             .map(|h| h.block_hash())
-                            .ok_or(SyncError::InvalidState("Catch-up stop block not found".to_string()))?;
-                        
+                            .ok_or(SyncError::InvalidState(
+                                "Catch-up stop block not found".to_string(),
+                            ))?;
+
                         tracing::info!(
                             "📋 Requesting catch-up masternode diff from height {} to {} to fill gap",
                             catch_up_start,
                             catch_up_end
                         );
-                        
-                        let catch_up_request = dashcore::network::message::NetworkMessage::GetMnListD(
-                            dashcore::network::message_sml::GetMnListDiff {
-                                base_block_hash: base_hash,
-                                block_hash: stop_hash,
-                            },
-                        );
-                        
+
+                        let catch_up_request =
+                            dashcore::network::message::NetworkMessage::GetMnListD(
+                                dashcore::network::message_sml::GetMnListDiff {
+                                    base_block_hash: base_hash,
+                                    block_hash: stop_hash,
+                                },
+                            );
+
                         network.send_message(catch_up_request).await.map_err(|e| {
-                            SyncError::Network(format!("Failed to request catch-up masternode diff: {}", e))
+                            SyncError::Network(format!(
+                                "Failed to request catch-up masternode diff: {}",
+                                e
+                            ))
                         })?;
                     }
                 }
@@ -1632,12 +1663,15 @@ impl SequentialSyncManager {
                     storage
                         .get_header(height - 1)
                         .await
-                        .map_err(|e| SyncError::Storage(format!("Failed to get previous block: {}", e)))?
+                        .map_err(|e| {
+                            SyncError::Storage(format!("Failed to get previous block: {}", e))
+                        })?
                         .map(|h| h.block_hash())
                         .ok_or(SyncError::InvalidState("Previous block not found".to_string()))?
                 } else {
                     // Genesis block case
-                    dashcore::blockdata::constants::genesis_block(self.config.network.into()).block_hash()
+                    dashcore::blockdata::constants::genesis_block(self.config.network.into())
+                        .block_hash()
                 };
 
                 tracing::info!(
@@ -1824,16 +1858,10 @@ impl SequentialSyncManager {
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
         // Get block heights for better logging
-        let base_height = storage
-            .get_header_height_by_hash(&diff.base_block_hash)
-            .await
-            .ok()
-            .flatten();
-        let target_height = storage
-            .get_header_height_by_hash(&diff.block_hash)
-            .await
-            .ok()
-            .flatten();
+        let base_height =
+            storage.get_header_height_by_hash(&diff.base_block_hash).await.ok().flatten();
+        let target_height =
+            storage.get_header_height_by_hash(&diff.block_hash).await.ok().flatten();
 
         tracing::info!(
             "📥 Processing post-sync masternode diff for block {} at height {:?} (base: {} at height {:?})",
@@ -1864,7 +1892,7 @@ impl SequentialSyncManager {
         //             "🔒 Checking {} pending ChainLocks after masternode list update",
         //             chain_manager.pending_chainlocks_count()
         //         );
-        //         
+        //
         //         // The chain manager will handle validation of pending ChainLocks
         //         // when it receives the next ChainLock or during periodic validation
         //     }
@@ -1908,7 +1936,9 @@ impl SequentialSyncManager {
 
     /// Get reference to the masternode engine if available.
     /// Returns None if masternodes are disabled or engine is not initialized.
-    pub fn get_masternode_engine(&self) -> Option<&dashcore::sml::masternode_list_engine::MasternodeListEngine> {
+    pub fn get_masternode_engine(
+        &self,
+    ) -> Option<&dashcore::sml::masternode_list_engine::MasternodeListEngine> {
         self.masternode_sync.engine()
     }
 

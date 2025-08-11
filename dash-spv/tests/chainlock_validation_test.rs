@@ -77,11 +77,7 @@ impl NetworkManager for MockNetworkManager {
         unimplemented!()
     }
 
-    async fn fetch_headers(
-        &mut self,
-        _start_height: u32,
-        _count: u32,
-    ) -> Result<Vec<Header>> {
+    async fn fetch_headers(&mut self, _start_height: u32, _count: u32) -> Result<Vec<Header>> {
         Ok(Vec::new())
     }
 
@@ -174,9 +170,8 @@ async fn test_chainlock_validation_without_masternode_engine() {
     // Process the ChainLock (should queue it since no masternode engine)
     let chainlock_manager = client.chainlock_manager();
     let chain_state = ChainState::new(Network::Dash);
-    let result = chainlock_manager
-        .process_chain_lock(chain_lock.clone(), &chain_state, storage)
-        .await;
+    let result =
+        chainlock_manager.process_chain_lock(chain_lock.clone(), &chain_state, storage).await;
 
     // Should succeed but queue for later validation
     assert!(result.is_ok());
@@ -242,10 +237,8 @@ async fn test_chainlock_validation_with_masternode_engine() {
     // Process pending ChainLocks
     let chain_state = ChainState::new(Network::Dash);
     let storage = client.storage_mut();
-    let result = client
-        .chainlock_manager()
-        .validate_pending_chainlocks(&chain_state, storage)
-        .await;
+    let result =
+        client.chainlock_manager().validate_pending_chainlocks(&chain_state, storage).await;
 
     // Should fail validation due to invalid signature
     // This is expected since our mock ChainLock has an invalid signature
@@ -282,15 +275,9 @@ async fn test_chainlock_queue_and_process_flow() {
     let chain_lock2 = create_test_chainlock(200, BlockHash::from_slice(&[2; 32]).unwrap());
     let chain_lock3 = create_test_chainlock(300, BlockHash::from_slice(&[3; 32]).unwrap());
 
-    chainlock_manager
-        .queue_pending_chainlock(chain_lock1)
-        .unwrap();
-    chainlock_manager
-        .queue_pending_chainlock(chain_lock2)
-        .unwrap();
-    chainlock_manager
-        .queue_pending_chainlock(chain_lock3)
-        .unwrap();
+    chainlock_manager.queue_pending_chainlock(chain_lock1).unwrap();
+    chainlock_manager.queue_pending_chainlock(chain_lock2).unwrap();
+    chainlock_manager.queue_pending_chainlock(chain_lock3).unwrap();
 
     // Verify all are queued
     {
@@ -304,9 +291,7 @@ async fn test_chainlock_queue_and_process_flow() {
     // Process pending (will fail validation but clear the queue)
     let chain_state = ChainState::new(Network::Dash);
     let storage = client.storage();
-    let _ = chainlock_manager
-        .validate_pending_chainlocks(&chain_state, storage)
-        .await;
+    let _ = chainlock_manager.validate_pending_chainlocks(&chain_state, storage).await;
 
     // Verify queue is cleared
     {
@@ -349,13 +334,11 @@ async fn test_chainlock_manager_cache_operations() {
     let chain_lock = create_test_chainlock(0, genesis.block_hash());
     let chain_state = ChainState::new(Network::Dash);
     let storage = client.storage();
-    let _ = chainlock_manager
-        .process_chain_lock(chain_lock.clone(), &chain_state, storage)
-        .await;
+    let _ = chainlock_manager.process_chain_lock(chain_lock.clone(), &chain_state, storage).await;
 
     // Test cache operations
     assert!(chainlock_manager.has_chain_lock_at_height(0));
-    
+
     let entry = chainlock_manager.get_chain_lock_by_height(0);
     assert!(entry.is_some());
     assert_eq!(entry.unwrap().chain_lock.block_height, 0);
@@ -401,15 +384,13 @@ async fn test_client_chainlock_update_flow() {
 
     // Simulate masternode sync by manually setting sequential sync state
     // In real usage, this would happen automatically during sync
-    client.sync_manager.set_phase(
-        dash_spv::sync::sequential::phases::SyncPhase::FullySynced {
-            sync_completed_at: std::time::Instant::now(),
-            total_sync_time: Duration::from_secs(10),
-            headers_synced: 1000,
-            filters_synced: 0,
-            blocks_downloaded: 0,
-        },
-    );
+    client.sync_manager.set_phase(dash_spv::sync::sequential::phases::SyncPhase::FullySynced {
+        sync_completed_at: std::time::Instant::now(),
+        total_sync_time: Duration::from_secs(10),
+        headers_synced: 1000,
+        filters_synced: 0,
+        blocks_downloaded: 0,
+    });
 
     // Create a mock masternode list engine
     let mock_engine = MasternodeListEngine::new(
