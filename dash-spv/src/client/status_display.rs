@@ -51,7 +51,9 @@ impl<'a> StatusDisplay<'a> {
             if with_logging {
                 tracing::debug!(
                     "Status display: storage_tip={}, sync_base={}, blockchain_height={}",
-                    storage_tip, state.sync_base_height, blockchain_height
+                    storage_tip,
+                    state.sync_base_height,
+                    blockchain_height
                 );
             }
             blockchain_height
