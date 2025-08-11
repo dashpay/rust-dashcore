@@ -36,15 +36,16 @@ mod tests {
     #[test]
     fn test_merkle_root_validation() {
         // Create a specific merkle root for testing
-        let specific_merkle =
-            BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::hash(b"specific_merkle"));
-
+        let specific_merkle = BlockHash::from_raw_hash(
+            dashcore_hashes::hash_x11::Hash::hash(b"specific_merkle")
+        );
+        
         let mut checkpoints = vec![
             create_test_checkpoint(0, 1000000),
             create_test_checkpoint(1000, 2000000),
             create_test_checkpoint(2000, 3000000),
         ];
-
+        
         // Set the specific merkle root on the middle checkpoint
         checkpoints[1].merkle_root = Some(specific_merkle);
         checkpoints[1].include_merkle_root = true;
@@ -59,8 +60,9 @@ mod tests {
         assert!(manager.validate_header(1000, &checkpoint_hash, Some(&specific_merkle)));
 
         // Test invalid merkle root
-        let wrong_merkle =
-            BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::hash(b"wrong_merkle"));
+        let wrong_merkle = BlockHash::from_raw_hash(
+            dashcore_hashes::hash_x11::Hash::hash(b"wrong_merkle")
+        );
         assert!(!manager.validate_header(1000, &checkpoint_hash, Some(&wrong_merkle)));
 
         // Test missing merkle root when required - should still pass as the implementation
@@ -71,7 +73,7 @@ mod tests {
     #[test]
     fn test_wallet_creation_time_checkpoint_selection() {
         let checkpoints = vec![
-            create_test_checkpoint(0, 1000000),         // Jan 1970
+            create_test_checkpoint(0, 1000000),      // Jan 1970
             create_test_checkpoint(100000, 1500000000), // July 2017
             create_test_checkpoint(200000, 1600000000), // Sept 2020
             create_test_checkpoint(300000, 1700000000), // Nov 2023
@@ -179,7 +181,7 @@ mod tests {
     #[test]
     fn test_checkpoint_protocol_version_extraction() {
         let mut checkpoint = create_test_checkpoint(100000, 1500000000);
-
+        
         // Test with masternode list name
         checkpoint.masternode_list_name = Some("ML100000__70227".to_string());
         assert_eq!(checkpoint.protocol_version(), Some(70227));
@@ -212,7 +214,7 @@ mod tests {
         assert_eq!(manager.last_checkpoint_before_height(0).unwrap().height, 0);
         assert_eq!(manager.last_checkpoint_before_height(5500).unwrap().height, 5000);
         assert_eq!(manager.last_checkpoint_before_height(999999).unwrap().height, 999000);
-
+        
         // Test edge case: height before first checkpoint
         assert!(manager.last_checkpoint_before_height(0).is_some());
     }
@@ -296,7 +298,7 @@ mod tests {
         // Verify all checkpoints are properly ordered
         let heights = manager.checkpoint_heights();
         for i in 1..heights.len() {
-            assert!(heights[i] > heights[i - 1], "Checkpoints not in ascending order");
+            assert!(heights[i] > heights[i-1], "Checkpoints not in ascending order");
         }
 
         // Verify all checkpoints have valid data
@@ -304,7 +306,7 @@ mod tests {
             assert!(checkpoint.timestamp > 0);
             assert!(checkpoint.nonce > 0);
             assert!(!checkpoint.chain_work.is_empty());
-
+            
             if checkpoint.height > 0 {
                 assert_ne!(checkpoint.prev_blockhash, BlockHash::all_zeros());
             }
@@ -324,7 +326,7 @@ mod tests {
         // Similar validations as mainnet
         let heights = manager.checkpoint_heights();
         for i in 1..heights.len() {
-            assert!(heights[i] > heights[i - 1]);
+            assert!(heights[i] > heights[i-1]);
         }
 
         for checkpoint in &checkpoints {

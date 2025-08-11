@@ -77,12 +77,12 @@ impl<'a> MessageHandler<'a> {
                     "📋 Received Headers2 message with {} compressed headers",
                     headers2.headers.len()
                 );
-
+                
                 // Track that this peer has sent us Headers2
                 if let Err(e) = self.network.mark_peer_sent_headers2().await {
                     tracing::error!("Failed to mark peer sent headers2: {}", e);
                 }
-
+                
                 // Move to sync manager without cloning
                 return self
                     .sync_manager
@@ -293,7 +293,7 @@ impl<'a> MessageHandler<'a> {
                 if let Err(e) = self.network.update_peer_dsq_preference(wants_dsq).await {
                     tracing::error!("Failed to update peer DSQ preference: {}", e);
                 }
-
+                
                 // Send our own SendDsq(false) in response - we're an SPV client and don't want DSQ messages
                 tracing::info!("Sending SendDsq(false) to indicate we don't want DSQ messages");
                 if let Err(e) = self.network.send_message(NetworkMessage::SendDsq(false)).await {

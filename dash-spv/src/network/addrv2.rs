@@ -195,8 +195,7 @@ mod tests {
             .as_secs() as u32;
 
         // Create test messages with various timestamps
-        let addr: SocketAddr =
-            "127.0.0.1:9999".parse().expect("Failed to parse test socket address");
+        let addr: SocketAddr = "127.0.0.1:9999".parse().expect("Failed to parse test socket address");
         let ipv4_addr = match addr.ip() {
             std::net::IpAddr::V4(v4) => v4,
             _ => panic!("Test expects IPv4 address but got IPv6"),

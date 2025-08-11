@@ -45,27 +45,27 @@ enum CallbackInfo {
 }
 
 /// # Safety
-///
+/// 
 /// `CallbackInfo` is only `Send` if the following conditions are met:
 /// - All callback functions must be safe to call from any thread
 /// - The `user_data` pointer must either:
 ///   - Point to thread-safe data (i.e., data that implements `Send`)
 ///   - Be properly synchronized by the caller (e.g., using mutexes)
 ///   - Be null
-///
+/// 
 /// The caller is responsible for ensuring these conditions are met. Violating
 /// these requirements will result in undefined behavior.
 unsafe impl Send for CallbackInfo {}
 
 /// # Safety
-///
+/// 
 /// `CallbackInfo` is only `Sync` if the following conditions are met:
 /// - All callback functions must be safe to call concurrently from multiple threads
 /// - The `user_data` pointer must either:
 ///   - Point to thread-safe data (i.e., data that implements `Sync`)
 ///   - Be properly synchronized by the caller (e.g., using mutexes)
 ///   - Be null
-///
+/// 
 /// The caller is responsible for ensuring these conditions are met. Violating
 /// these requirements will result in undefined behavior.
 unsafe impl Sync for CallbackInfo {}
@@ -157,10 +157,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
     let config = &(*config);
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .thread_name("dash-spv-worker")
-        .worker_threads(1) // Reduce threads for mobile
+        .worker_threads(1)  // Reduce threads for mobile
         .enable_all()
-        .build()
-    {
+        .build() {
         Ok(rt) => Arc::new(rt),
         Err(e) => {
             set_last_error(&format!("Failed to create runtime: {}", e));
@@ -361,9 +360,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
 }
 
 /// Sync the SPV client to the chain tip.
-///
+/// 
 /// # Safety
-///
+/// 
 /// This function is unsafe because:
 /// - `client` must be a valid pointer to an initialized `FFIDashSpvClient`
 /// - `user_data` must satisfy thread safety requirements:
@@ -371,15 +370,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_stop(client: *mut FFIDashSpvClient)
 ///   - The caller must ensure proper synchronization if the data is mutable
 ///   - The data must remain valid for the entire duration of the sync operation
 /// - `completion_callback` must be thread-safe and can be called from any thread
-///
+/// 
 /// # Parameters
-///
+/// 
 /// - `client`: Pointer to the SPV client
 /// - `completion_callback`: Optional callback invoked on completion
 /// - `user_data`: Optional user data pointer passed to callbacks
-///
+/// 
 /// # Returns
-///
+/// 
 /// 0 on success, error code on failure
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
@@ -419,10 +418,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
                         {
                             if let Some(callback) = completion_callback {
                                 let msg = CString::new("Sync completed successfully")
-                                    .unwrap_or_else(|_| {
-                                        CString::new("Sync completed")
-                                            .expect("hardcoded string is safe")
-                                    });
+                                    .unwrap_or_else(|_| CString::new("Sync completed").expect("hardcoded string is safe"));
                                 // SAFETY: The callback and user_data are safely managed through the registry
                                 // The registry ensures proper lifetime management and thread safety
                                 callback(true, msg.as_ptr(), user_data);
@@ -444,8 +440,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
                             if let Some(callback) = completion_callback {
                                 let msg = match CString::new(format!("Sync failed: {}", e)) {
                                     Ok(s) => s,
-                                    Err(_) => CString::new("Sync failed")
-                                        .expect("hardcoded string is safe"),
+                                    Err(_) => CString::new("Sync failed").expect("hardcoded string is safe"),
                                 };
                                 // SAFETY: The callback and user_data are safely managed through the registry
                                 // The registry ensures proper lifetime management and thread safety
@@ -549,9 +544,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
 }
 
 /// Sync the SPV client to the chain tip with detailed progress updates.
-///
+/// 
 /// # Safety
-///
+/// 
 /// This function is unsafe because:
 /// - `client` must be a valid pointer to an initialized `FFIDashSpvClient`
 /// - `user_data` must satisfy thread safety requirements:
@@ -559,16 +554,16 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
 ///   - The caller must ensure proper synchronization if the data is mutable
 ///   - The data must remain valid for the entire duration of the sync operation
 /// - Both `progress_callback` and `completion_callback` must be thread-safe and can be called from any thread
-///
+/// 
 /// # Parameters
-///
+/// 
 /// - `client`: Pointer to the SPV client
 /// - `progress_callback`: Optional callback invoked periodically with sync progress
 /// - `completion_callback`: Optional callback invoked on completion
 /// - `user_data`: Optional user data pointer passed to all callbacks
-///
+/// 
 /// # Returns
-///
+/// 
 /// 0 on success, error code on failure
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
@@ -679,11 +674,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                 {
                     match monitor_result {
                         Ok(_) => {
-                            let msg =
-                                CString::new("Sync completed successfully").unwrap_or_else(|_| {
-                                    CString::new("Sync completed")
-                                        .expect("hardcoded string is safe")
-                                });
+                            let msg = CString::new("Sync completed successfully")
+                                .unwrap_or_else(|_| CString::new("Sync completed").expect("hardcoded string is safe"));
                             // SAFETY: The callback and user_data are safely managed through the registry.
                             // The registry ensures proper lifetime management and thread safety.
                             // The string pointer is only valid for the duration of the callback.
@@ -694,9 +686,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
                         Err(e) => {
                             let msg = match CString::new(format!("Sync failed: {}", e)) {
                                 Ok(s) => s,
-                                Err(_) => {
-                                    CString::new("Sync failed").expect("hardcoded string is safe")
-                                }
+                                Err(_) => CString::new("Sync failed").expect("hardcoded string is safe"),
                             };
                             // SAFETY: Same as above
                             callback(false, msg.as_ptr(), user_data);

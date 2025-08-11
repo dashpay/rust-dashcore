@@ -135,20 +135,13 @@ impl MultiPeerNetworkManager {
             // Load saved peers from disk
             let saved_peers = self.peer_store.load_peers().await.unwrap_or_default();
             peer_addresses.extend(saved_peers);
-
+            
             // If we still have no peers, immediately discover via DNS
             if peer_addresses.is_empty() {
-                log::info!(
-                    "No peers configured, performing immediate DNS discovery for {:?}",
-                    self.network
-                );
+                log::info!("No peers configured, performing immediate DNS discovery for {:?}", self.network);
                 let dns_peers = self.discovery.discover_peers(self.network).await;
                 peer_addresses.extend(dns_peers.iter().take(TARGET_PEERS));
-                log::info!(
-                    "DNS discovery found {} peers, using {} for startup",
-                    dns_peers.len(),
-                    peer_addresses.len()
-                );
+                log::info!("DNS discovery found {} peers, using {} for startup", dns_peers.len(), peer_addresses.len());
             } else {
                 log::info!(
                     "Starting with {} peers from disk (DNS discovery will be used later if needed)",
@@ -789,10 +782,10 @@ impl MultiPeerNetworkManager {
             }
             NetworkMessage::GetHeaders2(gh2) => {
                 log::info!("📤 Sending GetHeaders2 to {} - version: {}, locator_count: {}, locator: {:?}, stop: {}", 
-                    addr,
+                    addr, 
                     gh2.version,
                     gh2.locator_hashes.len(),
-                    gh2.locator_hashes.iter().take(2).collect::<Vec<_>>(),
+                    gh2.locator_hashes.iter().take(2).collect::<Vec<_>>(), 
                     gh2.stop_hash
                 );
             }
@@ -1289,22 +1282,26 @@ impl NetworkManager for MultiPeerNetworkManager {
     async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()> {
         // Get the last peer that sent us a message
         let peer_id = self.get_last_message_peer_id().await;
-
+        
         if peer_id.0 == 0 {
             return Err(NetworkError::ConnectionFailed("No peer to update".to_string()));
         }
-
+        
         // Find the peer's address from the last message data
         let last_msg_peer = self.last_message_peer.lock().await;
         if let Some(addr) = &*last_msg_peer {
             // For now, just log it as we don't have a mutable peer manager
             // In a real implementation, we'd store this preference
-            tracing::info!("Updated peer {} DSQ preference to: {}", addr, wants_dsq);
+            tracing::info!(
+                "Updated peer {} DSQ preference to: {}",
+                addr,
+                wants_dsq
+            );
         }
-
+        
         Ok(())
     }
-
+    
     async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
         // Get the last peer that sent us a message
         let last_msg_peer = self.last_message_peer.lock().await;
@@ -1315,7 +1312,7 @@ impl NetworkManager for MultiPeerNetworkManager {
         }
         Ok(())
     }
-
+    
     async fn peer_has_sent_headers2(&self) -> bool {
         // Check if the current sync peer has sent us Headers2
         let current_peer = self.current_sync_peer.lock().await;

@@ -48,12 +48,7 @@ pub struct TcpConnection {
 
 impl TcpConnection {
     /// Create a new TCP connection to the given address.
-    pub fn new(
-        address: SocketAddr,
-        timeout: Duration,
-        read_timeout: Duration,
-        network: Network,
-    ) -> Self {
+    pub fn new(address: SocketAddr, timeout: Duration, read_timeout: Duration, network: Network) -> Self {
         Self {
             address,
             state: None,
@@ -93,7 +88,7 @@ impl TcpConnection {
         })?;
 
         // CRITICAL: Read timeout configuration affects message integrity
-        //
+        // 
         // WARNING: Timeout values below 100ms risk TCP partial reads causing
         // corrupted message framing and checksum validation failures.
         // See git commit 16d55f09 for historical context.
@@ -150,9 +145,9 @@ impl TcpConnection {
         })?;
 
         // CRITICAL: Read timeout configuration affects message integrity
-        //
+        // 
         // WARNING: DO NOT MODIFY TIMEOUT VALUES WITHOUT UNDERSTANDING THE IMPLICATIONS
-        //
+        // 
         // Previous bug (git commit 16d55f09): 15ms timeout caused TCP partial reads
         // leading to corrupted message framing and checksum validation failures
         // with debug output like: "CHECKSUM DEBUG: len=2, checksum=[15, 1d, fc, 66]"
@@ -317,21 +312,17 @@ impl TcpConnection {
         };
 
         let serialized = encode::serialize(&raw_message);
-
+        
         // Log details for debugging headers2 issues
-        if matches!(
-            raw_message.payload,
-            NetworkMessage::GetHeaders2(_) | NetworkMessage::GetHeaders(_)
-        ) {
+        if matches!(raw_message.payload, NetworkMessage::GetHeaders2(_) | NetworkMessage::GetHeaders(_)) {
             let msg_type = match raw_message.payload {
                 NetworkMessage::GetHeaders2(_) => "GetHeaders2",
                 NetworkMessage::GetHeaders(_) => "GetHeaders",
                 _ => "Unknown",
             };
-            tracing::debug!(
-                "Sending {} raw bytes (len={}): {:02x?}",
+            tracing::debug!("Sending {} raw bytes (len={}): {:02x?}", 
                 msg_type,
-                serialized.len(),
+                serialized.len(), 
                 &serialized[..std::cmp::min(100, serialized.len())]
             );
         }
@@ -406,7 +397,7 @@ impl TcpConnection {
                     self.address,
                     raw_message.payload.cmd()
                 );
-
+                
                 // Special logging for headers2
                 if raw_message.payload.cmd() == "headers2" {
                     tracing::info!("🎉 Received Headers2 message from {}!", self.address);

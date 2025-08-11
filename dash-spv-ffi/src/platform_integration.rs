@@ -41,9 +41,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_core_handle(
         return ptr::null_mut();
     }
 
-    Box::into_raw(Box::new(CoreSDKHandle {
-        client,
-    }))
+    Box::into_raw(Box::new(CoreSDKHandle { client }))
 }
 
 /// Releases a CoreSDKHandle
@@ -107,10 +105,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
 
     // TODO: Implement actual quorum public key retrieval
     // For now, return a placeholder error
-    FFIResult::error(
-        FFIErrorCode::NotImplemented,
-        "Quorum public key retrieval not yet implemented",
-    )
+    FFIResult::error(FFIErrorCode::NotImplemented, "Quorum public key retrieval not yet implemented")
 }
 
 /// Gets the platform activation height from the Core chain

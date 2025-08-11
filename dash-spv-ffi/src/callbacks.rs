@@ -1,6 +1,6 @@
-use dashcore::hashes::Hash;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
+use dashcore::hashes::Hash;
 
 pub type ProgressCallback =
     extern "C" fn(progress: f64, message: *const c_char, user_data: *mut c_void);
@@ -256,12 +256,7 @@ impl FFIEventCallbacks {
             );
             let txid_bytes = txid.as_byte_array();
             let hash_bytes = block_hash.as_byte_array();
-            callback(
-                txid_bytes.as_ptr() as *const [u8; 32],
-                block_height,
-                hash_bytes.as_ptr() as *const [u8; 32],
-                self.user_data,
-            );
+            callback(txid_bytes.as_ptr() as *const [u8; 32], block_height, hash_bytes.as_ptr() as *const [u8; 32], self.user_data);
             tracing::info!("✅ Mempool transaction confirmed callback completed");
         } else {
             tracing::debug!("Mempool transaction confirmed callback not set");

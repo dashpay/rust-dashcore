@@ -118,7 +118,7 @@ impl ForkDetector {
                     return ForkDetectionResult::Orphan;
                 }
             }
-
+            
             // Found connection point - this creates a new fork
             let fork_height = height;
             let fork = Fork {
@@ -144,7 +144,7 @@ impl ForkDetector {
                 } else {
                     height as u32
                 };
-
+                
                 // This connects to a header in chain state but not in storage
                 // Treat it as extending main chain if it's the tip
                 if height == chain_state.headers.len() - 1 {

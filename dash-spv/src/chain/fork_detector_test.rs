@@ -50,13 +50,12 @@ mod tests {
         }
 
         // Try to create a fork from before the checkpoint (should be rejected)
-        let pre_checkpoint_hash =
-            BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::hash(&[99u8]));
+        let pre_checkpoint_hash = BlockHash::from_raw_hash(dashcore_hashes::hash_x11::Hash::hash(&[99u8]));
         storage.store_header(&checkpoint_header, 500).expect("Failed to store at height 500");
-
+        
         let fork_header = create_test_header(pre_checkpoint_hash, 999);
         let result = detector.check_header(&fork_header, &chain_state, &storage);
-
+        
         // Should be orphan since it tries to fork before checkpoint
         assert!(matches!(result, ForkDetectionResult::Orphan));
     }
@@ -89,9 +88,9 @@ mod tests {
             // Get the header at this height from storage
             let fork_point_header = chain_state.header_at_height(height).unwrap();
             let fork_header = create_test_header(fork_point_header.block_hash(), 100 + height);
-
+            
             let result = detector.check_header(&fork_header, &chain_state, &storage);
-
+            
             match result {
                 ForkDetectionResult::CreatesNewFork(fork) => {
                     assert_eq!(fork.fork_height, height);
@@ -108,7 +107,7 @@ mod tests {
         for (i, tip) in fork_tips.iter().enumerate() {
             let extension = create_test_header(*tip, 200 + i as u32);
             let result = detector.check_header(&extension, &chain_state, &storage);
-
+            
             assert!(matches!(result, ForkDetectionResult::ExtendsFork(_)));
         }
     }
@@ -123,7 +122,7 @@ mod tests {
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).expect("Failed to store genesis");
         chain_state.add_header(genesis.clone());
-
+        
         // Build main chain past genesis
         let header1 = create_test_header(genesis.block_hash(), 1);
         storage.store_header(&header1, 1).expect("Failed to store header");
@@ -142,10 +141,11 @@ mod tests {
 
         // Verify we have 3 different forks
         let remaining_forks = detector.get_forks();
-        let mut fork_nonces: Vec<u32> =
-            remaining_forks.iter().map(|f| f.headers[0].nonce).collect();
+        let mut fork_nonces: Vec<u32> = remaining_forks.iter()
+            .map(|f| f.headers[0].nonce)
+            .collect();
         fork_nonces.sort();
-
+        
         // Since all forks have equal work, eviction order is not guaranteed
         // Just verify we have 3 unique forks
         assert_eq!(fork_nonces.len(), 3);
@@ -162,7 +162,7 @@ mod tests {
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).expect("Failed to store genesis");
         chain_state.add_header(genesis.clone());
-
+        
         // Build main chain past genesis
         let header1 = create_test_header(genesis.block_hash(), 1);
         storage.store_header(&header1, 1).expect("Failed to store header");
@@ -199,8 +199,7 @@ mod tests {
 
     #[test]
     fn test_fork_detection_thread_safety() {
-        let detector =
-            Arc::new(Mutex::new(ForkDetector::new(50).expect("Failed to create fork detector")));
+        let detector = Arc::new(Mutex::new(ForkDetector::new(50).expect("Failed to create fork detector")));
         let storage = Arc::new(MemoryStorage::new());
         let chain_state = Arc::new(Mutex::new(ChainState::new()));
 
@@ -220,35 +219,30 @@ mod tests {
 
         // Spawn multiple threads creating forks
         let mut handles = vec![];
-
+        
         for thread_id in 0..5 {
             let detector_clone = Arc::clone(&detector);
             let storage_clone = Arc::clone(&storage);
             let chain_state_clone = Arc::clone(&chain_state);
-
+            
             let handle = thread::spawn(move || {
                 // Each thread creates forks at different heights
                 for i in 0..10 {
                     let fork_height = (thread_id * 3 + i % 3) as u32;
                     let chain_state_lock = chain_state_clone.lock().unwrap();
-
-                    if let Some(fork_point_header) = chain_state_lock.header_at_height(fork_height)
-                    {
+                    
+                    if let Some(fork_point_header) = chain_state_lock.header_at_height(fork_height) {
                         let fork_header = create_test_header(
                             fork_point_header.block_hash(),
-                            1000 + thread_id * 100 + i,
+                            1000 + thread_id * 100 + i
                         );
-
+                        
                         let mut detector_lock = detector_clone.lock().unwrap();
-                        detector_lock.check_header(
-                            &fork_header,
-                            &chain_state_lock,
-                            storage_clone.as_ref(),
-                        );
+                        detector_lock.check_header(&fork_header, &chain_state_lock, storage_clone.as_ref());
                     }
                 }
             });
-
+            
             handles.push(handle);
         }
 
@@ -260,11 +254,11 @@ mod tests {
         // Verify the detector is in a consistent state
         let detector_lock = detector.lock().unwrap();
         let forks = detector_lock.get_forks();
-
+        
         // Should have multiple forks but within the limit
         assert!(forks.len() > 0);
         assert!(forks.len() <= 50);
-
+        
         // All forks should have valid structure
         for fork in forks {
             assert!(fork.headers.len() > 0);
@@ -311,7 +305,7 @@ mod tests {
         let genesis = genesis_block(Network::Dash).header;
         storage.store_header(&genesis, 0).expect("Failed to store genesis");
         chain_state.add_header(genesis.clone());
-
+        
         // Build main chain past genesis
         let header1 = create_test_header(genesis.block_hash(), 1);
         storage.store_header(&header1, 1).expect("Failed to store header");
@@ -375,17 +369,17 @@ mod tests {
         // Add headers to chain state but not storage (simulating sync issue)
         let genesis = genesis_block(Network::Dash).header;
         chain_state.add_header(genesis.clone());
-
+        
         let header1 = create_test_header(genesis.block_hash(), 1);
         chain_state.add_header(header1.clone());
-
+        
         let header2 = create_test_header(header1.block_hash(), 2);
         chain_state.add_header(header2.clone());
 
         // Try to extend from header1 (in chain state but not storage)
         let header3 = create_test_header(header1.block_hash(), 3);
         let result = detector.check_header(&header3, &chain_state, &storage);
-
+        
         // Should create a fork since it connects to non-tip header in chain state
         match result {
             ForkDetectionResult::CreatesNewFork(fork) => {

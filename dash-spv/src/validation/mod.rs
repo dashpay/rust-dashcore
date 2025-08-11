@@ -59,6 +59,7 @@ impl ValidationManager {
         }
     }
 
+
     /// Validate an InstantLock.
     pub fn validate_instantlock(&self, instantlock: &InstantLock) -> ValidationResult<()> {
         match self.mode {

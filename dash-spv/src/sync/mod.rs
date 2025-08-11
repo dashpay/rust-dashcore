@@ -48,9 +48,8 @@ impl SyncManager {
         let reorg_config = ReorgConfig::default();
 
         Ok(Self {
-            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config).map_err(|e| {
-                SyncError::InvalidState(format!("Failed to create header sync manager: {}", e))
-            })?,
+            header_sync: HeaderSyncManagerWithReorg::new(config, reorg_config)
+                .map_err(|e| SyncError::InvalidState(format!("Failed to create header sync manager: {}", e)))?,
             filter_sync: FilterSyncManager::new(config, received_filter_heights),
             masternode_sync: MasternodeSyncManager::new(config),
             state: SyncState::new(),

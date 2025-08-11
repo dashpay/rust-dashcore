@@ -9,15 +9,15 @@ mod tests {
     use crate::network::NetworkManager;
     use crate::storage::memory::MemoryStorageManager;
     use crate::storage::StorageManager;
-    use crate::sync::filters::FilterNotificationSender;
     use crate::sync::sequential::SequentialSyncManager;
+    use crate::sync::filters::FilterNotificationSender;
     use crate::types::{ChainState, MempoolState, SpvEvent, SpvStats};
     use crate::validation::ValidationManager;
     use crate::wallet::Wallet;
-    use dashcore::block::Header as BlockHeader;
     use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::{Block, BlockHash, Network, Transaction};
+    use dashcore::block::Header as BlockHeader;
     use dashcore_hashes::Hash;
     use std::sync::Arc;
     use tokio::sync::{mpsc, RwLock};
@@ -36,27 +36,26 @@ mod tests {
         mpsc::UnboundedSender<SpvEvent>,
     ) {
         let network = Box::new(MockNetworkManager::new()) as Box<dyn NetworkManager>;
-        let storage =
-            Box::new(MemoryStorageManager::new().await.unwrap()) as Box<dyn StorageManager>;
+        let storage = Box::new(MemoryStorageManager::new().await.unwrap()) as Box<dyn StorageManager>;
         let config = ClientConfig::default();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let (block_tx, _block_rx) = mpsc::unbounded_channel();
         let wallet = Arc::new(RwLock::new(Wallet::new()));
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
-
+        
         // Create sync manager dependencies
         let validation_manager = ValidationManager::new(Network::Dash);
         let chainlock_manager = ChainLockManager::new();
         let chain_state = Arc::new(RwLock::new(ChainState::default()));
-
+        
         let sync_manager = SequentialSyncManager::new(
             validation_manager,
             chainlock_manager,
             chain_state,
             stats.clone(),
         );
-
+        
         (
             network,
             storage,
@@ -111,7 +110,7 @@ mod tests {
         // Handle the message
         let result = handler.handle_network_message(message).await;
         assert!(result.is_ok());
-
+        
         // Verify peer was marked as having sent headers2
         // (MockNetworkManager would track this)
     }
@@ -304,10 +303,7 @@ mod tests {
 
         // Verify block was sent to processor
         match block_rx.recv().await {
-            Some(BlockProcessingTask::ProcessBlock {
-                block: received_block,
-                ..
-            }) => {
+            Some(BlockProcessingTask::ProcessBlock { block: received_block, .. }) => {
                 assert_eq!(received_block.block_hash(), block.block_hash());
             }
             _ => panic!("Expected block processing task"),
@@ -333,7 +329,7 @@ mod tests {
         // Enable mempool tracking
         config.enable_mempool_tracking = true;
         config.fetch_mempool_transactions = true;
-
+        
         // Create mempool filter
         let mempool_filter = Some(Arc::new(MempoolFilter::new(&config)));
 
@@ -358,7 +354,7 @@ mod tests {
         // Handle the message
         let result = handler.handle_network_message(message).await;
         assert!(result.is_ok());
-
+        
         // Should have requested the transaction
         // (MockNetworkManager would track this)
     }
@@ -412,10 +408,7 @@ mod tests {
 
         // Should have emitted transaction event
         match event_rx.recv().await {
-            Some(SpvEvent::TransactionReceived {
-                txid,
-                ..
-            }) => {
+            Some(SpvEvent::TransactionReceived { txid, .. }) => {
                 assert_eq!(txid, tx.txid());
             }
             _ => panic!("Expected TransactionReceived event"),
@@ -547,7 +540,7 @@ mod tests {
         // Handle the message
         let result = handler.handle_network_message(message).await;
         assert!(result.is_ok());
-
+        
         // Should respond with pong (MockNetworkManager would track this)
     }
 

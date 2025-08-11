@@ -114,7 +114,9 @@ impl HeaderSyncManager {
                 "Latest batch: {} headers, range {} → {}",
                 headers.len(),
                 headers[0].block_hash(),
-                headers.last().map(|h| h.block_hash()).unwrap_or_else(|| headers[0].block_hash())
+                headers.last()
+                    .map(|h| h.block_hash())
+                    .unwrap_or_else(|| headers[0].block_hash())
             );
             self.last_progress_log = Some(std::time::Instant::now());
         } else {
@@ -160,9 +162,7 @@ impl HeaderSyncManager {
             if let Some(last_header) = headers.last() {
                 self.request_headers(network, Some(last_header.block_hash())).await?;
             } else {
-                return Err(SyncError::InvalidState(
-                    "Headers array empty when expected".to_string(),
-                ));
+                return Err(SyncError::InvalidState("Headers array empty when expected".to_string()));
             }
         } else {
             // Post-sync mode - new blocks received dynamically
@@ -520,11 +520,7 @@ impl HeaderSyncManager {
                     self.config
                         .network
                         .known_genesis_block_hash()
-                        .ok_or_else(|| {
-                            SyncError::InvalidState(
-                                "Unable to get genesis block hash for network".to_string(),
-                            )
-                        })
+                        .ok_or_else(|| SyncError::InvalidState("Unable to get genesis block hash for network".to_string()))
                         .unwrap_or_else(|e| {
                             tracing::error!("Failed to get genesis block hash: {}", e);
                             dashcore::BlockHash::all_zeros()
@@ -534,11 +530,7 @@ impl HeaderSyncManager {
             self.config
                 .network
                 .known_genesis_block_hash()
-                .ok_or_else(|| {
-                    SyncError::InvalidState(
-                        "Unable to get genesis block hash for network".to_string(),
-                    )
-                })
+                .ok_or_else(|| SyncError::InvalidState("Unable to get genesis block hash for network".to_string()))
                 .unwrap_or_else(|e| {
                     tracing::error!("Failed to get genesis block hash: {}", e);
                     dashcore::BlockHash::all_zeros()

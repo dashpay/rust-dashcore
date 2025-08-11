@@ -57,9 +57,7 @@ mod tests {
                         // Verify it's a valid UTF-8 string
                         if let Ok(error_str) = c_str.to_str() {
                             // The error could be from any thread due to global mutex
-                            assert!(
-                                error_str.contains("Error from thread") || error_str.is_empty()
-                            );
+                            assert!(error_str.contains("Error from thread") || error_str.is_empty());
                         }
                     }
                 }

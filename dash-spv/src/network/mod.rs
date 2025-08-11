@@ -102,12 +102,12 @@ pub trait NetworkManager: Send + Sync {
 
     /// Update the DSQ (CoinJoin queue) message preference for the current peer.
     async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()>;
-
+    
     /// Mark that the current peer has sent us Headers2 messages.
     async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
         Ok(()) // Default implementation
     }
-
+    
     /// Check if the current peer has sent us Headers2 messages.
     async fn peer_has_sent_headers2(&self) -> bool {
         false // Default implementation
@@ -140,7 +140,7 @@ impl TcpNetworkManager {
             dsq_preference: false,
         })
     }
-
+    
     /// Get the current DSQ preference state.
     pub fn get_dsq_preference(&self) -> bool {
         self.dsq_preference
@@ -161,12 +161,8 @@ impl NetworkManager for TcpNetworkManager {
         // Try to connect to the first peer for now
         let peer_addr = self.config.peers[0];
 
-        let mut connection = TcpConnection::new(
-            peer_addr,
-            self.config.connection_timeout,
-            self.config.read_timeout,
-            self.config.network,
-        );
+        let mut connection =
+            TcpConnection::new(peer_addr, self.config.connection_timeout, self.config.read_timeout, self.config.network);
         connection.connect_instance().await?;
 
         // Perform handshake
@@ -329,11 +325,15 @@ impl NetworkManager for TcpNetworkManager {
     async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()> {
         // Store the DSQ preference
         self.dsq_preference = wants_dsq;
-
+        
         // For single peer connection, update the peer info if we have one
         if let Some(connection) = &self.connection {
             let peer_info = connection.peer_info();
-            tracing::info!("Updated peer {} DSQ preference to: {}", peer_info.address, wants_dsq);
+            tracing::info!(
+                "Updated peer {} DSQ preference to: {}",
+                peer_info.address,
+                wants_dsq
+            );
         }
         Ok(())
     }
