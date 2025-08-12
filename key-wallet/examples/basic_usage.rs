@@ -1,7 +1,8 @@
 //! Basic usage example for key-wallet
 
-use key_wallet::address::AddressGenerator;
-use key_wallet::derivation::{AccountDerivation, HDWallet};
+use core::str::FromStr;
+use dashcore::{Address, Network as DashNetwork};
+use key_wallet::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use key_wallet::mnemonic::Language;
 use key_wallet::prelude::*;
 use key_wallet::Network;
@@ -23,78 +24,94 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let seed = mnemonic.to_seed("");
     println!("   Seed: {}", hex::encode(&seed[..32])); // Show first 32 bytes
 
-    // 3. Create HD wallet
-    println!("\n3. Creating HD wallet...");
-    let wallet = HDWallet::from_seed(&seed, Network::Dash)?;
-    let master_pub = wallet.master_pub_key();
+    // 3. Create master key
+    println!("\n3. Creating master key...");
+    let master = ExtendedPrivKey::new_master(Network::Dash, &seed)?;
+    let secp = secp256k1::Secp256k1::new();
+    let master_pub = ExtendedPubKey::from_priv(&secp, &master);
     println!("   Master public key: {}", master_pub);
 
     // 4. Derive BIP44 account
     println!("\n4. Deriving BIP44 account 0...");
-    let account = wallet.bip44_account(0)?;
+    let path = DerivationPath::from(vec![
+        ChildNumber::from_hardened_idx(44)?, // Purpose
+        ChildNumber::from_hardened_idx(5)?,  // Dash coin type
+        ChildNumber::from_hardened_idx(0)?,  // Account 0
+    ]);
+    let account = master.derive_priv(&secp, &path)?;
     println!("   Account xprv: {}", account);
 
-    // 5. Create account derivation
+    // 5. Derive addresses
     println!("\n5. Deriving addresses...");
-    let account_derivation = AccountDerivation::new(account);
 
     // Derive first 5 receive addresses
     println!("   Receive addresses:");
     for i in 0..5 {
-        let addr_xpub = account_derivation.receive_address(i)?;
-        let addr = Address::p2pkh(&addr_xpub.public_key, Network::Dash);
+        let receive_path = DerivationPath::from(vec![
+            ChildNumber::from_normal_idx(0)?, // External chain
+            ChildNumber::from_normal_idx(i)?,
+        ]);
+        let addr_key = account.derive_priv(&secp, &receive_path)?;
+        let addr_xpub = ExtendedPubKey::from_priv(&secp, &addr_key);
+        let addr =
+            Address::p2pkh(&dashcore::PublicKey::new(addr_xpub.public_key), DashNetwork::Dash);
         println!("     {}: {}", i, addr);
     }
 
     // Derive first 2 change addresses
     println!("\n   Change addresses:");
     for i in 0..2 {
-        let addr_xpub = account_derivation.change_address(i)?;
-        let addr = Address::p2pkh(&addr_xpub.public_key, Network::Dash);
+        let change_path = DerivationPath::from(vec![
+            ChildNumber::from_normal_idx(1)?, // Internal chain
+            ChildNumber::from_normal_idx(i)?,
+        ]);
+        let addr_key = account.derive_priv(&secp, &change_path)?;
+        let addr_xpub = ExtendedPubKey::from_priv(&secp, &addr_key);
+        let addr =
+            Address::p2pkh(&dashcore::PublicKey::new(addr_xpub.public_key), DashNetwork::Dash);
         println!("     {}: {}", i, addr);
     }
 
     // 6. Demonstrate CoinJoin derivation
     println!("\n6. CoinJoin account...");
-    let coinjoin_account = wallet.coinjoin_account(0)?;
+    let coinjoin_path = DerivationPath::from(vec![
+        ChildNumber::from_hardened_idx(9)?, // CoinJoin purpose
+        ChildNumber::from_hardened_idx(5)?, // Dash coin type
+        ChildNumber::from_hardened_idx(0)?, // Account 0
+    ]);
+    let coinjoin_account = master.derive_priv(&secp, &coinjoin_path)?;
     println!("   CoinJoin account depth: {}", coinjoin_account.depth);
 
     // 7. Demonstrate identity key derivation
     println!("\n7. Identity authentication key...");
-    let identity_key = wallet.identity_authentication_key(0, 0)?;
+    let identity_path = DerivationPath::from(vec![
+        ChildNumber::from_hardened_idx(13)?, // Identity purpose
+        ChildNumber::from_hardened_idx(5)?,  // Dash coin type
+        ChildNumber::from_hardened_idx(3)?,  // Authentication feature
+        ChildNumber::from_hardened_idx(0)?,  // Identity index
+        ChildNumber::from_hardened_idx(0)?,  // Key index
+    ]);
+    let identity_key = master.derive_priv(&secp, &identity_path)?;
     println!("   Identity key depth: {}", identity_key.depth);
 
     // 8. Address parsing example
     println!("\n8. Address parsing...");
     let test_address = "XyPvhVmhWKDgvMJLwfFfMwhxpxGgd3TBxq";
-    match test_address.parse::<Address>() {
+    match Address::<dashcore::address::NetworkUnchecked>::from_str(test_address) {
         Ok(parsed) => {
-            println!("   Parsed address: {}", parsed);
-            println!("   Type: {:?}", parsed.address_type);
-            println!("   Network: {:?}", parsed.network);
+            // NetworkUnchecked addresses need to be converted to check network
+            if let Ok(checked) = parsed.clone().require_network(DashNetwork::Dash) {
+                println!("   Parsed address: {}", checked);
+                println!("   Type: {:?}", checked.address_type());
+                println!("   Network: Dash");
+            } else if let Ok(checked) = parsed.require_network(DashNetwork::Testnet) {
+                println!("   Parsed address: {}", checked);
+                println!("   Type: {:?}", checked.address_type());
+                println!("   Network: Testnet");
+            }
         }
         Err(e) => println!("   Failed to parse: {}", e),
     }
-
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn demonstrate_address_generation() -> core::result::Result<(), Box<dyn std::error::Error>> {
-    // This demonstrates bulk address generation
-    let seed = [0u8; 64];
-    let wallet = HDWallet::from_seed(&seed, Network::Dash)?;
-    let path = key_wallet::DerivationPath::from(vec![
-        ChildNumber::from_hardened_idx(44).unwrap(),
-        ChildNumber::from_hardened_idx(5).unwrap(),
-        ChildNumber::from_hardened_idx(0).unwrap(),
-    ]);
-    let account_xpub = wallet.derive_pub(&path)?;
-
-    let generator = AddressGenerator::new(Network::Dash);
-    let addresses = generator.generate_range(&account_xpub, true, 0, 100)?;
-
-    println!("Generated {} addresses", addresses.len());
 
     Ok(())
 }
