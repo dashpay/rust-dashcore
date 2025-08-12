@@ -1,11 +1,8 @@
 //! Address tests
 
-use dashcore_hashes::{hash160, Hash};
-use key_wallet::address::{Address, AddressGenerator, AddressType};
-use key_wallet::derivation::HDWallet;
-use key_wallet::Network;
+use core::str::FromStr;
+use dashcore::{Address, AddressType, Network as DashNetwork, ScriptBuf};
 use secp256k1::{PublicKey, Secp256k1};
-use std::str::FromStr;
 
 #[test]
 fn test_p2pkh_address_creation() {
@@ -14,12 +11,13 @@ fn test_p2pkh_address_creation() {
     // Create a public key
     let secret_key = secp256k1::SecretKey::from_slice(&[1u8; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+    let dash_pubkey = dashcore::PublicKey::new(public_key);
 
     // Create P2PKH address
-    let address = Address::p2pkh(&public_key, Network::Dash);
+    let address = Address::p2pkh(&dash_pubkey, DashNetwork::Dash);
 
-    assert_eq!(address.network, Network::Dash);
-    assert_eq!(address.address_type, AddressType::P2PKH);
+    assert_eq!(*address.network(), DashNetwork::Dash);
+    assert_eq!(address.address_type(), Some(AddressType::P2pkh));
 
     // Check that it generates a valid Dash address (starts with 'X')
     let addr_str = address.to_string();
@@ -28,15 +26,35 @@ fn test_p2pkh_address_creation() {
 }
 
 #[test]
+fn test_p2sh_address_creation() {
+    // Create a simple script
+    let script = ScriptBuf::from_hex("76a914").unwrap();
+
+    // Create P2SH address
+    let address = Address::p2sh(&script, DashNetwork::Dash).unwrap();
+
+    assert_eq!(*address.network(), DashNetwork::Dash);
+    assert_eq!(address.address_type(), Some(AddressType::P2sh));
+
+    // Check that it generates a valid Dash P2SH address (starts with '7')
+    let addr_str = address.to_string();
+    assert!(addr_str.starts_with('7'));
+}
+
+#[test]
 fn test_testnet_address() {
     let secp = Secp256k1::new();
 
     // Create a public key
-    let secret_key = secp256k1::SecretKey::from_slice(&[1u8; 32]).unwrap();
+    let secret_key = secp256k1::SecretKey::from_slice(&[2u8; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+    let dash_pubkey = dashcore::PublicKey::new(public_key);
 
     // Create testnet P2PKH address
-    let address = Address::p2pkh(&public_key, Network::Testnet);
+    let address = Address::p2pkh(&dash_pubkey, DashNetwork::Testnet);
+
+    assert_eq!(*address.network(), DashNetwork::Testnet);
+    assert_eq!(address.address_type(), Some(AddressType::P2pkh));
 
     // Check that it generates a valid testnet address (starts with 'y')
     let addr_str = address.to_string();
@@ -44,96 +62,43 @@ fn test_testnet_address() {
 }
 
 #[test]
-fn test_p2sh_address_creation() {
-    // Create a script hash
-    let script_hash = hash160::Hash::hash(b"test script");
-
-    // Create P2SH address
-    let address = Address::p2sh(script_hash, Network::Dash);
-
-    assert_eq!(address.network, Network::Dash);
-    assert_eq!(address.address_type, AddressType::P2SH);
-
-    // Check that it generates a valid P2SH address (starts with '7')
-    let addr_str = address.to_string();
-    assert!(addr_str.starts_with('7'));
-}
-
-#[test]
 fn test_address_parsing() {
-    // Test mainnet P2PKH
-    let addr_str = "XmnGSJav3CWVmzDv5U68k7XT9rRPqyavtE";
-    let address = Address::from_str(addr_str).unwrap();
+    // Test mainnet P2PKH address
+    let mainnet_addr = "XyPvhVmhWKDgvMJLwfFfMwhxpxGgd3TBxq";
+    let parsed = Address::<dashcore::address::NetworkUnchecked>::from_str(mainnet_addr).unwrap();
 
-    assert_eq!(address.network, Network::Dash);
-    assert_eq!(address.address_type, AddressType::P2PKH);
-    assert_eq!(address.to_string(), addr_str);
+    // Verify it's a mainnet address
+    let checked = parsed.require_network(DashNetwork::Dash).unwrap();
+    assert_eq!(*checked.network(), DashNetwork::Dash);
+    assert_eq!(checked.address_type(), Some(AddressType::P2pkh));
+
+    // Test testnet P2PKH address
+    let testnet_addr = "yTF4PrZMKYGLPwKR9UTzxwGLsfXF1F6zEo";
+    let parsed = Address::<dashcore::address::NetworkUnchecked>::from_str(testnet_addr).unwrap();
+
+    // Verify it's a testnet address
+    let checked = parsed.require_network(DashNetwork::Testnet).unwrap();
+    assert_eq!(*checked.network(), DashNetwork::Testnet);
+    assert_eq!(checked.address_type(), Some(AddressType::P2pkh));
 }
 
 #[test]
-fn test_address_script_pubkey() {
+fn test_address_roundtrip() {
     let secp = Secp256k1::new();
 
     // Create a public key
-    let secret_key = secp256k1::SecretKey::from_slice(&[1u8; 32]).unwrap();
+    let secret_key = secp256k1::SecretKey::from_slice(&[3u8; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+    let dash_pubkey = dashcore::PublicKey::new(public_key);
 
-    // Create P2PKH address
-    let address = Address::p2pkh(&public_key, Network::Dash);
-    let script_pubkey = address.script_pubkey();
+    // Create address
+    let address = Address::p2pkh(&dash_pubkey, DashNetwork::Dash);
+    let addr_str = address.to_string();
 
-    // P2PKH script should be 25 bytes
-    assert_eq!(script_pubkey.len(), 25);
+    // Parse it back
+    let parsed = Address::<dashcore::address::NetworkUnchecked>::from_str(&addr_str).unwrap();
+    let checked = parsed.require_network(DashNetwork::Dash).unwrap();
 
-    // Check script structure
-    assert_eq!(script_pubkey[0], 0x76); // OP_DUP
-    assert_eq!(script_pubkey[1], 0xa9); // OP_HASH160
-    assert_eq!(script_pubkey[2], 0x14); // Push 20 bytes
-    assert_eq!(script_pubkey[23], 0x88); // OP_EQUALVERIFY
-    assert_eq!(script_pubkey[24], 0xac); // OP_CHECKSIG
-}
-
-#[test]
-fn test_address_generator() {
-    let seed = [0u8; 64];
-    let wallet = HDWallet::from_seed(&seed, Network::Dash).unwrap();
-
-    // Get account public key
-    let path = key_wallet::DerivationPath::from(vec![
-        key_wallet::ChildNumber::from_hardened_idx(44).unwrap(),
-        key_wallet::ChildNumber::from_hardened_idx(5).unwrap(),
-        key_wallet::ChildNumber::from_hardened_idx(0).unwrap(),
-    ]);
-    let account_xpub = wallet.derive_pub(&path).unwrap();
-
-    // Create address generator
-    let generator = AddressGenerator::new(Network::Dash);
-
-    // Generate single address
-    let address = generator.generate_p2pkh(&account_xpub);
-    assert_eq!(address.network, Network::Dash);
-    assert_eq!(address.address_type, AddressType::P2PKH);
-}
-
-#[test]
-fn test_address_range_generation() {
-    let seed = [0u8; 64];
-    let wallet = HDWallet::from_seed(&seed, Network::Dash).unwrap();
-
-    // Get account public key
-    let account = wallet.bip44_account(0).unwrap();
-    let secp = Secp256k1::new();
-    let account_xpub = key_wallet::ExtendedPubKey::from_priv(&secp, &account);
-
-    // Create address generator
-    let generator = AddressGenerator::new(Network::Dash);
-
-    // Generate range of external addresses
-    let addresses = generator.generate_range(&account_xpub, true, 0, 5).unwrap();
-    assert_eq!(addresses.len(), 5);
-
-    // All addresses should be different
-    let addr_strings: Vec<_> = addresses.iter().map(|a| a.to_string()).collect();
-    let unique_count = addr_strings.iter().collect::<std::collections::HashSet<_>>().len();
-    assert_eq!(unique_count, 5);
+    // Compare
+    assert_eq!(address, checked);
 }

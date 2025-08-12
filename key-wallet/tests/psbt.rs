@@ -5,22 +5,18 @@ use core::convert::TryFrom;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use dashcore::bip32::{
-    ExtendedPrivKey, ExtendedPubKey, Fingerprint, IntoDerivationPath, KeySource,
-};
 use dashcore::blockdata::opcodes::OP_0;
 use dashcore::blockdata::script;
 use dashcore::consensus::encode::{deserialize, serialize_hex};
 use dashcore::hashes::hex::FromHex;
-use dashcore::psbt::{Psbt, PsbtSighashType};
 use dashcore::script::PushBytes;
 use dashcore::secp256k1::{self, Secp256k1};
 use dashcore::{
     Amount, Denomination, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Transaction, TxIn,
     TxOut, Witness,
 };
-
-const NETWORK: Network = Network::Testnet;
+use key_wallet::bip32::{ExtendedPrivKey, ExtendedPubKey, Fingerprint, KeySource};
+use key_wallet::psbt::{PartiallySignedTransaction as Psbt, PsbtSighashType};
 
 macro_rules! hex_script {
     ($s:expr) => {
@@ -30,7 +26,9 @@ macro_rules! hex_script {
 
 macro_rules! hex_psbt {
     ($s:expr) => {
-        Psbt::deserialize(&<Vec<u8> as FromHex>::from_hex($s).unwrap())
+        key_wallet::psbt::PartiallySignedTransaction::deserialize(
+            &<Vec<u8> as FromHex>::from_hex($s).unwrap(),
+        )
     };
 }
 
@@ -291,6 +289,7 @@ fn bip32_derivation(
         let path = pk_path[i].1;
 
         let pk = PublicKey::from_str(pk).unwrap();
+        use key_wallet::bip32::IntoDerivationPath;
         let path = path.into_derivation_path().unwrap();
 
         tree.insert(pk.inner, (fingerprint, path));
@@ -326,6 +325,7 @@ fn parse_and_verify_keys(
     for (secret_key, derivation_path) in sk_path.iter() {
         let wif_priv = PrivateKey::from_wif(secret_key).expect("failed to parse key");
 
+        use key_wallet::bip32::IntoDerivationPath;
         let path =
             derivation_path.into_derivation_path().expect("failed to convert derivation path");
         let ext_derived = ext_priv.derive_priv(secp, &path).expect("failed to derive ext priv key");

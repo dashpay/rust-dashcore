@@ -7,7 +7,6 @@ use alloc::string::String;
 
 use super::account_collection::AccountCollection;
 use super::config::WalletConfig;
-use super::metadata::WalletMetadata;
 use super::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
 use super::{Wallet, WalletType};
 use crate::account::{Account, AccountType};
@@ -47,19 +46,35 @@ impl Wallet {
                 | WalletType::MnemonicWithPassphrase { .. }
         );
 
+        // Compute wallet ID from root public key
+        let root_pub_key = match &wallet_type {
+            WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            }
+            | WalletType::Seed {
+                root_extended_private_key,
+                ..
+            }
+            | WalletType::ExtendedPrivKey(root_extended_private_key) => {
+                root_extended_private_key.to_root_extended_pub_key()
+            }
+            WalletType::MnemonicWithPassphrase {
+                root_extended_public_key,
+                ..
+            }
+            | WalletType::ExternalSignable(root_extended_public_key)
+            | WalletType::WatchOnly(root_extended_public_key) => root_extended_public_key.clone(),
+        };
+        let wallet_id = Self::compute_wallet_id(&root_pub_key);
+
         let mut wallet = Self {
+            wallet_id,
             config: config.clone(),
             wallet_type,
-            name: None,
-            description: None,
             standard_accounts: AccountCollection::new(),
             coinjoin_accounts: AccountCollection::new(),
             special_accounts: BTreeMap::new(),
-            metadata: WalletMetadata {
-                created_at: 0,
-                version: 1,
-                ..Default::default()
-            },
         };
 
         // Generate initial account
@@ -77,12 +92,26 @@ impl Wallet {
                 } => root_extended_public_key.to_extended_pub_key(network),
                 _ => unreachable!("Already checked is_watch_only"),
             };
+
+            // Create account derivation path
+            let derivation_path = crate::bip32::DerivationPath::from(vec![
+                crate::bip32::ChildNumber::from_hardened_idx(44).unwrap(),
+                crate::bip32::ChildNumber::from_hardened_idx(if network == Network::Dash {
+                    5
+                } else {
+                    1
+                })
+                .unwrap(),
+                crate::bip32::ChildNumber::from_hardened_idx(0).unwrap(),
+            ]);
+
             let account = Account::from_xpub(
+                None,
                 0,
                 xpub,
                 network,
-                config.account_default_external_gap_limit,
-                config.account_default_internal_gap_limit,
+                crate::dip9::DerivationPathReference::BIP44,
+                derivation_path,
             )?;
             wallet.standard_accounts.insert(network, 0, account);
         }
