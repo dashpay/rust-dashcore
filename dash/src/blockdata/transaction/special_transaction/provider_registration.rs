@@ -52,7 +52,7 @@ use crate::{Address, Network, OutPoint, ScriptBuf, VarInt, io};
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Copy)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub enum ProviderMasternodeType {
     Regular = 0,
     HighPerformance = 1,
@@ -96,7 +96,7 @@ impl Decodable for ProviderMasternodeType {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct ProviderRegistrationPayload {
     pub version: u16,
     pub masternode_type: ProviderMasternodeType,

@@ -34,7 +34,7 @@ use crate::prelude::*;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct AssetUnlockRequestInfo {
     /// The core request height of the transaction. This should match a period where the quorum_hash
     /// is still active
@@ -56,7 +56,7 @@ impl AssetUnlockRequestInfo {
         base_bytes: Vec<u8>,
         mut s: S,
     ) -> Result<usize, io::Error> {
-        s.write(base_bytes.as_slice())?;
+        s.write_all(base_bytes.as_slice())?;
         let mut len = base_bytes.len();
         len += self.consensus_encode(&mut s)?;
         Ok(len)

@@ -83,7 +83,7 @@ pub use ed25519_dalek;
 
 #[cfg(feature = "serde")]
 #[macro_use]
-extern crate actual_serde as serde;
+extern crate serde;
 extern crate core;
 
 #[cfg(test)]
@@ -92,7 +92,7 @@ mod test_macros;
 mod internal_macros;
 mod parse;
 #[cfg(feature = "serde")]
-mod serde_utils;
+pub mod serde_utils;
 
 #[macro_use]
 pub mod network;
@@ -101,36 +101,32 @@ pub mod amount;
 pub mod base58;
 pub mod bip152;
 pub mod bip158;
-// Re-export bip32 from key-wallet
-pub use key_wallet::bip32;
 pub mod blockdata;
 pub mod bloom;
 pub mod consensus;
 // Private until we either make this a crate or flatten it - still to be decided.
 pub mod bls_sig_utils;
-pub(crate) mod crypto;
-// Re-export dip9 from key-wallet
-pub use key_wallet::dip9;
+pub mod crypto;
 pub mod ephemerealdata;
 pub mod error;
 pub mod hash_types;
 pub mod merkle_tree;
 pub mod policy;
 pub mod pow;
-pub mod psbt;
 pub mod sign_message;
 pub mod signer;
 pub mod sml;
 pub mod string;
 pub mod taproot;
 pub mod util;
+// pub mod serialize;
 
 // May depend on crate features and we don't want to bother with it
 #[allow(unused)]
 #[cfg(feature = "std")]
 use std::error::Error as StdError;
 #[cfg(feature = "std")]
-use std::io;
+pub use std::io;
 
 #[allow(unused)]
 #[cfg(not(feature = "std"))]
@@ -194,7 +190,7 @@ mod io_extras {
 }
 
 #[rustfmt::skip]
-mod prelude {
+pub mod prelude {
     #[cfg(all(not(feature = "std"), not(test)))]
     pub use alloc::{string::{String, ToString}, vec::Vec, boxed::Box, borrow::{Borrow, Cow, ToOwned}, slice, rc};
 

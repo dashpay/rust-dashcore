@@ -1,0 +1,204 @@
+//! Account management for HD wallets
+//!
+//! This module provides comprehensive account management following BIP44,
+//! including gap limit tracking, address pool management, and support for
+//! multiple account types (standard, CoinJoin, watch-only).
+
+pub mod address_pool;
+pub mod balance;
+pub mod coinjoin;
+pub mod managed_account;
+pub mod managed_account_collection;
+pub mod metadata;
+pub mod scan;
+pub mod types;
+
+use core::fmt;
+
+#[cfg(feature = "bincode")]
+use bincode_derive::{Decode, Encode};
+use secp256k1::Secp256k1;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+use crate::bip32::{DerivationPath, ExtendedPrivKey, ExtendedPubKey};
+use crate::dip9::DerivationPathReference;
+use crate::error::Result;
+use crate::Network;
+
+pub use balance::AccountBalance;
+pub use coinjoin::CoinJoinPools;
+pub use managed_account::ManagedAccount;
+pub use managed_account_collection::ManagedAccountCollection;
+pub use metadata::AccountMetadata;
+pub use scan::ScanResult;
+pub use types::{AccountType, SpecialPurposeType};
+
+/// Complete account structure with all derivation paths
+///
+/// This is an immutable account structure that contains only the core
+/// identity information that doesn't change during normal operation.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub struct Account {
+    /// Wallet id
+    pub parent_wallet_id: Option<[u8; 32]>,
+    /// Account index (BIP44 account level)
+    pub index: u32,
+    /// Account type
+    pub account_type: AccountType,
+    /// Network this account belongs to
+    pub network: Network,
+    /// Account-level extended public key
+    pub account_xpub: ExtendedPubKey,
+    /// Derivation path reference
+    pub derivation_path_reference: DerivationPathReference,
+    /// Derivation path
+    pub derivation_path: DerivationPath,
+    /// Whether this is a watch-only account
+    pub is_watch_only: bool,
+}
+
+impl Account {
+    /// Create a new standard account from an extended private key
+    pub fn new(
+        parent_wallet_id: Option<[u8; 32]>,
+        index: u32,
+        account_key: ExtendedPrivKey,
+        network: Network,
+        derivation_path_reference: DerivationPathReference,
+        derivation_path: DerivationPath,
+    ) -> Result<Self> {
+        let secp = Secp256k1::new();
+        let account_xpub = ExtendedPubKey::from_priv(&secp, &account_key);
+
+        Ok(Self {
+            parent_wallet_id,
+            index,
+            account_type: AccountType::Standard,
+            network,
+            account_xpub,
+            derivation_path_reference,
+            derivation_path,
+            is_watch_only: false,
+        })
+    }
+
+    /// Create a watch-only account from an extended public key
+    pub fn from_xpub(
+        parent_wallet_id: Option<[u8; 32]>,
+        index: u32,
+        account_xpub: ExtendedPubKey,
+        network: Network,
+        derivation_path_reference: DerivationPathReference,
+        derivation_path: DerivationPath,
+    ) -> Result<Self> {
+        Ok(Self {
+            parent_wallet_id,
+            index,
+            account_type: AccountType::Standard,
+            network,
+            account_xpub,
+            derivation_path_reference,
+            derivation_path,
+            is_watch_only: true,
+        })
+    }
+
+    /// Export account as watch-only
+    pub fn to_watch_only(&self) -> Self {
+        let mut watch_only = self.clone();
+        watch_only.is_watch_only = true;
+        watch_only
+    }
+
+    /// Serialize account to bytes
+    #[cfg(feature = "bincode")]
+    pub fn serialize(&self) -> Result<alloc::vec::Vec<u8>> {
+        bincode::encode_to_vec(self, bincode::config::standard())
+            .map_err(|e| crate::error::Error::Serialization(e.to_string()))
+    }
+
+    /// Deserialize account from bytes
+    #[cfg(feature = "bincode")]
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        bincode::decode_from_slice(data, bincode::config::standard())
+            .map(|(account, _)| account)
+            .map_err(|e| crate::error::Error::Serialization(e.to_string()))
+    }
+
+    /// Get the extended public key for this account
+    pub fn extended_public_key(&self) -> ExtendedPubKey {
+        self.account_xpub
+    }
+}
+
+impl fmt::Display for Account {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Account #{} ({:?}) - Network: {:?}", self.index, self.account_type, self.network)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bip32::ChildNumber;
+    use crate::mnemonic::{Language, Mnemonic};
+
+    fn test_account() -> Account {
+        let mnemonic = Mnemonic::from_phrase(
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+            Language::English,
+        ).unwrap();
+        let seed = mnemonic.to_seed("");
+        let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+
+        // Derive account key (m/44'/1'/0')
+        let secp = Secp256k1::new();
+        let path = DerivationPath::from(vec![
+            ChildNumber::from_hardened_idx(44).unwrap(),
+            ChildNumber::from_hardened_idx(1).unwrap(),
+            ChildNumber::from_hardened_idx(0).unwrap(),
+        ]);
+        let account_key = master.derive_priv(&secp, &path).unwrap();
+
+        Account::new(None, 0, account_key, Network::Testnet, DerivationPathReference::BIP44, path)
+            .unwrap()
+    }
+
+    #[test]
+    fn test_account_creation() {
+        let account = test_account();
+        assert_eq!(account.index, 0);
+        assert_eq!(account.account_type, AccountType::Standard);
+        assert!(!account.is_watch_only);
+    }
+
+    #[test]
+    fn test_watch_only_account() {
+        let account = test_account();
+        let watch_only = Account::from_xpub(
+            None,
+            0,
+            account.account_xpub,
+            Network::Testnet,
+            DerivationPathReference::BIP44,
+            account.derivation_path.clone(),
+        )
+        .unwrap();
+
+        assert!(watch_only.is_watch_only);
+    }
+
+    #[test]
+    #[cfg(feature = "bincode")]
+    fn test_serialization() {
+        let account = test_account();
+        let serialized = account.serialize().unwrap();
+        let deserialized = Account::deserialize(&serialized).unwrap();
+
+        assert_eq!(account.index, deserialized.index);
+        assert_eq!(account.account_type, deserialized.account_type);
+    }
+}

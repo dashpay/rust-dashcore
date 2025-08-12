@@ -5,6 +5,7 @@
 
 #[cfg(all(not(feature = "std"), not(test)))]
 use alloc::vec::Vec;
+#[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use core::fmt::Debug;
 use hashes::{Hash, HashEngine};
@@ -27,7 +28,7 @@ const CL_REQUEST_ID_PREFIX: &str = "clsig";
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct ChainLock {
     /// Block height
     pub block_height: u32,

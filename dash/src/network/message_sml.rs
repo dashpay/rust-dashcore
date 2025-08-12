@@ -32,7 +32,7 @@ impl_consensus_encoding!(GetMnListDiff, base_block_hash, block_hash);
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct MnListDiff {
     /// Version of the message (currently 1).
     /// In protocol versions 70225 through 70228 this field was located between the `coinbase_tx` and `deleted_masternodes` fields.
@@ -80,7 +80,7 @@ impl_consensus_encoding!(
 #[derive(PartialEq, Eq, Clone, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct QuorumCLSigObject {
     pub signature: BLSSignature,
     pub index_set: Vec<u16>,
@@ -91,7 +91,7 @@ impl_consensus_encoding!(QuorumCLSigObject, signature, index_set);
 #[derive(PartialEq, Eq, Clone, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct DeletedQuorum {
     pub llmq_type: LLMQType,
     pub quorum_hash: QuorumHash,

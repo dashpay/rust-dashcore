@@ -16,7 +16,7 @@ use crate::{ProTxHash, PubkeyHash};
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub enum EntryMasternodeType {
     Regular,
     HighPerformance {
@@ -83,7 +83,7 @@ impl_consensus_encoding!(OperatorPublicKey, data, version);
 #[derive(Clone, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct MasternodeListEntry {
     pub version: u16,
     pub pro_reg_tx_hash: ProTxHash,

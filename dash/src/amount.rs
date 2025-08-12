@@ -358,7 +358,7 @@ fn unsigned_abs(x: i8) -> u8 {
     x.wrapping_abs() as u8
 }
 
-fn repeat_char(f: &mut dyn fmt::Write, c: char, count: usize) -> fmt::Result {
+fn repeat_char(f: &mut dyn Write, c: char, count: usize) -> fmt::Result {
     for _ in 0..count {
         f.write_char(c)?;
     }
@@ -369,7 +369,7 @@ fn repeat_char(f: &mut dyn fmt::Write, c: char, count: usize) -> fmt::Result {
 fn fmt_satoshi_in(
     satoshi: u64,
     negative: bool,
-    f: &mut dyn fmt::Write,
+    f: &mut dyn Write,
     denom: Denomination,
     show_denom: bool,
     options: FormatOptions,
@@ -1264,7 +1264,7 @@ pub mod serde {
     //! use dash::Amount;
     //!
     //! #[derive(Serialize, Deserialize)]
-    //! # #[serde(crate = "actual_serde")]
+    //! # #[serde(crate = "serde")]
     //! pub struct HasAmount {
     //!     #[serde(with = "dash::amount::serde::as_btc")]
     //!     pub amount: Amount,
@@ -2151,7 +2151,6 @@ mod tests {
     #[test]
     fn serde_as_sat() {
         #[derive(Serialize, Deserialize, PartialEq, Debug)]
-        #[serde(crate = "actual_serde")]
         struct T {
             #[serde(with = "crate::amount::serde::as_sat")]
             pub amt: Amount,
@@ -2185,7 +2184,7 @@ mod tests {
         use serde_json;
 
         #[derive(Serialize, Deserialize, PartialEq, Debug)]
-        #[serde(crate = "actual_serde")]
+
         struct T {
             #[serde(with = "crate::amount::serde::as_btc")]
             pub amt: Amount,
@@ -2221,7 +2220,7 @@ mod tests {
         use serde_json;
 
         #[derive(Serialize, Deserialize, PartialEq, Debug, Eq)]
-        #[serde(crate = "actual_serde")]
+
         struct T {
             #[serde(default, with = "crate::amount::serde::as_btc::opt")]
             pub amt: Option<Amount>,
@@ -2266,7 +2265,7 @@ mod tests {
         use serde_json;
 
         #[derive(Serialize, Deserialize, PartialEq, Debug, Eq)]
-        #[serde(crate = "actual_serde")]
+
         struct T {
             #[serde(default, with = "crate::amount::serde::as_sat::opt")]
             pub amt: Option<Amount>,

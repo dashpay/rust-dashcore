@@ -279,7 +279,6 @@ pub const LLMQ_DEV_PLATFORM: LLMQParams = LLMQParams {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum LLMQType {
     LlmqtypeUnknown = 0, // other kind of

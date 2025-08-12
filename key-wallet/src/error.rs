@@ -27,6 +27,12 @@ pub enum Error {
     InvalidNetwork,
     /// Key error
     KeyError(String),
+    /// CoinJoin not enabled
+    CoinJoinNotEnabled,
+    /// Serialization error
+    Serialization(String),
+    /// Invalid parameter
+    InvalidParameter(String),
 }
 
 impl fmt::Display for Error {
@@ -40,6 +46,9 @@ impl fmt::Display for Error {
             Error::Base58 => write!(f, "Base58 decoding error"),
             Error::InvalidNetwork => write!(f, "Invalid network"),
             Error::KeyError(s) => write!(f, "Key error: {}", s),
+            Error::CoinJoinNotEnabled => write!(f, "CoinJoin not enabled for this account"),
+            Error::Serialization(s) => write!(f, "Serialization error: {}", s),
+            Error::InvalidParameter(s) => write!(f, "Invalid parameter: {}", s),
         }
     }
 }

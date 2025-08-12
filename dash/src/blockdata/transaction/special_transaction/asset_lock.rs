@@ -40,7 +40,7 @@ use crate::{VarInt, io};
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct AssetLockPayload {
     pub version: u8,
     pub credit_outputs: Vec<TxOut>,
