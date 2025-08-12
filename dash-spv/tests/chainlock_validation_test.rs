@@ -7,9 +7,9 @@ use dash_spv::storage::{DiskStorageManager, StorageManager};
 use dash_spv::types::{ChainState, ValidationMode};
 use dashcore::block::Header;
 use dashcore::blockdata::constants::genesis_block;
-use dashcore::network::Network;
+use dashcore::Network;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
-use dashcore::{BlockHash, ChainLock, UInt256};
+use dashcore::{BlockHash, ChainLock};
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -157,7 +157,7 @@ async fn test_chainlock_validation_without_masternode_engine() {
     };
 
     // Create the SPV client
-    let mut client = DashSpvClient::new(config, storage, network).await.unwrap();
+    let mut client = DashSpvClient::new(config).await.unwrap();
 
     // Add a test header to storage
     let genesis = genesis_block(Network::Dash).header;
@@ -209,7 +209,7 @@ async fn test_chainlock_validation_with_masternode_engine() {
     };
 
     // Create the SPV client
-    let mut client = DashSpvClient::new(config, storage, network).await.unwrap();
+    let mut client = DashSpvClient::new(config).await.unwrap();
 
     // Add genesis header
     let storage = client.storage_mut();
@@ -267,7 +267,7 @@ async fn test_chainlock_queue_and_process_flow() {
     };
 
     // Create the SPV client
-    let client = DashSpvClient::new(config, storage, network).await.unwrap();
+    let client = DashSpvClient::new(config).await.unwrap();
     let chainlock_manager = client.chainlock_manager();
 
     // Queue multiple ChainLocks
@@ -322,7 +322,7 @@ async fn test_chainlock_manager_cache_operations() {
     };
 
     // Create the SPV client
-    let client = DashSpvClient::new(config, storage, network).await.unwrap();
+    let client = DashSpvClient::new(config).await.unwrap();
     let chainlock_manager = client.chainlock_manager();
 
     // Add test headers
@@ -376,7 +376,7 @@ async fn test_client_chainlock_update_flow() {
     };
 
     // Create the SPV client
-    let mut client = DashSpvClient::new(config, storage, network).await.unwrap();
+    let mut client = DashSpvClient::new(config).await.unwrap();
 
     // Initially, update should fail (no masternode engine)
     let updated = client.update_chainlock_validation().unwrap();
