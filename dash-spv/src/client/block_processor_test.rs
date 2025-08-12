@@ -145,7 +145,7 @@ mod tests {
         // transactions_processed field doesn't exist, check other stats
         assert!(stats_guard.last_activity.elapsed().as_secs() < 1);
 
-        // Check event was sent  
+        // Check event was sent
         match event_rx.recv().await {
             Some(SpvEvent::MempoolTransactionAdded {
                 txid: id,

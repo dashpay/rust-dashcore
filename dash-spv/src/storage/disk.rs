@@ -30,7 +30,6 @@ const HEADERS_PER_SEGMENT: u32 = 50_000;
 /// Maximum number of segments to keep in memory
 const MAX_ACTIVE_SEGMENTS: usize = 10;
 
-
 /// Commands for the background worker
 #[derive(Debug, Clone)]
 enum WorkerCommand {

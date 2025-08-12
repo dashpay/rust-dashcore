@@ -7,8 +7,8 @@ use dash_spv::storage::{DiskStorageManager, StorageManager};
 use dash_spv::types::{ChainState, ValidationMode};
 use dashcore::block::Header;
 use dashcore::blockdata::constants::genesis_block;
-use dashcore::Network;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+use dashcore::Network;
 use dashcore::{BlockHash, ChainLock};
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,7 +56,9 @@ impl NetworkManager for MockNetworkManager {
         Ok(())
     }
 
-    async fn receive_message(&mut self) -> dash_spv::error::NetworkResult<Option<dashcore::network::message::NetworkMessage>> {
+    async fn receive_message(
+        &mut self,
+    ) -> dash_spv::error::NetworkResult<Option<dashcore::network::message::NetworkMessage>> {
         // Simulate receiving ChainLock messages
         let mut sent = self.chain_locks_sent.write().await;
         if *sent < self.chain_locks.len() {
@@ -107,7 +109,9 @@ impl NetworkManager for MockNetworkManager {
         // No-op for mock
     }
 
-    fn get_message_sender(&self) -> tokio::sync::mpsc::Sender<dashcore::network::message::NetworkMessage> {
+    fn get_message_sender(
+        &self,
+    ) -> tokio::sync::mpsc::Sender<dashcore::network::message::NetworkMessage> {
         // Create a dummy sender that drops messages
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         tx
@@ -135,7 +139,10 @@ impl NetworkManager for MockNetworkManager {
         Ok(()) // No-op for mock
     }
 
-    async fn update_peer_dsq_preference(&mut self, _wants_dsq: bool) -> dash_spv::error::NetworkResult<()> {
+    async fn update_peer_dsq_preference(
+        &mut self,
+        _wants_dsq: bool,
+    ) -> dash_spv::error::NetworkResult<()> {
         Ok(()) // No-op for mock
     }
 }
@@ -302,7 +309,7 @@ async fn test_chainlock_queue_and_process_flow() {
     // Verify all are queued
     {
         // Note: pending_chainlocks is private, can't access directly
-    // let pending = chainlock_manager.pending_chainlocks.read().unwrap();
+        // let pending = chainlock_manager.pending_chainlocks.read().unwrap();
         // assert_eq!(pending.len(), 3);
         // assert_eq!(pending[0].block_height, 100);
         // assert_eq!(pending[1].block_height, 200);
@@ -317,7 +324,7 @@ async fn test_chainlock_queue_and_process_flow() {
     // Verify queue is cleared
     {
         // Note: pending_chainlocks is private, can't access directly
-    // let pending = chainlock_manager.pending_chainlocks.read().unwrap();
+        // let pending = chainlock_manager.pending_chainlocks.read().unwrap();
         // assert_eq!(pending.len(), 0);
     }
 }
@@ -356,7 +363,8 @@ async fn test_chainlock_manager_cache_operations() {
     let chain_lock = create_test_chainlock(0, genesis.block_hash());
     let chain_state = ChainState::new();
     let storage = client.storage();
-    let _ = chainlock_manager.process_chain_lock(chain_lock.clone(), &chain_state, &mut *storage).await;
+    let _ =
+        chainlock_manager.process_chain_lock(chain_lock.clone(), &chain_state, &mut *storage).await;
 
     // Test cache operations
     assert!(chainlock_manager.has_chain_lock_at_height(0));

@@ -215,7 +215,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize logging first (without terminal UI)
     dash_spv::init_logging(log_level)?;
-    
+
     // Log the data directory being used
     tracing::info!("Using data directory: {}", data_dir.display());
 

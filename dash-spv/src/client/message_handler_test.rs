@@ -14,15 +14,15 @@ mod tests {
     use crate::types::{ChainState, MempoolState, SpvEvent, SpvStats};
     use crate::validation::ValidationManager;
     use crate::wallet::Wallet;
-    use dashcore::Network;
-    use std::collections::HashSet;
-    use std::sync::Mutex;
     use dashcore::block::Header as BlockHeader;
     use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_blockdata::Inventory;
+    use dashcore::Network;
     use dashcore::{Block, BlockHash, Network, Transaction};
     use dashcore_hashes::Hash;
+    use std::collections::HashSet;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use tokio::sync::{mpsc, RwLock};
 
     async fn setup_test_components() -> (
@@ -51,10 +51,7 @@ mod tests {
 
         // Create sync manager
         let received_filter_heights = Arc::new(Mutex::new(HashSet::new()));
-        let sync_manager = SequentialSyncManager::new(
-            &config,
-            received_filter_heights,
-        ).unwrap();
+        let sync_manager = SequentialSyncManager::new(&config, received_filter_heights).unwrap();
 
         (
             network,

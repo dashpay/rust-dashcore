@@ -14,7 +14,6 @@ pub struct MasternodeState {
 
     /// Last update timestamp.
     pub last_update: u64,
-
 }
 
 /// Storage statistics.
