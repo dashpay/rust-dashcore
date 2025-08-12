@@ -350,12 +350,13 @@ impl std::error::Error for BuilderError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::hash_types::Txid;
-    use dashcore_hashes::Hash;
+    use dashcore::blockdata::script::ScriptBuf;
+    use dashcore::{OutPoint, TxOut, Txid};
+    use dashcore_hashes::{sha256d, Hash};
 
     fn test_utxo(value: u64) -> Utxo {
         let outpoint = OutPoint {
-            txid: Txid::from_slice(&[1u8; 32]).unwrap(),
+            txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
             vout: 0,
         };
 
@@ -365,7 +366,7 @@ mod tests {
         };
 
         let address = Address::p2pkh(
-            &secp256k1::PublicKey::from_slice(&[
+            &dashcore::PublicKey::from_slice(&[
                 0x02, 0x50, 0x86, 0x3a, 0xd6, 0x4a, 0x87, 0xae, 0x8a, 0x2f, 0xe8, 0x3c, 0x1a, 0xf1,
                 0xa8, 0x40, 0x3c, 0xb5, 0x3f, 0x53, 0xe4, 0x86, 0xd8, 0x51, 0x1d, 0xad, 0x8a, 0x04,
                 0x88, 0x7e, 0x5b, 0x23, 0x52,
@@ -381,7 +382,7 @@ mod tests {
 
     fn test_address() -> Address {
         Address::p2pkh(
-            &secp256k1::PublicKey::from_slice(&[
+            &dashcore::PublicKey::from_slice(&[
                 0x03, 0x50, 0x86, 0x3a, 0xd6, 0x4a, 0x87, 0xae, 0x8a, 0x2f, 0xe8, 0x3c, 0x1a, 0xf1,
                 0xa8, 0x40, 0x3c, 0xb5, 0x3f, 0x53, 0xe4, 0x86, 0xd8, 0x51, 0x1d, 0xad, 0x8a, 0x04,
                 0x88, 0x7e, 0x5b, 0x23, 0x52,
