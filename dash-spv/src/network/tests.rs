@@ -166,8 +166,6 @@ mod multi_peer_tests {
             start_from_height: None,
             wallet_creation_time: None,
             // QRInfo fields
-            enable_qr_info: true,
-            qr_info_fallback: true,
             qr_info_extra_share: true,
             qr_info_timeout: Duration::from_secs(30),
         }
