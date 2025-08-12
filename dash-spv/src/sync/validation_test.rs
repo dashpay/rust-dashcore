@@ -232,7 +232,7 @@ mod perf_tests {
 
         // Add 1000 diffs
         for i in 0..1000 {
-            qr_info.mn_list_diff_list.push(super::create_mock_mn_list_diff(i));
+            qr_info.mn_list_diff_list.push(create_mock_mn_list_diff(i));
         }
 
         let duration = start.elapsed();
