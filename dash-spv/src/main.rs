@@ -51,8 +51,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .short('d')
                 .long("data-dir")
                 .value_name("DIR")
-                .help("Data directory for storage")
-                .default_value("./dash-spv-data"),
+                .help("Data directory for storage (default: unique directory in /tmp)"),
         )
         .arg(
             Arg::new("peer")
@@ -143,10 +142,20 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create configuration
-    let data_dir_str = matches.get_one::<String>("data-dir").ok_or("Missing data-dir argument")?;
-    let data_dir = PathBuf::from(data_dir_str);
+    let data_dir = if let Some(data_dir_str) = matches.get_one::<String>("data-dir") {
+        PathBuf::from(data_dir_str)
+    } else {
+        // Create a unique temp directory with timestamp and process ID
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let pid = std::process::id();
+        let dir_name = format!("dash-spv-{}-{}", timestamp, pid);
+        std::env::temp_dir().join(dir_name)
+    };
     let mut config = ClientConfig::new(network)
-        .with_storage_path(data_dir)
+        .with_storage_path(data_dir.clone())
         .with_validation_mode(validation_mode)
         .with_log_level(log_level);
 
@@ -206,6 +215,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize logging first (without terminal UI)
     dash_spv::init_logging(log_level)?;
+    
+    // Log the data directory being used
+    tracing::info!("Using data directory: {}", data_dir.display());
 
     // Create and start the client
     let mut client = match DashSpvClient::new(config).await {

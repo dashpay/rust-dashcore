@@ -226,19 +226,6 @@ impl TransactionProcessor {
         })
     }
 
-    /// Extract an address from a script pubkey.
-    ///
-    /// This handles common script types like P2PKH, P2SH, etc.
-    /// Returns None if the script type is not supported or doesn't contain an address.
-    #[allow(dead_code)]
-    fn extract_address_from_script(&self, script: &dashcore::ScriptBuf) -> Option<Address> {
-        // Try to get address from script - this handles P2PKH, P2SH, P2WPKH, P2WSH
-        Address::from_script(script, dashcore::Network::Dash)
-            .ok()
-            .or_else(|| Address::from_script(script, dashcore::Network::Testnet).ok())
-            .or_else(|| Address::from_script(script, dashcore::Network::Regtest).ok())
-    }
-
     /// Get statistics about UTXOs for a specific address.
     pub async fn get_address_stats(
         &self,

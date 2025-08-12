@@ -66,7 +66,7 @@ mod tests {
 
         let config = ClientConfig::mainnet()
             .with_storage_path(path.clone())
-            .with_validation_mode(ValidationMode::CheckpointsOnly)
+            .with_validation_mode(ValidationMode::Basic)
             .with_connection_timeout(Duration::from_secs(10))
             .with_read_timeout(Duration::from_secs(5))
             .with_log_level("debug")
@@ -82,7 +82,7 @@ mod tests {
 
         assert_eq!(config.storage_path, Some(path));
         assert!(config.enable_persistence);
-        assert_eq!(config.validation_mode, ValidationMode::CheckpointsOnly);
+        assert_eq!(config.validation_mode, ValidationMode::Basic);
         assert_eq!(config.connection_timeout, Duration::from_secs(10));
         assert_eq!(config.read_timeout, Duration::from_secs(5));
         assert_eq!(config.log_level, "debug");
@@ -269,7 +269,9 @@ mod tests {
 
     #[test]
     fn test_clone_config() {
-        let original = ClientConfig::mainnet().with_max_peers(16).with_log_level("debug");
+        let mut original = ClientConfig::mainnet();
+        original.max_peers = 16;
+        original = original.with_log_level("debug");
 
         let cloned = original.clone();
 

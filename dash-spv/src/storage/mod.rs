@@ -242,18 +242,6 @@ pub trait StorageManager: Send + Sync {
         txid: dashcore::Txid,
     ) -> StorageResult<Option<dashcore::InstantLock>>;
 
-    /// Store a terminal block record.
-    async fn store_terminal_block(&mut self, block: &StoredTerminalBlock) -> StorageResult<()>;
-
-    /// Load a terminal block by height.
-    async fn load_terminal_block(&self, height: u32) -> StorageResult<Option<StoredTerminalBlock>>;
-
-    /// Get all stored terminal blocks.
-    async fn get_all_terminal_blocks(&self) -> StorageResult<Vec<StoredTerminalBlock>>;
-
-    /// Check if a terminal block is stored.
-    async fn has_terminal_block(&self, height: u32) -> StorageResult<bool>;
-
     // Mempool storage methods
     /// Store an unconfirmed transaction.
     async fn store_mempool_transaction(

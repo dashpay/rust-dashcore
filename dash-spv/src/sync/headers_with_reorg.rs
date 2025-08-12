@@ -379,11 +379,6 @@ impl HeaderSyncManagerWithReorg {
     }
 
     /// Process a single header with fork detection
-    ///
-    /// Note: This method is no longer used by handle_headers_message after the atomic batch
-    /// processing refactor. It's kept for potential future use cases like processing single
-    /// unsolicited headers from peers.
-    #[allow(dead_code)]
     async fn process_header_with_fork_detection(
         &mut self,
         header: &BlockHeader,

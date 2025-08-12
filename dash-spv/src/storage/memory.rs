@@ -9,7 +9,7 @@ use dashcore::{
 };
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::{MasternodeState, StorageManager, StorageStats, StoredTerminalBlock};
+use crate::storage::{MasternodeState, StorageManager, StorageStats};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 use crate::wallet::Utxo;
 
@@ -27,8 +27,6 @@ pub struct MemoryStorageManager {
     utxos: HashMap<OutPoint, Utxo>,
     // Index for efficient UTXO lookups by address
     utxo_address_index: HashMap<Address, Vec<OutPoint>>,
-    // Terminal blocks storage
-    terminal_blocks: HashMap<u32, StoredTerminalBlock>,
     // Mempool storage
     mempool_transactions: HashMap<Txid, UnconfirmedTransaction>,
     mempool_state: Option<MempoolState>,
@@ -47,7 +45,6 @@ impl MemoryStorageManager {
             header_hash_index: HashMap::new(),
             utxos: HashMap::new(),
             utxo_address_index: HashMap::new(),
-            terminal_blocks: HashMap::new(),
             mempool_transactions: HashMap::new(),
             mempool_state: None,
         })
@@ -500,25 +497,6 @@ impl StorageManager for MemoryStorageManager {
         } else {
             Ok(None)
         }
-    }
-
-    async fn store_terminal_block(&mut self, block: &StoredTerminalBlock) -> StorageResult<()> {
-        self.terminal_blocks.insert(block.height, block.clone());
-        Ok(())
-    }
-
-    async fn load_terminal_block(&self, height: u32) -> StorageResult<Option<StoredTerminalBlock>> {
-        Ok(self.terminal_blocks.get(&height).cloned())
-    }
-
-    async fn get_all_terminal_blocks(&self) -> StorageResult<Vec<StoredTerminalBlock>> {
-        let mut blocks: Vec<StoredTerminalBlock> = self.terminal_blocks.values().cloned().collect();
-        blocks.sort_by_key(|b| b.height);
-        Ok(blocks)
-    }
-
-    async fn has_terminal_block(&self, height: u32) -> StorageResult<bool> {
-        Ok(self.terminal_blocks.contains_key(&height))
     }
 
     // Mempool storage methods

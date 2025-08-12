@@ -20,7 +20,7 @@ use dashcore::{
 use dashcore_hashes::Hash;
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::{MasternodeState, StorageManager, StorageStats, StoredTerminalBlock};
+use crate::storage::{MasternodeState, StorageManager, StorageStats};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 use crate::wallet::Utxo;
 
@@ -30,9 +30,6 @@ const HEADERS_PER_SEGMENT: u32 = 50_000;
 /// Maximum number of segments to keep in memory
 const MAX_ACTIVE_SEGMENTS: usize = 10;
 
-/// How often to save dirty segments (seconds)
-#[allow(dead_code)]
-const SAVE_INTERVAL_SECS: u64 = 10;
 
 /// Commands for the background worker
 #[derive(Debug, Clone)]
@@ -1928,72 +1925,6 @@ impl StorageManager for DiskStorageManager {
         })?;
 
         Ok(Some(instant_lock))
-    }
-
-    async fn store_terminal_block(&mut self, block: &StoredTerminalBlock) -> StorageResult<()> {
-        let terminal_blocks_dir = self.base_path.join("terminal_blocks");
-        tokio::fs::create_dir_all(&terminal_blocks_dir).await?;
-
-        let path = terminal_blocks_dir.join(format!("terminal_block_{}.bin", block.height));
-        let data = bincode::serialize(block).map_err(|e| {
-            StorageError::WriteFailed(format!("Failed to serialize terminal block: {}", e))
-        })?;
-
-        tokio::fs::write(&path, data).await?;
-        Ok(())
-    }
-
-    async fn load_terminal_block(&self, height: u32) -> StorageResult<Option<StoredTerminalBlock>> {
-        let path = self.base_path.join(format!("terminal_blocks/terminal_block_{}.bin", height));
-
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let data = tokio::fs::read(&path).await?;
-        let block = bincode::deserialize(&data).map_err(|e| {
-            StorageError::ReadFailed(format!("Failed to deserialize terminal block: {}", e))
-        })?;
-
-        Ok(Some(block))
-    }
-
-    async fn get_all_terminal_blocks(&self) -> StorageResult<Vec<StoredTerminalBlock>> {
-        let terminal_blocks_dir = self.base_path.join("terminal_blocks");
-
-        if !terminal_blocks_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut terminal_blocks: Vec<StoredTerminalBlock> = Vec::new();
-        let mut entries = tokio::fs::read_dir(&terminal_blocks_dir).await?;
-
-        while let Some(entry) = entries.next_entry().await? {
-            let file_name = entry.file_name();
-            let file_name_str = file_name.to_string_lossy();
-
-            // Parse height from filename
-            if let Some(height_str) =
-                file_name_str.strip_prefix("terminal_block_").and_then(|s| s.strip_suffix(".bin"))
-            {
-                if let Ok(_height) = height_str.parse::<u32>() {
-                    let path = entry.path();
-                    let data = tokio::fs::read(&path).await?;
-                    if let Ok(block) = bincode::deserialize(&data) {
-                        terminal_blocks.push(block);
-                    }
-                }
-            }
-        }
-
-        // Sort by height
-        terminal_blocks.sort_by_key(|b| b.height);
-        Ok(terminal_blocks)
-    }
-
-    async fn has_terminal_block(&self, height: u32) -> StorageResult<bool> {
-        let path = self.base_path.join(format!("terminal_blocks/terminal_block_{}.bin", height));
-        Ok(path.exists())
     }
 
     // Mempool storage methods
