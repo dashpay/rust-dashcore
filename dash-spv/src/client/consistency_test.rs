@@ -39,8 +39,8 @@ mod tests {
 
     async fn setup_test_components(
     ) -> (Arc<RwLock<Wallet>>, Box<dyn StorageManager>, Arc<RwLock<HashSet<WatchItem>>>) {
-        let storage = Arc::new(RwLock::new(MemoryStorageManager::new().await.unwrap()));
-        let wallet = Arc::new(RwLock::new(Wallet::new(storage)));
+        let wallet_storage = Arc::new(RwLock::new(MemoryStorageManager::new().await.unwrap()));
+        let wallet = Arc::new(RwLock::new(Wallet::new(wallet_storage)));
         let storage =
             Box::new(MemoryStorageManager::new().await.unwrap()) as Box<dyn StorageManager>;
         let watch_items = Arc::new(RwLock::new(HashSet::new()));
@@ -64,8 +64,8 @@ mod tests {
         }
 
         // Add to storage
-        storage.store_utxo(&utxo1).await.unwrap();
-        storage.store_utxo(&utxo2).await.unwrap();
+        storage.store_utxo(&utxo1.outpoint, &utxo1).await.unwrap();
+        storage.store_utxo(&utxo2.outpoint, &utxo2).await.unwrap();
 
         // Add watched addresses
         let address = create_test_address();
@@ -108,7 +108,7 @@ mod tests {
 
         // Add UTXO only to storage
         let utxo = create_test_utxo(0);
-        storage.store_utxo(&utxo).await.unwrap();
+        storage.store_utxo(&utxo.outpoint, &utxo).await.unwrap();
 
         // Validate consistency
         let manager = ConsistencyManager::new(&wallet, &*storage, &watch_items);
@@ -152,8 +152,8 @@ mod tests {
             wallet_guard.add_utxo(utxo1.clone()).await.unwrap();
             wallet_guard.add_utxo(utxo2.clone()).await.unwrap();
         }
-        storage.store_utxo(&utxo1).await.unwrap();
-        storage.store_utxo(&utxo2).await.unwrap();
+        storage.store_utxo(&utxo1.outpoint, &utxo1).await.unwrap();
+        storage.store_utxo(&utxo2.outpoint, &utxo2).await.unwrap();
 
         // Validate consistency
         let manager = ConsistencyManager::new(&wallet, &*storage, &watch_items);
@@ -174,8 +174,8 @@ mod tests {
         // Add UTXOs only to storage
         let utxo1 = create_test_utxo(0);
         let utxo2 = create_test_utxo(1);
-        storage.store_utxo(&utxo1).await.unwrap();
-        storage.store_utxo(&utxo2).await.unwrap();
+        storage.store_utxo(&utxo1.outpoint, &utxo1).await.unwrap();
+        storage.store_utxo(&utxo2.outpoint, &utxo2).await.unwrap();
 
         // Recover consistency
         let manager = ConsistencyManager::new(&wallet, &*storage, &watch_items);
@@ -255,7 +255,7 @@ mod tests {
         let utxo3 = create_test_utxo(2);
 
         storage.store_utxo(&utxo1).await.unwrap();
-        storage.store_utxo(&utxo3).await.unwrap();
+        storage.store_utxo(&utxo3.outpoint, &utxo3).await.unwrap();
 
         {
             let mut wallet_guard = wallet.write().await;
@@ -316,7 +316,7 @@ mod tests {
         let utxo_storage_only = create_test_utxo(1);
 
         wallet.write().await.add_utxo(utxo_wallet_only.clone()).await.unwrap();
-        storage.store_utxo(&utxo_storage_only).await.unwrap();
+        storage.store_utxo(&utxo_storage_only.outpoint, &utxo_storage_only).await.unwrap();
 
         let address = create_test_address();
         watch_items.write().await.insert(WatchItem::address(address));

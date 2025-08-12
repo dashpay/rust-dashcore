@@ -3177,20 +3177,17 @@ impl DashSpvClient {
         &mut self.sync_manager
     }
 
-    /// Get reference to chainlock manager (for testing)
-    #[cfg(test)]
+    /// Get reference to chainlock manager
     pub fn chainlock_manager(&self) -> &Arc<ChainLockManager> {
         &self.chainlock_manager
     }
 
-    /// Get reference to storage manager (for testing)
-    #[cfg(test)]
+    /// Get reference to storage manager
     pub fn storage(&self) -> &dyn StorageManager {
         &*self.storage
     }
 
-    /// Get mutable reference to storage manager (for testing)
-    #[cfg(test)]
+    /// Get mutable reference to storage manager
     pub fn storage_mut(&mut self) -> &mut dyn StorageManager {
         &mut *self.storage
     }

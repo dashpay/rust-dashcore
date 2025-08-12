@@ -18,8 +18,8 @@ mod qrinfo_tests {
         };
 
         let create_diff = || MnListDiff {
-            base_block_hash: BlockHash::all_zeros(),
-            block_hash: BlockHash::all_zeros(),
+            base_block_hash: BlockHash::from([0u8; 32]),
+            block_hash: BlockHash::from([0u8; 32]),
             cb_tx_merkle_tree: vec![],
             cb_tx: None,
             deleted_mns: vec![],
