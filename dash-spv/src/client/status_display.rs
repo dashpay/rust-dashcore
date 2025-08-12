@@ -43,51 +43,23 @@ impl<'a> StatusDisplay<'a> {
         state: &ChainState,
         with_logging: bool,
     ) -> u32 {
-        if state.synced_from_checkpoint && state.sync_base_height > 0 {
-            // Get the actual number of headers in storage
-            if let Ok(Some(storage_tip)) = self.storage.get_tip_height().await {
-                // The blockchain height is sync_base_height + storage_tip
-                let blockchain_height = state.sync_base_height + storage_tip;
-                if with_logging {
-                    tracing::debug!(
-                        "Status display (checkpoint sync): storage_tip={}, sync_base={}, blockchain_height={}",
-                        storage_tip, state.sync_base_height, blockchain_height
-                    );
-                }
-                blockchain_height
-            } else {
-                // No headers in storage yet, use the checkpoint height
-                state.sync_base_height
+        // Unified formula for both checkpoint and genesis sync:
+        // For genesis sync: sync_base_height = 0, so height = 0 + storage_count
+        // For checkpoint sync: height = checkpoint_height + storage_count
+        if let Ok(Some(storage_tip)) = self.storage.get_tip_height().await {
+            let blockchain_height = state.sync_base_height + storage_tip;
+            if with_logging {
+                tracing::debug!(
+                    "Status display: storage_tip={}, sync_base={}, blockchain_height={}",
+                    storage_tip,
+                    state.sync_base_height,
+                    blockchain_height
+                );
             }
+            blockchain_height
         } else {
-            // Normal sync from genesis
-            // Check if headers are in storage but not loaded into memory yet
-            if state.headers.is_empty() {
-                // Headers might be in storage but not loaded into ChainState yet
-                if let Ok(Some(storage_tip)) = self.storage.get_tip_height().await {
-                    if with_logging {
-                        tracing::debug!(
-                            "Status display (normal sync): ChainState empty but storage has {} headers",
-                            storage_tip
-                        );
-                    }
-                    storage_tip
-                } else {
-                    // No headers in storage or ChainState
-                    0
-                }
-            } else {
-                // Headers are loaded in ChainState, use tip_height()
-                let tip = state.tip_height();
-                if with_logging {
-                    tracing::debug!(
-                        "Status display (normal sync): chain state has {} headers, tip_height={}",
-                        state.headers.len(),
-                        tip
-                    );
-                }
-                tip
-            }
+            // No headers in storage yet
+            state.sync_base_height
         }
     }
 
@@ -242,30 +214,15 @@ impl<'a> StatusDisplay<'a> {
     /// This helper method encapsulates the logic for determining the current filter header height,
     /// taking into account whether we're syncing from a checkpoint or from genesis.
     async fn calculate_filter_header_height(&self, state: &ChainState) -> u32 {
-        if state.synced_from_checkpoint && state.sync_base_height > 0 {
-            // Get the actual number of filter headers in storage
-            if let Ok(Some(storage_height)) = self.storage.get_filter_tip_height().await {
-                // The blockchain height is sync_base_height + storage_height
-                state.sync_base_height + storage_height
-            } else {
-                // No filter headers in storage yet, use the checkpoint height
-                state.sync_base_height
-            }
+        // Unified formula for both checkpoint and genesis sync:
+        // For genesis sync: sync_base_height = 0, so height = 0 + storage_count
+        // For checkpoint sync: height = checkpoint_height + storage_count
+        if let Ok(Some(storage_height)) = self.storage.get_filter_tip_height().await {
+            // The blockchain height is sync_base_height + storage_height
+            state.sync_base_height + storage_height
         } else {
-            // Normal sync from genesis
-            // Check if filter headers are in storage but not loaded into memory yet
-            if state.filter_headers.is_empty() {
-                // Filter headers might be in storage but not loaded into ChainState yet
-                if let Ok(Some(storage_height)) = self.storage.get_filter_tip_height().await {
-                    storage_height
-                } else {
-                    // No filter headers in storage or ChainState
-                    0
-                }
-            } else {
-                // Filter headers are loaded in ChainState
-                state.filter_headers.len().saturating_sub(1) as u32
-            }
+            // No filter headers in storage yet
+            state.sync_base_height
         }
     }
 }
