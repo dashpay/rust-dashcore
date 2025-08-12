@@ -1,10 +1,10 @@
-use blsful::verify_secure_basic_with_mode;
-use blsful::{Bls12381G2Impl, PublicKey, SerializationFormat, Signature, SignatureSchemes};
-use hashes::Hash;
-
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::QuorumValidationError;
+use blsful::inner_types::GroupEncoding;
+use blsful::verify_secure_basic_with_mode;
+use blsful::{Bls12381G2Impl, PublicKey, SerializationFormat, Signature, SignatureSchemes};
+use hashes::Hash;
 
 impl QualifiedQuorumEntry {
     /// Verifies the aggregated commitment signature for the quorum.
@@ -36,17 +36,11 @@ impl QualifiedQuorumEntry {
         let message = message.as_slice();
 
         // Collect public keys with proper legacy/modern deserialization
-        let mut uses_any_legacy = false;
         let public_keys: Vec<PublicKey<Bls12381G2Impl>> = operator_keys
             .into_iter()
             .filter_map(|masternode_list_entry| {
                 let bytes = masternode_list_entry.operator_public_key.as_ref();
                 let is_legacy = masternode_list_entry.use_legacy_bls_keys();
-
-                // Track if any key uses legacy format
-                if is_legacy {
-                    uses_any_legacy = true;
-                }
 
                 let format = if is_legacy {
                     SerializationFormat::Legacy
@@ -68,55 +62,12 @@ impl QualifiedQuorumEntry {
             .collect();
 
         // Deserialize the aggregated signature
-        // Note: We may need to handle legacy format for signatures as well
-        let sig_bytes = self.quorum_entry.all_commitment_aggregated_signature.as_bytes();
-        let sig_format = if uses_any_legacy {
-            SerializationFormat::Legacy
-        } else {
-            SerializationFormat::Modern
-        };
-        let signature = Signature::<Bls12381G2Impl>::from_bytes_with_mode(
-            sig_bytes,
-            SignatureSchemes::Basic,
-            sig_format, // Use same format as keys
-        )
-        .map_err(|e| {
+        let signature: Signature<Bls12381G2Impl> =
+            self.quorum_entry.all_commitment_aggregated_signature.try_into()?;
+
+        signature.verify_secure(&public_keys, message).map_err(|e| {
             QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(e.to_string())
-        })?;
-
-        // Extract the inner signature for verify_secure
-        let inner_sig = match signature {
-            Signature::Basic(sig) => sig,
-            _ => {
-                return Err(QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(
-                    "Expected Basic signature scheme".to_string(),
-                ));
-            }
-        };
-
-        // Verify using secure aggregation
-        // The legacy flag must match whether ANY of the keys used legacy format
-        let verified = verify_secure_basic_with_mode::<Bls12381G2Impl, _>(
-            &public_keys,
-            inner_sig,
-            message,
-            sig_format, // Use same format as keys and signature
-        )
-        .is_ok();
-
-        if verified {
-            Ok(())
-        } else {
-            Err(QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(format!(
-                "Signature verification failed: {} keys parsed, {} format used",
-                public_keys.len(),
-                if uses_any_legacy {
-                    "legacy"
-                } else {
-                    "modern"
-                }
-            )))
-        }
+        })
     }
 
     /// Verifies the quorum's threshold signature.
