@@ -48,7 +48,8 @@ mod tests {
         mpsc::UnboundedReceiver<SpvEvent>,
     ) {
         let (task_tx, task_rx) = mpsc::unbounded_channel();
-        let wallet = Arc::new(RwLock::new(Wallet::new()));
+        let storage = Arc::new(RwLock::new(MemoryStorageManager::new().await.unwrap()));
+        let wallet = Arc::new(RwLock::new(Wallet::new(storage)));
         let watch_items = Arc::new(RwLock::new(HashSet::new()));
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let (event_tx, event_rx) = mpsc::unbounded_channel();

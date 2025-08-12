@@ -122,8 +122,7 @@ async fn test_qrinfo_config_defaults() {
     // Test default configuration values
     let config = ClientConfig::default();
 
-    assert!(config.enable_qr_info);
-    assert!(config.qr_info_fallback);
+    // QR info is always enabled in current implementation
     assert!(config.qr_info_extra_share);
     assert_eq!(config.qr_info_timeout, Duration::from_secs(30));
 }
@@ -132,13 +131,9 @@ async fn test_qrinfo_config_defaults() {
 async fn test_qrinfo_config_builders() {
     // Test configuration builder methods
     let config = ClientConfig::new(Network::Testnet)
-        .with_qr_info(false)
-        .with_qr_info_fallback(false)
         .with_qr_info_extra_share(false)
         .with_qr_info_timeout(Duration::from_secs(60));
 
-    assert!(!config.enable_qr_info);
-    assert!(!config.qr_info_fallback);
     assert!(!config.qr_info_extra_share);
     assert_eq!(config.qr_info_timeout, Duration::from_secs(60));
 }

@@ -39,7 +39,8 @@ mod tests {
 
     async fn setup_test_components(
     ) -> (Arc<RwLock<Wallet>>, Box<dyn StorageManager>, Arc<RwLock<HashSet<WatchItem>>>) {
-        let wallet = Arc::new(RwLock::new(Wallet::new()));
+        let storage = Arc::new(RwLock::new(MemoryStorageManager::new().await.unwrap()));
+        let wallet = Arc::new(RwLock::new(Wallet::new(storage)));
         let storage =
             Box::new(MemoryStorageManager::new().await.unwrap()) as Box<dyn StorageManager>;
         let watch_items = Arc::new(RwLock::new(HashSet::new()));

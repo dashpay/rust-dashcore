@@ -21,7 +21,8 @@ mod tests {
         Box<dyn StorageManager>,
     ) {
         let watch_items = Arc::new(RwLock::new(HashSet::new()));
-        let wallet = Arc::new(RwLock::new(Wallet::new()));
+        let storage_arc = Arc::new(RwLock::new(MemoryStorageManager::new().await.unwrap()));
+        let wallet = Arc::new(RwLock::new(Wallet::new(storage_arc.clone())));
         let (tx, _rx) = mpsc::unbounded_channel();
         let storage =
             Box::new(MemoryStorageManager::new().await.unwrap()) as Box<dyn StorageManager>;
@@ -204,7 +205,8 @@ mod tests {
     #[tokio::test]
     async fn test_watch_item_update_notification() {
         let watch_items = Arc::new(RwLock::new(HashSet::new()));
-        let wallet = Arc::new(RwLock::new(Wallet::new()));
+        let storage = Arc::new(RwLock::new(MemoryStorageManager::new().await.unwrap()));
+        let wallet = Arc::new(RwLock::new(Wallet::new(storage.clone())));
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut storage =
             Box::new(MemoryStorageManager::new().await.unwrap()) as Box<dyn StorageManager>;

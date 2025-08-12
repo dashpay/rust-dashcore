@@ -34,7 +34,7 @@ mod tests {
     }
 
     /// Create a mock MnListDiff for testing
-    fn create_mock_mn_list_diff(_height: u32) -> MnListDiff {
+    pub fn create_mock_mn_list_diff(_height: u32) -> MnListDiff {
         MnListDiff {
             version: 1,
             base_block_hash: BlockHash::all_zeros(),
@@ -232,7 +232,7 @@ mod perf_tests {
 
         // Add 1000 diffs
         for i in 0..1000 {
-            qr_info.mn_list_diff_list.push(create_mock_mn_list_diff(i));
+            qr_info.mn_list_diff_list.push(super::tests::create_mock_mn_list_diff(i));
         }
 
         let duration = start.elapsed();

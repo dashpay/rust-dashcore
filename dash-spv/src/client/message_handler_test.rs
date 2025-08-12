@@ -41,7 +41,8 @@ mod tests {
         let config = ClientConfig::default();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let (block_tx, _block_rx) = mpsc::unbounded_channel();
-        let wallet = Arc::new(RwLock::new(Wallet::new()));
+        let storage = Arc::new(RwLock::new(MemoryStorageManager::new().await.unwrap()));
+        let wallet = Arc::new(RwLock::new(Wallet::new(storage.clone())));
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
 
@@ -49,6 +50,7 @@ mod tests {
         let validation_manager = ValidationManager::new(Network::Dash);
         let chainlock_manager = ChainLockManager::new();
         let chain_state = Arc::new(RwLock::new(ChainState::default()));
+        let storage2 = Arc::new(RwLock::new(MemoryStorageManager::new().await.unwrap()));
 
         let sync_manager = SequentialSyncManager::new(
             validation_manager,
