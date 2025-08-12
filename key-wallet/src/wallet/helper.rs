@@ -92,137 +92,65 @@ impl Wallet {
     }
 
     /// Get total balance across all accounts
+    /// Note: This would need to be implemented using ManagedAccounts
     pub fn total_balance(&self) -> WalletBalance {
-        let mut total = WalletBalance::default();
-
-        for account in self.standard_accounts.all_accounts() {
-            total.confirmed += account.balance.confirmed;
-            total.unconfirmed += account.balance.unconfirmed;
-            total.immature += account.balance.immature;
-            total.total += account.balance.total;
-        }
-
-        for account in self.coinjoin_accounts.all_accounts() {
-            total.confirmed += account.balance.confirmed;
-            total.unconfirmed += account.balance.unconfirmed;
-            total.immature += account.balance.immature;
-            total.total += account.balance.total;
-        }
-
-        total
+        // This would need to be implemented with ManagedAccountCollection
+        // For now, returning default as balances are tracked in ManagedAccount
+        WalletBalance::default()
     }
 
     /// Get all addresses across all accounts
+    /// Note: This would need to be implemented using ManagedAccounts
     pub fn all_addresses(&self) -> Vec<Address> {
-        let mut addresses = Vec::new();
-        for account in self.standard_accounts.all_accounts() {
-            addresses.extend(account.get_all_addresses());
-        }
-        for account in self.coinjoin_accounts.all_accounts() {
-            addresses.extend(account.get_all_addresses());
-        }
-        addresses
+        // This would need to be implemented with ManagedAccountCollection
+        // For now, returning empty as addresses are tracked in ManagedAccount
+        Vec::new()
     }
 
     /// Find which account an address belongs to
-    pub fn find_account_for_address(&self, address: &Address) -> Option<(&Account, Network, u32)> {
-        for (network, index) in self.standard_accounts.all_indices() {
-            if let Some(account) = self.standard_accounts.get(network, index) {
-                if account.contains_address(address) {
-                    return Some((account, network, index));
-                }
-            }
-        }
-        for (network, index) in self.coinjoin_accounts.all_indices() {
-            if let Some(account) = self.coinjoin_accounts.get(network, index) {
-                if account.contains_address(address) {
-                    return Some((account, network, index));
-                }
-            }
-        }
+    /// Note: This would need to be implemented using ManagedAccounts
+    pub fn find_account_for_address(&self, _address: &Address) -> Option<(&Account, Network, u32)> {
+        // This would need to be implemented with ManagedAccountCollection
         None
     }
 
     /// Mark an address as used across all accounts
-    pub fn mark_address_used(&mut self, address: &Address) -> bool {
-        for account in self.standard_accounts.all_accounts_mut() {
-            if account.mark_address_used(address) {
-                self.metadata.last_synced = Some(0);
-                return true;
-            }
-        }
-        for account in self.coinjoin_accounts.all_accounts_mut() {
-            if account.mark_address_used(address) {
-                self.metadata.last_synced = Some(0);
-                return true;
-            }
-        }
+    /// Note: This would need to be implemented using ManagedAccounts
+    pub fn mark_address_used(&mut self, _address: &Address) -> bool {
+        // This would need to be implemented with ManagedAccountCollection
         false
     }
 
     /// Scan all accounts for address activity
-    pub fn scan_for_activity<F>(&mut self, check_fn: F) -> WalletScanResult
+    /// Note: This would need to be implemented using ManagedAccounts
+    pub fn scan_for_activity<F>(&mut self, _check_fn: F) -> WalletScanResult
     where
         F: Fn(&Address) -> bool + Clone,
     {
-        let mut result = WalletScanResult::default();
-
-        for (network, index) in self.standard_accounts.all_indices() {
-            if let Some(account) = self.standard_accounts.get_mut(network, index) {
-                let scan_result = account.scan_for_activity(check_fn.clone());
-                if scan_result.total_found > 0 {
-                    result.accounts_with_activity.push(index);
-                    result.total_addresses_found += scan_result.total_found;
-                }
-            }
-        }
-
-        for (network, index) in self.coinjoin_accounts.all_indices() {
-            if let Some(account) = self.coinjoin_accounts.get_mut(network, index) {
-                let scan_result = account.scan_for_activity(check_fn.clone());
-                if scan_result.total_found > 0 {
-                    result.accounts_with_activity.push(index);
-                    result.total_addresses_found += scan_result.total_found;
-                }
-            }
-        }
-
-        if result.total_addresses_found > 0 {
-            self.metadata.last_synced = Some(0);
-        }
-
-        result
+        // This would need to be implemented with ManagedAccountCollection
+        WalletScanResult::default()
     }
 
     /// Get the next receive address for the default account
-    pub fn get_next_receive_address(&mut self, network: Network) -> Result<Address> {
-        self.default_account_mut(network)
-            .ok_or(Error::InvalidParameter("No default account".into()))?
-            .get_next_receive_address()
+    /// Note: This would need to be implemented using ManagedAccounts
+    pub fn get_next_receive_address(&mut self, _network: Network) -> Result<Address> {
+        Err(Error::InvalidParameter("Address generation needs ManagedAccount".into()))
     }
 
     /// Get the next change address for the default account
-    pub fn get_next_change_address(&mut self, network: Network) -> Result<Address> {
-        self.default_account_mut(network)
-            .ok_or(Error::InvalidParameter("No default account".into()))?
-            .get_next_change_address()
+    /// Note: This would need to be implemented using ManagedAccounts
+    pub fn get_next_change_address(&mut self, _network: Network) -> Result<Address> {
+        Err(Error::InvalidParameter("Address generation needs ManagedAccount".into()))
     }
 
     /// Enable CoinJoin for an account
+    /// Note: This would need to be implemented using ManagedAccounts
     pub fn enable_coinjoin_for_account(
         &mut self,
-        network: Network,
-        account_index: u32,
+        _network: Network,
+        _account_index: u32,
     ) -> Result<()> {
-        let account = self
-            .standard_accounts
-            .get_mut(network, account_index)
-            .or_else(|| self.coinjoin_accounts.get_mut(network, account_index))
-            .ok_or(Error::InvalidParameter(format!(
-                "Account {} not found for network {:?}",
-                account_index, network
-            )))?;
-        account.enable_coinjoin(self.config.coinjoin_default_gap_limit)
+        Err(Error::InvalidParameter("CoinJoin enabling needs ManagedAccount".into()))
     }
 
     /// Export wallet as watch-only
@@ -294,27 +222,6 @@ impl Wallet {
     /// Check if wallet has a seed
     pub fn has_seed(&self) -> bool {
         matches!(self.wallet_type, WalletType::Seed { .. })
-    }
-
-    /// Get the mnemonic if available (for testing)
-    #[cfg(test)]
-    pub(crate) fn test_get_mnemonic(&self) -> Option<&Mnemonic> {
-        match &self.wallet_type {
-            WalletType::Mnemonic {
-                mnemonic,
-                ..
-            } => Some(mnemonic),
-            WalletType::MnemonicWithPassphrase {
-                mnemonic,
-                ..
-            } => Some(mnemonic),
-            _ => None,
-        }
-    }
-
-    /// Update last sync timestamp
-    pub fn update_sync_timestamp(&mut self, timestamp: u64) {
-        self.metadata.last_synced = Some(timestamp);
     }
 }
 

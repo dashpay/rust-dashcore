@@ -271,6 +271,27 @@ impl FromOnNetwork<RootExtendedPubKey> for ExtendedPubKey {
 }
 
 impl Wallet {
+    /// Get the root extended public key from the wallet type
+    pub fn root_extended_pub_key(&self) -> RootExtendedPubKey {
+        match &self.wallet_type {
+            WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.to_root_extended_pub_key(),
+            WalletType::MnemonicWithPassphrase {
+                root_extended_public_key,
+                ..
+            } => root_extended_public_key.clone(),
+            WalletType::Seed {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.to_root_extended_pub_key(),
+            WalletType::ExtendedPrivKey(key) => key.to_root_extended_pub_key(),
+            WalletType::ExternalSignable(key) => key.clone(),
+            WalletType::WatchOnly(key) => key.clone(),
+        }
+    }
+
     /// Get the root extended private key from the wallet type
     pub(crate) fn root_extended_priv_key(&self) -> crate::Result<&RootExtendedPrivKey> {
         match &self.wallet_type {

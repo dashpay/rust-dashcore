@@ -27,35 +27,19 @@ pub struct WalletStats {
 
 impl Wallet {
     /// Get wallet statistics
+    /// Note: Address statistics would need to be implemented using ManagedAccounts
     pub fn stats(&self) -> WalletStats {
         let total_accounts =
             self.standard_accounts.total_count() + self.coinjoin_accounts.total_count();
-        let mut total_addresses = 0;
-        let mut used_addresses = 0;
-        let mut coinjoin_enabled = 0;
 
-        for account in self.standard_accounts.all_accounts() {
-            total_addresses += account.get_all_addresses().len();
-            used_addresses += account.get_used_addresses().len();
-            if account.coinjoin_addresses.is_some() {
-                coinjoin_enabled += 1;
-            }
-        }
-
-        for account in self.coinjoin_accounts.all_accounts() {
-            total_addresses += account.get_all_addresses().len();
-            used_addresses += account.get_used_addresses().len();
-            if account.coinjoin_addresses.is_some() {
-                coinjoin_enabled += 1;
-            }
-        }
-
+        // Address statistics would need to be retrieved from ManagedAccountCollection
+        // For now, we return basic stats based on account counts
         WalletStats {
             total_accounts,
-            total_addresses,
-            used_addresses,
-            unused_addresses: total_addresses - used_addresses,
-            coinjoin_enabled_accounts: coinjoin_enabled,
+            total_addresses: 0,  // Would need ManagedAccounts
+            used_addresses: 0,   // Would need ManagedAccounts
+            unused_addresses: 0, // Would need ManagedAccounts
+            coinjoin_enabled_accounts: self.coinjoin_accounts.total_count(),
             is_watch_only: self.is_watch_only(),
         }
     }
