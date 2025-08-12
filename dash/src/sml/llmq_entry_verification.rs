@@ -10,7 +10,7 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 #[derive(Clone, Ord, PartialOrd, PartialEq, Eq, Hash, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub enum LLMQEntryVerificationSkipStatus {
     NotMarkedForVerification,
     MissedList(CoreBlockHeight),
@@ -43,7 +43,7 @@ impl Display for LLMQEntryVerificationSkipStatus {
 #[derive(Clone, Ord, PartialOrd, PartialEq, Eq, Hash, Debug, Default)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub enum LLMQEntryVerificationStatus {
     #[default]
     Unknown,

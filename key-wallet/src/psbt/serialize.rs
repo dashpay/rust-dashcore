@@ -45,7 +45,8 @@ pub trait Deserialize: Sized {
 impl PartiallySignedTransaction {
     /// Serialize a value as bytes in hex.
     pub fn serialize_hex(&self) -> String {
-        hex::encode(self.serialize())
+        use dashcore::prelude::DisplayHex;
+        format!("{:x}", self.serialize().as_hex())
     }
 
     /// Serialize as raw binary data
@@ -195,6 +196,7 @@ impl Deserialize for ecdsa::Signature {
             ecdsa::Error::HexEncoding(..) => {
                 unreachable!("Decoding from slice, not hex")
             }
+            _ => Error::InvalidEcdsaSignature(e),
         })
     }
 }
@@ -287,6 +289,7 @@ impl Deserialize for taproot::Signature {
             taproot::Error::InvalidSighashType(flag) => Error::NonStandardSighashType(flag as u32),
             taproot::Error::InvalidSignatureSize(_) => Error::InvalidTaprootSignature(e),
             taproot::Error::Secp256k1(..) => Error::InvalidTaprootSignature(e),
+            _ => Error::InvalidTaprootSignature(e),
         })
     }
 }

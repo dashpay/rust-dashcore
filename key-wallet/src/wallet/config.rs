@@ -2,6 +2,7 @@
 //!
 //! This module defines the configuration options for wallets.
 
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Wallet configuration

@@ -4,14 +4,14 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::{Network, Wallet, WalletConfig, WalletType};
+    use crate::{Network, Wallet, WalletConfig};
 
     #[test]
     fn test_address_labeling() {
         let config = WalletConfig::default();
 
-        let mut wallet = Wallet::new(config, Network::Testnet).unwrap();
-        let account = wallet.get_account_mut(0).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+        let account = wallet.get_account_mut(Network::Testnet, 0).unwrap();
 
         // Generate an address
         let address = account.get_next_receive_address().unwrap();
@@ -30,8 +30,8 @@ mod tests {
     fn test_address_pool_info() {
         let config = WalletConfig::default();
 
-        let mut wallet = Wallet::new(config, Network::Testnet).unwrap();
-        let account = wallet.get_account_mut(0).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+        let account = wallet.get_account_mut(Network::Testnet, 0).unwrap();
 
         // Generate multiple addresses
         let addr1 = account.get_next_receive_address().unwrap();
@@ -59,8 +59,8 @@ mod tests {
     fn test_address_usage_tracking() {
         let config = WalletConfig::default();
 
-        let mut wallet = Wallet::new(config, Network::Testnet).unwrap();
-        let account = wallet.get_account_mut(0).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+        let account = wallet.get_account_mut(Network::Testnet, 0).unwrap();
 
         // Generate addresses - should be same until marked as used
         let addr1 = account.get_next_receive_address().unwrap();
@@ -89,8 +89,8 @@ mod tests {
     fn test_address_derivation_info() {
         let config = WalletConfig::default();
 
-        let mut wallet = Wallet::new(config, Network::Testnet).unwrap();
-        let account = wallet.get_account_mut(0).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+        let account = wallet.get_account_mut(Network::Testnet, 0).unwrap();
 
         // Generate an address
         let address = account.get_next_receive_address().unwrap();
@@ -108,26 +108,26 @@ mod tests {
     fn test_multiple_account_address_tracking() {
         let config = WalletConfig::default();
 
-        let mut wallet = Wallet::new(config, Network::Testnet).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
 
         // Generate addresses for each account
         let mut addresses = vec![];
         for i in 0..3 {
-            let account = wallet.get_account_mut(i).unwrap();
+            let account = wallet.get_account_mut(Network::Testnet, i).unwrap();
             let addr = account.get_next_receive_address().unwrap();
             addresses.push((i, addr));
         }
 
         // Verify each account tracks its own addresses
         for (account_idx, addr) in addresses {
-            let account = wallet.get_account(account_idx).unwrap();
+            let account = wallet.get_account(Network::Testnet, account_idx).unwrap();
             let info = account.external_pool().get_address_info(&addr);
             assert!(info.is_some());
 
             // Other accounts shouldn't have this address
             for i in 0..3 {
                 if i != account_idx {
-                    let other_account = wallet.get_account(i).unwrap();
+                    let other_account = wallet.get_account(Network::Testnet, i).unwrap();
                     assert!(other_account.external_pool().get_address_info(&addr).is_none());
                 }
             }
@@ -138,8 +138,8 @@ mod tests {
     fn test_address_pool_lookahead() {
         let config = WalletConfig::default();
 
-        let mut wallet = Wallet::new(config, Network::Testnet).unwrap();
-        let account = wallet.get_account_mut(0).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+        let account = wallet.get_account_mut(Network::Testnet, 0).unwrap();
 
         // All pre-generated addresses should already exist
         let mut addresses = vec![];
@@ -164,8 +164,8 @@ mod tests {
     fn test_change_address_tracking() {
         let config = WalletConfig::default();
 
-        let mut wallet = Wallet::new(config, Network::Testnet).unwrap();
-        let account = wallet.get_account_mut(0).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+        let account = wallet.get_account_mut(Network::Testnet, 0).unwrap();
 
         // Generate change addresses
         let change1 = account.get_next_change_address().unwrap();
@@ -190,8 +190,8 @@ mod tests {
     fn test_address_info_consistency() {
         let config = WalletConfig::default();
 
-        let mut wallet = Wallet::new(config, Network::Testnet).unwrap();
-        let account = wallet.get_account_mut(0).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+        let account = wallet.get_account_mut(Network::Testnet, 0).unwrap();
 
         // Generate an address
         let address = account.get_next_receive_address().unwrap();
@@ -209,8 +209,8 @@ mod tests {
     fn test_account_all_addresses() {
         let config = WalletConfig::default();
 
-        let mut wallet = Wallet::new(config, Network::Testnet).unwrap();
-        let account = wallet.get_account_mut(0).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+        let account = wallet.get_account_mut(Network::Testnet, 0).unwrap();
 
         // Get some addresses (pre-generated)
         let recv1 = account.external_pool().get_address_at_index(0).unwrap();

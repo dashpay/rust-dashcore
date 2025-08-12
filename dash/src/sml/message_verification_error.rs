@@ -13,7 +13,7 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub enum MessageVerificationError {
     #[error("Required cycle not present to verify instant send: {0}")]
     CycleHashNotPresent(CycleHash),

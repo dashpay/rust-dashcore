@@ -35,7 +35,6 @@ impl_consensus_encoding!(GetQRInfo, base_block_hashes, block_request_hash, extra
 #[derive(PartialEq, Eq, Clone, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 pub struct QRInfo {
     // Quorum snapshots for heights h-c, h-2c, h-3c.
     pub quorum_snapshot_at_h_minus_c: QuorumSnapshot,
@@ -153,7 +152,7 @@ impl Decodable for QRInfo {
 #[derive(PartialEq, Eq, Clone, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct QuorumSnapshot {
     pub skip_list_mode: MNSkipListMode,
     pub active_quorum_members: Vec<bool>, // Bitset, length = (active_quorum_members_count + 7) / 8
@@ -216,7 +215,7 @@ impl Decodable for QuorumSnapshot {
 #[repr(u32)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub enum MNSkipListMode {
     /// Mode 0: No skipping – the skip list is empty.
     NoSkipping = 0,

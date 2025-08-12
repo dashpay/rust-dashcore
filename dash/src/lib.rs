@@ -83,7 +83,7 @@ pub use ed25519_dalek;
 
 #[cfg(feature = "serde")]
 #[macro_use]
-extern crate actual_serde as serde;
+extern crate serde;
 extern crate core;
 
 #[cfg(test)]

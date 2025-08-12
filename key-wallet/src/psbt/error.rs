@@ -8,7 +8,6 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::consensus::encode;
 use dashcore::io;
 use dashcore_hashes as hashes;
-use internals::write_err;
 
 /// Enum for marking psbt hash error.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -139,7 +138,7 @@ impl fmt::Display for Error {
             Error::NonStandardSighashType(ref sht) => {
                 write!(f, "non-standard sighash type: {}", sht)
             }
-            Error::HashParse(ref e) => write_err!(f, "hash parse error"; e),
+            Error::HashParse(ref e) => write!(f, "hash parse error: {}", e),
             Error::InvalidPreimageHashPair {
                 ref preimage,
                 ref hash,
@@ -151,26 +150,26 @@ impl fmt::Display for Error {
             Error::CombineInconsistentKeySources(ref s) => {
                 write!(f, "combine conflict: {}", s)
             }
-            Error::ConsensusEncoding(ref e) => write_err!(f, "dash consensus encoding error"; e),
+            Error::ConsensusEncoding(ref e) => write!(f, "dash consensus encoding error: {}", e),
             Error::NegativeFee => f.write_str("PSBT has a negative fee which is not allowed"),
             Error::FeeOverflow => f.write_str("integer overflow in fee calculation"),
-            Error::InvalidPublicKey(ref e) => write_err!(f, "invalid public key"; e),
+            Error::InvalidPublicKey(ref e) => write!(f, "invalid public key: {}", e),
             Error::InvalidSecp256k1PublicKey(ref e) => {
-                write_err!(f, "invalid secp256k1 public key"; e)
+                write!(f, "invalid secp256k1 public key: {}", e)
             }
             Error::InvalidXOnlyPublicKey => f.write_str("invalid xonly public key"),
-            Error::InvalidEcdsaSignature(ref e) => write_err!(f, "invalid ECDSA signature"; e),
-            Error::InvalidTaprootSignature(ref e) => write_err!(f, "invalid taproot signature"; e),
+            Error::InvalidEcdsaSignature(ref e) => write!(f, "invalid ECDSA signature: {}", e),
+            Error::InvalidTaprootSignature(ref e) => write!(f, "invalid taproot signature: {}", e),
             Error::InvalidControlBlock => f.write_str("invalid control block"),
             Error::InvalidLeafVersion => f.write_str("invalid leaf version"),
             Error::Taproot(s) => write!(f, "taproot error -  {}", s),
-            Error::TapTree(ref e) => write_err!(f, "taproot tree error"; e),
+            Error::TapTree(ref e) => write!(f, "taproot tree error: {}", e),
             Error::XPubKey(s) => write!(f, "xpub key error -  {}", s),
             Error::Version(s) => write!(f, "version error {}", s),
             Error::PartialDataConsumption => {
                 f.write_str("data not consumed entirely when explicitly deserializing")
             }
-            Error::Io(ref e) => write_err!(f, "I/O error"; e),
+            Error::Io(ref e) => write!(f, "I/O error: {}", e),
         }
     }
 }

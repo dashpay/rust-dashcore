@@ -213,6 +213,10 @@ impl AddressPool {
                 // For now, default to P2PKH
                 Address::p2pkh(&dash_pubkey, network)
             }
+            _ => {
+                // For other address types, default to P2PKH
+                Address::p2pkh(&dash_pubkey, network)
+            }
         };
 
         // Store the address info
@@ -717,7 +721,7 @@ mod tests {
             .gap_limit(10)
             .network(Network::Testnet)
             .lookahead(20)
-            .address_type(AddressType::P2PKH)
+            .address_type(AddressType::P2pkh)
             .build()
             .unwrap();
 

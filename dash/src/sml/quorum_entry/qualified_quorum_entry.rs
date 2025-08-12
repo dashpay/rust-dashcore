@@ -10,7 +10,6 @@ use bincode::{Decode, Encode};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum VerifyingChainLockSignaturesType {
     Rotating([BLSSignature; 4]),
@@ -23,7 +22,6 @@ pub enum VerifyingChainLockSignaturesType {
 /// status of the quorum, as well as its computed commitment and entry hashes.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct QualifiedQuorumEntry {
     /// The underlying quorum entry
