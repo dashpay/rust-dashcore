@@ -8,6 +8,7 @@ use dashcore_hashes::{self as hashes, hash160, ripemd160, sha256, sha256d};
 use secp256k1::XOnlyPublicKey;
 
 use crate::psbt::map::Map;
+use crate::psbt::serialize::Deserialize;
 use crate::psbt::{error, raw, Error};
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -25,7 +26,7 @@ use std::collections::btree_map;
 
 use crate::bip32::KeySource;
 #[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize as SerdeDeserialize, Serialize};
 
 /// Type: Non-Witness UTXO PSBT_IN_NON_WITNESS_UTXO = 0x00
 const PSBT_IN_NON_WITNESS_UTXO: u8 = 0x00;
@@ -71,7 +72,7 @@ const PSBT_IN_PROPRIETARY: u8 = 0xFC;
 /// A key-value map for an input of the corresponding index in the unsigned
 /// transaction.
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize, SerdeDeserialize))]
 pub struct Input {
     /// The non-witness transaction this input spends from. Should only be
     /// [Some] for inputs which spend non-segwit outputs or
@@ -148,7 +149,7 @@ pub struct Input {
 /// directly which signature hash type the user is dealing with. Therefore, the user is responsible
 /// for converting to/from [`PsbtSighashType`] from/to the desired signature hash type they need.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize, SerdeDeserialize))]
 pub struct PsbtSighashType {
     pub(in crate::psbt) inner: u32,
 }

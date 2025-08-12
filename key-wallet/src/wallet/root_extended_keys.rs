@@ -1,6 +1,7 @@
 use crate::bip32::{ChainCode, ChildNumber, ExtendedPrivKey, ExtendedPubKey};
 use crate::{Error, Network, Wallet};
 use secp256k1::Secp256k1;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::wallet::WalletType;

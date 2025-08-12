@@ -33,7 +33,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Eq, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct MasternodeListEngineBTreeMapBlockContainer {
     pub block_hashes: BTreeMap<CoreBlockHeight, BlockHash>,
@@ -54,7 +53,6 @@ impl MasternodeListEngineBTreeMapBlockContainer {
 
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum MasternodeListEngineBlockContainer {
     BTreeMapContainer(MasternodeListEngineBTreeMapBlockContainer),
@@ -165,7 +163,6 @@ impl MasternodeListEngineBlockContainer {
 
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct MasternodeListEngine {
     pub block_container: MasternodeListEngineBlockContainer,

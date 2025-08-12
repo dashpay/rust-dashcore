@@ -584,7 +584,6 @@ pub type UntweakedPublicKey = XOnlyPublicKey;
 /// Tweaked BIP-340 X-coord-only public key
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct TweakedPublicKey(XOnlyPublicKey);
 
@@ -620,7 +619,6 @@ pub type UntweakedKeyPair = Keypair;
 /// ```
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct TweakedKeyPair(Keypair);
 

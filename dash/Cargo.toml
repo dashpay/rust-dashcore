@@ -23,7 +23,7 @@ default = [ "std", "secp-recovery", "bincode" ]
 base64 = [ "base64-compat" ]
 rand-std = ["secp256k1/rand"]
 rand = ["secp256k1/rand"]
-serde = ["actual-serde", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde"]
+serde = ["dep:serde", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde"]
 secp-lowmemory = ["secp256k1/lowmemory"]
 secp-recovery = ["secp256k1/recovery"]
 signer = ["secp-recovery", "rand", "base64"]
@@ -54,8 +54,7 @@ secp256k1 = { default-features = false, features = ["hashes"], version= "0.30.0"
 dash-network = { path = "../dash-network", default-features = false }
 core2 = { version = "0.4.0", optional = true, features = ["alloc"], default-features = false }
 rustversion = { version="1.0.20"}
-# Do NOT use this as a feature! Use the `serde` feature instead.
-actual-serde = { package = "serde", version = "1.0.219", default-features = false, features = [ "derive", "alloc" ], optional = true }
+serde = { version = "1.0.219", default-features = false, features = [ "derive", "alloc" ], optional = true }
 
 base64-compat = { version = "1.0.0", optional = true }
 bitcoinconsensus = { version = "0.20.2-0.5.0", default-features = false, optional = true }
