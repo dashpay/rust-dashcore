@@ -141,7 +141,6 @@ impl SequentialSyncManager {
         // Transition from Idle to first phase
         self.transition_to_next_phase(storage, network, "Starting sync").await?;
 
-        // For the initial sync start, we should just prepare like interleaved does
         // The actual header request will be sent when we have peers
         match &self.current_phase {
             SyncPhase::DownloadingHeaders {
@@ -844,7 +843,7 @@ impl SequentialSyncManager {
                     ..
                 },
                 NetworkMessage::Block(_),
-            ) => true, // Allow blocks during masternode sync for DKG window checking
+            ) => true, // Allow blocks during masternode sync
             (
                 SyncPhase::DownloadingCFHeaders {
                     ..
