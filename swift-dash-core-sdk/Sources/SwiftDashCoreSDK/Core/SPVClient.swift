@@ -367,16 +367,10 @@ private let syncCompletionCallback: @convention(c) (Bool, UnsafePointer<CChar>?,
 
 // Detailed sync callbacks
 private let detailedSyncProgressCallback: @convention(c) (UnsafePointer<FFIDetailedSyncProgress>?, UnsafeMutableRawPointer?) -> Void = { ffiProgress, userData in
-    print("🟢 detailedSyncProgressCallback called from FFI")
     guard let userData = userData,
-          let ffiProgress = ffiProgress else { 
-        print("🟢 userData or ffiProgress is nil")
-        return 
-    }
+          let ffiProgress = ffiProgress else { return }
     
-    print("🟢 Getting holder from userData")
     let holder = Unmanaged<DetailedCallbackHolder>.fromOpaque(userData).takeUnretainedValue()
-    print("🟢 Calling holder.progressCallback")
     // Pass the FFI progress directly, conversion will happen in the holder's callback
     holder.progressCallback?(ffiProgress.pointee)
 }
@@ -545,7 +539,6 @@ private let eventMempoolTransactionRemovedCallback: MempoolRemovedCallback = { t
 
 @Observable
 public final class SPVClient {
-    @ObservationIgnored
     private var client: UnsafeMutablePointer<FFIDashSpvClient>?
     public let configuration: SPVClientConfiguration
     private let asyncBridge = AsyncBridge()
@@ -580,13 +573,6 @@ public final class SPVClient {
         } else {
             print("✅ Rust logging initialized with level: \(configuration.logLevel)")
         }
-    }
-    
-    /// Expose FFI client handle for Platform SDK integration
-    /// This is needed for Platform SDK to access Core chain data for proof verification
-    /// Note: This will be nil until start() has been called
-    public var ffiClientHandle: UnsafeMutablePointer<FFIDashSpvClient>? {
-        return client
     }
     
     deinit {
@@ -1273,12 +1259,8 @@ extension SPVClient {
         // Create a callback holder with type-erased callbacks
         let wrappedProgressCallback: (@Sendable (Any) -> Void)? = progressCallback.map { callback in
             { progress in
-                print("🟣 FFI progress callback wrapper called")
                 if let detailedProgress = progress as? FFIDetailedSyncProgress {
-                    print("🟣 Converting FFI progress to Swift DetailedSyncProgress")
                     callback(DetailedSyncProgress(ffiProgress: detailedProgress))
-                } else {
-                    print("🟣 Failed to cast progress to FFIDetailedSyncProgress")
                 }
             }
         }

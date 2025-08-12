@@ -57,17 +57,15 @@ impl ConnectionPool {
         }
 
         connections.insert(addr, Arc::new(RwLock::new(conn)));
-        log::info!("🔵 Added connection to {}, total peers: {}", addr, connections.len());
+        log::info!("Added connection to {}, total peers: {}", addr, connections.len());
         Ok(())
     }
 
     /// Remove a connection from the pool
     pub async fn remove_connection(&self, addr: &SocketAddr) -> Option<Arc<RwLock<TcpConnection>>> {
-        let mut connections = self.connections.write().await;
-        let removed = connections.remove(addr);
+        let removed = self.connections.write().await.remove(addr);
         if removed.is_some() {
-            let remaining = connections.len();
-            log::info!("🔴 Removed connection to {}, {} peers remaining", addr, remaining);
+            log::info!("Removed connection to {}", addr);
         }
         removed
     }

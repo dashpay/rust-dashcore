@@ -23,8 +23,26 @@ let package = Package(
         // No external dependencies - using only Swift standard library and frameworks
     ],
     targets: [
-        // DashSPVFFI target removed - now provided by unified SDK in dashpay-ios
-        // Note: This package cannot build standalone - it requires the unified SDK's DashSPVFFI module
+        .target(
+            name: "DashSPVFFI",
+            dependencies: [],
+            path: "Sources/DashSPVFFI",
+            exclude: ["DashSPVFFI.swift"],
+            sources: ["dummy.c"],
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("include"),
+            ],
+            linkerSettings: [
+                // Link to static library
+                .linkedLibrary("dash_spv_ffi"),
+                .unsafeFlags([
+                    "-L/Users/quantum/src/rust-dashcore/dash-spv-ffi/target/aarch64-apple-ios-sim/release",
+                    "-L/Users/quantum/src/rust-dashcore/dash-spv-ffi/target/aarch64-apple-ios/release",
+                    "-L/Users/quantum/src/rust-dashcore/target/aarch64-apple-darwin/release"
+                ])
+            ]
+        ),
         .target(
             name: "KeyWalletFFI",
             dependencies: [],
@@ -58,7 +76,7 @@ let package = Package(
         ),
         .target(
             name: "SwiftDashCoreSDK",
-            dependencies: [],
+            dependencies: ["DashSPVFFI"],
             path: "Sources/SwiftDashCoreSDK",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")

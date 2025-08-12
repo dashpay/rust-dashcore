@@ -1,11 +1,7 @@
 //! Storage abstraction for the Dash SPV client.
 
-pub mod compat;
 pub mod disk;
-pub mod disk_backend;
 pub mod memory;
-pub mod memory_backend;
-pub mod service;
 pub mod sync_state;
 pub mod sync_storage;
 pub mod types;
@@ -115,11 +111,6 @@ pub trait StorageManager: Send + Sync {
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>>;
 
     /// Get a specific header by height.
-    ///
-    /// TODO: Consider changing this API to accept blockchain heights instead of storage-relative heights.
-    /// Currently expects storage index (0-based from sync_base_height), but this creates confusion
-    /// since most blockchain operations work with absolute blockchain heights. A future refactor
-    /// could make this more intuitive by handling the height conversion internally.
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>>;
 
     /// Get the current tip height.

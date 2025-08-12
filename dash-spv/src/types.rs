@@ -9,43 +9,6 @@ use dashcore::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Information about the current synchronization phase.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SyncPhaseInfo {
-    /// Name of the current phase.
-    pub phase_name: String,
-
-    /// Progress percentage (0-100).
-    pub progress_percentage: f64,
-
-    /// Items completed in this phase.
-    pub items_completed: u32,
-
-    /// Total items expected in this phase (if known).
-    pub items_total: Option<u32>,
-
-    /// Processing rate (items per second).
-    pub rate: f64,
-
-    /// Estimated time remaining in this phase.
-    pub eta_seconds: Option<u64>,
-
-    /// Time elapsed in this phase (seconds).
-    pub elapsed_seconds: u64,
-
-    /// Additional phase-specific details.
-    pub details: Option<String>,
-
-    /// Current absolute position (e.g., current block height)
-    pub current_position: Option<u32>,
-
-    /// Target absolute position (e.g., target block height)
-    pub target_position: Option<u32>,
-
-    /// Units for the rate (e.g., "headers/sec", "filters/sec", "diffs/sec")
-    pub rate_units: Option<String>,
-}
-
 /// Unique identifier for a peer connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PeerId(pub u64);
@@ -57,7 +20,7 @@ impl std::fmt::Display for PeerId {
 }
 
 /// Sync progress information.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncProgress {
     /// Current height of synchronized headers.
     pub header_height: u32,
@@ -94,9 +57,6 @@ pub struct SyncProgress {
 
     /// Last update time.
     pub last_update: SystemTime,
-
-    /// Current synchronization phase and its details.
-    pub current_phase: Option<SyncPhaseInfo>,
 }
 
 impl Default for SyncProgress {
@@ -115,7 +75,6 @@ impl Default for SyncProgress {
             last_synced_filter_height: None,
             sync_start: now,
             last_update: now,
-            current_phase: None,
         }
     }
 }
@@ -1228,84 +1187,4 @@ impl MempoolState {
     pub fn total_pending_balance(&self) -> i64 {
         self.pending_balance + self.pending_instant_balance
     }
-}
-
-/// Network and sync events emitted by the SPV client during operation
-#[derive(Debug, Clone)]
-pub enum NetworkEvent {
-    // Network events
-    PeerConnected {
-        address: std::net::SocketAddr,
-        height: Option<u32>,
-        version: u32,
-    },
-    PeerDisconnected {
-        address: std::net::SocketAddr,
-    },
-
-    // Sync events
-    SyncStarted {
-        starting_height: u32,
-        target_height: Option<u32>,
-    },
-    HeadersReceived {
-        count: usize,
-        tip_height: u32,
-        progress_percent: f64,
-    },
-    FilterHeadersReceived {
-        count: usize,
-        tip_height: u32,
-    },
-    SyncProgress {
-        headers: u32,
-        filter_headers: u32,
-        filters: u32,
-        progress_percent: f64,
-    },
-    SyncCompleted {
-        final_height: u32,
-    },
-
-    // Chain events
-    NewChainLock {
-        height: u32,
-        block_hash: dashcore::BlockHash,
-    },
-    NewBlock {
-        height: u32,
-        block_hash: dashcore::BlockHash,
-        matched_addresses: Vec<dashcore::Address>,
-    },
-    InstantLock {
-        txid: dashcore::Txid,
-    },
-
-    // Masternode events
-    MasternodeListUpdated {
-        height: u32,
-        masternode_count: usize,
-    },
-
-    // Wallet events
-    AddressMatch {
-        address: dashcore::Address,
-        txid: dashcore::Txid,
-        amount: u64,
-        is_spent: bool,
-    },
-
-    // Error events
-    NetworkError {
-        peer: Option<std::net::SocketAddr>,
-        error: String,
-    },
-    SyncError {
-        phase: String,
-        error: String,
-    },
-    ValidationError {
-        height: u32,
-        error: String,
-    },
 }

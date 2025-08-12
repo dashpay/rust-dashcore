@@ -247,10 +247,6 @@ pub struct PhaseProgress {
     pub eta: Option<Duration>,
     /// Time elapsed in this phase
     pub elapsed: Duration,
-    /// Current absolute position (e.g., current block height)
-    pub current_position: Option<u32>,
-    /// Target absolute position (e.g., target block height)
-    pub target_position: Option<u32>,
 }
 
 impl SyncPhase {
@@ -267,18 +263,11 @@ impl SyncPhase {
             } => {
                 let items_completed = current_height.saturating_sub(*start_height);
                 let items_total = target_height.map(|t| t.saturating_sub(*start_height));
-
-                // Calculate percentage based on progress made in this sync session
-                let percentage = if let Some(target) = target_height {
-                    if *target > *start_height {
-                        // Progress is based on how much we've synced vs how much we need to sync
-                        let progress = current_height.saturating_sub(*start_height) as f64;
-                        let total_needed = target.saturating_sub(*start_height) as f64;
-                        (progress / total_needed) * 100.0
-                    } else if *current_height >= *target {
-                        100.0
+                let percentage = if let Some(total) = items_total {
+                    if total > 0 {
+                        (items_completed as f64 / total as f64) * 100.0
                     } else {
-                        0.0
+                        100.0
                     }
                 } else {
                     0.0
@@ -301,52 +290,6 @@ impl SyncPhase {
                     rate: *headers_per_second,
                     eta,
                     elapsed: start_time.elapsed(),
-                    current_position: Some(*current_height),
-                    target_position: *target_height,
-                }
-            }
-
-            SyncPhase::DownloadingMnList {
-                start_height,
-                current_height,
-                target_height,
-                diffs_processed,
-                start_time,
-                ..
-            } => {
-                let items_completed = current_height.saturating_sub(*start_height);
-                let items_total = target_height.saturating_sub(*start_height);
-                let percentage = if items_total > 0 {
-                    (items_completed as f64 / items_total as f64) * 100.0
-                } else {
-                    100.0
-                };
-
-                let elapsed = start_time.elapsed();
-                let rate = if elapsed.as_secs() > 0 && *diffs_processed > 0 {
-                    *diffs_processed as f64 / elapsed.as_secs_f64()
-                } else {
-                    0.0
-                };
-
-                let eta = if rate > 0.0 && items_total > items_completed {
-                    // Estimate based on heights remaining, not diffs
-                    let remaining = items_total.saturating_sub(items_completed);
-                    Some(Duration::from_secs_f64(remaining as f64 / rate))
-                } else {
-                    None
-                };
-
-                PhaseProgress {
-                    phase_name: self.name(),
-                    items_completed: *diffs_processed, // Show diffs processed
-                    items_total: None,                 // We don't know how many diffs total
-                    percentage,
-                    rate,
-                    eta,
-                    elapsed,
-                    current_position: Some(*current_height),
-                    target_position: Some(*target_height),
                 }
             }
 
@@ -381,8 +324,6 @@ impl SyncPhase {
                     rate: *cfheaders_per_second,
                     eta,
                     elapsed: start_time.elapsed(),
-                    current_position: Some(*current_height),
-                    target_position: Some(*target_height),
                 }
             }
 
@@ -421,8 +362,6 @@ impl SyncPhase {
                     rate,
                     eta,
                     elapsed,
-                    current_position: Some(items_completed), // For filters, position is same as items completed
-                    target_position: Some(*total_filters),
                 }
             }
 
@@ -462,8 +401,6 @@ impl SyncPhase {
                     rate,
                     eta,
                     elapsed,
-                    current_position: Some(items_completed),
-                    target_position: Some(items_total),
                 }
             }
 
@@ -475,8 +412,6 @@ impl SyncPhase {
                 rate: 0.0,
                 eta: None,
                 elapsed: Duration::from_secs(0),
-                current_position: None,
-                target_position: None,
             },
         }
     }

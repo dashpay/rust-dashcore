@@ -10,8 +10,6 @@ pub mod headers_with_reorg;
 pub mod masternodes;
 pub mod sequential;
 pub mod state;
-pub mod sync_engine;
-pub mod sync_state;
 pub mod terminal_block_data;
 pub mod terminal_blocks;
 

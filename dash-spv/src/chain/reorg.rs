@@ -79,18 +79,18 @@ impl ReorgManager {
     }
 
     /// Check if a fork has more work than the current chain and should trigger a reorg
-    pub async fn should_reorganize(
+    pub fn should_reorganize(
         &self,
         current_tip: &ChainTip,
         fork: &Fork,
         storage: &dyn ChainStorage,
     ) -> Result<bool, String> {
-        self.should_reorganize_with_chain_state(current_tip, fork, storage, None).await
+        self.should_reorganize_with_chain_state(current_tip, fork, storage, None)
     }
 
     /// Check if a fork has more work than the current chain and should trigger a reorg
     /// This version is checkpoint-aware when chain_state is provided
-    pub async fn should_reorganize_with_chain_state(
+    pub fn should_reorganize_with_chain_state(
         &self,
         current_tip: &ChainTip,
         fork: &Fork,
@@ -154,10 +154,7 @@ impl ReorgManager {
         if self.respect_chain_locks {
             if let Some(ref chain_lock_mgr) = self.chain_lock_manager {
                 // Check if reorg would violate chain locks
-                if chain_lock_mgr
-                    .would_violate_chain_lock(fork.fork_height, current_tip.height)
-                    .await
-                {
+                if chain_lock_mgr.would_violate_chain_lock(fork.fork_height, current_tip.height) {
                     return Err(format!(
                         "Cannot reorg: would violate chain lock between heights {} and {}",
                         fork.fork_height, current_tip.height
@@ -167,7 +164,7 @@ impl ReorgManager {
                 // Fall back to checking individual blocks
                 for height in (fork.fork_height + 1)..=current_tip.height {
                     if let Ok(Some(header)) = storage.get_header_by_height(height) {
-                        if self.is_chain_locked(&header, storage).await? {
+                        if self.is_chain_locked(&header, storage)? {
                             return Err(format!(
                                 "Cannot reorg past chain-locked block at height {}",
                                 height
@@ -480,7 +477,7 @@ impl ReorgManager {
     }
 
     /// Check if a block is chain-locked
-    async fn is_chain_locked(
+    fn is_chain_locked(
         &self,
         header: &BlockHeader,
         storage: &dyn ChainStorage,
@@ -488,9 +485,7 @@ impl ReorgManager {
         if let Some(ref chain_lock_mgr) = self.chain_lock_manager {
             // Get the height of this header
             if let Ok(Some(height)) = storage.get_header_height(&header.block_hash()) {
-                return Ok(chain_lock_mgr
-                    .is_block_chain_locked(&header.block_hash(), height)
-                    .await);
+                return Ok(chain_lock_mgr.is_block_chain_locked(&header.block_hash(), height));
             }
         }
         // If no chain lock manager or height not found, assume not locked

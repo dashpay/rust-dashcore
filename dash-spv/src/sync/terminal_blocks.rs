@@ -88,7 +88,7 @@ impl TerminalBlockManager {
                     (1500000, "00000000000000105cfae44a995332d8ec256850ea33a1f7b700474e3dad82bc"),
                     (1750000, "0000000000000001342be6b8bdf33a92d68059d746db2681cf3f24117dd50089"),
                     // Latest terminal block
-                    (2000000, "0000000000000009bd68b5e00976c3f7482d4cc12b6596614fbba5678ef13a59"),
+                    (2000000, "0000000000000021f7b88e014325c323dc41d20aec211e5cc5a81eeef2f91de2"),
                 ]
             }
             Network::Testnet => {

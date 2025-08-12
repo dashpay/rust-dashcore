@@ -523,9 +523,9 @@ void ffi_dash_spv_release_core_handle(struct CoreSDKHandle *handle);
  * - out_pubkey_size must be at least 48 bytes
  */
 struct FFIResult ffi_dash_spv_get_quorum_public_key(struct FFIDashSpvClient *client,
-                                                    uint32_t quorum_type,
+                                                    uint32_t _quorum_type,
                                                     const uint8_t *quorum_hash,
-                                                    uint32_t core_chain_locked_height,
+                                                    uint32_t _core_chain_locked_height,
                                                     uint8_t *out_pubkey,
                                                     uintptr_t out_pubkey_size);
 

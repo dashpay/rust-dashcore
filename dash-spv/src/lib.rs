@@ -16,7 +16,7 @@
 //! use dashcore::Network;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create configuration for mainnet
 //!     let config = ClientConfig::mainnet()
 //!         .with_storage_path("/path/to/data".into())
@@ -86,7 +86,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// This is a convenience function that sets up tracing-subscriber
 /// with a simple format suitable for most applications.
-pub fn init_logging(level: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn init_logging(level: &str) -> Result<(), Box<dyn std::error::Error>> {
     use tracing_subscriber::fmt;
 
     let level = match level {

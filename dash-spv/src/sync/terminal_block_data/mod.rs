@@ -48,17 +48,15 @@ pub struct TerminalBlockMasternodeState {
 
 impl TerminalBlockMasternodeState {
     /// Get the block hash as a BlockHash type
-    pub fn get_block_hash(&self) -> Result<BlockHash, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_block_hash(&self) -> Result<BlockHash, Box<dyn std::error::Error>> {
         let bytes = hex::decode(&self.block_hash)?;
         let mut hash_array = [0u8; 32];
         hash_array.copy_from_slice(&bytes);
-        // Reverse bytes for little-endian format
-        hash_array.reverse();
         Ok(BlockHash::from_byte_array(hash_array))
     }
 
     /// Validate the terminal block data
-    pub fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn validate(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Validate block hash format
         if self.block_hash.len() != 64 {
             return Err("Invalid block hash length".into());
@@ -92,7 +90,7 @@ impl TerminalBlockMasternodeState {
 
 impl StoredMasternodeEntry {
     /// Validate the masternode entry
-    pub fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn validate(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Validate ProTxHash (should be 64 hex chars)
         if self.pro_tx_hash.len() != 64 {
             return Err("Invalid ProTxHash length".into());
@@ -232,7 +230,7 @@ pub fn convert_rpc_masternode(
     voting_address: &str,
     is_valid: bool,
     n_type: u16,
-) -> Result<StoredMasternodeEntry, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<StoredMasternodeEntry, Box<dyn std::error::Error>> {
     Ok(StoredMasternodeEntry {
         pro_tx_hash: pro_tx_hash.to_string(),
         service: service.to_string(),

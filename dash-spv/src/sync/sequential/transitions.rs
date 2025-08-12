@@ -99,25 +99,15 @@ impl TransitionManager {
                 },
                 next_phase,
             ) => {
-                // Check if we actually downloaded any filter headers
-                let filter_tip = storage
-                    .get_filter_tip_height()
-                    .await
-                    .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?;
+                // CFHeaders must be complete
+                if !self.are_cfheaders_complete(current_phase, storage).await? {
+                    return Ok(false);
+                }
 
                 match next_phase {
                     SyncPhase::DownloadingFilters {
                         ..
-                    } => {
-                        // Can only go to filters if we actually downloaded cfheaders
-                        Ok(filter_tip.is_some() && filter_tip != Some(0))
-                    }
-                    SyncPhase::FullySynced {
-                        ..
-                    } => {
-                        // Can go to synced if no filter headers were downloaded (no peer support)
-                        Ok(filter_tip.is_none() || filter_tip == Some(0))
-                    }
+                    } => Ok(true), // Always download filters after cfheaders
                     _ => Ok(false),
                 }
             }
@@ -178,37 +168,16 @@ impl TransitionManager {
         match current_phase {
             SyncPhase::Idle => {
                 // Always start with headers
-                let storage_height = storage
+                let start_height = storage
                     .get_tip_height()
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to get tip height: {}", e)))?
                     .unwrap_or(0);
 
-                // For checkpoint sync, we need to get the actual blockchain height
-                // This accounts for the sync base height from checkpoints
-                let blockchain_height =
-                    if let Ok(Some(metadata)) = storage.load_metadata("sync_base_height").await {
-                        if metadata.len() >= 4 {
-                            let sync_base = u32::from_le_bytes([
-                                metadata[0],
-                                metadata[1],
-                                metadata[2],
-                                metadata[3],
-                            ]);
-                            sync_base + storage_height
-                        } else {
-                            storage_height
-                        }
-                    } else {
-                        storage_height
-                    };
-
-                // For progress calculation, start_height should be 0 to show overall progress
-                // current_height is the actual blockchain height we're at
                 Ok(Some(SyncPhase::DownloadingHeaders {
                     start_time: Instant::now(),
-                    start_height: 0, // Start from 0 for accurate progress calculation
-                    current_height: blockchain_height,
+                    start_height,
+                    current_height: start_height,
                     target_height: None,
                     last_progress: Instant::now(),
                     headers_downloaded: 0,
@@ -220,12 +189,6 @@ impl TransitionManager {
             SyncPhase::DownloadingHeaders {
                 ..
             } => {
-                tracing::info!(
-                    "🔍 [DEBUG] Determining next phase after headers. Config: enable_masternodes={}, enable_filters={}",
-                    self.config.enable_masternodes,
-                    self.config.enable_filters
-                );
-
                 if self.config.enable_masternodes {
                     let header_tip = storage
                         .get_tip_height()
@@ -235,18 +198,10 @@ impl TransitionManager {
                         })?
                         .unwrap_or(0);
 
-                    let mn_state = storage.load_masternode_state().await;
-                    let mn_height = match &mn_state {
+                    let mn_height = match storage.load_masternode_state().await {
                         Ok(Some(state)) => state.last_height,
                         _ => 0,
                     };
-
-                    tracing::info!(
-                        "🔍 [DEBUG] Creating MnList phase: header_tip={}, mn_height={}, mn_state={:?}",
-                        header_tip,
-                        mn_height,
-                        mn_state.is_ok()
-                    );
 
                     Ok(Some(SyncPhase::DownloadingMnList {
                         start_time: Instant::now(),
@@ -276,29 +231,16 @@ impl TransitionManager {
             SyncPhase::DownloadingCFHeaders {
                 ..
             } => {
-                // Check if we actually downloaded any filter headers
-                let filter_tip = storage
-                    .get_filter_tip_height()
-                    .await
-                    .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?;
-
-                if filter_tip.is_none() || filter_tip == Some(0) {
-                    // No filter headers were downloaded (no peer support)
-                    // Skip directly to fully synced
-                    tracing::info!("No filter headers downloaded, skipping to fully synced");
-                    self.create_fully_synced_phase(storage).await
-                } else {
-                    // After CFHeaders, we need to determine what filters to download
-                    // For now, we'll create a filters phase that will be populated later
-                    Ok(Some(SyncPhase::DownloadingFilters {
-                        start_time: Instant::now(),
-                        requested_ranges: std::collections::HashMap::new(),
-                        completed_heights: std::collections::HashSet::new(),
-                        total_filters: 0, // Will be determined based on watch items
-                        last_progress: Instant::now(),
-                        batches_processed: 0,
-                    }))
-                }
+                // After CFHeaders, we need to determine what filters to download
+                // For now, we'll create a filters phase that will be populated later
+                Ok(Some(SyncPhase::DownloadingFilters {
+                    start_time: Instant::now(),
+                    requested_ranges: std::collections::HashMap::new(),
+                    completed_heights: std::collections::HashSet::new(),
+                    total_filters: 0, // Will be determined based on watch items
+                    last_progress: Instant::now(),
+                    batches_processed: 0,
+                }))
             }
 
             SyncPhase::DownloadingFilters {
@@ -365,18 +307,9 @@ impl TransitionManager {
     ) -> SyncResult<bool> {
         if let SyncPhase::DownloadingHeaders {
             received_empty_response,
-            current_height,
-            target_height,
             ..
         } = phase
         {
-            tracing::info!(
-                "🔍 [DEBUG] Checking headers complete: received_empty_response={}, current_height={}, target_height={:?}",
-                received_empty_response,
-                current_height,
-                target_height
-            );
-
             // Headers are complete when we receive an empty response
             Ok(*received_empty_response)
         } else {
@@ -464,50 +397,17 @@ impl TransitionManager {
         &self,
         storage: &dyn StorageManager,
     ) -> SyncResult<Option<SyncPhase>> {
-        let header_tip_storage = storage
+        let header_tip = storage
             .get_tip_height()
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to get header tip: {}", e)))?
             .unwrap_or(0);
 
-        let filter_tip_storage = storage
+        let filter_tip = storage
             .get_filter_tip_height()
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?
             .unwrap_or(0);
-
-        // For checkpoint sync, convert storage heights to blockchain heights
-        let sync_base_height =
-            if let Ok(Some(metadata)) = storage.load_metadata("sync_base_height").await {
-                if metadata.len() >= 4 {
-                    u32::from_le_bytes([metadata[0], metadata[1], metadata[2], metadata[3]])
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
-
-        let header_tip = if sync_base_height > 0 {
-            sync_base_height + header_tip_storage
-        } else {
-            header_tip_storage
-        };
-
-        let filter_tip = if sync_base_height > 0 && filter_tip_storage > 0 {
-            sync_base_height + filter_tip_storage
-        } else {
-            filter_tip_storage
-        };
-
-        tracing::info!(
-            "🔍 [DEBUG] Creating CFHeaders phase: filter_tip={} (storage={}), header_tip={} (storage={}), sync_base={}",
-            filter_tip,
-            filter_tip_storage,
-            header_tip,
-            header_tip_storage,
-            sync_base_height
-        );
 
         Ok(Some(SyncPhase::DownloadingCFHeaders {
             start_time: Instant::now(),
