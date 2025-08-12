@@ -650,20 +650,6 @@ impl StorageManager for MockStorageManager {
         Ok(None)
     }
 
-    async fn store_terminal_block(
-        &mut self,
-        _block: &dash_spv::storage::StoredTerminalBlock,
-    ) -> dash_spv::error::StorageResult<()> {
-        Ok(())
-    }
-
-    async fn get_terminal_block(
-        &self,
-    ) -> dash_spv::error::StorageResult<Option<dash_spv::storage::StoredTerminalBlock>> {
-        Ok(None)
-    }
-
-    async fn clear_terminal_block(&mut self) -> dash_spv::error::StorageResult<()> {
-        Ok(())
-    }
+    // Terminal block methods removed from StorageManager trait
+    // These methods are no longer part of the trait
 }
