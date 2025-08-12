@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "network": "Testnet",
+  "peers": [
+    {
+      "address": "34.220.175.29:19999",
+      "services": 1,
+      "last_seen": 1752765176
+    },
+    {
+      "address": "18.237.170.32:19999",
+      "services": 1,
+      "last_seen": 1752765176
+    },
+    {
+      "address": "34.219.33.231:19999",
+      "services": 1,
+      "last_seen": 1752765176
+    }
+  ]
+}

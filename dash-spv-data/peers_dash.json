@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "network": "Dash",
+  "peers": [
+    {
+      "address": "46.101.74.231:9999",
+      "services": 1,
+      "last_seen": 1752559019
+    },
+    {
+      "address": "82.211.21.62:9999",
+      "services": 1,
+      "last_seen": 1752559019
+    },
+    {
+      "address": "31.57.190.31:9999",
+      "services": 1,
+      "last_seen": 1752559020
+    }
+  ]
+}

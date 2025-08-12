@@ -10,11 +10,8 @@ pub mod headers;
 pub mod headers2_state;
 pub mod headers_with_reorg;
 pub mod masternodes;
-pub mod masternodes_old;
 pub mod sequential;
 pub mod state;
-pub mod terminal_block_data;
-pub mod terminal_blocks;
 pub mod validation;
 pub mod validation_state;
 
@@ -33,7 +30,6 @@ pub use headers::HeaderSyncManager;
 pub use headers_with_reorg::{HeaderSyncManagerWithReorg, ReorgConfig};
 pub use masternodes::MasternodeSyncManager;
 pub use state::SyncState;
-pub use terminal_blocks::{TerminalBlock, TerminalBlockManager};
 
 /// Legacy sync manager - kept for compatibility but simplified.
 /// Use SequentialSyncManager for all synchronization needs.

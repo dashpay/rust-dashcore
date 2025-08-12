@@ -1,0 +1,102 @@
+{
+  "version": 2,
+  "network": "testnet",
+  "chain_tip": {
+    "height": 1100000,
+    "hash": "000000078cc3952c7f594de921ae82fcf430a5f3b86755cd72acd819d0001015",
+    "prev_hash": "00000068da3dc19e54cefd3f7e2a7f380bf8d9a0eb1090a7197c3e0b10e2cf1f",
+    "time": 1725934127
+  },
+  "sync_progress": {
+    "header_height": 1100000,
+    "filter_header_height": 1100000,
+    "masternode_height": 0,
+    "peer_count": 1,
+    "headers_synced": false,
+    "filter_headers_synced": false,
+    "masternodes_synced": false,
+    "filter_sync_available": false,
+    "filters_downloaded": 0,
+    "last_synced_filter_height": null,
+    "sync_start": {
+      "secs_since_epoch": 1753149686,
+      "nanos_since_epoch": 593383000
+    },
+    "last_update": {
+      "secs_since_epoch": 1753149686,
+      "nanos_since_epoch": 593383000
+    }
+  },
+  "checkpoints": [
+    {
+      "height": 1100000,
+      "block_hash": "000000078cc3952c7f594de921ae82fcf430a5f3b86755cd72acd819d0001015",
+      "filter_header": null,
+      "validated": true,
+      "created_at": {
+        "secs_since_epoch": 1753149686,
+        "nanos_since_epoch": 594039000
+      }
+    },
+    {
+      "height": 1100000,
+      "block_hash": "000000078cc3952c7f594de921ae82fcf430a5f3b86755cd72acd819d0001015",
+      "filter_header": null,
+      "validated": true,
+      "created_at": {
+        "secs_since_epoch": 1753149686,
+        "nanos_since_epoch": 594269000
+      }
+    },
+    {
+      "height": 1100000,
+      "block_hash": "000000078cc3952c7f594de921ae82fcf430a5f3b86755cd72acd819d0001015",
+      "filter_header": null,
+      "validated": true,
+      "created_at": {
+        "secs_since_epoch": 1753149686,
+        "nanos_since_epoch": 594492000
+      }
+    },
+    {
+      "height": 1100000,
+      "block_hash": "000000078cc3952c7f594de921ae82fcf430a5f3b86755cd72acd819d0001015",
+      "filter_header": null,
+      "validated": true,
+      "created_at": {
+        "secs_since_epoch": 1753149686,
+        "nanos_since_epoch": 594706000
+      }
+    },
+    {
+      "height": 1100000,
+      "block_hash": "000000078cc3952c7f594de921ae82fcf430a5f3b86755cd72acd819d0001015",
+      "filter_header": null,
+      "validated": true,
+      "created_at": {
+        "secs_since_epoch": 1753149686,
+        "nanos_since_epoch": 594918000
+      }
+    }
+  ],
+  "masternode_sync": {
+    "last_synced_height": null,
+    "is_synced": false,
+    "masternode_count": 0,
+    "last_diff_height": null
+  },
+  "filter_sync": {
+    "filter_header_height": 1100000,
+    "filter_height": 0,
+    "filters_downloaded": 0,
+    "matched_heights": [],
+    "filter_sync_available": false
+  },
+  "saved_at": {
+    "secs_since_epoch": 1753149686,
+    "nanos_since_epoch": 594964000
+  },
+  "chain_work": "ChainWork { work: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 171, 184, 197] }",
+  "sync_base_height": 1100000,
+  "synced_from_checkpoint": true
+}

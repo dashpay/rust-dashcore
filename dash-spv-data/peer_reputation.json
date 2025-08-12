@@ -1,0 +1,123 @@
+[
+  [
+    "65.21.237.222:9999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 1,
+      "successful_connections": 1
+    }
+  ],
+  [
+    "46.4.162.127:9999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 1,
+      "successful_connections": 1
+    }
+  ],
+  [
+    "31.57.190.31:9999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 2,
+      "successful_connections": 2
+    }
+  ],
+  [
+    "18.237.170.32:19999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 2,
+      "successful_connections": 2
+    }
+  ],
+  [
+    "82.211.21.62:9999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 2,
+      "successful_connections": 2
+    }
+  ],
+  [
+    "64.176.80.228:9999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 1,
+      "successful_connections": 1
+    }
+  ],
+  [
+    "34.219.33.231:19999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 2,
+      "successful_connections": 2
+    }
+  ],
+  [
+    "82.211.25.15:9999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 1,
+      "successful_connections": 1
+    }
+  ],
+  [
+    "34.220.175.29:19999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 2,
+      "successful_connections": 2
+    }
+  ],
+  [
+    "82.211.25.28:9999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 1,
+      "successful_connections": 1
+    }
+  ],
+  [
+    "46.101.74.231:9999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 2,
+      "successful_connections": 2
+    }
+  ]
+]
