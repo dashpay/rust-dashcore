@@ -356,7 +356,8 @@ async fn test_process_multiple_filter_matches() {
 async fn test_sync_manager_integration() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut sync_manager = SyncManager::new(&config, received_heights).unwrap();
+    let mut sync_manager = SyncManager::new(&config, received_heights)
+        .expect("Failed to create SyncManager for integration test");
     let mut network = MockNetworkManager::new();
 
     let block_hash = BlockHash::from_slice(&[1u8; 32]).unwrap();
