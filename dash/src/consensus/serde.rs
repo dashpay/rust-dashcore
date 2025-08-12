@@ -552,7 +552,7 @@ impl<E: fmt::Debug, I: Iterator<Item = Result<u8, E>>> io::Read for IterReader<E
 /// use dashcore::Transaction;
 ///
 /// #[derive(Serialize, Deserialize)]
-/// # #[serde(crate = "actual_serde")]
+/// # #[serde(crate = "serde")]
 /// pub struct MyStruct {
 ///     #[serde(with = "consensus::serde::With::<consensus::serde::Hex>")]
 ///     tx: Transaction,

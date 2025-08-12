@@ -46,11 +46,6 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::str::FromStr;
 
-use bech32;
-use hashes::{Hash, HashEngine, sha256};
-use internals::write_err;
-use secp256k1::{Secp256k1, Verification, XOnlyPublicKey};
-
 use crate::base58;
 use crate::blockdata::constants::{
     MAX_SCRIPT_ELEMENT_SIZE, PUBKEY_ADDRESS_PREFIX_MAIN, PUBKEY_ADDRESS_PREFIX_TEST,
@@ -66,7 +61,13 @@ use crate::error::ParseIntError;
 use crate::hash_types::{PubkeyHash, ScriptHash};
 use crate::prelude::*;
 use crate::taproot::TapNodeHash;
+use bech32;
 use dash_network::Network;
+use hashes::{Hash, HashEngine, sha256};
+use internals::write_err;
+use secp256k1::{Secp256k1, Verification, XOnlyPublicKey};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 /// Address error.
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -183,6 +184,7 @@ impl From<bech32::Error> for Error {
 
 /// The different types of addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum AddressType {
     /// Pay to pubkey hash.
@@ -813,12 +815,112 @@ crate::serde_utils::serde_string_serialize_impl!(Address, "a Dash address");
 crate::serde_utils::serde_string_deserialize_impl!(Address<NetworkUnchecked>, "a Dash address");
 
 #[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Address<NetworkChecked> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use core::str::FromStr;
+        use serde::de::Error;
+
+        let s = String::deserialize(deserializer)?;
+        let addr_unchecked = Address::<NetworkUnchecked>::from_str(&s).map_err(D::Error::custom)?;
+
+        // For NetworkChecked, we need to assume a network. This is a limitation
+        // of deserializing without network context. Users should use Address<NetworkUnchecked>
+        // for serde when the network is not known at compile time.
+        addr_unchecked.require_network(Network::Dash).map_err(D::Error::custom)
+    }
+}
+
+#[cfg(feature = "serde")]
 impl serde::Serialize for Address<NetworkUnchecked> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         serializer.collect_str(&DisplayUnchecked(self))
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl bincode::Encode for Address {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        self.to_string().encode(encoder)
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl bincode::Decode for Address {
+    fn decode<D: bincode::de::Decoder>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        use core::str::FromStr;
+        let s = String::decode(decoder)?;
+        Address::from_str(&s)
+            .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))
+            .map(|a| a.assume_checked())
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<'de> bincode::BorrowDecode<'de> for Address {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        use core::str::FromStr;
+        let s = String::borrow_decode(decoder)?;
+        Address::from_str(&s)
+            .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))
+            .map(|a| a.assume_checked())
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl bincode::Encode for AddressType {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        use bincode::Encode;
+        (*self as u8).encode(encoder)
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl bincode::Decode for AddressType {
+    fn decode<D: bincode::de::Decoder>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let val = u8::decode(decoder)?;
+        match val {
+            0 => Ok(AddressType::P2pkh),
+            1 => Ok(AddressType::P2sh),
+            2 => Ok(AddressType::P2wpkh),
+            3 => Ok(AddressType::P2wsh),
+            4 => Ok(AddressType::P2tr),
+            _ => Err(bincode::error::DecodeError::OtherString("invalid address type".to_string())),
+        }
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<'de> bincode::BorrowDecode<'de> for AddressType {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let val = u8::borrow_decode(decoder)?;
+        match val {
+            0 => Ok(AddressType::P2pkh),
+            1 => Ok(AddressType::P2sh),
+            2 => Ok(AddressType::P2wpkh),
+            3 => Ok(AddressType::P2wsh),
+            4 => Ok(AddressType::P2tr),
+            _ => Err(bincode::error::DecodeError::OtherString("invalid address type".to_string())),
+        }
     }
 }
 

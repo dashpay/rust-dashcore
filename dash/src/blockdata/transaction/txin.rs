@@ -31,7 +31,6 @@ use crate::{Witness, io};
 /// A transaction input, which defines old coins to be consumed
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct TxIn {
     /// The reference to the previous output that is being used an an input.

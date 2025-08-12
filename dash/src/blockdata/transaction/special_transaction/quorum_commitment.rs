@@ -37,7 +37,6 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 ///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct QuorumEntry {
     pub version: u16,
@@ -182,7 +181,7 @@ impl Decodable for QuorumEntry {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct QuorumCommitmentPayload {
     version: u16,
     height: u32,

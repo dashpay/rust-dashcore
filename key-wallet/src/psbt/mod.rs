@@ -782,7 +782,7 @@ mod display_from_str {
     use core::fmt::{self, Display, Formatter};
     use core::str::FromStr;
 
-    use base64::display::Base64Display;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     use internals::write_err;
 
     use super::{Error, PartiallySignedTransaction};
@@ -794,7 +794,7 @@ mod display_from_str {
         /// Error in internal PSBT data structure.
         PsbtEncoding(Error),
         /// Error in PSBT Base64 encoding.
-        Base64Encoding(::base64::DecodeError),
+        Base64Encoding(base64::DecodeError),
     }
 
     impl Display for PsbtParseError {
@@ -822,7 +822,7 @@ mod display_from_str {
 
     impl Display for PartiallySignedTransaction {
         fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            write!(f, "{}", Base64Display::with_config(&self.serialize(), base64::STANDARD))
+            write!(f, "{}", STANDARD.encode(&self.serialize()))
         }
     }
 
@@ -830,7 +830,7 @@ mod display_from_str {
         type Err = PsbtParseError;
 
         fn from_str(s: &str) -> Result<Self, Self::Err> {
-            let data = base64::decode(s).map_err(PsbtParseError::Base64Encoding)?;
+            let data = STANDARD.decode(s).map_err(PsbtParseError::Base64Encoding)?;
             PartiallySignedTransaction::deserialize(&data).map_err(PsbtParseError::PsbtEncoding)
         }
     }
@@ -850,16 +850,16 @@ mod tests {
 
     use super::*;
     use crate::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey, KeySource};
-    use crate::blockdata::script::ScriptBuf;
-    use crate::blockdata::transaction::outpoint::OutPoint;
-    use crate::blockdata::transaction::txin::TxIn;
-    use crate::blockdata::transaction::txout::TxOut;
-    use crate::blockdata::transaction::Transaction;
-    use crate::blockdata::witness::Witness;
     use crate::internal_macros::hex;
     use crate::psbt::map::{Input, Output};
     use crate::psbt::raw;
     use crate::psbt::serialize::{Deserialize, Serialize};
+    use dashcore::blockdata::script::ScriptBuf;
+    use dashcore::blockdata::transaction::outpoint::OutPoint;
+    use dashcore::blockdata::transaction::txin::TxIn;
+    use dashcore::blockdata::transaction::txout::TxOut;
+    use dashcore::blockdata::transaction::Transaction;
+    use dashcore::blockdata::witness::Witness;
 
     #[test]
     fn trivial_psbt() {
@@ -1130,15 +1130,15 @@ mod tests {
         use std::str::FromStr;
 
         use super::*;
-        use crate::blockdata::script::ScriptBuf;
-        use crate::blockdata::transaction::outpoint::OutPoint;
-        use crate::blockdata::transaction::txin::TxIn;
-        use crate::blockdata::transaction::txout::TxOut;
-        use crate::blockdata::transaction::Transaction;
-        use crate::blockdata::witness::Witness;
         use crate::psbt::map::{Input, Map, Output};
         use crate::psbt::{raw, Error, PartiallySignedTransaction};
         use crate::sighash::EcdsaSighashType;
+        use dashcore::blockdata::script::ScriptBuf;
+        use dashcore::blockdata::transaction::outpoint::OutPoint;
+        use dashcore::blockdata::transaction::txin::TxIn;
+        use dashcore::blockdata::transaction::txout::TxOut;
+        use dashcore::blockdata::transaction::Transaction;
+        use dashcore::blockdata::witness::Witness;
 
         #[test]
         #[should_panic(expected = "InvalidMagic")]

@@ -30,7 +30,7 @@ use crate::relative;
 #[allow(clippy::derive_ord_xor_partial_ord)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub enum LockTime {
     /// A block height lock time value.
     Blocks(Height),
@@ -192,7 +192,7 @@ impl fmt::Display for LockTime {
 /// A relative lock time lock-by-blockheight value.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct Height(u16);
 
 impl Height {
@@ -246,7 +246,7 @@ impl fmt::Display for Height {
 /// For BIP 68 relative lock-by-blocktime locks, time is measure in 512 second intervals.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct Time(u16);
 
 impl Time {

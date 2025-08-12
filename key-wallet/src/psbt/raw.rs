@@ -11,14 +11,14 @@ use core::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
-use super::serialize::{Deserialize, Serialize};
+use super::serialize::{self, Deserialize, Serialize};
 use crate::psbt::Error;
 use alloc::vec::Vec;
 use dashcore::consensus::encode::{
     self, deserialize, serialize, Decodable, Encodable, ReadExt, VarInt, WriteExt, MAX_VEC_SIZE,
 };
 use dashcore::io;
-use internals::hex::display::DisplayHex;
+use dashcore::prelude::DisplayHex;
 
 /// A PSBT key in its raw byte form.
 #[derive(Debug, PartialEq, Hash, Eq, Clone, Ord, PartialOrd)]
@@ -127,7 +127,7 @@ impl Serialize for Key {
 impl Serialize for Pair {
     fn serialize(&self) -> Vec<u8> {
         let mut buf = Vec::new();
-        buf.extend(self.key.serialize());
+        buf.extend(serialize::Serialize::serialize(&self.key));
         // <value> := <valuelen> <valuedata>
         self.value.consensus_encode(&mut buf).unwrap();
         buf

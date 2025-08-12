@@ -16,10 +16,10 @@ pub mod root_extended_keys;
 pub mod stats;
 
 use self::account_collection::AccountCollection;
-use self::config::WalletConfig;
+pub(crate) use self::config::WalletConfig;
 use self::metadata::WalletMetadata;
 use self::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
-use crate::account::{Account, SpecialPurposeType};
+use crate::account::Account;
 use crate::mnemonic::Mnemonic;
 use crate::seed::Seed;
 use crate::Network;
@@ -108,6 +108,7 @@ impl fmt::Display for Wallet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mnemonic::Language;
 
     #[test]
     fn test_wallet_creation() {
@@ -140,7 +141,6 @@ mod tests {
     #[test]
     fn test_account_creation() {
         let config = WalletConfig {
-            network: Network::Testnet,
             ..Default::default()
         };
 
@@ -155,7 +155,6 @@ mod tests {
     #[test]
     fn test_address_generation() {
         let config = WalletConfig {
-            network: Network::Testnet,
             ..Default::default()
         };
 

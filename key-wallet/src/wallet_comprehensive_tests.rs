@@ -5,8 +5,8 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
+    use crate::account::address_pool::{AddressPool, KeySource};
     use crate::account::{Account, AccountType};
-    use crate::address_pool::{AddressPool, KeySource};
     use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey};
     use crate::gap_limit::{GapLimit, GapLimitManager};
     use crate::mnemonic::{Language, Mnemonic};
@@ -24,18 +24,18 @@ mod tests {
     fn test_wallet_transaction_creation() {
         let config = WalletConfig::default();
 
-        let mut wallet = Wallet::new(config, Network::Testnet).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
 
         // Generate some addresses
-        let addr1 = wallet.get_next_receive_address().unwrap();
-        let addr2 = wallet.get_next_receive_address().unwrap();
+        let addr1 = wallet.get_next_receive_address(Network::Testnet).unwrap();
+        let addr2 = wallet.get_next_receive_address(Network::Testnet).unwrap();
 
         // addr1 and addr2 should be the same (first unused)
         assert_eq!(addr1, addr2);
 
         // Mark first as used to get different address
         wallet.mark_address_used(&addr1);
-        let addr3 = wallet.get_next_receive_address().unwrap();
+        let addr3 = wallet.get_next_receive_address(Network::Testnet).unwrap();
 
         assert_ne!(addr1, addr3); // Should be different after marking used
     }
@@ -44,11 +44,11 @@ mod tests {
     fn test_wallet_balance_tracking() {
         let config = WalletConfig::default();
 
-        let mut wallet = Wallet::new(config, Network::Testnet).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
 
         // Update balances for different accounts
-        wallet.get_account_mut(0).unwrap().update_balance(100000, 50000, 0);
-        wallet.get_account_mut(1).unwrap().update_balance(200000, 0, 10000);
+        wallet.get_account_mut(Network::Testnet, 0).unwrap().update_balance(100000, 50000, 0);
+        wallet.get_account_mut(Network::Testnet, 1).unwrap().update_balance(200000, 0, 10000);
 
         let total = wallet.total_balance();
         assert_eq!(total.confirmed, 300000);
@@ -62,8 +62,6 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
 
         let config = WalletConfig {
-            external_gap_limit: 20,
-            internal_gap_limit: 10,
             ..Default::default()
         };
 
@@ -392,7 +390,7 @@ mod tests {
 
         // Verify addresses match
         let addr1 = wallet
-            .accounts
+            .standard_accounts
             .get(&0)
             .unwrap()
             .external_addresses
@@ -400,7 +398,7 @@ mod tests {
             .map(|i| i.address.clone());
 
         let addr2 = watch_only
-            .accounts
+            .standard_accounts
             .get(&0)
             .unwrap()
             .external_addresses

@@ -388,7 +388,7 @@ impl<'de> serde::Deserialize<'de> for LockTime {
 /// An absolute block height, guaranteed to always contain a valid height value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct Height(u32);
 
 impl Height {
@@ -479,7 +479,7 @@ impl FromHexStr for Height {
 /// threshold) seconds since epoch'.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+
 pub struct Time(u32);
 
 impl Time {

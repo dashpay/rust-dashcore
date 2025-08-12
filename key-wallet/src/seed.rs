@@ -4,6 +4,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+#[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use core::fmt;
 use core::str::FromStr;
