@@ -39,14 +39,14 @@ use dashcore::hashes::hex::Error::InvalidChar;
 use dashcore::hashes::sha256;
 use dashcore::{
     Address, Amount, BlockHash, PrivateKey, ProTxHash, PublicKey, QuorumHash, Script, ScriptBuf,
-    SignedAmount, Transaction, TxMerkleNode, Txid, bip32, bip158,
+    SignedAmount, Transaction, TxMerkleNode, Txid, bip158,
 };
 use hex::FromHexError;
+use key_wallet::bip32;
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use serde_with::{Bytes, DisplayFromStr, serde_as};
-
 //TODO(stevenroose) consider using a Time type
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -205,7 +205,7 @@ pub struct GetBestChainLockResult {
 #[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetBlockResult {
-    pub hash: dashcore::BlockHash,
+    pub hash: BlockHash,
     pub confirmations: i32,
     pub size: usize,
     pub strippedsize: Option<usize>,
@@ -213,7 +213,7 @@ pub struct GetBlockResult {
     pub version: i32,
     #[serde(default, deserialize_with = "deserialize_hex_opt")]
     pub version_hex: Option<Vec<u8>>,
-    pub merkleroot: dashcore::TxMerkleNode,
+    pub merkleroot: TxMerkleNode,
     pub tx: Vec<Txid>,
     pub cb_tx: CoinbaseTxDetails,
     pub time: usize,
@@ -223,15 +223,15 @@ pub struct GetBlockResult {
     pub difficulty: f64,
     pub chainwork: Vec<u8>,
     pub n_tx: usize,
-    pub previousblockhash: Option<dashcore::BlockHash>,
-    pub nextblockhash: Option<dashcore::BlockHash>,
+    pub previousblockhash: Option<BlockHash>,
+    pub nextblockhash: Option<BlockHash>,
     pub chainlock: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetBlockHeaderResult {
-    pub hash: dashcore::BlockHash,
+    pub hash: BlockHash,
     pub confirmations: i32,
     pub height: usize,
     pub version: Version,
@@ -249,9 +249,9 @@ pub struct GetBlockHeaderResult {
     pub chainwork: Vec<u8>,
     pub n_tx: usize,
     #[serde(rename = "previousblockhash")]
-    pub previous_block_hash: Option<dashcore::BlockHash>,
+    pub previous_block_hash: Option<BlockHash>,
     #[serde(rename = "nextblockhash")]
-    pub next_block_hash: Option<dashcore::BlockHash>,
+    pub next_block_hash: Option<BlockHash>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
@@ -263,7 +263,7 @@ pub struct GetBlockStatsResult {
     #[serde(rename = "avgtxsize")]
     pub avg_tx_size: u32,
     #[serde(rename = "blockhash")]
-    pub block_hash: dashcore::BlockHash,
+    pub block_hash: BlockHash,
     #[serde(rename = "feerate_percentiles")]
     pub fee_rate_percentiles: FeeRatePercentiles,
     pub height: u32,
@@ -320,7 +320,7 @@ pub struct GetBlockStatsResultPartial {
     #[serde(default, rename = "avgtxsize", skip_serializing_if = "Option::is_none")]
     pub avg_tx_size: Option<u32>,
     #[serde(default, rename = "blockhash", skip_serializing_if = "Option::is_none")]
-    pub block_hash: Option<dashcore::BlockHash>,
+    pub block_hash: Option<BlockHash>,
     #[serde(default, rename = "feerate_percentiles", skip_serializing_if = "Option::is_none")]
     pub fee_rate_percentiles: Option<FeeRatePercentiles>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -486,8 +486,8 @@ impl BlockStatsFields {
     }
 }
 
-impl fmt::Display for BlockStatsFields {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for BlockStatsFields {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}", self.get_rpc_keyword())
     }
 }
@@ -590,7 +590,7 @@ pub struct GetRawTransactionResultVout {
 pub struct GetRawTransactionResult {
     #[serde(default, rename = "in_active_chain")]
     pub in_active_chain: bool,
-    pub txid: dashcore::Txid,
+    pub txid: Txid,
     pub size: usize,
     pub version: u32,
     #[serde(rename = "type")]
@@ -603,7 +603,7 @@ pub struct GetRawTransactionResult {
     pub extra_payload: Option<Vec<u8>>,
     #[serde(with = "hex")]
     pub hex: Vec<u8>,
-    pub blockhash: Option<dashcore::BlockHash>,
+    pub blockhash: Option<BlockHash>,
     pub height: Option<i32>,
     pub confirmations: Option<u32>,
     pub time: Option<usize>,
@@ -690,12 +690,12 @@ pub struct WalletTxInfo {
     pub blockindex: Option<usize>,
     pub blocktime: Option<u64>,
     pub blockheight: Option<u32>,
-    pub txid: dashcore::Txid,
+    pub txid: Txid,
     pub time: u64,
     pub timereceived: u64,
     /// Conflicting transaction ids
     #[serde(rename = "walletconflicts")]
-    pub wallet_conflicts: Vec<dashcore::Txid>,
+    pub wallet_conflicts: Vec<Txid>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize)]
@@ -807,7 +807,7 @@ pub struct ListReceivedByAddressResult {
     pub amount: Amount,
     pub confirmations: u32,
     pub label: String,
-    pub txids: Vec<dashcore::Txid>,
+    pub txids: Vec<Txid>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -825,7 +825,7 @@ impl SignRawTransactionResult {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct TestMempoolAcceptResult {
-    pub txid: dashcore::Txid,
+    pub txid: Txid,
     pub allowed: bool,
     #[serde(rename = "reject-reason")]
     pub reject_reason: Option<String>,
@@ -1024,10 +1024,10 @@ pub struct GetMempoolEntryResult {
     /// Fee information
     pub fees: GetMempoolEntryResultFees,
     /// Unconfirmed transactions used as inputs for this transaction
-    pub depends: Vec<dashcore::Txid>,
+    pub depends: Vec<Txid>,
     /// Unconfirmed transactions spending outputs from this transaction
     #[serde(rename = "spentby")]
-    pub spent_by: Vec<dashcore::Txid>,
+    pub spent_by: Vec<Txid>,
     /// Whether this transaction is currently unbroadcast (initial broadcast not yet acknowledged by any peers)
     /// Added in dashcore Core v0.21
     pub unbroadcast: Option<bool>,
@@ -1138,7 +1138,7 @@ impl<'de> serde::Deserialize<'de> for ImportMultiRescanSince {
         impl<'de> de::Visitor<'de> for Visitor {
             type Value = ImportMultiRescanSince;
 
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
                 write!(formatter, "unix timestamp or 'now'")
             }
 
@@ -1718,7 +1718,7 @@ impl serde::Serialize for SigHashType {
 #[derive(Serialize, Clone, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateRawTransactionInput {
-    pub txid: dashcore::Txid,
+    pub txid: Txid,
     pub vout: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sequence: Option<u32>,
@@ -1916,8 +1916,8 @@ impl<'a> serde::Serialize for PubKeyOrAddress<'a> {
         S: Serializer,
     {
         match *self {
-            PubKeyOrAddress::Address(a) => serde::Serialize::serialize(a, serializer),
-            PubKeyOrAddress::PubKey(k) => serde::Serialize::serialize(k, serializer),
+            PubKeyOrAddress::Address(a) => Serialize::serialize(a, serializer),
+            PubKeyOrAddress::PubKey(k) => Serialize::serialize(k, serializer),
         }
     }
 }
@@ -2842,8 +2842,8 @@ pub struct QuorumMasternodeListItem {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MasternodeDiff {
-    pub base_block_hash: dashcore::BlockHash,
-    pub block_hash: dashcore::BlockHash,
+    pub base_block_hash: BlockHash,
+    pub block_hash: BlockHash,
     #[serde_as(as = "Bytes")]
     pub cb_tx_merkle_tree: Vec<u8>,
     #[serde_as(as = "Bytes")]
@@ -2958,7 +2958,7 @@ pub struct QuorumRotationInfo {
     pub mn_list_diff_at_h_minus_c: MasternodeDiff,
     pub mn_list_diff_at_h_minus_2c: MasternodeDiff,
     pub mn_list_diff_at_h_minus_3c: MasternodeDiff,
-    pub block_hash_list: Vec<dashcore::BlockHash>,
+    pub block_hash_list: Vec<BlockHash>,
     pub quorum_snapshot_list: Vec<QuorumSnapshot>,
     pub mn_list_diff_list: Vec<MasternodeDiff>,
 }
@@ -3055,8 +3055,8 @@ pub enum ProTxRevokeReason {
 #[derive(Debug)]
 pub struct HexError(FromHexError);
 
-impl std::fmt::Display for HexError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for HexError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Failed to deserialize hex string: {}", self.0)
     }
 }
@@ -3103,8 +3103,8 @@ where
 #[derive(Debug)]
 pub struct CustomAddressError(address::Error);
 
-impl std::fmt::Display for CustomAddressError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for CustomAddressError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Failed to deserialize address: {}", self.0)
     }
 }
@@ -3120,8 +3120,8 @@ impl From<address::Error> for CustomAddressError {
 #[derive(Debug)]
 pub struct ArrayConversionError(Vec<u8>);
 
-impl std::fmt::Display for ArrayConversionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for ArrayConversionError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Failed to convert Vec<u8> to [u8; 20]: {:?}", self.0)
     }
 }
@@ -3175,7 +3175,7 @@ where
     let str_sequence = String::deserialize(deserializer)?;
     let str_array: Vec<String> = str_sequence.split('-').map(|item| item.to_owned()).collect();
 
-    let txid: dashcore::Txid = dashcore::Txid::from_hex(&str_array[0]).unwrap();
+    let txid: Txid = Txid::from_hex(&str_array[0]).unwrap();
     let vout: u32 = str_array[1].parse().unwrap();
 
     let outpoint = dashcore::OutPoint {
