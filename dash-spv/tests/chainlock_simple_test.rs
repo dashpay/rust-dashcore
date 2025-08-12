@@ -41,7 +41,8 @@ async fn test_chainlock_validation_flow() {
     let mut client = DashSpvClient::new(config).await.unwrap();
 
     // Test that update_chainlock_validation works
-    let updated = client.update_chainlock_validation().await.unwrap();
+    let updated = client.update_chainlock_validation().unwrap();
+
     // The update may succeed if masternodes are enabled and terminal block data is available
     // This is expected behavior - the client pre-loads terminal block data for mainnet
     if enable_masternodes && network == Network::Dash {

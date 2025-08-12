@@ -227,12 +227,12 @@ async fn test_chainlock_validation_with_masternode_engine() {
     );
 
     // Update the ChainLock manager with the engine
-    let updated = client.update_chainlock_validation().await.unwrap();
+    let updated = client.update_chainlock_validation().unwrap();
     assert!(!updated); // Should be false since we don't have a real engine
 
     // For testing, directly set a mock engine
     let engine_arc = Arc::new(mock_engine);
-    client.chainlock_manager().set_masternode_engine(engine_arc).await;
+    client.chainlock_manager().set_masternode_engine(engine_arc);
 
     // Process pending ChainLocks
     let chain_state = ChainState::new(Network::Dash);
@@ -337,18 +337,18 @@ async fn test_chainlock_manager_cache_operations() {
     let _ = chainlock_manager.process_chain_lock(chain_lock.clone(), &chain_state, storage).await;
 
     // Test cache operations
-    assert!(chainlock_manager.has_chain_lock_at_height(0).await);
+    assert!(chainlock_manager.has_chain_lock_at_height(0));
 
-    let entry = chainlock_manager.get_chain_lock_by_height(0).await;
+    let entry = chainlock_manager.get_chain_lock_by_height(0);
     assert!(entry.is_some());
     assert_eq!(entry.unwrap().chain_lock.block_height, 0);
 
-    let entry_by_hash = chainlock_manager.get_chain_lock_by_hash(&genesis.block_hash()).await;
+    let entry_by_hash = chainlock_manager.get_chain_lock_by_hash(&genesis.block_hash());
     assert!(entry_by_hash.is_some());
     assert_eq!(entry_by_hash.unwrap().chain_lock.block_height, 0);
 
     // Check stats
-    let stats = chainlock_manager.get_stats().await;
+    let stats = chainlock_manager.get_stats();
     assert!(stats.total_chain_locks > 0);
     assert_eq!(stats.highest_locked_height, Some(0));
     assert_eq!(stats.lowest_locked_height, Some(0));
@@ -379,7 +379,7 @@ async fn test_client_chainlock_update_flow() {
     let mut client = DashSpvClient::new(config, storage, network).await.unwrap();
 
     // Initially, update should fail (no masternode engine)
-    let updated = client.update_chainlock_validation().await.unwrap();
+    let updated = client.update_chainlock_validation().unwrap();
     assert!(!updated);
 
     // Simulate masternode sync by manually setting sequential sync state
@@ -406,7 +406,7 @@ async fn test_client_chainlock_update_flow() {
     client.sync_manager.masternode_sync_mut().set_engine(Some(mock_engine));
 
     // Now update should succeed
-    let updated = client.update_chainlock_validation().await.unwrap();
+    let updated = client.update_chainlock_validation().unwrap();
     assert!(updated);
 
     info!("ChainLock validation update flow test completed");

@@ -557,6 +557,10 @@ impl DiskStorageManager {
                         // Transition Saving -> Clean, unless new changes occurred (Saving -> Dirty)
                         if segment.state == SegmentState::Saving {
                             segment.state = SegmentState::Clean;
+                            tracing::debug!(
+                                "Header segment {} save completed, state: Clean",
+                                segment_id
+                            );
                         } else {
                             tracing::debug!("Header segment {} save completed, but state is {:?} (likely dirty again)", segment_id, segment.state);
                         }
@@ -570,13 +574,21 @@ impl DiskStorageManager {
                         // Transition Saving -> Clean, unless new changes occurred (Saving -> Dirty)
                         if segment.state == SegmentState::Saving {
                             segment.state = SegmentState::Clean;
+                            tracing::debug!(
+                                "Filter segment {} save completed, state: Clean",
+                                segment_id
+                            );
                         } else {
                             tracing::debug!("Filter segment {} save completed, but state is {:?} (likely dirty again)", segment_id, segment.state);
                         }
                     }
                 }
-                WorkerNotification::IndexSaved => {}
-                WorkerNotification::UtxoCacheSaved => {}
+                WorkerNotification::IndexSaved => {
+                    tracing::debug!("Index save completed");
+                }
+                WorkerNotification::UtxoCacheSaved => {
+                    tracing::debug!("UTXO cache save completed");
+                }
             }
         }
     }
@@ -768,6 +780,10 @@ impl DiskStorageManager {
             return Ok(());
         }
 
+        // Acquire write locks for the entire operation to prevent race conditions
+        let mut cached_tip = self.cached_tip_height.write().await;
+        let mut reverse_index = self.header_hash_index.write().await;
+
         let mut next_height = start_height;
         let initial_height = next_height;
 
@@ -782,12 +798,8 @@ impl DiskStorageManager {
             let segment_id = Self::get_segment_id(next_height);
             let offset = Self::get_segment_offset(next_height);
 
-            // Ensure segment is loaded BEFORE acquiring locks to avoid deadlock
+            // Ensure segment is loaded
             self.ensure_segment_loaded(segment_id).await?;
-
-            // Now acquire write locks for the update operation
-            let mut cached_tip = self.cached_tip_height.write().await;
-            let mut reverse_index = self.header_hash_index.write().await;
 
             // Update segment
             {
@@ -814,14 +826,13 @@ impl DiskStorageManager {
             // Update reverse index
             reverse_index.insert(header.block_hash(), next_height);
 
-            // Update cached tip for each header to keep it current
-            *cached_tip = Some(next_height);
-
-            // Release locks before processing next header to avoid holding them too long
-            drop(reverse_index);
-            drop(cached_tip);
-
             next_height += 1;
+        }
+
+        // Update cached tip height atomically with reverse index
+        // Only update if we actually stored headers
+        if !headers.is_empty() {
+            *cached_tip = Some(next_height - 1);
         }
 
         let final_height = if next_height > 0 {
@@ -837,28 +848,12 @@ impl DiskStorageManager {
             final_height
         );
 
-        // Save dirty segments periodically
-        // - Every 100 headers when storing small batches (common during sync)
-        // - Every 1000 headers when storing large batches
-        // - At multiples of 1000 for checkpoint saves
-        let should_save = if headers.len() <= 10 {
-            // For small batches (1-10 headers), save every 100 headers
-            next_height % 100 == 0
-        } else if headers.len() >= 1000 {
-            // For large batches, always save
-            true
-        } else {
-            // For medium batches, save at 1000 boundaries
-            next_height % 1000 == 0
-        };
+        // Release locks before saving (to avoid deadlocks during background saves)
+        drop(reverse_index);
+        drop(cached_tip);
 
-        tracing::debug!(
-            "DiskStorage: should_save = {}, next_height = {}, headers.len() = {}",
-            should_save,
-            next_height,
-            headers.len()
-        );
-        if should_save {
+        // Save dirty segments periodically (every 1000 headers)
+        if headers.len() >= 1000 || next_height % 1000 == 0 {
             self.save_dirty_segments().await?;
         }
 
@@ -1138,15 +1133,6 @@ impl StorageManager for DiskStorageManager {
             let segment_id = Self::get_segment_id(next_height);
             let offset = Self::get_segment_offset(next_height);
 
-            // Debug logging for hang investigation
-            if next_height == 2310663 {
-                tracing::warn!(
-                    "🔍 Processing header at critical height 2310663 - segment_id: {}, offset: {}",
-                    segment_id,
-                    offset
-                );
-            }
-
             // Ensure segment is loaded
             self.ensure_segment_loaded(segment_id).await?;
 
@@ -1219,22 +1205,8 @@ impl StorageManager for DiskStorageManager {
         drop(reverse_index);
         drop(cached_tip);
 
-        // Save dirty segments periodically
-        // - Every 100 headers when storing small batches (common during sync)
-        // - Every 1000 headers when storing large batches
-        // - At multiples of 1000 for checkpoint saves
-        let should_save = if headers.len() <= 10 {
-            // For small batches (1-10 headers), save every 100 headers
-            next_height % 100 == 0
-        } else if headers.len() >= 1000 {
-            // For large batches, always save
-            true
-        } else {
-            // For medium batches, save at 1000 boundaries
-            next_height % 1000 == 0
-        };
-
-        if should_save {
+        // Save dirty segments periodically (every 1000 headers)
+        if headers.len() >= 1000 || next_height % 1000 == 0 {
             self.save_dirty_segments().await?;
         }
 
@@ -1283,9 +1255,6 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
-        // TODO: This method currently expects storage-relative heights (0-based from sync_base_height).
-        // Consider refactoring to accept blockchain heights and handle conversion internally for better UX.
-
         // First check if this height is within our known range
         let tip_height = self.cached_tip_height.read().await;
         if let Some(tip) = *tip_height {
@@ -1435,109 +1404,27 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
-        // Store the main state info as JSON (without the large engine_state)
-        let json_path = self.base_path.join("state/masternode.json");
-        let engine_path = self.base_path.join("state/masternode_engine.bin");
-
-        // Create a version without the engine state for JSON storage
-        let json_state = serde_json::json!({
-            "last_height": state.last_height,
-            "last_update": state.last_update,
-            "terminal_block_hash": state.terminal_block_hash,
-            "engine_state_size": state.engine_state.len()
-        });
-
-        let json = serde_json::to_string_pretty(&json_state).map_err(|e| {
+        let path = self.base_path.join("state/masternode.json");
+        let json = serde_json::to_string_pretty(state).map_err(|e| {
             StorageError::Serialization(format!("Failed to serialize masternode state: {}", e))
         })?;
-        tokio::fs::write(json_path, json).await?;
 
-        // Store the engine state as binary
-        if !state.engine_state.is_empty() {
-            tokio::fs::write(engine_path, &state.engine_state).await?;
-        }
-
+        tokio::fs::write(path, json).await?;
         Ok(())
     }
 
     async fn load_masternode_state(&self) -> StorageResult<Option<MasternodeState>> {
-        let json_path = self.base_path.join("state/masternode.json");
-        let engine_path = self.base_path.join("state/masternode_engine.bin");
-
-        if !json_path.exists() {
+        let path = self.base_path.join("state/masternode.json");
+        if !path.exists() {
             return Ok(None);
         }
 
-        // Try to read the file with size limit check
-        let metadata = tokio::fs::metadata(&json_path).await?;
-        if metadata.len() > 10_000_000 {
-            // 10MB limit for JSON file
-            tracing::error!(
-                "Masternode state JSON file is too large: {} bytes. Likely corrupted.",
-                metadata.len()
-            );
-            // Delete the corrupted file and return None to start fresh
-            let _ = tokio::fs::remove_file(&json_path).await;
-            let _ = tokio::fs::remove_file(&engine_path).await;
-            return Ok(None);
-        }
+        let content = tokio::fs::read_to_string(path).await?;
+        let state = serde_json::from_str(&content).map_err(|e| {
+            StorageError::Serialization(format!("Failed to deserialize masternode state: {}", e))
+        })?;
 
-        let content = tokio::fs::read_to_string(&json_path).await?;
-
-        // First try to parse as the new format (without engine_state in JSON)
-        if let Ok(json_state) = serde_json::from_str::<serde_json::Value>(&content) {
-            if !json_state.get("engine_state").is_some() {
-                // New format - load from separate files
-                let last_height = json_state["last_height"]
-                    .as_u64()
-                    .ok_or_else(|| StorageError::Serialization("Missing last_height".to_string()))?
-                    as u32;
-                let last_update = json_state["last_update"].as_u64().ok_or_else(|| {
-                    StorageError::Serialization("Missing last_update".to_string())
-                })?;
-                let terminal_block_hash =
-                    json_state["terminal_block_hash"].as_array().and_then(|arr| {
-                        if arr.len() == 32 {
-                            let mut hash = [0u8; 32];
-                            for (i, v) in arr.iter().enumerate() {
-                                hash[i] = v.as_u64()? as u8;
-                            }
-                            Some(hash)
-                        } else {
-                            None
-                        }
-                    });
-
-                // Load the engine state binary if it exists
-                let engine_state = if engine_path.exists() {
-                    tokio::fs::read(engine_path).await?
-                } else {
-                    Vec::new()
-                };
-
-                return Ok(Some(MasternodeState {
-                    last_height,
-                    engine_state,
-                    last_update,
-                    terminal_block_hash,
-                }));
-            }
-        }
-
-        // Fall back to old format (with engine_state in JSON) - but with size protection
-        match serde_json::from_str::<MasternodeState>(&content) {
-            Ok(state) => Ok(Some(state)),
-            Err(e) => {
-                tracing::error!(
-                    "Failed to deserialize masternode state: {}. Deleting corrupted file.",
-                    e
-                );
-                // Delete the corrupted file
-                let _ = tokio::fs::remove_file(&json_path).await;
-                let _ = tokio::fs::remove_file(&engine_path).await;
-                Ok(None)
-            }
-        }
+        Ok(Some(state))
     }
 
     async fn store_chain_state(&mut self, state: &ChainState) -> StorageResult<()> {

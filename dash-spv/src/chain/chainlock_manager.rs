@@ -6,8 +6,7 @@
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::{BlockHash, ChainLock};
 use indexmap::IndexMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use tracing::{debug, error, info, warn};
 
 use crate::error::{StorageError, StorageResult, ValidationError, ValidationResult};
@@ -58,15 +57,25 @@ impl ChainLockManager {
     }
 
     /// Set the masternode engine for validation
-    pub async fn set_masternode_engine(&self, engine: Arc<MasternodeListEngine>) {
-        let mut guard = self.masternode_engine.write().await;
-        *guard = Some(engine);
-        info!("Masternode engine set for ChainLock validation");
+    pub fn set_masternode_engine(&self, engine: Arc<MasternodeListEngine>) {
+        match self.masternode_engine.write() {
+            Ok(mut guard) => {
+                *guard = Some(engine);
+                info!("Masternode engine set for ChainLock validation");
+            }
+            Err(e) => {
+                error!("Failed to set masternode engine: {}", e);
+            }
+        }
     }
 
     /// Queue a ChainLock for validation when masternode data is available
-    pub async fn queue_pending_chainlock(&self, chain_lock: ChainLock) -> StorageResult<()> {
-        let mut pending = self.pending_chainlocks.write().await;
+    pub fn queue_pending_chainlock(&self, chain_lock: ChainLock) -> StorageResult<()> {
+        let mut pending = self
+            .pending_chainlocks
+            .write()
+            .map_err(|_| StorageError::LockPoisoned("pending_chainlocks".to_string()))?;
+
         // If at capacity, drop the oldest ChainLock
         if pending.len() >= MAX_PENDING_CHAINLOCKS {
             let dropped = pending.remove(0);
@@ -88,7 +97,10 @@ impl ChainLockManager {
         storage: &mut dyn StorageManager,
     ) -> ValidationResult<()> {
         let pending = {
-            let mut pending_guard = self.pending_chainlocks.write().await;
+            let mut pending_guard = self
+                .pending_chainlocks
+                .write()
+                .map_err(|_| ValidationError::InvalidChainLock("Lock poisoned".to_string()))?;
             std::mem::take(&mut *pending_guard)
         };
 
@@ -137,8 +149,8 @@ impl ChainLockManager {
         );
 
         // Check if we already have this chain lock
-        if self.has_chain_lock_at_height(chain_lock.block_height).await {
-            let existing = self.get_chain_lock_by_height(chain_lock.block_height).await;
+        if self.has_chain_lock_at_height(chain_lock.block_height) {
+            let existing = self.get_chain_lock_by_height(chain_lock.block_height);
             if let Some(existing_entry) = existing {
                 if existing_entry.chain_lock.block_hash != chain_lock.block_hash {
                     error!(
@@ -172,7 +184,11 @@ impl ChainLockManager {
         }
 
         // Full validation with masternode engine if available
-        let engine_guard = self.masternode_engine.read().await;
+        let engine_guard = self
+            .masternode_engine
+            .read()
+            .map_err(|_| ValidationError::InvalidChainLock("Lock poisoned".to_string()))?;
+
         let mut validated = false;
 
         if let Some(engine) = engine_guard.as_ref() {
@@ -194,7 +210,7 @@ impl ChainLockManager {
                         warn!("⚠️ Masternode engine exists but lacks required masternode lists for height {} (needs list at height {} for ChainLock validation), queueing ChainLock for later validation", 
                             chain_lock.block_height, required_height);
                         drop(engine_guard); // Release the read lock before acquiring write lock
-                        self.queue_pending_chainlock(chain_lock.clone()).await.map_err(|e| {
+                        self.queue_pending_chainlock(chain_lock.clone()).map_err(|e| {
                             ValidationError::InvalidChainLock(format!(
                                 "Failed to queue pending ChainLock: {}",
                                 e
@@ -212,7 +228,7 @@ impl ChainLockManager {
             // Queue for later validation when engine becomes available
             warn!("⚠️ Masternode engine not available, queueing ChainLock for later validation");
             drop(engine_guard); // Release the read lock before acquiring write lock
-            self.queue_pending_chainlock(chain_lock.clone()).await.map_err(|e| {
+            self.queue_pending_chainlock(chain_lock.clone()).map_err(|e| {
                 ValidationError::InvalidChainLock(format!(
                     "Failed to queue pending ChainLock: {}",
                     e
@@ -275,8 +291,14 @@ impl ChainLockManager {
     ) -> StorageResult<()> {
         // Store in memory caches
         {
-            let mut by_height = self.chain_locks_by_height.write().await;
-            let mut by_hash = self.chain_locks_by_hash.write().await;
+            let mut by_height = self
+                .chain_locks_by_height
+                .write()
+                .map_err(|_| StorageError::LockPoisoned("chain_locks_by_height".to_string()))?;
+            let mut by_hash = self
+                .chain_locks_by_hash
+                .write()
+                .map_err(|_| StorageError::LockPoisoned("chain_locks_by_hash".to_string()))?;
 
             by_height.insert(chain_lock.block_height, entry.clone());
             by_hash.insert(chain_lock.block_hash, entry.clone());
@@ -311,32 +333,29 @@ impl ChainLockManager {
     }
 
     /// Check if we have a chain lock at the given height
-    pub async fn has_chain_lock_at_height(&self, height: u32) -> bool {
-        let locks = self.chain_locks_by_height.read().await;
-        locks.contains_key(&height)
+    pub fn has_chain_lock_at_height(&self, height: u32) -> bool {
+        self.chain_locks_by_height.read().map(|locks| locks.contains_key(&height)).unwrap_or(false)
     }
 
     /// Get chain lock by height
-    pub async fn get_chain_lock_by_height(&self, height: u32) -> Option<ChainLockEntry> {
-        let locks = self.chain_locks_by_height.read().await;
-        locks.get(&height).cloned()
+    pub fn get_chain_lock_by_height(&self, height: u32) -> Option<ChainLockEntry> {
+        self.chain_locks_by_height.read().ok().and_then(|locks| locks.get(&height).cloned())
     }
 
     /// Get chain lock by block hash
-    pub async fn get_chain_lock_by_hash(&self, hash: &BlockHash) -> Option<ChainLockEntry> {
-        let locks = self.chain_locks_by_hash.read().await;
-        locks.get(hash).cloned()
+    pub fn get_chain_lock_by_hash(&self, hash: &BlockHash) -> Option<ChainLockEntry> {
+        self.chain_locks_by_hash.read().ok().and_then(|locks| locks.get(hash).cloned())
     }
 
     /// Check if a block is chain-locked
-    pub async fn is_block_chain_locked(&self, block_hash: &BlockHash, height: u32) -> bool {
+    pub fn is_block_chain_locked(&self, block_hash: &BlockHash, height: u32) -> bool {
         // First check by hash (most specific)
-        if let Some(entry) = self.get_chain_lock_by_hash(block_hash).await {
+        if let Some(entry) = self.get_chain_lock_by_hash(block_hash) {
             return entry.validated && entry.chain_lock.block_hash == *block_hash;
         }
 
         // Then check by height
-        if let Some(entry) = self.get_chain_lock_by_height(height).await {
+        if let Some(entry) = self.get_chain_lock_by_height(height) {
             return entry.validated && entry.chain_lock.block_hash == *block_hash;
         }
 
@@ -344,22 +363,20 @@ impl ChainLockManager {
     }
 
     /// Get the highest chain-locked block height
-    pub async fn get_highest_chain_locked_height(&self) -> Option<u32> {
-        let locks = self.chain_locks_by_height.read().await;
-        locks.keys().max().cloned()
+    pub fn get_highest_chain_locked_height(&self) -> Option<u32> {
+        self.chain_locks_by_height.read().ok().and_then(|locks| locks.keys().max().cloned())
     }
 
     /// Check if a reorganization would violate chain locks
-    pub async fn would_violate_chain_lock(
-        &self,
-        reorg_from_height: u32,
-        reorg_to_height: u32,
-    ) -> bool {
+    pub fn would_violate_chain_lock(&self, reorg_from_height: u32, reorg_to_height: u32) -> bool {
         if !self.enforce_chain_locks {
             return false;
         }
 
-        let locks = self.chain_locks_by_height.read().await;
+        let locks = match self.chain_locks_by_height.read() {
+            Ok(locks) => locks,
+            Err(_) => return false, // If we can't read locks, assume no violation
+        };
 
         // Check if any chain-locked block would be reorganized
         for height in reorg_from_height..=reorg_to_height {
@@ -399,8 +416,12 @@ impl ChainLockManager {
                             validated: true,
                         };
 
-                        let mut by_height = self.chain_locks_by_height.write().await;
-                        let mut by_hash = self.chain_locks_by_hash.write().await;
+                        let mut by_height = self.chain_locks_by_height.write().map_err(|_| {
+                            StorageError::LockPoisoned("chain_locks_by_height".to_string())
+                        })?;
+                        let mut by_hash = self.chain_locks_by_hash.write().map_err(|_| {
+                            StorageError::LockPoisoned("chain_locks_by_hash".to_string())
+                        })?;
 
                         by_height.insert(chain_lock.block_height, entry.clone());
                         by_hash.insert(chain_lock.block_hash, entry);
@@ -418,9 +439,33 @@ impl ChainLockManager {
     }
 
     /// Get chain lock statistics
-    pub async fn get_stats(&self) -> ChainLockStats {
-        let by_height = self.chain_locks_by_height.read().await;
-        let by_hash = self.chain_locks_by_hash.read().await;
+    pub fn get_stats(&self) -> ChainLockStats {
+        let by_height = match self.chain_locks_by_height.read() {
+            Ok(guard) => guard,
+            Err(_) => {
+                return ChainLockStats {
+                    total_chain_locks: 0,
+                    cached_by_height: 0,
+                    cached_by_hash: 0,
+                    highest_locked_height: None,
+                    lowest_locked_height: None,
+                    enforce_chain_locks: self.enforce_chain_locks,
+                }
+            }
+        };
+        let by_hash = match self.chain_locks_by_hash.read() {
+            Ok(guard) => guard,
+            Err(_) => {
+                return ChainLockStats {
+                    total_chain_locks: 0,
+                    cached_by_height: 0,
+                    cached_by_hash: 0,
+                    highest_locked_height: None,
+                    lowest_locked_height: None,
+                    enforce_chain_locks: self.enforce_chain_locks,
+                }
+            }
+        };
 
         ChainLockStats {
             total_chain_locks: by_height.len(),

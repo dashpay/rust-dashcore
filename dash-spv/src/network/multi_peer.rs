@@ -283,7 +283,6 @@ impl MultiPeerNetworkManager {
         tokio::spawn(async move {
             log::debug!("Starting peer reader loop for {}", addr);
             let mut loop_iteration = 0;
-            let mut consecutive_no_message = 0u32;
 
             while !shutdown.load(Ordering::Relaxed) {
                 loop_iteration += 1;
@@ -305,25 +304,22 @@ impl MultiPeerNetworkManager {
 
                 // Read message with minimal lock time
                 let msg_result = {
-                    // First, check if connected with a quick read lock
-                    {
-                        let conn_guard = conn.read().await;
-                        if !conn_guard.is_connected() {
-                            log::warn!("Breaking peer reader loop for {} - connection no longer connected (iteration {})", addr, loop_iteration);
-                            break;
-                        }
+                    // Try to get a read lock first to check if connection is available
+                    let conn_guard = conn.read().await;
+                    if !conn_guard.is_connected() {
+                        log::warn!("Breaking peer reader loop for {} - connection no longer connected (iteration {})", addr, loop_iteration);
+                        drop(conn_guard);
+                        break;
                     }
+                    drop(conn_guard);
 
-                    // Acquire write lock and receive message
+                    // Now get write lock only for the duration of the read
                     let mut conn_guard = conn.write().await;
                     conn_guard.receive_message().await
                 };
 
                 match msg_result {
                     Ok(Some(msg)) => {
-                        // Reset the no-message counter since we got data
-                        consecutive_no_message = 0;
-
                         // Log all received messages at debug level to help troubleshoot
                         log::debug!("Received {:?} from {}", msg.cmd(), addr);
 
@@ -462,21 +458,8 @@ impl MultiPeerNetworkManager {
                         }
                     }
                     Ok(None) => {
-                        // No message available
-                        consecutive_no_message += 1;
-
-                        // CRITICAL: We must sleep to prevent lock starvation
-                        // The reader loop can monopolize the write lock by acquiring it
-                        // every 100ms (the socket read timeout). Use exponential backoff
-                        // to give other tasks a fair chance to acquire the lock.
-                        let backoff_ms = match consecutive_no_message {
-                            1..=5 => 10,    // First 5: 10ms
-                            6..=10 => 50,   // Next 5: 50ms
-                            11..=20 => 100, // Next 10: 100ms
-                            _ => 200,       // After 20: 200ms
-                        };
-
-                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        // No message available, continue immediately
+                        // The socket read timeout already provides necessary delay
                         continue;
                     }
                     Err(e) => {
@@ -687,28 +670,19 @@ impl MultiPeerNetworkManager {
 
                 // Send ping to all peers if needed
                 for (addr, conn) in pool.get_all_connections().await {
-                    // First check if we need to ping with a read lock
-                    let should_ping = {
-                        let conn_guard = conn.read().await;
-                        conn_guard.should_ping()
-                    };
-
-                    if should_ping {
-                        // Only acquire write lock if we actually need to ping
-                        let mut conn_guard = conn.write().await;
+                    let mut conn_guard = conn.write().await;
+                    if conn_guard.should_ping() {
                         if let Err(e) = conn_guard.send_ping().await {
                             log::error!("Failed to ping {}: {}", addr, e);
-                            drop(conn_guard); // Release lock before updating reputation
                             // Update reputation for ping failure
                             reputation_manager.update_reputation(
                                 addr,
                                 misbehavior_scores::TIMEOUT,
                                 "Ping failed",
                             ).await;
-                        } else {
-                            conn_guard.cleanup_old_pings();
                         }
                     }
+                    conn_guard.cleanup_old_pings();
                 }
 
                 // Only save known peers if not in exclusive mode
@@ -734,27 +708,10 @@ impl MultiPeerNetworkManager {
 
     /// Send a message to a single peer (using sticky peer selection for sync consistency)
     async fn send_to_single_peer(&self, message: NetworkMessage) -> NetworkResult<()> {
-        // Enhanced logging for GetHeaders debugging
-        let message_cmd = message.cmd();
-        if matches!(&message, NetworkMessage::GetHeaders(_)) {
-            tracing::info!("🔍 [TRACE] send_to_single_peer called with GetHeaders");
-        }
-
         let connections = self.pool.get_all_connections().await;
 
         if connections.is_empty() {
-            log::warn!("⚠️ No connected peers available when trying to send {}", message_cmd);
-            if matches!(&message, NetworkMessage::GetHeaders(_)) {
-                tracing::error!("🚨 [TRACE] GetHeaders failed: no connected peers!");
-            }
             return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
-        }
-
-        if matches!(&message, NetworkMessage::GetHeaders(_)) {
-            tracing::info!("🔍 [TRACE] Found {} connected peers", connections.len());
-            for (addr, _) in &connections {
-                tracing::info!("  - Peer: {}", addr);
-            }
         }
 
         // For filter-related messages, we need a peer that supports compact filters
@@ -789,40 +746,27 @@ impl MultiPeerNetworkManager {
             }
         } else {
             // For non-filter messages, use the sticky sync peer
-            if matches!(&message, NetworkMessage::GetHeaders(_)) {
-                tracing::info!("🔍 [TRACE] Checking sticky sync peer for GetHeaders");
-            }
-
             let mut current_sync_peer = self.current_sync_peer.lock().await;
             let selected = if let Some(current_addr) = *current_sync_peer {
                 // Check if current sync peer is still connected
                 if connections.iter().any(|(addr, _)| *addr == current_addr) {
                     // Keep using the same peer for sync consistency
-                    if matches!(&message, NetworkMessage::GetHeaders(_)) {
-                        tracing::info!("🔍 [TRACE] Using existing sticky peer: {}", current_addr);
-                    }
                     current_addr
                 } else {
                     // Current sync peer disconnected, pick a new one
                     let new_addr = connections[0].0;
                     log::info!(
-                        "🔄 Sync peer switched from {} to {} (previous peer disconnected)",
+                        "Sync peer switched from {} to {} (previous peer disconnected)",
                         current_addr,
                         new_addr
                     );
-                    if matches!(&message, NetworkMessage::GetHeaders(_)) {
-                        tracing::warn!("⚠️ [TRACE] Sticky peer {} disconnected during GetHeaders, switching to {}", current_addr, new_addr);
-                    }
                     *current_sync_peer = Some(new_addr);
                     new_addr
                 }
             } else {
                 // No current sync peer, pick the first available
                 let new_addr = connections[0].0;
-                log::info!("📌 Sync peer selected: {}", new_addr);
-                if matches!(&message, NetworkMessage::GetHeaders(_)) {
-                    tracing::info!("🔍 [TRACE] No sticky peer set, selecting: {}", new_addr);
-                }
+                log::info!("Sync peer selected: {}", new_addr);
                 *current_sync_peer = Some(new_addr);
                 new_addr
             };
@@ -831,37 +775,20 @@ impl MultiPeerNetworkManager {
         };
 
         // Find the connection for the selected peer
-        if matches!(&message, NetworkMessage::GetHeaders(_)) {
-            tracing::info!("🔍 [TRACE] Selected peer for GetHeaders: {}", selected_peer);
-        }
-
-        let (addr, conn) =
-            connections.iter().find(|(a, _)| *a == selected_peer).ok_or_else(|| {
-                if matches!(&message, NetworkMessage::GetHeaders(_)) {
-                    tracing::error!(
-                        "🚨 [TRACE] GetHeaders failed: selected peer {} not found in connections!",
-                        selected_peer
-                    );
-                }
-                NetworkError::ConnectionFailed("Selected peer not found".to_string())
-            })?;
+        let (addr, conn) = connections
+            .iter()
+            .find(|(a, _)| *a == selected_peer)
+            .ok_or_else(|| NetworkError::ConnectionFailed("Selected peer not found".to_string()))?;
 
         // Reduce verbosity for common sync messages
-        let message_cmd = message.cmd();
         match &message {
-            NetworkMessage::GetHeaders(gh) => {
-                tracing::info!("📤 [TRACE] About to send GetHeaders to {} - version: {}, locator: {:?}, stop: {}",
-                    addr,
-                    gh.version,
-                    gh.locator_hashes.iter().take(2).collect::<Vec<_>>(),
-                    gh.stop_hash
-                );
-            }
-            NetworkMessage::GetCFilters(_) | NetworkMessage::GetCFHeaders(_) => {
-                log::debug!("Sending {} to {}", message_cmd, addr);
+            NetworkMessage::GetHeaders(_)
+            | NetworkMessage::GetCFilters(_)
+            | NetworkMessage::GetCFHeaders(_) => {
+                log::debug!("Sending {} to {}", message.cmd(), addr);
             }
             NetworkMessage::GetHeaders2(gh2) => {
-                log::info!("📤 Sending GetHeaders2 to {} - version: {}, locator_count: {}, locator: {:?}, stop: {}",
+                log::info!("📤 Sending GetHeaders2 to {} - version: {}, locator_count: {}, locator: {:?}, stop: {}", 
                     addr,
                     gh2.version,
                     gh2.locator_hashes.len(),
@@ -873,34 +800,15 @@ impl MultiPeerNetworkManager {
                 log::info!("🤝 Sending SendHeaders2 to {} - requesting compressed headers", addr);
             }
             _ => {
-                log::trace!("Sending {:?} to {}", message_cmd, addr);
+                log::trace!("Sending {:?} to {}", message.cmd(), addr);
             }
-        }
-
-        let is_getheaders = matches!(&message, NetworkMessage::GetHeaders(_));
-
-        if is_getheaders {
-            tracing::info!("🔍 [TRACE] Acquiring write lock for connection to {}", addr);
         }
 
         let mut conn_guard = conn.write().await;
-
-        if is_getheaders {
-            tracing::info!("🔍 [TRACE] Got write lock, calling send_message on connection");
-        }
-
-        let result = conn_guard.send_message(message).await.map_err(|e| {
-            if is_getheaders {
-                tracing::error!("🚨 [TRACE] GetHeaders send_message failed: {}", e);
-            }
-            NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e))
-        });
-
-        if is_getheaders && result.is_ok() {
-            tracing::info!("✅ [TRACE] GetHeaders successfully sent to {}", addr);
-        }
-
-        result
+        conn_guard
+            .send_message(message)
+            .await
+            .map_err(|e| NetworkError::ProtocolError(format!("Failed to send to {}: {}", addr, e)))
     }
 
     /// Broadcast a message to all connected peers
@@ -1123,8 +1031,7 @@ impl NetworkManager for MultiPeerNetworkManager {
             NetworkMessage::GetHeaders(_)
             | NetworkMessage::GetCFHeaders(_)
             | NetworkMessage::GetCFilters(_)
-            | NetworkMessage::GetData(_)
-            | NetworkMessage::GetMnListD(_) => self.send_to_single_peer(message).await,
+            | NetworkMessage::GetData(_) => self.send_to_single_peer(message).await,
             _ => {
                 // For other messages, broadcast to all peers
                 let results = self.broadcast(message).await;

@@ -23,7 +23,6 @@ use crate::storage::StorageManager;
 use crate::sync::{
     FilterSyncManager, HeaderSyncManagerWithReorg, MasternodeSyncManager, ReorgConfig,
 };
-use crate::types::ChainState;
 use crate::types::SyncProgress;
 
 use phases::{PhaseTransition, SyncPhase};
@@ -63,12 +62,6 @@ pub struct SequentialSyncManager {
 
     /// Current retry count for the active phase
     current_phase_retries: u32,
-
-    /// Time of last header request to detect timeouts near tip
-    last_header_request_time: Option<Instant>,
-
-    /// Height at which we last requested headers
-    last_header_request_height: Option<u32>,
 }
 
 impl SequentialSyncManager {
@@ -95,8 +88,6 @@ impl SequentialSyncManager {
             phase_timeout: Duration::from_secs(60), // 1 minute default timeout per phase
             max_phase_retries: 3,
             current_phase_retries: 0,
-            last_header_request_time: None,
-            last_header_request_height: None,
         })
     }
 
@@ -120,9 +111,6 @@ impl SequentialSyncManager {
             }
         }
 
-        // Also restore masternode engine state from storage
-        self.masternode_sync.restore_engine_state(storage).await?;
-
         Ok(loaded_count)
     }
 
@@ -131,15 +119,10 @@ impl SequentialSyncManager {
         self.header_sync.get_chain_height()
     }
 
-    /// Update the chain state (used for checkpoint sync)
-    pub fn update_chain_state(&mut self, chain_state: ChainState) {
-        self.header_sync.update_chain_state(chain_state);
-    }
-
     /// Start the sequential sync process
     pub async fn start_sync(
         &mut self,
-        network: &mut dyn NetworkManager,
+        _network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<bool> {
         if self.current_phase.is_syncing() {
@@ -149,69 +132,6 @@ impl SequentialSyncManager {
         tracing::info!("🚀 Starting sequential sync process");
         tracing::info!("📊 Current phase: {}", self.current_phase.name());
         self.sync_start_time = Some(Instant::now());
-
-        // Check if we actually need to sync more headers
-        let current_height = self.header_sync.get_chain_height();
-        let peer_best_height = network
-            .get_peer_best_height()
-            .await
-            .map_err(|e| SyncError::Network(format!("Failed to get peer height: {}", e)))?
-            .unwrap_or(current_height);
-
-        tracing::info!(
-            "🔍 Checking sync status - current height: {}, peer best height: {}",
-            current_height,
-            peer_best_height
-        );
-
-        // Update target height in the phase if we're downloading headers
-        if let SyncPhase::DownloadingHeaders {
-            target_height,
-            ..
-        } = &mut self.current_phase
-        {
-            *target_height = Some(peer_best_height);
-        }
-
-        // If we're already synced to peer height and have headers, transition directly to FullySynced
-        if current_height >= peer_best_height && current_height > 0 {
-            tracing::info!(
-                "✅ Already synced to peer height {} - transitioning directly to FullySynced",
-                current_height
-            );
-
-            // Calculate sync stats for already-synced state
-            let headers_synced = current_height;
-            let filters_synced = storage
-                .get_filter_tip_height()
-                .await
-                .map_err(|e| SyncError::Storage(format!("Failed to get filter tip: {}", e)))?
-                .unwrap_or(0);
-
-            self.current_phase = SyncPhase::FullySynced {
-                sync_completed_at: Instant::now(),
-                total_sync_time: Duration::from_secs(0), // No actual sync time since we were already synced
-                headers_synced,
-                filters_synced,
-                blocks_downloaded: 0,
-            };
-
-            tracing::info!(
-                "🎉 Sync state updated to FullySynced (headers: {}, filters: {})",
-                headers_synced,
-                filters_synced
-            );
-
-            return Ok(true);
-        }
-
-        // We need to sync more headers, proceed with normal sync
-        tracing::info!(
-            "📥 Need to sync {} more headers from {} to {}",
-            peer_best_height.saturating_sub(current_height),
-            current_height,
-            peer_best_height
-        );
 
         // Transition from Idle to first phase
         self.transition_to_next_phase(storage, "Starting sync").await?;
@@ -229,15 +149,6 @@ impl SequentialSyncManager {
                 // Prepare the header sync without sending requests
                 let base_hash = self.header_sync.prepare_sync(storage).await?;
                 tracing::debug!("Starting from base hash: {:?}", base_hash);
-
-                // Ensure the header sync knows it needs to continue syncing
-                if peer_best_height > current_height {
-                    tracing::info!(
-                        "📡 Header sync needs to fetch {} more headers",
-                        peer_best_height - current_height
-                    );
-                    // The header sync manager's syncing_headers flag is already set by prepare_sync
-                }
             }
             _ => {
                 // If we're not in headers phase, something is wrong
@@ -266,25 +177,8 @@ impl SequentialSyncManager {
                     // Get current tip from storage to determine base hash
                     let base_hash = self.get_base_hash_from_storage(storage).await?;
 
-                    // Track when we made this request and at what height
-                    let current_height = self.get_blockchain_height_from_storage(storage).await?;
-                    self.last_header_request_time = Some(Instant::now());
-                    self.last_header_request_height = Some(current_height);
-
                     // Request headers starting from our current tip
-                    tracing::info!(
-                        "📤 [DEBUG] Sequential sync requesting headers with base_hash: {:?}",
-                        base_hash
-                    );
-                    match self.header_sync.request_headers(network, base_hash).await {
-                        Ok(_) => {
-                            tracing::info!("✅ [DEBUG] Header request sent successfully");
-                        }
-                        Err(e) => {
-                            tracing::error!("❌ [DEBUG] Failed to request headers: {}", e);
-                            return Err(e);
-                        }
-                    }
+                    self.header_sync.request_headers(network, base_hash).await?;
                 } else {
                     // Otherwise start sync normally
                     self.header_sync.start_sync(network, storage).await?;
@@ -297,28 +191,12 @@ impl SequentialSyncManager {
         Ok(())
     }
 
-    /// Execute the current sync phase (wrapper that prevents recursion)
+    /// Execute the current sync phase
     async fn execute_current_phase(
         &mut self,
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
-        self.execute_current_phase_internal(network, storage).await?;
-        Ok(())
-    }
-
-    /// Execute the current sync phase (internal implementation)
-    /// Returns true if phase completed and can continue, false if waiting for messages
-    async fn execute_current_phase_internal(
-        &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
-    ) -> SyncResult<bool> {
-        tracing::info!(
-            "🔧 [DEBUG] Execute current phase called for: {}",
-            self.current_phase.name()
-        );
-
         match &self.current_phase {
             SyncPhase::DownloadingHeaders {
                 ..
@@ -334,28 +212,15 @@ impl SequentialSyncManager {
                     // Not prepared yet, start sync normally
                     self.header_sync.start_sync(network, storage).await?;
                 }
-                // Return false to indicate we need to wait for headers messages
-                return Ok(false);
             }
 
             SyncPhase::DownloadingMnList {
                 ..
             } => {
                 tracing::info!("📥 Starting masternode list download phase");
-                tracing::info!(
-                    "🔍 [DEBUG] Config: enable_masternodes = {}",
-                    self.config.enable_masternodes
-                );
-
                 // Get the effective chain height from header sync which accounts for checkpoint base
                 let effective_height = self.header_sync.get_chain_height();
                 let sync_base_height = self.header_sync.get_sync_base_height();
-
-                tracing::info!(
-                    "🔍 [DEBUG] Masternode sync starting with effective_height={}, sync_base_height={}",
-                    effective_height,
-                    sync_base_height
-                );
 
                 // Also get the actual storage tip height to verify
                 let storage_tip = storage
@@ -388,34 +253,15 @@ impl SequentialSyncManager {
                     effective_height
                 };
 
-                let sync_started = self
-                    .masternode_sync
+                self.masternode_sync
                     .start_sync_with_height(network, storage, safe_height, sync_base_height)
                     .await?;
-
-                if !sync_started {
-                    // Masternode sync reports it's already up to date
-                    tracing::info!("📊 Masternode sync reports already up to date, transitioning to next phase");
-                    self.transition_to_next_phase(storage, "Masternode list already synced")
-                        .await?;
-                    // Return true to indicate we transitioned and can continue execution
-                    return Ok(true);
-                }
-                // Return false to indicate we need to wait for messages
-                return Ok(false);
             }
 
             SyncPhase::DownloadingCFHeaders {
-                current_height,
-                target_height,
                 ..
             } => {
-                tracing::info!("📥 Starting filter headers download phase");
-                tracing::info!(
-                    "🔍 [DEBUG] Filter headers phase: current={}, target={}",
-                    current_height,
-                    target_height
-                );
+                tracing::info!("📥 Starting filter header download phase");
 
                 // Get sync base height from header sync
                 let sync_base_height = self.header_sync.get_sync_base_height();
@@ -427,63 +273,7 @@ impl SequentialSyncManager {
                     self.filter_sync.set_sync_base_height(sync_base_height);
                 }
 
-                // Check if we need to request filter headers
-                if current_height < target_height {
-                    // For checkpoint sync, we need to convert target height to storage height
-                    let sync_base_height = self.header_sync.get_sync_base_height();
-                    let storage_height =
-                        if sync_base_height > 0 && *target_height > sync_base_height {
-                            target_height - sync_base_height
-                        } else {
-                            *target_height
-                        };
-
-                    tracing::info!(
-                        "🔍 [DEBUG] Getting header at storage height {} (blockchain height {})",
-                        storage_height,
-                        target_height
-                    );
-
-                    // Get the stop hash for the target height
-                    let stop_hash = if let Some(header) =
-                        storage.get_header(storage_height).await.map_err(|e| {
-                            SyncError::Storage(format!(
-                                "Failed to get header at {}: {}",
-                                storage_height, e
-                            ))
-                        })? {
-                        header.block_hash()
-                    } else {
-                        tracing::error!(
-                            "No header found at storage height {} (blockchain height {})",
-                            storage_height,
-                            target_height
-                        );
-                        self.transition_to_next_phase(storage, "No header at target height")
-                            .await?;
-                        return Ok(true);
-                    };
-
-                    // Request filter headers
-                    let start_height = current_height + 1;
-                    self.filter_sync
-                        .request_filter_headers(network, start_height, stop_hash)
-                        .await?;
-
-                    tracing::info!(
-                        "📡 Requested filter headers from {} to {} (stop hash: {})",
-                        start_height,
-                        target_height,
-                        stop_hash
-                    );
-                } else {
-                    tracing::info!("Filter headers already synced, transitioning to next phase");
-                    self.transition_to_next_phase(storage, "Filter headers already synced").await?;
-                    return Ok(true);
-                }
-
-                // Return false to indicate we need to wait for messages
-                return Ok(false);
+                self.filter_sync.start_sync_headers(network, storage).await?;
             }
 
             SyncPhase::DownloadingFilters {
@@ -542,11 +332,7 @@ impl SequentialSyncManager {
                 } else {
                     // No filter headers available, skip to next phase
                     self.transition_to_next_phase(storage, "No filter headers available").await?;
-                    // Return true to indicate we transitioned and can continue execution
-                    return Ok(true);
                 }
-                // Return false to indicate we need to wait for messages
-                return Ok(false);
             }
 
             SyncPhase::DownloadingBlocks {
@@ -556,22 +342,14 @@ impl SequentialSyncManager {
                 // Block download will be initiated based on filter matches
                 // For now, we'll complete the sync
                 self.transition_to_next_phase(storage, "No blocks to download").await?;
-                // Return true to indicate we transitioned and can continue execution
-                return Ok(true);
             }
 
             _ => {
                 // Idle or FullySynced - nothing to execute
-                tracing::info!(
-                    "🔧 [DEBUG] No execution needed for phase: {}",
-                    self.current_phase.name()
-                );
-                return Ok(false);
             }
         }
 
-        // Default return - waiting for messages
-        Ok(false)
+        Ok(())
     }
 
     /// Handle incoming network messages with phase filtering
@@ -726,13 +504,6 @@ impl SequentialSyncManager {
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
-        // First check if the current phase needs to be executed (e.g., after a transition)
-        if self.current_phase_needs_execution() {
-            tracing::info!("Executing phase {} after transition", self.current_phase.name());
-            self.execute_phases_until_blocked(network, storage).await?;
-            return Ok(());
-        }
-
         if let Some(last_progress) = self.current_phase.last_progress_time() {
             if last_progress.elapsed() > self.phase_timeout {
                 tracing::warn!(
@@ -749,67 +520,8 @@ impl SequentialSyncManager {
         // Also check phase-specific timeouts
         match &self.current_phase {
             SyncPhase::DownloadingHeaders {
-                current_height,
                 ..
             } => {
-                // First check if we have no peers - this might indicate peers served their headers and disconnected
-                if network.peer_count() == 0 {
-                    tracing::warn!(
-                        "⚠️ No connected peers during header sync phase at height {}",
-                        current_height
-                    );
-
-                    // If we have a reasonable number of headers, consider sync complete
-                    if *current_height > 0 {
-                        tracing::info!(
-                            "📊 Headers sync likely complete - all peers disconnected after serving headers up to height {}",
-                            current_height
-                        );
-                        self.transition_to_next_phase(
-                            storage,
-                            "Headers sync complete - peers disconnected",
-                        )
-                        .await?;
-                        self.execute_phases_until_blocked(network, storage).await?;
-                        return Ok(());
-                    }
-                }
-
-                // Check if we have a pending header request that might have timed out
-                if let (Some(request_time), Some(request_height)) =
-                    (self.last_header_request_time, self.last_header_request_height)
-                {
-                    // Get peer best height to check if we're near the tip
-                    let peer_best_height = network
-                        .get_peer_best_height()
-                        .await
-                        .map_err(|e| {
-                            SyncError::Network(format!("Failed to get peer height: {}", e))
-                        })?
-                        .unwrap_or(*current_height);
-
-                    let blocks_from_tip = peer_best_height.saturating_sub(request_height);
-                    let time_waiting = request_time.elapsed();
-
-                    // If we're within 10 blocks of peer tip and waited 5+ seconds, consider sync complete
-                    if blocks_from_tip <= 10 && time_waiting >= Duration::from_secs(5) {
-                        tracing::info!(
-                            "📊 Header sync complete - no response after {}s when {} blocks from tip (height {} vs peer {})",
-                            time_waiting.as_secs(),
-                            blocks_from_tip,
-                            request_height,
-                            peer_best_height
-                        );
-                        self.transition_to_next_phase(
-                            storage,
-                            "Headers sync complete - near peer tip with timeout",
-                        )
-                        .await?;
-                        self.execute_phases_until_blocked(network, storage).await?;
-                        return Ok(());
-                    }
-                }
-
                 self.header_sync.check_sync_timeout(storage, network).await?;
             }
             SyncPhase::DownloadingCFHeaders {
@@ -893,7 +605,7 @@ impl SequentialSyncManager {
                                         self.current_phase.update_progress();
 
                                         // Re-execute the phase
-                                        self.execute_phases_until_blocked(network, storage).await?;
+                                        self.execute_current_phase(network, storage).await?;
                                         return Ok(());
                                     } else {
                                         tracing::error!(
@@ -910,7 +622,7 @@ impl SequentialSyncManager {
                                 "Filter sync timeout - forcing completion",
                             )
                             .await?;
-                            self.execute_phases_until_blocked(network, storage).await?;
+                            self.execute_current_phase(network, storage).await?;
                         }
                     }
                 }
@@ -951,38 +663,17 @@ impl SequentialSyncManager {
         // from storage and network queries.
 
         // Create a basic progress report template
-        let phase_progress = self.current_phase.progress();
-
-        // Convert phase progress to SyncPhaseInfo
-        let current_phase = Some(crate::types::SyncPhaseInfo {
-            phase_name: phase_progress.phase_name.to_string(),
-            progress_percentage: phase_progress.percentage,
-            items_completed: phase_progress.items_completed,
-            items_total: phase_progress.items_total,
-            rate: phase_progress.rate,
-            eta_seconds: phase_progress.eta.map(|d| d.as_secs()),
-            elapsed_seconds: phase_progress.elapsed.as_secs(),
-            details: self.get_phase_details(),
-            current_position: phase_progress.current_position,
-            target_position: phase_progress.target_position,
-            rate_units: Some(self.get_phase_rate_units()),
-        });
+        let _phase_progress = self.current_phase.progress();
 
         SyncProgress {
             headers_synced: matches!(
                 self.current_phase,
-                SyncPhase::DownloadingMnList { .. }
-                    | SyncPhase::DownloadingCFHeaders { .. }
-                    | SyncPhase::DownloadingFilters { .. }
-                    | SyncPhase::DownloadingBlocks { .. }
-                    | SyncPhase::FullySynced { .. }
+                SyncPhase::DownloadingHeaders { .. } | SyncPhase::FullySynced { .. }
             ),
             header_height: 0, // PLACEHOLDER: Caller MUST query storage.get_tip_height()
             filter_headers_synced: matches!(
                 self.current_phase,
-                SyncPhase::DownloadingFilters { .. }
-                    | SyncPhase::DownloadingBlocks { .. }
-                    | SyncPhase::FullySynced { .. }
+                SyncPhase::DownloadingCFHeaders { .. } | SyncPhase::FullySynced { .. }
             ),
             filter_header_height: 0, // PLACEHOLDER: Caller MUST query storage.get_filter_tip_height()
             masternodes_synced: matches!(
@@ -996,155 +687,12 @@ impl SequentialSyncManager {
             sync_start: std::time::SystemTime::now(),
             last_update: std::time::SystemTime::now(),
             filter_sync_available: self.config.enable_filters,
-            current_phase,
         }
     }
 
     /// Check if sync is complete
     pub fn is_synced(&self) -> bool {
         matches!(self.current_phase, SyncPhase::FullySynced { .. })
-    }
-
-    /// Get rate units for the current phase
-    fn get_phase_rate_units(&self) -> String {
-        match &self.current_phase {
-            SyncPhase::DownloadingHeaders {
-                ..
-            } => "headers/sec".to_string(),
-            SyncPhase::DownloadingMnList {
-                ..
-            } => "diffs/sec".to_string(),
-            SyncPhase::DownloadingCFHeaders {
-                ..
-            } => "filter headers/sec".to_string(),
-            SyncPhase::DownloadingFilters {
-                ..
-            } => "filters/sec".to_string(),
-            SyncPhase::DownloadingBlocks {
-                ..
-            } => "blocks/sec".to_string(),
-            _ => "items/sec".to_string(),
-        }
-    }
-
-    /// Get phase-specific details for the current sync phase
-    fn get_phase_details(&self) -> Option<String> {
-        match &self.current_phase {
-            SyncPhase::Idle => Some("Waiting to start synchronization".to_string()),
-            SyncPhase::DownloadingHeaders {
-                target_height,
-                current_height,
-                ..
-            } => {
-                if let Some(target) = target_height {
-                    Some(format!("Syncing headers from {} to {}", current_height, target))
-                } else {
-                    Some(format!("Syncing headers from height {}", current_height))
-                }
-            }
-            SyncPhase::DownloadingMnList {
-                current_height,
-                target_height,
-                ..
-            } => Some(format!(
-                "Syncing masternode lists from {} to {}",
-                current_height, target_height
-            )),
-            SyncPhase::DownloadingCFHeaders {
-                current_height,
-                target_height,
-                ..
-            } => {
-                Some(format!("Syncing filter headers from {} to {}", current_height, target_height))
-            }
-            SyncPhase::DownloadingFilters {
-                completed_heights,
-                total_filters,
-                ..
-            } => {
-                Some(format!("{} of {} filters downloaded", completed_heights.len(), total_filters))
-            }
-            SyncPhase::DownloadingBlocks {
-                completed,
-                total_blocks,
-                ..
-            } => Some(format!("{} of {} blocks downloaded", completed.len(), total_blocks)),
-            SyncPhase::FullySynced {
-                headers_synced,
-                filters_synced,
-                blocks_downloaded,
-                ..
-            } => Some(format!("Sync complete")),
-        }
-    }
-
-    /// Execute phases until we reach one that needs to wait for network messages
-    async fn execute_phases_until_blocked(
-        &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
-    ) -> SyncResult<()> {
-        const MAX_ITERATIONS: usize = 10; // Safety limit to prevent infinite loops
-        let mut iterations = 0;
-
-        loop {
-            iterations += 1;
-            if iterations > MAX_ITERATIONS {
-                tracing::warn!("⚠️ Reached maximum phase execution iterations, stopping");
-                break;
-            }
-
-            let previous_phase = std::mem::discriminant(&self.current_phase);
-
-            // Execute the current phase
-            let continue_execution = self.execute_current_phase_internal(network, storage).await?;
-
-            if !continue_execution {
-                // Phase indicated it needs to wait for messages
-                tracing::info!(
-                    "🔍 [DEBUG] Phase {} needs to wait for messages, breaking execute loop",
-                    self.current_phase.name()
-                );
-                break;
-            }
-
-            let current_phase_discriminant = std::mem::discriminant(&self.current_phase);
-
-            // If we didn't transition to a new phase, we're done
-            if previous_phase == current_phase_discriminant {
-                tracing::info!("🔍 [DEBUG] Phase didn't change, breaking execute loop");
-                break;
-            }
-
-            tracing::info!(
-                "🔍 [DEBUG] Phase changed to {}, continuing execution loop",
-                self.current_phase.name()
-            );
-
-            // Continue looping to execute the new phase
-        }
-
-        Ok(())
-    }
-
-    /// Check if the current phase needs to be executed
-    /// This is true for phases that haven't been started yet
-    fn current_phase_needs_execution(&self) -> bool {
-        match &self.current_phase {
-            SyncPhase::DownloadingCFHeaders {
-                ..
-            } => {
-                // Check if filter sync hasn't started yet (no progress time)
-                self.current_phase.last_progress_time().is_none()
-            }
-            SyncPhase::DownloadingFilters {
-                ..
-            } => {
-                // Check if filter download hasn't started yet
-                self.current_phase.last_progress_time().is_none()
-            }
-            _ => false, // Other phases are started by messages or initial sync
-        }
     }
 
     /// Check if currently in the downloading blocks phase
@@ -1252,33 +800,17 @@ impl SequentialSyncManager {
         storage: &mut dyn StorageManager,
         reason: &str,
     ) -> SyncResult<()> {
-        tracing::info!(
-            "🔄 [DEBUG] Starting transition from {} - reason: {}",
-            self.current_phase.name(),
-            reason
-        );
-
         // Get the next phase
         let next_phase =
             self.transition_manager.get_next_phase(&self.current_phase, storage).await?;
 
         if let Some(next) = next_phase {
-            tracing::info!("🔄 [DEBUG] Next phase determined: {}", next.name());
-
             // Check if transition is allowed
-            let can_transition = self
+            if !self
                 .transition_manager
                 .can_transition_to(&self.current_phase, &next, storage)
-                .await?;
-
-            tracing::info!(
-                "🔄 [DEBUG] Can transition from {} to {}: {}",
-                self.current_phase.name(),
-                next.name(),
-                can_transition
-            );
-
-            if !can_transition {
+                .await?
+            {
                 return Err(SyncError::Validation(format!(
                     "Invalid phase transition from {} to {}",
                     self.current_phase.name(),
@@ -1314,16 +846,6 @@ impl SequentialSyncManager {
             self.phase_history.push(transition);
             self.current_phase = next;
             self.current_phase_retries = 0;
-
-            tracing::info!(
-                "✅ [DEBUG] Phase transition complete. Current phase is now: {}",
-                self.current_phase.name()
-            );
-            tracing::info!(
-                "📋 [DEBUG] Config state: enable_masternodes={}, enable_filters={}",
-                self.config.enable_masternodes,
-                self.config.enable_filters
-            );
 
             // Start the next phase
             // Note: We can't execute the next phase here as we don't have network access
@@ -1440,7 +962,6 @@ impl SequentialSyncManager {
         // Update phase state and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingHeaders {
             current_height,
-            target_height,
             headers_downloaded,
             start_time,
             headers_per_second,
@@ -1480,34 +1001,8 @@ impl SequentialSyncManager {
         network: &mut dyn NetworkManager,
         storage: &mut dyn StorageManager,
     ) -> SyncResult<()> {
-        let continue_sync = match self
-            .header_sync
-            .handle_headers_message(headers.clone(), storage, network)
-            .await
-        {
-            Ok(continue_sync) => continue_sync,
-            Err(SyncError::Network(msg)) if msg.contains("No connected peers") => {
-                // Special case: peers disconnected after serving headers
-                // Check if we're near the tip and should consider sync complete
-                let current_height = self.get_blockchain_height_from_storage(storage).await?;
-                tracing::warn!(
-                    "⚠️ Header sync failed due to no connected peers at height {}",
-                    current_height
-                );
-
-                // If we've made progress and have a reasonable number of headers, consider it complete
-                if current_height > 0 && headers.len() < 2000 {
-                    tracing::info!(
-                        "📊 Headers sync likely complete - peers disconnected after serving headers up to height {}",
-                        current_height
-                    );
-                    false // Don't continue sync
-                } else {
-                    return Err(SyncError::Network(msg));
-                }
-            }
-            Err(e) => return Err(e),
-        };
+        let continue_sync =
+            self.header_sync.handle_headers_message(headers.clone(), storage, network).await?;
 
         // Calculate blockchain height before borrowing self.current_phase
         let blockchain_height = self.get_blockchain_height_from_storage(storage).await.unwrap_or(0);
@@ -1515,7 +1010,6 @@ impl SequentialSyncManager {
         // Update phase state and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingHeaders {
             current_height,
-            target_height,
             headers_downloaded,
             start_time,
             headers_per_second,
@@ -1527,14 +1021,6 @@ impl SequentialSyncManager {
             // Update current height - use blockchain height for checkpoint awareness
             *current_height = blockchain_height;
 
-            // Update target height if we can get peer's best height
-            if target_height.is_none() {
-                if let Ok(Some(peer_height)) = network.get_peer_best_height().await {
-                    *target_height = Some(peer_height);
-                    tracing::debug!("Updated target height to {}", peer_height);
-                }
-            }
-
             // Update progress
             *headers_downloaded += headers.len() as u32;
             let elapsed = start_time.elapsed().as_secs_f64();
@@ -1545,109 +1031,22 @@ impl SequentialSyncManager {
             // Check if we received empty response (sync complete)
             if headers.is_empty() {
                 *received_empty_response = true;
-                tracing::info!("🎆 Received empty headers response - sync complete");
             }
 
             // Update progress time
             *last_progress = Instant::now();
 
-            // Log the decision factors
-            tracing::info!(
-                "📊 Header sync decision - continue_sync: {}, headers_received: {}, empty_response: {}, current_height: {}",
-                continue_sync,
-                headers.len(),
-                *received_empty_response,
-                *current_height
-            );
-
             // Check if phase is complete
-            // Only transition if we got an empty response OR the sync manager explicitly said to stop
-            let should_transition = !continue_sync || *received_empty_response;
-
-            // Additional check: if we're within 5 headers of peer tip, consider sync complete
-            let should_transition = if should_transition {
-                true
-            } else if let Ok(Some(peer_height)) = network.get_peer_best_height().await {
-                let gap = peer_height.saturating_sub(*current_height);
-                if gap <= 5 && headers.len() < 100 {
-                    tracing::info!(
-                        "📊 Headers sync complete - within {} headers of peer tip (height {} vs peer {})",
-                        gap,
-                        *current_height,
-                        peer_height
-                    );
-                    // Mark as having received empty response so transition logic works
-                    *received_empty_response = true;
-                    true
-                } else {
-                    false
-                }
-            } else {
-                should_transition
-            };
-
-            should_transition
+            !continue_sync || *received_empty_response
         } else {
             false
         };
 
         if should_transition {
-            tracing::info!(
-                "📊 Transitioning away from headers phase - continue_sync: {}, headers.len(): {}",
-                continue_sync,
-                headers.len()
-            );
-
-            // Double-check with peer height before transitioning
-            if let Ok(Some(peer_height)) = network.get_peer_best_height().await {
-                let gap = peer_height.saturating_sub(blockchain_height);
-                if gap > 5 {
-                    tracing::error!(
-                        "❌ Headers sync ending prematurely! Our height: {}, peer height: {}, gap: {} headers",
-                        blockchain_height,
-                        peer_height,
-                        gap
-                    );
-                } else if gap > 0 {
-                    tracing::info!(
-                        "✅ Headers sync complete - within acceptable range of peer tip. Gap: {} headers (height {} vs peer {})",
-                        gap,
-                        blockchain_height,
-                        peer_height
-                    );
-                }
-            }
-
             self.transition_to_next_phase(storage, "Headers sync complete").await?;
 
-            tracing::info!("🚀 [DEBUG] About to execute next phase after headers complete");
-
-            // Execute phases that can complete immediately (like when masternode sync is already up to date)
-            self.execute_phases_until_blocked(network, storage).await?;
-
-            tracing::info!(
-                "✅ [DEBUG] Phase execution complete, current phase: {}",
-                self.current_phase.name()
-            );
-        } else if continue_sync {
-            // Headers sync returned true, meaning we should continue requesting more headers
-            tracing::info!("📡 [DEBUG] Headers sync wants to continue (continue_sync=true)");
-
-            // Only request more if we're still in the downloading headers phase
-            if matches!(self.current_phase, SyncPhase::DownloadingHeaders { .. }) {
-                // The header sync manager has already requested more headers internally
-                // We just need to update our tracking
-                tracing::info!("📡 [DEBUG] Headers sync continuing - more headers expected. Waiting for network response...");
-
-                // Update the phase to track that we're waiting for more headers
-                if let SyncPhase::DownloadingHeaders {
-                    last_progress,
-                    ..
-                } = &mut self.current_phase
-                {
-                    *last_progress = Instant::now();
-                }
-            }
+            // Execute the next phase
+            self.execute_current_phase(network, storage).await?;
         }
 
         Ok(())
@@ -1679,40 +1078,24 @@ impl SequentialSyncManager {
 
             // Check if phase is complete
             if !continue_sync {
-                // Masternode sync reports complete - verify we've actually reached the target
+                // Masternode sync has completed - ensure phase state reflects this
+                // by updating target_height to match current_height before transition
                 if let SyncPhase::DownloadingMnList {
                     current_height,
                     target_height,
                     ..
-                } = &self.current_phase
+                } = &mut self.current_phase
                 {
-                    if *current_height >= *target_height {
-                        // We've reached or exceeded the target height
-                        self.transition_to_next_phase(storage, "Masternode sync complete").await?;
-                        // Execute phases that can complete immediately
-                        self.execute_phases_until_blocked(network, storage).await?;
-                    } else {
-                        // Masternode sync thinks it's done but we haven't reached target
-                        // This can happen after a genesis sync that only gets us partway
-                        tracing::info!(
-                            "Masternode sync reports complete but only at height {} of target {}. Continuing sync...",
-                            *current_height, *target_height
-                        );
-
-                        // Re-start the masternode sync to continue from current height
-                        let effective_height = self.header_sync.get_chain_height();
-                        let sync_base_height = self.header_sync.get_sync_base_height();
-
-                        self.masternode_sync
-                            .start_sync_with_height(
-                                network,
-                                storage,
-                                effective_height,
-                                sync_base_height,
-                            )
-                            .await?;
+                    // Force completion state by ensuring current >= target
+                    if *current_height < *target_height {
+                        *target_height = *current_height;
                     }
                 }
+
+                self.transition_to_next_phase(storage, "Masternode sync complete").await?;
+
+                // Execute the next phase
+                self.execute_current_phase(network, storage).await?;
             }
         }
 
@@ -1755,8 +1138,8 @@ impl SequentialSyncManager {
             if !continue_sync {
                 self.transition_to_next_phase(storage, "Filter headers sync complete").await?;
 
-                // Execute phases that can complete immediately
-                self.execute_phases_until_blocked(network, storage).await?;
+                // Execute the next phase
+                self.execute_current_phase(network, storage).await?;
             }
         }
 
@@ -1918,14 +1301,14 @@ impl SequentialSyncManager {
                     );
                     self.transition_to_next_phase(storage, "All filters downloaded").await?;
 
-                    // Execute phases that can complete immediately
-                    self.execute_phases_until_blocked(network, storage).await?;
+                    // Execute the next phase
+                    self.execute_current_phase(network, storage).await?;
                 } else if *total_filters == 0 && !has_pending {
                     // Edge case: no filters to download
                     self.transition_to_next_phase(storage, "No filters to download").await?;
 
-                    // Execute phases that can complete immediately
-                    self.execute_phases_until_blocked(network, storage).await?;
+                    // Execute the next phase
+                    self.execute_current_phase(network, storage).await?;
                 } else {
                     tracing::trace!(
                         "Filter sync progress: {}/{} received, {} active requests",
@@ -1977,8 +1360,8 @@ impl SequentialSyncManager {
         if should_transition {
             self.transition_to_next_phase(storage, "All blocks downloaded").await?;
 
-            // Execute phases that can complete immediately
-            self.execute_phases_until_blocked(network, storage).await?;
+            // Execute the next phase (if any)
+            self.execute_current_phase(network, storage).await?;
         }
 
         Ok(())
@@ -2547,10 +1930,6 @@ impl SequentialSyncManager {
 
         // Clear phase history
         self.phase_history.clear();
-
-        // Reset header request tracking
-        self.last_header_request_time = None;
-        self.last_header_request_height = None;
 
         tracing::info!("Reset sequential sync manager to idle state");
     }

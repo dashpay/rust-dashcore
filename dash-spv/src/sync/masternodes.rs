@@ -47,8 +47,6 @@ pub struct MasternodeSyncManager {
     pending_individual_diffs: Option<(u32, u32)>,
     /// Sync base height (when syncing from checkpoint)
     sync_base_height: u32,
-    /// Track if we're retrying from genesis to ignore stale diffs
-    retrying_from_genesis: bool,
 }
 
 impl MasternodeSyncManager {
@@ -76,43 +74,7 @@ impl MasternodeSyncManager {
             bulk_diff_target_height: None,
             pending_individual_diffs: None,
             sync_base_height: 0,
-            retrying_from_genesis: false,
         }
-    }
-
-    /// Restore the engine state from storage if available.
-    pub async fn restore_engine_state(&mut self, storage: &dyn StorageManager) -> SyncResult<()> {
-        if !self.config.enable_masternodes {
-            return Ok(());
-        }
-
-        // Load masternode state from storage
-        tracing::debug!("Loading masternode state from storage");
-        if let Some(state) = storage
-            .load_masternode_state()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to load masternode state: {}", e)))?
-        {
-            if !state.engine_state.is_empty() {
-                // Deserialize the engine state
-                match bincode::deserialize::<MasternodeListEngine>(&state.engine_state) {
-                    Ok(engine) => {
-                        self.engine = Some(engine);
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to deserialize engine state: {}. Starting with fresh engine.",
-                            e
-                        );
-                        // Keep the default engine we created in new()
-                    }
-                }
-            } else {
-                tracing::debug!("Masternode state exists but engine state is empty");
-            }
-        }
-
-        Ok(())
     }
 
     /// Validate a terminal block against the chain and return its height if valid.
@@ -127,14 +89,7 @@ impl MasternodeSyncManager {
         // Check if the terminal block exists in our chain
         match storage.get_header(terminal_height).await {
             Ok(Some(header)) => {
-                let actual_hash = header.block_hash();
-                tracing::info!(
-                    "Terminal block validation at height {}: expected hash {}, actual hash {}",
-                    terminal_height,
-                    expected_hash,
-                    actual_hash
-                );
-                if actual_hash == expected_hash {
+                if header.block_hash() == expected_hash {
                     if has_precalculated_data {
                         tracing::info!(
                             "Using terminal block at height {} with pre-calculated masternode data as base for sync",
@@ -191,40 +146,34 @@ impl MasternodeSyncManager {
             return Ok(0);
         }
 
-        // When syncing from checkpoint, storage uses absolute blockchain heights
-        // No need to convert - just use terminal_height directly
-        let storage_height = terminal_height;
+        // Convert blockchain height to storage height
+        let storage_height = terminal_height - sync_base_height;
 
         // Check if the terminal block exists in our chain
         match storage.get_header(storage_height).await {
             Ok(Some(header)) => {
-                let actual_hash = header.block_hash();
-                tracing::info!(
-                    "Terminal block validation at height {}: expected hash {}, actual hash {}",
-                    terminal_height,
-                    expected_hash,
-                    actual_hash
-                );
-                if actual_hash == expected_hash {
+                if header.block_hash() == expected_hash {
                     if has_precalculated_data {
                         tracing::info!(
-                            "Using terminal block at height {} with pre-calculated masternode data as base for sync",
-                            terminal_height
+                            "Using terminal block at blockchain height {} (storage height {}) with pre-calculated masternode data as base for sync",
+                            terminal_height,
+                            storage_height
                         );
                     } else {
                         tracing::info!(
-                            "Using terminal block at height {} as base for masternode sync (no pre-calculated data)",
-                            terminal_height
+                            "Using terminal block at blockchain height {} (storage height {}) as base for masternode sync (no pre-calculated data)",
+                            terminal_height,
+                            storage_height
                         );
                     }
                     Ok(terminal_height)
                 } else {
                     let msg = if has_precalculated_data {
-                        "Terminal block hash mismatch at height {} (with pre-calculated data) - falling back to genesis"
+                        "Terminal block hash mismatch at blockchain height {} (storage height {}) (with pre-calculated data) - falling back to genesis"
                     } else {
-                        "Terminal block hash mismatch at height {} (without pre-calculated data) - falling back to genesis"
+                        "Terminal block hash mismatch at blockchain height {} (storage height {}) (without pre-calculated data) - falling back to genesis"
                     };
-                    tracing::warn!(msg, terminal_height);
+                    tracing::warn!(msg, terminal_height, storage_height);
                     Ok(0)
                 }
             }
@@ -258,36 +207,12 @@ impl MasternodeSyncManager {
             return Ok(true);
         }
 
-        // Check if we should ignore this diff due to retry
-        if self.retrying_from_genesis {
-            // Only process genesis diffs when retrying
-            let genesis_hash =
-                self.config.network.known_genesis_block_hash().unwrap_or_else(BlockHash::all_zeros);
-            if diff.base_block_hash != genesis_hash {
-                tracing::debug!(
-                    "Ignoring non-genesis diff while retrying from genesis: base_block_hash={}",
-                    diff.base_block_hash
-                );
-                return Ok(true);
-            }
-            // This is the genesis diff we're waiting for
-            self.retrying_from_genesis = false;
-        }
-
         self.last_sync_progress = std::time::Instant::now();
 
         // Process the diff with fallback to genesis if incremental diff fails
         match self.process_masternode_diff(diff, storage).await {
             Ok(()) => {
                 // Success - diff applied
-                // Increment received diffs count
-                self.received_diffs_count += 1;
-                tracing::debug!(
-                    "After processing diff: received_diffs_count={}, expected_diffs_count={}, pending_individual_diffs={:?}",
-                    self.received_diffs_count,
-                    self.expected_diffs_count,
-                    self.pending_individual_diffs
-                );
             }
             Err(e) if e.to_string().contains("MissingStartMasternodeList") => {
                 tracing::warn!("Incremental masternode diff failed with MissingStartMasternodeList, retrying from genesis");
@@ -295,12 +220,10 @@ impl MasternodeSyncManager {
                 // Reset sync state but keep in progress
                 self.last_sync_progress = std::time::Instant::now();
                 // Reset counters since we're starting over
+                self.expected_diffs_count = 0;
                 self.received_diffs_count = 0;
                 self.bulk_diff_target_height = None;
-                // IMPORTANT: Preserve pending_individual_diffs so we still request them after genesis sync
-                // self.pending_individual_diffs = None;  // Don't clear this!
-                // Mark that we're retrying from genesis
-                self.retrying_from_genesis = true;
+                self.pending_individual_diffs = None;
 
                 // Get current height again
                 let current_height = storage
@@ -319,12 +242,11 @@ impl MasternodeSyncManager {
                     "Requesting fallback masternode diffs from genesis to height {}",
                     current_height
                 );
-                self.request_masternode_diffs_for_chainlock_validation_with_base(
+                self.request_masternode_diffs_for_chainlock_validation(
                     network,
                     storage,
                     0,
                     current_height,
-                    self.sync_base_height,
                 )
                 .await?;
 
@@ -337,14 +259,10 @@ impl MasternodeSyncManager {
             }
         }
 
-        // Check if we've received all expected diffs
-        tracing::info!(
-            "Checking diff completion: received={}, expected={}, pending_individual_diffs={:?}",
-            self.received_diffs_count,
-            self.expected_diffs_count,
-            self.pending_individual_diffs
-        );
+        // Increment received diffs count
+        self.received_diffs_count += 1;
 
+        // Check if we've received all expected diffs
         if self.expected_diffs_count > 0 && self.received_diffs_count >= self.expected_diffs_count {
             // Check if this was the bulk diff and we have pending individual diffs
             if let Some((start_height, end_height)) = self.pending_individual_diffs.take() {
@@ -383,7 +301,7 @@ impl MasternodeSyncManager {
                 }
 
                 tracing::info!(
-                    "✅ Bulk diff complete, now requesting {} individual masternode diffs from blockchain heights {} to {}",
+                    "Bulk diff complete, now requesting {} individual masternode diffs from blockchain heights {} to {}",
                     self.expected_diffs_count,
                     start_height,
                     end_height
@@ -445,12 +363,11 @@ impl MasternodeSyncManager {
                     None => 0,
                 };
 
-            self.request_masternode_diffs_for_chainlock_validation_with_base(
+            self.request_masternode_diffs_for_chainlock_validation(
                 network,
                 storage,
                 last_masternode_height,
                 current_height,
-                self.sync_base_height,
             )
             .await?;
             self.last_sync_progress = std::time::Instant::now();
@@ -490,38 +407,21 @@ impl MasternodeSyncManager {
         // Use the provided effective height instead of storage height
         let current_height = effective_height;
 
-        tracing::debug!("About to load masternode state from storage");
-
         // Get last known masternode height
-        let last_masternode_height = match storage
-            .load_masternode_state()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to load masternode state: {}", e)))?
-        {
-            Some(state) => {
-                tracing::info!(
-                        "Found existing masternode state: last_height={}, has_engine_state={}, terminal_block={:?}",
-                        state.last_height,
-                        !state.engine_state.is_empty(),
-                        state.terminal_block_hash.is_some()
-                    );
-                state.last_height
-            }
-            None => {
-                tracing::info!("No existing masternode state found, starting from height 0");
-                0
-            }
-        };
+        let last_masternode_height =
+            match storage.load_masternode_state().await.map_err(|e| {
+                SyncError::Storage(format!("Failed to load masternode state: {}", e))
+            })? {
+                Some(state) => state.last_height,
+                None => 0,
+            };
 
         // If we're already up to date, no need to sync
         if last_masternode_height >= current_height {
             tracing::info!(
-                "✅ Masternode list already synced to current height (last: {}, current: {})",
+                "Masternode list already synced to current height (last: {}, current: {})",
                 last_masternode_height,
                 current_height
-            );
-            tracing::info!(
-                "📊 [DEBUG] Returning false to indicate masternode sync is already complete"
             );
             return Ok(false);
         }
@@ -539,7 +439,6 @@ impl MasternodeSyncManager {
         self.received_diffs_count = 0;
         self.bulk_diff_target_height = None;
         self.pending_individual_diffs = None;
-        self.retrying_from_genesis = false;
 
         // Check if we can use a terminal block as a base for optimization
         let base_height = if last_masternode_height > 0 {
@@ -619,35 +518,20 @@ impl MasternodeSyncManager {
             .unwrap_or(0);
 
         // Get last known masternode height
-        let last_masternode_height = match storage
-            .load_masternode_state()
-            .await
-            .map_err(|e| SyncError::Storage(format!("Failed to load masternode state: {}", e)))?
-        {
-            Some(state) => {
-                tracing::info!(
-                        "Found existing masternode state: last_height={}, has_engine_state={}, terminal_block={:?}",
-                        state.last_height,
-                        !state.engine_state.is_empty(),
-                        state.terminal_block_hash.is_some()
-                    );
-                state.last_height
-            }
-            None => {
-                tracing::info!("No existing masternode state found, starting from height 0");
-                0
-            }
-        };
+        let last_masternode_height =
+            match storage.load_masternode_state().await.map_err(|e| {
+                SyncError::Storage(format!("Failed to load masternode state: {}", e))
+            })? {
+                Some(state) => state.last_height,
+                None => 0,
+            };
 
         // If we're already up to date, no need to sync
         if last_masternode_height >= current_height {
             tracing::info!(
-                "✅ Masternode list already synced to current height (last: {}, current: {})",
+                "Masternode list already synced to current height (last: {}, current: {})",
                 last_masternode_height,
                 current_height
-            );
-            tracing::info!(
-                "📊 [DEBUG] Returning false to indicate masternode sync is already complete"
             );
             return Ok(false);
         }
@@ -665,7 +549,6 @@ impl MasternodeSyncManager {
         self.received_diffs_count = 0;
         self.bulk_diff_target_height = None;
         self.pending_individual_diffs = None;
-        self.retrying_from_genesis = false;
 
         // Check if we can use a terminal block as a base for optimization
         let base_height = if last_masternode_height > 0 {
@@ -706,12 +589,11 @@ impl MasternodeSyncManager {
         };
 
         // Request masternode list diffs to ensure we have lists for ChainLock validation
-        self.request_masternode_diffs_for_chainlock_validation_with_base(
+        self.request_masternode_diffs_for_chainlock_validation(
             network,
             storage,
             base_height,
             current_height,
-            self.sync_base_height,
         )
         .await?;
 
@@ -921,15 +803,8 @@ impl MasternodeSyncManager {
         let current_block_hash = storage
             .get_header(current_height)
             .await
-            .map_err(|e| {
-                SyncError::Storage(format!(
-                    "Failed to get current header at height {}: {}",
-                    current_height, e
-                ))
-            })?
-            .ok_or_else(|| {
-                SyncError::Storage(format!("Current header not found at height {}", current_height))
-            })?
+            .map_err(|e| SyncError::Storage(format!("Failed to get current header: {}", e)))?
+            .ok_or_else(|| SyncError::Storage("Current header not found".to_string()))?
             .block_hash();
 
         let get_mn_list_diff = GetMnListDiff {
@@ -999,10 +874,6 @@ impl MasternodeSyncManager {
                     .await?;
                 self.expected_diffs_count = 1; // Only expecting the bulk diff initially
                 self.bulk_diff_target_height = Some(bulk_end_height);
-                tracing::debug!(
-                    "Set expected_diffs_count=1 for bulk diff, bulk_diff_target_height={}",
-                    bulk_end_height
-                );
 
                 // Store the individual diff request for later (using blockchain heights)
                 // Individual diffs should start after the bulk diff ends
@@ -1011,11 +882,6 @@ impl MasternodeSyncManager {
                     // Store range for individual diffs
                     // We'll request diffs FROM bulk_end_height TO bulk_end_height+1, etc.
                     self.pending_individual_diffs = Some((individual_start, target_height));
-                    tracing::debug!(
-                        "Setting pending_individual_diffs: start={}, end={}",
-                        individual_start,
-                        target_height
-                    );
                 }
 
                 tracing::info!(
@@ -1066,10 +932,21 @@ impl MasternodeSyncManager {
         current_height: u32,
         sync_base_height: u32,
     ) -> SyncResult<()> {
-        // When syncing from checkpoint, storage uses absolute blockchain heights
-        // No need to convert
-        let storage_base_height = base_height;
-        let storage_current_height = current_height;
+        // Convert blockchain heights to storage heights
+        let storage_base_height = if base_height >= sync_base_height {
+            base_height - sync_base_height
+        } else {
+            0
+        };
+
+        let storage_current_height = if current_height >= sync_base_height {
+            current_height - sync_base_height
+        } else {
+            return Err(SyncError::InvalidState(format!(
+                "Current height {} is less than sync base height {}",
+                current_height, sync_base_height
+            )));
+        };
 
         // Verify the storage height actually exists
         let storage_tip = storage
@@ -1079,85 +956,10 @@ impl MasternodeSyncManager {
             .unwrap_or(0);
 
         if storage_current_height > storage_tip {
-            // This can happen during phase transitions or when headers are still being stored
-            // Instead of failing, adjust to use the storage tip
-            tracing::warn!(
-                "Requested storage height {} exceeds storage tip {} (blockchain height {} with sync base {}). Using storage tip instead.",
+            return Err(SyncError::InvalidState(format!(
+                "Requested storage height {} exceeds storage tip {} (blockchain height {} with sync base {})",
                 storage_current_height, storage_tip, current_height, sync_base_height
-            );
-
-            // Use the storage tip as the current height
-            let adjusted_storage_height = storage_tip;
-            let adjusted_blockchain_height = storage_tip; // Storage already uses blockchain heights
-
-            // Update the heights to use what's actually available
-            // Don't recurse - just continue with adjusted values
-            if adjusted_storage_height <= storage_base_height {
-                // Nothing to sync
-                return Ok(());
-            }
-
-            // Log the adjustment
-            tracing::debug!(
-                "Adjusted MnListDiff request heights - blockchain: {}-{}, storage: {}-{}",
-                base_height,
-                adjusted_blockchain_height,
-                storage_base_height,
-                adjusted_storage_height
-            );
-
-            // Get current block hash at the adjusted height
-            let adjusted_current_hash = storage
-                .get_header(adjusted_storage_height)
-                .await
-                .map_err(|e| {
-                    SyncError::Storage(format!(
-                        "Failed to get header at adjusted storage height {}: {}",
-                        adjusted_storage_height, e
-                    ))
-                })?
-                .ok_or_else(|| {
-                    SyncError::Storage(format!(
-                        "Header not found at adjusted storage height {}",
-                        adjusted_storage_height
-                    ))
-                })?
-                .block_hash();
-
-            // Continue with the request using adjusted values
-            let get_mn_list_diff = GetMnListDiff {
-                base_block_hash: if base_height == 0 {
-                    self.config.network.known_genesis_block_hash().ok_or_else(|| {
-                        SyncError::Network("No genesis hash for network".to_string())
-                    })?
-                } else {
-                    storage
-                        .get_header(storage_base_height)
-                        .await
-                        .map_err(|e| {
-                            SyncError::Storage(format!("Failed to get base header: {}", e))
-                        })?
-                        .ok_or_else(|| {
-                            SyncError::Storage(format!(
-                                "Base header not found at storage height {}",
-                                storage_base_height
-                            ))
-                        })?
-                        .block_hash()
-                },
-                block_hash: adjusted_current_hash,
-            };
-
-            network.send_message(NetworkMessage::GetMnListD(get_mn_list_diff)).await.map_err(
-                |e| SyncError::Network(format!("Failed to send adjusted GetMnListDiff: {}", e)),
-            )?;
-
-            tracing::info!(
-                "Requested masternode list diff from blockchain height {} (storage {}) to {} (storage {}) [adjusted from {}]",
-                base_height, storage_base_height, adjusted_blockchain_height, adjusted_storage_height, current_height
-            );
-
-            return Ok(());
+            )));
         }
 
         tracing::debug!(
@@ -1294,10 +1096,6 @@ impl MasternodeSyncManager {
                 .await?;
                 self.expected_diffs_count = 1; // Only expecting the bulk diff initially
                 self.bulk_diff_target_height = Some(bulk_end_height);
-                tracing::debug!(
-                    "Set expected_diffs_count=1 for bulk diff, bulk_diff_target_height={}",
-                    bulk_end_height
-                );
 
                 // Store the individual diff request for later (using blockchain heights)
                 // Individual diffs should start after the bulk diff ends
@@ -1306,11 +1104,6 @@ impl MasternodeSyncManager {
                     // Store range for individual diffs
                     // We'll request diffs FROM bulk_end_height TO bulk_end_height+1, etc.
                     self.pending_individual_diffs = Some((individual_start, target_height));
-                    tracing::debug!(
-                        "Setting pending_individual_diffs: start={}, end={}",
-                        individual_start,
-                        target_height
-                    );
                 }
 
                 tracing::info!(
@@ -1399,19 +1192,16 @@ impl MasternodeSyncManager {
             tracing::debug!("Target block hash is zero - likely empty masternode list in regtest");
         } else {
             // Feed target block hash
-            if let Some(storage_target_height) = storage
+            if let Some(target_height) = storage
                 .get_header_height_by_hash(&target_block_hash)
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to lookup target hash: {}", e)))?
             {
-                // Storage already uses blockchain heights when syncing from checkpoint
-                let blockchain_target_height = storage_target_height;
-                engine.feed_block_height(blockchain_target_height, target_block_hash);
+                engine.feed_block_height(target_height, target_block_hash);
                 tracing::debug!(
-                    "Fed target block hash {} at blockchain height {} (storage height {})",
+                    "Fed target block hash {} at height {}",
                     target_block_hash,
-                    blockchain_target_height,
-                    storage_target_height
+                    target_height
                 );
             } else {
                 return Err(SyncError::Storage(format!(
@@ -1434,26 +1224,23 @@ impl MasternodeSyncManager {
                 tracing::debug!("Fed genesis block hash {} at height 0", base_block_hash);
             } else {
                 // For non-genesis blocks, look up the height
-                if let Some(storage_base_height) = storage
+                if let Some(base_height) = storage
                     .get_header_height_by_hash(&base_block_hash)
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to lookup base hash: {}", e)))?
                 {
-                    // Storage already uses blockchain heights when syncing from checkpoint
-                    let blockchain_base_height = storage_base_height;
-                    engine.feed_block_height(blockchain_base_height, base_block_hash);
+                    engine.feed_block_height(base_height, base_block_hash);
                     tracing::debug!(
-                        "Fed base block hash {} at blockchain height {} (storage height {})",
+                        "Fed base block hash {} at height {}",
                         base_block_hash,
-                        blockchain_base_height,
-                        storage_base_height
+                        base_height
                     );
                 }
             }
 
             // Calculate start_height for filtering redundant submissions
             // Feed last 1000 headers or from base height, whichever is more recent
-            let storage_start_height =
+            let start_height =
                 if base_block_hash
                     == self.config.network.known_genesis_block_hash().ok_or_else(|| {
                         SyncError::Network("No genesis hash for network".to_string())
@@ -1461,12 +1248,12 @@ impl MasternodeSyncManager {
                 {
                     // For genesis, start from 0 (but limited by what's in storage)
                     0
-                } else if let Some(storage_base_height) = storage
+                } else if let Some(base_height) = storage
                     .get_header_height_by_hash(&base_block_hash)
                     .await
                     .map_err(|e| SyncError::Storage(format!("Failed to lookup base hash: {}", e)))?
                 {
-                    storage_base_height.saturating_sub(100) // Include some headers before base
+                    base_height.saturating_sub(100) // Include some headers before base
                 } else {
                     tip_height.saturating_sub(1000)
                 };
@@ -1474,38 +1261,25 @@ impl MasternodeSyncManager {
             // Feed any quorum hashes from new_quorums that are block hashes
             for quorum in &diff.new_quorums {
                 // Note: quorum_hash is not necessarily a block hash, so we check if it exists
-                if let Some(storage_quorum_height) =
+                if let Some(quorum_height) =
                     storage.get_header_height_by_hash(&quorum.quorum_hash).await.map_err(|e| {
                         SyncError::Storage(format!("Failed to lookup quorum hash: {}", e))
                     })?
                 {
                     // Only feed blocks at or after start_height to avoid redundant submissions
-                    if storage_quorum_height >= storage_start_height {
-                        // Storage already uses blockchain heights when syncing from checkpoint
-                        let blockchain_quorum_height = storage_quorum_height;
-
-                        // Check if this block hash is already known to avoid duplicate feeds
-                        if !engine.block_container.contains_hash(&quorum.quorum_hash) {
-                            engine.feed_block_height(blockchain_quorum_height, quorum.quorum_hash);
-                            tracing::debug!(
-                                "Fed quorum hash {} at blockchain height {} (storage height {})",
-                                quorum.quorum_hash,
-                                blockchain_quorum_height,
-                                storage_quorum_height
-                            );
-                        } else {
-                            tracing::trace!(
-                                "Skipping already known quorum hash {} at blockchain height {}",
-                                quorum.quorum_hash,
-                                blockchain_quorum_height
-                            );
-                        }
+                    if quorum_height >= start_height {
+                        engine.feed_block_height(quorum_height, quorum.quorum_hash);
+                        tracing::debug!(
+                            "Fed quorum hash {} at height {}",
+                            quorum.quorum_hash,
+                            quorum_height
+                        );
                     } else {
                         tracing::trace!(
-                            "Skipping quorum hash {} at storage height {} (before start_height {})",
+                            "Skipping quorum hash {} at height {} (before start_height {})",
                             quorum.quorum_hash,
-                            storage_quorum_height,
-                            storage_start_height
+                            quorum_height,
+                            start_height
                         );
                     }
                 }
@@ -1514,26 +1288,19 @@ impl MasternodeSyncManager {
             // Feed a reasonable range of recent headers for validation purposes
             // The engine may need recent headers for various validations
 
-            if storage_start_height < tip_height {
+            if start_height < tip_height {
                 tracing::debug!(
-                    "Feeding headers from storage height {} to {} to masternode engine",
-                    storage_start_height,
+                    "Feeding headers from {} to {} to masternode engine",
+                    start_height,
                     tip_height
                 );
                 let headers =
-                    storage.get_headers_batch(storage_start_height, tip_height).await.map_err(
-                        |e| SyncError::Storage(format!("Failed to batch load headers: {}", e)),
-                    )?;
+                    storage.get_headers_batch(start_height, tip_height).await.map_err(|e| {
+                        SyncError::Storage(format!("Failed to batch load headers: {}", e))
+                    })?;
 
-                for (storage_height, header) in headers {
-                    // Storage already uses blockchain heights when syncing from checkpoint
-                    let blockchain_height = storage_height;
-                    let block_hash = header.block_hash();
-
-                    // Only feed if not already known
-                    if !engine.block_container.contains_hash(&block_hash) {
-                        engine.feed_block_height(blockchain_height, block_hash);
-                    }
+                for (height, header) in headers {
+                    engine.feed_block_height(height, header.block_hash());
                 }
             }
         }
@@ -1547,16 +1314,9 @@ impl MasternodeSyncManager {
                 );
 
                 // Store empty masternode state to mark sync as complete
-                // Serialize the engine state even for regtest
-                let engine_state = if let Some(engine) = &self.engine {
-                    bincode::serialize(engine).unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-
                 let masternode_state = MasternodeState {
                     last_height: tip_height,
-                    engine_state,
+                    engine_state: Vec::new(), // Empty state for regtest
                     last_update: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -1574,69 +1334,17 @@ impl MasternodeSyncManager {
         }
 
         // Apply the diff to our engine
-        let apply_result = engine.apply_diff(diff.clone(), None, true, None);
-
-        // Handle specific error cases
-        match apply_result {
-            Ok(_) => {
-                // Success - diff applied
-            }
-            Err(e) if e.to_string().contains("MissingStartMasternodeList") => {
-                // If this is a genesis diff and we still get MissingStartMasternodeList,
-                // it means the engine needs to be reset
-                if diff.base_block_hash
-                    == self.config.network.known_genesis_block_hash().ok_or_else(|| {
-                        SyncError::Network("No genesis hash for network".to_string())
-                    })?
-                {
-                    tracing::warn!("Genesis diff failed with MissingStartMasternodeList - resetting engine state");
-
-                    // Reset the engine to a clean state
-                    engine.masternode_lists.clear();
-                    engine.known_snapshots.clear();
-                    engine.rotated_quorums_per_cycle.clear();
-                    engine.quorum_statuses.clear();
-
-                    // Re-feed genesis block
-                    if let Some(genesis_hash) = self.config.network.known_genesis_block_hash() {
-                        engine.feed_block_height(0, genesis_hash);
-                    }
-
-                    // Try applying the diff again
-                    engine.apply_diff(diff, None, true, None).map_err(|e| {
-                        SyncError::Validation(format!(
-                            "Failed to apply genesis masternode diff after reset: {:?}",
-                            e
-                        ))
-                    })?;
-
-                    tracing::info!(
-                        "Successfully applied genesis masternode diff after engine reset"
-                    );
-                } else {
-                    // Non-genesis diff failed - this will trigger a retry from genesis
-                    return Err(SyncError::Validation(format!(
-                        "Failed to apply masternode diff: {:?}",
-                        e
-                    )));
-                }
-            }
-            Err(e) => {
-                // Other errors
-                if self.config.network == dashcore::Network::Regtest
-                    && e.to_string().contains("IncompleteMnListDiff")
-                {
-                    return Err(SyncError::SyncFailed(format!(
+        engine.apply_diff(diff, None, true, None)
+            .map_err(|e| {
+                // Provide more context for IncompleteMnListDiff in regtest
+                if self.config.network == dashcore::Network::Regtest && e.to_string().contains("IncompleteMnListDiff") {
+                    SyncError::SyncFailed(format!(
                         "Failed to apply masternode diff in regtest (this is normal if no masternodes are configured): {:?}", e
-                    )));
+                    ))
                 } else {
-                    return Err(SyncError::Validation(format!(
-                        "Failed to apply masternode diff: {:?}",
-                        e
-                    )));
+                    SyncError::Validation(format!("Failed to apply masternode diff: {:?}", e))
                 }
-            }
-        }
+            })?;
 
         tracing::info!("Successfully applied masternode list diff");
 
@@ -1687,18 +1395,9 @@ impl MasternodeSyncManager {
             target_height
         };
 
-        // Serialize the engine state
-        let engine_state = if let Some(engine) = &self.engine {
-            bincode::serialize(engine).map_err(|e| {
-                SyncError::Storage(format!("Failed to serialize engine state: {}", e))
-            })?
-        } else {
-            Vec::new()
-        };
-
         let masternode_state = MasternodeState {
             last_height: blockchain_height,
-            engine_state,
+            engine_state: Vec::new(), // TODO: Serialize engine state
             last_update: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|e| SyncError::InvalidState(format!("System time error: {}", e)))?
@@ -1723,7 +1422,6 @@ impl MasternodeSyncManager {
         self.received_diffs_count = 0;
         self.bulk_diff_target_height = None;
         self.pending_individual_diffs = None;
-        self.retrying_from_genesis = false;
         if let Some(_engine) = &mut self.engine {
             // TODO: Reset engine state if needed
         }
