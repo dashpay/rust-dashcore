@@ -1706,6 +1706,15 @@ impl ExtendedPrivKey {
     pub fn fingerprint<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> Fingerprint {
         self.identifier(secp)[0..4].try_into().expect("4 is the fingerprint length")
     }
+
+    /// Convert to a PrivateKey for signing operations
+    pub fn to_priv(&self) -> dashcore::PrivateKey {
+        dashcore::PrivateKey {
+            compressed: true,
+            network: self.network.into(),
+            inner: self.private_key,
+        }
+    }
 }
 
 impl ExtendedPubKey {
@@ -1990,6 +1999,14 @@ impl ExtendedPubKey {
     /// Returns the first four bytes of the identifier
     pub fn fingerprint(&self) -> Fingerprint {
         self.identifier()[0..4].try_into().expect("4 is the fingerprint length")
+    }
+
+    /// Convert to a PublicKey for use in address generation
+    pub fn to_pub(&self) -> dashcore::PublicKey {
+        dashcore::PublicKey {
+            compressed: true,
+            inner: self.public_key,
+        }
     }
 }
 
@@ -2676,5 +2693,30 @@ mod tests {
             sk.public_key.to_string(),
             "0251b09b90295c4c793e9452af0e14142c3406b67e864541149de708eb2d41d104"
         ); // Add correct expected value
+    }
+
+    #[test]
+    fn test_to_priv_and_to_pub() {
+        let seed = [0x42u8; 32];
+        let network = Network::Testnet;
+
+        let ext_priv = ExtendedPrivKey::new_master(network, &seed).unwrap();
+        let secp = Secp256k1::new();
+
+        // Test to_priv() method
+        let priv_key = ext_priv.to_priv();
+        assert_eq!(priv_key.compressed, true);
+        assert_eq!(priv_key.network, dashcore::Network::Testnet);
+        assert_eq!(priv_key.inner, ext_priv.private_key);
+
+        // Test to_pub() method
+        let ext_pub = ExtendedPubKey::from_priv(&secp, &ext_priv);
+        let pub_key = ext_pub.to_pub();
+        assert_eq!(pub_key.compressed, true);
+        assert_eq!(pub_key.inner, ext_pub.public_key);
+
+        // Verify the keys match
+        let pub_from_priv = dashcore::PublicKey::from_private_key(&secp, &priv_key);
+        assert_eq!(pub_key.inner, pub_from_priv.inner);
     }
 }
