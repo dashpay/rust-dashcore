@@ -36,6 +36,7 @@ pub mod gap_limit;
 pub mod mnemonic;
 pub mod psbt;
 pub mod seed;
+pub mod transaction_checking;
 pub(crate) mod utils;
 pub mod wallet;
 pub mod watch_only;
@@ -43,7 +44,7 @@ pub mod watch_only;
 pub use dashcore;
 
 pub use account::address_pool::{AddressInfo, AddressPool, KeySource, PoolStats};
-pub use account::{Account, AccountBalance, AccountType, SpecialPurposeType};
+pub use account::{Account, AccountType, ManagedAccountType};
 pub use bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 #[cfg(feature = "bip38")]
 pub use bip38::{encrypt_private_key, generate_intermediate_code, Bip38EncryptedKey, Bip38Mode};
@@ -55,7 +56,7 @@ pub use error::{Error, Result};
 pub use gap_limit::{GapLimit, GapLimitManager, GapLimitStage};
 pub use mnemonic::Mnemonic;
 pub use seed::Seed;
-pub use wallet::{config::WalletConfig, Wallet};
+pub use wallet::{balance::{WalletBalance, BalanceError}, config::WalletConfig, Wallet};
 pub use watch_only::{ScanResult, WatchOnlyWallet, WatchOnlyWalletBuilder};
 
 /// Re-export commonly used types

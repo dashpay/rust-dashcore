@@ -5,7 +5,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 
-use super::account_collection::AccountCollection;
+use crate::account::account_collection::AccountCollection;
 use super::config::WalletConfig;
 use super::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
 use super::{Wallet, WalletType};
@@ -79,7 +79,10 @@ impl Wallet {
 
         // Generate initial account
         if !is_watch_only {
-            wallet.add_account(0, AccountType::Standard, network)?;
+            wallet.add_account(0, AccountType::Standard { 
+                index: 0, 
+                standard_account_type: crate::account::StandardAccountType::BIP44Account 
+            }, network)?;
         } else {
             // For watch-only, external signable, and mnemonic with passphrase wallets, create account with the provided xpub
             let xpub = match &wallet.wallet_type {
@@ -93,25 +96,14 @@ impl Wallet {
                 _ => unreachable!("Already checked is_watch_only"),
             };
 
-            // Create account derivation path
-            let derivation_path = crate::bip32::DerivationPath::from(vec![
-                crate::bip32::ChildNumber::from_hardened_idx(44).unwrap(),
-                crate::bip32::ChildNumber::from_hardened_idx(if network == Network::Dash {
-                    5
-                } else {
-                    1
-                })
-                .unwrap(),
-                crate::bip32::ChildNumber::from_hardened_idx(0).unwrap(),
-            ]);
-
             let account = Account::from_xpub(
                 None,
-                0,
+                AccountType::Standard { 
+                    index: 0, 
+                    standard_account_type: crate::account::StandardAccountType::BIP44Account 
+                },
                 xpub,
                 network,
-                crate::dip9::DerivationPathReference::BIP44,
-                derivation_path,
             )?;
             wallet.standard_accounts.insert(network, 0, account);
         }

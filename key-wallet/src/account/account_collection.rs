@@ -1,43 +1,43 @@
-//! Collection of managed accounts organized by network
+//! Account collection management for wallets
 //!
-//! This module provides a structure for managing multiple accounts
-//! across different networks in a hierarchical manner.
+//! This module provides a structured way to manage accounts by type.
 
-use super::managed_account::ManagedAccount;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// Collection of managed accounts organized by type
+use crate::account::Account;
+
+/// Collection of accounts organized by type
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct ManagedAccountCollection {
+pub struct AccountCollection {
     /// Standard BIP44 accounts by index
-    pub standard_bip44_accounts: BTreeMap<u32, ManagedAccount>,
+    pub standard_bip44_accounts: BTreeMap<u32, Account>,
     /// Standard BIP32 accounts by index
-    pub standard_bip32_accounts: BTreeMap<u32, ManagedAccount>,
+    pub standard_bip32_accounts: BTreeMap<u32, Account>,
     /// CoinJoin accounts by index
-    pub coinjoin_accounts: BTreeMap<u32, ManagedAccount>,
+    pub coinjoin_accounts: BTreeMap<u32, Account>,
     /// Identity registration account (optional)
-    pub identity_registration: Option<ManagedAccount>,
+    pub identity_registration: Option<Account>,
     /// Identity top-up accounts by registration index
-    pub identity_topup: BTreeMap<u32, ManagedAccount>,
+    pub identity_topup: BTreeMap<u32, Account>,
     /// Identity top-up not bound to identity (optional)
-    pub identity_topup_not_bound: Option<ManagedAccount>,
+    pub identity_topup_not_bound: Option<Account>,
     /// Identity invitation account (optional)
-    pub identity_invitation: Option<ManagedAccount>,
+    pub identity_invitation: Option<Account>,
     /// Provider voting keys (optional)
-    pub provider_voting_keys: Option<ManagedAccount>,
+    pub provider_voting_keys: Option<Account>,
     /// Provider owner keys (optional)
-    pub provider_owner_keys: Option<ManagedAccount>,
+    pub provider_owner_keys: Option<Account>,
     /// Provider operator keys (optional)
-    pub provider_operator_keys: Option<ManagedAccount>,
+    pub provider_operator_keys: Option<Account>,
     /// Provider platform keys (optional)
-    pub provider_platform_keys: Option<ManagedAccount>,
+    pub provider_platform_keys: Option<Account>,
 }
 
-impl ManagedAccountCollection {
+impl AccountCollection {
     /// Create a new empty account collection
     pub fn new() -> Self {
         Self {
@@ -56,11 +56,11 @@ impl ManagedAccountCollection {
     }
 
     /// Insert an account into the collection
-    pub fn insert(&mut self, account: ManagedAccount) {
-        use super::types::{ManagedAccountType, StandardAccountType};
+    pub fn insert(&mut self, account: Account) {
+        use crate::account::{AccountType, StandardAccountType};
         
         match &account.account_type {
-            ManagedAccountType::Standard { index, standard_account_type, .. } => {
+            AccountType::Standard { index, standard_account_type } => {
                 match standard_account_type {
                     StandardAccountType::BIP44Account => {
                         self.standard_bip44_accounts.insert(*index, account);
@@ -70,157 +70,85 @@ impl ManagedAccountCollection {
                     }
                 }
             }
-            ManagedAccountType::CoinJoin { index, .. } => {
+            AccountType::CoinJoin { index } => {
                 self.coinjoin_accounts.insert(*index, account);
             }
-            ManagedAccountType::IdentityRegistration { .. } => {
+            AccountType::IdentityRegistration => {
                 self.identity_registration = Some(account);
             }
-            ManagedAccountType::IdentityTopUp { registration_index, .. } => {
+            AccountType::IdentityTopUp { registration_index } => {
                 self.identity_topup.insert(*registration_index, account);
             }
-            ManagedAccountType::IdentityTopUpNotBoundToIdentity { .. } => {
+            AccountType::IdentityTopUpNotBoundToIdentity => {
                 self.identity_topup_not_bound = Some(account);
             }
-            ManagedAccountType::IdentityInvitation { .. } => {
+            AccountType::IdentityInvitation => {
                 self.identity_invitation = Some(account);
             }
-            ManagedAccountType::ProviderVotingKeys { .. } => {
+            AccountType::ProviderVotingKeys => {
                 self.provider_voting_keys = Some(account);
             }
-            ManagedAccountType::ProviderOwnerKeys { .. } => {
+            AccountType::ProviderOwnerKeys => {
                 self.provider_owner_keys = Some(account);
             }
-            ManagedAccountType::ProviderOperatorKeys { .. } => {
+            AccountType::ProviderOperatorKeys => {
                 self.provider_operator_keys = Some(account);
             }
-            ManagedAccountType::ProviderPlatformKeys { .. } => {
+            AccountType::ProviderPlatformKeys => {
                 self.provider_platform_keys = Some(account);
             }
         }
     }
     
-    /// Insert an account into the collection with explicit index (for compatibility)
-    pub fn insert_with_index(&mut self, index: u32, account: ManagedAccount) {
-        // For backwards compatibility, we'll insert based on the account type
-        // This assumes the index matches what's in the account type
-        self.insert(account);
-    }
-
-    /// Get an account by index
-    pub fn get(&self, index: u32) -> Option<&ManagedAccount> {
-        // Try standard BIP44 first
-        if let Some(account) = self.standard_bip44_accounts.get(&index) {
-            return Some(account);
-        }
-        
-        // Try standard BIP32
-        if let Some(account) = self.standard_bip32_accounts.get(&index) {
-            return Some(account);
-        }
-        
-        // Try CoinJoin
-        if let Some(account) = self.coinjoin_accounts.get(&index) {
-            return Some(account);
-        }
-        
-        // For identity top-up with registration index
-        if let Some(account) = self.identity_topup.get(&index) {
-            return Some(account);
-        }
-        
-        None
+    /// Get an account by index (tries standard BIP44, BIP32, then CoinJoin)
+    pub fn get(&self, index: u32) -> Option<&Account> {
+        self.standard_bip44_accounts.get(&index)
+            .or_else(|| self.standard_bip32_accounts.get(&index))
+            .or_else(|| self.coinjoin_accounts.get(&index))
+            .or_else(|| self.identity_topup.get(&index))
     }
 
     /// Get a mutable account by index
-    pub fn get_mut(&mut self, index: u32) -> Option<&mut ManagedAccount> {
-        // Try standard BIP44 first
+    pub fn get_mut(&mut self, index: u32) -> Option<&mut Account> {
         if let Some(account) = self.standard_bip44_accounts.get_mut(&index) {
             return Some(account);
         }
-        
-        // Try standard BIP32
         if let Some(account) = self.standard_bip32_accounts.get_mut(&index) {
             return Some(account);
         }
-        
-        // Try CoinJoin
         if let Some(account) = self.coinjoin_accounts.get_mut(&index) {
             return Some(account);
         }
-        
-        // For identity top-up with registration index
         if let Some(account) = self.identity_topup.get_mut(&index) {
             return Some(account);
         }
-        
         None
     }
 
     /// Remove an account from the collection
-    pub fn remove(&mut self, index: u32) -> Option<ManagedAccount> {
-        // Try standard BIP44 first
-        if let Some(account) = self.standard_bip44_accounts.remove(&index) {
-            return Some(account);
-        }
-        
-        // Try standard BIP32
-        if let Some(account) = self.standard_bip32_accounts.remove(&index) {
-            return Some(account);
-        }
-        
-        // Try CoinJoin
-        if let Some(account) = self.coinjoin_accounts.remove(&index) {
-            return Some(account);
-        }
-        
-        // For identity top-up with registration index
-        if let Some(account) = self.identity_topup.remove(&index) {
-            return Some(account);
-        }
-        
-        None
+    pub fn remove(&mut self, index: u32) -> Option<Account> {
+        self.standard_bip44_accounts.remove(&index)
+            .or_else(|| self.standard_bip32_accounts.remove(&index))
+            .or_else(|| self.coinjoin_accounts.remove(&index))
+            .or_else(|| self.identity_topup.remove(&index))
     }
 
     /// Check if an account exists
     pub fn contains_key(&self, index: u32) -> bool {
-        // Check standard BIP44
-        if self.standard_bip44_accounts.contains_key(&index) {
-            return true;
-        }
-        
-        // Check standard BIP32
-        if self.standard_bip32_accounts.contains_key(&index) {
-            return true;
-        }
-        
-        // Check CoinJoin
-        if self.coinjoin_accounts.contains_key(&index) {
-            return true;
-        }
-        
-        // Check identity top-up with registration index
-        if self.identity_topup.contains_key(&index) {
-            return true;
-        }
-        
-        false
+        self.standard_bip44_accounts.contains_key(&index) ||
+        self.standard_bip32_accounts.contains_key(&index) ||
+        self.coinjoin_accounts.contains_key(&index) ||
+        self.identity_topup.contains_key(&index)
     }
 
     /// Get all accounts
-    pub fn all_accounts(&self) -> Vec<&ManagedAccount> {
+    pub fn all_accounts(&self) -> Vec<&Account> {
         let mut accounts = Vec::new();
         
-        // Add standard BIP44 accounts
         accounts.extend(self.standard_bip44_accounts.values());
-        
-        // Add standard BIP32 accounts
         accounts.extend(self.standard_bip32_accounts.values());
-        
-        // Add CoinJoin accounts
         accounts.extend(self.coinjoin_accounts.values());
         
-        // Add special purpose accounts
         if let Some(account) = &self.identity_registration {
             accounts.push(account);
         }
@@ -255,19 +183,13 @@ impl ManagedAccountCollection {
     }
 
     /// Get all accounts mutably
-    pub fn all_accounts_mut(&mut self) -> Vec<&mut ManagedAccount> {
+    pub fn all_accounts_mut(&mut self) -> Vec<&mut Account> {
         let mut accounts = Vec::new();
         
-        // Add standard BIP44 accounts
         accounts.extend(self.standard_bip44_accounts.values_mut());
-        
-        // Add standard BIP32 accounts
         accounts.extend(self.standard_bip32_accounts.values_mut());
-        
-        // Add CoinJoin accounts
         accounts.extend(self.coinjoin_accounts.values_mut());
         
-        // Add special purpose accounts
         if let Some(account) = &mut self.identity_registration {
             accounts.push(account);
         }
@@ -310,21 +232,13 @@ impl ManagedAccountCollection {
     pub fn all_indices(&self) -> Vec<u32> {
         let mut indices = Vec::new();
         
-        // Add standard BIP44 indices
         indices.extend(self.standard_bip44_accounts.keys().copied());
-        
-        // Add standard BIP32 indices
         indices.extend(self.standard_bip32_accounts.keys().copied());
-        
-        // Add CoinJoin indices
         indices.extend(self.coinjoin_accounts.keys().copied());
-        
-        // Add identity top-up registration indices
         indices.extend(self.identity_topup.keys().copied());
         
         indices
     }
-
 
     /// Check if the collection is empty
     pub fn is_empty(&self) -> bool {
@@ -354,15 +268,5 @@ impl ManagedAccountCollection {
         self.provider_owner_keys = None;
         self.provider_operator_keys = None;
         self.provider_platform_keys = None;
-    }
-
-    /// Check if a transaction belongs to any accounts in this collection
-    pub fn check_transaction(
-        &self,
-        tx: &dashcore::blockdata::transaction::Transaction,
-        account_types: &[crate::transaction_checking::transaction_router::AccountTypeToCheck],
-    ) -> crate::transaction_checking::account_checker::TransactionCheckResult {
-        use crate::transaction_checking::account_checker::AccountTransactionChecker;
-        AccountTransactionChecker::check_transaction(self, tx, account_types)
     }
 }

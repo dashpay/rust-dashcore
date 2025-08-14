@@ -4,6 +4,7 @@
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
+use dashcore::prelude::CoreBlockHeight;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +13,9 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct WalletMetadata {
     /// Wallet creation timestamp
-    pub created_at: u64,
+    pub first_loaded_at: u64,
+    /// Birth height (when wallet was created/restored) - None if unknown
+    pub birth_height: Option<CoreBlockHeight>,
     /// Last sync timestamp
     pub last_synced: Option<u64>,
     /// Total transactions

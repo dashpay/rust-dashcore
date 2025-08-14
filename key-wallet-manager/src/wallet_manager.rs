@@ -4,13 +4,20 @@
 //! each of which can have multiple accounts. This follows the architecture
 //! pattern where a manager oversees multiple distinct wallets.
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use dashcore::blockdata::transaction::Transaction;
-use dashcore_hashes::Hash;
-use key_wallet::{Account, AccountType, Address, Mnemonic, Network, Wallet, WalletConfig};
+use dashcore::blockdata::transaction::{OutPoint, Transaction};
+use dashcore::{BlockHash, Txid};
+use key_wallet::{
+    Account, AccountType, Address, DerivationPath, ExtendedPubKey, Mnemonic, 
+    Network, Wallet, WalletConfig
+};
+use key_wallet::account::ManagedAccount;
+use secp256k1::Secp256k1;
+use dashcore::PublicKey;
+use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord, Utxo as WalletUtxo, WalletBalance};
 
 use crate::fee::FeeLevel;
 use crate::utxo::{Utxo, UtxoSet};
@@ -26,72 +33,27 @@ pub type AccountId = u32;
 /// Each wallet can contain multiple accounts following BIP44 standard.
 /// This is the main entry point for wallet operations.
 pub struct WalletManager {
-    /// All managed wallets indexed by wallet ID
-    wallets: BTreeMap<WalletId, ManagedWallet>,
+    /// Immutable wallets indexed by wallet ID
+    wallets: BTreeMap<WalletId, Wallet>,
+    /// Mutable wallet info indexed by wallet ID
+    wallet_infos: BTreeMap<WalletId, ManagedWalletInfo>,
     /// Global UTXO set across all wallets
     utxo_set: UtxoSet,
     /// Global transaction history
-    transactions: BTreeMap<[u8; 32], TransactionRecord>,
+    transactions: BTreeMap<Txid, TransactionRecord>,
     /// Current block height
     current_height: u32,
     /// Default network for new wallets
     default_network: Network,
 }
 
-/// A managed wallet with its metadata and state
-#[derive(Debug, Clone)]
-pub struct ManagedWallet {
-    /// The underlying wallet instance
-    pub wallet: Wallet,
-    /// Wallet metadata
-    pub metadata: WalletMetadata,
-    /// Per-wallet UTXO set
-    pub utxo_set: UtxoSet,
-    /// Per-wallet transaction history
-    pub transactions: BTreeMap<[u8; 32], TransactionRecord>,
-}
-
-/// Metadata for a managed wallet
-#[derive(Debug, Clone)]
-pub struct WalletMetadata {
-    /// Wallet identifier
-    pub id: WalletId,
-    /// Human-readable name
-    pub name: String,
-    /// Creation timestamp
-    pub created_at: u64,
-    /// Last used timestamp
-    pub last_used: u64,
-    /// Network this wallet operates on
-    pub network: Network,
-    /// Whether this wallet is watch-only
-    pub is_watch_only: bool,
-    /// Optional description
-    pub description: Option<String>,
-}
-
-/// Transaction record
-#[derive(Debug, Clone)]
-pub struct TransactionRecord {
-    /// The transaction
-    pub transaction: Transaction,
-    /// Block height (if confirmed)
-    pub height: Option<u32>,
-    /// Timestamp
-    pub timestamp: u64,
-    /// Net amount for wallet
-    pub net_amount: i64,
-    /// Fee paid (if known)
-    pub fee: Option<u64>,
-    /// Transaction label
-    pub label: Option<String>,
-}
 
 impl WalletManager {
     /// Create a new wallet manager
     pub fn new(default_network: Network) -> Self {
         Self {
             wallets: BTreeMap::new(),
+            wallet_infos: BTreeMap::new(),
             utxo_set: UtxoSet::new(),
             transactions: BTreeMap::new(),
             current_height: 0,
@@ -107,7 +69,8 @@ impl WalletManager {
         mnemonic: &str,
         passphrase: &str,
         network: Option<Network>,
-    ) -> Result<&ManagedWallet, WalletError> {
+        birth_height: Option<u32>,
+    ) -> Result<&ManagedWalletInfo, WalletError> {
         if self.wallets.contains_key(&wallet_id) {
             return Err(WalletError::WalletExists(wallet_id));
         }
@@ -125,28 +88,28 @@ impl WalletManager {
         )
         .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
-        let metadata = WalletMetadata {
-            id: wallet_id.clone(),
-            name,
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            last_used: 0,
-            network,
-            is_watch_only: false,
-            description: None,
-        };
-
-        let managed_wallet = ManagedWallet {
-            wallet,
-            metadata,
-            utxo_set: UtxoSet::new(),
-            transactions: BTreeMap::new(),
-        };
-
-        self.wallets.insert(wallet_id.clone(), managed_wallet);
-        Ok(self.wallets.get(&wallet_id).unwrap())
+        // Create managed wallet info
+        let mut managed_info = ManagedWalletInfo::with_name(wallet.wallet_id, name);
+        managed_info.metadata.birth_height = birth_height;
+        managed_info.metadata.first_loaded_at = current_timestamp();
+        
+        // Create default account in the wallet
+        let mut wallet_mut = wallet.clone();
+        if wallet_mut.get_account(network, 0).is_none() {
+            wallet_mut.add_account(0, AccountType::Standard, network)
+                .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
+        }
+        
+        let account = wallet_mut.get_account(network, 0)
+            .ok_or_else(|| WalletError::AccountCreation("Failed to get default account".to_string()))?;
+        
+        // Add the account to managed info and generate initial addresses
+        // Note: Address generation would need to be done through proper derivation from the account's xpub
+        // For now, we'll just store the wallet with the account ready
+        
+        self.wallets.insert(wallet_id.clone(), wallet_mut);
+        self.wallet_infos.insert(wallet_id.clone(), managed_info);
+        Ok(self.wallet_infos.get(&wallet_id).unwrap())
     }
 
     /// Create a new empty wallet and add it to the manager
@@ -155,7 +118,7 @@ impl WalletManager {
         wallet_id: WalletId,
         name: String,
         network: Option<Network>,
-    ) -> Result<&ManagedWallet, WalletError> {
+    ) -> Result<&ManagedWalletInfo, WalletError> {
         if self.wallets.contains_key(&wallet_id) {
             return Err(WalletError::WalletExists(wallet_id));
         }
@@ -165,43 +128,56 @@ impl WalletManager {
         let wallet = Wallet::new_random(WalletConfig::default(), network)
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
-        let metadata = WalletMetadata {
-            id: wallet_id.clone(),
-            name,
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            last_used: 0,
-            network,
-            is_watch_only: false,
-            description: None,
-        };
-
-        let managed_wallet = ManagedWallet {
-            wallet,
-            metadata,
-            utxo_set: UtxoSet::new(),
-            transactions: BTreeMap::new(),
-        };
-
-        self.wallets.insert(wallet_id.clone(), managed_wallet);
-        Ok(self.wallets.get(&wallet_id).unwrap())
+        // Create managed wallet info
+        let mut managed_info = ManagedWalletInfo::with_name(wallet.wallet_id, name);
+        managed_info.metadata.birth_height = Some(self.current_height);
+        managed_info.metadata.first_loaded_at = current_timestamp();
+        
+        // Create default account
+        let mut wallet_mut = wallet.clone();
+        wallet_mut.add_account(0, AccountType::Standard, network)
+            .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
+        let _account = wallet_mut.get_account(network, 0)
+            .ok_or_else(|| WalletError::AccountCreation("Failed to get default account".to_string()))?;
+        
+        // Note: Address generation would need to be done through proper derivation from the account's xpub
+        // The ManagedAccount in managed_info will track the addresses
+        
+        self.wallets.insert(wallet_id.clone(), wallet_mut);
+        self.wallet_infos.insert(wallet_id.clone(), managed_info);
+        Ok(self.wallet_infos.get(&wallet_id).unwrap())
     }
 
     /// Get a wallet by ID
-    pub fn get_wallet(&self, wallet_id: &WalletId) -> Option<&ManagedWallet> {
+    pub fn get_wallet(&self, wallet_id: &WalletId) -> Option<&Wallet> {
         self.wallets.get(wallet_id)
     }
 
-    /// Get a mutable wallet by ID
-    pub fn get_wallet_mut(&mut self, wallet_id: &WalletId) -> Option<&mut ManagedWallet> {
-        self.wallets.get_mut(wallet_id)
+    /// Get wallet info by ID
+    pub fn get_wallet_info(&self, wallet_id: &WalletId) -> Option<&ManagedWalletInfo> {
+        self.wallet_infos.get(wallet_id)
+    }
+
+    /// Get mutable wallet info by ID
+    pub fn get_wallet_info_mut(&mut self, wallet_id: &WalletId) -> Option<&mut ManagedWalletInfo> {
+        self.wallet_infos.get_mut(wallet_id)
+    }
+
+    /// Get both wallet and info by ID
+    pub fn get_wallet_and_info(&self, wallet_id: &WalletId) -> Option<(&Wallet, &ManagedWalletInfo)> {
+        match (self.wallets.get(wallet_id), self.wallet_infos.get(wallet_id)) {
+            (Some(wallet), Some(info)) => Some((wallet, info)),
+            _ => None,
+        }
     }
 
     /// Remove a wallet
-    pub fn remove_wallet(&mut self, wallet_id: &WalletId) -> Result<ManagedWallet, WalletError> {
-        self.wallets.remove(wallet_id).ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))
+    pub fn remove_wallet(&mut self, wallet_id: &WalletId) -> Result<(Wallet, ManagedWalletInfo), WalletError> {
+        let wallet = self.wallets.remove(wallet_id)
+            .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
+        let info = self.wallet_infos.remove(wallet_id)
+            .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
+        Ok((wallet, info))
     }
 
     /// List all wallet IDs
@@ -210,8 +186,13 @@ impl WalletManager {
     }
 
     /// Get all wallets
-    pub fn get_all_wallets(&self) -> &BTreeMap<WalletId, ManagedWallet> {
+    pub fn get_all_wallets(&self) -> &BTreeMap<WalletId, Wallet> {
         &self.wallets
+    }
+
+    /// Get all wallet infos
+    pub fn get_all_wallet_infos(&self) -> &BTreeMap<WalletId, ManagedWalletInfo> {
+        &self.wallet_infos
     }
 
     /// Get wallet count
@@ -228,19 +209,30 @@ impl WalletManager {
     ) -> Result<(), WalletError> {
         let wallet = self
             .wallets
+            .get(wallet_id)
+            .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
+        let managed_info = self
+            .wallet_infos
             .get_mut(wallet_id)
             .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
 
-        wallet
-            .wallet
-            .add_account(index, account_type, wallet.metadata.network)
+        // Clone wallet to mutate it
+        let mut wallet_mut = wallet.clone();
+        let network = self.default_network;
+        
+        wallet_mut
+            .add_account(index, account_type, network)
             .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
-
-        // Update last used timestamp
-        wallet.metadata.last_used = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        
+        // Get the created account to verify it was created
+        let _account = wallet_mut.get_account(network, index)
+            .ok_or_else(|| WalletError::AccountCreation("Failed to get created account".to_string()))?;
+        
+        // Update wallet
+        self.wallets.insert(wallet_id.clone(), wallet_mut);
+        
+        // Update metadata
+        managed_info.update_last_synced(current_timestamp());
 
         Ok(())
     }
@@ -252,8 +244,7 @@ impl WalletManager {
             .get(wallet_id)
             .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
 
-        let _network = wallet.metadata.network;
-        Ok(wallet.wallet.all_accounts())
+        Ok(wallet.all_accounts())
     }
 
     /// Get account by index in a specific wallet
@@ -267,36 +258,155 @@ impl WalletManager {
             .get(wallet_id)
             .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
 
-        let network = wallet.metadata.network;
-        Ok(wallet.wallet.get_account(network, index))
+        Ok(wallet.get_account(self.default_network, index))
     }
 
     /// Get receive address from a specific wallet and account
-    /// NOTE: This method is temporarily disabled due to the Account/ManagedAccount refactoring.
-    /// Address generation now requires ManagedAccount which holds mutable state.
     pub fn get_receive_address(
         &mut self,
-        _wallet_id: &WalletId,
-        _account_index: u32,
+        wallet_id: &WalletId,
+        account_index: u32,
     ) -> Result<Address, WalletError> {
-        // TODO: Implement ManagedAccount integration for address generation
-        Err(WalletError::AddressGeneration(
-            "Address generation requires ManagedAccount integration".to_string(),
-        ))
+        let wallet = self.wallets
+            .get(wallet_id)
+            .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
+        let managed_info = self.wallet_infos
+            .get_mut(wallet_id)
+            .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
+        
+        // Get the account from the wallet
+        let account = wallet.get_account(self.default_network, account_index)
+            .ok_or(WalletError::AccountNotFound(account_index))?;
+        
+        // Get or create the managed account in the collection
+        if !managed_info.standard_accounts.contains_key(self.default_network, account_index) {
+            // Create a new managed account if it doesn't exist
+            let base_path = DerivationPath::bip_44_account(self.default_network, account_index);
+            let external_addresses = key_wallet::account::address_pool::AddressPool::new(
+                base_path.clone(),
+                false,
+                20,
+                self.default_network,
+            );
+            let internal_addresses = key_wallet::account::address_pool::AddressPool::new(
+                base_path,
+                true,
+                20,
+                self.default_network,
+            );
+            let gap_limits = key_wallet::gap_limit::GapLimitManager::new(20, 20, None);
+            let managed_account = ManagedAccount::new(
+                account_index,
+                AccountType::Standard,
+                self.default_network,
+                external_addresses,
+                internal_addresses,
+                gap_limits,
+                false,
+            );
+            managed_info.standard_accounts.insert(self.default_network, account_index, managed_account);
+        }
+        
+        let managed_account = managed_info.standard_accounts
+            .get_mut(self.default_network, account_index)
+            .ok_or_else(|| WalletError::AccountNotFound(account_index))?;
+        
+        // Find the next unused index for receive addresses
+        let next_index = managed_account.external_addresses.stats().total_generated;
+        
+        // Derive the address from the account's xpub
+        let address = derive_address_from_account(
+            &account.account_xpub,
+            false, // not change
+            next_index,
+            self.default_network,
+        )?;
+        
+        // Track the address in the managed account's address pool
+        // Note: AddressPool doesn't have a simple add method, so we need to track it differently
+        // For now, just track in monitored addresses
+        let path = DerivationPath::bip_44_payment_path(
+            self.default_network,
+            account_index,
+            false,
+            next_index,
+        );
+        managed_info.add_monitored_address(address.clone(), path);
+        
+        Ok(address)
     }
 
     /// Get change address from a specific wallet and account
-    /// NOTE: This method is temporarily disabled due to the Account/ManagedAccount refactoring.
-    /// Address generation now requires ManagedAccount which holds mutable state.
     pub fn get_change_address(
         &mut self,
-        _wallet_id: &WalletId,
-        _account_index: u32,
+        wallet_id: &WalletId,
+        account_index: u32,
     ) -> Result<Address, WalletError> {
-        // TODO: Implement ManagedAccount integration for address generation
-        Err(WalletError::AddressGeneration(
-            "Address generation requires ManagedAccount integration".to_string(),
-        ))
+        let wallet = self.wallets
+            .get(wallet_id)
+            .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
+        let managed_info = self.wallet_infos
+            .get_mut(wallet_id)
+            .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
+        
+        // Get the account from the wallet
+        let account = wallet.get_account(self.default_network, account_index)
+            .ok_or(WalletError::AccountNotFound(account_index))?;
+        
+        // Get or create the managed account in the collection
+        if !managed_info.standard_accounts.contains_key(self.default_network, account_index) {
+            // Create a new managed account if it doesn't exist
+            let base_path = DerivationPath::bip_44_account(self.default_network, account_index);
+            let external_addresses = key_wallet::account::address_pool::AddressPool::new(
+                base_path.clone(),
+                false,
+                20,
+                self.default_network,
+            );
+            let internal_addresses = key_wallet::account::address_pool::AddressPool::new(
+                base_path,
+                true,
+                20,
+                self.default_network,
+            );
+            let gap_limits = key_wallet::gap_limit::GapLimitManager::new(20, 20, None);
+            let managed_account = ManagedAccount::new(
+                account_index,
+                AccountType::Standard,
+                self.default_network,
+                external_addresses,
+                internal_addresses,
+                gap_limits,
+                false,
+            );
+            managed_info.standard_accounts.insert(self.default_network, account_index, managed_account);
+        }
+        
+        let managed_account = managed_info.standard_accounts
+            .get_mut(self.default_network, account_index)
+            .ok_or_else(|| WalletError::AccountNotFound(account_index))?;
+        
+        // Find the next unused index for change addresses
+        let next_index = managed_account.internal_addresses.stats().total_generated;
+        
+        // Derive the address from the account's xpub
+        let address = derive_address_from_account(
+            &account.account_xpub,
+            true, // is change
+            next_index,
+            self.default_network,
+        )?;
+        
+        // Track the address in the managed account's address pool
+        let path = DerivationPath::bip_44_payment_path(
+            self.default_network,
+            account_index,
+            true,
+            next_index,
+        );
+        managed_info.add_monitored_address(address.clone(), path);
+        
+        Ok(address)
     }
 
     /// Send transaction from a specific wallet and account
@@ -305,60 +415,72 @@ impl WalletManager {
         wallet_id: &WalletId,
         account_index: u32,
         recipients: Vec<(Address, u64)>,
-        fee_level: FeeLevel,
+        _fee_level: FeeLevel,
     ) -> Result<Transaction, WalletError> {
         // Get change address first
         let change_address = self.get_change_address(wallet_id, account_index)?;
 
-        let wallet = self
-            .wallets
+        let managed_info = self
+            .wallet_infos
             .get_mut(wallet_id)
             .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
 
-        // Get the account
-        let network = wallet.metadata.network;
-        let _account = wallet
-            .wallet
-            .get_account(network, account_index)
-            .ok_or(WalletError::AccountNotFound(account_index))?;
-        // TODO: Get addresses from ManagedAccount once integrated
-        let account_addresses: Vec<Address> = Vec::new();
+        // Get spendable UTXOs
+        let utxos = managed_info.get_spendable_utxos();
+        if utxos.is_empty() {
+            return Err(WalletError::InsufficientFunds);
+        }
 
-        // Filter UTXOs for this account
-        let account_utxos: Vec<&Utxo> = wallet.utxo_set.for_address(&change_address);
+        // Simple coin selection - just use first UTXOs that cover amount
+        let total_needed: u64 = recipients.iter().map(|(_, amt)| amt).sum();
+        let fee_estimate = 10000u64; // Fixed fee for now
+        let mut selected_utxos = Vec::new();
+        let mut total_input = 0u64;
+        
+        for utxo in utxos {
+            if total_input >= total_needed + fee_estimate {
+                break;
+            }
+            selected_utxos.push(utxo.clone());
+            total_input += utxo.txout.value;
+        }
+        
+        if total_input < total_needed + fee_estimate {
+            return Err(WalletError::InsufficientFunds);
+        }
 
-        // TODO: Fix transaction building once ManagedAccount is integrated
+        // Build transaction (simplified - would need proper implementation)
+        // For now, return an error as we need proper transaction building
         return Err(WalletError::TransactionBuild(
-            "Transaction building needs ManagedAccount integration".to_string(),
+            "Transaction building implementation needed".to_string(),
         ));
+        
         #[allow(unreachable_code)]
-        let tx: Transaction =
-            unimplemented!("Transaction building needs ManagedAccount integration");
+        {
+            let tx: Transaction = unimplemented!("Transaction building needs implementation");
+            
+            // Record transaction
+            let txid = tx.txid();
+            let record = TransactionRecord {
+                transaction: tx.clone(),
+                txid,
+                height: None,
+                block_hash: None,
+                timestamp: current_timestamp(),
+                net_amount: -(recipients.iter().map(|(_, amount)| *amount as i64).sum::<i64>()),
+                fee: Some(fee_estimate),
+                label: None,
+                is_ours: true,
+            };
 
-        // Record transaction
-        let txid = tx.txid();
-        let record = TransactionRecord {
-            transaction: tx.clone(),
-            height: None,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            net_amount: -(recipients.iter().map(|(_, amount)| *amount as i64).sum::<i64>()),
-            fee: None, // TODO: Calculate actual fee
-            label: None,
-        };
+            managed_info.add_transaction(record.clone());
+            self.transactions.insert(txid, record);
 
-        wallet.transactions.insert(txid.to_byte_array(), record.clone());
-        self.transactions.insert(txid.to_byte_array(), record);
+            // Update last used timestamp
+            managed_info.update_last_synced(current_timestamp());
 
-        // Update last used timestamp
-        wallet.metadata.last_used = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        Ok(tx)
+            Ok(tx)
+        }
     }
 
     /// Get transaction history for all wallets
@@ -371,22 +493,31 @@ impl WalletManager {
         &self,
         wallet_id: &WalletId,
     ) -> Result<Vec<&TransactionRecord>, WalletError> {
-        let wallet = self
-            .wallets
+        let managed_info = self
+            .wallet_infos
             .get(wallet_id)
             .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
 
-        Ok(wallet.transactions.values().collect())
+        Ok(managed_info.get_transaction_history())
     }
 
     /// Add UTXO to a specific wallet
     pub fn add_utxo(&mut self, wallet_id: &WalletId, utxo: Utxo) -> Result<(), WalletError> {
-        let wallet = self
-            .wallets
+        let managed_info = self
+            .wallet_infos
             .get_mut(wallet_id)
             .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
 
-        wallet.utxo_set.add(utxo.clone());
+        // Convert to wallet UTXO
+        let wallet_utxo = WalletUtxo {
+            outpoint: utxo.outpoint,
+            txout: utxo.txout.clone(),
+            address: utxo.address.clone(),
+            height: Some(utxo.height),
+            is_locked: false,
+        };
+        
+        managed_info.add_utxo(wallet_utxo);
         self.utxo_set.add(utxo); // Also add to global set
 
         Ok(())
@@ -398,13 +529,29 @@ impl WalletManager {
     }
 
     /// Get UTXOs for a specific wallet
-    pub fn get_wallet_utxos(&self, wallet_id: &WalletId) -> Result<Vec<&Utxo>, WalletError> {
-        let wallet = self
-            .wallets
+    pub fn get_wallet_utxos(&self, wallet_id: &WalletId) -> Result<Vec<Utxo>, WalletError> {
+        let managed_info = self
+            .wallet_infos
             .get(wallet_id)
             .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
 
-        Ok(wallet.utxo_set.all())
+        // Convert wallet UTXOs back to manager UTXOs
+        let utxos = managed_info.get_utxos()
+            .into_iter()
+            .map(|wu| Utxo {
+                outpoint: wu.outpoint,
+                txout: wu.txout.clone(),
+                address: wu.address.clone(),
+                height: wu.height.unwrap_or(0),
+                is_coinbase: false,
+                is_confirmed: wu.height.is_some(),
+                is_instantlocked: false,
+                is_locked: wu.is_locked,
+                label: None,
+            })
+            .collect();
+        
+        Ok(utxos)
     }
 
     /// Get total balance across all wallets
@@ -412,14 +559,25 @@ impl WalletManager {
         self.utxo_set.total_balance()
     }
 
-    /// Get balance for a specific wallet
-    pub fn get_wallet_balance(&self, wallet_id: &WalletId) -> Result<u64, WalletError> {
-        let wallet = self
-            .wallets
+    /// Get balance for a specific wallet (uses cached value)
+    pub fn get_wallet_balance(&self, wallet_id: &WalletId) -> Result<WalletBalance, WalletError> {
+        let managed_info = self
+            .wallet_infos
             .get(wallet_id)
             .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
 
-        Ok(wallet.utxo_set.total_balance())
+        Ok(managed_info.get_balance())
+    }
+    
+    /// Update the cached balance for a specific wallet
+    pub fn update_wallet_balance(&mut self, wallet_id: &WalletId) -> Result<(), WalletError> {
+        let managed_info = self
+            .wallet_infos
+            .get_mut(wallet_id)
+            .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
+        
+        managed_info.update_balance();
+        Ok(())
     }
 
     /// Update wallet metadata
@@ -429,20 +587,20 @@ impl WalletManager {
         name: Option<String>,
         description: Option<String>,
     ) -> Result<(), WalletError> {
-        let wallet = self
-            .wallets
+        let managed_info = self
+            .wallet_infos
             .get_mut(wallet_id)
             .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
 
         if let Some(new_name) = name {
-            wallet.metadata.name = new_name;
+            managed_info.set_name(new_name);
         }
 
-        wallet.metadata.description = description;
-        wallet.metadata.last_used = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        if let Some(desc) = description {
+            managed_info.set_description(desc);
+        }
+        
+        managed_info.update_last_synced(current_timestamp());
 
         Ok(())
     }
@@ -491,6 +649,8 @@ pub enum WalletError {
     InvalidParameter(String),
     /// Transaction building failed
     TransactionBuild(String),
+    /// Insufficient funds
+    InsufficientFunds,
 }
 
 impl core::fmt::Display for WalletError {
@@ -506,8 +666,51 @@ impl core::fmt::Display for WalletError {
             WalletError::InvalidNetwork => write!(f, "Invalid network"),
             WalletError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
             WalletError::TransactionBuild(err) => write!(f, "Transaction build failed: {}", err),
+            WalletError::InsufficientFunds => write!(f, "Insufficient funds"),
         }
     }
+}
+
+/// Helper function for getting current timestamp
+fn current_timestamp() -> u64 {
+    #[cfg(feature = "std")]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        0 // In no_std environment, timestamp would need to be provided externally
+    }
+}
+
+/// Derive an address from an account's extended public key
+fn derive_address_from_account(
+    account_xpub: &ExtendedPubKey,
+    is_change: bool,
+    index: u32,
+    network: Network,
+) -> Result<Address, WalletError> {
+    let secp = Secp256k1::new();
+    
+    // Derive change/receive branch (account xpub is already at m/44'/5'/account')
+    let change_num = if is_change { 1 } else { 0 };
+    let branch_xpub = account_xpub
+        .derive_pub(&secp, &[key_wallet::ChildNumber::from_normal_idx(change_num).unwrap()])
+        .map_err(|e| WalletError::AddressGeneration(format!("Failed to derive branch: {}", e)))?;
+    
+    // Derive the specific address index
+    let address_xpub = branch_xpub
+        .derive_pub(&secp, &[key_wallet::ChildNumber::from_normal_idx(index).unwrap()])
+        .map_err(|e| WalletError::AddressGeneration(format!("Failed to derive address: {}", e)))?;
+    
+    // Convert to public key and create address
+    let pubkey = PublicKey::from_slice(&address_xpub.public_key.serialize())
+        .map_err(|e| WalletError::AddressGeneration(format!("Failed to create pubkey: {}", e)))?;
+    
+    Ok(Address::p2pkh(&pubkey, network))
 }
 
 #[cfg(feature = "std")]

@@ -27,7 +27,6 @@ pub enum DerivationPathReference {
     BlockchainIdentityCreditInvitationFunding = 13,
     ProviderPlatformNodeKeys = 14,
     CoinJoin = 15,
-    BIP44CoinType = 16,
     Root = 255,
 }
 

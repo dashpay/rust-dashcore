@@ -3,20 +3,21 @@
 //! This module provides comprehensive wallet functionality including
 //! multiple accounts, seed management, and transaction coordination.
 
-pub mod account_collection;
 pub mod accounts;
 pub mod balance;
 #[cfg(feature = "bip38")]
 pub mod bip38;
 pub mod config;
 pub mod helper;
+pub mod immature_transaction;
 pub mod initialization;
-mod managed_wallet_info;
+pub mod managed_wallet_info;
 pub mod metadata;
 pub mod root_extended_keys;
 pub mod stats;
 
-use self::account_collection::AccountCollection;
+use crate::account::account_collection::AccountCollection;
+pub use self::balance::{BalanceError, WalletBalance};
 pub(crate) use self::config::WalletConfig;
 pub use self::managed_wallet_info::ManagedWalletInfo;
 use self::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
@@ -73,12 +74,8 @@ pub struct Wallet {
     pub config: WalletConfig,
     /// Wallet type (mnemonic, mnemonic with passphrase, or watch-only)
     pub wallet_type: WalletType,
-    /// Standard BIP44 accounts organized by network
-    pub standard_accounts: AccountCollection,
-    /// CoinJoin accounts organized by network
-    pub coinjoin_accounts: AccountCollection,
-    /// Special purpose accounts organized by network
-    pub special_accounts: BTreeMap<Network, Vec<Account>>,
+    /// All accounts organized by network
+    pub accounts: BTreeMap<Network, AccountCollection>,
 }
 
 /// Wallet scan result
@@ -261,9 +258,9 @@ mod tests {
 
         // Try creating special purpose accounts
         wallet
-            .add_special_account(0, SpecialPurposeType::IdentityRegistration, Network::Testnet)
+            .add_special_account(0, AccountType::IdentityRegistration, Network::Testnet)
             .unwrap();
-        wallet.add_special_account(1, SpecialPurposeType::IdentityTopUp, Network::Testnet).unwrap();
+        wallet.add_special_account(1, AccountType::IdentityTopUp, Network::Testnet).unwrap();
 
         assert_eq!(wallet.standard_accounts.network_count(Network::Testnet), 2); // 2 standard accounts (0 and 1)
         assert_eq!(wallet.coinjoin_accounts.network_count(Network::Testnet), 1); // 1 coinjoin account (2)
@@ -286,7 +283,7 @@ mod tests {
         assert_eq!(managed_info.wallet_id, wallet.wallet_id);
         assert_eq!(managed_info.name.as_ref().unwrap(), "Test Wallet");
         assert_eq!(managed_info.description.as_ref().unwrap(), "A test wallet");
-        assert_eq!(managed_info.metadata.created_at, 0); // Default value
+        assert_eq!(managed_info.metadata.first_loaded_at, 0); // Default value
         assert!(managed_info.metadata.last_synced.is_none());
 
         // Test updating metadata

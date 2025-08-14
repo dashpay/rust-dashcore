@@ -9,7 +9,7 @@ use core::fmt;
 use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
 use dashcore::blockdata::transaction::txin::TxIn;
 use dashcore::blockdata::transaction::txout::TxOut;
-use dashcore::blockdata::transaction::Transaction;
+use dashcore::blockdata::transaction::{Transaction, Weight};
 use dashcore::sighash::{EcdsaSighashType, SighashCache};
 use dashcore_hashes::Hash;
 use key_wallet::{Address, Network};
@@ -222,11 +222,10 @@ impl TransactionBuilder {
 
         // Create unsigned transaction
         let mut transaction = Transaction {
-            version: self.version as u16,
+            version: self.version as u32,
             lock_time: self.lock_time,
             input: tx_inputs,
             output: tx_outputs,
-            special_transaction_payload: None,
         };
 
         // Sign inputs if keys are provided

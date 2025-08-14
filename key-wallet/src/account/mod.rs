@@ -5,13 +5,14 @@
 //! multiple account types (standard, CoinJoin, watch-only).
 
 pub mod address_pool;
-pub mod balance;
 pub mod coinjoin;
 pub mod managed_account;
 pub mod managed_account_collection;
 pub mod metadata;
 pub mod scan;
+pub mod transaction_record;
 pub mod types;
+pub mod account_collection;
 
 use core::fmt;
 
@@ -26,13 +27,13 @@ use crate::dip9::DerivationPathReference;
 use crate::error::Result;
 use crate::Network;
 
-pub use balance::AccountBalance;
 pub use coinjoin::CoinJoinPools;
-pub use managed_account::ManagedAccount;
+pub use managed_account::{ManagedAccount, Utxo};
 pub use managed_account_collection::ManagedAccountCollection;
 pub use metadata::AccountMetadata;
 pub use scan::ScanResult;
-pub use types::{AccountType, SpecialPurposeType};
+pub use transaction_record::TransactionRecord;
+pub use types::{AccountType, ManagedAccountType, StandardAccountType};
 
 /// Complete account structure with all derivation paths
 ///
@@ -44,43 +45,32 @@ pub use types::{AccountType, SpecialPurposeType};
 pub struct Account {
     /// Wallet id
     pub parent_wallet_id: Option<[u8; 32]>,
-    /// Account index (BIP44 account level)
-    pub index: u32,
-    /// Account type
+    /// Account type (includes index information and derivation path)
     pub account_type: AccountType,
     /// Network this account belongs to
     pub network: Network,
     /// Account-level extended public key
     pub account_xpub: ExtendedPubKey,
-    /// Derivation path reference
-    pub derivation_path_reference: DerivationPathReference,
-    /// Derivation path
-    pub derivation_path: DerivationPath,
     /// Whether this is a watch-only account
     pub is_watch_only: bool,
 }
 
 impl Account {
-    /// Create a new standard account from an extended private key
+    /// Create a new account from an extended private key
     pub fn new(
         parent_wallet_id: Option<[u8; 32]>,
-        index: u32,
+        account_type: AccountType,
         account_key: ExtendedPrivKey,
         network: Network,
-        derivation_path_reference: DerivationPathReference,
-        derivation_path: DerivationPath,
     ) -> Result<Self> {
         let secp = Secp256k1::new();
         let account_xpub = ExtendedPubKey::from_priv(&secp, &account_key);
 
         Ok(Self {
             parent_wallet_id,
-            index,
-            account_type: AccountType::Standard,
+            account_type,
             network,
             account_xpub,
-            derivation_path_reference,
-            derivation_path,
             is_watch_only: false,
         })
     }
@@ -88,22 +78,37 @@ impl Account {
     /// Create a watch-only account from an extended public key
     pub fn from_xpub(
         parent_wallet_id: Option<[u8; 32]>,
-        index: u32,
+        account_type: AccountType,
         account_xpub: ExtendedPubKey,
         network: Network,
-        derivation_path_reference: DerivationPathReference,
-        derivation_path: DerivationPath,
     ) -> Result<Self> {
         Ok(Self {
             parent_wallet_id,
-            index,
-            account_type: AccountType::Standard,
+            account_type,
             network,
             account_xpub,
-            derivation_path_reference,
-            derivation_path,
             is_watch_only: true,
         })
+    }
+    
+    /// Get the account index
+    pub fn index(&self) -> Option<u32> {
+        self.account_type.index()
+    }
+    
+    /// Get the account index or 0 if none exists
+    pub fn index_or_default(&self) -> u32 {
+        self.account_type.index_or_default()
+    }
+
+    /// Get the derivation path reference for this account
+    pub fn derivation_path_reference(&self) -> DerivationPathReference {
+        self.account_type.derivation_path_reference()
+    }
+
+    /// Get the derivation path for this account
+    pub fn derivation_path(&self) -> Result<DerivationPath> {
+        self.account_type.derivation_path(self.network)
     }
 
     /// Export account as watch-only
@@ -136,7 +141,11 @@ impl Account {
 
 impl fmt::Display for Account {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Account #{} ({:?}) - Network: {:?}", self.index, self.account_type, self.network)
+        if let Some(index) = self.index() {
+            write!(f, "Account #{} ({:?}) - Network: {:?}", index, self.account_type, self.network)
+        } else {
+            write!(f, "Account ({:?}) - Network: {:?}", self.account_type, self.network)
+        }
     }
 }
 
@@ -163,15 +172,19 @@ mod tests {
         ]);
         let account_key = master.derive_priv(&secp, &path).unwrap();
 
-        Account::new(None, 0, account_key, Network::Testnet, DerivationPathReference::BIP44, path)
-            .unwrap()
+        Account::new(
+            None, 
+            AccountType::Standard { index: 0, standard_account_type: StandardAccountType::BIP44Account }, 
+            account_key, 
+            Network::Testnet
+        ).unwrap()
     }
 
     #[test]
     fn test_account_creation() {
         let account = test_account();
-        assert_eq!(account.index, 0);
-        assert_eq!(account.account_type, AccountType::Standard);
+        assert_eq!(account.index(), Some(0));
+        assert_eq!(account.account_type, AccountType::Standard { index: 0, standard_account_type: StandardAccountType::BIP44Account });
         assert!(!account.is_watch_only);
     }
 
@@ -180,11 +193,9 @@ mod tests {
         let account = test_account();
         let watch_only = Account::from_xpub(
             None,
-            0,
+            AccountType::Standard { index: 0, standard_account_type: StandardAccountType::BIP44Account },
             account.account_xpub,
             Network::Testnet,
-            DerivationPathReference::BIP44,
-            account.derivation_path.clone(),
         )
         .unwrap();
 
@@ -198,7 +209,7 @@ mod tests {
         let serialized = account.serialize().unwrap();
         let deserialized = Account::deserialize(&serialized).unwrap();
 
-        assert_eq!(account.index, deserialized.index);
+        assert_eq!(account.index(), deserialized.index());
         assert_eq!(account.account_type, deserialized.account_type);
     }
 }
