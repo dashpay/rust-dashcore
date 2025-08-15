@@ -486,13 +486,13 @@ async fn test_progress_reporting() {
 **Implementation**:
 ```rust
 use std::collections::HashMap;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex};
 use dashcore::{BlockHash, network::message_qrinfo::QRInfo};
 
 /// Correlates QRInfo requests with responses for parallel processing
 pub struct QRInfoCorrelationManager {
     /// Pending requests waiting for responses
-    pending_requests: HashMap<RequestId, PendingQRInfoRequest>,
+    pending_requests: Mutex<HashMap<RequestId, PendingQRInfoRequest>>,
     /// Next request ID
     next_request_id: AtomicU64,
 }
@@ -538,7 +538,7 @@ impl QRInfoCorrelationManager {
         let matching_request_id = self.find_matching_request(&qr_info)?;
         
         if let Some(pending) = self.pending_requests.remove(&matching_request_id) {
-            if pending.response_sender.send(qr_info).is_err() {
+            if pending.response_sender.send(Ok(qr_info)).is_err() {
                 tracing::warn!(
                     "Failed to send QRInfo response for request {} - receiver dropped",
                     matching_request_id.0
@@ -564,7 +564,7 @@ impl QRInfoCorrelationManager {
         
         for request_id in expired_ids {
             if let Some(pending) = self.pending_requests.remove(&request_id) {
-                let _ = pending.response_sender.send_error(CorrelationError::Timeout);
+                let _ = pending.response_sender.send(Err(CorrelationError::Timeout));
                 tracing::warn!("Cleaned up expired QRInfo request {}", request_id.0);
             }
         }
