@@ -2,19 +2,19 @@
 //!
 //! Tests Provider (DIP-3) and Identity (Platform) special transactions.
 
-use dashcore::{Transaction, TxIn, TxOut, OutPoint, ScriptBuf, Txid};
 use dashcore::hashes::Hash;
+use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::collections::HashMap;
 
 /// Special transaction types in Dash
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SpecialTransactionType {
-    ProviderRegistration = 1,     // ProRegTx
-    ProviderUpdate = 2,           // ProUpServTx  
-    ProviderRevoke = 3,           // ProUpRevTx
-    CoinbaseSpecial = 5,          // CbTx
-    QuorumCommitment = 6,         // qcTx
-    ProviderUpdateRegistrar = 7,  // ProUpRegTx
+    ProviderRegistration = 1,    // ProRegTx
+    ProviderUpdate = 2,          // ProUpServTx
+    ProviderRevoke = 3,          // ProUpRevTx
+    CoinbaseSpecial = 5,         // CbTx
+    QuorumCommitment = 6,        // qcTx
+    ProviderUpdateRegistrar = 7, // ProUpRegTx
 }
 
 /// Provider registration transaction payload
@@ -84,13 +84,13 @@ fn test_provider_registration_transaction() {
         script_payout: ScriptBuf::new(),
         inputs_hash: [5u8; 32],
     };
-    
+
     // Create transaction with special payload
     let tx = create_special_transaction(SpecialTransactionType::ProviderRegistration);
-    
+
     // Verify transaction properties
     assert_eq!(tx.version, 3); // Version 3 for special transactions
-    // In a real implementation, would verify special_transaction_payload is Some
+                               // In a real implementation, would verify special_transaction_payload is Some
 }
 
 #[test]
@@ -104,9 +104,9 @@ fn test_provider_update_service_transaction() {
         inputs_hash: [2u8; 32],
         operator_signature: [3u8; 96],
     };
-    
+
     let tx = create_special_transaction(SpecialTransactionType::ProviderUpdate);
-    
+
     assert_eq!(tx.version, 3);
     // In a real implementation, would verify special_transaction_payload is Some
 }
@@ -122,9 +122,9 @@ fn test_provider_update_registrar_transaction() {
         script_payout: ScriptBuf::new(),
         inputs_hash: [4u8; 32],
     };
-    
+
     let tx = create_special_transaction(SpecialTransactionType::ProviderUpdateRegistrar);
-    
+
     assert_eq!(tx.version, 3);
     // In a real implementation, would verify special_transaction_payload is Some
 }
@@ -138,9 +138,9 @@ fn test_provider_revocation_transaction() {
         inputs_hash: [2u8; 32],
         operator_signature: [3u8; 96],
     };
-    
+
     let tx = create_special_transaction(SpecialTransactionType::ProviderRevoke);
-    
+
     assert_eq!(tx.version, 3);
     // In a real implementation, would verify special_transaction_payload is Some
 }
@@ -154,19 +154,19 @@ fn test_coinbase_special_transaction() {
         merkle_root_mn_list: [u8; 32],
         merkle_root_quorums: [u8; 32],
     }
-    
+
     let payload = CbTxPayload {
         version: 2,
         height: 100000,
         merkle_root_mn_list: [1u8; 32],
         merkle_root_quorums: [2u8; 32],
     };
-    
+
     let mut tx = create_special_transaction(SpecialTransactionType::CoinbaseSpecial);
-    
+
     // Coinbase has special input
     tx.input[0].previous_output = OutPoint::null();
-    
+
     assert!(tx.is_coin_base());
     assert_eq!(tx.version, 3);
 }
@@ -179,15 +179,15 @@ fn test_quorum_commitment_transaction() {
         height: u32,
         commitment: Vec<u8>,
     }
-    
+
     let payload = QcTxPayload {
         version: 1,
         height: 100000,
         commitment: vec![0u8; 100], // Actual commitment data
     };
-    
+
     let tx = create_special_transaction(SpecialTransactionType::QuorumCommitment);
-    
+
     assert_eq!(tx.version, 3);
     // In a real implementation, would verify special_transaction_payload is Some
 }
@@ -201,16 +201,16 @@ fn test_special_transaction_validation() {
         (SpecialTransactionType::ProviderRevoke, 0),
         (SpecialTransactionType::ProviderUpdateRegistrar, 0),
     ];
-    
+
     for (tx_type, min_amount) in test_cases {
         let tx = create_special_transaction(tx_type);
-        
+
         // Validate version
         assert_eq!(tx.version, 3, "Special transactions must be version 3");
-        
+
         // Validate has special payload
         // In a real implementation, would verify special_transaction_payload is Some
-        
+
         // Validate minimum amounts if applicable
         if min_amount > 0 && !tx.output.is_empty() {
             assert!(tx.output[0].value >= min_amount, "Insufficient collateral");
@@ -227,14 +227,14 @@ fn test_provider_key_update_scenarios() {
         PayoutScriptOnly,
         AllKeys,
     }
-    
+
     let scenarios = vec![
         UpdateScenario::OperatorKeyOnly,
         UpdateScenario::VotingKeyOnly,
         UpdateScenario::PayoutScriptOnly,
         UpdateScenario::AllKeys,
     ];
-    
+
     for scenario in scenarios {
         let mut payload = ProUpRegTxPayload {
             version: 1,
@@ -245,7 +245,7 @@ fn test_provider_key_update_scenarios() {
             script_payout: ScriptBuf::new(),
             inputs_hash: [0u8; 32],
         };
-        
+
         match scenario {
             UpdateScenario::OperatorKeyOnly => {
                 payload.operator_pubkey = [1u8; 48];
@@ -262,7 +262,7 @@ fn test_provider_key_update_scenarios() {
                 payload.script_payout = ScriptBuf::from(vec![3u8; 25]);
             }
         }
-        
+
         let tx = create_special_transaction(SpecialTransactionType::ProviderUpdateRegistrar);
         // In a real implementation, would verify special_transaction_payload is Some
     }
@@ -278,14 +278,14 @@ fn test_provider_revocation_reasons() {
         CompromisedKeys = 2,
         ChangeOfKeys = 3,
     }
-    
+
     let reasons = vec![
         RevocationReason::NotSpecified,
         RevocationReason::TermOfService,
         RevocationReason::CompromisedKeys,
         RevocationReason::ChangeOfKeys,
     ];
-    
+
     for reason in reasons {
         let payload = ProUpRevTxPayload {
             version: 1,
@@ -294,10 +294,10 @@ fn test_provider_revocation_reasons() {
             inputs_hash: [2u8; 32],
             operator_signature: [3u8; 96],
         };
-        
+
         let tx = create_special_transaction(SpecialTransactionType::ProviderRevoke);
         // In a real implementation, would verify special_transaction_payload is Some
-        
+
         // Verify reason is valid
         assert!(payload.reason <= 3);
     }
@@ -312,16 +312,16 @@ fn test_special_transaction_size_limits() {
         SpecialTransactionType::ProviderRevoke,
         SpecialTransactionType::ProviderUpdateRegistrar,
     ];
-    
+
     for tx_type in tx_types {
         let tx = create_special_transaction(tx_type);
-        
+
         // Serialize transaction (mock)
         let serialized_size = estimate_transaction_size(&tx);
-        
+
         // Maximum transaction size is 100KB
         assert!(serialized_size < 100_000, "Transaction exceeds size limit");
-        
+
         // Special transactions should be relatively small
         assert!(serialized_size < 10_000, "Special transaction unexpectedly large");
     }
@@ -331,17 +331,17 @@ fn test_special_transaction_size_limits() {
 fn test_provider_operator_reward_distribution() {
     // Test operator reward percentage validation
     let reward_percentages = vec![
-        0,    // 0% - all to owner
-        500,  // 5%
-        1000, // 10%
-        5000, // 50%
+        0,     // 0% - all to owner
+        500,   // 5%
+        1000,  // 10%
+        5000,  // 50%
         10000, // 100% - all to operator
         10001, // Invalid - over 100%
     ];
-    
+
     for reward in reward_percentages {
         let is_valid = reward <= 10000;
-        
+
         if is_valid {
             let payload = ProRegTxPayload {
                 version: 1,
@@ -357,7 +357,7 @@ fn test_provider_operator_reward_distribution() {
                 script_payout: ScriptBuf::new(),
                 inputs_hash: [0u8; 32],
             };
-            
+
             assert!(payload.operator_reward <= 10000);
         } else {
             // Should fail validation
@@ -372,21 +372,19 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
     let mut tx = Transaction {
         version: 3, // Version 3 for special transactions
         lock_time: 0,
-        input: vec![
-            TxIn {
-                previous_output: OutPoint {
-                    txid: Txid::from_byte_array([1u8; 32]),
-                    vout: 0,
-                },
-                script_sig: ScriptBuf::new(),
-                sequence: 0xffffffff,
-                witness: dashcore::Witness::default(),
-            }
-        ],
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([1u8; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::default(),
+        }],
         output: vec![],
         special_transaction_payload: None,
     };
-    
+
     // Add appropriate outputs based on type
     match tx_type {
         SpecialTransactionType::ProviderRegistration => {
@@ -404,11 +402,11 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
             });
         }
     }
-    
+
     // Special transaction payload would be set here in real implementation
     // For testing purposes, we leave it as None
     tx.special_transaction_payload = None;
-    
+
     tx
 }
 
@@ -419,6 +417,6 @@ fn estimate_transaction_size(tx: &Transaction) -> usize {
     let input_size = tx.input.len() * 148; // Approximate input size
     let output_size = tx.output.len() * 34; // Approximate output size
     let payload_size = 0; // Simplified for test purposes
-    
+
     base_size + input_size + output_size + payload_size
 }

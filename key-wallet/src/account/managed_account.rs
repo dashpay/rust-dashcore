@@ -10,9 +10,9 @@ use crate::gap_limit::GapLimitManager;
 use crate::wallet::balance::WalletBalance;
 use crate::Network;
 use alloc::collections::{BTreeMap, BTreeSet};
-use dashcore::Address;
-use dashcore::blockdata::transaction::OutPoint;
 use dashcore::blockdata::transaction::txout::TxOut;
+use dashcore::blockdata::transaction::OutPoint;
+use dashcore::Address;
 use dashcore::Txid;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -86,7 +86,7 @@ impl ManagedAccount {
     pub fn index(&self) -> Option<u32> {
         self.account_type.index()
     }
-    
+
     /// Get the account index or 0 if none exists
     pub fn index_or_default(&self) -> u32 {
         self.account_type.index_or_default()
@@ -97,7 +97,11 @@ impl ManagedAccount {
     /// Address generation should be done through a method that has access to the Account's keys
     pub fn get_next_receive_address_index(&self) -> Option<u32> {
         // Only applicable for standard accounts
-        if let ManagedAccountType::Standard { external_addresses, .. } = &self.account_type {
+        if let ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } = &self.account_type
+        {
             external_addresses
                 .get_unused_addresses()
                 .first()
@@ -112,7 +116,11 @@ impl ManagedAccount {
     /// Address generation should be done through a method that has access to the Account's keys
     pub fn get_next_change_address_index(&self) -> Option<u32> {
         // Only applicable for standard accounts
-        if let ManagedAccountType::Standard { internal_addresses, .. } = &self.account_type {
+        if let ManagedAccountType::Standard {
+            internal_addresses,
+            ..
+        } = &self.account_type
+        {
             internal_addresses
                 .get_unused_addresses()
                 .first()
@@ -125,21 +133,48 @@ impl ManagedAccount {
     /// Get the next unused address index for single-pool account types
     pub fn get_next_address_index(&self) -> Option<u32> {
         match &self.account_type {
-            ManagedAccountType::Standard { .. } => self.get_next_receive_address_index(),
-            ManagedAccountType::CoinJoin { addresses, .. } |
-            ManagedAccountType::IdentityRegistration { addresses, .. } |
-            ManagedAccountType::IdentityTopUp { addresses, .. } |
-            ManagedAccountType::IdentityTopUpNotBoundToIdentity { addresses, .. } |
-            ManagedAccountType::IdentityInvitation { addresses, .. } |
-            ManagedAccountType::ProviderVotingKeys { addresses, .. } |
-            ManagedAccountType::ProviderOwnerKeys { addresses, .. } |
-            ManagedAccountType::ProviderOperatorKeys { addresses, .. } |
-            ManagedAccountType::ProviderPlatformKeys { addresses, .. } => {
-                addresses
-                    .get_unused_addresses()
-                    .first()
-                    .and_then(|addr| addresses.get_address_index(addr))
+            ManagedAccountType::Standard {
+                ..
+            } => self.get_next_receive_address_index(),
+            ManagedAccountType::CoinJoin {
+                addresses,
+                ..
             }
+            | ManagedAccountType::IdentityRegistration {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityTopUp {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityInvitation {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderVotingKeys {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderOwnerKeys {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderOperatorKeys {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderPlatformKeys {
+                addresses,
+                ..
+            } => addresses
+                .get_unused_addresses()
+                .first()
+                .and_then(|addr| addresses.get_address_index(addr)),
         }
     }
 
@@ -150,11 +185,15 @@ impl ManagedAccount {
 
         // Use the account type's mark_address_used method
         let result = self.account_type.mark_address_used(address);
-        
+
         // Update gap limits if address was marked as used
         if result {
             match &self.account_type {
-                ManagedAccountType::Standard { external_addresses, internal_addresses, .. } => {
+                ManagedAccountType::Standard {
+                    external_addresses,
+                    internal_addresses,
+                    ..
+                } => {
                     if let Some(index) = external_addresses.get_address_index(address) {
                         self.gap_limits.external.mark_used(index);
                     } else if let Some(index) = internal_addresses.get_address_index(address) {
@@ -172,12 +211,17 @@ impl ManagedAccount {
                 }
             }
         }
-        
+
         result
     }
 
     /// Update the account balance
-    pub fn update_balance(&mut self, confirmed: u64, unconfirmed: u64, locked: u64) -> Result<(), crate::wallet::balance::BalanceError> {
+    pub fn update_balance(
+        &mut self,
+        confirmed: u64,
+        unconfirmed: u64,
+        locked: u64,
+    ) -> Result<(), crate::wallet::balance::BalanceError> {
         self.balance.update(confirmed, unconfirmed, locked)?;
         self.metadata.last_used = Some(Self::current_timestamp());
         Ok(())

@@ -24,10 +24,11 @@ pub struct WalletBalance {
 impl WalletBalance {
     /// Create a new wallet balance
     pub fn new(confirmed: u64, unconfirmed: u64, locked: u64) -> Result<Self, BalanceError> {
-        let total = confirmed.checked_add(unconfirmed)
+        let total = confirmed
+            .checked_add(unconfirmed)
             .and_then(|sum| sum.checked_add(locked))
             .ok_or(BalanceError::Overflow)?;
-        
+
         Ok(Self {
             confirmed,
             unconfirmed,
@@ -66,10 +67,8 @@ impl WalletBalance {
             });
         }
 
-        self.locked = self.locked.checked_sub(amount)
-            .ok_or(BalanceError::Underflow)?;
-        self.confirmed = self.confirmed.checked_add(amount)
-            .ok_or(BalanceError::Overflow)?;
+        self.locked = self.locked.checked_sub(amount).ok_or(BalanceError::Underflow)?;
+        self.confirmed = self.confirmed.checked_add(amount).ok_or(BalanceError::Overflow)?;
         // Total remains the same
         Ok(())
     }
@@ -84,10 +83,8 @@ impl WalletBalance {
             });
         }
 
-        self.unconfirmed = self.unconfirmed.checked_sub(amount)
-            .ok_or(BalanceError::Underflow)?;
-        self.confirmed = self.confirmed.checked_add(amount)
-            .ok_or(BalanceError::Overflow)?;
+        self.unconfirmed = self.unconfirmed.checked_sub(amount).ok_or(BalanceError::Underflow)?;
+        self.confirmed = self.confirmed.checked_add(amount).ok_or(BalanceError::Overflow)?;
         // Total remains the same
         Ok(())
     }
@@ -102,29 +99,23 @@ impl WalletBalance {
             });
         }
 
-        self.confirmed = self.confirmed.checked_sub(amount)
-            .ok_or(BalanceError::Underflow)?;
-        self.locked = self.locked.checked_add(amount)
-            .ok_or(BalanceError::Overflow)?;
+        self.confirmed = self.confirmed.checked_sub(amount).ok_or(BalanceError::Underflow)?;
+        self.locked = self.locked.checked_add(amount).ok_or(BalanceError::Overflow)?;
         // Total remains the same
         Ok(())
     }
 
     /// Add incoming unconfirmed balance
     pub fn add_unconfirmed(&mut self, amount: u64) -> Result<(), BalanceError> {
-        self.unconfirmed = self.unconfirmed.checked_add(amount)
-            .ok_or(BalanceError::Overflow)?;
-        self.total = self.total.checked_add(amount)
-            .ok_or(BalanceError::Overflow)?;
+        self.unconfirmed = self.unconfirmed.checked_add(amount).ok_or(BalanceError::Overflow)?;
+        self.total = self.total.checked_add(amount).ok_or(BalanceError::Overflow)?;
         Ok(())
     }
 
     /// Add incoming confirmed balance
     pub fn add_confirmed(&mut self, amount: u64) -> Result<(), BalanceError> {
-        self.confirmed = self.confirmed.checked_add(amount)
-            .ok_or(BalanceError::Overflow)?;
-        self.total = self.total.checked_add(amount)
-            .ok_or(BalanceError::Overflow)?;
+        self.confirmed = self.confirmed.checked_add(amount).ok_or(BalanceError::Overflow)?;
+        self.total = self.total.checked_add(amount).ok_or(BalanceError::Overflow)?;
         Ok(())
     }
 
@@ -137,10 +128,8 @@ impl WalletBalance {
             });
         }
 
-        self.confirmed = self.confirmed.checked_sub(amount)
-            .ok_or(BalanceError::Underflow)?;
-        self.total = self.total.checked_sub(amount)
-            .ok_or(BalanceError::Underflow)?;
+        self.confirmed = self.confirmed.checked_sub(amount).ok_or(BalanceError::Underflow)?;
+        self.total = self.total.checked_sub(amount).ok_or(BalanceError::Underflow)?;
         Ok(())
     }
 
@@ -153,19 +142,23 @@ impl WalletBalance {
             });
         }
 
-        self.unconfirmed = self.unconfirmed.checked_sub(amount)
-            .ok_or(BalanceError::Underflow)?;
-        self.total = self.total.checked_sub(amount)
-            .ok_or(BalanceError::Underflow)?;
+        self.unconfirmed = self.unconfirmed.checked_sub(amount).ok_or(BalanceError::Underflow)?;
+        self.total = self.total.checked_sub(amount).ok_or(BalanceError::Underflow)?;
         Ok(())
     }
 
     /// Update all balance components at once
-    pub fn update(&mut self, confirmed: u64, unconfirmed: u64, locked: u64) -> Result<(), BalanceError> {
-        let total = confirmed.checked_add(unconfirmed)
+    pub fn update(
+        &mut self,
+        confirmed: u64,
+        unconfirmed: u64,
+        locked: u64,
+    ) -> Result<(), BalanceError> {
+        let total = confirmed
+            .checked_add(unconfirmed)
             .and_then(|sum| sum.checked_add(locked))
             .ok_or(BalanceError::Overflow)?;
-        
+
         self.confirmed = confirmed;
         self.unconfirmed = unconfirmed;
         self.locked = locked;
@@ -215,21 +208,30 @@ pub enum BalanceError {
 impl core::fmt::Display for BalanceError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            BalanceError::InsufficientConfirmedBalance { requested, available } => {
+            BalanceError::InsufficientConfirmedBalance {
+                requested,
+                available,
+            } => {
                 write!(
                     f,
                     "Insufficient confirmed balance: requested {} but only {} available",
                     requested, available
                 )
             }
-            BalanceError::InsufficientUnconfirmedBalance { requested, available } => {
+            BalanceError::InsufficientUnconfirmedBalance {
+                requested,
+                available,
+            } => {
                 write!(
                     f,
                     "Insufficient unconfirmed balance: requested {} but only {} available",
                     requested, available
                 )
             }
-            BalanceError::InsufficientLockedBalance { requested, available } => {
+            BalanceError::InsufficientLockedBalance {
+                requested,
+                available,
+            } => {
                 write!(
                     f,
                     "Insufficient locked balance: requested {} but only {} available",
@@ -261,7 +263,7 @@ mod tests {
         assert_eq!(balance.locked, 200);
         assert_eq!(balance.total, 1700);
     }
-    
+
     #[test]
     fn test_balance_creation_overflow() {
         let result = WalletBalance::new(u64::MAX, 1, 0);
@@ -271,13 +273,13 @@ mod tests {
     #[test]
     fn test_balance_mature() {
         let mut balance = WalletBalance::new(1000, 500, 200).unwrap();
-        
+
         // Mature 100 from locked to confirmed
         assert!(balance.mature(100).is_ok());
         assert_eq!(balance.confirmed, 1100);
         assert_eq!(balance.locked, 100);
         assert_eq!(balance.total, 1700); // Total unchanged
-        
+
         // Try to mature more than available
         assert!(balance.mature(200).is_err());
     }
@@ -285,13 +287,13 @@ mod tests {
     #[test]
     fn test_balance_confirm() {
         let mut balance = WalletBalance::new(1000, 500, 200).unwrap();
-        
+
         // Confirm 300 from unconfirmed to confirmed
         assert!(balance.confirm(300).is_ok());
         assert_eq!(balance.confirmed, 1300);
         assert_eq!(balance.unconfirmed, 200);
         assert_eq!(balance.total, 1700); // Total unchanged
-        
+
         // Try to confirm more than available
         assert!(balance.confirm(300).is_err());
     }
@@ -299,13 +301,13 @@ mod tests {
     #[test]
     fn test_balance_lock() {
         let mut balance = WalletBalance::new(1000, 500, 200).unwrap();
-        
+
         // Lock 400 from confirmed
         assert!(balance.lock(400).is_ok());
         assert_eq!(balance.confirmed, 600);
         assert_eq!(balance.locked, 600);
         assert_eq!(balance.total, 1700); // Total unchanged
-        
+
         // Try to lock more than available
         assert!(balance.lock(700).is_err());
     }
@@ -313,12 +315,12 @@ mod tests {
     #[test]
     fn test_balance_spend() {
         let mut balance = WalletBalance::new(1000, 500, 200).unwrap();
-        
+
         // Spend 400 confirmed
         assert!(balance.spend_confirmed(400).is_ok());
         assert_eq!(balance.confirmed, 600);
         assert_eq!(balance.total, 1300); // Total reduced
-        
+
         // Try to spend more than available
         assert!(balance.spend_confirmed(700).is_err());
     }
@@ -326,17 +328,17 @@ mod tests {
     #[test]
     fn test_balance_add_remove() {
         let mut balance = WalletBalance::new(1000, 0, 0).unwrap();
-        
+
         // Add unconfirmed
         assert!(balance.add_unconfirmed(500).is_ok());
         assert_eq!(balance.unconfirmed, 500);
         assert_eq!(balance.total, 1500);
-        
+
         // Add confirmed
         assert!(balance.add_confirmed(300).is_ok());
         assert_eq!(balance.confirmed, 1300);
         assert_eq!(balance.total, 1800);
-        
+
         // Remove unconfirmed
         assert!(balance.remove_unconfirmed(200).is_ok());
         assert_eq!(balance.unconfirmed, 300);
@@ -346,12 +348,12 @@ mod tests {
     #[test]
     fn test_balance_helpers() {
         let balance = WalletBalance::new(1000, 500, 200).unwrap();
-        
+
         assert_eq!(balance.spendable(), 1000);
         assert_eq!(balance.pending(), 500);
         assert_eq!(balance.available(), 1500);
         assert!(!balance.is_empty());
-        
+
         let empty = WalletBalance::zero();
         assert!(empty.is_empty());
     }
@@ -359,21 +361,21 @@ mod tests {
     #[test]
     fn test_balance_update() {
         let mut balance = WalletBalance::new(1000, 500, 200).unwrap();
-        
+
         assert!(balance.update(2000, 1000, 500).is_ok());
         assert_eq!(balance.confirmed, 2000);
         assert_eq!(balance.unconfirmed, 1000);
         assert_eq!(balance.locked, 500);
         assert_eq!(balance.total, 3500);
     }
-    
+
     #[test]
     fn test_overflow_protection() {
         let mut balance = WalletBalance::new(u64::MAX - 100, 0, 0).unwrap();
-        
+
         // Test overflow in add_confirmed
         assert_eq!(balance.add_confirmed(200), Err(BalanceError::Overflow));
-        
+
         // Test overflow in confirm
         balance.unconfirmed = 200;
         balance.confirmed = u64::MAX - 100;

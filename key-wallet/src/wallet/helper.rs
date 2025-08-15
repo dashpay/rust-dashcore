@@ -8,8 +8,8 @@ use super::{Wallet, WalletScanResult, WalletType};
 use crate::account::Account;
 use crate::error::{Error, Result};
 use crate::Network;
-use dashcore::Address;
 use alloc::vec::Vec;
+use dashcore::Address;
 
 impl Wallet {
     /// Get an account by network and index (searches both standard and coinjoin accounts)
@@ -20,7 +20,9 @@ impl Wallet {
     /// Get a standard account by network and index
     pub fn get_standard_account(&self, network: Network, index: u32) -> Option<&Account> {
         self.accounts.get(&network).and_then(|collection| {
-            collection.standard_bip44_accounts.get(&index)
+            collection
+                .standard_bip44_accounts
+                .get(&index)
                 .or_else(|| collection.standard_bip32_accounts.get(&index))
         })
     }
@@ -56,13 +58,17 @@ impl Wallet {
         network: Network,
         index: u32,
     ) -> Option<&mut Account> {
-        self.accounts.get_mut(&network).and_then(|collection| collection.coinjoin_accounts.get_mut(&index))
+        self.accounts
+            .get_mut(&network)
+            .and_then(|collection| collection.coinjoin_accounts.get_mut(&index))
     }
 
     /// Get the default account (index 0, searches standard accounts first)
     pub fn default_account(&self, network: Network) -> Option<&Account> {
         self.accounts.get(&network).and_then(|collection| {
-            collection.standard_bip44_accounts.get(&0)
+            collection
+                .standard_bip44_accounts
+                .get(&0)
                 .or_else(|| collection.standard_bip32_accounts.get(&0))
                 .or_else(|| collection.coinjoin_accounts.get(&0))
         })

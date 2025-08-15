@@ -16,11 +16,11 @@ pub mod metadata;
 pub mod root_extended_keys;
 pub mod stats;
 
-use crate::account::account_collection::AccountCollection;
 pub use self::balance::{BalanceError, WalletBalance};
 pub(crate) use self::config::WalletConfig;
 pub use self::managed_wallet_info::ManagedWalletInfo;
 use self::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
+use crate::account::account_collection::AccountCollection;
 use crate::account::Account;
 use crate::mnemonic::Mnemonic;
 use crate::seed::Seed;
@@ -106,8 +106,9 @@ impl fmt::Display for Wallet {
         let id_hex =
             self.wallet_id.iter().take(4).map(|b| format!("{:02x}", b)).collect::<String>();
 
-        let total_accounts: usize = self.accounts.values().map(|collection| collection.count()).sum();
-        
+        let total_accounts: usize =
+            self.accounts.values().map(|collection| collection.count()).sum();
+
         write!(
             f,
             "Wallet [{}...] ({}) - {} accounts, {} addresses",
@@ -154,7 +155,10 @@ mod tests {
         assert_eq!(wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 1);
         let default_account = wallet.default_account(Network::Testnet).unwrap();
         match &default_account.account_type {
-            AccountType::Standard { index, .. } => assert_eq!(*index, 0),
+            AccountType::Standard {
+                index,
+                ..
+            } => assert_eq!(*index, 0),
             _ => panic!("Expected standard account"),
         }
     }
@@ -166,13 +170,27 @@ mod tests {
         };
 
         let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
-        wallet.add_account(1, AccountType::Standard { index: 1, standard_account_type: StandardAccountType::BIP44Account }, Network::Testnet).unwrap();
-        wallet.add_account(2, AccountType::CoinJoin { index: 2 }, Network::Testnet).unwrap();
+        wallet
+            .add_account(
+                1,
+                AccountType::Standard {
+                    index: 1,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                Network::Testnet,
+            )
+            .unwrap();
+        wallet
+            .add_account(
+                2,
+                AccountType::CoinJoin {
+                    index: 2,
+                },
+                Network::Testnet,
+            )
+            .unwrap();
 
-        assert_eq!(
-            wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0),
-            3
-        );
+        assert_eq!(wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 3);
         // 1 initial + 2 created
     }
 
@@ -242,8 +260,16 @@ mod tests {
         let wallet2 = Wallet::from_mnemonic(mnemonic, config, Network::Testnet).unwrap();
 
         // Both wallets should generate the same addresses
-        let account1_1 = wallet1.accounts.get(&Network::Testnet).and_then(|c| c.standard_bip44_accounts.get(&0)).unwrap();
-        let account2_1 = wallet2.accounts.get(&Network::Testnet).and_then(|c| c.standard_bip44_accounts.get(&0)).unwrap();
+        let account1_1 = wallet1
+            .accounts
+            .get(&Network::Testnet)
+            .and_then(|c| c.standard_bip44_accounts.get(&0))
+            .unwrap();
+        let account2_1 = wallet2
+            .accounts
+            .get(&Network::Testnet)
+            .and_then(|c| c.standard_bip44_accounts.get(&0))
+            .unwrap();
 
         // Should have same extended public keys
         assert_eq!(account1_1.extended_public_key(), account2_1.extended_public_key());
@@ -257,14 +283,37 @@ mod tests {
         let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
 
         // Create different types of accounts
-        wallet.add_account(1, AccountType::Standard { index: 1, standard_account_type: StandardAccountType::BIP44Account }, Network::Testnet).unwrap();
-        wallet.add_account(2, AccountType::CoinJoin { index: 2 }, Network::Testnet).unwrap();
+        wallet
+            .add_account(
+                1,
+                AccountType::Standard {
+                    index: 1,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                Network::Testnet,
+            )
+            .unwrap();
+        wallet
+            .add_account(
+                2,
+                AccountType::CoinJoin {
+                    index: 2,
+                },
+                Network::Testnet,
+            )
+            .unwrap();
 
         // Try creating special purpose accounts
+        wallet.add_special_account(0, AccountType::IdentityRegistration, Network::Testnet).unwrap();
         wallet
-            .add_special_account(0, AccountType::IdentityRegistration, Network::Testnet)
+            .add_special_account(
+                1,
+                AccountType::IdentityTopUp {
+                    registration_index: 0,
+                },
+                Network::Testnet,
+            )
             .unwrap();
-        wallet.add_special_account(1, AccountType::IdentityTopUp { registration_index: 0 }, Network::Testnet).unwrap();
 
         let collection = wallet.accounts.get(&Network::Testnet).unwrap();
         assert_eq!(collection.standard_bip44_accounts.len(), 2); // 2 standard accounts (0 and 1)
@@ -307,7 +356,9 @@ mod tests {
         let config = WalletConfig::default();
         let wallet = Wallet::new_random(config, Network::Testnet).unwrap();
 
-        let account = wallet.accounts.get(&Network::Testnet)
+        let account = wallet
+            .accounts
+            .get(&Network::Testnet)
             .and_then(|c| c.standard_bip44_accounts.get(&0))
             .unwrap();
         let xpub = account.extended_public_key();
@@ -321,7 +372,9 @@ mod tests {
         assert_eq!(watch_only.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 1);
 
         // Watch-only wallet has accounts but can't generate addresses without key source
-        let _account = watch_only.accounts.get(&Network::Testnet)
+        let _account = watch_only
+            .accounts
+            .get(&Network::Testnet)
             .and_then(|c| c.standard_bip44_accounts.get(&0))
             .unwrap();
     }
@@ -363,11 +416,15 @@ mod tests {
                 .unwrap();
 
         // Different passphrases should generate different account keys
-        let xpub1 = wallet1.accounts.get(&Network::Testnet)
+        let xpub1 = wallet1
+            .accounts
+            .get(&Network::Testnet)
             .and_then(|c| c.standard_bip44_accounts.get(&0))
             .unwrap()
             .extended_public_key();
-        let xpub2 = wallet2.accounts.get(&Network::Testnet)
+        let xpub2 = wallet2
+            .accounts
+            .get(&Network::Testnet)
             .and_then(|c| c.standard_bip44_accounts.get(&0))
             .unwrap()
             .extended_public_key();
@@ -381,7 +438,16 @@ mod tests {
         let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
 
         // Create a second account to match original test
-        wallet.add_account(1, AccountType::Standard { index: 1, standard_account_type: StandardAccountType::BIP44Account }, Network::Testnet).unwrap();
+        wallet
+            .add_account(
+                1,
+                AccountType::Standard {
+                    index: 1,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                Network::Testnet,
+            )
+            .unwrap();
 
         // Test getting accounts
         assert!(wallet.get_account(Network::Testnet, 0).is_some());
@@ -425,7 +491,14 @@ mod tests {
         let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
 
         // Test duplicate account creation should fail
-        let result = wallet.add_account(0, AccountType::Standard { index: 0, standard_account_type: StandardAccountType::BIP44Account }, Network::Testnet);
+        let result = wallet.add_account(
+            0,
+            AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            },
+            Network::Testnet,
+        );
         assert!(result.is_err()); // Account 0 already exists
 
         // Basic wallet should have default account

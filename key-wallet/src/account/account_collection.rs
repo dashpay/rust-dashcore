@@ -58,25 +58,30 @@ impl AccountCollection {
     /// Insert an account into the collection
     pub fn insert(&mut self, account: Account) {
         use crate::account::{AccountType, StandardAccountType};
-        
+
         match &account.account_type {
-            AccountType::Standard { index, standard_account_type } => {
-                match standard_account_type {
-                    StandardAccountType::BIP44Account => {
-                        self.standard_bip44_accounts.insert(*index, account);
-                    }
-                    StandardAccountType::BIP32Account => {
-                        self.standard_bip32_accounts.insert(*index, account);
-                    }
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => match standard_account_type {
+                StandardAccountType::BIP44Account => {
+                    self.standard_bip44_accounts.insert(*index, account);
                 }
-            }
-            AccountType::CoinJoin { index } => {
+                StandardAccountType::BIP32Account => {
+                    self.standard_bip32_accounts.insert(*index, account);
+                }
+            },
+            AccountType::CoinJoin {
+                index,
+            } => {
                 self.coinjoin_accounts.insert(*index, account);
             }
             AccountType::IdentityRegistration => {
                 self.identity_registration = Some(account);
             }
-            AccountType::IdentityTopUp { registration_index } => {
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => {
                 self.identity_topup.insert(*registration_index, account);
             }
             AccountType::IdentityTopUpNotBoundToIdentity => {
@@ -99,10 +104,11 @@ impl AccountCollection {
             }
         }
     }
-    
+
     /// Get an account by index (tries standard BIP44, BIP32, then CoinJoin)
     pub fn get(&self, index: u32) -> Option<&Account> {
-        self.standard_bip44_accounts.get(&index)
+        self.standard_bip44_accounts
+            .get(&index)
             .or_else(|| self.standard_bip32_accounts.get(&index))
             .or_else(|| self.coinjoin_accounts.get(&index))
             .or_else(|| self.identity_topup.get(&index))
@@ -127,7 +133,8 @@ impl AccountCollection {
 
     /// Remove an account from the collection
     pub fn remove(&mut self, index: u32) -> Option<Account> {
-        self.standard_bip44_accounts.remove(&index)
+        self.standard_bip44_accounts
+            .remove(&index)
             .or_else(|| self.standard_bip32_accounts.remove(&index))
             .or_else(|| self.coinjoin_accounts.remove(&index))
             .or_else(|| self.identity_topup.remove(&index))
@@ -135,91 +142,91 @@ impl AccountCollection {
 
     /// Check if an account exists
     pub fn contains_key(&self, index: u32) -> bool {
-        self.standard_bip44_accounts.contains_key(&index) ||
-        self.standard_bip32_accounts.contains_key(&index) ||
-        self.coinjoin_accounts.contains_key(&index) ||
-        self.identity_topup.contains_key(&index)
+        self.standard_bip44_accounts.contains_key(&index)
+            || self.standard_bip32_accounts.contains_key(&index)
+            || self.coinjoin_accounts.contains_key(&index)
+            || self.identity_topup.contains_key(&index)
     }
 
     /// Get all accounts
     pub fn all_accounts(&self) -> Vec<&Account> {
         let mut accounts = Vec::new();
-        
+
         accounts.extend(self.standard_bip44_accounts.values());
         accounts.extend(self.standard_bip32_accounts.values());
         accounts.extend(self.coinjoin_accounts.values());
-        
+
         if let Some(account) = &self.identity_registration {
             accounts.push(account);
         }
-        
+
         accounts.extend(self.identity_topup.values());
-        
+
         if let Some(account) = &self.identity_topup_not_bound {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &self.identity_invitation {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &self.provider_voting_keys {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &self.provider_owner_keys {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &self.provider_operator_keys {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &self.provider_platform_keys {
             accounts.push(account);
         }
-        
+
         accounts
     }
 
     /// Get all accounts mutably
     pub fn all_accounts_mut(&mut self) -> Vec<&mut Account> {
         let mut accounts = Vec::new();
-        
+
         accounts.extend(self.standard_bip44_accounts.values_mut());
         accounts.extend(self.standard_bip32_accounts.values_mut());
         accounts.extend(self.coinjoin_accounts.values_mut());
-        
+
         if let Some(account) = &mut self.identity_registration {
             accounts.push(account);
         }
-        
+
         accounts.extend(self.identity_topup.values_mut());
-        
+
         if let Some(account) = &mut self.identity_topup_not_bound {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &mut self.identity_invitation {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &mut self.provider_voting_keys {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &mut self.provider_owner_keys {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &mut self.provider_operator_keys {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &mut self.provider_platform_keys {
             accounts.push(account);
         }
-        
+
         accounts
     }
 
@@ -231,28 +238,28 @@ impl AccountCollection {
     /// Get all account indices
     pub fn all_indices(&self) -> Vec<u32> {
         let mut indices = Vec::new();
-        
+
         indices.extend(self.standard_bip44_accounts.keys().copied());
         indices.extend(self.standard_bip32_accounts.keys().copied());
         indices.extend(self.coinjoin_accounts.keys().copied());
         indices.extend(self.identity_topup.keys().copied());
-        
+
         indices
     }
 
     /// Check if the collection is empty
     pub fn is_empty(&self) -> bool {
-        self.standard_bip44_accounts.is_empty() &&
-        self.standard_bip32_accounts.is_empty() &&
-        self.coinjoin_accounts.is_empty() &&
-        self.identity_registration.is_none() &&
-        self.identity_topup.is_empty() &&
-        self.identity_topup_not_bound.is_none() &&
-        self.identity_invitation.is_none() &&
-        self.provider_voting_keys.is_none() &&
-        self.provider_owner_keys.is_none() &&
-        self.provider_operator_keys.is_none() &&
-        self.provider_platform_keys.is_none()
+        self.standard_bip44_accounts.is_empty()
+            && self.standard_bip32_accounts.is_empty()
+            && self.coinjoin_accounts.is_empty()
+            && self.identity_registration.is_none()
+            && self.identity_topup.is_empty()
+            && self.identity_topup_not_bound.is_none()
+            && self.identity_invitation.is_none()
+            && self.provider_voting_keys.is_none()
+            && self.provider_owner_keys.is_none()
+            && self.provider_operator_keys.is_none()
+            && self.provider_platform_keys.is_none()
     }
 
     /// Clear all accounts

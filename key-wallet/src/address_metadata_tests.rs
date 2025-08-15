@@ -4,7 +4,10 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::{account::{AccountType, StandardAccountType}, Network, Wallet, WalletConfig};
+    use crate::{
+        account::{AccountType, StandardAccountType},
+        Network, Wallet, WalletConfig,
+    };
 
     // TODO: Address metadata tests need to be reimplemented with ManagedAccount
     // The following functionality is now in ManagedAccount:
@@ -30,7 +33,10 @@ mod tests {
 
         let account = wallet.get_account(Network::Testnet, 0).unwrap();
         match &account.account_type {
-            AccountType::Standard { index, .. } => assert_eq!(*index, 0),
+            AccountType::Standard {
+                index,
+                ..
+            } => assert_eq!(*index, 0),
             _ => panic!("Expected Standard account type"),
         }
     }
@@ -41,8 +47,26 @@ mod tests {
         let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
 
         // Add more accounts
-        wallet.add_account(1, AccountType::Standard { index: 1, standard_account_type: StandardAccountType::BIP44Account }, Network::Testnet).unwrap();
-        wallet.add_account(2, AccountType::Standard { index: 2, standard_account_type: StandardAccountType::BIP44Account }, Network::Testnet).unwrap();
+        wallet
+            .add_account(
+                1,
+                AccountType::Standard {
+                    index: 1,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                Network::Testnet,
+            )
+            .unwrap();
+        wallet
+            .add_account(
+                2,
+                AccountType::Standard {
+                    index: 2,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                Network::Testnet,
+            )
+            .unwrap();
 
         // Verify accounts exist
         assert!(wallet.get_account(Network::Testnet, 0).is_some());
@@ -53,7 +77,10 @@ mod tests {
         for i in 0..3 {
             let account = wallet.get_account(Network::Testnet, i).unwrap();
             match &account.account_type {
-                AccountType::Standard { index, .. } => assert_eq!(*index, i),
+                AccountType::Standard {
+                    index,
+                    ..
+                } => assert_eq!(*index, i),
                 _ => panic!("Expected Standard account type"),
             }
         }

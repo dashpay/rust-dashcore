@@ -46,7 +46,16 @@ mod tests {
         assert_eq!(account1.extended_public_key(), account2.extended_public_key());
         // Account types should match
         match (&account1.account_type, &account2.account_type) {
-            (AccountType::Standard { index: idx1, .. }, AccountType::Standard { index: idx2, .. }) => {
+            (
+                AccountType::Standard {
+                    index: idx1,
+                    ..
+                },
+                AccountType::Standard {
+                    index: idx2,
+                    ..
+                },
+            ) => {
                 assert_eq!(idx1, idx2);
             }
             _ => panic!("Account types don't match"),
@@ -59,8 +68,25 @@ mod tests {
         let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
 
         // Add additional accounts
-        wallet.add_account(1, AccountType::Standard { index: 1, standard_account_type: StandardAccountType::BIP44Account }, Network::Testnet).unwrap();
-        wallet.add_account(2, AccountType::CoinJoin { index: 2 }, Network::Testnet).unwrap();
+        wallet
+            .add_account(
+                1,
+                AccountType::Standard {
+                    index: 1,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                Network::Testnet,
+            )
+            .unwrap();
+        wallet
+            .add_account(
+                2,
+                AccountType::CoinJoin {
+                    index: 2,
+                },
+                Network::Testnet,
+            )
+            .unwrap();
 
         // Verify accounts exist
         assert!(wallet.get_account(Network::Testnet, 0).is_some());
@@ -70,10 +96,10 @@ mod tests {
         // Verify account types
         let account0 = wallet.get_account(Network::Testnet, 0).unwrap();
         assert!(matches!(account0.account_type, AccountType::Standard { .. }));
-        
+
         let account1 = wallet.get_account(Network::Testnet, 1).unwrap();
         assert!(matches!(account1.account_type, AccountType::Standard { .. }));
-        
+
         let account2 = wallet.get_coinjoin_account(Network::Testnet, 2).unwrap();
         assert!(matches!(account2.account_type, AccountType::CoinJoin { .. }));
     }

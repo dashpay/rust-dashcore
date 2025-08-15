@@ -120,7 +120,7 @@ impl ManagedWalletInfo {
         let mut confirmed = 0u64;
         let mut unconfirmed = 0u64;
         let mut locked = 0u64;
-        
+
         // Sum balances from all accounts across all networks
         for collection in self.accounts.values() {
             for account in collection.all_accounts() {
@@ -136,23 +136,23 @@ impl ManagedWalletInfo {
                 }
             }
         }
-        
+
         // Update balance, ignoring overflow errors as we're recalculating from scratch
         self.balance = WalletBalance::new(confirmed, unconfirmed, locked)
             .unwrap_or_else(|_| WalletBalance::default());
     }
-    
+
     /// Get the cached wallet balance
     pub fn get_balance(&self) -> WalletBalance {
         self.balance
     }
-    
+
     /// Get total wallet balance by recalculating from all accounts (for verification)
     pub fn calculate_balance(&self) -> WalletBalance {
         let mut confirmed = 0u64;
         let mut unconfirmed = 0u64;
         let mut locked = 0u64;
-        
+
         // Sum balances from all accounts across all networks
         for collection in self.accounts.values() {
             for account in collection.all_accounts() {
@@ -168,58 +168,58 @@ impl ManagedWalletInfo {
                 }
             }
         }
-        
+
         WalletBalance::new(confirmed, unconfirmed, locked)
             .unwrap_or_else(|_| WalletBalance::default())
     }
-    
+
     /// Add a monitored address
     pub fn add_monitored_address(&mut self, _address: Address) {
         // Find the account that should own this address
         // For now, we'll store it at the wallet level for simplicity
         // In a full implementation, this would delegate to the appropriate account
     }
-    
+
     /// Add a transaction record to the appropriate account
     pub fn add_transaction(&mut self, _transaction: TransactionRecord) {
         // This would need to determine which account owns the transaction
         // For now, this is a placeholder
     }
-    
+
     /// Get all transaction history across all accounts
     pub fn get_transaction_history(&self) -> Vec<&TransactionRecord> {
         let mut transactions = Vec::new();
-        
+
         // Collect transactions from all accounts across all networks
         for collection in self.accounts.values() {
             for account in collection.all_accounts() {
                 transactions.extend(account.transactions.values());
             }
         }
-        
+
         transactions
     }
-    
+
     /// Add a UTXO to the appropriate account
     pub fn add_utxo(&mut self, _utxo: Utxo) {
         // This would need to determine which account owns the UTXO
         // For now, this is a placeholder
     }
-    
+
     /// Get all UTXOs across all accounts
     pub fn get_utxos(&self) -> Vec<&Utxo> {
         let mut utxos = Vec::new();
-        
+
         // Collect UTXOs from all accounts across all networks
         for collection in self.accounts.values() {
             for account in collection.all_accounts() {
                 utxos.extend(account.utxos.values());
             }
         }
-        
+
         utxos
     }
-    
+
     /// Get spendable UTXOs (confirmed and not locked)
     pub fn get_spendable_utxos(&self) -> Vec<&Utxo> {
         self.get_utxos()
@@ -229,7 +229,11 @@ impl ManagedWalletInfo {
     }
 
     /// Add an immature transaction
-    pub fn add_immature_transaction(&mut self, network: Network, tx: super::immature_transaction::ImmatureTransaction) {
+    pub fn add_immature_transaction(
+        &mut self,
+        network: Network,
+        tx: super::immature_transaction::ImmatureTransaction,
+    ) {
         self.immature_transactions
             .entry(network)
             .or_insert_with(ImmatureTransactionCollection::new)
@@ -237,16 +241,22 @@ impl ManagedWalletInfo {
     }
 
     /// Process matured transactions for a given chain height
-    pub fn process_matured_transactions(&mut self, network: Network, current_height: u32) -> Vec<super::immature_transaction::ImmatureTransaction> {
+    pub fn process_matured_transactions(
+        &mut self,
+        network: Network,
+        current_height: u32,
+    ) -> Vec<super::immature_transaction::ImmatureTransaction> {
         if let Some(collection) = self.immature_transactions.get_mut(&network) {
             let matured = collection.remove_matured(current_height);
-            
+
             // Update accounts with matured transactions
             if let Some(account_collection) = self.accounts.get_mut(&network) {
                 for tx in &matured {
                     // Process BIP44 accounts
                     for &index in &tx.affected_accounts.bip44_accounts {
-                        if let Some(account) = account_collection.standard_bip44_accounts.get_mut(&index) {
+                        if let Some(account) =
+                            account_collection.standard_bip44_accounts.get_mut(&index)
+                        {
                             // Add transaction record as confirmed
                             let tx_record = crate::account::TransactionRecord::new_confirmed(
                                 tx.transaction.clone(),
@@ -259,10 +269,12 @@ impl ManagedWalletInfo {
                             account.transactions.insert(tx.txid, tx_record);
                         }
                     }
-                    
+
                     // Process BIP32 accounts
                     for &index in &tx.affected_accounts.bip32_accounts {
-                        if let Some(account) = account_collection.standard_bip32_accounts.get_mut(&index) {
+                        if let Some(account) =
+                            account_collection.standard_bip32_accounts.get_mut(&index)
+                        {
                             let tx_record = crate::account::TransactionRecord::new_confirmed(
                                 tx.transaction.clone(),
                                 tx.height,
@@ -274,10 +286,11 @@ impl ManagedWalletInfo {
                             account.transactions.insert(tx.txid, tx_record);
                         }
                     }
-                    
+
                     // Process CoinJoin accounts
                     for &index in &tx.affected_accounts.coinjoin_accounts {
-                        if let Some(account) = account_collection.coinjoin_accounts.get_mut(&index) {
+                        if let Some(account) = account_collection.coinjoin_accounts.get_mut(&index)
+                        {
                             let tx_record = crate::account::TransactionRecord::new_confirmed(
                                 tx.transaction.clone(),
                                 tx.height,
@@ -291,10 +304,10 @@ impl ManagedWalletInfo {
                     }
                 }
             }
-            
+
             // Update balance after processing matured transactions
             self.update_balance();
-            
+
             matured
         } else {
             Vec::new()
@@ -302,7 +315,10 @@ impl ManagedWalletInfo {
     }
 
     /// Get immature transactions for a network
-    pub fn get_immature_transactions(&self, network: Network) -> Option<&ImmatureTransactionCollection> {
+    pub fn get_immature_transactions(
+        &self,
+        network: Network,
+    ) -> Option<&ImmatureTransactionCollection> {
         self.immature_transactions.get(&network)
     }
 
@@ -325,4 +341,3 @@ impl ManagedWalletInfo {
 
 /// Re-export types from account module for convenience
 pub use crate::account::{TransactionRecord, Utxo};
-

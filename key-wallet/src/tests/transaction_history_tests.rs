@@ -2,8 +2,8 @@
 //!
 //! Tests transaction recording, confirmation tracking, queries, and metadata.
 
-use dashcore::{Transaction, Txid, BlockHash, OutPoint, TxIn, TxOut, ScriptBuf};
 use dashcore::hashes::Hash;
+use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::collections::{BTreeMap, HashMap};
 
 /// Transaction history entry
@@ -25,7 +25,7 @@ struct TransactionHistoryEntry {
 enum TransactionCategory {
     Received,
     Sent,
-    Internal,    // Between own accounts
+    Internal, // Between own accounts
     Coinbase,
     CoinJoin,
     ProviderRegistration,
@@ -49,23 +49,23 @@ impl TransactionHistory {
             unconfirmed: Vec::new(),
         }
     }
-    
+
     fn add_transaction(&mut self, entry: TransactionHistoryEntry) {
         let txid = entry.txid;
-        
+
         if let Some(height) = entry.block_height {
             self.by_height.entry(height).or_insert_with(Vec::new).push(txid);
         } else {
             self.unconfirmed.push(txid);
         }
-        
+
         self.entries.insert(txid, entry);
     }
-    
+
     fn get_transaction(&self, txid: &Txid) -> Option<&TransactionHistoryEntry> {
         self.entries.get(txid)
     }
-    
+
     fn update_confirmations(&mut self, txid: &Txid, confirmations: u32, height: Option<u32>) {
         if let Some(entry) = self.entries.get_mut(txid) {
             entry.confirmations = confirmations;
@@ -79,8 +79,12 @@ impl TransactionHistory {
             }
         }
     }
-    
-    fn get_history_range(&self, start_height: u32, end_height: u32) -> Vec<&TransactionHistoryEntry> {
+
+    fn get_history_range(
+        &self,
+        start_height: u32,
+        end_height: u32,
+    ) -> Vec<&TransactionHistoryEntry> {
         let mut result = Vec::new();
         for (height, txids) in self.by_height.range(start_height..=end_height) {
             for txid in txids {
@@ -91,7 +95,7 @@ impl TransactionHistory {
         }
         result
     }
-    
+
     fn mark_replaced(&mut self, original: &Txid, replacement: Txid) {
         if let Some(entry) = self.entries.get_mut(original) {
             entry.replaced_by = Some(replacement);
@@ -104,23 +108,19 @@ fn create_test_transaction(value: u64) -> Transaction {
     Transaction {
         version: 2,
         lock_time: 0,
-        input: vec![
-            TxIn {
-                previous_output: OutPoint {
-                    txid: Txid::from_byte_array([1u8; 32]),
-                    vout: 0,
-                },
-                script_sig: ScriptBuf::new(),
-                sequence: 0xffffffff,
-                witness: dashcore::Witness::default(),
-            }
-        ],
-        output: vec![
-            TxOut {
-                value,
-                script_pubkey: ScriptBuf::new(),
-            }
-        ],
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([1u8; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::default(),
+        }],
+        output: vec![TxOut {
+            value,
+            script_pubkey: ScriptBuf::new(),
+        }],
         special_transaction_payload: None,
     }
 }
@@ -128,7 +128,7 @@ fn create_test_transaction(value: u64) -> Transaction {
 #[test]
 fn test_transaction_history_recording() {
     let mut history = TransactionHistory::new();
-    
+
     // Create and add transactions
     let tx1 = create_test_transaction(100000);
     let entry1 = TransactionHistoryEntry {
@@ -143,9 +143,9 @@ fn test_transaction_history_recording() {
         metadata: HashMap::new(),
         replaced_by: None,
     };
-    
+
     history.add_transaction(entry1.clone());
-    
+
     // Verify it was recorded
     let retrieved = history.get_transaction(&tx1.txid());
     assert!(retrieved.is_some());
@@ -156,7 +156,7 @@ fn test_transaction_history_recording() {
 #[test]
 fn test_transaction_confirmation_tracking() {
     let mut history = TransactionHistory::new();
-    
+
     // Add unconfirmed transaction
     let tx = create_test_transaction(100000);
     let entry = TransactionHistoryEntry {
@@ -171,18 +171,18 @@ fn test_transaction_confirmation_tracking() {
         metadata: HashMap::new(),
         replaced_by: None,
     };
-    
+
     history.add_transaction(entry);
     assert_eq!(history.unconfirmed.len(), 1);
-    
+
     // Update to confirmed
     history.update_confirmations(&tx.txid(), 1, Some(100));
-    
+
     let retrieved = history.get_transaction(&tx.txid()).unwrap();
     assert_eq!(retrieved.confirmations, 1);
     assert_eq!(retrieved.block_height, Some(100));
     assert_eq!(history.unconfirmed.len(), 0);
-    
+
     // Update confirmations
     for confirms in 2..=6 {
         history.update_confirmations(&tx.txid(), confirms, Some(100));
@@ -194,7 +194,7 @@ fn test_transaction_confirmation_tracking() {
 #[test]
 fn test_transaction_replacement_rbf() {
     let mut history = TransactionHistory::new();
-    
+
     // Add original transaction
     let tx1 = create_test_transaction(100000);
     let entry1 = TransactionHistoryEntry {
@@ -209,9 +209,9 @@ fn test_transaction_replacement_rbf() {
         metadata: HashMap::new(),
         replaced_by: None,
     };
-    
+
     history.add_transaction(entry1);
-    
+
     // Add replacement transaction
     let tx2 = create_test_transaction(99000); // Less output due to higher fee
     let entry2 = TransactionHistoryEntry {
@@ -226,12 +226,12 @@ fn test_transaction_replacement_rbf() {
         metadata: HashMap::new(),
         replaced_by: None,
     };
-    
+
     history.add_transaction(entry2);
-    
+
     // Mark original as replaced
     history.mark_replaced(&tx1.txid(), tx2.txid());
-    
+
     let original = history.get_transaction(&tx1.txid()).unwrap();
     assert_eq!(original.replaced_by, Some(tx2.txid()));
 }
@@ -239,7 +239,7 @@ fn test_transaction_replacement_rbf() {
 #[test]
 fn test_transaction_history_queries() {
     let mut history = TransactionHistory::new();
-    
+
     // Add transactions at different heights
     for i in 0..10 {
         let tx = create_test_transaction(100000 * (i + 1));
@@ -251,21 +251,21 @@ fn test_transaction_history_queries() {
             block_hash: Some(BlockHash::from_slice(&[i as u8 + 1; 32]).unwrap()),
             confirmations: 6,
             fee: Some(1000),
-            category: if i % 2 == 0 { 
-                TransactionCategory::Received 
-            } else { 
-                TransactionCategory::Sent 
+            category: if i % 2 == 0 {
+                TransactionCategory::Received
+            } else {
+                TransactionCategory::Sent
             },
             metadata: HashMap::new(),
             replaced_by: None,
         };
         history.add_transaction(entry);
     }
-    
+
     // Query range
     let range = history.get_history_range(102, 105);
     assert_eq!(range.len(), 4); // Heights 102, 103, 104, 105
-    
+
     // Verify order
     for i in 0..range.len() - 1 {
         assert!(range[i].block_height <= range[i + 1].block_height);
@@ -275,13 +275,13 @@ fn test_transaction_history_queries() {
 #[test]
 fn test_transaction_metadata_storage() {
     let mut history = TransactionHistory::new();
-    
+
     let tx = create_test_transaction(100000);
     let mut metadata = HashMap::new();
     metadata.insert("label".to_string(), "Payment to Alice".to_string());
     metadata.insert("category".to_string(), "business".to_string());
     metadata.insert("note".to_string(), "Invoice #123".to_string());
-    
+
     let entry = TransactionHistoryEntry {
         tx: tx.clone(),
         txid: tx.txid(),
@@ -294,9 +294,9 @@ fn test_transaction_metadata_storage() {
         metadata: metadata.clone(),
         replaced_by: None,
     };
-    
+
     history.add_transaction(entry);
-    
+
     let retrieved = history.get_transaction(&tx.txid()).unwrap();
     assert_eq!(retrieved.metadata.get("label"), Some(&"Payment to Alice".to_string()));
     assert_eq!(retrieved.metadata.get("category"), Some(&"business".to_string()));
@@ -316,7 +316,7 @@ fn test_transaction_category_classification() {
         TransactionCategory::IdentityRegistration,
         TransactionCategory::IdentityTopUp,
     ];
-    
+
     // Verify each category is distinct
     for (i, cat1) in categories.iter().enumerate() {
         for (j, cat2) in categories.iter().enumerate() {
@@ -332,33 +332,29 @@ fn test_transaction_category_classification() {
 #[test]
 fn test_coinbase_transaction_history() {
     let mut history = TransactionHistory::new();
-    
+
     // Create coinbase transaction
     let height = 100000u32;
     let mut script_sig = vec![];
     script_sig.push(0x03);
     script_sig.extend_from_slice(&height.to_le_bytes()[0..3]);
-    
+
     let coinbase_tx = Transaction {
         version: 2,
         lock_time: 0,
-        input: vec![
-            TxIn {
-                previous_output: OutPoint::null(),
-                script_sig: ScriptBuf::from(script_sig),
-                sequence: 0xffffffff,
-                witness: dashcore::Witness::default(),
-            }
-        ],
-        output: vec![
-            TxOut {
-                value: 5000000000,
-                script_pubkey: ScriptBuf::new(),
-            }
-        ],
+        input: vec![TxIn {
+            previous_output: OutPoint::null(),
+            script_sig: ScriptBuf::from(script_sig),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: 5000000000,
+            script_pubkey: ScriptBuf::new(),
+        }],
         special_transaction_payload: None,
     };
-    
+
     let entry = TransactionHistoryEntry {
         tx: coinbase_tx.clone(),
         txid: coinbase_tx.txid(),
@@ -371,9 +367,9 @@ fn test_coinbase_transaction_history() {
         metadata: HashMap::new(),
         replaced_by: None,
     };
-    
+
     history.add_transaction(entry);
-    
+
     let retrieved = history.get_transaction(&coinbase_tx.txid()).unwrap();
     assert_eq!(retrieved.category, TransactionCategory::Coinbase);
     assert!(retrieved.fee.is_none());
@@ -382,7 +378,7 @@ fn test_coinbase_transaction_history() {
 #[test]
 fn test_internal_transfer_tracking() {
     let mut history = TransactionHistory::new();
-    
+
     // Create internal transfer (between own accounts)
     let tx = create_test_transaction(100000);
     let entry = TransactionHistoryEntry {
@@ -397,9 +393,9 @@ fn test_internal_transfer_tracking() {
         metadata: HashMap::new(),
         replaced_by: None,
     };
-    
+
     history.add_transaction(entry);
-    
+
     let retrieved = history.get_transaction(&tx.txid()).unwrap();
     assert_eq!(retrieved.category, TransactionCategory::Internal);
     // Internal transfers should not affect total balance (only fee is lost)
@@ -408,10 +404,10 @@ fn test_internal_transfer_tracking() {
 #[test]
 fn test_transaction_history_pruning() {
     let mut history = TransactionHistory::new();
-    
+
     // Add many old transactions
     for i in 0..1000 {
-        let tx = create_test_transaction(1000 + i);  // Vary the amount to get different txids
+        let tx = create_test_transaction(1000 + i); // Vary the amount to get different txids
         let entry = TransactionHistoryEntry {
             tx: tx.clone(),
             txid: tx.txid(),
@@ -426,17 +422,15 @@ fn test_transaction_history_pruning() {
         };
         history.add_transaction(entry);
     }
-    
+
     // In a real implementation, we would prune old transactions
     // keeping only recent ones and important ones (coinbase, large amounts, etc.)
     assert_eq!(history.entries.len(), 1000);
-    
+
     // Simulate pruning: keep only last 100 blocks
     let cutoff_height = 900;
-    let to_keep: Vec<Txid> = history.by_height
-        .range(cutoff_height..)
-        .flat_map(|(_, txids)| txids.clone())
-        .collect();
-    
+    let to_keep: Vec<Txid> =
+        history.by_height.range(cutoff_height..).flat_map(|(_, txids)| txids.clone()).collect();
+
     assert_eq!(to_keep.len(), 100);
 }

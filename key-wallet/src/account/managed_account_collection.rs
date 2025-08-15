@@ -58,48 +58,70 @@ impl ManagedAccountCollection {
     /// Insert an account into the collection
     pub fn insert(&mut self, account: ManagedAccount) {
         use super::types::{ManagedAccountType, StandardAccountType};
-        
+
         match &account.account_type {
-            ManagedAccountType::Standard { index, standard_account_type, .. } => {
-                match standard_account_type {
-                    StandardAccountType::BIP44Account => {
-                        self.standard_bip44_accounts.insert(*index, account);
-                    }
-                    StandardAccountType::BIP32Account => {
-                        self.standard_bip32_accounts.insert(*index, account);
-                    }
+            ManagedAccountType::Standard {
+                index,
+                standard_account_type,
+                ..
+            } => match standard_account_type {
+                StandardAccountType::BIP44Account => {
+                    self.standard_bip44_accounts.insert(*index, account);
                 }
-            }
-            ManagedAccountType::CoinJoin { index, .. } => {
+                StandardAccountType::BIP32Account => {
+                    self.standard_bip32_accounts.insert(*index, account);
+                }
+            },
+            ManagedAccountType::CoinJoin {
+                index,
+                ..
+            } => {
                 self.coinjoin_accounts.insert(*index, account);
             }
-            ManagedAccountType::IdentityRegistration { .. } => {
+            ManagedAccountType::IdentityRegistration {
+                ..
+            } => {
                 self.identity_registration = Some(account);
             }
-            ManagedAccountType::IdentityTopUp { registration_index, .. } => {
+            ManagedAccountType::IdentityTopUp {
+                registration_index,
+                ..
+            } => {
                 self.identity_topup.insert(*registration_index, account);
             }
-            ManagedAccountType::IdentityTopUpNotBoundToIdentity { .. } => {
+            ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                ..
+            } => {
                 self.identity_topup_not_bound = Some(account);
             }
-            ManagedAccountType::IdentityInvitation { .. } => {
+            ManagedAccountType::IdentityInvitation {
+                ..
+            } => {
                 self.identity_invitation = Some(account);
             }
-            ManagedAccountType::ProviderVotingKeys { .. } => {
+            ManagedAccountType::ProviderVotingKeys {
+                ..
+            } => {
                 self.provider_voting_keys = Some(account);
             }
-            ManagedAccountType::ProviderOwnerKeys { .. } => {
+            ManagedAccountType::ProviderOwnerKeys {
+                ..
+            } => {
                 self.provider_owner_keys = Some(account);
             }
-            ManagedAccountType::ProviderOperatorKeys { .. } => {
+            ManagedAccountType::ProviderOperatorKeys {
+                ..
+            } => {
                 self.provider_operator_keys = Some(account);
             }
-            ManagedAccountType::ProviderPlatformKeys { .. } => {
+            ManagedAccountType::ProviderPlatformKeys {
+                ..
+            } => {
                 self.provider_platform_keys = Some(account);
             }
         }
     }
-    
+
     /// Insert an account into the collection with explicit index (for compatibility)
     pub fn insert_with_index(&mut self, index: u32, account: ManagedAccount) {
         // For backwards compatibility, we'll insert based on the account type
@@ -113,22 +135,22 @@ impl ManagedAccountCollection {
         if let Some(account) = self.standard_bip44_accounts.get(&index) {
             return Some(account);
         }
-        
+
         // Try standard BIP32
         if let Some(account) = self.standard_bip32_accounts.get(&index) {
             return Some(account);
         }
-        
+
         // Try CoinJoin
         if let Some(account) = self.coinjoin_accounts.get(&index) {
             return Some(account);
         }
-        
+
         // For identity top-up with registration index
         if let Some(account) = self.identity_topup.get(&index) {
             return Some(account);
         }
-        
+
         None
     }
 
@@ -138,22 +160,22 @@ impl ManagedAccountCollection {
         if let Some(account) = self.standard_bip44_accounts.get_mut(&index) {
             return Some(account);
         }
-        
+
         // Try standard BIP32
         if let Some(account) = self.standard_bip32_accounts.get_mut(&index) {
             return Some(account);
         }
-        
+
         // Try CoinJoin
         if let Some(account) = self.coinjoin_accounts.get_mut(&index) {
             return Some(account);
         }
-        
+
         // For identity top-up with registration index
         if let Some(account) = self.identity_topup.get_mut(&index) {
             return Some(account);
         }
-        
+
         None
     }
 
@@ -163,22 +185,22 @@ impl ManagedAccountCollection {
         if let Some(account) = self.standard_bip44_accounts.remove(&index) {
             return Some(account);
         }
-        
+
         // Try standard BIP32
         if let Some(account) = self.standard_bip32_accounts.remove(&index) {
             return Some(account);
         }
-        
+
         // Try CoinJoin
         if let Some(account) = self.coinjoin_accounts.remove(&index) {
             return Some(account);
         }
-        
+
         // For identity top-up with registration index
         if let Some(account) = self.identity_topup.remove(&index) {
             return Some(account);
         }
-        
+
         None
     }
 
@@ -188,116 +210,116 @@ impl ManagedAccountCollection {
         if self.standard_bip44_accounts.contains_key(&index) {
             return true;
         }
-        
+
         // Check standard BIP32
         if self.standard_bip32_accounts.contains_key(&index) {
             return true;
         }
-        
+
         // Check CoinJoin
         if self.coinjoin_accounts.contains_key(&index) {
             return true;
         }
-        
+
         // Check identity top-up with registration index
         if self.identity_topup.contains_key(&index) {
             return true;
         }
-        
+
         false
     }
 
     /// Get all accounts
     pub fn all_accounts(&self) -> Vec<&ManagedAccount> {
         let mut accounts = Vec::new();
-        
+
         // Add standard BIP44 accounts
         accounts.extend(self.standard_bip44_accounts.values());
-        
+
         // Add standard BIP32 accounts
         accounts.extend(self.standard_bip32_accounts.values());
-        
+
         // Add CoinJoin accounts
         accounts.extend(self.coinjoin_accounts.values());
-        
+
         // Add special purpose accounts
         if let Some(account) = &self.identity_registration {
             accounts.push(account);
         }
-        
+
         accounts.extend(self.identity_topup.values());
-        
+
         if let Some(account) = &self.identity_topup_not_bound {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &self.identity_invitation {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &self.provider_voting_keys {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &self.provider_owner_keys {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &self.provider_operator_keys {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &self.provider_platform_keys {
             accounts.push(account);
         }
-        
+
         accounts
     }
 
     /// Get all accounts mutably
     pub fn all_accounts_mut(&mut self) -> Vec<&mut ManagedAccount> {
         let mut accounts = Vec::new();
-        
+
         // Add standard BIP44 accounts
         accounts.extend(self.standard_bip44_accounts.values_mut());
-        
+
         // Add standard BIP32 accounts
         accounts.extend(self.standard_bip32_accounts.values_mut());
-        
+
         // Add CoinJoin accounts
         accounts.extend(self.coinjoin_accounts.values_mut());
-        
+
         // Add special purpose accounts
         if let Some(account) = &mut self.identity_registration {
             accounts.push(account);
         }
-        
+
         accounts.extend(self.identity_topup.values_mut());
-        
+
         if let Some(account) = &mut self.identity_topup_not_bound {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &mut self.identity_invitation {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &mut self.provider_voting_keys {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &mut self.provider_owner_keys {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &mut self.provider_operator_keys {
             accounts.push(account);
         }
-        
+
         if let Some(account) = &mut self.provider_platform_keys {
             accounts.push(account);
         }
-        
+
         accounts
     }
 
@@ -309,36 +331,35 @@ impl ManagedAccountCollection {
     /// Get all account indices
     pub fn all_indices(&self) -> Vec<u32> {
         let mut indices = Vec::new();
-        
+
         // Add standard BIP44 indices
         indices.extend(self.standard_bip44_accounts.keys().copied());
-        
+
         // Add standard BIP32 indices
         indices.extend(self.standard_bip32_accounts.keys().copied());
-        
+
         // Add CoinJoin indices
         indices.extend(self.coinjoin_accounts.keys().copied());
-        
+
         // Add identity top-up registration indices
         indices.extend(self.identity_topup.keys().copied());
-        
+
         indices
     }
 
-
     /// Check if the collection is empty
     pub fn is_empty(&self) -> bool {
-        self.standard_bip44_accounts.is_empty() &&
-        self.standard_bip32_accounts.is_empty() &&
-        self.coinjoin_accounts.is_empty() &&
-        self.identity_registration.is_none() &&
-        self.identity_topup.is_empty() &&
-        self.identity_topup_not_bound.is_none() &&
-        self.identity_invitation.is_none() &&
-        self.provider_voting_keys.is_none() &&
-        self.provider_owner_keys.is_none() &&
-        self.provider_operator_keys.is_none() &&
-        self.provider_platform_keys.is_none()
+        self.standard_bip44_accounts.is_empty()
+            && self.standard_bip32_accounts.is_empty()
+            && self.coinjoin_accounts.is_empty()
+            && self.identity_registration.is_none()
+            && self.identity_topup.is_empty()
+            && self.identity_topup_not_bound.is_none()
+            && self.identity_invitation.is_none()
+            && self.provider_voting_keys.is_none()
+            && self.provider_owner_keys.is_none()
+            && self.provider_operator_keys.is_none()
+            && self.provider_platform_keys.is_none()
     }
 
     /// Clear all accounts

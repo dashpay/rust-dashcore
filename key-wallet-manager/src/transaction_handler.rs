@@ -9,13 +9,14 @@ use alloc::vec::Vec;
 use core::convert::TryFrom;
 
 use dashcore::blockdata::script::ScriptBuf;
-use dashcore::blockdata::transaction::{OutPoint, Transaction, TxOut};
+use dashcore::blockdata::transaction::Transaction;
 use dashcore::{Address as DashAddress, Txid};
+use dashcore::{OutPoint, TxOut};
 use dashcore_hashes::Hash;
 use key_wallet::{Address, Network};
 
 use crate::utxo::{Utxo, UtxoSet};
-use crate::wallet_manager::{ManagedWallet, TransactionRecord, WalletId};
+use crate::wallet_manager::WalletId;
 
 /// Transaction handler for processing incoming transactions
 pub struct TransactionHandler {
@@ -82,20 +83,16 @@ impl TransactionHandler {
             pending_txs: BTreeMap::new(),
         }
     }
-    
+
     /// Register a wallet's addresses for monitoring
-    pub fn register_wallet_addresses(
-        &mut self,
-        wallet_id: WalletId,
-        addresses: Vec<Address>,
-    ) {
+    pub fn register_wallet_addresses(&mut self, wallet_id: WalletId, addresses: Vec<Address>) {
         for address in addresses {
             self.address_index.insert(address.clone(), wallet_id.clone());
             let script = ScriptBuf::from(address.script_pubkey());
             self.script_index.insert(script, address);
         }
     }
-    
+
     /// Unregister a wallet's addresses
     pub fn unregister_wallet(&mut self, wallet_id: &WalletId) {
         self.address_index.retain(|_, wid| wid != wallet_id);
@@ -106,13 +103,13 @@ impl TransactionHandler {
             .filter(|(_, wid)| *wid == wallet_id)
             .map(|(addr, _)| addr.clone())
             .collect();
-        
+
         for address in addresses_to_remove {
             let script = ScriptBuf::from(address.script_pubkey());
             self.script_index.remove(&script);
         }
     }
-    
+
     /// Process an incoming transaction
     pub fn process_transaction(
         &mut self,
@@ -128,20 +125,20 @@ impl TransactionHandler {
             balance_changes: BTreeMap::new(),
             is_relevant: false,
         };
-        
+
         // Check outputs for addresses we control
         for (vout, output) in tx.output.iter().enumerate() {
             if let Some(address) = self.script_index.get(&output.script_pubkey) {
                 if let Some(wallet_id) = self.address_index.get(address) {
                     result.is_relevant = true;
                     result.affected_wallets.push(wallet_id.clone());
-                    
+
                     // Create UTXO
                     let outpoint = OutPoint {
                         txid,
                         vout: vout as u32,
                     };
-                    
+
                     let utxo = Utxo::new(
                         outpoint,
                         output.clone(),
@@ -149,16 +146,16 @@ impl TransactionHandler {
                         height.unwrap_or(0),
                         false, // Not coinbase (we should check this properly)
                     );
-                    
+
                     result.new_utxos.push(utxo);
-                    
+
                     // Update balance change
                     *result.balance_changes.entry(wallet_id.clone()).or_insert(0) +=
                         output.value as i64;
                 }
             }
         }
-        
+
         // Check inputs for UTXOs we're spending
         for input in &tx.input {
             // We need to look up the previous output to see if it's ours
@@ -166,7 +163,7 @@ impl TransactionHandler {
             // For now, we'll just record the spent outpoint
             result.spent_utxos.push(input.previous_output);
         }
-        
+
         // Store as pending if unconfirmed
         if height.is_none() && result.is_relevant {
             self.pending_txs.insert(
@@ -174,39 +171,35 @@ impl TransactionHandler {
                 PendingTransaction {
                     transaction: tx.clone(),
                     first_seen: timestamp,
-                    fee: None, // Calculate if possible
+                    fee: None,      // Calculate if possible
                     is_ours: false, // Determine based on inputs
                 },
             );
         }
-        
+
         result
     }
-    
+
     /// Confirm a pending transaction
-    pub fn confirm_transaction(
-        &mut self,
-        txid: &Txid,
-        _height: u32,
-    ) -> Option<PendingTransaction> {
+    pub fn confirm_transaction(&mut self, txid: &Txid, _height: u32) -> Option<PendingTransaction> {
         self.pending_txs.remove(txid)
     }
-    
+
     /// Remove a transaction (due to reorg or expiry)
     pub fn remove_transaction(&mut self, txid: &Txid) -> Option<PendingTransaction> {
         self.pending_txs.remove(txid)
     }
-    
+
     /// Get all pending transactions
     pub fn pending_transactions(&self) -> &BTreeMap<Txid, PendingTransaction> {
         &self.pending_txs
     }
-    
+
     /// Check if a script is relevant to any wallet
     pub fn is_script_relevant(&self, script: &ScriptBuf) -> bool {
         self.script_index.contains_key(script)
     }
-    
+
     /// Get wallet ID for an address
     pub fn get_wallet_for_address(&self, address: &Address) -> Option<&WalletId> {
         self.address_index.get(address)
@@ -224,7 +217,7 @@ impl AddressTracker {
             gap_limit,
         }
     }
-    
+
     /// Mark an address as used
     pub fn mark_address_used(
         &mut self,
@@ -234,13 +227,13 @@ impl AddressTracker {
         address_index: u32,
     ) {
         let key = (wallet_id, account_index);
-        
+
         if is_change {
             self.used_change_addresses
                 .entry(key.clone())
                 .or_insert_with(BTreeSet::new)
                 .insert(address_index);
-            
+
             // Update index if needed
             let current = self.change_indices.entry(key).or_insert(0);
             if address_index >= *current {
@@ -251,7 +244,7 @@ impl AddressTracker {
                 .entry(key.clone())
                 .or_insert_with(BTreeSet::new)
                 .insert(address_index);
-            
+
             // Update index if needed
             let current = self.receive_indices.entry(key).or_insert(0);
             if address_index >= *current {
@@ -259,23 +252,17 @@ impl AddressTracker {
             }
         }
     }
-    
+
     /// Get the next receive address index
     pub fn next_receive_index(&self, wallet_id: &WalletId, account_index: u32) -> u32 {
-        *self
-            .receive_indices
-            .get(&(wallet_id.clone(), account_index))
-            .unwrap_or(&0)
+        *self.receive_indices.get(&(wallet_id.clone(), account_index)).unwrap_or(&0)
     }
-    
+
     /// Get the next change address index
     pub fn next_change_index(&self, wallet_id: &WalletId, account_index: u32) -> u32 {
-        *self
-            .change_indices
-            .get(&(wallet_id.clone(), account_index))
-            .unwrap_or(&0)
+        *self.change_indices.get(&(wallet_id.clone(), account_index)).unwrap_or(&0)
     }
-    
+
     /// Check if we need to generate more addresses based on gap limit
     pub fn should_generate_addresses(
         &self,
@@ -284,7 +271,7 @@ impl AddressTracker {
         is_change: bool,
     ) -> bool {
         let key = (wallet_id.clone(), account_index);
-        
+
         let (used_set, current_index) = if is_change {
             (
                 self.used_change_addresses.get(&key),
@@ -296,16 +283,14 @@ impl AddressTracker {
                 self.receive_indices.get(&key).copied().unwrap_or(0),
             )
         };
-        
+
         // Find the highest used index
-        let highest_used = used_set
-            .and_then(|set| set.iter().max().copied())
-            .unwrap_or(0);
-        
+        let highest_used = used_set.and_then(|set| set.iter().max().copied()).unwrap_or(0);
+
         // Check if we have enough gap
         current_index < highest_used + self.gap_limit
     }
-    
+
     /// Get unused address indices within the current range
     pub fn get_unused_indices(
         &self,
@@ -314,7 +299,7 @@ impl AddressTracker {
         is_change: bool,
     ) -> Vec<u32> {
         let key = (wallet_id.clone(), account_index);
-        
+
         let (used_set, current_index) = if is_change {
             (
                 self.used_change_addresses.get(&key),
@@ -326,12 +311,10 @@ impl AddressTracker {
                 self.receive_indices.get(&key).copied().unwrap_or(0),
             )
         };
-        
+
         let used_set = used_set.cloned().unwrap_or_default();
-        
-        (0..current_index)
-            .filter(|i| !used_set.contains(i))
-            .collect()
+
+        (0..current_index).filter(|i| !used_set.contains(i)).collect()
     }
 }
 
@@ -360,7 +343,7 @@ pub fn match_transaction(
     let mut matching_outputs = Vec::new();
     let mut input_value = 0u64;
     let mut output_value = 0u64;
-    
+
     // Check inputs
     for (idx, input) in tx.input.iter().enumerate() {
         if let Some(utxo) = our_utxos.get(&input.previous_output) {
@@ -368,11 +351,13 @@ pub fn match_transaction(
             input_value += utxo.value();
         }
     }
-    
+
     // Check outputs
     for (idx, output) in tx.output.iter().enumerate() {
         // Try to extract address from script
-        if let Ok(_dash_addr) = DashAddress::from_script(&output.script_pubkey, dashcore::Network::Dash) {
+        if let Ok(_dash_addr) =
+            DashAddress::from_script(&output.script_pubkey, dashcore::Network::Dash)
+        {
             // Convert to our Address type (this needs proper implementation)
             // For now, check if script matches any of our addresses
             for addr in addresses {
@@ -384,16 +369,15 @@ pub fn match_transaction(
             }
         }
     }
-    
+
     // If no matches, return None
     if matching_inputs.is_empty() && matching_outputs.is_empty() {
         return None;
     }
-    
+
     let net_value = output_value as i64 - input_value as i64;
-    let is_internal = !matching_inputs.is_empty() && 
-                      matching_inputs.len() == tx.input.len();
-    
+    let is_internal = !matching_inputs.is_empty() && matching_inputs.len() == tx.input.len();
+
     Some(TransactionMatch {
         txid: tx.txid(),
         matching_inputs,
@@ -406,20 +390,20 @@ pub fn match_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_address_tracker() {
         let mut tracker = AddressTracker::new(20);
         let wallet_id = "wallet1".to_string();
-        
+
         // Mark some addresses as used
         tracker.mark_address_used(wallet_id.clone(), 0, false, 0);
         tracker.mark_address_used(wallet_id.clone(), 0, false, 2);
         tracker.mark_address_used(wallet_id.clone(), 0, false, 5);
-        
+
         // Check next index
         assert_eq!(tracker.next_receive_index(&wallet_id, 0), 6);
-        
+
         // Check unused indices
         let unused = tracker.get_unused_indices(&wallet_id, 0, false);
         assert!(unused.contains(&1));

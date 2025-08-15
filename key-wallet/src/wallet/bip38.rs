@@ -47,7 +47,8 @@ impl Wallet {
         }
 
         // Verify account exists
-        let account = self.accounts
+        let account = self
+            .accounts
             .get(&network)
             .and_then(|collection| collection.get(account_index))
             .ok_or(Error::InvalidParameter(format!(
@@ -64,9 +65,17 @@ impl Wallet {
 
         let hd_wallet = HDWallet::new(master_key);
         let account_key = match &account.account_type {
-            AccountType::CoinJoin { .. } => hd_wallet.coinjoin_account(account_index)?,
-            AccountType::Standard { .. } => hd_wallet.bip44_account(account_index)?,
-            _ => return Err(Error::InvalidParameter("Unsupported account type for BIP38 export".into())),
+            AccountType::CoinJoin {
+                ..
+            } => hd_wallet.coinjoin_account(account_index)?,
+            AccountType::Standard {
+                ..
+            } => hd_wallet.bip44_account(account_index)?,
+            _ => {
+                return Err(Error::InvalidParameter(
+                    "Unsupported account type for BIP38 export".into(),
+                ))
+            }
         };
 
         let secret_key = account_key.private_key;

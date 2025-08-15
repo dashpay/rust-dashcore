@@ -58,16 +58,14 @@ impl AffectedAccounts {
 
     /// Check if any accounts are affected
     pub fn is_empty(&self) -> bool {
-        self.bip44_accounts.is_empty() && 
-        self.bip32_accounts.is_empty() && 
-        self.coinjoin_accounts.is_empty()
+        self.bip44_accounts.is_empty()
+            && self.bip32_accounts.is_empty()
+            && self.coinjoin_accounts.is_empty()
     }
 
     /// Get total number of affected accounts
     pub fn count(&self) -> usize {
-        self.bip44_accounts.len() + 
-        self.bip32_accounts.len() + 
-        self.coinjoin_accounts.len()
+        self.bip44_accounts.len() + self.bip32_accounts.len() + self.coinjoin_accounts.len()
     }
 
     /// Add a BIP44 account
@@ -162,13 +160,13 @@ impl ImmatureTransactionCollection {
     pub fn insert(&mut self, tx: ImmatureTransaction) {
         let maturity_height = tx.height + tx.maturity_confirmations;
         let txid = tx.txid;
-        
+
         // Add to the maturity height index
         self.transactions_by_maturity_height
             .entry(maturity_height)
             .or_insert_with(Vec::new)
             .push(tx);
-        
+
         // Add to txid index
         self.txid_to_height.insert(txid, maturity_height);
     }
@@ -178,15 +176,17 @@ impl ImmatureTransactionCollection {
         // Find the maturity height for this txid
         if let Some(maturity_height) = self.txid_to_height.remove(txid) {
             // Find and remove from the transactions list at that height
-            if let Some(transactions) = self.transactions_by_maturity_height.get_mut(&maturity_height) {
+            if let Some(transactions) =
+                self.transactions_by_maturity_height.get_mut(&maturity_height)
+            {
                 if let Some(pos) = transactions.iter().position(|tx| tx.txid == *txid) {
                     let tx = transactions.remove(pos);
-                    
+
                     // If this was the last transaction at this height, remove the entry
                     if transactions.is_empty() {
                         self.transactions_by_maturity_height.remove(&maturity_height);
                     }
-                    
+
                     return Some(tx);
                 }
             }
@@ -207,7 +207,9 @@ impl ImmatureTransactionCollection {
     /// Get a mutable reference to an immature transaction
     pub fn get_mut(&mut self, txid: &Txid) -> Option<&mut ImmatureTransaction> {
         if let Some(maturity_height) = self.txid_to_height.get(txid) {
-            if let Some(transactions) = self.transactions_by_maturity_height.get_mut(maturity_height) {
+            if let Some(transactions) =
+                self.transactions_by_maturity_height.get_mut(maturity_height)
+            {
                 return transactions.iter_mut().find(|tx| tx.txid == *txid);
             }
         }
@@ -222,25 +224,26 @@ impl ImmatureTransactionCollection {
     /// Get all transactions that have matured at or before the given height
     pub fn get_matured(&self, current_height: u32) -> Vec<&ImmatureTransaction> {
         let mut matured = Vec::new();
-        
+
         // Iterate through all heights up to and including current_height
         for (_, transactions) in self.transactions_by_maturity_height.range(..=current_height) {
             matured.extend(transactions.iter());
         }
-        
+
         matured
     }
 
     /// Remove and return all matured transactions
     pub fn remove_matured(&mut self, current_height: u32) -> Vec<ImmatureTransaction> {
         let mut matured = Vec::new();
-        
+
         // Collect all maturity heights that have been reached
-        let matured_heights: Vec<u32> = self.transactions_by_maturity_height
+        let matured_heights: Vec<u32> = self
+            .transactions_by_maturity_height
             .range(..=current_height)
             .map(|(height, _)| *height)
             .collect();
-        
+
         // Remove all transactions at matured heights
         for height in matured_heights {
             if let Some(transactions) = self.transactions_by_maturity_height.remove(&height) {
@@ -251,16 +254,13 @@ impl ImmatureTransactionCollection {
                 matured.extend(transactions);
             }
         }
-        
+
         matured
     }
 
     /// Get all immature transactions
     pub fn all(&self) -> Vec<&ImmatureTransaction> {
-        self.transactions_by_maturity_height
-            .values()
-            .flat_map(|txs| txs.iter())
-            .collect()
+        self.transactions_by_maturity_height.values().flat_map(|txs| txs.iter()).collect()
     }
 
     /// Get number of immature transactions
@@ -317,7 +317,7 @@ impl ImmatureTransactionCollection {
             .map(|tx| tx.total_received)
             .sum()
     }
-    
+
     /// Get transactions that will mature at a specific height
     pub fn at_height(&self, height: u32) -> Vec<&ImmatureTransaction> {
         self.transactions_by_maturity_height
@@ -325,12 +325,12 @@ impl ImmatureTransactionCollection {
             .map(|txs| txs.iter().collect())
             .unwrap_or_default()
     }
-    
+
     /// Get the next maturity height (the lowest height where transactions will mature)
     pub fn next_maturity_height(&self) -> Option<u32> {
         self.transactions_by_maturity_height.keys().next().copied()
     }
-    
+
     /// Get all maturity heights
     pub fn maturity_heights(&self) -> Vec<u32> {
         self.transactions_by_maturity_height.keys().copied().collect()

@@ -29,8 +29,9 @@ fn test_wallet_manager_from_mnemonic() {
         &mnemonic.to_string(),
         "",
         Some(Network::Testnet),
+        None, // birth_height
     );
-    assert!(wallet.is_ok());
+    assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
     assert_eq!(manager.wallet_count(), 1);
 }
 
@@ -44,12 +45,18 @@ fn test_account_management() {
         "Test Wallet".to_string(),
         Some(Network::Testnet),
     );
-    assert!(wallet.is_ok());
+    assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
 
     // Add accounts to the wallet
     // Note: Index 0 already exists from wallet creation, so use index 1
-    let result =
-        manager.create_account(&"wallet1".to_string(), 1, key_wallet::AccountType::Standard);
+    let result = manager.create_account(
+        &"wallet1".to_string(),
+        1,
+        key_wallet::AccountType::Standard {
+            index: 1,
+            standard_account_type: key_wallet::account::StandardAccountType::BIP44Account,
+        },
+    );
     assert!(result.is_ok());
 
     // Get accounts from wallet - should have 2 accounts now (0 and 1)
@@ -68,17 +75,24 @@ fn test_address_generation() {
         "Test Wallet".to_string(),
         Some(Network::Testnet),
     );
-    assert!(wallet.is_ok());
+    assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
 
     // Add an account
-    let _ = manager.create_account(&"wallet1".to_string(), 0, key_wallet::AccountType::Standard);
+    let _ = manager.create_account(
+        &"wallet1".to_string(),
+        0,
+        key_wallet::AccountType::Standard {
+            index: 0,
+            standard_account_type: key_wallet::account::StandardAccountType::BIP44Account,
+        },
+    );
 
-    // Note: Address generation is currently disabled due to ManagedAccount refactoring
+    // Test address generation
     let address1 = manager.get_receive_address(&"wallet1".to_string(), 0);
-    assert!(address1.is_err()); // Expected to fail until ManagedAccount is integrated
+    assert!(address1.is_ok(), "Failed to get receive address: {:?}", address1);
 
     let change = manager.get_change_address(&"wallet1".to_string(), 0);
-    assert!(change.is_err()); // Expected to fail until ManagedAccount is integrated
+    assert!(change.is_ok(), "Failed to get change address: {:?}", change);
 }
 
 #[test]
@@ -91,11 +105,12 @@ fn test_utxo_management() {
     let mut manager = WalletManager::new(Network::Testnet);
 
     // Create a wallet first
-    let _ = manager.create_wallet(
+    let wallet = manager.create_wallet(
         "wallet1".to_string(),
         "Test Wallet".to_string(),
         Some(Network::Testnet),
     );
+    assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
 
     // Create a test UTXO
     let outpoint = OutPoint {
@@ -130,7 +145,7 @@ fn test_utxo_management() {
 
     let balance = manager.get_wallet_balance(&"wallet1".to_string());
     assert!(balance.is_ok());
-    assert_eq!(balance.unwrap(), 100000);
+    assert_eq!(balance.unwrap().total, 100000);
 }
 
 #[test]
@@ -143,11 +158,12 @@ fn test_balance_calculation() {
     let mut manager = WalletManager::new(Network::Testnet);
 
     // Create a wallet first
-    let _ = manager.create_wallet(
+    let wallet = manager.create_wallet(
         "wallet1".to_string(),
         "Test Wallet".to_string(),
         Some(Network::Testnet),
     );
+    assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
 
     // Create a dummy address for testing
     let address = key_wallet::Address::p2pkh(
@@ -189,7 +205,7 @@ fn test_balance_calculation() {
     // Check wallet balance
     let balance = manager.get_wallet_balance(&"wallet1".to_string());
     assert!(balance.is_ok());
-    assert_eq!(balance.unwrap(), 80000);
+    assert_eq!(balance.unwrap().total, 80000);
 
     // Check global balance
     let total = manager.get_total_balance();

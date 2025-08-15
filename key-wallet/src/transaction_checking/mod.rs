@@ -4,10 +4,10 @@
 //! wallet accounts, routing checks to appropriate account types based on
 //! transaction types.
 
-pub mod wallet_checker;
 pub mod account_checker;
 pub mod transaction_router;
+pub mod wallet_checker;
 
-pub use wallet_checker::WalletTransactionChecker;
 pub use account_checker::AccountTransactionChecker;
-pub use transaction_router::{TransactionType, TransactionRouter};
+pub use transaction_router::{TransactionRouter, TransactionType};
+pub use wallet_checker::WalletTransactionChecker;

@@ -2,12 +2,12 @@
 //!
 //! Tests full wallet lifecycle, account discovery, and complex scenarios.
 
-use crate::wallet::{Wallet, WalletConfig};
 use crate::account::{AccountType, StandardAccountType};
 use crate::mnemonic::{Language, Mnemonic};
+use crate::wallet::{Wallet, WalletConfig};
 use crate::Network;
-use dashcore::{Transaction, TxIn, TxOut, OutPoint, ScriptBuf, Txid, BlockHash};
 use dashcore::hashes::Hash;
+use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::collections::BTreeMap;
 
 #[test]
@@ -16,46 +16,55 @@ fn test_full_wallet_lifecycle() {
     let config = WalletConfig::default();
     let mut wallet = Wallet::new_random(config.clone(), Network::Testnet).unwrap();
     let wallet_id = wallet.wallet_id;
-    
+
     // 2. Add multiple accounts
     for i in 1..5 {
-        wallet.add_account(
-            i,
-            AccountType::Standard {
-                index: i,
-                standard_account_type: StandardAccountType::BIP44Account,
+        wallet
+            .add_account(
+                i,
+                AccountType::Standard {
+                    index: i,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                Network::Testnet,
+            )
+            .unwrap();
+    }
+
+    // 3. Add different account types
+    wallet
+        .add_account(
+            0,
+            AccountType::CoinJoin {
+                index: 0,
             },
             Network::Testnet,
-        ).unwrap();
-    }
-    
-    // 3. Add different account types
-    wallet.add_account(
-        0,
-        AccountType::CoinJoin { index: 0 },
-        Network::Testnet,
-    ).unwrap();
-    
+        )
+        .unwrap();
+
     // 4. Verify account structure
     let collection = wallet.accounts.get(&Network::Testnet).unwrap();
     assert_eq!(collection.standard_bip44_accounts.len(), 5); // 0-4
     assert_eq!(collection.coinjoin_accounts.len(), 1);
-    
+
     // 5. Export mnemonic for recovery
     let mnemonic = match &wallet.wallet_type {
-        crate::wallet::WalletType::Mnemonic { mnemonic, .. } => mnemonic.clone(),
+        crate::wallet::WalletType::Mnemonic {
+            mnemonic,
+            ..
+        } => mnemonic.clone(),
         _ => panic!("Expected mnemonic wallet"),
     };
-    
+
     // 6. Destroy wallet and recover
     drop(wallet);
-    
+
     // 7. Recover wallet from mnemonic
     let recovered_wallet = Wallet::from_mnemonic(mnemonic, config, Network::Testnet).unwrap();
-    
+
     // 8. Verify wallet ID matches
     assert_eq!(recovered_wallet.wallet_id, wallet_id);
-    
+
     // 9. Re-add accounts and verify they generate same addresses
     // (In real implementation, would check address generation)
 }
@@ -66,29 +75,31 @@ fn test_account_discovery_workflow() {
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         Language::English,
     ).unwrap();
-    
+
     let config = WalletConfig::default();
     let mut wallet = Wallet::from_mnemonic(mnemonic, config, Network::Testnet).unwrap();
-    
+
     // Simulate account discovery process
     let mut found_accounts = Vec::new();
     let max_gap = 5; // Stop after 5 consecutive unused accounts
     let mut gap_count = 0;
-    
+
     for i in 0..20 {
         // In real implementation, would check blockchain for transactions
         let has_transactions = i < 3 || i == 7; // Simulate accounts 0,1,2,7 having transactions
-        
+
         if has_transactions {
             // Try to add account, OK if it already exists (account 0 is created by default)
-            wallet.add_account(
-                i,
-                AccountType::Standard {
-                    index: i,
-                    standard_account_type: StandardAccountType::BIP44Account,
-                },
-                Network::Testnet,
-            ).ok();
+            wallet
+                .add_account(
+                    i,
+                    AccountType::Standard {
+                        index: i,
+                        standard_account_type: StandardAccountType::BIP44Account,
+                    },
+                    Network::Testnet,
+                )
+                .ok();
             found_accounts.push(i);
             gap_count = 0;
         } else {
@@ -98,7 +109,7 @@ fn test_account_discovery_workflow() {
             }
         }
     }
-    
+
     assert_eq!(found_accounts, vec![0, 1, 2, 7]);
 }
 
@@ -108,48 +119,54 @@ fn test_multi_network_wallet_management() {
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         Language::English,
     ).unwrap();
-    
+
     let config = WalletConfig::default();
-    
+
     // Create wallet and add accounts on different networks
     let mut wallet = Wallet::from_mnemonic(mnemonic, config, Network::Testnet).unwrap();
-    
+
     // Add testnet accounts (account 0 already exists)
     for i in 0..3 {
-        wallet.add_account(
-            i,
-            AccountType::Standard {
-                index: i,
-                standard_account_type: StandardAccountType::BIP44Account,
-            },
-            Network::Testnet,
-        ).ok();
+        wallet
+            .add_account(
+                i,
+                AccountType::Standard {
+                    index: i,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                Network::Testnet,
+            )
+            .ok();
     }
-    
+
     // Add mainnet accounts
     for i in 0..2 {
-        wallet.add_account(
-            i,
-            AccountType::Standard {
-                index: i,
-                standard_account_type: StandardAccountType::BIP44Account,
-            },
-            Network::Dash,
-        ).ok();
+        wallet
+            .add_account(
+                i,
+                AccountType::Standard {
+                    index: i,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                Network::Dash,
+            )
+            .ok();
     }
-    
+
     // Add devnet accounts
     for i in 0..2 {
-        wallet.add_account(
-            i,
-            AccountType::Standard {
-                index: i,
-                standard_account_type: StandardAccountType::BIP44Account,
-            },
-            Network::Devnet,
-        ).ok();
+        wallet
+            .add_account(
+                i,
+                AccountType::Standard {
+                    index: i,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                Network::Devnet,
+            )
+            .ok();
     }
-    
+
     // Verify network separation
     assert_eq!(wallet.accounts.get(&Network::Testnet).unwrap().standard_bip44_accounts.len(), 3);
     assert_eq!(wallet.accounts.get(&Network::Dash).unwrap().standard_bip44_accounts.len(), 2);
@@ -160,17 +177,34 @@ fn test_multi_network_wallet_management() {
 fn test_wallet_with_all_account_types() {
     let config = WalletConfig::default();
     let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
-    
+
     // Add one of each account type
     let account_types = vec![
-        AccountType::Standard { index: 0, standard_account_type: StandardAccountType::BIP44Account },
-        AccountType::Standard { index: 0, standard_account_type: StandardAccountType::BIP32Account },
-        AccountType::Standard { index: 1, standard_account_type: StandardAccountType::BIP44Account },
-        AccountType::CoinJoin { index: 0 },
-        AccountType::CoinJoin { index: 1 },
+        AccountType::Standard {
+            index: 0,
+            standard_account_type: StandardAccountType::BIP44Account,
+        },
+        AccountType::Standard {
+            index: 0,
+            standard_account_type: StandardAccountType::BIP32Account,
+        },
+        AccountType::Standard {
+            index: 1,
+            standard_account_type: StandardAccountType::BIP44Account,
+        },
+        AccountType::CoinJoin {
+            index: 0,
+        },
+        AccountType::CoinJoin {
+            index: 1,
+        },
         AccountType::IdentityRegistration,
-        AccountType::IdentityTopUp { registration_index: 0 },
-        AccountType::IdentityTopUp { registration_index: 1 },
+        AccountType::IdentityTopUp {
+            registration_index: 0,
+        },
+        AccountType::IdentityTopUp {
+            registration_index: 1,
+        },
         AccountType::IdentityTopUpNotBoundToIdentity,
         AccountType::IdentityInvitation,
         AccountType::ProviderVotingKeys,
@@ -178,13 +212,13 @@ fn test_wallet_with_all_account_types() {
         AccountType::ProviderOperatorKeys,
         AccountType::ProviderPlatformKeys,
     ];
-    
+
     for (i, account_type) in account_types.iter().enumerate() {
         let index = account_type.index().unwrap_or(0);
         // Try to add, OK if already exists (e.g., standard account 0)
         wallet.add_account(index, account_type.clone(), Network::Testnet).ok();
     }
-    
+
     // Verify all accounts were added
     let collection = wallet.accounts.get(&Network::Testnet).unwrap();
     assert_eq!(collection.standard_bip44_accounts.len(), 2); // indices 0 and 1
@@ -204,22 +238,20 @@ fn test_wallet_with_all_account_types() {
 fn test_transaction_broadcast_simulation() {
     let config = WalletConfig::default();
     let wallet = Wallet::new_random(config, Network::Testnet).unwrap();
-    
+
     // Simulate creating a transaction
     let tx = Transaction {
         version: 2,
         lock_time: 0,
-        input: vec![
-            TxIn {
-                previous_output: OutPoint {
-                    txid: Txid::from_byte_array([1u8; 32]),
-                    vout: 0,
-                },
-                script_sig: ScriptBuf::new(),
-                sequence: 0xffffffff,
-                witness: dashcore::Witness::default(),
-            }
-        ],
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([1u8; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::default(),
+        }],
         output: vec![
             TxOut {
                 value: 100000,
@@ -232,15 +264,15 @@ fn test_transaction_broadcast_simulation() {
         ],
         special_transaction_payload: None,
     };
-    
+
     // Simulate broadcast process
     let txid = tx.txid();
-    
+
     // 1. Mark outputs as pending
     // 2. Broadcast to network (simulated)
     // 3. Wait for confirmation (simulated)
     // 4. Update wallet state
-    
+
     assert_ne!(txid, Txid::from_byte_array([0u8; 32]));
 }
 
@@ -248,34 +280,50 @@ fn test_transaction_broadcast_simulation() {
 fn test_coinjoin_mixing_workflow() {
     let config = WalletConfig::default();
     let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
-    
+
     // Add CoinJoin account
-    wallet.add_account(
-        0,
-        AccountType::CoinJoin { index: 0 },
-        Network::Testnet,
-    ).unwrap();
-    
+    wallet
+        .add_account(
+            0,
+            AccountType::CoinJoin {
+                index: 0,
+            },
+            Network::Testnet,
+        )
+        .unwrap();
+
     // Simulate CoinJoin rounds
     struct CoinJoinRound {
         round_id: u32,
         participants: u32,
         denomination: u64,
     }
-    
+
     let rounds = vec![
-        CoinJoinRound { round_id: 1, participants: 5, denomination: 10000000 },
-        CoinJoinRound { round_id: 2, participants: 8, denomination: 1000000 },
-        CoinJoinRound { round_id: 3, participants: 10, denomination: 100000 },
+        CoinJoinRound {
+            round_id: 1,
+            participants: 5,
+            denomination: 10000000,
+        },
+        CoinJoinRound {
+            round_id: 2,
+            participants: 8,
+            denomination: 1000000,
+        },
+        CoinJoinRound {
+            round_id: 3,
+            participants: 10,
+            denomination: 100000,
+        },
     ];
-    
+
     for round in rounds {
         // Simulate participating in CoinJoin round
         // 1. Create denomination outputs
         // 2. Submit to mixing pool
         // 3. Receive mixed outputs
         // 4. Update account with new UTXOs
-        
+
         assert!(round.participants >= 3); // Minimum participants for privacy
     }
 }
@@ -284,13 +332,13 @@ fn test_coinjoin_mixing_workflow() {
 fn test_provider_registration_workflow() {
     let config = WalletConfig::default();
     let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
-    
+
     // Add all provider key accounts
     wallet.add_account(0, AccountType::ProviderVotingKeys, Network::Testnet).unwrap();
     wallet.add_account(0, AccountType::ProviderOwnerKeys, Network::Testnet).unwrap();
     wallet.add_account(0, AccountType::ProviderOperatorKeys, Network::Testnet).unwrap();
     wallet.add_account(0, AccountType::ProviderPlatformKeys, Network::Testnet).unwrap();
-    
+
     // Simulate provider registration
     struct ProviderRegistration {
         collateral_txid: Txid,
@@ -298,21 +346,21 @@ fn test_provider_registration_workflow() {
         service_ip: [u8; 4],
         service_port: u16,
     }
-    
+
     let registration = ProviderRegistration {
         collateral_txid: Txid::from_byte_array([1u8; 32]),
         collateral_index: 0,
         service_ip: [127, 0, 0, 1],
         service_port: 9999,
     };
-    
+
     // Verify all required keys are available
     let collection = wallet.accounts.get(&Network::Testnet).unwrap();
     assert!(collection.provider_voting_keys.is_some());
     assert!(collection.provider_owner_keys.is_some());
     assert!(collection.provider_operator_keys.is_some());
     assert!(collection.provider_platform_keys.is_some());
-    
+
     // In real implementation would:
     // 1. Generate ProRegTx
     // 2. Sign with collateral key
@@ -324,30 +372,38 @@ fn test_provider_registration_workflow() {
 fn test_identity_creation_workflow() {
     let config = WalletConfig::default();
     let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
-    
+
     // Add identity accounts
     wallet.add_account(0, AccountType::IdentityRegistration, Network::Testnet).unwrap();
-    wallet.add_account(0, AccountType::IdentityTopUp { registration_index: 0 }, Network::Testnet).unwrap();
-    
+    wallet
+        .add_account(
+            0,
+            AccountType::IdentityTopUp {
+                registration_index: 0,
+            },
+            Network::Testnet,
+        )
+        .unwrap();
+
     // Simulate identity creation process
     struct IdentityCreation {
         identity_id: [u8; 32],
         initial_balance: u64,
         keys_to_register: u32,
     }
-    
+
     let identity = IdentityCreation {
         identity_id: [1u8; 32],
         initial_balance: 1000000,
         keys_to_register: 3,
     };
-    
+
     // Steps:
     // 1. Fund identity registration address
     // 2. Create identity create transition
     // 3. Register identity keys
     // 4. Top up identity credits
-    
+
     assert!(identity.initial_balance >= 100000); // Minimum balance requirement
     assert!(identity.keys_to_register >= 1); // At least one key required
 }
@@ -357,19 +413,21 @@ fn test_wallet_balance_calculation() {
     // Test comprehensive balance calculation across all accounts
     let config = WalletConfig::default();
     let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
-    
+
     // Add multiple accounts (account 0 already exists)
     for i in 0..3 {
-        wallet.add_account(
-            i,
-            AccountType::Standard {
-                index: i,
-                standard_account_type: StandardAccountType::BIP44Account,
-            },
-            Network::Testnet,
-        ).ok();
+        wallet
+            .add_account(
+                i,
+                AccountType::Standard {
+                    index: i,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                Network::Testnet,
+            )
+            .ok();
     }
-    
+
     // Simulate UTXOs in each account
     struct AccountBalance {
         account_index: u32,
@@ -377,17 +435,32 @@ fn test_wallet_balance_calculation() {
         unconfirmed: u64,
         immature: u64,
     }
-    
+
     let balances = vec![
-        AccountBalance { account_index: 0, confirmed: 1000000, unconfirmed: 50000, immature: 0 },
-        AccountBalance { account_index: 1, confirmed: 2000000, unconfirmed: 0, immature: 5000000 },
-        AccountBalance { account_index: 2, confirmed: 500000, unconfirmed: 100000, immature: 0 },
+        AccountBalance {
+            account_index: 0,
+            confirmed: 1000000,
+            unconfirmed: 50000,
+            immature: 0,
+        },
+        AccountBalance {
+            account_index: 1,
+            confirmed: 2000000,
+            unconfirmed: 0,
+            immature: 5000000,
+        },
+        AccountBalance {
+            account_index: 2,
+            confirmed: 500000,
+            unconfirmed: 100000,
+            immature: 0,
+        },
     ];
-    
+
     let total_confirmed: u64 = balances.iter().map(|b| b.confirmed).sum();
     let total_unconfirmed: u64 = balances.iter().map(|b| b.unconfirmed).sum();
     let total_immature: u64 = balances.iter().map(|b| b.immature).sum();
-    
+
     assert_eq!(total_confirmed, 3500000);
     assert_eq!(total_unconfirmed, 150000);
     assert_eq!(total_immature, 5000000);
@@ -398,29 +471,41 @@ fn test_wallet_migration_between_versions() {
     // Test wallet format migration/upgrade scenarios
     let config = WalletConfig::default();
     let wallet = Wallet::new_random(config, Network::Testnet).unwrap();
-    
+
     // Simulate version upgrade scenarios
     struct WalletVersion {
         major: u32,
         minor: u32,
         patch: u32,
     }
-    
+
     let versions = vec![
-        WalletVersion { major: 1, minor: 0, patch: 0 },
-        WalletVersion { major: 1, minor: 1, patch: 0 },
-        WalletVersion { major: 2, minor: 0, patch: 0 },
+        WalletVersion {
+            major: 1,
+            minor: 0,
+            patch: 0,
+        },
+        WalletVersion {
+            major: 1,
+            minor: 1,
+            patch: 0,
+        },
+        WalletVersion {
+            major: 2,
+            minor: 0,
+            patch: 0,
+        },
     ];
-    
+
     for (i, version) in versions.iter().enumerate() {
         if i > 0 {
             // Simulate migration from previous version
             let prev_version = &versions[i - 1];
-            
+
             // Check if migration is needed
-            let needs_migration = version.major > prev_version.major || 
-                                  (version.major == prev_version.major && version.minor > prev_version.minor);
-            
+            let needs_migration = version.major > prev_version.major
+                || (version.major == prev_version.major && version.minor > prev_version.minor);
+
             if needs_migration {
                 // In real implementation would:
                 // 1. Backup current wallet
@@ -436,32 +521,32 @@ fn test_wallet_migration_between_versions() {
 fn test_concurrent_wallet_operations() {
     use std::sync::{Arc, Mutex};
     use std::thread;
-    
+
     let config = WalletConfig::default();
-    let wallet = Arc::new(Mutex::new(
-        Wallet::new_random(config, Network::Testnet).unwrap()
-    ));
-    
+    let wallet = Arc::new(Mutex::new(Wallet::new_random(config, Network::Testnet).unwrap()));
+
     let mut handles = vec![];
-    
+
     // Simulate concurrent operations
     for i in 0..5 {
         let wallet_clone = Arc::clone(&wallet);
-        
+
         // Different operation types
         let handle = match i % 3 {
             0 => {
                 // Add account
                 thread::spawn(move || {
                     let mut wallet = wallet_clone.lock().unwrap();
-                    wallet.add_account(
-                        i,
-                        AccountType::Standard {
-                            index: i,
-                            standard_account_type: StandardAccountType::BIP44Account,
-                        },
-                        Network::Testnet,
-                    ).ok();
+                    wallet
+                        .add_account(
+                            i,
+                            AccountType::Standard {
+                                index: i,
+                                standard_account_type: StandardAccountType::BIP44Account,
+                            },
+                            Network::Testnet,
+                        )
+                        .ok();
                 })
             }
             1 => {
@@ -479,15 +564,15 @@ fn test_concurrent_wallet_operations() {
                 })
             }
         };
-        
+
         handles.push(handle);
     }
-    
+
     // Wait for all operations to complete
     for handle in handles {
         handle.join().unwrap();
     }
-    
+
     // Verify wallet is still in valid state
     let wallet = wallet.lock().unwrap();
     assert!(wallet.accounts.contains_key(&Network::Testnet));
@@ -498,27 +583,27 @@ fn test_wallet_with_thousands_of_addresses() {
     // Stress test with large number of addresses
     let config = WalletConfig::default();
     let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
-    
+
     // Account 0 is already created by default, no need to add it
-    
+
     // Simulate generating many addresses
     let num_addresses = 1000;
     let mut generation_times = Vec::new();
-    
+
     for i in 0..num_addresses {
         let start = std::time::Instant::now();
-        
+
         // In real implementation would generate address at index i
         // let _address = account.derive_address(i);
-        
+
         let elapsed = start.elapsed();
         generation_times.push(elapsed.as_micros());
     }
-    
+
     // Calculate statistics
     let avg_time: u128 = generation_times.iter().sum::<u128>() / generation_times.len() as u128;
     let max_time = generation_times.iter().max().unwrap();
-    
+
     // Performance assertions
     assert!(avg_time < 1000); // Average should be under 1ms
     assert!(max_time < &10000); // Max should be under 10ms
@@ -531,28 +616,29 @@ fn test_wallet_recovery_with_used_addresses() {
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         Language::English,
     ).unwrap();
-    
+
     let config = WalletConfig::default();
-    let mut wallet = Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet).unwrap();
-    
+    let mut wallet =
+        Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet).unwrap();
+
     // Simulate address usage pattern: 0, 1, 2, 5, 10, 15
     let used_indices = vec![0, 1, 2, 5, 10, 15];
-    
+
     // Recovery should discover all used addresses with gap limit
     let gap_limit = 20;
     let mut discovered = Vec::new();
-    
+
     for i in 0..30 {
         if used_indices.contains(&i) {
             discovered.push(i);
         }
-        
+
         // Check if we've exceeded gap limit
         let last_used = discovered.last().copied().unwrap_or(0);
         if i - last_used > gap_limit {
             break;
         }
     }
-    
+
     assert_eq!(discovered, used_indices);
 }

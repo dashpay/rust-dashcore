@@ -7,10 +7,9 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
-use dashcore::blockdata::transaction::txin::TxIn;
-use dashcore::blockdata::transaction::txout::TxOut;
-use dashcore::blockdata::transaction::{Transaction, Weight};
+use dashcore::blockdata::transaction::Transaction;
 use dashcore::sighash::{EcdsaSighashType, SighashCache};
+use dashcore::{TxIn, TxOut};
 use dashcore_hashes::Hash;
 use key_wallet::{Address, Network};
 use secp256k1::{Message, Secp256k1, SecretKey};
@@ -34,7 +33,7 @@ pub struct TransactionBuilder {
     /// Lock time
     lock_time: u32,
     /// Transaction version
-    version: i32,
+    version: u16,
     /// Whether to enable RBF (Replace-By-Fee)
     enable_rbf: bool,
 }
@@ -145,7 +144,7 @@ impl TransactionBuilder {
     }
 
     /// Set the transaction version
-    pub fn set_version(mut self, version: i32) -> Self {
+    pub fn set_version(mut self, version: u16) -> Self {
         self.version = version;
         self
     }
@@ -222,10 +221,11 @@ impl TransactionBuilder {
 
         // Create unsigned transaction
         let mut transaction = Transaction {
-            version: self.version as u32,
+            version: self.version,
             lock_time: self.lock_time,
             input: tx_inputs,
             output: tx_outputs,
+            special_transaction_payload: None,
         };
 
         // Sign inputs if keys are provided

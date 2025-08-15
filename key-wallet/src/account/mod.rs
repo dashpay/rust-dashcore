@@ -4,6 +4,7 @@
 //! including gap limit tracking, address pool management, and support for
 //! multiple account types (standard, CoinJoin, watch-only).
 
+pub mod account_collection;
 pub mod address_pool;
 pub mod coinjoin;
 pub mod managed_account;
@@ -12,7 +13,6 @@ pub mod metadata;
 pub mod scan;
 pub mod transaction_record;
 pub mod types;
-pub mod account_collection;
 
 use core::fmt;
 
@@ -90,12 +90,12 @@ impl Account {
             is_watch_only: true,
         })
     }
-    
+
     /// Get the account index
     pub fn index(&self) -> Option<u32> {
         self.account_type.index()
     }
-    
+
     /// Get the account index or 0 if none exists
     pub fn index_or_default(&self) -> u32 {
         self.account_type.index_or_default()
@@ -173,18 +173,28 @@ mod tests {
         let account_key = master.derive_priv(&secp, &path).unwrap();
 
         Account::new(
-            None, 
-            AccountType::Standard { index: 0, standard_account_type: StandardAccountType::BIP44Account }, 
-            account_key, 
-            Network::Testnet
-        ).unwrap()
+            None,
+            AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            },
+            account_key,
+            Network::Testnet,
+        )
+        .unwrap()
     }
 
     #[test]
     fn test_account_creation() {
         let account = test_account();
         assert_eq!(account.index(), Some(0));
-        assert_eq!(account.account_type, AccountType::Standard { index: 0, standard_account_type: StandardAccountType::BIP44Account });
+        assert_eq!(
+            account.account_type,
+            AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account
+            }
+        );
         assert!(!account.is_watch_only);
     }
 
@@ -193,7 +203,10 @@ mod tests {
         let account = test_account();
         let watch_only = Account::from_xpub(
             None,
-            AccountType::Standard { index: 0, standard_account_type: StandardAccountType::BIP44Account },
+            AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            },
             account.account_xpub,
             Network::Testnet,
         )

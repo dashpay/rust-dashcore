@@ -3,12 +3,12 @@
 //! This module provides methods for checking if transactions belong to
 //! specific accounts within a ManagedAccountCollection.
 
+use super::transaction_router::AccountTypeToCheck;
 use crate::account::{ManagedAccount, ManagedAccountCollection};
 use crate::Address;
-use super::transaction_router::AccountTypeToCheck;
-use dashcore::blockdata::transaction::Transaction;
-use dashcore::blockdata::script::ScriptBuf;
 use alloc::vec::Vec;
+use dashcore::blockdata::script::ScriptBuf;
+use dashcore::blockdata::transaction::Transaction;
 
 /// Result of checking a transaction against accounts
 #[derive(Debug, Clone)]
@@ -74,15 +74,21 @@ impl AccountTransactionChecker {
         account_type: &AccountTypeToCheck,
     ) -> Option<AccountMatch> {
         match account_type {
-            AccountTypeToCheck::StandardBIP44 => {
-                Self::check_indexed_accounts(&collection.standard_bip44_accounts, tx, account_type.clone())
-            }
-            AccountTypeToCheck::StandardBIP32 => {
-                Self::check_indexed_accounts(&collection.standard_bip32_accounts, tx, account_type.clone())
-            }
-            AccountTypeToCheck::CoinJoin => {
-                Self::check_indexed_accounts(&collection.coinjoin_accounts, tx, account_type.clone())
-            }
+            AccountTypeToCheck::StandardBIP44 => Self::check_indexed_accounts(
+                &collection.standard_bip44_accounts,
+                tx,
+                account_type.clone(),
+            ),
+            AccountTypeToCheck::StandardBIP32 => Self::check_indexed_accounts(
+                &collection.standard_bip32_accounts,
+                tx,
+                account_type.clone(),
+            ),
+            AccountTypeToCheck::CoinJoin => Self::check_indexed_accounts(
+                &collection.coinjoin_accounts,
+                tx,
+                account_type.clone(),
+            ),
             AccountTypeToCheck::IdentityRegistration => {
                 collection.identity_registration.as_ref().and_then(|account| {
                     Self::check_single_account(account, tx, account_type.clone(), None)
@@ -131,7 +137,9 @@ impl AccountTransactionChecker {
         account_type: AccountTypeToCheck,
     ) -> Option<AccountMatch> {
         for (index, account) in accounts {
-            if let Some(match_info) = Self::check_single_account(account, tx, account_type.clone(), Some(*index)) {
+            if let Some(match_info) =
+                Self::check_single_account(account, tx, account_type.clone(), Some(*index))
+            {
                 return Some(match_info);
             }
         }

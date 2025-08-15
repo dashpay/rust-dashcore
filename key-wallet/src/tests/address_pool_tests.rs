@@ -2,7 +2,7 @@
 //!
 //! Tests address generation, gap limit enforcement, and pool operations.
 
-// Note: AddressPool API has changed significantly. 
+// Note: AddressPool API has changed significantly.
 // These tests need to be rewritten when the new API stabilizes.
 // For now, using placeholder tests.
 

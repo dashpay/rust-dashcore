@@ -5,10 +5,10 @@
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 
-use crate::account::account_collection::AccountCollection;
 use super::config::WalletConfig;
 use super::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
 use super::{Wallet, WalletType};
+use crate::account::account_collection::AccountCollection;
 use crate::account::{Account, AccountType};
 use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
 use crate::error::Result;
@@ -77,10 +77,14 @@ impl Wallet {
 
         // Generate initial account
         if !is_watch_only {
-            wallet.add_account(0, AccountType::Standard { 
-                index: 0, 
-                standard_account_type: crate::account::StandardAccountType::BIP44Account 
-            }, network)?;
+            wallet.add_account(
+                0,
+                AccountType::Standard {
+                    index: 0,
+                    standard_account_type: crate::account::StandardAccountType::BIP44Account,
+                },
+                network,
+            )?;
         } else {
             // For watch-only, external signable, and mnemonic with passphrase wallets, create account with the provided xpub
             let xpub = match &wallet.wallet_type {
@@ -96,9 +100,9 @@ impl Wallet {
 
             let account = Account::from_xpub(
                 None,
-                AccountType::Standard { 
-                    index: 0, 
-                    standard_account_type: crate::account::StandardAccountType::BIP44Account 
+                AccountType::Standard {
+                    index: 0,
+                    standard_account_type: crate::account::StandardAccountType::BIP44Account,
                 },
                 xpub,
                 network,

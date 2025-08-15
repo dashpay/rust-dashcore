@@ -23,9 +23,9 @@ mod bip38_tests;
 #[cfg(test)]
 mod mnemonic_tests;
 #[cfg(test)]
-mod wallet_comprehensive_tests;
-#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wallet_comprehensive_tests;
 
 pub mod account;
 pub mod bip32;
@@ -58,7 +58,11 @@ pub use error::{Error, Result};
 pub use gap_limit::{GapLimit, GapLimitManager, GapLimitStage};
 pub use mnemonic::Mnemonic;
 pub use seed::Seed;
-pub use wallet::{balance::{WalletBalance, BalanceError}, config::WalletConfig, Wallet};
+pub use wallet::{
+    balance::{BalanceError, WalletBalance},
+    config::WalletConfig,
+    Wallet,
+};
 pub use watch_only::{ScanResult, WatchOnlyWallet, WatchOnlyWalletBuilder};
 
 /// Re-export commonly used types

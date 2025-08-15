@@ -40,10 +40,18 @@ impl TransactionRouter {
         // Check if it's a special transaction
         if let Some(ref payload) = tx.special_transaction_payload {
             match payload {
-                TransactionPayload::ProviderRegistrationPayloadType(_) => TransactionType::ProviderRegistration,
-                TransactionPayload::ProviderUpdateRegistrarPayloadType(_) => TransactionType::ProviderUpdateRegistrar,
-                TransactionPayload::ProviderUpdateServicePayloadType(_) => TransactionType::ProviderUpdateService,
-                TransactionPayload::ProviderUpdateRevocationPayloadType(_) => TransactionType::ProviderUpdateRevocation,
+                TransactionPayload::ProviderRegistrationPayloadType(_) => {
+                    TransactionType::ProviderRegistration
+                }
+                TransactionPayload::ProviderUpdateRegistrarPayloadType(_) => {
+                    TransactionType::ProviderUpdateRegistrar
+                }
+                TransactionPayload::ProviderUpdateServicePayloadType(_) => {
+                    TransactionType::ProviderUpdateService
+                }
+                TransactionPayload::ProviderUpdateRevocationPayloadType(_) => {
+                    TransactionType::ProviderUpdateRevocation
+                }
                 TransactionPayload::AssetLockPayloadType(_) => TransactionType::AssetLock,
                 TransactionPayload::AssetUnlockPayloadType(_) => TransactionType::AssetUnlock,
                 TransactionPayload::CoinbasePayloadType(_) => TransactionType::Coinbase,
@@ -60,13 +68,10 @@ impl TransactionRouter {
     /// Determine which account types should be checked for a given transaction type
     pub fn get_relevant_account_types(tx_type: &TransactionType) -> Vec<AccountTypeToCheck> {
         match tx_type {
-            TransactionType::Standard => vec![
-                AccountTypeToCheck::StandardBIP44,
-                AccountTypeToCheck::StandardBIP32,
-            ],
-            TransactionType::CoinJoin => vec![
-                AccountTypeToCheck::CoinJoin,
-            ],
+            TransactionType::Standard => {
+                vec![AccountTypeToCheck::StandardBIP44, AccountTypeToCheck::StandardBIP32]
+            }
+            TransactionType::CoinJoin => vec![AccountTypeToCheck::CoinJoin],
             TransactionType::ProviderRegistration => vec![
                 AccountTypeToCheck::ProviderOwnerKeys,
                 AccountTypeToCheck::ProviderOperatorKeys,
@@ -101,17 +106,15 @@ impl TransactionRouter {
                 AccountTypeToCheck::IdentityTopUpNotBound,
                 AccountTypeToCheck::IdentityInvitation,
             ],
-            TransactionType::AssetUnlock => vec![
-                AccountTypeToCheck::StandardBIP44,
-                AccountTypeToCheck::StandardBIP32,
-            ],
+            TransactionType::AssetUnlock => {
+                vec![AccountTypeToCheck::StandardBIP44, AccountTypeToCheck::StandardBIP32]
+            }
             TransactionType::Coinbase => vec![
                 // Check all account types for unknown special transactions
                 AccountTypeToCheck::StandardBIP44,
                 AccountTypeToCheck::StandardBIP32,
             ],
-            TransactionType::Ignored => vec![
-            ],
+            TransactionType::Ignored => vec![],
         }
     }
 
@@ -121,21 +124,20 @@ impl TransactionRouter {
         // - Multiple inputs from different addresses
         // - Multiple outputs with same denominations
         // - Specific version flags
-        
+
         // Simplified check - real implementation would be more sophisticated
-        tx.input.len() >= 3 && tx.output.len() >= 3 && 
-        Self::has_denomination_outputs(tx)
+        tx.input.len() >= 3 && tx.output.len() >= 3 && Self::has_denomination_outputs(tx)
     }
 
     /// Check if transaction has denomination outputs typical of CoinJoin
     fn has_denomination_outputs(tx: &Transaction) -> bool {
         // Check for standard CoinJoin denominations
         const COINJOIN_DENOMINATIONS: [u64; 5] = [
-            100_000_000,  // 1 DASH
-            10_000_000,   // 0.1 DASH
-            1_000_000,    // 0.01 DASH
-            100_000,      // 0.001 DASH
-            10_000,       // 0.0001 DASH
+            100_000_000, // 1 DASH
+            10_000_000,  // 0.1 DASH
+            1_000_000,   // 0.01 DASH
+            100_000,     // 0.001 DASH
+            10_000,      // 0.0001 DASH
         ];
 
         let mut denomination_count = 0;
