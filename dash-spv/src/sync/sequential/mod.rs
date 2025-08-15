@@ -1819,7 +1819,7 @@ impl SequentialSyncManager {
             // If we have masternodes enabled, request masternode list updates for ChainLock validation
             if self.config.enable_masternodes {
                 // For ChainLock validation, we need masternode lists at (block_height - CHAINLOCK_VALIDATION_MASTERNODE_OFFSET)
-                // So we request the masternode diff for each new block to maintain a rolling window of masternode states
+                // We request the masternode diff for each new block (not just offset blocks) to maintain a complete rolling window
                 let base_block_hash = if height > 0 {
                     // Get the previous block hash
                     storage
