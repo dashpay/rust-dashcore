@@ -216,9 +216,85 @@ impl ParallelQRInfoExecutor {
     
     /// Wait for QRInfo response for a specific request
     async fn wait_for_qr_info_response(request: &QRInfoRequest) -> Result<QRInfo, ParallelExecutionError> {
-        // Implementation would depend on how network responses are routed
-        // This is a placeholder - actual implementation would use request correlation
-        todo!("Implement QRInfo response correlation and waiting")
+        use tokio::time::timeout;
+        use std::sync::Arc;
+        
+        // Get global correlation manager (would be dependency-injected in real implementation)
+        let correlation_manager = QRInfoCorrelationManager::global();
+        
+        // Register request and get response receiver
+        let (request_id, response_rx) = {
+            let mut manager = correlation_manager.lock().await;
+            manager.register_request(request.base_hash, request.tip_hash)
+        };
+        
+        // Wait for response with configurable timeout
+        let response_timeout = Duration::from_secs(30); // Configurable timeout
+        let result = timeout(response_timeout, response_rx).await;
+        
+        // Cleanup: ensure request is removed from pending list on all paths
+        let cleanup_result = {
+            let mut manager = correlation_manager.lock().await;
+            manager.cleanup_request(request_id)
+        };
+        
+        match result {
+            Ok(Ok(qr_info)) => {
+                // Validate the QRInfo payload
+                Self::validate_qr_info_response(&qr_info, request)?;
+                
+                tracing::debug!(
+                    "Successfully received and validated QRInfo response for request {:?}",
+                    request_id
+                );
+                Ok(qr_info)
+            }
+            Ok(Err(_)) => {
+                // Response channel was closed/dropped (sender error)
+                tracing::error!("QRInfo response channel closed for request {:?}", request_id);
+                Err(ParallelExecutionError::Network(
+                    "Response channel closed before receiving QRInfo".to_string()
+                ))
+            }
+            Err(_) => {
+                // Timeout waiting for response
+                tracing::warn!(
+                    "Timeout waiting for QRInfo response for request {:?} after {:?}",
+                    request_id, response_timeout
+                );
+                Err(ParallelExecutionError::Timeout)
+            }
+        }
+    }
+    
+    /// Validate QRInfo response matches the original request
+    fn validate_qr_info_response(qr_info: &QRInfo, request: &QRInfoRequest) -> Result<(), ParallelExecutionError> {
+        // Validate that the response corresponds to our request
+        let tip_hash = qr_info.mn_list_diff_tip.block_hash;
+        if tip_hash != request.tip_hash {
+            return Err(ParallelExecutionError::Processing(
+                format!("QRInfo response tip hash {:x} doesn't match request tip hash {:x}",
+                        tip_hash, request.tip_hash)
+            ));
+        }
+        
+        // Validate base hash if available in the response
+        let base_hash = qr_info.mn_list_diff_tip.base_block_hash;
+        if base_hash != request.base_hash {
+            return Err(ParallelExecutionError::Processing(
+                format!("QRInfo response base hash {:x} doesn't match request base hash {:x}",
+                        base_hash, request.base_hash)
+            ));
+        }
+        
+        // Additional validation: check that diffs are reasonable
+        if qr_info.mn_list_diff_list.is_empty() && 
+           qr_info.mn_list_diff_h.added_mns.is_empty() && 
+           qr_info.mn_list_diff_h.deleted_mns.is_empty() {
+            tracing::warn!("Received QRInfo with no diffs - this might indicate an empty response");
+        }
+        
+        Ok(())
     }
     
     fn estimate_remaining_time(completed: usize, total: usize, avg_time: Duration) -> Duration {
@@ -480,6 +556,30 @@ impl QRInfoCorrelationManager {
                 tracing::warn!("Cleaned up expired QRInfo request {}", request_id.0);
             }
         }
+    }
+    
+    /// Clean up a specific request by ID (used for explicit cleanup)
+    pub fn cleanup_request(&mut self, request_id: RequestId) -> Result<(), CorrelationError> {
+        if self.pending_requests.remove(&request_id).is_some() {
+            tracing::debug!("Cleaned up completed QRInfo request {}", request_id.0);
+            Ok(())
+        } else {
+            // Request might have already been cleaned up or never existed
+            tracing::debug!("Request {} not found during cleanup (already processed?)", request_id.0);
+            Ok(())
+        }
+    }
+    
+    /// Get global correlation manager instance (for dependency injection in real implementation)
+    pub fn global() -> Arc<tokio::sync::Mutex<Self>> {
+        // In a real implementation, this would be a proper singleton or dependency injection
+        // For the planning document, this is a placeholder showing the integration pattern
+        use std::sync::OnceLock;
+        static GLOBAL_MANAGER: OnceLock<Arc<tokio::sync::Mutex<QRInfoCorrelationManager>>> = OnceLock::new();
+        
+        GLOBAL_MANAGER.get_or_init(|| {
+            Arc::new(tokio::sync::Mutex::new(QRInfoCorrelationManager::new()))
+        }).clone()
     }
     
     /// Find the pending request that matches this QRInfo response
