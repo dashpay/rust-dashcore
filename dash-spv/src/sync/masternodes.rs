@@ -60,10 +60,7 @@ impl MasternodeSyncManager {
                     Ok(engine) => {
                         // Store the embedded diff in our cache
                         let mut diffs = HashMap::new();
-                        diffs.insert(
-                            (embedded.base_height, embedded.target_height),
-                            embedded.diff,
-                        );
+                        diffs.insert((embedded.base_height, embedded.target_height), embedded.diff);
                         (Some(engine), diffs)
                     }
                     Err(e) => {

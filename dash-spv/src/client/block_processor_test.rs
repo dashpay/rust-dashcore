@@ -244,7 +244,10 @@ mod tests {
         // Create a dummy P2PKH address for testing
         use dashcore::hashes::Hash;
         let pubkey_hash = dashcore::PubkeyHash::from_byte_array([0u8; 20]);
-        let address = dashcore::Address::new(dashcore::Network::Testnet, dashcore::address::Payload::PubkeyHash(pubkey_hash));
+        let address = dashcore::Address::new(
+            dashcore::Network::Testnet,
+            dashcore::address::Payload::PubkeyHash(pubkey_hash),
+        );
         watch_items.write().await.insert(WatchItem::address(address.clone()));
 
         // Start processor in background

@@ -19,7 +19,10 @@ mod tests {
         // Create a dummy P2PKH address for testing
         use dashcore::hashes::Hash;
         let pubkey_hash = dashcore::PubkeyHash::from_byte_array([0u8; 20]);
-        Address::new(dashcore::Network::Testnet, dashcore::address::Payload::PubkeyHash(pubkey_hash))
+        Address::new(
+            dashcore::Network::Testnet,
+            dashcore::address::Payload::PubkeyHash(pubkey_hash),
+        )
     }
 
     fn create_test_utxo(index: u32) -> SpvUtxo {

@@ -3241,7 +3241,10 @@ mod tests {
         // Test address
         use dashcore::hashes::Hash;
         let pubkey_hash = dashcore::PubkeyHash::from_byte_array([0u8; 20]);
-        let address = dashcore::Address::new(dashcore::Network::Dash, dashcore::address::Payload::PubkeyHash(pubkey_hash));
+        let address = dashcore::Address::new(
+            dashcore::Network::Dash,
+            dashcore::address::Payload::PubkeyHash(pubkey_hash),
+        );
 
         // Test 1: Simple incoming transaction
         let tx1 = Transaction {

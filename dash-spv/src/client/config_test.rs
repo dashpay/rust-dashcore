@@ -121,7 +121,8 @@ mod tests {
         // Create a dummy P2PKH address for testing
         use dashcore::hashes::Hash;
         let pubkey_hash = dashcore::PubkeyHash::from_byte_array([0u8; 20]);
-        let address = Address::new(Network::Testnet, dashcore::address::Payload::PubkeyHash(pubkey_hash));
+        let address =
+            Address::new(Network::Testnet, dashcore::address::Payload::PubkeyHash(pubkey_hash));
         config = config.watch_address(address);
         assert_eq!(config.watch_items.len(), 1);
 

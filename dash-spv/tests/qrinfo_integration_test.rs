@@ -11,8 +11,8 @@ use dashcore::{
     BlockHash, Network, QuorumHash, Transaction,
 };
 use dashcore_hashes::Hash;
-use std::time::Duration;
 use log::info;
+use std::time::Duration;
 
 /// Helper to generate test QRInfo data
 fn create_test_qr_info(_base_height: u32, tip_height: u32) -> QRInfo {
