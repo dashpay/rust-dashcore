@@ -430,7 +430,6 @@ mod tests {
         let mut watch_only = Wallet::from_xpub(
             root_xpub_as_extended,
             config2,
-            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
         .unwrap();

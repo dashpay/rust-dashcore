@@ -146,7 +146,6 @@ fn test_wallet_creation_watch_only() {
     let wallet = Wallet::from_xpub(
         master_xpub,
         config,
-        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -520,7 +519,6 @@ fn test_wallet_external_signable() {
     let wallet = Wallet::from_external_signable(
         xpub,
         config,
-        Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();

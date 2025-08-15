@@ -17,8 +17,8 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{Address, Network, Wallet};
 
 use crate::compact_filter::{CompactFilter, FilterType};
-use crate::utxo::Utxo;
 use crate::wallet_manager::{WalletError, WalletId, WalletManager};
+use key_wallet::Utxo;
 
 /// Enhanced wallet manager with SPV support
 pub struct EnhancedWalletManager {

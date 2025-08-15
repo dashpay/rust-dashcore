@@ -128,7 +128,7 @@ impl ManagedWalletInfo {
                     let value = utxo.txout.value;
                     if utxo.is_locked {
                         locked += value;
-                    } else if utxo.height.is_some() {
+                    } else if utxo.is_confirmed {
                         confirmed += value;
                     } else {
                         unconfirmed += value;
@@ -160,7 +160,7 @@ impl ManagedWalletInfo {
                     let value = utxo.txout.value;
                     if utxo.is_locked {
                         locked += value;
-                    } else if utxo.height.is_some() {
+                    } else if utxo.is_confirmed {
                         confirmed += value;
                     } else {
                         unconfirmed += value;
@@ -224,7 +224,7 @@ impl ManagedWalletInfo {
     pub fn get_spendable_utxos(&self) -> Vec<&Utxo> {
         self.get_utxos()
             .into_iter()
-            .filter(|utxo| !utxo.is_locked && utxo.height.is_some())
+            .filter(|utxo| !utxo.is_locked && (utxo.is_confirmed || utxo.is_instantlocked))
             .collect()
     }
 
@@ -340,4 +340,5 @@ impl ManagedWalletInfo {
 }
 
 /// Re-export types from account module for convenience
-pub use crate::account::{TransactionRecord, Utxo};
+pub use crate::account::TransactionRecord;
+pub use crate::utxo::Utxo;

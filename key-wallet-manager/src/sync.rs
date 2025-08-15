@@ -17,8 +17,8 @@ use key_wallet::{Address, Network};
 
 use crate::compact_filter::{CompactFilter, FilterHeader, FilterType};
 use crate::transaction_handler::{AddressTracker, TransactionHandler, TransactionProcessResult};
-use crate::utxo::UtxoSet;
 use crate::wallet_manager::{WalletId, WalletManager};
+use key_wallet::UtxoSet;
 
 /// Sync state for a wallet
 #[derive(Debug, Clone)]

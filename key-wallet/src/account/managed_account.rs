@@ -7,10 +7,10 @@ use super::metadata::AccountMetadata;
 use super::transaction_record::TransactionRecord;
 use super::types::ManagedAccountType;
 use crate::gap_limit::GapLimitManager;
+use crate::utxo::Utxo;
 use crate::wallet::balance::WalletBalance;
 use crate::Network;
 use alloc::collections::{BTreeMap, BTreeSet};
-use dashcore::blockdata::transaction::txout::TxOut;
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::Address;
 use dashcore::Txid;
@@ -43,22 +43,6 @@ pub struct ManagedAccount {
     pub monitored_addresses: BTreeSet<Address>,
     /// UTXO set for this account
     pub utxos: BTreeMap<OutPoint, Utxo>,
-}
-
-/// Simple UTXO representation
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Utxo {
-    /// The outpoint
-    pub outpoint: OutPoint,
-    /// The output
-    pub txout: TxOut,
-    /// The address this UTXO belongs to
-    pub address: Address,
-    /// Confirmation height
-    pub height: Option<u32>,
-    /// Whether this UTXO is locked/reserved
-    pub is_locked: bool,
 }
 
 impl ManagedAccount {
@@ -228,7 +212,7 @@ impl ManagedAccount {
     }
 
     /// Get all addresses from all pools
-    pub fn get_all_addresses(&self) -> alloc::vec::Vec<Address> {
+    pub fn get_all_addresses(&self) -> Vec<Address> {
         self.account_type.get_all_addresses()
     }
 

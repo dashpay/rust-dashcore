@@ -11,9 +11,7 @@ use alloc::vec::Vec;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::PublicKey;
 use dashcore::Txid;
-use key_wallet::wallet::managed_wallet_info::{
-    ManagedWalletInfo, TransactionRecord, Utxo as WalletUtxo,
-};
+use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
 use key_wallet::WalletBalance;
 use key_wallet::{
     Account, AccountType, Address, DerivationPath, ExtendedPubKey, Mnemonic, Network, Wallet,
@@ -22,7 +20,7 @@ use key_wallet::{
 use secp256k1::Secp256k1;
 
 use crate::fee::FeeLevel;
-use crate::utxo::{Utxo, UtxoSet};
+use key_wallet::{Utxo, UtxoSet};
 
 /// Unique identifier for a wallet
 pub type WalletId = String;
@@ -48,7 +46,7 @@ pub struct WalletManager {
     /// Default network for new wallets
     default_network: Network,
     /// Temporary wallet UTXOs storage (workaround for ManagedWalletInfo limitation)
-    wallet_utxos: BTreeMap<WalletId, Vec<WalletUtxo>>,
+    wallet_utxos: BTreeMap<WalletId, Vec<Utxo>>,
     /// Monitored addresses per wallet (temporary storage)
     pub(crate) monitored_addresses: BTreeMap<WalletId, BTreeSet<Address>>,
 }
@@ -513,14 +511,8 @@ impl WalletManager {
             return Err(WalletError::WalletNotFound(wallet_id.clone()));
         }
 
-        // Convert to wallet UTXO
-        let wallet_utxo = WalletUtxo {
-            outpoint: utxo.outpoint.clone(),
-            txout: utxo.txout.clone(),
-            address: utxo.address.clone(),
-            height: Some(utxo.height),
-            is_locked: false,
-        };
+        // Store the UTXO directly
+        let wallet_utxo = utxo.clone();
 
         // Store in our temporary storage
         self.wallet_utxos.entry(wallet_id.clone()).or_insert_with(Vec::new).push(wallet_utxo);
@@ -546,19 +538,7 @@ impl WalletManager {
         let wallet_utxos = self.wallet_utxos.get(wallet_id);
 
         let utxos = if let Some(wallet_utxos) = wallet_utxos {
-            wallet_utxos
-                .iter()
-                .map(|wu| Utxo {
-                    outpoint: wu.outpoint.clone(),
-                    txout: wu.txout.clone(),
-                    address: wu.address.clone(),
-                    height: wu.height.unwrap_or(0),
-                    is_coinbase: false,
-                    is_confirmed: wu.height.is_some(),
-                    is_instantlocked: false,
-                    is_locked: wu.is_locked,
-                })
-                .collect()
+            wallet_utxos.iter().map(|wu| wu.clone()).collect()
         } else {
             Vec::new()
         };
@@ -590,7 +570,7 @@ impl WalletManager {
                 let value = utxo.txout.value;
                 if utxo.is_locked {
                     locked += value;
-                } else if utxo.height.is_some() {
+                } else if utxo.is_confirmed {
                     confirmed += value;
                 } else {
                     unconfirmed += value;
@@ -675,7 +655,7 @@ impl WalletManager {
     }
 
     /// Get wallet UTXOs (temporary accessor)
-    pub fn get_wallet_utxos_temp(&self, wallet_id: &WalletId) -> Vec<WalletUtxo> {
+    pub fn get_wallet_utxos_temp(&self, wallet_id: &WalletId) -> Vec<Utxo> {
         self.wallet_utxos.get(wallet_id).map(|utxos| utxos.clone()).unwrap_or_default()
     }
 

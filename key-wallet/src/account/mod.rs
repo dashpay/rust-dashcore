@@ -28,7 +28,7 @@ use crate::error::Result;
 use crate::Network;
 
 pub use coinjoin::CoinJoinPools;
-pub use managed_account::{ManagedAccount, Utxo};
+pub use managed_account::ManagedAccount;
 pub use managed_account_collection::ManagedAccountCollection;
 pub use metadata::AccountMetadata;
 pub use scan::ScanResult;

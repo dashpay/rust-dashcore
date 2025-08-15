@@ -30,13 +30,12 @@ pub mod spv_client_integration;
 pub mod sync;
 pub mod transaction_builder;
 pub mod transaction_handler;
-pub mod utxo;
 pub mod wallet_manager;
 
 // Re-export key-wallet types
 pub use key_wallet::{
     Account, AccountType, Address, AddressType, ChildNumber, DerivationPath, ExtendedPrivKey,
-    ExtendedPubKey, Mnemonic, Network, Wallet, WalletConfig,
+    ExtendedPubKey, Mnemonic, Network, Utxo, UtxoSet, Wallet, WalletConfig,
 };
 
 // Re-export dashcore transaction types
@@ -63,5 +62,4 @@ pub use transaction_handler::{
     AddressTracker, TransactionHandler, TransactionMatch,
     TransactionProcessResult as HandlerTransactionResult,
 };
-pub use utxo::{Utxo, UtxoSet};
 pub use wallet_manager::{WalletError, WalletManager};

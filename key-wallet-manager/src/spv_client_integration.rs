@@ -15,7 +15,7 @@ use dashcore::{BlockHash, Network as DashNetwork, Txid};
 use dashcore_hashes::Hash;
 use key_wallet::{Address, Network};
 
-use crate::compact_filter::{CompactFilter, FilterType};
+use crate::compact_filter::CompactFilter;
 use crate::enhanced_wallet_manager::{
     BlockProcessResult, EnhancedWalletManager, TransactionProcessResult,
 };

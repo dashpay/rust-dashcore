@@ -40,6 +40,7 @@ pub mod psbt;
 pub mod seed;
 pub mod transaction_checking;
 pub(crate) mod utils;
+pub mod utxo;
 pub mod wallet;
 pub mod watch_only;
 
@@ -58,6 +59,7 @@ pub use error::{Error, Result};
 pub use gap_limit::{GapLimit, GapLimitManager, GapLimitStage};
 pub use mnemonic::Mnemonic;
 pub use seed::Seed;
+pub use utxo::{Utxo, UtxoSet};
 pub use wallet::{
     balance::{BalanceError, WalletBalance},
     config::WalletConfig,

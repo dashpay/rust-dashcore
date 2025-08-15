@@ -16,7 +16,7 @@ use secp256k1::{Message, Secp256k1, SecretKey};
 
 use crate::coin_selection::{CoinSelector, SelectionStrategy};
 use crate::fee::FeeLevel;
-use crate::utxo::Utxo;
+use key_wallet::Utxo;
 
 /// Transaction builder for creating Dash transactions
 pub struct TransactionBuilder {

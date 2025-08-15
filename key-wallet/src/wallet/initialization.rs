@@ -5,8 +5,7 @@
 use super::config::WalletConfig;
 use super::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
 use super::{Wallet, WalletType};
-use crate::account::account_collection::AccountCollection;
-use crate::account::{Account, AccountType};
+use crate::account::AccountType;
 use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
 use crate::error::Result;
 use crate::mnemonic::{Language, Mnemonic};
@@ -87,7 +86,6 @@ impl Wallet {
                 root_extended_private_key,
             },
             config,
-            network,
         )?;
 
         // Create accounts based on options
@@ -96,19 +94,8 @@ impl Wallet {
         Ok(wallet)
     }
 
-    /// Create a wallet from a specific wallet type
-    pub fn from_wallet_type(
-        wallet_type: WalletType,
-        config: WalletConfig,
-        network: Network,
-    ) -> Result<Self> {
-        let is_watch_only = matches!(
-            wallet_type,
-            WalletType::WatchOnly(_)
-                | WalletType::ExternalSignable(_)
-                | WalletType::MnemonicWithPassphrase { .. }
-        );
-
+    /// Create a wallet from a specific wallet type with no accounts
+    pub fn from_wallet_type(wallet_type: WalletType, config: WalletConfig) -> Result<Self> {
         // Compute wallet ID from root public key
         let root_pub_key = match &wallet_type {
             WalletType::Mnemonic {
@@ -164,7 +151,6 @@ impl Wallet {
                 root_extended_private_key,
             },
             config,
-            network,
         )?;
 
         // Create accounts based on options
@@ -200,7 +186,6 @@ impl Wallet {
                 root_extended_public_key,
             },
             config,
-            network,
         )?;
 
         // Create accounts based on options
@@ -221,15 +206,11 @@ impl Wallet {
     pub fn from_xpub(
         master_xpub: ExtendedPubKey,
         config: WalletConfig,
-        network: Network,
         account_creation_options: WalletAccountCreationOptions,
     ) -> Result<Self> {
         let root_extended_public_key = RootExtendedPubKey::from_extended_pub_key(&master_xpub);
-        let wallet = Self::from_wallet_type(
-            WalletType::WatchOnly(root_extended_public_key),
-            config,
-            network,
-        )?;
+        let wallet =
+            Self::from_wallet_type(WalletType::WatchOnly(root_extended_public_key), config)?;
 
         // For watch-only wallets, we can only create accounts if we have the xpubs
         // The Default option won't work as it tries to derive keys
@@ -262,15 +243,11 @@ impl Wallet {
     pub fn from_external_signable(
         master_xpub: ExtendedPubKey,
         config: WalletConfig,
-        network: Network,
         account_creation_options: WalletAccountCreationOptions,
     ) -> Result<Self> {
         let root_extended_public_key = RootExtendedPubKey::from_extended_pub_key(&master_xpub);
-        let wallet = Self::from_wallet_type(
-            WalletType::ExternalSignable(root_extended_public_key),
-            config,
-            network,
-        )?;
+        let wallet =
+            Self::from_wallet_type(WalletType::ExternalSignable(root_extended_public_key), config)?;
 
         // For externally signable wallets, we can only create accounts if we have the xpubs
         match account_creation_options {
@@ -309,7 +286,6 @@ impl Wallet {
                 root_extended_private_key,
             },
             config,
-            network,
         )?;
 
         // Create accounts based on options
@@ -348,11 +324,8 @@ impl Wallet {
         account_creation_options: WalletAccountCreationOptions,
     ) -> Result<Self> {
         let root_extended_private_key = RootExtendedPrivKey::from_extended_priv_key(&master_key);
-        let mut wallet = Self::from_wallet_type(
-            WalletType::ExtendedPrivKey(root_extended_private_key),
-            config,
-            network,
-        )?;
+        let mut wallet =
+            Self::from_wallet_type(WalletType::ExtendedPrivKey(root_extended_private_key), config)?;
 
         // Create accounts based on options
         wallet.create_accounts_from_options(account_creation_options, network)?;

@@ -7,9 +7,9 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 
+use crate::Address;
 use dashcore::blockdata::transaction::txout::TxOut;
 use dashcore::blockdata::transaction::OutPoint;
-use key_wallet::Address;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -307,10 +307,10 @@ impl Default for UtxoSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Network;
     use dashcore::blockdata::script::ScriptBuf;
     use dashcore::Txid;
     use dashcore_hashes::{sha256d, Hash};
-    use key_wallet::Network;
 
     fn test_utxo(value: u64, height: u32) -> Utxo {
         test_utxo_with_vout(value, height, 0)

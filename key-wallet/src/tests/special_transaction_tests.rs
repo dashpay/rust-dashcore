@@ -11,80 +11,14 @@ use std::collections::HashMap;
 enum SpecialTransactionType {
     ProviderRegistration = 1,    // ProRegTx
     ProviderUpdate = 2,          // ProUpServTx
-    ProviderRevoke = 3,          // ProUpRevTx
+    ProviderRevoke = 4,          // ProUpRevTx (note: 4, not 3)
     CoinbaseSpecial = 5,         // CbTx
     QuorumCommitment = 6,        // qcTx
-    ProviderUpdateRegistrar = 7, // ProUpRegTx
-}
-
-/// Provider registration transaction payload
-struct ProRegTxPayload {
-    version: u16,
-    tx_type: u16,
-    mode: u16,
-    collateral_outpoint: OutPoint,
-    ip_address: [u8; 16],
-    port: u16,
-    owner_key_hash: [u8; 20],
-    operator_pubkey: [u8; 48],
-    voting_key_hash: [u8; 20],
-    operator_reward: u16,
-    script_payout: ScriptBuf,
-    inputs_hash: [u8; 32],
-}
-
-/// Provider update service transaction payload
-struct ProUpServTxPayload {
-    version: u16,
-    provider_txid: Txid,
-    ip_address: [u8; 16],
-    port: u16,
-    script_operator_payout: ScriptBuf,
-    inputs_hash: [u8; 32],
-    operator_signature: [u8; 96],
-}
-
-/// Provider update registrar transaction payload
-struct ProUpRegTxPayload {
-    version: u16,
-    provider_txid: Txid,
-    mode: u16,
-    operator_pubkey: [u8; 48],
-    voting_key_hash: [u8; 20],
-    script_payout: ScriptBuf,
-    inputs_hash: [u8; 32],
-}
-
-/// Provider revocation transaction payload
-struct ProUpRevTxPayload {
-    version: u16,
-    provider_txid: Txid,
-    reason: u16,
-    inputs_hash: [u8; 32],
-    operator_signature: [u8; 96],
+    ProviderUpdateRegistrar = 3, // ProUpRegTx (note: 3, not 7)
 }
 
 #[test]
 fn test_provider_registration_transaction() {
-    // Create a provider registration transaction
-    let payload = ProRegTxPayload {
-        version: 1,
-        tx_type: SpecialTransactionType::ProviderRegistration as u16,
-        mode: 0, // Normal mode
-        collateral_outpoint: OutPoint {
-            txid: Txid::from_byte_array([1u8; 32]),
-            vout: 0,
-        },
-        ip_address: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1], // IPv4 mapped
-        port: 9999,
-        owner_key_hash: [2u8; 20],
-        operator_pubkey: [3u8; 48],
-        voting_key_hash: [4u8; 20],
-        operator_reward: 0, // 0%
-        script_payout: ScriptBuf::new(),
-        inputs_hash: [5u8; 32],
-    };
-
     // Create transaction with special payload
     let tx = create_special_transaction(SpecialTransactionType::ProviderRegistration);
 
@@ -95,16 +29,6 @@ fn test_provider_registration_transaction() {
 
 #[test]
 fn test_provider_update_service_transaction() {
-    let payload = ProUpServTxPayload {
-        version: 1,
-        provider_txid: Txid::from_byte_array([1u8; 32]),
-        ip_address: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 192, 168, 1, 1],
-        port: 9999,
-        script_operator_payout: ScriptBuf::new(),
-        inputs_hash: [2u8; 32],
-        operator_signature: [3u8; 96],
-    };
-
     let tx = create_special_transaction(SpecialTransactionType::ProviderUpdate);
 
     assert_eq!(tx.version, 3);
@@ -113,16 +37,6 @@ fn test_provider_update_service_transaction() {
 
 #[test]
 fn test_provider_update_registrar_transaction() {
-    let payload = ProUpRegTxPayload {
-        version: 1,
-        provider_txid: Txid::from_byte_array([1u8; 32]),
-        mode: 0,
-        operator_pubkey: [2u8; 48],
-        voting_key_hash: [3u8; 20],
-        script_payout: ScriptBuf::new(),
-        inputs_hash: [4u8; 32],
-    };
-
     let tx = create_special_transaction(SpecialTransactionType::ProviderUpdateRegistrar);
 
     assert_eq!(tx.version, 3);
@@ -131,14 +45,6 @@ fn test_provider_update_registrar_transaction() {
 
 #[test]
 fn test_provider_revocation_transaction() {
-    let payload = ProUpRevTxPayload {
-        version: 1,
-        provider_txid: Txid::from_byte_array([1u8; 32]),
-        reason: 0, // Not specified
-        inputs_hash: [2u8; 32],
-        operator_signature: [3u8; 96],
-    };
-
     let tx = create_special_transaction(SpecialTransactionType::ProviderRevoke);
 
     assert_eq!(tx.version, 3);
@@ -235,35 +141,11 @@ fn test_provider_key_update_scenarios() {
         UpdateScenario::AllKeys,
     ];
 
-    for scenario in scenarios {
-        let mut payload = ProUpRegTxPayload {
-            version: 1,
-            provider_txid: Txid::from_byte_array([1u8; 32]),
-            mode: 0,
-            operator_pubkey: [0u8; 48],
-            voting_key_hash: [0u8; 20],
-            script_payout: ScriptBuf::new(),
-            inputs_hash: [0u8; 32],
-        };
-
-        match scenario {
-            UpdateScenario::OperatorKeyOnly => {
-                payload.operator_pubkey = [1u8; 48];
-            }
-            UpdateScenario::VotingKeyOnly => {
-                payload.voting_key_hash = [2u8; 20];
-            }
-            UpdateScenario::PayoutScriptOnly => {
-                payload.script_payout = ScriptBuf::from(vec![3u8; 25]);
-            }
-            UpdateScenario::AllKeys => {
-                payload.operator_pubkey = [1u8; 48];
-                payload.voting_key_hash = [2u8; 20];
-                payload.script_payout = ScriptBuf::from(vec![3u8; 25]);
-            }
-        }
-
+    for _scenario in scenarios {
+        // Note: This test would need proper ProviderUpdateRegistrarPayload implementation
+        // For now, just create a basic transaction
         let tx = create_special_transaction(SpecialTransactionType::ProviderUpdateRegistrar);
+        assert_eq!(tx.version, 3);
         // In a real implementation, would verify special_transaction_payload is Some
     }
 }
@@ -287,19 +169,14 @@ fn test_provider_revocation_reasons() {
     ];
 
     for reason in reasons {
-        let payload = ProUpRevTxPayload {
-            version: 1,
-            provider_txid: Txid::from_byte_array([1u8; 32]),
-            reason: reason as u16,
-            inputs_hash: [2u8; 32],
-            operator_signature: [3u8; 96],
-        };
+        // Test that the reason is valid
+        let reason_value = reason as u16;
+        assert!(reason_value <= 3);
 
         let tx = create_special_transaction(SpecialTransactionType::ProviderRevoke);
         // In a real implementation, would verify special_transaction_payload is Some
-
-        // Verify reason is valid
-        assert!(payload.reason <= 3);
+        // and that the payload has the correct reason field
+        assert_eq!(tx.version, 3);
     }
 }
 
@@ -343,22 +220,14 @@ fn test_provider_operator_reward_distribution() {
         let is_valid = reward <= 10000;
 
         if is_valid {
-            let payload = ProRegTxPayload {
-                version: 1,
-                tx_type: SpecialTransactionType::ProviderRegistration as u16,
-                mode: 0,
-                collateral_outpoint: OutPoint::null(),
-                ip_address: [0u8; 16],
-                port: 9999,
-                owner_key_hash: [0u8; 20],
-                operator_pubkey: [0u8; 48],
-                voting_key_hash: [0u8; 20],
-                operator_reward: reward,
-                script_payout: ScriptBuf::new(),
-                inputs_hash: [0u8; 32],
-            };
+            // Test that valid rewards are acceptable
+            assert!(reward <= 10000);
 
-            assert!(payload.operator_reward <= 10000);
+            // Create a transaction to test the structure is valid
+            let tx = create_special_transaction(SpecialTransactionType::ProviderRegistration);
+            assert_eq!(tx.version, 3);
+            // In a real implementation, would verify special_transaction_payload is Some
+            // and that the payload has the correct operator_reward field
         } else {
             // Should fail validation
             assert!(reward > 10000);
@@ -368,6 +237,22 @@ fn test_provider_operator_reward_distribution() {
 
 /// Helper function to create a special transaction
 fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
+    use dashcore::blockdata::transaction::special_transaction::{
+        coinbase::CoinbasePayload,
+        provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
+        provider_update_revocation::ProviderUpdateRevocationPayload,
+        provider_update_service::ProviderUpdateServicePayload,
+        quorum_commitment::{QuorumCommitmentPayload, QuorumEntry},
+        TransactionPayload,
+    };
+    use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+    use dashcore::hash_types::{
+        InputsHash, MerkleRootMasternodeList, MerkleRootQuorums, PubkeyHash, QuorumHash,
+        QuorumVVecHash,
+    };
+    use dashcore::sml::llmq_type::LLMQType;
+    use std::net::SocketAddr;
+
     // Create base transaction
     let mut tx = Transaction {
         version: 3, // Version 3 for special transactions
@@ -385,27 +270,125 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
         special_transaction_payload: None,
     };
 
-    // Add appropriate outputs based on type
+    // Add appropriate outputs and payloads based on type
     match tx_type {
         SpecialTransactionType::ProviderRegistration => {
             // Collateral output (1000 DASH)
             tx.output.push(TxOut {
-                value: 1000_000_000_00,
+                value: 100_000_000_000, // 1000 DASH in satoshis
                 script_pubkey: ScriptBuf::new(),
             });
+
+            // Create provider registration payload
+            let payload = ProviderRegistrationPayload {
+                version: 1,
+                masternode_type: ProviderMasternodeType::Regular,
+                masternode_mode: 0,
+                collateral_outpoint: OutPoint {
+                    txid: Txid::from_byte_array([2u8; 32]),
+                    vout: 0,
+                },
+                service_address: "127.0.0.1:19999".parse::<SocketAddr>().unwrap(),
+                owner_key_hash: PubkeyHash::from_byte_array([3u8; 20]),
+                operator_public_key: BLSPublicKey::from([4u8; 48]),
+                voting_key_hash: PubkeyHash::from_byte_array([5u8; 20]),
+                operator_reward: 1000, // 10% (1000/10000)
+                script_payout: ScriptBuf::new(),
+                inputs_hash: InputsHash::from_byte_array([6u8; 32]),
+                signature: vec![7u8; 96],
+                platform_node_id: Some(PubkeyHash::from_byte_array([8u8; 20])),
+                platform_p2p_port: Some(26656),
+                platform_http_port: Some(443),
+            };
+            tx.special_transaction_payload =
+                Some(TransactionPayload::ProviderRegistrationPayloadType(payload));
         }
-        _ => {
+
+        SpecialTransactionType::ProviderUpdate => {
             // Regular output for fees
+            tx.output.push(TxOut {
+                value: 1000,
+                script_pubkey: ScriptBuf::new(),
+            });
+
+            let payload = ProviderUpdateServicePayload {
+                version: 1,
+                mn_type: None, // LegacyBLS version
+                pro_tx_hash: Txid::from_byte_array([9u8; 32]),
+                ip_address: u128::from_be_bytes([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 127, 0, 0, 1,
+                ]), // IPv4-mapped IPv6 for 127.0.0.1
+                port: 19999,
+                script_payout: ScriptBuf::new(),
+                inputs_hash: InputsHash::from_byte_array([10u8; 32]),
+                platform_node_id: Some([12u8; 20]),
+                platform_p2p_port: Some(26656),
+                platform_http_port: Some(443),
+                payload_sig: BLSSignature::from([11u8; 96]),
+            };
+            tx.special_transaction_payload =
+                Some(TransactionPayload::ProviderUpdateServicePayloadType(payload));
+        }
+
+        SpecialTransactionType::ProviderRevoke => {
+            // Regular output for fees
+            tx.output.push(TxOut {
+                value: 1000,
+                script_pubkey: ScriptBuf::new(),
+            });
+
+            let payload = ProviderUpdateRevocationPayload {
+                version: 1,
+                pro_tx_hash: Txid::from_byte_array([13u8; 32]),
+                reason: 1, // Reason for revocation
+                inputs_hash: InputsHash::from_byte_array([14u8; 32]),
+                payload_sig: BLSSignature::from([15u8; 96]),
+            };
+            tx.special_transaction_payload =
+                Some(TransactionPayload::ProviderUpdateRevocationPayloadType(payload));
+        }
+
+        SpecialTransactionType::QuorumCommitment => {
+            // Regular output for fees
+            tx.output.push(TxOut {
+                value: 1000,
+                script_pubkey: ScriptBuf::new(),
+            });
+
+            // Note: QuorumCommitmentPayload has private fields and complex construction.
+            // For testing purposes, we'll skip the actual payload creation and just
+            // create a basic transaction structure.
+            // In a real implementation, this would require proper QuorumEntry construction
+            // and access to QuorumCommitmentPayload constructors.
+        }
+
+        SpecialTransactionType::CoinbaseSpecial => {
+            // Coinbase reward output
+            tx.output.push(TxOut {
+                value: 500_000_000, // 5 DASH block reward
+                script_pubkey: ScriptBuf::new(),
+            });
+
+            let payload = CoinbasePayload {
+                version: 2,
+                height: 100000,
+                merkle_root_masternode_list: MerkleRootMasternodeList::from_byte_array([23u8; 32]),
+                merkle_root_quorums: MerkleRootQuorums::from_byte_array([24u8; 32]),
+                best_cl_height: Some(100000),
+                best_cl_signature: Some(BLSSignature::from([25u8; 96])),
+                asset_locked_amount: Some(1000000000),
+            };
+            tx.special_transaction_payload = Some(TransactionPayload::CoinbasePayloadType(payload));
+        }
+
+        _ => {
+            // For other transaction types not implemented yet
             tx.output.push(TxOut {
                 value: 1000,
                 script_pubkey: ScriptBuf::new(),
             });
         }
     }
-
-    // Special transaction payload would be set here in real implementation
-    // For testing purposes, we leave it as None
-    tx.special_transaction_payload = None;
 
     tx
 }

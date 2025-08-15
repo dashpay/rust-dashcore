@@ -143,7 +143,6 @@ mod tests {
         let watch_only = Wallet::from_xpub(
             root_xpub_as_extended,
             config,
-            Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
         .unwrap();

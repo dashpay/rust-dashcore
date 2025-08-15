@@ -15,8 +15,8 @@ use dashcore::{OutPoint, TxOut};
 use dashcore_hashes::Hash;
 use key_wallet::{Address, Network};
 
-use crate::utxo::{Utxo, UtxoSet};
 use crate::wallet_manager::WalletId;
+use key_wallet::{Utxo, UtxoSet};
 
 /// Transaction handler for processing incoming transactions
 pub struct TransactionHandler {
