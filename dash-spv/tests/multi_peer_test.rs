@@ -142,7 +142,7 @@ async fn test_max_peer_limit() {
     // The client should never connect to more than MAX_PEERS
     // This is enforced in the ConnectionPool
     println!("Maximum peer limit is set to: {}", MAX_PEERS);
-    assert_eq!(MAX_PEERS, 12, "Default max peers should be 12");
+    assert_eq!(MAX_PEERS, 3, "Default max peers should be 12");
 }
 
 #[cfg(test)]

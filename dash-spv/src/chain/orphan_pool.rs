@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn test_add_and_retrieve_orphan() {
         let mut pool = OrphanPool::new();
-        let genesis = BlockHash::all_zeros();
+        let genesis = BlockHash::from([0u8; 32]);
         let header = create_test_header(genesis, 1);
         let block_hash = header.block_hash();
 
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn test_remove_orphan() {
         let mut pool = OrphanPool::new();
-        let header = create_test_header(BlockHash::all_zeros(), 1);
+        let header = create_test_header(BlockHash::from([0u8; 32]), 1);
         let block_hash = header.block_hash();
 
         pool.add_orphan(header.clone());
@@ -284,21 +284,21 @@ mod tests {
 
         // Add 4 orphans, should evict the oldest
         for i in 0..4 {
-            let header = create_test_header(BlockHash::all_zeros(), i);
+            let header = create_test_header(BlockHash::from([0u8; 32]), i);
             pool.add_orphan(header);
         }
 
         assert_eq!(pool.len(), 3);
 
         // First orphan should have been evicted
-        let first_hash = create_test_header(BlockHash::all_zeros(), 0).block_hash();
+        let first_hash = create_test_header(BlockHash::from([0u8; 32]), 0).block_hash();
         assert!(!pool.contains(&first_hash));
     }
 
     #[test]
     fn test_duplicate_orphan() {
         let mut pool = OrphanPool::new();
-        let header = create_test_header(BlockHash::all_zeros(), 1);
+        let header = create_test_header(BlockHash::from([0u8; 32]), 1);
 
         assert!(pool.add_orphan(header.clone()));
         assert!(!pool.add_orphan(header)); // Should not add duplicate
@@ -310,7 +310,7 @@ mod tests {
         let mut pool = OrphanPool::new();
 
         // Create a chain of orphans
-        let genesis = BlockHash::all_zeros();
+        let genesis = BlockHash::from([0u8; 32]);
         let header1 = create_test_header(genesis, 1);
         let hash1 = header1.block_hash();
         let header2 = create_test_header(hash1, 2);
@@ -336,14 +336,14 @@ mod tests {
     #[test]
     fn test_process_attempts() {
         let mut pool = OrphanPool::new();
-        let header = create_test_header(BlockHash::all_zeros(), 1);
+        let header = create_test_header(BlockHash::from([0u8; 32]), 1);
         let block_hash = header.block_hash();
 
         pool.add_orphan(header);
 
         // Get orphans multiple times
         for _ in 0..3 {
-            pool.get_orphans_by_prev(&BlockHash::all_zeros());
+            pool.get_orphans_by_prev(&BlockHash::from([0u8; 32]));
         }
 
         // Check process attempts
@@ -356,7 +356,7 @@ mod tests {
         let mut pool = OrphanPool::new();
 
         for i in 0..5 {
-            let header = create_test_header(BlockHash::all_zeros(), i);
+            let header = create_test_header(BlockHash::from([0u8; 32]), i);
             pool.add_orphan(header);
         }
 

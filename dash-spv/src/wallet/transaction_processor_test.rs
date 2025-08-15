@@ -41,7 +41,7 @@ mod tests {
     fn create_test_block_with_transactions(transactions: Vec<Transaction>) -> Block {
         let header = BlockHeader {
             version: Version::from_consensus(1),
-            prev_blockhash: dashcore::BlockHash::all_zeros(),
+            prev_blockhash: dashcore::BlockHash::from([0u8; 32]),
             merkle_root: dashcore_hashes::sha256d::Hash::all_zeros().into(),
             time: 1234567890,
             bits: CompactTarget::from_consensus(0x1d00ffff),

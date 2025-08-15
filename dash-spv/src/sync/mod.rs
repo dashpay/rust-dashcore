@@ -3,6 +3,9 @@
 //! This module provides sequential sync strategy:
 //! Headers first, then filter headers, then filters on-demand
 
+pub mod chainlock_validation;
+pub mod discovery;
+pub mod embedded_data;
 pub mod filters;
 pub mod headers;
 pub mod headers2_state;
@@ -10,8 +13,11 @@ pub mod headers_with_reorg;
 pub mod masternodes;
 pub mod sequential;
 pub mod state;
-pub mod terminal_block_data;
-pub mod terminal_blocks;
+pub mod validation;
+pub mod validation_state;
+
+#[cfg(test)]
+mod validation_test;
 
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
@@ -25,7 +31,6 @@ pub use headers::HeaderSyncManager;
 pub use headers_with_reorg::{HeaderSyncManagerWithReorg, ReorgConfig};
 pub use masternodes::MasternodeSyncManager;
 pub use state::SyncState;
-pub use terminal_blocks::{TerminalBlock, TerminalBlockManager};
 
 /// Legacy sync manager - kept for compatibility but simplified.
 /// Use SequentialSyncManager for all synchronization needs.

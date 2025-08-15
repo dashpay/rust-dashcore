@@ -36,7 +36,7 @@ mod tests {
         chain_state.sync_base_height = 1000;
 
         // Add a checkpoint header at height 1000
-        let checkpoint_header = create_test_header(BlockHash::all_zeros(), 1000);
+        let checkpoint_header = create_test_header(BlockHash::from([0u8; 32]), 1000);
         storage.store_header(&checkpoint_header, 1000).expect("Failed to store checkpoint");
         chain_state.add_header(checkpoint_header.clone());
 
@@ -280,7 +280,7 @@ mod tests {
         let mut chain_state = ChainState::new();
 
         // Test 1: Empty chain state (no genesis)
-        let orphan = create_test_header(BlockHash::all_zeros(), 1);
+        let orphan = create_test_header(BlockHash::from([0u8; 32]), 1);
         let result = detector.check_header(&orphan, &chain_state, &storage);
         assert!(matches!(result, ForkDetectionResult::Orphan));
 

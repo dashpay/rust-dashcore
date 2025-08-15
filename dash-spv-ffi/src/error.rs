@@ -7,6 +7,7 @@ use std::sync::Mutex;
 static LAST_ERROR: Mutex<Option<CString>> = Mutex::new(None);
 
 #[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FFIErrorCode {
     Success = 0,
     NullPointer = 1,

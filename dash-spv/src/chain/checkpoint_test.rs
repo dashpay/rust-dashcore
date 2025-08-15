@@ -254,7 +254,7 @@ mod tests {
         let manager = CheckpointManager::new(checkpoints.clone());
 
         let correct_hash = manager.get_checkpoint(100000).unwrap().block_hash;
-        let wrong_hash = BlockHash::all_zeros();
+        let wrong_hash = BlockHash::from([0u8; 32]);
 
         // Test validation at checkpoint height
         assert!(manager.validate_block(100000, &correct_hash));
@@ -306,7 +306,7 @@ mod tests {
             assert!(!checkpoint.chain_work.is_empty());
 
             if checkpoint.height > 0 {
-                assert_ne!(checkpoint.prev_blockhash, BlockHash::all_zeros());
+                assert_ne!(checkpoint.prev_blockhash, BlockHash::from([0u8; 32]));
             }
         }
 

@@ -2,6 +2,7 @@
 
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_headers2::Headers2Message;
+use dashcore::network::message_qrinfo::{GetQRInfo, QRInfo};
 use tracing;
 
 /// Handles incoming network messages and routes them appropriately.
@@ -87,6 +88,16 @@ impl MessageHandler {
                 self.stats.instantlock_messages += 1;
                 MessageHandleResult::InstantLock(instantlock)
             }
+            NetworkMessage::QRInfo(qr_info) => {
+                self.stats.qrinfo_messages += 1;
+                MessageHandleResult::QRInfo(qr_info)
+            }
+            NetworkMessage::GetQRInfo(_) => {
+                // We don't serve QRInfo requests, only make them
+                tracing::warn!("Received unexpected GetQRInfo request");
+                self.stats.other_messages += 1;
+                MessageHandleResult::Unhandled(message)
+            }
             other => {
                 self.stats.other_messages += 1;
                 tracing::debug!("Received unhandled message: {:?}", other);
@@ -154,6 +165,9 @@ pub enum MessageHandleResult {
     /// GetData message.
     GetData(Vec<dashcore::network::message_blockdata::Inventory>),
 
+    /// QRInfo message.
+    QRInfo(QRInfo),
+
     /// Unhandled message.
     Unhandled(NetworkMessage),
 }
@@ -178,5 +192,6 @@ pub struct MessageStats {
     pub instantlock_messages: u64,
     pub inventory_messages: u64,
     pub getdata_messages: u64,
+    pub qrinfo_messages: u64,
     pub other_messages: u64,
 }

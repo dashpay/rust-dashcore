@@ -100,7 +100,7 @@ struct SyncCallbackData {
 
 /// FFIDashSpvClient structure
 pub struct FFIDashSpvClient {
-    inner: Arc<Mutex<Option<DashSpvClient>>>,
+    pub(crate) inner: Arc<Mutex<Option<DashSpvClient>>>,
     runtime: Arc<Runtime>,
     event_callbacks: Arc<Mutex<FFIEventCallbacks>>,
     active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
@@ -157,7 +157,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
     let config = &(*config);
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .thread_name("dash-spv-worker")
-        .worker_threads(1) // Reduce threads for mobile
+        .worker_threads(4) // Use 4 threads for better performance on iOS
         .enable_all()
         .build()
     {

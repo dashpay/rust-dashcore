@@ -242,7 +242,7 @@ impl RecoveryManager {
                 error,
             } => {
                 tracing::error!("❌ Aborting sync: {}", error);
-                Err(SyncError::SyncFailed(error))
+                Err(SyncError::Network(error))
             }
 
             RecoveryStrategy::SwitchPeer => {

@@ -111,6 +111,11 @@ pub trait StorageManager: Send + Sync {
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>>;
 
     /// Get a specific header by height.
+    ///
+    /// TODO: Consider changing this API to accept blockchain heights instead of storage-relative heights.
+    /// Currently expects storage index (0-based from sync_base_height), but this creates confusion
+    /// since most blockchain operations work with absolute blockchain heights. A future refactor
+    /// could make this more intuitive by handling the height conversion internally.
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>>;
 
     /// Get the current tip height.
@@ -236,18 +241,6 @@ pub trait StorageManager: Send + Sync {
         &self,
         txid: dashcore::Txid,
     ) -> StorageResult<Option<dashcore::InstantLock>>;
-
-    /// Store a terminal block record.
-    async fn store_terminal_block(&mut self, block: &StoredTerminalBlock) -> StorageResult<()>;
-
-    /// Load a terminal block by height.
-    async fn load_terminal_block(&self, height: u32) -> StorageResult<Option<StoredTerminalBlock>>;
-
-    /// Get all stored terminal blocks.
-    async fn get_all_terminal_blocks(&self) -> StorageResult<Vec<StoredTerminalBlock>>;
-
-    /// Check if a terminal block is stored.
-    async fn has_terminal_block(&self, height: u32) -> StorageResult<bool>;
 
     // Mempool storage methods
     /// Store an unconfirmed transaction.
