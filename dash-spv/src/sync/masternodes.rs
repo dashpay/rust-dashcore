@@ -42,21 +42,63 @@ pub struct MasternodeSyncManager {
 impl MasternodeSyncManager {
     /// Create a new masternode sync manager.
     pub fn new(config: &ClientConfig) -> Self {
-        let engine = if config.enable_masternodes {
-            let mut engine = MasternodeListEngine::default_for_network(config.network);
-            // Feed genesis block hash at height 0
-            if let Some(genesis_hash) = config.network.known_genesis_block_hash() {
-                engine.feed_block_height(0, genesis_hash);
+        let (engine, mnlist_diffs) = if config.enable_masternodes {
+            // Try to load embedded MNListDiff data for faster initial sync
+            if let Some(embedded) = super::embedded_data::get_embedded_diff(config.network) {
+                tracing::info!(
+                    "📦 Using embedded MNListDiff for {} - starting from height {}",
+                    config.network,
+                    embedded.target_height
+                );
+
+                // Initialize engine with the embedded diff
+                match MasternodeListEngine::initialize_with_diff_to_height(
+                    embedded.diff.clone(),
+                    embedded.target_height,
+                    config.network,
+                ) {
+                    Ok(engine) => {
+                        // Store the embedded diff in our cache
+                        let mut diffs = HashMap::new();
+                        diffs.insert(
+                            (embedded.base_height, embedded.target_height),
+                            embedded.diff,
+                        );
+                        (Some(engine), diffs)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to initialize engine with embedded diff: {}. Falling back to default.",
+                            e
+                        );
+                        let mut engine = MasternodeListEngine::default_for_network(config.network);
+                        // Feed genesis block hash at height 0
+                        if let Some(genesis_hash) = config.network.known_genesis_block_hash() {
+                            engine.feed_block_height(0, genesis_hash);
+                        }
+                        (Some(engine), HashMap::new())
+                    }
+                }
+            } else {
+                tracing::info!(
+                    "No embedded MNListDiff available for {} - starting from genesis",
+                    config.network
+                );
+                let mut engine = MasternodeListEngine::default_for_network(config.network);
+                // Feed genesis block hash at height 0
+                if let Some(genesis_hash) = config.network.known_genesis_block_hash() {
+                    engine.feed_block_height(0, genesis_hash);
+                }
+                (Some(engine), HashMap::new())
             }
-            Some(engine)
         } else {
-            None
+            (None, HashMap::new())
         };
 
         Self {
             config: config.clone(),
             engine,
-            mnlist_diffs: HashMap::new(),
+            mnlist_diffs,
             qr_infos: HashMap::new(),
             last_qrinfo_block_hash: None,
             error: None,

@@ -5,6 +5,7 @@
 
 pub mod chainlock_validation;
 pub mod discovery;
+pub mod embedded_data;
 pub mod filters;
 pub mod headers;
 pub mod headers2_state;
