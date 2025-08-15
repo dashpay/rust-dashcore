@@ -202,7 +202,7 @@ impl StorageManager for MockStorageManager {
         self
     }
 
-    async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
+    async fn store_headers(&mut self, _headers: &[BlockHeader]) -> StorageResult<()> {
         if self.lock_poisoned {
             return Err(StorageError::LockPoisoned("Mock lock poisoned".to_string()));
         }
@@ -218,6 +218,13 @@ impl StorageManager for MockStorageManager {
         Ok(())
     }
 
+    async fn load_headers(&self, _range: std::ops::Range<u32>) -> StorageResult<Vec<BlockHeader>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(vec![])
+    }
+
     async fn get_header(&self, _height: u32) -> StorageResult<Option<BlockHeader>> {
         if self.lock_poisoned {
             return Err(StorageError::LockPoisoned("Mock lock poisoned".to_string()));
@@ -231,16 +238,6 @@ impl StorageManager for MockStorageManager {
         Ok(None)
     }
 
-    async fn get_header_by_hash(
-        &self,
-        _hash: &BlockHash,
-    ) -> StorageResult<Option<(u32, BlockHeader)>> {
-        if self.fail_on_read {
-            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
-        }
-        Ok(None)
-    }
-
     async fn get_tip_height(&self) -> StorageResult<Option<u32>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
@@ -248,25 +245,18 @@ impl StorageManager for MockStorageManager {
         Ok(Some(0))
     }
 
-    async fn get_headers_range(
-        &self,
-        _range: std::ops::Range<u32>,
-    ) -> StorageResult<Vec<BlockHeader>> {
-        if self.fail_on_read {
-            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
-        }
-        Ok(vec![])
-    }
-
-    async fn store_filter_header(
-        &mut self,
-        _height: u32,
-        _filter_header: &FilterHeader,
-    ) -> StorageResult<()> {
+    async fn store_filter_headers(&mut self, _headers: &[FilterHeader]) -> StorageResult<()> {
         if self.fail_on_write {
             return Err(StorageError::WriteFailed("Mock write failure".to_string()));
         }
         Ok(())
+    }
+
+    async fn load_filter_headers(&self, _range: std::ops::Range<u32>) -> StorageResult<Vec<FilterHeader>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(vec![])
     }
 
     async fn get_filter_header(&self, _height: u32) -> StorageResult<Option<FilterHeader>> {
@@ -283,6 +273,25 @@ impl StorageManager for MockStorageManager {
         Ok(Some(0))
     }
 
+    async fn store_masternode_state(
+        &mut self,
+        _state: &dash_spv::storage::MasternodeState,
+    ) -> StorageResult<()> {
+        if self.fail_on_write {
+            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn load_masternode_state(
+        &self,
+    ) -> StorageResult<Option<dash_spv::storage::MasternodeState>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(None)
+    }
+
     async fn store_chain_state(&mut self, _state: &ChainState) -> StorageResult<()> {
         if self.fail_on_write {
             return Err(StorageError::WriteFailed("Mock write failure".to_string()));
@@ -290,18 +299,49 @@ impl StorageManager for MockStorageManager {
         Ok(())
     }
 
-    async fn get_chain_state(&self) -> StorageResult<Option<ChainState>> {
+    async fn load_chain_state(&self) -> StorageResult<Option<ChainState>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
         }
         Ok(None)
     }
 
-    async fn compact_storage(&mut self) -> StorageResult<()> {
+    async fn store_filter(&mut self, _height: u32, _filter: &[u8]) -> StorageResult<()> {
+        if self.fail_on_write {
+            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
+        }
         Ok(())
     }
 
-    async fn get_stats(&self) -> StorageResult<dash_spv::storage::StorageStats> {
+    async fn load_filter(&self, _height: u32) -> StorageResult<Option<Vec<u8>>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(None)
+    }
+
+    async fn store_metadata(&mut self, _key: &str, _value: &[u8]) -> StorageResult<()> {
+        if self.fail_on_write {
+            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn load_metadata(&self, _key: &str) -> StorageResult<Option<Vec<u8>>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(None)
+    }
+
+    async fn clear(&mut self) -> StorageResult<()> {
+        if self.fail_on_write {
+            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn stats(&self) -> StorageResult<dash_spv::storage::StorageStats> {
         Ok(dash_spv::storage::StorageStats {
             headers_count: 0,
             filter_headers_count: 0,
@@ -314,10 +354,21 @@ impl StorageManager for MockStorageManager {
         })
     }
 
-    async fn get_utxos_by_address(
+    async fn get_header_height_by_hash(
         &self,
-        _address: &Address,
-    ) -> StorageResult<Vec<(OutPoint, Utxo)>> {
+        _hash: &dashcore::BlockHash,
+    ) -> StorageResult<Option<u32>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(None)
+    }
+
+    async fn get_headers_batch(
+        &self,
+        _start_height: u32,
+        _end_height: u32,
+    ) -> StorageResult<Vec<(u32, BlockHeader)>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
         }
@@ -331,21 +382,151 @@ impl StorageManager for MockStorageManager {
         Ok(())
     }
 
-    async fn remove_utxo(&mut self, _outpoint: &OutPoint) -> StorageResult<Option<Utxo>> {
+    async fn remove_utxo(&mut self, _outpoint: &OutPoint) -> StorageResult<()> {
         if self.fail_on_write {
             return Err(StorageError::WriteFailed("Mock write failure".to_string()));
         }
-        Ok(None)
+        Ok(())
     }
 
-    async fn get_utxo(&self, _outpoint: &OutPoint) -> StorageResult<Option<Utxo>> {
+    async fn get_utxos_for_address(&self, _address: &Address) -> StorageResult<Vec<Utxo>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(vec![])
+    }
+
+    async fn get_all_utxos(&self) -> StorageResult<HashMap<OutPoint, Utxo>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(HashMap::new())
+    }
+
+    async fn store_sync_state(&mut self, _state: &dash_spv::storage::PersistentSyncState) -> StorageResult<()> {
+        if self.fail_on_write {
+            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn load_sync_state(&self) -> StorageResult<Option<dash_spv::storage::PersistentSyncState>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
         }
         Ok(None)
     }
 
-    async fn get_all_utxos(&self) -> StorageResult<HashMap<OutPoint, Utxo>> {
+    async fn clear_sync_state(&mut self) -> StorageResult<()> {
+        if self.fail_on_write {
+            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn store_sync_checkpoint(
+        &mut self,
+        _height: u32,
+        _checkpoint: &dash_spv::storage::sync_state::SyncCheckpoint,
+    ) -> StorageResult<()> {
+        if self.fail_on_write {
+            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn get_sync_checkpoints(
+        &self,
+        _start_height: u32,
+        _end_height: u32,
+    ) -> StorageResult<Vec<dash_spv::storage::sync_state::SyncCheckpoint>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(vec![])
+    }
+
+    async fn store_chain_lock(
+        &mut self,
+        _height: u32,
+        _chain_lock: &dashcore::ChainLock,
+    ) -> StorageResult<()> {
+        if self.fail_on_write {
+            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn load_chain_lock(&self, _height: u32) -> StorageResult<Option<dashcore::ChainLock>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(None)
+    }
+
+    async fn get_chain_locks(
+        &self,
+        _start_height: u32,
+        _end_height: u32,
+    ) -> StorageResult<Vec<(u32, dashcore::ChainLock)>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(vec![])
+    }
+
+    async fn store_instant_lock(
+        &mut self,
+        _txid: dashcore::Txid,
+        _instant_lock: &dashcore::InstantLock,
+    ) -> StorageResult<()> {
+        if self.fail_on_write {
+            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn load_instant_lock(
+        &self,
+        _txid: dashcore::Txid,
+    ) -> StorageResult<Option<dashcore::InstantLock>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(None)
+    }
+
+    async fn store_mempool_transaction(
+        &mut self,
+        _txid: &Txid,
+        _tx: &UnconfirmedTransaction,
+    ) -> StorageResult<()> {
+        if self.fail_on_write {
+            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn remove_mempool_transaction(&mut self, _txid: &Txid) -> StorageResult<()> {
+        if self.fail_on_write {
+            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn get_mempool_transaction(
+        &self,
+        _txid: &Txid,
+    ) -> StorageResult<Option<UnconfirmedTransaction>> {
+        if self.fail_on_read {
+            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
+        }
+        Ok(None)
+    }
+
+    async fn get_all_mempool_transactions(
+        &self,
+    ) -> StorageResult<HashMap<Txid, UnconfirmedTransaction>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
         }
@@ -359,34 +540,19 @@ impl StorageManager for MockStorageManager {
         Ok(())
     }
 
-    async fn get_mempool_state(&self) -> StorageResult<Option<MempoolState>> {
+    async fn load_mempool_state(&self) -> StorageResult<Option<MempoolState>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
         }
         Ok(None)
     }
 
-    async fn store_masternode_state(
-        &mut self,
-        _state: &dash_spv::storage::MasternodeState,
-    ) -> StorageResult<()> {
+    async fn clear_mempool(&mut self) -> StorageResult<()> {
         if self.fail_on_write {
             return Err(StorageError::WriteFailed("Mock write failure".to_string()));
         }
         Ok(())
     }
-
-    async fn get_masternode_state(
-        &self,
-    ) -> StorageResult<Option<dash_spv::storage::MasternodeState>> {
-        if self.fail_on_read {
-            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
-        }
-        Ok(None)
-    }
-
-    // Terminal block methods removed from StorageManager trait
-    // These methods are no longer part of the trait
 }
 
 // ===== Network Error Tests =====

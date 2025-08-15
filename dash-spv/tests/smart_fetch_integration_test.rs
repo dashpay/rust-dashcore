@@ -91,19 +91,23 @@ async fn test_smart_fetch_quorum_discovery() {
         deleted_masternodes: vec![],
         new_masternodes: vec![],
         deleted_quorums: vec![],
-        new_quorums: vec![QuorumEntry {
-            version: 1,
-            llmq_type: LLMQType::Llmqtype50_60,
-            quorum_hash: dashcore::QuorumHash::all_zeros(),
-            quorum_index: None,
-            signers: vec![true; 50],
-            valid_members: vec![true; 50],
-            quorum_public_key: dashcore::bls_sig_utils::BLSPublicKey::from([0; 48]),
-            quorum_vvec_hash: dashcore::hash_types::QuorumVVecHash::all_zeros(),
-            threshold_sig: dashcore::bls_sig_utils::BLSSignature::from([0; 96]),
-            all_commitment_aggregated_signature: dashcore::bls_sig_utils::BLSSignature::from(
-                [0; 96],
-            ),
+        new_quorums: vec![{
+            let llmq_type = LLMQType::Llmqtype50_60;
+            let quorum_size = llmq_type.size() as usize;
+            QuorumEntry {
+                version: 1,
+                llmq_type,
+                quorum_hash: dashcore::QuorumHash::all_zeros(),
+                quorum_index: None,
+                signers: vec![true; quorum_size],
+                valid_members: vec![true; quorum_size],
+                quorum_public_key: dashcore::bls_sig_utils::BLSPublicKey::from([0; 48]),
+                quorum_vvec_hash: dashcore::hash_types::QuorumVVecHash::all_zeros(),
+                threshold_sig: dashcore::bls_sig_utils::BLSSignature::from([0; 96]),
+                all_commitment_aggregated_signature: dashcore::bls_sig_utils::BLSSignature::from(
+                    [0; 96],
+                ),
+            }
         }],
         quorums_chainlock_signatures: vec![],
     };
