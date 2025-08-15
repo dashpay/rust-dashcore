@@ -733,7 +733,7 @@ impl MasternodeSyncManager {
                 base_block_hash,
                 block_hash: target_block_hash,
             };
-            let network_message = NetworkMessage::GetMnListD(get_mnlist_diff);
+            let network_message = NetworkMessage::GetMnListDiff(get_mnlist_diff);
 
             // Send the request (this matches dash-evo-tool's pattern of sending individual requests)
             tracing::info!("📤 Requesting MnListDiff: base_height={}, target_height={}, base_hash={}, target_hash={}",
