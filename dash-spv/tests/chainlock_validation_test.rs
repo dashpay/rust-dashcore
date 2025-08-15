@@ -288,7 +288,7 @@ async fn test_chainlock_queue_and_process_flow() {
     let storage_path = temp_dir.path().to_path_buf();
 
     // Create storage
-    let storage = Box::new(DiskStorageManager::new(storage_path).await.unwrap());
+    let mut storage = Box::new(DiskStorageManager::new(storage_path).await.unwrap());
     let network = Box::new(MockNetworkManager::new());
 
     // Create client config
@@ -325,7 +325,6 @@ async fn test_chainlock_queue_and_process_flow() {
 
     // Process pending (will fail validation but clear the queue)
     let chain_state = ChainState::new();
-    let storage = client.storage();
     let _ = chainlock_manager.validate_pending_chainlocks(&chain_state, &mut *storage).await;
 
     // Verify queue is cleared
@@ -363,13 +362,12 @@ async fn test_chainlock_manager_cache_operations() {
 
     // Add test headers
     let genesis = genesis_block(Network::Dash).header;
-    let storage = client.storage();
+    let mut storage = client.storage();
     // storage.store_header(&genesis, 0).await.unwrap();
 
     // Create and process a ChainLock
     let chain_lock = create_test_chainlock(0, genesis.block_hash());
     let chain_state = ChainState::new();
-    let storage = client.storage();
     let _ =
         chainlock_manager.process_chain_lock(chain_lock.clone(), &chain_state, &mut *storage).await;
 
