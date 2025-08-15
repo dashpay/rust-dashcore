@@ -546,17 +546,22 @@ impl SyncPhase {
         if let SyncPhase::DownloadingMnList {
             sync_strategy:
                 Some(HybridSyncStrategy::EngineDiscovery {
+                    qr_info_requests,
                     qr_info_completed,
                     ..
                 }),
             requests_completed,
+            requests_total,
             last_progress,
             ..
         } = self
         {
-            *qr_info_completed += 1;
-            *requests_completed += 1;
-            *last_progress = Instant::now();
+            // Only increment if we haven't reached the planned total
+            if *qr_info_completed < *qr_info_requests {
+                *qr_info_completed += 1;
+                *requests_completed = (*requests_completed + 1).min(*requests_total);
+                *last_progress = Instant::now();
+            }
         }
     }
 
@@ -565,19 +570,24 @@ impl SyncPhase {
         if let SyncPhase::DownloadingMnList {
             sync_strategy:
                 Some(HybridSyncStrategy::EngineDiscovery {
+                    mn_diff_requests,
                     mn_diff_completed,
                     ..
                 }),
             requests_completed,
+            requests_total,
             diffs_processed,
             last_progress,
             ..
         } = self
         {
-            *mn_diff_completed += 1;
-            *requests_completed += 1;
-            *diffs_processed += 1; // Backward compatibility
-            *last_progress = Instant::now();
+            // Only increment if we haven't reached the planned total
+            if *mn_diff_completed < *mn_diff_requests {
+                *mn_diff_completed += 1;
+                *requests_completed = (*requests_completed + 1).min(*requests_total);
+                *diffs_processed += 1; // Backward compatibility
+                *last_progress = Instant::now();
+            }
         }
     }
 
