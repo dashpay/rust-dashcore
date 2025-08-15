@@ -142,8 +142,8 @@ mod tests {
         Transaction {
             version: 1,
             lock_time: 0,
-            input: vec![],
-            output: vec![],
+            input: Vec::new(),
+            output: Vec::new(),
             special_transaction_payload: None,
         }
     }

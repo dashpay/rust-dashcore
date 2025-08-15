@@ -37,7 +37,7 @@ fn create_coinbase_transaction(address: &Address, height: u32) -> Transaction {
     let script_pubkey = address.script_pubkey();
 
     // Create coinbase input with height in scriptSig
-    let mut script_sig = vec![];
+    let mut script_sig = Vec::new();
     script_sig.push(0x03); // Push 3 bytes
     script_sig.extend_from_slice(&height.to_le_bytes()[0..3]); // Height as little-endian
 

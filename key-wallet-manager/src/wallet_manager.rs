@@ -92,7 +92,7 @@ impl WalletManager {
             passphrase.to_string(),
             WalletConfig::default(),
             network,
-            Vec::new(), // Empty account types list for backward compatibility
+            key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
@@ -110,7 +110,7 @@ impl WalletManager {
                 standard_account_type: StandardAccountType::BIP44Account,
             };
             wallet_mut
-                .add_account(0, account_type, network)
+                .add_account(account_type, network, None)
                 .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
         }
 
@@ -147,7 +147,12 @@ impl WalletManager {
             Mnemonic::from_phrase(test_mnemonic, key_wallet::mnemonic::Language::English)
                 .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
-        let wallet = Wallet::from_mnemonic(mnemonic, WalletConfig::default(), network)
+        let wallet = Wallet::from_mnemonic(
+            mnemonic, 
+            WalletConfig::default(), 
+            network,
+            key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
+        )
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
         // Create managed wallet info
@@ -164,7 +169,7 @@ impl WalletManager {
                 standard_account_type: StandardAccountType::BIP44Account,
             };
             wallet_mut
-                .add_account(0, account_type, network)
+                .add_account(account_type, network, None)
                 .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
         }
 
@@ -239,6 +244,7 @@ impl WalletManager {
     }
 
     /// Create an account in a specific wallet
+    /// Note: The index parameter is kept for convenience, even though AccountType contains it
     pub fn create_account(
         &mut self,
         wallet_id: &WalletId,
@@ -259,7 +265,7 @@ impl WalletManager {
         let network = self.default_network;
 
         wallet_mut
-            .add_account(index, account_type, network)
+            .add_account(account_type, network, None)
             .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
 
         // Get the created account to verify it was created
@@ -539,7 +545,6 @@ impl WalletManager {
                     is_confirmed: wu.height.is_some(),
                     is_instantlocked: false,
                     is_locked: wu.is_locked,
-                    label: None,
                 })
                 .collect()
         } else {

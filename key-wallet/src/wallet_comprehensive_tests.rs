@@ -21,10 +21,10 @@ mod tests {
     #[test]
     fn test_wallet_creation() {
         let config = WalletConfig::default();
-        let wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+        let wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
 
-        // Verify wallet has a default account
-        assert_eq!(wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 1);
+        // Verify wallet has default accounts
+        assert!(wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0) >= 2); // Default creates multiple accounts
         assert!(wallet.has_mnemonic());
         assert!(!wallet.is_watch_only());
     }
@@ -35,8 +35,8 @@ mod tests {
         let config = WalletConfig::default();
 
         let wallet1 =
-            Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet).unwrap();
-        let wallet2 = Wallet::from_mnemonic(mnemonic, config, Network::Testnet).unwrap();
+            Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet2 = Wallet::from_mnemonic(mnemonic, config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
 
         // Verify both wallets have the same account structure
         let account1 = wallet1.get_account(Network::Testnet, 0).unwrap();
@@ -65,26 +65,24 @@ mod tests {
     #[test]
     fn test_multiple_accounts() {
         let config = WalletConfig::default();
-        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
 
         // Add additional accounts
         wallet
-            .add_account(
-                1,
-                AccountType::Standard {
+            .add_account(AccountType::Standard {
                     index: 1,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 Network::Testnet,
+                None,
             )
             .unwrap();
         wallet
-            .add_account(
-                2,
-                AccountType::CoinJoin {
+            .add_account(AccountType::CoinJoin {
                     index: 2,
                 },
                 Network::Testnet,
+                None,
             )
             .unwrap();
 
@@ -107,7 +105,7 @@ mod tests {
     #[test]
     fn test_watch_only_wallet() {
         let config = WalletConfig::default();
-        let wallet = Wallet::new_random(config.clone(), Network::Testnet).unwrap();
+        let wallet = Wallet::new_random(config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
 
         // Get the wallet's root extended public key
         let root_xpub = wallet.root_extended_pub_key();
@@ -115,11 +113,11 @@ mod tests {
 
         // Create watch-only wallet from the root xpub
         let watch_only =
-            Wallet::from_xpub(root_xpub_as_extended, config, Network::Testnet).unwrap();
+            Wallet::from_xpub(root_xpub_as_extended, config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
 
         assert!(watch_only.is_watch_only());
         assert!(!watch_only.has_mnemonic());
-        assert_eq!(watch_only.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 1);
+        assert_eq!(watch_only.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 0); // None creates no accounts
 
         // Both wallets should have the same root public key
         let watch_root_xpub = watch_only.root_extended_pub_key();
@@ -135,13 +133,12 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
         let config = WalletConfig::default();
 
-        // Create wallet without passphrase
-        let wallet1 = Wallet::from_mnemonic_with_passphrase(
+        // Create wallet without passphrase - use regular from_mnemonic for empty passphrase
+        let wallet1 = Wallet::from_mnemonic(
             mnemonic.clone(),
-            "".to_string(),
             config.clone(),
             Network::Testnet,
-            Vec::new(),
+            crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
 
@@ -151,15 +148,15 @@ mod tests {
             "TREZOR".to_string(),
             config,
             Network::Testnet,
-            Vec::new(),
+            crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
         .unwrap();
 
-        // Different passphrases should generate different account keys
-        let account1 = wallet1.get_account(Network::Testnet, 0).unwrap();
-        let account2 = wallet2.get_account(Network::Testnet, 0).unwrap();
+        // Different passphrases should generate different root keys
+        let root_xpub1 = wallet1.root_extended_pub_key();
+        let root_xpub2 = wallet2.root_extended_pub_key();
 
-        assert_ne!(account1.extended_public_key(), account2.extended_public_key());
+        assert_ne!(root_xpub1.root_public_key, root_xpub2.root_public_key);
     }
 
     // ============================================================================

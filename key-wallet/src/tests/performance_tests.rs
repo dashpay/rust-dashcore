@@ -89,7 +89,7 @@ fn test_key_derivation_performance() {
 #[test]
 fn test_account_creation_performance() {
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
 
     let iterations = 100;
     let mut times = Vec::new();
@@ -99,12 +99,12 @@ fn test_account_creation_performance() {
         // Try to add account, OK if already exists (e.g., account 0)
         wallet
             .add_account(
-                i as u32,
                 AccountType::Standard {
                     index: i as u32,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 Network::Testnet,
+                None,
             )
             .ok();
         times.push(start.elapsed());
@@ -131,7 +131,7 @@ fn test_wallet_recovery_performance() {
     for _ in 0..iterations {
         let start = Instant::now();
         let _wallet =
-            Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet).unwrap();
+            Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
         times.push(start.elapsed());
     }
 
@@ -182,20 +182,19 @@ fn test_address_generation_batch_performance() {
 #[test]
 fn test_large_wallet_memory_usage() {
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
 
     // Add many accounts
     let num_accounts = 100;
 
     for i in 0..num_accounts {
         wallet
-            .add_account(
-                i,
-                AccountType::Standard {
+            .add_account(AccountType::Standard {
                     index: i,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 Network::Testnet,
+                None,
             )
             .ok(); // OK if already exists
     }
@@ -222,7 +221,7 @@ fn test_concurrent_derivation_performance() {
 
     let num_threads = 4;
     let iterations_per_thread = 250;
-    let mut handles = vec![];
+    let mut handles = Vec::new();
 
     let start = Instant::now();
 
@@ -276,7 +275,7 @@ fn test_wallet_serialization_performance() {
 
     for _ in 0..iterations {
         let start = Instant::now();
-        let _wallet = Wallet::new_random(config.clone(), Network::Testnet).unwrap();
+        let _wallet = Wallet::new_random(config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
         creation_times.push(start.elapsed());
     }
 

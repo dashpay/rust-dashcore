@@ -43,7 +43,7 @@ fn test_bip44_account_creation() {
         let derivation_path = account_type.derivation_path(network).unwrap();
         let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
-        let account = Account::new(
+        let account = Account::from_xpriv(
             Some([0u8; 32]), // wallet_id
             account_type.clone(),
             account_key,
@@ -85,7 +85,7 @@ fn test_bip32_account_creation() {
         let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
         let account =
-            Account::new(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
+            Account::from_xpriv(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
 
         // Verify account properties
         match &account.account_type {
@@ -120,7 +120,7 @@ fn test_coinjoin_account_creation() {
         let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
         let account =
-            Account::new(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
+            Account::from_xpriv(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
 
         // Verify account properties
         match &account.account_type {
@@ -149,7 +149,7 @@ fn test_identity_registration_account() {
     let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
     let account =
-        Account::new(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
+        Account::from_xpriv(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
 
     // Verify account type
     assert!(matches!(account.account_type, AccountType::IdentityRegistration));
@@ -174,7 +174,7 @@ fn test_identity_topup_account() {
         let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
         let account =
-            Account::new(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
+            Account::from_xpriv(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
 
         // Verify account properties
         match &account.account_type {
@@ -203,7 +203,7 @@ fn test_identity_topup_not_bound_account() {
     let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
     let account =
-        Account::new(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
+        Account::from_xpriv(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
 
     // Verify account type
     assert!(matches!(account.account_type, AccountType::IdentityTopUpNotBoundToIdentity));
@@ -224,7 +224,7 @@ fn test_identity_invitation_account() {
     let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
     let account =
-        Account::new(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
+        Account::from_xpriv(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
 
     // Verify account type
     assert!(matches!(account.account_type, AccountType::IdentityInvitation));
@@ -245,7 +245,7 @@ fn test_provider_voting_keys_account() {
     let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
     let account =
-        Account::new(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
+        Account::from_xpriv(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
 
     // Verify account type
     assert!(matches!(account.account_type, AccountType::ProviderVotingKeys));
@@ -266,7 +266,7 @@ fn test_provider_owner_keys_account() {
     let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
     let account =
-        Account::new(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
+        Account::from_xpriv(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
 
     // Verify account type
     assert!(matches!(account.account_type, AccountType::ProviderOwnerKeys));
@@ -287,7 +287,7 @@ fn test_provider_operator_keys_account() {
     let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
     let account =
-        Account::new(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
+        Account::from_xpriv(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
 
     // Verify account type
     assert!(matches!(account.account_type, AccountType::ProviderOperatorKeys));
@@ -308,7 +308,7 @@ fn test_provider_platform_keys_account() {
     let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
     let account =
-        Account::new(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
+        Account::from_xpriv(Some([0u8; 32]), account_type.clone(), account_key, network).unwrap();
 
     // Verify account type
     assert!(matches!(account.account_type, AccountType::ProviderPlatformKeys));
@@ -332,7 +332,7 @@ fn test_account_extended_key_generation() {
     let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
     let account =
-        Account::new(Some([0u8; 32]), account_type, account_key.clone(), network).unwrap();
+        Account::from_xpriv(Some([0u8; 32]), account_type, account_key.clone(), network).unwrap();
 
     // Verify extended public key can be derived
     let xpub = account.extended_public_key();
@@ -392,7 +392,7 @@ fn test_account_network_consistency() {
     let derivation_path = account_type.derivation_path(network).unwrap();
     let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
-    let account = Account::new(Some([0u8; 32]), account_type, account_key, network).unwrap();
+    let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
     // Account should know its network
     // Note: Account struct doesn't store network directly but uses it for address generation
@@ -437,7 +437,7 @@ fn test_multiple_account_types_same_wallet() {
         let derivation_path = account_type.derivation_path(network).unwrap();
         let account_key = hd_wallet.derive(&derivation_path).unwrap();
 
-        let account = Account::new(Some(wallet_id), account_type, account_key, network).unwrap();
+        let account = Account::from_xpriv(Some(wallet_id), account_type, account_key, network).unwrap();
 
         accounts.push(account);
     }

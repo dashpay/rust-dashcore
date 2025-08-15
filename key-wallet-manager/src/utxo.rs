@@ -34,8 +34,6 @@ pub struct Utxo {
     pub is_instantlocked: bool,
     /// Whether this UTXO is locked (not available for spending)
     pub is_locked: bool,
-    /// Optional label for this UTXO
-    pub label: Option<String>,
 }
 
 impl Utxo {
@@ -56,7 +54,6 @@ impl Utxo {
             is_confirmed: false,
             is_instantlocked: false,
             is_locked: false,
-            label: None,
         }
     }
 

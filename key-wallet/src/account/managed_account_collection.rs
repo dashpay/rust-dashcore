@@ -122,13 +122,6 @@ impl ManagedAccountCollection {
         }
     }
 
-    /// Insert an account into the collection with explicit index (for compatibility)
-    pub fn insert_with_index(&mut self, index: u32, account: ManagedAccount) {
-        // For backwards compatibility, we'll insert based on the account type
-        // This assumes the index matches what's in the account type
-        self.insert(account);
-    }
-
     /// Get an account by index
     pub fn get(&self, index: u32) -> Option<&ManagedAccount> {
         // Try standard BIP44 first

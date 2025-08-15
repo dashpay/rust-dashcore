@@ -335,7 +335,7 @@ fn test_coinbase_transaction_history() {
 
     // Create coinbase transaction
     let height = 100000u32;
-    let mut script_sig = vec![];
+    let mut script_sig = Vec::new();
     script_sig.push(0x03);
     script_sig.extend_from_slice(&height.to_le_bytes()[0..3]);
 

@@ -56,16 +56,13 @@ pub struct Account {
 }
 
 impl Account {
-    /// Create a new account from an extended private key
+    /// Create a new account from an extended public key
     pub fn new(
         parent_wallet_id: Option<[u8; 32]>,
         account_type: AccountType,
-        account_key: ExtendedPrivKey,
+        account_xpub: ExtendedPubKey,
         network: Network,
     ) -> Result<Self> {
-        let secp = Secp256k1::new();
-        let account_xpub = ExtendedPubKey::from_priv(&secp, &account_key);
-
         Ok(Self {
             parent_wallet_id,
             account_type,
@@ -73,6 +70,19 @@ impl Account {
             account_xpub,
             is_watch_only: false,
         })
+    }
+
+    /// Create an account from an extended private key (derives the public key)
+    pub fn from_xpriv(
+        parent_wallet_id: Option<[u8; 32]>,
+        account_type: AccountType,
+        account_xpriv: ExtendedPrivKey,
+        network: Network,
+    ) -> Result<Self> {
+        let secp = Secp256k1::new();
+        let account_xpub = ExtendedPubKey::from_priv(&secp, &account_xpriv);
+        
+        Self::new(parent_wallet_id, account_type, account_xpub, network)
     }
 
     /// Create a watch-only account from an extended public key
@@ -170,15 +180,15 @@ mod tests {
             ChildNumber::from_hardened_idx(1).unwrap(),
             ChildNumber::from_hardened_idx(0).unwrap(),
         ]);
-        let account_key = master.derive_priv(&secp, &path).unwrap();
+        let account_xpriv = master.derive_priv(&secp, &path).unwrap();
 
-        Account::new(
+        Account::from_xpriv(
             None,
             AccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            account_key,
+            account_xpriv,
             Network::Testnet,
         )
         .unwrap()

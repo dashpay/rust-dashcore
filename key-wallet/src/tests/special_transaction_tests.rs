@@ -381,7 +381,7 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
             sequence: 0xffffffff,
             witness: dashcore::Witness::default(),
         }],
-        output: vec![],
+        output: Vec::new(),
         special_transaction_payload: None,
     };
 

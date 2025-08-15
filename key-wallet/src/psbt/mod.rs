@@ -289,7 +289,7 @@ impl PartiallySignedTransaction {
 
         let input = &mut self.inputs[input_index]; // Index checked in call to `sighash_ecdsa`.
 
-        let mut used = vec![]; // List of pubkeys used to sign the input.
+        let mut used = Vec::new(); // List of pubkeys used to sign the input.
 
         for (pk, key_source) in input.bip32_derivation.iter() {
             let sk = if let Ok(Some(sk)) = k.get_key(KeyRequest::Bip32(key_source.clone()), secp) {
@@ -868,8 +868,8 @@ mod tests {
             unsigned_tx: Transaction {
                 version: 2,
                 lock_time: 0,
-                input: vec![],
-                output: vec![],
+                input: Vec::new(),
+                output: Vec::new(),
                 special_transaction_payload: None,
             },
             xpub: Default::default(),
@@ -877,8 +877,8 @@ mod tests {
             proprietary: BTreeMap::new(),
             unknown: BTreeMap::new(),
 
-            inputs: vec![],
-            outputs: vec![],
+            inputs: Vec::new(),
+            outputs: Vec::new(),
         };
         assert_eq!(psbt.serialize_hex(), "70736274ff01000a0200000000000000000000");
     }

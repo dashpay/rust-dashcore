@@ -12,7 +12,7 @@ use bincode_derive::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 /// Account types supported by the wallet
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum StandardAccountType {
@@ -24,7 +24,7 @@ pub enum StandardAccountType {
 }
 
 /// Account types supported by the wallet
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum AccountType {

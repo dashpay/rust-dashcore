@@ -10,7 +10,7 @@ license = "CC0-1.0"
 
 [features]
 default = ["std"]
-std = ["dashcore_hashes/std", "secp256k1/std", "bip39/std", "getrandom", "dash-network/std"]
+std = ["dashcore_hashes/std", "secp256k1/std", "bip39/std", "getrandom", "dash-network/std", "rand"]
 serde = ["dep:serde", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde", "dashcore/serde"]
 bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dash-network/bincode", "dashcore_hashes/bincode", "dashcore/bincode"]
 bip38 = ["scrypt", "aes", "sha2", "bs58", "rand"]

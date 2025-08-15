@@ -12,7 +12,7 @@ use dashcore::{Address, BlockHash, OutPoint, Script, ScriptBuf, Transaction, TxI
 /// Helper to create a coinbase transaction
 fn create_test_coinbase(height: u32, value: u64) -> Transaction {
     // Create coinbase input with height in scriptSig
-    let mut script_sig = vec![];
+    let mut script_sig = Vec::new();
     script_sig.push(0x03); // Push 3 bytes
     script_sig.extend_from_slice(&height.to_le_bytes()[0..3]); // Height as little-endian
 

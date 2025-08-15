@@ -271,7 +271,6 @@ impl EnhancedWalletManager {
                                 is_confirmed: height.is_some(),
                                 is_instantlocked: false,
                                 is_locked: false,
-                                label: None,
                             };
 
                             result.new_utxos.push(utxo.clone());

@@ -26,7 +26,7 @@ mod tests {
     fn test_basic_wallet_creation() {
         // Basic test that wallet and accounts can be created
         let config = WalletConfig::default();
-        let wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+        let wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
 
         // Verify wallet has a default account
         assert!(wallet.get_account(Network::Testnet, 0).is_some());
@@ -44,27 +44,27 @@ mod tests {
     #[test]
     fn test_multiple_accounts() {
         let config = WalletConfig::default();
-        let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
+        let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
 
         // Add more accounts
         wallet
             .add_account(
-                1,
                 AccountType::Standard {
                     index: 1,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 Network::Testnet,
+                None,
             )
             .unwrap();
         wallet
             .add_account(
-                2,
                 AccountType::Standard {
                     index: 2,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 Network::Testnet,
+                None,
             )
             .unwrap();
 
