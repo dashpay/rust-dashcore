@@ -675,12 +675,12 @@ pub enum CorrelationError {
 ```rust
 #[tokio::test]
 async fn test_request_response_correlation() {
-    let mut correlator = QRInfoCorrelationManager::new();
+    let correlator = QRInfoCorrelationManager::new();
     
     let base_hash = test_block_hash(1000);
     let tip_hash = test_block_hash(1100);
     
-    let (request_id, response_rx) = correlator.register_request(base_hash, tip_hash);
+    let (request_id, response_rx) = correlator.register_request(base_hash, tip_hash).await;
     
     // Create matching QRInfo response
     let mut qr_info = create_test_qr_info();
@@ -688,11 +688,11 @@ async fn test_request_response_correlation() {
     qr_info.mn_list_diff_tip.base_block_hash = base_hash;
     
     // Handle the response
-    let result = correlator.handle_qr_info_response(qr_info.clone());
+    let result = correlator.handle_qr_info_response(qr_info.clone()).await;
     assert!(result.is_ok());
     
     // Should receive the response
-    let received_qr_info = response_rx.await.unwrap();
+    let received_qr_info = response_rx.await.unwrap().unwrap();
     assert_eq!(received_qr_info.mn_list_diff_tip.block_hash, tip_hash);
 }
 
