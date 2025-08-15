@@ -17,7 +17,6 @@ mod tests {
     use dashcore::block::Header as BlockHeader;
     use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_blockdata::Inventory;
-    use dashcore::Network;
     use dashcore::{Block, BlockHash, Network, Transaction};
     use dashcore_hashes::Hash;
     use std::collections::HashSet;
@@ -144,14 +143,24 @@ mod tests {
 
         // Create a MnListDiff message
         let mnlistdiff = dashcore::network::message_sml::MnListDiff {
-            base_block_hash: BlockHash::all_zeros(),
-            block_hash: BlockHash::all_zeros(),
+            version: 1,
+            base_block_hash: BlockHash::from([0u8; 32]),
+            block_hash: BlockHash::from([0u8; 32]),
             total_transactions: 0,
-            new_masternodes: vec![],
+            merkle_hashes: vec![],
+            merkle_flags: vec![],
+            coinbase_tx: dashcore::Transaction {
+                version: 1,
+                lock_time: 0,
+                input: vec![],
+                output: vec![],
+                special_transaction_payload: None,
+            },
             deleted_masternodes: vec![],
-            updated_masternodes: vec![],
-            new_quorums: vec![],
+            new_masternodes: vec![],
             deleted_quorums: vec![],
+            new_quorums: vec![],
+            quorums_chainlock_signatures: vec![],
         };
         let message = NetworkMessage::MnListDiff(mnlistdiff);
 
@@ -193,8 +202,8 @@ mod tests {
         // Create a CFHeaders message
         let cfheaders = dashcore::network::message_filter::CFHeaders {
             filter_type: 0,
-            stop_hash: BlockHash::all_zeros(),
-            previous_filter: [0; 32],
+            stop_hash: BlockHash::from([0u8; 32]),
+            previous_filter_header: dashcore::hash_types::FilterHeader::from([0u8; 32]),
             filter_hashes: vec![],
         };
         let message = NetworkMessage::CFHeaders(cfheaders);
@@ -237,7 +246,7 @@ mod tests {
         // Create a CFilter message
         let cfilter = dashcore::network::message_filter::CFilter {
             filter_type: 0,
-            block_hash: BlockHash::all_zeros(),
+            block_hash: BlockHash::from([0u8; 32]),
             filter: vec![],
         };
         let message = NetworkMessage::CFilter(cfilter);
@@ -331,7 +340,13 @@ mod tests {
         config.fetch_mempool_transactions = true;
 
         // Create mempool filter
-        let mempool_filter = Some(Arc::new(MempoolFilter::new(&config)));
+        let mempool_filter = Some(Arc::new(MempoolFilter::new(
+            crate::client::config::MempoolStrategy::Selective,
+            std::time::Duration::from_secs(60),
+            1000,
+            mempool_state.clone(),
+            vec![],
+        )));
 
         let mut handler = MessageHandler::new(
             &mut sync_manager,
@@ -372,12 +387,18 @@ mod tests {
             wallet,
             _,
             mempool_state,
-            mut event_rx,
+            event_tx,
         ) = setup_test_components().await;
 
         // Enable mempool tracking
         config.enable_mempool_tracking = true;
-        let mempool_filter = Some(Arc::new(MempoolFilter::new(&config)));
+        let mempool_filter = Some(Arc::new(MempoolFilter::new(
+            crate::client::config::MempoolStrategy::Selective,
+            std::time::Duration::from_secs(60),
+            1000,
+            mempool_state.clone(),
+            vec![],
+        )));
 
         let mut handler = MessageHandler::new(
             &mut sync_manager,
@@ -390,7 +411,7 @@ mod tests {
             &wallet,
             &mempool_filter,
             &mempool_state,
-            &event_rx.clone(),
+            &event_tx,
         );
 
         // Create a Tx message
@@ -487,11 +508,10 @@ mod tests {
         );
 
         // Skip InstantLock test - message type varies by dashcore version
-        return;
-
-        // Handle the message
-        let result = handler.handle_network_message(message).await;
-        assert!(result.is_ok());
+        // TODO: Re-enable when InstantLock message type is stabilized
+        // let message = NetworkMessage::InstantLock(...);
+        // let result = handler.handle_network_message(message).await;
+        // assert!(result.is_ok());
     }
 
     #[tokio::test]

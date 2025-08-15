@@ -527,7 +527,7 @@ impl HeaderSyncManager {
                         })
                         .unwrap_or_else(|e| {
                             tracing::error!("Failed to get genesis block hash: {}", e);
-                            dashcore::BlockHash::all_zeros()
+                            dashcore::BlockHash::from([0u8; 32])
                         })
                 })
         } else {
@@ -541,7 +541,7 @@ impl HeaderSyncManager {
                 })
                 .unwrap_or_else(|e| {
                     tracing::error!("Failed to get genesis block hash: {}", e);
-                    dashcore::BlockHash::all_zeros()
+                    dashcore::BlockHash::from([0u8; 32])
                 })
         };
 
@@ -630,7 +630,7 @@ mod tests {
         let mut storage = MemoryStorageManager::new().await.unwrap();
 
         // Store the genesis header
-        let genesis = create_test_header(0, BlockHash::all_zeros());
+        let genesis = create_test_header(0, BlockHash::from([0u8; 32]));
         storage.store_headers(&[genesis]).await.unwrap();
 
         // Store header at height 1
@@ -666,7 +666,7 @@ mod tests {
     async fn test_validate_headers_with_gaps() {
         // Create storage with a header at height 0
         let mut storage = MemoryStorageManager::new().await.unwrap();
-        let genesis = create_test_header(0, BlockHash::all_zeros());
+        let genesis = create_test_header(0, BlockHash::from([0u8; 32]));
         storage.store_headers(&[genesis]).await.unwrap();
 
         // Create config and sync manager

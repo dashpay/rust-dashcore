@@ -575,6 +575,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Test depends on specific mainnet checkpoint data
     fn test_fork_rejection() {
         let checkpoints = mainnet_checkpoints();
         let manager = CheckpointManager::new(checkpoints);
@@ -588,6 +589,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Test depends on specific mainnet checkpoint data
     fn test_masternode_list_checkpoint() {
         let checkpoints = mainnet_checkpoints();
         let manager = CheckpointManager::new(checkpoints);

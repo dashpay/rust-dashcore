@@ -118,13 +118,12 @@ mod tests {
     fn test_watch_items() {
         let mut config = ClientConfig::default();
 
-        // Note: We need a valid address string for the network
-        // Using a dummy P2PKH address format for testing
-        let addr_str = "XeNTGz5bVjPNZVPpwTRz6SnLbZGxLqJUg4"; // Example Dash mainnet address
-        if let Ok(address) = Address::from_str(addr_str) {
-            config = config.watch_address(address.assume_checked());
-            assert_eq!(config.watch_items.len(), 1);
-        }
+        // Create a dummy P2PKH address for testing
+        use dashcore::hashes::Hash;
+        let pubkey_hash = dashcore::PubkeyHash::from_byte_array([0u8; 20]);
+        let address = Address::new(Network::Testnet, dashcore::address::Payload::PubkeyHash(pubkey_hash));
+        config = config.watch_address(address);
+        assert_eq!(config.watch_items.len(), 1);
 
         let script = dashcore::ScriptBuf::new();
         config = config.watch_script(script);

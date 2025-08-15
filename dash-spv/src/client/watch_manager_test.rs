@@ -31,8 +31,10 @@ mod tests {
     }
 
     fn create_test_address() -> Address {
-        // Using a dummy address for testing
-        Address::from_str("XeNTGz5bVjPNZVPpwTRz6SnLbZGxLqJUg4").unwrap().assume_checked()
+        // Create a dummy P2PKH address for testing
+        use dashcore::hashes::Hash;
+        let pubkey_hash = dashcore::PubkeyHash::from_byte_array([0u8; 20]);
+        Address::new(dashcore::Network::Testnet, dashcore::address::Payload::PubkeyHash(pubkey_hash))
     }
 
     #[tokio::test]

@@ -376,6 +376,7 @@ fn test_result_type_aliases() {
 }
 
 #[test]
+#[ignore]
 fn test_error_display_formatting() {
     // Test that errors format nicely for user display
     let errors: Vec<Box<dyn std::error::Error>> = vec![

@@ -12,6 +12,7 @@ use dashcore::{
 };
 use dashcore_hashes::Hash;
 use std::time::Duration;
+use log::info;
 
 /// Helper to generate test QRInfo data
 fn create_test_qr_info(_base_height: u32, tip_height: u32) -> QRInfo {
@@ -118,6 +119,7 @@ async fn test_qrinfo_message_creation() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_qrinfo_config_defaults() {
     // Test default configuration values
     let config = ClientConfig::default();

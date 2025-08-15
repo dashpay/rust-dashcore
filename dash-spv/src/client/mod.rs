@@ -2755,7 +2755,7 @@ impl DashSpvClient {
                 // Use the actual Dash mainnet genesis block parameters
                 BlockHeader {
                     version: Version::from_consensus(1),
-                    prev_blockhash: dashcore::BlockHash::all_zeros(),
+                    prev_blockhash: dashcore::BlockHash::from([0u8; 32]),
                     merkle_root: "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
                         .parse()
                         .unwrap_or_else(|_| dashcore::hashes::sha256d::Hash::all_zeros().into()),
@@ -2768,7 +2768,7 @@ impl DashSpvClient {
                 // Use the actual Dash testnet genesis block parameters
                 BlockHeader {
                     version: Version::from_consensus(1),
-                    prev_blockhash: dashcore::BlockHash::all_zeros(),
+                    prev_blockhash: dashcore::BlockHash::from([0u8; 32]),
                     merkle_root: "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
                         .parse()
                         .unwrap_or_else(|_| dashcore::hashes::sha256d::Hash::all_zeros().into()),
@@ -3239,9 +3239,9 @@ mod tests {
         let wallet = Arc::new(crate::wallet::Wallet::new(storage.clone()));
 
         // Test address
-        let address = dashcore::Address::from_str("yYZqVQcvnDVrPt9fMTxBVLJNr6yL8YFtez")
-            .unwrap()
-            .assume_checked();
+        use dashcore::hashes::Hash;
+        let pubkey_hash = dashcore::PubkeyHash::from_byte_array([0u8; 20]);
+        let address = dashcore::Address::new(dashcore::Network::Dash, dashcore::address::Payload::PubkeyHash(pubkey_hash));
 
         // Test 1: Simple incoming transaction
         let tx1 = Transaction {

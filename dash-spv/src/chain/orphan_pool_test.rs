@@ -28,7 +28,7 @@ mod tests {
         // Add orphans
         let mut hashes = Vec::new();
         for i in 0..5 {
-            let header = create_test_header(BlockHash::all_zeros(), i);
+            let header = create_test_header(BlockHash::from([0u8; 32]), i);
             hashes.push(header.block_hash());
             pool.add_orphan(header);
         }
@@ -39,7 +39,7 @@ mod tests {
         thread::sleep(Duration::from_millis(150));
 
         // Add a fresh orphan
-        let fresh_header = create_test_header(BlockHash::all_zeros(), 100);
+        let fresh_header = create_test_header(BlockHash::from([0u8; 32]), 100);
         let fresh_hash = fresh_header.block_hash();
         pool.add_orphan(fresh_header);
 
@@ -60,7 +60,7 @@ mod tests {
         let mut pool = OrphanPool::new();
 
         // Create a chain of orphans: A -> B -> C -> D
-        let header_a = create_test_header(BlockHash::all_zeros(), 1);
+        let header_a = create_test_header(BlockHash::from([0u8; 32]), 1);
         let hash_a = header_a.block_hash();
 
         let header_b = create_test_header(hash_a, 2);
@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn test_orphan_pool_multiple_orphans_same_parent() {
         let mut pool = OrphanPool::new();
-        let parent = BlockHash::all_zeros();
+        let parent = BlockHash::from([0u8; 32]);
 
         // Add multiple orphans with the same parent
         let mut headers = Vec::new();
@@ -269,17 +269,17 @@ mod tests {
         let mut pool = OrphanPool::with_config(10, Duration::from_secs(3600));
 
         // Add orphans with delays
-        let header1 = create_test_header(BlockHash::all_zeros(), 1);
+        let header1 = create_test_header(BlockHash::from([0u8; 32]), 1);
         pool.add_orphan(header1);
 
         thread::sleep(Duration::from_millis(50));
 
-        let header2 = create_test_header(BlockHash::all_zeros(), 2);
+        let header2 = create_test_header(BlockHash::from([0u8; 32]), 2);
         pool.add_orphan(header2);
 
         thread::sleep(Duration::from_millis(50));
 
-        let header3 = create_test_header(BlockHash::all_zeros(), 3);
+        let header3 = create_test_header(BlockHash::from([0u8; 32]), 3);
         pool.add_orphan(header3);
 
         let stats = pool.stats();
@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn test_process_attempts_tracking() {
         let mut pool = OrphanPool::new();
-        let parent = BlockHash::all_zeros();
+        let parent = BlockHash::from([0u8; 32]);
 
         let header = create_test_header(parent, 1);
         let hash = header.block_hash();
@@ -320,7 +320,7 @@ mod tests {
         // Add orphans in specific order
         let mut hashes = Vec::new();
         for i in 0..5 {
-            let header = create_test_header(BlockHash::all_zeros(), i);
+            let header = create_test_header(BlockHash::from([0u8; 32]), i);
             hashes.push(header.block_hash());
             pool.add_orphan(header);
 
@@ -345,7 +345,7 @@ mod tests {
     fn test_remove_orphan_returns_removed_data() {
         let mut pool = OrphanPool::new();
 
-        let header = create_test_header(BlockHash::all_zeros(), 1);
+        let header = create_test_header(BlockHash::from([0u8; 32]), 1);
         let hash = header.block_hash();
         let original_time = Instant::now();
 
@@ -353,7 +353,7 @@ mod tests {
 
         // Process a few times to increment attempts
         for _ in 0..3 {
-            pool.get_orphans_by_prev(&BlockHash::all_zeros());
+            pool.get_orphans_by_prev(&BlockHash::from([0u8; 32]));
         }
 
         // Remove and verify returned data

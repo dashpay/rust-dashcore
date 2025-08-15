@@ -192,7 +192,7 @@ struct CachedValidationResult {
 
 /// Validation statistics
 #[derive(Debug, Default)]
-struct ValidationStats {
+pub struct ValidationStats {
     total_validations: usize,
     successful_validations: usize,
     failed_validations: usize,

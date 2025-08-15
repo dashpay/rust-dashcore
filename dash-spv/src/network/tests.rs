@@ -18,14 +18,24 @@ mod qrinfo_tests {
         };
 
         let create_diff = || MnListDiff {
+            version: 1,
             base_block_hash: BlockHash::from([0u8; 32]),
             block_hash: BlockHash::from([0u8; 32]),
-            cb_tx_merkle_tree: vec![],
-            cb_tx: None,
-            deleted_mns: vec![],
-            mn_list: vec![],
+            total_transactions: 0,
+            merkle_hashes: vec![],
+            merkle_flags: vec![],
+            coinbase_tx: dashcore::Transaction {
+                version: 1,
+                lock_time: 0,
+                input: vec![],
+                output: vec![],
+                special_transaction_payload: None,
+            },
+            deleted_masternodes: vec![],
+            new_masternodes: vec![],
             deleted_quorums: vec![],
             new_quorums: vec![],
+            quorums_chainlock_signatures: vec![],
         };
 
         QRInfo {
@@ -72,8 +82,8 @@ mod qrinfo_tests {
 
         let mut handler = MessageHandler::new();
         let get_qr_info = GetQRInfo {
-            base_block_hashes: vec![BlockHash::all_zeros()],
-            block_request_hash: BlockHash::all_zeros(),
+            base_block_hashes: vec![BlockHash::from([0u8; 32])],
+            block_request_hash: BlockHash::from([0u8; 32]),
             extra_share: true,
         };
 

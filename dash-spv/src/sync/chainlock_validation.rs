@@ -380,7 +380,7 @@ mod tests {
         let mut validator = ChainLockValidator::new(config);
 
         // Add entries to fill cache
-        let hash1 = BlockHash::all_zeros();
+        let hash1 = BlockHash::from([0u8; 32]);
         let hash2 = BlockHash::from([1; 32]);
         let hash3 = BlockHash::from([2; 32]);
 
