@@ -608,14 +608,15 @@ impl QRInfoCorrelationManager {
         
         // Fallback: Try to match based on height ranges if we can derive them
         // This is more complex but handles edge cases
-        self.find_matching_request_by_content(qr_info)
+        self.find_matching_request_by_content(qr_info).await
     }
     
-    fn find_matching_request_by_content(&self, qr_info: &QRInfo) -> Result<RequestId, CorrelationError> {
+    async fn find_matching_request_by_content(&self, qr_info: &QRInfo) -> Result<RequestId, CorrelationError> {
         // More sophisticated matching based on analyzing all diffs in QRInfo
         // This is a backup strategy if simple tip_hash matching fails
         
-        for (request_id, pending) in &self.pending_requests {
+        let pending_requests = self.pending_requests.lock().await;
+        for (request_id, pending) in pending_requests.iter() {
             // Check if any of the diffs in QRInfo match our expected range
             let diffs = [
                 &qr_info.mn_list_diff_tip,
@@ -642,8 +643,9 @@ impl QRInfoCorrelationManager {
         Err(CorrelationError::NoMatchFound)
     }
     
-    pub fn pending_count(&self) -> usize {
-        self.pending_requests.len()
+    pub async fn pending_count(&self) -> usize {
+        let pending_requests = self.pending_requests.lock().await;
+        pending_requests.len()
     }
 }
 
@@ -1166,18 +1168,18 @@ pub struct QRInfoRecoveryManager {
     /// Error statistics for adaptive behavior
     error_stats: ErrorStatistics,
     /// Recovery strategies
-    recovery_strategies: Vec<Box<dyn RecoveryStrategy>>,
+    recovery_strategies: Vec<RecoveryStrategyEnum>,
     /// Circuit breaker for catastrophic failures
     circuit_breaker: CircuitBreaker,
 }
 
 impl QRInfoRecoveryManager {
     pub fn new() -> Self {
-        let mut recovery_strategies: Vec<Box<dyn RecoveryStrategy>> = vec![
-            Box::new(ExponentialBackoffStrategy::new()),
-            Box::new(NetworkSwitchStrategy::new()),
-            Box::new(FallbackToSequentialStrategy::new()),
-            Box::new(MnListDiffFallbackStrategy::new()),
+        let recovery_strategies: Vec<RecoveryStrategyEnum> = vec![
+            RecoveryStrategyEnum::ExponentialBackoff(ExponentialBackoffStrategy::new()),
+            RecoveryStrategyEnum::NetworkSwitch(NetworkSwitchStrategy::new()),
+            RecoveryStrategyEnum::FallbackToSequential(FallbackToSequentialStrategy::new()),
+            RecoveryStrategyEnum::MnListDiffFallback(MnListDiffFallbackStrategy::new()),
         ];
         
         Self {
