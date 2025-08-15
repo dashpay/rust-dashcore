@@ -698,7 +698,7 @@ async fn test_request_response_correlation() {
 
 #[tokio::test] 
 async fn test_multiple_concurrent_requests() {
-    let mut correlator = QRInfoCorrelationManager::new();
+    let correlator = QRInfoCorrelationManager::new();
     
     let mut request_receivers = Vec::new();
     let mut expected_responses = Vec::new();
@@ -708,7 +708,7 @@ async fn test_multiple_concurrent_requests() {
         let base_hash = test_block_hash(i * 100);
         let tip_hash = test_block_hash(i * 100 + 50);
         
-        let (_, response_rx) = correlator.register_request(base_hash, tip_hash);
+        let (_, response_rx) = correlator.register_request(base_hash, tip_hash).await;
         request_receivers.push(response_rx);
         
         let mut qr_info = create_test_qr_info();
@@ -719,41 +719,41 @@ async fn test_multiple_concurrent_requests() {
     // Send responses in different order
     let response_order = [2, 0, 4, 1, 3];
     for &index in &response_order {
-        let result = correlator.handle_qr_info_response(expected_responses[index].clone());
+        let result = correlator.handle_qr_info_response(expected_responses[index].clone()).await;
         assert!(result.is_ok(), "Failed to handle response {}", index);
     }
     
     // All requests should receive their responses
     for (i, response_rx) in request_receivers.into_iter().enumerate() {
-        let received = response_rx.await.unwrap();
+        let received = response_rx.await.unwrap().unwrap();
         assert_eq!(
             received.mn_list_diff_tip.block_hash,
             expected_responses[i].mn_list_diff_tip.block_hash
         );
     }
     
-    assert_eq!(correlator.pending_count(), 0);
+    assert_eq!(correlator.pending_count().await, 0);
 }
 
 #[tokio::test]
 async fn test_expired_request_cleanup() {
-    let mut correlator = QRInfoCorrelationManager::new();
+    let correlator = QRInfoCorrelationManager::new();
     
     let (_, response_rx) = correlator.register_request(
         test_block_hash(1000),
         test_block_hash(1100)
-    );
+    ).await;
     
-    assert_eq!(correlator.pending_count(), 1);
+    assert_eq!(correlator.pending_count().await, 1);
     
     // Clean up with very short timeout
-    correlator.cleanup_expired_requests(Duration::from_millis(1));
+    correlator.cleanup_expired_requests(Duration::from_millis(1)).await;
     
     // Wait a bit to ensure expiration
     tokio::time::sleep(Duration::from_millis(10)).await;
-    correlator.cleanup_expired_requests(Duration::from_millis(1));
+    correlator.cleanup_expired_requests(Duration::from_millis(1)).await;
     
-    assert_eq!(correlator.pending_count(), 0);
+    assert_eq!(correlator.pending_count().await, 0);
     
     // Should receive timeout error
     let result = response_rx.await;
