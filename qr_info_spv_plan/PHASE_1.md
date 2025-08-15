@@ -337,9 +337,9 @@ impl<'a, S: StorageManager> AsyncBlockHeightFetcher<'a, S> {
 // The existing storage layer already provides what we need:
 impl StorageManager for DiskStorageManager {
     // ALREADY EXISTS: O(1) hash-to-height lookup
-    async fn get_header_height(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
-        // Uses existing header_hash_index: Arc<RwLock<HashMap<BlockHash, u32>>>
-        // This is already implemented and tested!
+    async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
+        // Uses existing header_hash_index (HashMap / Arc<RwLock<...>>) to return
+        // StorageResult<Option<u32>> - this is already implemented and tested!
     }
 }
 ```
