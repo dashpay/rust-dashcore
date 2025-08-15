@@ -9,32 +9,30 @@ use crate::account::Account;
 use crate::error::{Error, Result};
 use crate::Network;
 use dashcore::Address;
+use alloc::vec::Vec;
 
 impl Wallet {
     /// Get an account by network and index (searches both standard and coinjoin accounts)
     pub fn get_account(&self, network: Network, index: u32) -> Option<&Account> {
-        self.standard_accounts
-            .get(network, index)
-            .or_else(|| self.coinjoin_accounts.get(network, index))
+        self.accounts.get(&network).and_then(|collection| collection.get(index))
     }
 
     /// Get a standard account by network and index
     pub fn get_standard_account(&self, network: Network, index: u32) -> Option<&Account> {
-        self.standard_accounts.get(network, index)
+        self.accounts.get(&network).and_then(|collection| {
+            collection.standard_bip44_accounts.get(&index)
+                .or_else(|| collection.standard_bip32_accounts.get(&index))
+        })
     }
 
     /// Get a coinjoin account by network and index
     pub fn get_coinjoin_account(&self, network: Network, index: u32) -> Option<&Account> {
-        self.coinjoin_accounts.get(network, index)
+        self.accounts.get(&network).and_then(|collection| collection.coinjoin_accounts.get(&index))
     }
 
     /// Get a mutable account by network and index (searches both standard and coinjoin accounts)
     pub fn get_account_mut(&mut self, network: Network, index: u32) -> Option<&mut Account> {
-        if self.standard_accounts.contains_key(network, index) {
-            self.standard_accounts.get_mut(network, index)
-        } else {
-            self.coinjoin_accounts.get_mut(network, index)
-        }
+        self.accounts.get_mut(&network).and_then(|collection| collection.get_mut(index))
     }
 
     /// Get a mutable standard account by network and index
@@ -43,7 +41,13 @@ impl Wallet {
         network: Network,
         index: u32,
     ) -> Option<&mut Account> {
-        self.standard_accounts.get_mut(network, index)
+        self.accounts.get_mut(&network).and_then(|collection| {
+            if collection.standard_bip44_accounts.contains_key(&index) {
+                collection.standard_bip44_accounts.get_mut(&index)
+            } else {
+                collection.standard_bip32_accounts.get_mut(&index)
+            }
+        })
     }
 
     /// Get a mutable coinjoin account by network and index
@@ -52,41 +56,51 @@ impl Wallet {
         network: Network,
         index: u32,
     ) -> Option<&mut Account> {
-        self.coinjoin_accounts.get_mut(network, index)
+        self.accounts.get_mut(&network).and_then(|collection| collection.coinjoin_accounts.get_mut(&index))
     }
 
     /// Get the default account (index 0, searches standard accounts first)
     pub fn default_account(&self, network: Network) -> Option<&Account> {
-        self.standard_accounts.get(network, 0).or_else(|| self.coinjoin_accounts.get(network, 0))
+        self.accounts.get(&network).and_then(|collection| {
+            collection.standard_bip44_accounts.get(&0)
+                .or_else(|| collection.standard_bip32_accounts.get(&0))
+                .or_else(|| collection.coinjoin_accounts.get(&0))
+        })
     }
 
     /// Get the default account mutably
     pub fn default_account_mut(&mut self, network: Network) -> Option<&mut Account> {
-        if self.standard_accounts.contains_key(network, 0) {
-            self.standard_accounts.get_mut(network, 0)
-        } else {
-            self.coinjoin_accounts.get_mut(network, 0)
-        }
+        self.accounts.get_mut(&network).and_then(|collection| {
+            if collection.standard_bip44_accounts.contains_key(&0) {
+                collection.standard_bip44_accounts.get_mut(&0)
+            } else if collection.standard_bip32_accounts.contains_key(&0) {
+                collection.standard_bip32_accounts.get_mut(&0)
+            } else {
+                collection.coinjoin_accounts.get_mut(&0)
+            }
+        })
     }
 
     /// Get all accounts (both standard and coinjoin)
     pub fn all_accounts(&self) -> Vec<&Account> {
         let mut accounts = Vec::new();
-        accounts.extend(self.standard_accounts.all_accounts());
-        accounts.extend(self.coinjoin_accounts.all_accounts());
+        for collection in self.accounts.values() {
+            accounts.extend(collection.all_accounts());
+        }
         accounts
     }
 
     /// Get the count of accounts (both standard and coinjoin)
     pub fn account_count(&self) -> usize {
-        self.standard_accounts.total_count() + self.coinjoin_accounts.total_count()
+        self.accounts.values().map(|collection| collection.count()).sum()
     }
 
     /// Get all account indices for a network (both standard and coinjoin)
     pub fn account_indices(&self, network: Network) -> Vec<u32> {
         let mut indices = Vec::new();
-        indices.extend(self.standard_accounts.network_indices(network));
-        indices.extend(self.coinjoin_accounts.network_indices(network));
+        if let Some(collection) = self.accounts.get(&network) {
+            indices.extend(collection.all_indices());
+        }
         indices.sort();
         indices
     }
@@ -181,11 +195,10 @@ impl Wallet {
         watch_only.wallet_type = WalletType::WatchOnly(root_pub_key);
 
         // Convert all accounts to watch-only
-        for account in watch_only.standard_accounts.all_accounts_mut() {
-            *account = account.to_watch_only();
-        }
-        for account in watch_only.coinjoin_accounts.all_accounts_mut() {
-            *account = account.to_watch_only();
+        for collection in watch_only.accounts.values_mut() {
+            for account in collection.all_accounts_mut() {
+                *account = account.to_watch_only();
+            }
         }
 
         watch_only
@@ -224,5 +237,3 @@ impl Wallet {
         matches!(self.wallet_type, WalletType::Seed { .. })
     }
 }
-
-use alloc::vec::Vec;

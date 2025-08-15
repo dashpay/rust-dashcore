@@ -72,9 +72,7 @@ impl Wallet {
             wallet_id,
             config: config.clone(),
             wallet_type,
-            standard_accounts: AccountCollection::new(),
-            coinjoin_accounts: AccountCollection::new(),
-            special_accounts: BTreeMap::new(),
+            accounts: BTreeMap::new(),
         };
 
         // Generate initial account
@@ -105,7 +103,8 @@ impl Wallet {
                 xpub,
                 network,
             )?;
-            wallet.standard_accounts.insert(network, 0, account);
+            let collection = wallet.accounts.entry(network).or_insert_with(AccountCollection::new);
+            collection.insert(account);
         }
 
         Ok(wallet)

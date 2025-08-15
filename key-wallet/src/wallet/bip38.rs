@@ -47,10 +47,9 @@ impl Wallet {
         }
 
         // Verify account exists
-        let account = self
-            .standard_accounts
-            .get(network, account_index)
-            .or_else(|| self.coinjoin_accounts.get(network, account_index))
+        let account = self.accounts
+            .get(&network)
+            .and_then(|collection| collection.get(account_index))
             .ok_or(Error::InvalidParameter(format!(
                 "Account {} not found for network {:?}",
                 account_index, network
@@ -64,9 +63,10 @@ impl Wallet {
         use crate::derivation::HDWallet;
 
         let hd_wallet = HDWallet::new(master_key);
-        let account_key = match account.account_type {
-            AccountType::CoinJoin => hd_wallet.coinjoin_account(account_index)?,
-            _ => hd_wallet.bip44_account(account_index)?,
+        let account_key = match &account.account_type {
+            AccountType::CoinJoin { .. } => hd_wallet.coinjoin_account(account_index)?,
+            AccountType::Standard { .. } => hd_wallet.bip44_account(account_index)?,
+            _ => return Err(Error::InvalidParameter("Unsupported account type for BIP38 export".into())),
         };
 
         let secret_key = account_key.private_key;

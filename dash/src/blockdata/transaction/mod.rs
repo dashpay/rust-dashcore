@@ -43,7 +43,7 @@ use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 use crate::blockdata::script;
 use crate::blockdata::script::Script;
 use crate::blockdata::transaction::hash_type::EcdsaSighashType;
-use crate::blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
+pub use crate::blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;

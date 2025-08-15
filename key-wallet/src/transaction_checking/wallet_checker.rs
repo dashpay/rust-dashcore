@@ -6,7 +6,7 @@
 use crate::wallet::immature_transaction::{AffectedAccounts, ImmatureTransaction};
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::Network;
-use super::account_checker::TransactionCheckResult;
+pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_router::TransactionRouter;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::BlockHash;

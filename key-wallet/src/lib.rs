@@ -24,6 +24,8 @@ mod bip38_tests;
 mod mnemonic_tests;
 #[cfg(test)]
 mod wallet_comprehensive_tests;
+#[cfg(test)]
+mod tests;
 
 pub mod account;
 pub mod bip32;

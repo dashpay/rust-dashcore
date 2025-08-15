@@ -6,7 +6,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::account::AccountType;
+    use crate::account::{AccountType, StandardAccountType};
     use crate::mnemonic::{Language, Mnemonic};
     use crate::wallet::{Wallet, WalletConfig};
     use crate::Network;
@@ -24,7 +24,7 @@ mod tests {
         let wallet = Wallet::new_random(config, Network::Testnet).unwrap();
 
         // Verify wallet has a default account
-        assert_eq!(wallet.standard_accounts.network_count(Network::Testnet), 1);
+        assert_eq!(wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 1);
         assert!(wallet.has_mnemonic());
         assert!(!wallet.is_watch_only());
     }
@@ -44,8 +44,13 @@ mod tests {
 
         // Should have same extended public keys
         assert_eq!(account1.extended_public_key(), account2.extended_public_key());
-        assert_eq!(account1.index, account2.index);
-        assert_eq!(account1.account_type, account2.account_type);
+        // Account types should match
+        match (&account1.account_type, &account2.account_type) {
+            (AccountType::Standard { index: idx1, .. }, AccountType::Standard { index: idx2, .. }) => {
+                assert_eq!(idx1, idx2);
+            }
+            _ => panic!("Account types don't match"),
+        }
     }
 
     #[test]
@@ -54,8 +59,8 @@ mod tests {
         let mut wallet = Wallet::new_random(config, Network::Testnet).unwrap();
 
         // Add additional accounts
-        wallet.add_account(1, AccountType::Standard, Network::Testnet).unwrap();
-        wallet.add_account(2, AccountType::CoinJoin, Network::Testnet).unwrap();
+        wallet.add_account(1, AccountType::Standard { index: 1, standard_account_type: StandardAccountType::BIP44Account }, Network::Testnet).unwrap();
+        wallet.add_account(2, AccountType::CoinJoin { index: 2 }, Network::Testnet).unwrap();
 
         // Verify accounts exist
         assert!(wallet.get_account(Network::Testnet, 0).is_some());
@@ -63,18 +68,14 @@ mod tests {
         assert!(wallet.get_coinjoin_account(Network::Testnet, 2).is_some());
 
         // Verify account types
-        assert_eq!(
-            wallet.get_account(Network::Testnet, 0).unwrap().account_type,
-            AccountType::Standard
-        );
-        assert_eq!(
-            wallet.get_account(Network::Testnet, 1).unwrap().account_type,
-            AccountType::Standard
-        );
-        assert_eq!(
-            wallet.get_coinjoin_account(Network::Testnet, 2).unwrap().account_type,
-            AccountType::CoinJoin
-        );
+        let account0 = wallet.get_account(Network::Testnet, 0).unwrap();
+        assert!(matches!(account0.account_type, AccountType::Standard { .. }));
+        
+        let account1 = wallet.get_account(Network::Testnet, 1).unwrap();
+        assert!(matches!(account1.account_type, AccountType::Standard { .. }));
+        
+        let account2 = wallet.get_coinjoin_account(Network::Testnet, 2).unwrap();
+        assert!(matches!(account2.account_type, AccountType::CoinJoin { .. }));
     }
 
     #[test]
@@ -92,7 +93,7 @@ mod tests {
 
         assert!(watch_only.is_watch_only());
         assert!(!watch_only.has_mnemonic());
-        assert_eq!(watch_only.standard_accounts.network_count(Network::Testnet), 1);
+        assert_eq!(watch_only.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 1);
 
         // Both wallets should have the same root public key
         let watch_root_xpub = watch_only.root_extended_pub_key();
