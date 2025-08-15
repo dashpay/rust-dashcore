@@ -124,8 +124,8 @@ async fn test_qrinfo_config_defaults() {
     // Test default configuration values
     let config = ClientConfig::default();
 
-    // QR info is always enabled in current implementation
-    assert!(config.qr_info_extra_share);
+    // QR info extra share is disabled by default
+    assert!(!config.qr_info_extra_share);
     assert_eq!(config.qr_info_timeout, Duration::from_secs(30));
 }
 
