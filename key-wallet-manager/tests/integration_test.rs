@@ -59,10 +59,10 @@ fn test_account_management() {
     );
     assert!(result.is_ok());
 
-    // Get accounts from wallet - should have 2 accounts now (0 and 1)
+    // Get accounts from wallet - Default creates 9 accounts, plus the one we added
     let accounts = manager.get_accounts(&"wallet1".to_string());
     assert!(accounts.is_ok());
-    assert_eq!(accounts.unwrap().len(), 2);
+    assert_eq!(accounts.unwrap().len(), 10); // 9 from Default + 1 we added
 }
 
 #[test]

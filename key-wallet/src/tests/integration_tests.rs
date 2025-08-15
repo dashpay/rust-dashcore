@@ -14,13 +14,19 @@ use std::collections::BTreeMap;
 fn test_full_wallet_lifecycle() {
     // 1. Create wallet
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config.clone(),
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
     let wallet_id = wallet.wallet_id;
 
     // 2. Add multiple accounts
     for i in 0..5 {
         wallet
-            .add_account(AccountType::Standard {
+            .add_account(
+                AccountType::Standard {
                     index: i,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
@@ -32,7 +38,8 @@ fn test_full_wallet_lifecycle() {
 
     // 3. Add different account types
     wallet
-        .add_account(AccountType::CoinJoin {
+        .add_account(
+            AccountType::CoinJoin {
                 index: 0,
             },
             Network::Testnet,
@@ -58,7 +65,13 @@ fn test_full_wallet_lifecycle() {
     drop(wallet);
 
     // 7. Recover wallet from mnemonic
-    let recovered_wallet = Wallet::from_mnemonic(mnemonic, config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let recovered_wallet = Wallet::from_mnemonic(
+        mnemonic,
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // 8. Verify wallet ID matches
     assert_eq!(recovered_wallet.wallet_id, wallet_id);
@@ -75,7 +88,13 @@ fn test_account_discovery_workflow() {
     ).unwrap();
 
     let config = WalletConfig::default();
-    let mut wallet = Wallet::from_mnemonic(mnemonic, config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::from_mnemonic(
+        mnemonic,
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Simulate account discovery process
     let mut found_accounts = Vec::new();
@@ -89,7 +108,8 @@ fn test_account_discovery_workflow() {
         if has_transactions {
             // Try to add account, OK if it already exists (account 0 is created by default)
             wallet
-                .add_account(AccountType::Standard {
+                .add_account(
+                    AccountType::Standard {
                         index: i,
                         standard_account_type: StandardAccountType::BIP44Account,
                     },
@@ -120,12 +140,19 @@ fn test_multi_network_wallet_management() {
     let config = WalletConfig::default();
 
     // Create wallet and add accounts on different networks
-    let mut wallet = Wallet::from_mnemonic(mnemonic, config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::from_mnemonic(
+        mnemonic,
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Add testnet accounts (account 0 already exists)
     for i in 0..3 {
         wallet
-            .add_account(AccountType::Standard {
+            .add_account(
+                AccountType::Standard {
                     index: i,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
@@ -138,7 +165,8 @@ fn test_multi_network_wallet_management() {
     // Add mainnet accounts
     for i in 0..2 {
         wallet
-            .add_account(AccountType::Standard {
+            .add_account(
+                AccountType::Standard {
                     index: i,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
@@ -151,7 +179,8 @@ fn test_multi_network_wallet_management() {
     // Add devnet accounts
     for i in 0..2 {
         wallet
-            .add_account(AccountType::Standard {
+            .add_account(
+                AccountType::Standard {
                     index: i,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
@@ -170,7 +199,12 @@ fn test_multi_network_wallet_management() {
 #[test]
 fn test_wallet_with_all_account_types() {
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Add one of each account type
     let account_types = vec![
@@ -231,7 +265,12 @@ fn test_wallet_with_all_account_types() {
 #[test]
 fn test_transaction_broadcast_simulation() {
     let config = WalletConfig::default();
-    let wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Simulate creating a transaction
     let tx = Transaction {
@@ -273,11 +312,17 @@ fn test_transaction_broadcast_simulation() {
 #[test]
 fn test_coinjoin_mixing_workflow() {
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Add CoinJoin account
     wallet
-        .add_account(AccountType::CoinJoin {
+        .add_account(
+            AccountType::CoinJoin {
                 index: 0,
             },
             Network::Testnet,
@@ -324,7 +369,12 @@ fn test_coinjoin_mixing_workflow() {
 #[test]
 fn test_provider_registration_workflow() {
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Add all provider key accounts
     wallet.add_account(AccountType::ProviderVotingKeys, Network::Testnet, None).unwrap();
@@ -364,7 +414,12 @@ fn test_provider_registration_workflow() {
 #[test]
 fn test_identity_creation_workflow() {
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Add identity accounts
     wallet.add_account(AccountType::IdentityRegistration, Network::Testnet, None).unwrap();
@@ -405,12 +460,18 @@ fn test_identity_creation_workflow() {
 fn test_wallet_balance_calculation() {
     // Test comprehensive balance calculation across all accounts
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Add multiple accounts (account 0 already exists)
     for i in 0..3 {
         wallet
-            .add_account(AccountType::Standard {
+            .add_account(
+                AccountType::Standard {
                     index: i,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
@@ -462,7 +523,12 @@ fn test_wallet_balance_calculation() {
 fn test_wallet_migration_between_versions() {
     // Test wallet format migration/upgrade scenarios
     let config = WalletConfig::default();
-    let wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Simulate version upgrade scenarios
     struct WalletVersion {
@@ -515,7 +581,14 @@ fn test_concurrent_wallet_operations() {
     use std::thread;
 
     let config = WalletConfig::default();
-    let wallet = Arc::new(Mutex::new(Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap()));
+    let wallet = Arc::new(Mutex::new(
+        Wallet::new_random(
+            config,
+            Network::Testnet,
+            crate::wallet::initialization::WalletAccountCreationOptions::None,
+        )
+        .unwrap(),
+    ));
 
     let mut handles = Vec::new();
 
@@ -530,7 +603,8 @@ fn test_concurrent_wallet_operations() {
                 thread::spawn(move || {
                     let mut wallet = wallet_clone.lock().unwrap();
                     wallet
-                        .add_account(AccountType::Standard {
+                        .add_account(
+                            AccountType::Standard {
                                 index: i,
                                 standard_account_type: StandardAccountType::BIP44Account,
                             },
@@ -573,7 +647,12 @@ fn test_concurrent_wallet_operations() {
 fn test_wallet_with_thousands_of_addresses() {
     // Stress test with large number of addresses
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Account 0 is already created by default, no need to add it
 
@@ -609,8 +688,13 @@ fn test_wallet_recovery_with_used_addresses() {
     ).unwrap();
 
     let config = WalletConfig::default();
-    let mut wallet =
-        Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::from_mnemonic(
+        mnemonic.clone(),
+        config.clone(),
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Simulate address usage pattern: 0, 1, 2, 5, 10, 15
     let used_indices = vec![0, 1, 2, 5, 10, 15];

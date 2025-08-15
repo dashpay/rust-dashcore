@@ -54,13 +54,25 @@ fn test_corrupted_wallet_data_recovery() {
     ).unwrap();
 
     let config = WalletConfig::default();
-    let wallet = Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let wallet = Wallet::from_mnemonic(
+        mnemonic.clone(),
+        config.clone(),
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Wallet serialization would use bincode if available
     // For now, just test recovery by recreating from mnemonic
 
     // Recovery: recreate from mnemonic
-    let recovered_wallet = Wallet::from_mnemonic(mnemonic, config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let recovered_wallet = Wallet::from_mnemonic(
+        mnemonic,
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
     assert_eq!(wallet.wallet_id, recovered_wallet.wallet_id);
 }
 
@@ -74,11 +86,22 @@ fn test_network_mismatch_handling() {
     let config = WalletConfig::default();
 
     // Create wallet for testnet
-    let testnet_wallet =
-        Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
+    let testnet_wallet = Wallet::from_mnemonic(
+        mnemonic.clone(),
+        config.clone(),
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::Default,
+    )
+    .unwrap();
 
     // Create wallet for mainnet with same mnemonic
-    let mainnet_wallet = Wallet::from_mnemonic(mnemonic, config, Network::Dash, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
+    let mainnet_wallet = Wallet::from_mnemonic(
+        mnemonic,
+        config,
+        Network::Dash,
+        crate::wallet::initialization::WalletAccountCreationOptions::Default,
+    )
+    .unwrap();
 
     // Wallet IDs should be the same (derived from same root key)
     assert_eq!(testnet_wallet.wallet_id, mainnet_wallet.wallet_id);
@@ -119,7 +142,12 @@ fn test_zero_value_transaction_handling() {
 #[test]
 fn test_duplicate_account_handling() {
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Add an account
     let account_type = AccountType::Standard {
@@ -209,7 +237,14 @@ fn test_concurrent_access_simulation() {
     use std::thread;
 
     let config = WalletConfig::default();
-    let wallet = Arc::new(Mutex::new(Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap()));
+    let wallet = Arc::new(Mutex::new(
+        Wallet::new_random(
+            config,
+            Network::Testnet,
+            crate::wallet::initialization::WalletAccountCreationOptions::None,
+        )
+        .unwrap(),
+    ));
 
     let mut handles = Vec::new();
 
@@ -238,7 +273,12 @@ fn test_concurrent_access_simulation() {
 #[test]
 fn test_empty_wallet_operations() {
     let config = WalletConfig::default();
-    let wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Operations on empty wallet should not panic
     let network = Network::Testnet;
@@ -324,12 +364,18 @@ fn test_wallet_recovery_with_missing_accounts() {
     ).unwrap();
 
     let config = WalletConfig::default();
-    let mut wallet =
-        Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::from_mnemonic(
+        mnemonic.clone(),
+        config.clone(),
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Add accounts with gaps (0, 2, 5)
     wallet
-        .add_account(AccountType::Standard {
+        .add_account(
+            AccountType::Standard {
                 index: 2,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
@@ -339,7 +385,8 @@ fn test_wallet_recovery_with_missing_accounts() {
         .unwrap();
 
     wallet
-        .add_account(AccountType::Standard {
+        .add_account(
+            AccountType::Standard {
                 index: 5,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
@@ -349,7 +396,13 @@ fn test_wallet_recovery_with_missing_accounts() {
         .unwrap();
 
     // Recovery should handle gaps in account indices
-    let recovered_wallet = Wallet::from_mnemonic(mnemonic, config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let recovered_wallet = Wallet::from_mnemonic(
+        mnemonic,
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Should be able to recreate the same accounts
     assert_eq!(wallet.wallet_id, recovered_wallet.wallet_id);

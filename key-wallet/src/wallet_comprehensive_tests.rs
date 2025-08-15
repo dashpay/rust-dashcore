@@ -21,7 +21,12 @@ mod tests {
     #[test]
     fn test_wallet_creation() {
         let config = WalletConfig::default();
-        let wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet = Wallet::new_random(
+            config,
+            Network::Testnet,
+            crate::wallet::initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Verify wallet has default accounts
         assert!(wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0) >= 2); // Default creates multiple accounts
@@ -34,9 +39,20 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
         let config = WalletConfig::default();
 
-        let wallet1 =
-            Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
-        let wallet2 = Wallet::from_mnemonic(mnemonic, config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet1 = Wallet::from_mnemonic(
+            mnemonic.clone(),
+            config.clone(),
+            Network::Testnet,
+            crate::wallet::initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
+        let wallet2 = Wallet::from_mnemonic(
+            mnemonic,
+            config,
+            Network::Testnet,
+            crate::wallet::initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Verify both wallets have the same account structure
         let account1 = wallet1.get_account(Network::Testnet, 0).unwrap();
@@ -65,11 +81,17 @@ mod tests {
     #[test]
     fn test_multiple_accounts() {
         let config = WalletConfig::default();
-        let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
+        let mut wallet = Wallet::new_random(
+            config,
+            Network::Testnet,
+            crate::wallet::initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Add additional accounts
         wallet
-            .add_account(AccountType::Standard {
+            .add_account(
+                AccountType::Standard {
                     index: 1,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
@@ -78,7 +100,8 @@ mod tests {
             )
             .unwrap();
         wallet
-            .add_account(AccountType::CoinJoin {
+            .add_account(
+                AccountType::CoinJoin {
                     index: 2,
                 },
                 Network::Testnet,
@@ -105,15 +128,25 @@ mod tests {
     #[test]
     fn test_watch_only_wallet() {
         let config = WalletConfig::default();
-        let wallet = Wallet::new_random(config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet = Wallet::new_random(
+            config.clone(),
+            Network::Testnet,
+            crate::wallet::initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Get the wallet's root extended public key
         let root_xpub = wallet.root_extended_pub_key();
         let root_xpub_as_extended = root_xpub.to_extended_pub_key(Network::Testnet);
 
         // Create watch-only wallet from the root xpub
-        let watch_only =
-            Wallet::from_xpub(root_xpub_as_extended, config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+        let watch_only = Wallet::from_xpub(
+            root_xpub_as_extended,
+            config,
+            Network::Testnet,
+            crate::wallet::initialization::WalletAccountCreationOptions::None,
+        )
+        .unwrap();
 
         assert!(watch_only.is_watch_only());
         assert!(!watch_only.has_mnemonic());

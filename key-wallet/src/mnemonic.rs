@@ -8,10 +8,10 @@ use core::str::FromStr;
 use crate::bip32::ExtendedPrivKey;
 use crate::error::{Error, Result};
 use bip39 as bip39_crate;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 #[cfg(feature = "std")]
 use rand::{RngCore, SeedableRng};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 /// Language for mnemonic generation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,23 +97,23 @@ impl Mnemonic {
     }
 
     /// Generate a new mnemonic using a provided RNG
-    /// 
+    ///
     /// This allows using custom random number generators like StdRng, ChaChaRng, etc.
-    /// 
+    ///
     /// # Example
     /// ```no_run
     /// use key_wallet::mnemonic::{Mnemonic, Language};
     /// use rand::rngs::StdRng;
     /// use rand::SeedableRng;
-    /// 
+    ///
     /// let mut rng = StdRng::from_entropy();
     /// let mnemonic = Mnemonic::generate_using_rng(12, Language::English, &mut rng).unwrap();
     /// ```
     #[cfg(feature = "std")]
     pub fn generate_using_rng<R: RngCore>(
-        word_count: usize, 
-        language: Language, 
-        rng: &mut R
+        word_count: usize,
+        language: Language,
+        rng: &mut R,
     ) -> Result<Self> {
         // Validate word count and get entropy size
         let entropy_bytes = match word_count {
@@ -139,36 +139,32 @@ impl Mnemonic {
     }
 
     /// Generate a new mnemonic from a u64 seed
-    /// 
+    ///
     /// This creates a deterministic mnemonic from a seed value.
     /// Uses StdRng seeded with the provided value.
-    /// 
+    ///
     /// # Warning
     /// This is deterministic - the same seed will always produce the same mnemonic.
     /// This should only be used for testing or when deterministic generation is specifically required.
-    /// 
+    ///
     /// # Example
     /// ```no_run
     /// use key_wallet::mnemonic::{Mnemonic, Language};
-    /// 
+    ///
     /// let seed = 12345u64;
     /// let mnemonic = Mnemonic::generate_with_seed(12, Language::English, seed).unwrap();
     /// ```
     #[cfg(feature = "std")]
-    pub fn generate_with_seed(
-        word_count: usize, 
-        language: Language, 
-        seed: u64
-    ) -> Result<Self> {
+    pub fn generate_with_seed(word_count: usize, language: Language, seed: u64) -> Result<Self> {
         use rand::rngs::StdRng;
-        
+
         // Create RNG from seed
         // We need to convert u64 to [u8; 32] for StdRng
         let mut seed_bytes = [0u8; 32];
         seed_bytes[..8].copy_from_slice(&seed.to_le_bytes());
-        
+
         let mut rng = StdRng::from_seed(seed_bytes);
-        
+
         // Use the RNG to generate the mnemonic
         Self::generate_using_rng(word_count, language, &mut rng)
     }
@@ -489,24 +485,24 @@ mod tests {
     fn test_generate_using_rng() {
         use rand::rngs::StdRng;
         use rand::SeedableRng;
-        
+
         // Create a seeded RNG for deterministic results
         let mut rng = StdRng::seed_from_u64(12345);
-        
+
         // Generate 12-word mnemonic
         let mnemonic = Mnemonic::generate_using_rng(12, Language::English, &mut rng).unwrap();
         assert_eq!(mnemonic.word_count(), 12);
-        
+
         // Generate 24-word mnemonic
         let mut rng = StdRng::seed_from_u64(12345);
         let mnemonic24 = Mnemonic::generate_using_rng(24, Language::English, &mut rng).unwrap();
         assert_eq!(mnemonic24.word_count(), 24);
-        
+
         // Test with different language
         let mut rng = StdRng::seed_from_u64(54321);
         let mnemonic_jp = Mnemonic::generate_using_rng(12, Language::Japanese, &mut rng).unwrap();
         assert_eq!(mnemonic_jp.word_count(), 12);
-        
+
         // Test invalid word count
         let mut rng = StdRng::seed_from_u64(99999);
         assert!(Mnemonic::generate_using_rng(13, Language::English, &mut rng).is_err());
@@ -520,34 +516,34 @@ mod tests {
         let seed = 42u64;
         let mnemonic1 = Mnemonic::generate_with_seed(12, Language::English, seed).unwrap();
         let mnemonic2 = Mnemonic::generate_with_seed(12, Language::English, seed).unwrap();
-        
+
         // Same seed should produce same mnemonic
         assert_eq!(mnemonic1.phrase(), mnemonic2.phrase());
         assert_eq!(mnemonic1.word_count(), 12);
-        
+
         // Different seed should produce different mnemonic
         let mnemonic3 = Mnemonic::generate_with_seed(12, Language::English, 43).unwrap();
         assert_ne!(mnemonic1.phrase(), mnemonic3.phrase());
-        
+
         // Test with different word counts
         let mnemonic_15 = Mnemonic::generate_with_seed(15, Language::English, seed).unwrap();
         assert_eq!(mnemonic_15.word_count(), 15);
-        
+
         let mnemonic_18 = Mnemonic::generate_with_seed(18, Language::English, seed).unwrap();
         assert_eq!(mnemonic_18.word_count(), 18);
-        
+
         let mnemonic_21 = Mnemonic::generate_with_seed(21, Language::English, seed).unwrap();
         assert_eq!(mnemonic_21.word_count(), 21);
-        
+
         let mnemonic_24 = Mnemonic::generate_with_seed(24, Language::English, seed).unwrap();
         assert_eq!(mnemonic_24.word_count(), 24);
-        
+
         // Test with different languages
         let mnemonic_fr = Mnemonic::generate_with_seed(12, Language::French, seed).unwrap();
         assert_eq!(mnemonic_fr.word_count(), 12);
         // French mnemonic should be different from English even with same seed and entropy
         // (due to different word lists)
-        
+
         // Test invalid word count
         assert!(Mnemonic::generate_with_seed(10, Language::English, seed).is_err());
         assert!(Mnemonic::generate_with_seed(25, Language::English, seed).is_err());
@@ -558,18 +554,22 @@ mod tests {
     #[cfg(feature = "std")]
     fn test_generate_with_seed_deterministic() {
         let test_seeds = vec![0u64, 1, 100, 1000, u64::MAX];
-        
+
         for seed in test_seeds {
             // Generate multiple times with same seed
             let mnemonics: Vec<_> = (0..5)
                 .map(|_| Mnemonic::generate_with_seed(12, Language::English, seed).unwrap())
                 .collect();
-            
+
             // All should be identical
             let first_phrase = mnemonics[0].phrase();
             for mnemonic in &mnemonics[1..] {
-                assert_eq!(mnemonic.phrase(), first_phrase, 
-                    "Mnemonic generation with seed {} was not deterministic", seed);
+                assert_eq!(
+                    mnemonic.phrase(),
+                    first_phrase,
+                    "Mnemonic generation with seed {} was not deterministic",
+                    seed
+                );
             }
         }
     }

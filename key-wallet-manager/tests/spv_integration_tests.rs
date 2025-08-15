@@ -8,9 +8,9 @@ use dashcore::{TxIn, TxOut};
 use dashcore_hashes::Hash;
 
 use key_wallet::mnemonic::Language;
+use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{Mnemonic, Network, Wallet, WalletConfig};
-
 use key_wallet_manager::compact_filter::{CompactFilter, FilterType};
 use key_wallet_manager::enhanced_wallet_manager::EnhancedWalletManager;
 use key_wallet_manager::spv_client_integration::{SPVSyncStatus, SPVWalletIntegration};
@@ -23,8 +23,13 @@ fn create_test_wallet() -> (Wallet, ManagedWalletInfo) {
         Language::English,
     ).unwrap();
 
-    let wallet =
-        Wallet::from_mnemonic(mnemonic, WalletConfig::default(), Network::Testnet).unwrap();
+    let wallet = Wallet::from_mnemonic(
+        mnemonic,
+        WalletConfig::default(),
+        Network::Testnet,
+        WalletAccountCreationOptions::Default,
+    )
+    .unwrap();
     let info = ManagedWalletInfo::with_name(wallet.wallet_id, "Test Wallet".to_string());
 
     (wallet, info)

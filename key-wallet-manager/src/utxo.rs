@@ -95,11 +95,6 @@ impl Utxo {
     pub fn unlock(&mut self) {
         self.is_locked = false;
     }
-
-    /// Set a label for this UTXO
-    pub fn set_label(&mut self, label: String) {
-        self.label = Some(label);
-    }
 }
 
 impl Ord for Utxo {

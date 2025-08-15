@@ -135,7 +135,12 @@ mod tests {
             ..Default::default()
         };
 
-        let wallet = Wallet::new_random(config, Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet = Wallet::new_random(
+            config,
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
         // Default creates BIP44 account 0, CoinJoin account 0, and special accounts
         assert!(wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0) >= 2);
         assert!(wallet.has_mnemonic());
@@ -150,7 +155,13 @@ mod tests {
         ).unwrap();
 
         let config = WalletConfig::default();
-        let wallet = Wallet::from_mnemonic(mnemonic, config, Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet = Wallet::from_mnemonic(
+            mnemonic,
+            config,
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Default creates multiple accounts
         assert!(wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0) >= 2);
@@ -175,11 +186,12 @@ mod tests {
         let mut bip44_set = BTreeSet::new();
         bip44_set.insert(0);
         let mut wallet = Wallet::new_random(
-            config, 
-            Network::Testnet, 
-            initialization::WalletAccountCreationOptions::BIP44AccountsOnly(BTreeSet::new())
-        ).unwrap();
-        
+            config,
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::BIP44AccountsOnly(BTreeSet::new()),
+        )
+        .unwrap();
+
         wallet
             .add_account(
                 AccountType::Standard {
@@ -214,7 +226,12 @@ mod tests {
             ..Default::default()
         };
 
-        let wallet = Wallet::new_random(config, Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet = Wallet::new_random(
+            config,
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Verify we have a default account
         assert!(wallet.get_account(Network::Testnet, 0).is_some());
@@ -233,10 +250,11 @@ mod tests {
         config.coinjoin_default_gap_limit = 10;
 
         let wallet = Wallet::new_random(
-            config, 
-            Network::Testnet, 
-            initialization::WalletAccountCreationOptions::BIP44AccountsOnly(BTreeSet::new())
-        ).unwrap();
+            config,
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::BIP44AccountsOnly(BTreeSet::new()),
+        )
+        .unwrap();
 
         assert_eq!(wallet.config.account_default_external_gap_limit, 30);
         assert_eq!(wallet.config.account_default_internal_gap_limit, 15);
@@ -252,7 +270,13 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase(mnemonic_phrase, Language::English).unwrap();
 
         let config = WalletConfig::default();
-        let wallet = Wallet::from_mnemonic(mnemonic, config, Network::Dash, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet = Wallet::from_mnemonic(
+            mnemonic,
+            config,
+            Network::Dash,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         assert!(wallet.accounts.get(&Network::Dash).map(|c| c.count()).unwrap_or(0) >= 2); // Default creates multiple accounts
         assert!(wallet.has_mnemonic());
@@ -268,11 +292,22 @@ mod tests {
         let config = WalletConfig::default();
 
         // Create first wallet
-        let wallet1 =
-            Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet1 = Wallet::from_mnemonic(
+            mnemonic.clone(),
+            config.clone(),
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Create second wallet from same mnemonic (simulating recovery)
-        let wallet2 = Wallet::from_mnemonic(mnemonic, config, Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet2 = Wallet::from_mnemonic(
+            mnemonic,
+            config,
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Both wallets should generate the same addresses
         let account1_1 = wallet1
@@ -295,7 +330,12 @@ mod tests {
     fn test_multiple_account_creation() {
         let config = WalletConfig::default();
 
-        let mut wallet = Wallet::new_random(config, Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let mut wallet = Wallet::new_random(
+            config,
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Create different types of accounts
         wallet
@@ -341,7 +381,12 @@ mod tests {
     #[test]
     fn test_wallet_with_managed_info() {
         let config = WalletConfig::default();
-        let wallet = Wallet::new_random(config, Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet = Wallet::new_random(
+            config,
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Create managed info from the wallet
         let mut managed_info = ManagedWalletInfo::from_wallet(&wallet);
@@ -360,7 +405,8 @@ mod tests {
         assert_eq!(managed_info.metadata.last_synced, Some(1234567890));
 
         // The wallet itself remains unchanged
-        assert!(wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0) >= 2); // Default creates multiple accounts
+        assert!(wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0) >= 2);
+        // Default creates multiple accounts
     }
 
     // ✓ Test watch-only wallet creation (high level)
@@ -368,7 +414,12 @@ mod tests {
     fn test_watch_only_wallet_basics() {
         // Create a regular wallet first to get the root xpub
         let config = WalletConfig::default();
-        let wallet = Wallet::new_random(config, Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet = Wallet::new_random(
+            config,
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Get the root extended public key
         let root_xpub = wallet.root_extended_pub_key();
@@ -376,27 +427,35 @@ mod tests {
 
         // Create watch-only wallet from root xpub
         let config2 = WalletConfig::default();
-        let mut watch_only = Wallet::from_xpub(root_xpub_as_extended, config2, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+        let mut watch_only = Wallet::from_xpub(
+            root_xpub_as_extended,
+            config2,
+            Network::Testnet,
+            crate::wallet::initialization::WalletAccountCreationOptions::None,
+        )
+        .unwrap();
 
         assert!(watch_only.is_watch_only());
         assert!(!watch_only.has_mnemonic());
-        
+
         // Watch-only wallets start with no accounts
         assert_eq!(watch_only.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 0);
-        
+
         // But we can add accounts manually by providing their xpubs
         let account = wallet.get_account(Network::Testnet, 0).unwrap();
         let account_xpub = account.extended_public_key();
-        
-        watch_only.add_account(
-            AccountType::Standard {
-                index: 0,
-                standard_account_type: StandardAccountType::BIP44Account,
-            },
-            Network::Testnet,
-            Some(account_xpub),
-        ).unwrap();
-        
+
+        watch_only
+            .add_account(
+                AccountType::Standard {
+                    index: 0,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                },
+                Network::Testnet,
+                Some(account_xpub),
+            )
+            .unwrap();
+
         // Now the watch-only wallet has the account
         assert_eq!(watch_only.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 1);
         let watch_only_account = watch_only.get_account(Network::Testnet, 0).unwrap();
@@ -456,10 +515,11 @@ mod tests {
         use std::collections::BTreeSet;
         let config = WalletConfig::default();
         let mut wallet = Wallet::new_random(
-            config, 
+            config,
             Network::Testnet,
-            initialization::WalletAccountCreationOptions::BIP44AccountsOnly(BTreeSet::new())
-        ).unwrap();
+            initialization::WalletAccountCreationOptions::BIP44AccountsOnly(BTreeSet::new()),
+        )
+        .unwrap();
 
         // Create a second account to match original test
         wallet
@@ -501,7 +561,12 @@ mod tests {
         config.account_default_internal_gap_limit = 0; // Will be adjusted
                                                        // Note: ensure_minimum_limits method doesn't exist
 
-        let wallet = Wallet::new_random(config.clone(), Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet = Wallet::new_random(
+            config.clone(),
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // The wallet uses the config as-is, doesn't adjust it
         assert_eq!(wallet.config.account_default_external_gap_limit, 0);
@@ -512,7 +577,12 @@ mod tests {
     #[test]
     fn test_wallet_error_conditions() {
         let config = WalletConfig::default();
-        let mut wallet = Wallet::new_random(config, Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let mut wallet = Wallet::new_random(
+            config,
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Test duplicate account creation should fail
         let result = wallet.add_account(
@@ -533,7 +603,12 @@ mod tests {
     #[test]
     fn test_wallet_id_generation() {
         let config = WalletConfig::default();
-        let wallet = Wallet::new_random(config.clone(), Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet = Wallet::new_random(
+            config.clone(),
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         // Wallet ID should be set
         assert_ne!(wallet.wallet_id, [0u8; 32]);
@@ -551,8 +626,20 @@ mod tests {
 
         let config2 = WalletConfig::default();
         let config3 = WalletConfig::default();
-        let wallet1 = Wallet::from_mnemonic(mnemonic.clone(), config2, Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
-        let wallet2 = Wallet::from_mnemonic(mnemonic, config3, Network::Testnet, initialization::WalletAccountCreationOptions::Default).unwrap();
+        let wallet1 = Wallet::from_mnemonic(
+            mnemonic.clone(),
+            config2,
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
+        let wallet2 = Wallet::from_mnemonic(
+            mnemonic,
+            config3,
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
 
         assert_eq!(wallet1.wallet_id, wallet2.wallet_id);
     }

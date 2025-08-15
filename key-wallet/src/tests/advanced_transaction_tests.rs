@@ -14,7 +14,12 @@ use std::collections::{BTreeMap, HashMap};
 fn test_multi_account_transaction() {
     // Test transaction involving multiple accounts
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::Default).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::Default,
+    )
+    .unwrap();
 
     // Add multiple accounts (account 0 already exists by default)
     for i in 1..3 {

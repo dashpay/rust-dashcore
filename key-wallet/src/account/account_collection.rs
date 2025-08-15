@@ -151,7 +151,7 @@ impl AccountCollection {
     /// Check if a specific account type already exists in the collection
     pub fn contains_account_type(&self, account_type: &crate::account::AccountType) -> bool {
         use crate::account::{AccountType, StandardAccountType};
-        
+
         match account_type {
             AccountType::Standard {
                 index,
@@ -164,35 +164,19 @@ impl AccountCollection {
                     self.standard_bip32_accounts.contains_key(index)
                 }
             },
-            AccountType::CoinJoin { index } => {
-                self.coinjoin_accounts.contains_key(index)
-            }
-            AccountType::IdentityRegistration => {
-                self.identity_registration.is_some()
-            }
+            AccountType::CoinJoin {
+                index,
+            } => self.coinjoin_accounts.contains_key(index),
+            AccountType::IdentityRegistration => self.identity_registration.is_some(),
             AccountType::IdentityTopUp {
                 registration_index,
-            } => {
-                self.identity_topup.contains_key(registration_index)
-            }
-            AccountType::IdentityTopUpNotBoundToIdentity => {
-                self.identity_topup_not_bound.is_some()
-            }
-            AccountType::IdentityInvitation => {
-                self.identity_invitation.is_some()
-            }
-            AccountType::ProviderVotingKeys => {
-                self.provider_voting_keys.is_some()
-            }
-            AccountType::ProviderOwnerKeys => {
-                self.provider_owner_keys.is_some()
-            }
-            AccountType::ProviderOperatorKeys => {
-                self.provider_operator_keys.is_some()
-            }
-            AccountType::ProviderPlatformKeys => {
-                self.provider_platform_keys.is_some()
-            }
+            } => self.identity_topup.contains_key(registration_index),
+            AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.is_some(),
+            AccountType::IdentityInvitation => self.identity_invitation.is_some(),
+            AccountType::ProviderVotingKeys => self.provider_voting_keys.is_some(),
+            AccountType::ProviderOwnerKeys => self.provider_owner_keys.is_some(),
+            AccountType::ProviderOperatorKeys => self.provider_operator_keys.is_some(),
+            AccountType::ProviderPlatformKeys => self.provider_platform_keys.is_some(),
         }
     }
 

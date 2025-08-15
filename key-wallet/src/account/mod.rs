@@ -81,7 +81,7 @@ impl Account {
     ) -> Result<Self> {
         let secp = Secp256k1::new();
         let account_xpub = ExtendedPubKey::from_priv(&secp, &account_xpriv);
-        
+
         Self::new(parent_wallet_id, account_type, account_xpub, network)
     }
 

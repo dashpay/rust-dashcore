@@ -38,10 +38,16 @@ struct ParticipantInfo {
 fn test_coinjoin_denomination_creation() {
     // Test creating standard CoinJoin denominations
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     wallet
-        .add_account(AccountType::CoinJoin {
+        .add_account(
+            AccountType::CoinJoin {
                 index: 0,
             },
             Network::Testnet,
@@ -78,10 +84,16 @@ fn test_coinjoin_denomination_creation() {
 fn test_coinjoin_round_participation() {
     // Test participating in a CoinJoin round
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     wallet
-        .add_account(AccountType::CoinJoin {
+        .add_account(
+            AccountType::CoinJoin {
                 index: 0,
             },
             Network::Testnet,
@@ -184,7 +196,12 @@ fn test_coinjoin_fee_calculation() {
 fn test_coinjoin_collateral_handling() {
     // Test collateral requirements for CoinJoin
     let config = WalletConfig::default();
-    let wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Collateral amount (0.001% of denomination)
     let denomination = DENOMINATIONS[3]; // 1 DASH
@@ -259,10 +276,16 @@ fn test_coinjoin_round_timeout() {
 fn test_multiple_denomination_mixing() {
     // Test mixing multiple denominations in parallel
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     wallet
-        .add_account(AccountType::CoinJoin {
+        .add_account(
+            AccountType::CoinJoin {
                 index: 0,
             },
             Network::Testnet,

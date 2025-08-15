@@ -2,9 +2,6 @@
 //!
 //! This module contains all methods for creating and initializing wallets.
 
-use alloc::collections::BTreeMap;
-use alloc::string::String;
-use std::collections::BTreeSet;
 use super::config::WalletConfig;
 use super::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
 use super::{Wallet, WalletType};
@@ -15,6 +12,9 @@ use crate::error::Result;
 use crate::mnemonic::{Language, Mnemonic};
 use crate::seed::Seed;
 use crate::Network;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use std::collections::BTreeSet;
 
 /// Set of BIP44 account indices to create
 pub type WalletAccountCreationBIP44Accounts = BTreeSet<u32>;
@@ -32,42 +32,42 @@ pub enum WalletAccountCreationOptions {
     /// and all special purpose accounts (Identity Registration, Identity Invitation,
     /// Provider keys, etc.)
     Default,
-    
+
     /// Create all specified BIP44 and CoinJoin accounts plus all special purpose accounts
-    /// 
+    ///
     /// # Arguments
     /// * First parameter: Set of BIP44 account indices to create
     /// * Second parameter: Set of CoinJoin account indices to create
     AllAccounts(WalletAccountCreationBIP44Accounts, WalletAccountCreationCoinjoinAccounts),
-    
-    /// Create only BIP44 accounts (no CoinJoin or special accounts), with optional 
+
+    /// Create only BIP44 accounts (no CoinJoin or special accounts), with optional
     /// identity top-up accounts for specific registrations
-    /// 
+    ///
     /// # Arguments
     /// * Set of identity top-up registration indices (can be empty)
     BIP44AccountsOnly(WalletAccountCreationTopUpAccounts),
-    
+
     /// Create specific accounts with full control over what gets created
-    /// 
+    ///
     /// # Arguments
     /// * First: Set of BIP44 account indices
     /// * Second: Set of CoinJoin account indices  
     /// * Third: Set of identity top-up registration indices
     /// * Fourth: Additional special account type to create (e.g., IdentityRegistration)
     SpecificAccounts(
-        WalletAccountCreationBIP44Accounts, 
-        WalletAccountCreationCoinjoinAccounts, 
-        WalletAccountCreationTopUpAccounts, 
-        Option<Vec<AccountType>>
+        WalletAccountCreationBIP44Accounts,
+        WalletAccountCreationCoinjoinAccounts,
+        WalletAccountCreationTopUpAccounts,
+        Option<Vec<AccountType>>,
     ),
-    
+
     /// Create no accounts at all - useful for tests that want to manually control account creation
     None,
 }
 
 impl Wallet {
     /// Create a new wallet with a randomly generated mnemonic
-    /// 
+    ///
     /// # Arguments
     /// * `config` - Wallet configuration
     /// * `network` - Network for the wallet
@@ -89,10 +89,10 @@ impl Wallet {
             config,
             network,
         )?;
-        
+
         // Create accounts based on options
         wallet.create_accounts_from_options(account_creation_options, network)?;
-        
+
         Ok(wallet)
     }
 
@@ -143,7 +143,7 @@ impl Wallet {
     }
 
     /// Create a wallet from a mnemonic phrase
-    /// 
+    ///
     /// # Arguments
     /// * `mnemonic` - The mnemonic phrase
     /// * `config` - Wallet configuration
@@ -166,16 +166,16 @@ impl Wallet {
             config,
             network,
         )?;
-        
+
         // Create accounts based on options
         wallet.create_accounts_from_options(account_creation_options, network)?;
-        
+
         Ok(wallet)
     }
 
     /// Create a wallet from a mnemonic phrase with passphrase
     /// The passphrase is used only to derive the master public key, then discarded
-    /// 
+    ///
     /// # Arguments
     /// * `mnemonic` - The mnemonic phrase
     /// * `passphrase` - The BIP39 passphrase
@@ -210,13 +210,13 @@ impl Wallet {
     }
 
     /// Create a watch-only wallet from extended public key
-    /// 
+    ///
     /// # Arguments
     /// * `master_xpub` - The extended public key
     /// * `config` - Wallet configuration
     /// * `network` - Network for the wallet
     /// * `account_creation_options` - Specifies which accounts to create during initialization
-    /// 
+    ///
     /// Note: Watch-only wallets can only create accounts if the extended public keys are provided
     pub fn from_xpub(
         master_xpub: ExtendedPubKey,
@@ -225,8 +225,12 @@ impl Wallet {
         account_creation_options: WalletAccountCreationOptions,
     ) -> Result<Self> {
         let root_extended_public_key = RootExtendedPubKey::from_extended_pub_key(&master_xpub);
-        let wallet = Self::from_wallet_type(WalletType::WatchOnly(root_extended_public_key), config, network)?;
-        
+        let wallet = Self::from_wallet_type(
+            WalletType::WatchOnly(root_extended_public_key),
+            config,
+            network,
+        )?;
+
         // For watch-only wallets, we can only create accounts if we have the xpubs
         // The Default option won't work as it tries to derive keys
         match account_creation_options {
@@ -236,23 +240,24 @@ impl Wallet {
             _ => {
                 // Other options would need explicit xpubs provided
                 return Err(crate::error::Error::InvalidParameter(
-                    "Watch-only wallets require explicit extended public keys for account creation".to_string()
+                    "Watch-only wallets require explicit extended public keys for account creation"
+                        .to_string(),
                 ));
             }
         }
-        
+
         Ok(wallet)
     }
 
     /// Create an external signable wallet from extended public key
     /// This wallet type allows for external signing of transactions
-    /// 
+    ///
     /// # Arguments
     /// * `master_xpub` - The extended public key
     /// * `config` - Wallet configuration
     /// * `network` - Network for the wallet
     /// * `account_creation_options` - Specifies which accounts to create during initialization
-    /// 
+    ///
     /// Note: External signable wallets can only create accounts if the extended public keys are provided
     pub fn from_external_signable(
         master_xpub: ExtendedPubKey,
@@ -266,7 +271,7 @@ impl Wallet {
             config,
             network,
         )?;
-        
+
         // For externally signable wallets, we can only create accounts if we have the xpubs
         match account_creation_options {
             WalletAccountCreationOptions::Default | WalletAccountCreationOptions::None => {
@@ -279,12 +284,12 @@ impl Wallet {
                 ));
             }
         }
-        
+
         Ok(wallet)
     }
 
     /// Create a wallet from seed bytes
-    /// 
+    ///
     /// # Arguments
     /// * `seed` - The seed bytes
     /// * `config` - Wallet configuration
@@ -306,15 +311,15 @@ impl Wallet {
             config,
             network,
         )?;
-        
+
         // Create accounts based on options
         wallet.create_accounts_from_options(account_creation_options, network)?;
-        
+
         Ok(wallet)
     }
 
     /// Create a wallet from seed bytes array
-    /// 
+    ///
     /// # Arguments
     /// * `seed_bytes` - The seed bytes array
     /// * `config` - Wallet configuration
@@ -330,7 +335,7 @@ impl Wallet {
     }
 
     /// Create a wallet from an extended private key
-    /// 
+    ///
     /// # Arguments
     /// * `master_key` - The extended private key
     /// * `config` - Wallet configuration
@@ -348,10 +353,10 @@ impl Wallet {
             config,
             network,
         )?;
-        
+
         // Create accounts based on options
         wallet.create_accounts_from_options(account_creation_options, network)?;
-        
+
         Ok(wallet)
     }
 }

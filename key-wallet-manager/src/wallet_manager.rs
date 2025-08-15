@@ -87,14 +87,26 @@ impl WalletManager {
         let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
-        let wallet = Wallet::from_mnemonic_with_passphrase(
-            mnemonic_obj,
-            passphrase.to_string(),
-            WalletConfig::default(),
-            network,
-            key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
-        )
-        .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
+        // Use appropriate wallet creation method based on whether a passphrase is provided
+        let wallet = if passphrase.is_empty() {
+            Wallet::from_mnemonic(
+                mnemonic_obj,
+                WalletConfig::default(),
+                network,
+                key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
+            )
+            .map_err(|e| WalletError::WalletCreation(e.to_string()))?
+        } else {
+            // For wallets with passphrase, use None since they can't derive accounts without the passphrase
+            Wallet::from_mnemonic_with_passphrase(
+                mnemonic_obj,
+                passphrase.to_string(),
+                WalletConfig::default(),
+                network,
+                key_wallet::wallet::initialization::WalletAccountCreationOptions::None,
+            )
+            .map_err(|e| WalletError::WalletCreation(e.to_string()))?
+        };
 
         // Create managed wallet info
         let mut managed_info = ManagedWalletInfo::with_name(wallet.wallet_id, name);
@@ -148,12 +160,12 @@ impl WalletManager {
                 .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
         let wallet = Wallet::from_mnemonic(
-            mnemonic, 
-            WalletConfig::default(), 
+            mnemonic,
+            WalletConfig::default(),
             network,
             key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
         )
-            .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
+        .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
         // Create managed wallet info
         let mut managed_info = ManagedWalletInfo::with_name(wallet.wallet_id, name);

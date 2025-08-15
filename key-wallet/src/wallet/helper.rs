@@ -261,18 +261,20 @@ impl Wallet {
                     network,
                     None,
                 )?;
-                
+
                 // Create default CoinJoin account 0
                 self.add_account(
-                    AccountType::CoinJoin { index: 0 },
+                    AccountType::CoinJoin {
+                        index: 0,
+                    },
                     network,
                     None,
                 )?;
-                
+
                 // Create all special purpose accounts
                 self.create_special_purpose_accounts(network)?;
             }
-            
+
             WalletAccountCreationOptions::AllAccounts(bip44_indices, coinjoin_indices) => {
                 // Create specified BIP44 accounts
                 for index in bip44_indices {
@@ -285,25 +287,29 @@ impl Wallet {
                         None,
                     )?;
                 }
-                
+
                 // Create specified CoinJoin accounts
                 for index in coinjoin_indices {
                     self.add_account(
-                        AccountType::CoinJoin { index },
+                        AccountType::CoinJoin {
+                            index,
+                        },
                         network,
                         None,
                     )?;
                 }
-                
+
                 // Create all special purpose accounts
                 self.create_special_purpose_accounts(network)?;
             }
-            
+
             WalletAccountCreationOptions::BIP44AccountsOnly(topup_indices) => {
                 // Create BIP44 account 0 if not exists
-                if !self.accounts.get(&network)
+                if !self
+                    .accounts
+                    .get(&network)
                     .map(|c| c.standard_bip44_accounts.contains_key(&0))
-                    .unwrap_or(false) 
+                    .unwrap_or(false)
                 {
                     self.add_account(
                         AccountType::Standard {
@@ -314,17 +320,19 @@ impl Wallet {
                         None,
                     )?;
                 }
-                
+
                 // Create identity top-up accounts for specified registrations
                 for registration_index in topup_indices {
                     self.add_account(
-                        AccountType::IdentityTopUp { registration_index },
+                        AccountType::IdentityTopUp {
+                            registration_index,
+                        },
                         network,
                         None,
                     )?;
                 }
             }
-            
+
             WalletAccountCreationOptions::SpecificAccounts(
                 bip44_indices,
                 coinjoin_indices,
@@ -342,25 +350,29 @@ impl Wallet {
                         None,
                     )?;
                 }
-                
+
                 // Create specified CoinJoin accounts
                 for index in coinjoin_indices {
                     self.add_account(
-                        AccountType::CoinJoin { index },
+                        AccountType::CoinJoin {
+                            index,
+                        },
                         network,
                         None,
                     )?;
                 }
-                
+
                 // Create identity top-up accounts
                 for registration_index in topup_indices {
                     self.add_account(
-                        AccountType::IdentityTopUp { registration_index },
+                        AccountType::IdentityTopUp {
+                            registration_index,
+                        },
                         network,
                         None,
                     )?;
                 }
-                
+
                 // Create any additional special accounts if provided
                 if let Some(special_types) = special_accounts {
                     for account_type in special_types {
@@ -368,32 +380,32 @@ impl Wallet {
                     }
                 }
             }
-            
+
             WalletAccountCreationOptions::None => {
                 // Don't create any accounts - useful for tests
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Create all special purpose accounts
     fn create_special_purpose_accounts(&mut self, network: Network) -> Result<()> {
         // Identity registration account
         self.add_account(AccountType::IdentityRegistration, network, None)?;
-        
+
         // Identity invitation account
         self.add_account(AccountType::IdentityInvitation, network, None)?;
-        
+
         // Identity top-up not bound to identity
         self.add_account(AccountType::IdentityTopUpNotBoundToIdentity, network, None)?;
-        
+
         // Provider keys accounts
         self.add_account(AccountType::ProviderVotingKeys, network, None)?;
         self.add_account(AccountType::ProviderOwnerKeys, network, None)?;
         self.add_account(AccountType::ProviderOperatorKeys, network, None)?;
         self.add_account(AccountType::ProviderPlatformKeys, network, None)?;
-        
+
         Ok(())
     }
 }

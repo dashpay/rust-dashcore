@@ -16,7 +16,13 @@ fn test_wallet_mnemonic_export() {
     ).unwrap();
 
     let config = WalletConfig::default();
-    let wallet = Wallet::from_mnemonic(mnemonic.clone(), config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let wallet = Wallet::from_mnemonic(
+        mnemonic.clone(),
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Export mnemonic
     match &wallet.wallet_type {
@@ -33,12 +39,18 @@ fn test_wallet_mnemonic_export() {
 #[test]
 fn test_wallet_full_backup_restore() {
     let config = WalletConfig::default();
-    let mut original_wallet = Wallet::new_random(config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut original_wallet = Wallet::new_random(
+        config.clone(),
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Add various accounts including 0 since None doesn't create any
     for i in 0..3 {
         original_wallet
-            .add_account(AccountType::Standard {
+            .add_account(
+                AccountType::Standard {
                     index: i,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
@@ -49,7 +61,8 @@ fn test_wallet_full_backup_restore() {
     }
 
     original_wallet
-        .add_account(AccountType::CoinJoin {
+        .add_account(
+            AccountType::CoinJoin {
                 index: 0,
             },
             Network::Testnet,
@@ -71,7 +84,13 @@ fn test_wallet_full_backup_restore() {
     drop(original_wallet);
 
     // Restore wallet
-    let mut restored_wallet = Wallet::from_mnemonic(mnemonic, config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut restored_wallet = Wallet::from_mnemonic(
+        mnemonic,
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Verify wallet ID matches
     assert_eq!(restored_wallet.wallet_id, wallet_id);
@@ -79,7 +98,8 @@ fn test_wallet_full_backup_restore() {
     // Re-add accounts including 0 since None doesn't create any
     for i in 0..3 {
         restored_wallet
-            .add_account(AccountType::Standard {
+            .add_account(
+                AccountType::Standard {
                     index: i,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
@@ -90,7 +110,8 @@ fn test_wallet_full_backup_restore() {
     }
 
     restored_wallet
-        .add_account(AccountType::CoinJoin {
+        .add_account(
+            AccountType::CoinJoin {
                 index: 0,
             },
             Network::Testnet,
@@ -108,7 +129,12 @@ fn test_wallet_full_backup_restore() {
 fn test_wallet_partial_backup() {
     // Test backing up only essential data (mnemonic + account indices)
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Add accounts including standard 0 since None doesn't create any
     let account_metadata = vec![
@@ -162,7 +188,13 @@ fn test_wallet_partial_backup() {
 
     // Restore from backup
     let config = WalletConfig::default();
-    let mut restored = Wallet::from_mnemonic(backup.mnemonic, config, backup.network, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut restored = Wallet::from_mnemonic(
+        backup.mnemonic,
+        config,
+        backup.network,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     for (index, account_type) in backup.accounts {
         // Skip if it's the default account 0
@@ -227,7 +259,12 @@ fn test_wallet_encrypted_backup() {
 fn test_wallet_metadata_backup() {
     // Test backing up wallet metadata (labels, settings, etc.)
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Add accounts with metadata
     struct AccountMetadata {
@@ -273,8 +310,13 @@ fn test_multi_network_backup_restore() {
     ).unwrap();
 
     let config = WalletConfig::default();
-    let mut wallet =
-        Wallet::from_mnemonic(mnemonic.clone(), config.clone(), Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::from_mnemonic(
+        mnemonic.clone(),
+        config.clone(),
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Add accounts on multiple networks
     let networks = vec![Network::Testnet, Network::Dash, Network::Devnet];
@@ -283,7 +325,8 @@ fn test_multi_network_backup_restore() {
         for i in 0..2 {
             // Try to add account, OK if it already exists (account 0 is created by default)
             wallet
-                .add_account(AccountType::Standard {
+                .add_account(
+                    AccountType::Standard {
                         index: i,
                         standard_account_type: StandardAccountType::BIP44Account,
                     },
@@ -311,7 +354,13 @@ fn test_multi_network_backup_restore() {
     }
 
     // Restore and verify
-    let mut restored = Wallet::from_mnemonic(mnemonic, config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut restored = Wallet::from_mnemonic(
+        mnemonic,
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     for backup in network_backups {
         for i in 0..backup.account_count {
@@ -338,7 +387,12 @@ fn test_multi_network_backup_restore() {
 fn test_incremental_backup() {
     // Test incremental backup of changes since last backup
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(config, Network::Testnet, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap();
+    let mut wallet = Wallet::new_random(
+        config,
+        Network::Testnet,
+        crate::wallet::initialization::WalletAccountCreationOptions::None,
+    )
+    .unwrap();
 
     // Initial state - account 0 is created by default, no need to add it
 
@@ -351,7 +405,8 @@ fn test_incremental_backup() {
 
     // Make changes
     wallet
-        .add_account(AccountType::Standard {
+        .add_account(
+            AccountType::Standard {
                 index: 1,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
@@ -361,7 +416,8 @@ fn test_incremental_backup() {
         .unwrap();
 
     wallet
-        .add_account(AccountType::CoinJoin {
+        .add_account(
+            AccountType::CoinJoin {
                 index: 0,
             },
             Network::Testnet,
@@ -407,7 +463,13 @@ fn test_backup_version_compatibility() {
     let wallet = match backup_v1.version {
         1 => {
             // Version 1 migration logic
-            Wallet::from_mnemonic(mnemonic, config, backup_v1.network, crate::wallet::initialization::WalletAccountCreationOptions::None).unwrap()
+            Wallet::from_mnemonic(
+                mnemonic,
+                config,
+                backup_v1.network,
+                crate::wallet::initialization::WalletAccountCreationOptions::None,
+            )
+            .unwrap()
         }
         _ => panic!("Unsupported backup version"),
     };

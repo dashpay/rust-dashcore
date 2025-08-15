@@ -12,16 +12,16 @@ use crate::Network;
 
 impl Wallet {
     /// Add a new account to the wallet
-    /// 
+    ///
     /// # Arguments
     /// * `account_type` - The type of account to create
     /// * `network` - The network for the account
     /// * `account_xpub` - Optional extended public key for the account. If not provided,
     ///                    the account will be derived from the wallet's private key.
-    ///                    This will fail if the wallet doesn't have a private key 
-    ///                    (watch-only wallets or externally managed wallets where 
+    ///                    This will fail if the wallet doesn't have a private key
+    ///                    (watch-only wallets or externally managed wallets where
     ///                    the private key is stored securely outside of the SDK).
-    /// 
+    ///
     /// # Returns
     /// A reference to the newly created account
     pub fn add_account(
@@ -40,13 +40,13 @@ impl Wallet {
         } else {
             // Derive from wallet's private key
             let derivation_path = account_type.derivation_path(network)?;
-            
+
             // This will fail if the wallet doesn't have a private key (watch-only or externally managed)
             let root_key = self.root_extended_priv_key()?;
             let master_key = root_key.to_extended_priv_key(network);
             let hd_wallet = HDWallet::new(master_key);
             let account_xpriv = hd_wallet.derive(&derivation_path)?;
-            
+
             Account::from_xpriv(Some(wallet_id), account_type, account_xpriv, network)?
         };
 
@@ -66,7 +66,9 @@ impl Wallet {
 
         // Return a reference to the newly inserted account
         match &account_type {
-            AccountType::CoinJoin { index } => Ok(collection.coinjoin_accounts.get(index).unwrap()),
+            AccountType::CoinJoin {
+                index,
+            } => Ok(collection.coinjoin_accounts.get(index).unwrap()),
             AccountType::Standard {
                 index,
                 standard_account_type,
@@ -110,7 +112,6 @@ impl Wallet {
             }
         }
     }
-
 
     /// Get the wallet ID for this wallet
     fn get_wallet_id(&self) -> [u8; 32] {
