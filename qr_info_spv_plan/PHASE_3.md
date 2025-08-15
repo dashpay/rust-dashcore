@@ -115,6 +115,9 @@ impl ParallelQRInfoExecutor {
                 tracing::debug!("Starting QRInfo request {}/{}: heights {}-{}", 
                     index + 1, total_requests, request.base_height, request.tip_height);
                 
+                // Capture start time for processing duration measurement
+                let start_time = std::time::Instant::now();
+                
                 // Execute request with timeout
                 let result = timeout(timeout_duration, async {
                     // Send network request
@@ -135,10 +138,13 @@ impl ParallelQRInfoExecutor {
                         proc.process_qr_info(qr_info).await?;
                     }
                     
+                    // Calculate elapsed processing time
+                    let processing_time = start_time.elapsed();
+                    
                     Ok::<QRInfoResult, ParallelExecutionError>(QRInfoResult {
                         request: request.clone(),
                         success: true,
-                        processing_time: std::time::Instant::now(),
+                        processing_time,
                         error: None,
                     })
                 }).await;
@@ -165,20 +171,26 @@ impl ParallelQRInfoExecutor {
                     Ok(Err(e)) => {
                         tracing::warn!("QRInfo request {}/{} failed: {}", 
                             index + 1, total_requests, e);
+                        // Calculate elapsed processing time for failed request
+                        let processing_time = start_time.elapsed();
+                        
                         Ok(QRInfoResult {
                             request,
                             success: false,
-                            processing_time: std::time::Instant::now(),
+                            processing_time,
                             error: Some(e),
                         })
                     }
                     Err(_) => {
                         tracing::error!("QRInfo request {}/{} timed out after {:?}", 
                             index + 1, total_requests, timeout_duration);
+                        // Calculate elapsed processing time for timed out request
+                        let processing_time = start_time.elapsed();
+                        
                         Ok(QRInfoResult {
                             request,
                             success: false,
-                            processing_time: std::time::Instant::now(),
+                            processing_time,
                             error: Some(ParallelExecutionError::Timeout),
                         })
                     }
@@ -312,7 +324,7 @@ impl ParallelQRInfoExecutor {
 pub struct QRInfoResult {
     pub request: QRInfoRequest,
     pub success: bool,
-    pub processing_time: std::time::Instant,
+    pub processing_time: std::time::Duration,
     pub error: Option<ParallelExecutionError>,
 }
 
@@ -498,7 +510,7 @@ impl QRInfoCorrelationManager {
         &mut self,
         base_hash: BlockHash,
         tip_hash: BlockHash,
-    ) -> (RequestId, oneshot::Receiver<QRInfo>) {
+    ) -> (RequestId, oneshot::Receiver<Result<QRInfo, CorrelationError>>) {
         let request_id = RequestId(self.next_request_id.fetch_add(1, Ordering::Relaxed));
         let (response_tx, response_rx) = oneshot::channel();
         
@@ -642,7 +654,7 @@ pub struct RequestId(u64);
 struct PendingQRInfoRequest {
     base_hash: BlockHash,
     tip_hash: BlockHash,
-    response_sender: oneshot::Sender<QRInfo>,
+    response_sender: oneshot::Sender<Result<QRInfo, CorrelationError>>,
     timestamp: Instant,
 }
 
