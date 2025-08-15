@@ -8,15 +8,11 @@ use crate::account::managed_account_collection::ManagedAccountCollection;
 use crate::account::types::{
     ManagedAccountType, StandardAccountType as ManagedStandardAccountType,
 };
-use crate::account::{Account, AccountType, StandardAccountType};
-use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
+use crate::account::{AccountType, StandardAccountType};
 use crate::gap_limit::GapLimitManager;
-use crate::mnemonic::{Language, Mnemonic};
 use crate::Network;
 use dashcore::hashes::Hash;
-use dashcore::{Address, BlockHash, OutPoint, Script, ScriptBuf, Transaction, TxIn, TxOut, Txid};
-use secp256k1::Secp256k1;
-use std::collections::BTreeMap;
+use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 
 /// Helper to create a test managed account
 fn create_test_managed_account(network: Network, account_type: AccountType) -> ManagedAccount {
@@ -409,8 +405,8 @@ fn test_change_address_routing() {
             internal_addresses,
             ..
         } => {
-            assert!(external_addresses.is_internal == false);
-            assert!(internal_addresses.is_internal == true);
+            assert_eq!(external_addresses.is_internal, false);
+            assert_eq!(internal_addresses.is_internal, true);
         }
         _ => panic!("Expected Standard account type"),
     }

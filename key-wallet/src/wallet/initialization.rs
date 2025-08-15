@@ -18,6 +18,9 @@ use std::collections::BTreeSet;
 /// Set of BIP44 account indices to create
 pub type WalletAccountCreationBIP44Accounts = BTreeSet<u32>;
 
+/// Set of BIP32 account indices to create
+pub type WalletAccountCreationBIP32Accounts = BTreeSet<u32>;
+
 /// Set of CoinJoin account indices to create
 pub type WalletAccountCreationCoinjoinAccounts = BTreeSet<u32>;
 
@@ -37,14 +40,19 @@ pub enum WalletAccountCreationOptions {
     /// # Arguments
     /// * First parameter: Set of BIP44 account indices to create
     /// * Second parameter: Set of CoinJoin account indices to create
-    AllAccounts(WalletAccountCreationBIP44Accounts, WalletAccountCreationCoinjoinAccounts),
+    AllAccounts(
+        WalletAccountCreationBIP44Accounts,
+        WalletAccountCreationBIP32Accounts,
+        WalletAccountCreationCoinjoinAccounts,
+        WalletAccountCreationTopUpAccounts,
+    ),
 
     /// Create only BIP44 accounts (no CoinJoin or special accounts), with optional
     /// identity top-up accounts for specific registrations
     ///
     /// # Arguments
     /// * Set of identity top-up registration indices (can be empty)
-    BIP44AccountsOnly(WalletAccountCreationTopUpAccounts),
+    BIP44AccountsOnly(WalletAccountCreationBIP44Accounts),
 
     /// Create specific accounts with full control over what gets created
     ///

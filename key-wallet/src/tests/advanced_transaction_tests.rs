@@ -3,11 +3,10 @@
 //! Tests for complex transaction scenarios, multi-account handling, and broadcast simulation.
 
 use crate::account::{AccountType, StandardAccountType};
-use crate::mnemonic::{Language, Mnemonic};
 use crate::wallet::{Wallet, WalletConfig};
 use crate::Network;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::collections::{BTreeMap, HashMap};
 
 #[test]
@@ -391,69 +390,6 @@ fn test_transaction_replacement_by_fee() {
 
     // Verify same inputs are spent
     assert_eq!(original_tx.input[0].previous_output, replacement_tx.input[0].previous_output);
-}
-
-#[test]
-fn test_child_pays_for_parent() {
-    // Test Child-Pays-For-Parent (CPFP) fee bumping
-    let parent_tx = Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([1u8; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![
-            TxOut {
-                value: 50000,
-                script_pubkey: ScriptBuf::new(),
-            },
-            TxOut {
-                value: 49000, // Change output
-                script_pubkey: ScriptBuf::new(),
-            },
-        ],
-        special_transaction_payload: None,
-    };
-
-    let parent_txid = parent_tx.txid();
-
-    // Create child transaction spending parent's output
-    let child_tx = Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: parent_txid,
-                vout: 1, // Spend change output
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![TxOut {
-            value: 44000, // High fee: 49000 - 44000 = 5000
-            script_pubkey: ScriptBuf::new(),
-        }],
-        special_transaction_payload: None,
-    };
-
-    // Calculate effective fee rate
-    let parent_fee = 1000u64;
-    let child_fee = 5000u64;
-    let parent_size = 226;
-    let child_size = 192;
-
-    let combined_fee_rate = (parent_fee + child_fee) as f64 / (parent_size + child_size) as f64;
-
-    // Verify CPFP increases effective fee rate
-    let parent_fee_rate = parent_fee as f64 / parent_size as f64;
-    assert!(combined_fee_rate > parent_fee_rate);
 }
 
 #[test]

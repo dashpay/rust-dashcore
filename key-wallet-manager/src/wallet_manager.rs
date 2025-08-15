@@ -113,7 +113,7 @@ impl WalletManager {
 
         // Create default account in the wallet
         let mut wallet_mut = wallet.clone();
-        if wallet_mut.get_account(network, 0).is_none() {
+        if wallet_mut.get_bip44_account(network, 0).is_none() {
             use key_wallet::account::StandardAccountType;
             let account_type = AccountType::Standard {
                 index: 0,
@@ -124,7 +124,7 @@ impl WalletManager {
                 .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
         }
 
-        let account = wallet_mut.get_account(network, 0).ok_or_else(|| {
+        let account = wallet_mut.get_bip44_account(network, 0).ok_or_else(|| {
             WalletError::AccountCreation("Failed to get default account".to_string())
         })?;
 
@@ -172,7 +172,7 @@ impl WalletManager {
 
         // Check if account 0 already exists (from_mnemonic might create it)
         let mut wallet_mut = wallet.clone();
-        if wallet_mut.get_account(network, 0).is_none() {
+        if wallet_mut.get_bip44_account(network, 0).is_none() {
             use key_wallet::account::StandardAccountType;
             let account_type = AccountType::Standard {
                 index: 0,
@@ -279,7 +279,7 @@ impl WalletManager {
             .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
 
         // Get the created account to verify it was created
-        let _account = wallet_mut.get_account(network, index).ok_or_else(|| {
+        let _account = wallet_mut.get_bip44_account(network, index).ok_or_else(|| {
             WalletError::AccountCreation("Failed to get created account".to_string())
         })?;
 
@@ -313,7 +313,7 @@ impl WalletManager {
             .get(wallet_id)
             .ok_or_else(|| WalletError::WalletNotFound(wallet_id.clone()))?;
 
-        Ok(wallet.get_account(self.default_network, index))
+        Ok(wallet.get_bip44_account(self.default_network, index))
     }
 
     /// Get receive address from a specific wallet and account
@@ -333,7 +333,7 @@ impl WalletManager {
 
         // Get the account from the wallet
         let account = wallet
-            .get_account(self.default_network, account_index)
+            .get_bip44_account(self.default_network, account_index)
             .ok_or(WalletError::AccountNotFound(account_index))?;
 
         // For now, we'll just derive the next address index
@@ -382,7 +382,7 @@ impl WalletManager {
 
         // Get the account from the wallet
         let account = wallet
-            .get_account(self.default_network, account_index)
+            .get_bip44_account(self.default_network, account_index)
             .ok_or(WalletError::AccountNotFound(account_index))?;
 
         // For now, we'll just derive the next address index

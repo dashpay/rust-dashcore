@@ -2,9 +2,8 @@
 //!
 //! Tests boundary conditions, error scenarios, and recovery mechanisms.
 
-use crate::account::{Account, AccountType, StandardAccountType};
-use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey};
-use crate::error::{Error, Result};
+use crate::account::{AccountType, StandardAccountType};
+use crate::bip32::{ChildNumber, DerivationPath};
 use crate::mnemonic::{Language, Mnemonic};
 use crate::wallet::{Wallet, WalletConfig};
 use crate::Network;
@@ -172,13 +171,13 @@ fn test_extreme_gap_limit() {
 
     // Test with extremely large gap limit
     let base_path = DerivationPath::from(vec![ChildNumber::from(0)]);
-    let mut pool = AddressPool::new(base_path.clone(), false, 10000, Network::Testnet);
+    let pool = AddressPool::new(base_path.clone(), false, 10000, Network::Testnet);
 
     // Should handle large gap limits without issues
     assert_eq!(pool.gap_limit, 10000);
 
     // Test with zero gap limit
-    let mut zero_gap_pool = AddressPool::new(base_path, false, 0, Network::Testnet);
+    let zero_gap_pool = AddressPool::new(base_path, false, 0, Network::Testnet);
     assert_eq!(zero_gap_pool.gap_limit, 0);
 }
 
@@ -204,7 +203,7 @@ fn test_max_transaction_size() {
 
     // Create transaction with many outputs (stress test)
     let mut outputs = Vec::new();
-    for i in 0..10000 {
+    for _i in 0..10000 {
         outputs.push(TxOut {
             value: 546, // Dust limit
             script_pubkey: ScriptBuf::new(),
@@ -249,7 +248,7 @@ fn test_concurrent_access_simulation() {
     let mut handles = Vec::new();
 
     // Simulate concurrent reads
-    for i in 0..10 {
+    for _i in 0..10 {
         let wallet_clone = Arc::clone(&wallet);
         let handle = thread::spawn(move || {
             let wallet = wallet_clone.lock().unwrap();
@@ -284,7 +283,7 @@ fn test_empty_wallet_operations() {
     let network = Network::Testnet;
 
     // Get account that doesn't exist
-    let account = wallet.get_account(network, 999);
+    let account = wallet.get_bip44_account(network, 999);
     assert!(account.is_none());
 
     // Get balance of empty wallet

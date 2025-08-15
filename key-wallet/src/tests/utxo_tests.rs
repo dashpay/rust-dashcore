@@ -4,9 +4,8 @@
 
 // UTXO types would normally come from wallet module
 // For testing, using mock implementations at the bottom of this file
-use crate::Network;
 use dashcore::hashes::Hash;
-use dashcore::{Address, BlockHash, OutPoint, Script, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use dashcore::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::collections::{BTreeMap, HashMap};
 
 /// Helper to create a test UTXO

@@ -3,7 +3,7 @@
 //! These tests verify that the high-level wallet management functionality
 //! works correctly with the low-level key-wallet primitives.
 
-use key_wallet::{mnemonic::Language, Mnemonic, Network};
+use key_wallet::{mnemonic::Language, Mnemonic, Network, Utxo};
 use key_wallet_manager::WalletManager;
 
 #[test]
@@ -100,7 +100,6 @@ fn test_utxo_management() {
     use dashcore::blockdata::script::ScriptBuf;
     use dashcore::{OutPoint, TxOut, Txid};
     use dashcore_hashes::{sha256d, Hash};
-    use key_wallet_manager::utxo::Utxo;
 
     let mut manager = WalletManager::new(Network::Testnet);
 
@@ -153,7 +152,6 @@ fn test_balance_calculation() {
     use dashcore::blockdata::script::ScriptBuf;
     use dashcore::{OutPoint, TxOut, Txid};
     use dashcore_hashes::{sha256d, Hash};
-    use key_wallet_manager::utxo::Utxo;
 
     let mut manager = WalletManager::new(Network::Testnet);
 

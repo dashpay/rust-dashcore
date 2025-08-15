@@ -13,7 +13,7 @@ use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::{BlockHash, Txid};
 use dashcore_hashes::Hash;
-use key_wallet::{Address, Network};
+use key_wallet::{Address, Network, Utxo};
 
 use crate::compact_filter::{CompactFilter, FilterHeader, FilterType};
 use crate::transaction_handler::{AddressTracker, TransactionHandler, TransactionProcessResult};
@@ -233,7 +233,7 @@ pub struct BlockProcessResult {
     /// Updates for each affected wallet
     pub wallet_updates: BTreeMap<WalletId, WalletUpdate>,
     /// New UTXOs created
-    pub new_utxos: Vec<crate::utxo::Utxo>,
+    pub new_utxos: Vec<Utxo>,
     /// UTXOs that were spent
     pub spent_utxos: Vec<dashcore::OutPoint>,
     /// New addresses needed per wallet/account

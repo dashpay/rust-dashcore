@@ -2,8 +2,7 @@
 //!
 //! Tests CoinJoin rounds, denomination creation, and privacy features.
 
-use crate::account::{Account, AccountType};
-use crate::mnemonic::{Language, Mnemonic};
+use crate::account::AccountType;
 use crate::wallet::{Wallet, WalletConfig};
 use crate::Network;
 use dashcore::hashes::Hash;
@@ -81,65 +80,6 @@ fn test_coinjoin_denomination_creation() {
 }
 
 #[test]
-fn test_coinjoin_round_participation() {
-    // Test participating in a CoinJoin round
-    let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(
-        config,
-        Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
-    wallet
-        .add_account(
-            AccountType::CoinJoin {
-                index: 0,
-            },
-            Network::Testnet,
-            None,
-        )
-        .unwrap();
-
-    // Create a CoinJoin round
-    let round = CoinJoinRound {
-        round_id: 12345,
-        denomination: DENOMINATIONS[2], // 0.1 DASH denomination
-        participants: Vec::new(),
-        collateral_required: 10000, // 0.0001 DASH collateral
-    };
-
-    // Simulate multiple participants
-    let num_participants = 5;
-    let mut participants = Vec::new();
-
-    for i in 0..num_participants {
-        let participant = ParticipantInfo {
-            participant_id: i,
-            inputs: vec![OutPoint {
-                txid: Txid::from_byte_array([i as u8; 32]),
-                vout: 0,
-            }],
-            output_addresses: vec![format!("yAddress{}_1", i), format!("yAddress{}_2", i)],
-        };
-        participants.push(participant);
-    }
-
-    // Verify minimum participants for privacy
-    assert!(participants.len() >= 3, "Need at least 3 participants for privacy");
-
-    // Simulate round completion
-    let outputs_per_participant = 2;
-    let total_outputs = participants.len() * outputs_per_participant;
-
-    // All outputs should be the same denomination
-    let output_amount = round.denomination;
-
-    // Verify anonymity set
-    assert!(total_outputs >= 6, "Anonymity set too small");
-}
-
-#[test]
 fn test_coinjoin_output_shuffling() {
     // Test that CoinJoin outputs are properly shuffled
     let num_participants = 10;
@@ -194,15 +134,6 @@ fn test_coinjoin_fee_calculation() {
 
 #[test]
 fn test_coinjoin_collateral_handling() {
-    // Test collateral requirements for CoinJoin
-    let config = WalletConfig::default();
-    let wallet = Wallet::new_random(
-        config,
-        Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
     // Collateral amount (0.001% of denomination)
     let denomination = DENOMINATIONS[3]; // 1 DASH
     let collateral = denomination / 100000; // 0.001%

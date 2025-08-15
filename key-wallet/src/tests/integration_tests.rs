@@ -7,8 +7,7 @@ use crate::mnemonic::{Language, Mnemonic};
 use crate::wallet::{Wallet, WalletConfig};
 use crate::Network;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
-use std::collections::BTreeMap;
+use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 
 #[test]
 fn test_full_wallet_lifecycle() {
@@ -199,53 +198,17 @@ fn test_multi_network_wallet_management() {
 #[test]
 fn test_wallet_with_all_account_types() {
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(
+    let wallet = Wallet::new_random(
         config,
         Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
+        crate::wallet::initialization::WalletAccountCreationOptions::AllAccounts(
+            [0, 1].into(),
+            [0].into(),
+            [0, 1].into(),
+            [0, 1].into(),
+        ),
     )
     .unwrap();
-
-    // Add one of each account type
-    let account_types = vec![
-        AccountType::Standard {
-            index: 0,
-            standard_account_type: StandardAccountType::BIP44Account,
-        },
-        AccountType::Standard {
-            index: 0,
-            standard_account_type: StandardAccountType::BIP32Account,
-        },
-        AccountType::Standard {
-            index: 1,
-            standard_account_type: StandardAccountType::BIP44Account,
-        },
-        AccountType::CoinJoin {
-            index: 0,
-        },
-        AccountType::CoinJoin {
-            index: 1,
-        },
-        AccountType::IdentityRegistration,
-        AccountType::IdentityTopUp {
-            registration_index: 0,
-        },
-        AccountType::IdentityTopUp {
-            registration_index: 1,
-        },
-        AccountType::IdentityTopUpNotBoundToIdentity,
-        AccountType::IdentityInvitation,
-        AccountType::ProviderVotingKeys,
-        AccountType::ProviderOwnerKeys,
-        AccountType::ProviderOperatorKeys,
-        AccountType::ProviderPlatformKeys,
-    ];
-
-    for (i, account_type) in account_types.iter().enumerate() {
-        let index = account_type.index().unwrap_or(0);
-        // Try to add, OK if already exists (e.g., standard account 0)
-        wallet.add_account(account_type.clone(), Network::Testnet, None).ok();
-    }
 
     // Verify all accounts were added
     let collection = wallet.accounts.get(&Network::Testnet).unwrap();
@@ -625,7 +588,7 @@ fn test_concurrent_wallet_operations() {
                 // Get account
                 thread::spawn(move || {
                     let wallet = wallet_clone.lock().unwrap();
-                    let _account = wallet.get_account(Network::Testnet, i);
+                    let _account = wallet.get_bip44_account(Network::Testnet, i);
                 })
             }
         };

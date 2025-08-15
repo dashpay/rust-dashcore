@@ -34,9 +34,9 @@ mod tests {
         .unwrap();
 
         // Verify wallet has a default account
-        assert!(wallet.get_account(Network::Testnet, 0).is_some());
+        assert!(wallet.get_bip44_account(Network::Testnet, 0).is_some());
 
-        let account = wallet.get_account(Network::Testnet, 0).unwrap();
+        let account = wallet.get_bip44_account(Network::Testnet, 0).unwrap();
         match &account.account_type {
             AccountType::Standard {
                 index,
@@ -79,13 +79,13 @@ mod tests {
             .unwrap();
 
         // Verify accounts exist
-        assert!(wallet.get_account(Network::Testnet, 0).is_some());
-        assert!(wallet.get_account(Network::Testnet, 1).is_some());
-        assert!(wallet.get_account(Network::Testnet, 2).is_some());
+        assert!(wallet.get_bip44_account(Network::Testnet, 0).is_some());
+        assert!(wallet.get_bip44_account(Network::Testnet, 1).is_some());
+        assert!(wallet.get_bip44_account(Network::Testnet, 2).is_some());
 
         // Verify account indices
         for i in 0..3 {
-            let account = wallet.get_account(Network::Testnet, i).unwrap();
+            let account = wallet.get_bip44_account(Network::Testnet, i).unwrap();
             match &account.account_type {
                 AccountType::Standard {
                     index,

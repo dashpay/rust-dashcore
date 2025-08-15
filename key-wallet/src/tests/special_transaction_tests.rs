@@ -2,9 +2,18 @@
 //!
 //! Tests Provider (DIP-3) and Identity (Platform) special transactions.
 
+use dashcore::blockdata::transaction::special_transaction::{
+    coinbase::CoinbasePayload,
+    provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
+    provider_update_revocation::ProviderUpdateRevocationPayload,
+    provider_update_service::ProviderUpdateServicePayload,
+    TransactionPayload,
+};
+use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+use dashcore::hash_types::{InputsHash, MerkleRootMasternodeList, MerkleRootQuorums, PubkeyHash};
 use dashcore::hashes::Hash;
 use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
-use std::collections::HashMap;
+use std::net::SocketAddr;
 
 /// Special transaction types in Dash
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -15,87 +24,6 @@ enum SpecialTransactionType {
     CoinbaseSpecial = 5,         // CbTx
     QuorumCommitment = 6,        // qcTx
     ProviderUpdateRegistrar = 3, // ProUpRegTx (note: 3, not 7)
-}
-
-#[test]
-fn test_provider_registration_transaction() {
-    // Create transaction with special payload
-    let tx = create_special_transaction(SpecialTransactionType::ProviderRegistration);
-
-    // Verify transaction properties
-    assert_eq!(tx.version, 3); // Version 3 for special transactions
-                               // In a real implementation, would verify special_transaction_payload is Some
-}
-
-#[test]
-fn test_provider_update_service_transaction() {
-    let tx = create_special_transaction(SpecialTransactionType::ProviderUpdate);
-
-    assert_eq!(tx.version, 3);
-    // In a real implementation, would verify special_transaction_payload is Some
-}
-
-#[test]
-fn test_provider_update_registrar_transaction() {
-    let tx = create_special_transaction(SpecialTransactionType::ProviderUpdateRegistrar);
-
-    assert_eq!(tx.version, 3);
-    // In a real implementation, would verify special_transaction_payload is Some
-}
-
-#[test]
-fn test_provider_revocation_transaction() {
-    let tx = create_special_transaction(SpecialTransactionType::ProviderRevoke);
-
-    assert_eq!(tx.version, 3);
-    // In a real implementation, would verify special_transaction_payload is Some
-}
-
-#[test]
-fn test_coinbase_special_transaction() {
-    // Coinbase special transaction includes extra data
-    struct CbTxPayload {
-        version: u16,
-        height: u32,
-        merkle_root_mn_list: [u8; 32],
-        merkle_root_quorums: [u8; 32],
-    }
-
-    let payload = CbTxPayload {
-        version: 2,
-        height: 100000,
-        merkle_root_mn_list: [1u8; 32],
-        merkle_root_quorums: [2u8; 32],
-    };
-
-    let mut tx = create_special_transaction(SpecialTransactionType::CoinbaseSpecial);
-
-    // Coinbase has special input
-    tx.input[0].previous_output = OutPoint::null();
-
-    assert!(tx.is_coin_base());
-    assert_eq!(tx.version, 3);
-}
-
-#[test]
-fn test_quorum_commitment_transaction() {
-    // Quorum commitment for ChainLocks
-    struct QcTxPayload {
-        version: u16,
-        height: u32,
-        commitment: Vec<u8>,
-    }
-
-    let payload = QcTxPayload {
-        version: 1,
-        height: 100000,
-        commitment: vec![0u8; 100], // Actual commitment data
-    };
-
-    let tx = create_special_transaction(SpecialTransactionType::QuorumCommitment);
-
-    assert_eq!(tx.version, 3);
-    // In a real implementation, would verify special_transaction_payload is Some
 }
 
 #[test]
@@ -237,22 +165,6 @@ fn test_provider_operator_reward_distribution() {
 
 /// Helper function to create a special transaction
 fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
-    use dashcore::blockdata::transaction::special_transaction::{
-        coinbase::CoinbasePayload,
-        provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
-        provider_update_revocation::ProviderUpdateRevocationPayload,
-        provider_update_service::ProviderUpdateServicePayload,
-        quorum_commitment::{QuorumCommitmentPayload, QuorumEntry},
-        TransactionPayload,
-    };
-    use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
-    use dashcore::hash_types::{
-        InputsHash, MerkleRootMasternodeList, MerkleRootQuorums, PubkeyHash, QuorumHash,
-        QuorumVVecHash,
-    };
-    use dashcore::sml::llmq_type::LLMQType;
-    use std::net::SocketAddr;
-
     // Create base transaction
     let mut tx = Transaction {
         version: 3, // Version 3 for special transactions

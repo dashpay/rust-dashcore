@@ -55,8 +55,8 @@ mod tests {
         .unwrap();
 
         // Verify both wallets have the same account structure
-        let account1 = wallet1.get_account(Network::Testnet, 0).unwrap();
-        let account2 = wallet2.get_account(Network::Testnet, 0).unwrap();
+        let account1 = wallet1.get_bip44_account(Network::Testnet, 0).unwrap();
+        let account2 = wallet2.get_bip44_account(Network::Testnet, 0).unwrap();
 
         // Should have same extended public keys
         assert_eq!(account1.extended_public_key(), account2.extended_public_key());
@@ -110,15 +110,15 @@ mod tests {
             .unwrap();
 
         // Verify accounts exist
-        assert!(wallet.get_account(Network::Testnet, 0).is_some());
-        assert!(wallet.get_account(Network::Testnet, 1).is_some());
+        assert!(wallet.get_bip44_account(Network::Testnet, 0).is_some());
+        assert!(wallet.get_bip44_account(Network::Testnet, 1).is_some());
         assert!(wallet.get_coinjoin_account(Network::Testnet, 2).is_some());
 
         // Verify account types
-        let account0 = wallet.get_account(Network::Testnet, 0).unwrap();
+        let account0 = wallet.get_bip44_account(Network::Testnet, 0).unwrap();
         assert!(matches!(account0.account_type, AccountType::Standard { .. }));
 
-        let account1 = wallet.get_account(Network::Testnet, 1).unwrap();
+        let account1 = wallet.get_bip44_account(Network::Testnet, 1).unwrap();
         assert!(matches!(account1.account_type, AccountType::Standard { .. }));
 
         let account2 = wallet.get_coinjoin_account(Network::Testnet, 2).unwrap();

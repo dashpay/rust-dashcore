@@ -4,6 +4,8 @@
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+#[cfg(feature = "bincode")]
+use bincode_derive::{Decode, Encode};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +14,7 @@ use crate::account::Account;
 /// Collection of accounts organized by type
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct AccountCollection {
     /// Standard BIP44 accounts by index
     pub standard_bip44_accounts: BTreeMap<u32, Account>,
@@ -103,49 +106,6 @@ impl AccountCollection {
                 self.provider_platform_keys = Some(account);
             }
         }
-    }
-
-    /// Get an account by index (tries standard BIP44, BIP32, then CoinJoin)
-    pub fn get(&self, index: u32) -> Option<&Account> {
-        self.standard_bip44_accounts
-            .get(&index)
-            .or_else(|| self.standard_bip32_accounts.get(&index))
-            .or_else(|| self.coinjoin_accounts.get(&index))
-            .or_else(|| self.identity_topup.get(&index))
-    }
-
-    /// Get a mutable account by index
-    pub fn get_mut(&mut self, index: u32) -> Option<&mut Account> {
-        if let Some(account) = self.standard_bip44_accounts.get_mut(&index) {
-            return Some(account);
-        }
-        if let Some(account) = self.standard_bip32_accounts.get_mut(&index) {
-            return Some(account);
-        }
-        if let Some(account) = self.coinjoin_accounts.get_mut(&index) {
-            return Some(account);
-        }
-        if let Some(account) = self.identity_topup.get_mut(&index) {
-            return Some(account);
-        }
-        None
-    }
-
-    /// Remove an account from the collection
-    pub fn remove(&mut self, index: u32) -> Option<Account> {
-        self.standard_bip44_accounts
-            .remove(&index)
-            .or_else(|| self.standard_bip32_accounts.remove(&index))
-            .or_else(|| self.coinjoin_accounts.remove(&index))
-            .or_else(|| self.identity_topup.remove(&index))
-    }
-
-    /// Check if an account exists
-    pub fn contains_key(&self, index: u32) -> bool {
-        self.standard_bip44_accounts.contains_key(&index)
-            || self.standard_bip32_accounts.contains_key(&index)
-            || self.coinjoin_accounts.contains_key(&index)
-            || self.identity_topup.contains_key(&index)
     }
 
     /// Check if a specific account type already exists in the collection

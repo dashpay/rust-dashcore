@@ -11,7 +11,7 @@ license = "CC0-1.0"
 [features]
 default = ["std"]
 std = ["dashcore_hashes/std", "secp256k1/std", "bip39/std", "getrandom", "dash-network/std", "rand"]
-serde = ["dep:serde", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde", "dashcore/serde"]
+serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde", "dashcore/serde"]
 bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dash-network/bincode", "dashcore_hashes/bincode", "dashcore/bincode"]
 bip38 = ["scrypt", "aes", "sha2", "bs58", "rand"]
 
@@ -36,8 +36,8 @@ rand = { version = "0.8", default-features = false, features = ["std", "std_rng"
 bincode = { version = "=2.0.0-rc.3", optional = true }
 bincode_derive = { version = "=2.0.0-rc.3", optional = true }
 base64 = { version = "0.22", optional = true }
+serde_json = { version = "1.0", optional = true }
 
 [dev-dependencies]
 hex = "0.4"
-serde_json = "1.0"
 key-wallet = { path = ".", features = ["bip38", "serde", "bincode"] }

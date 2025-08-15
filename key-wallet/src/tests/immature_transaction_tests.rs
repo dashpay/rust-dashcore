@@ -7,7 +7,7 @@ use crate::wallet::immature_transaction::{
 };
 use alloc::vec::Vec;
 use dashcore::hashes::Hash;
-use dashcore::{Address, BlockHash, OutPoint, Script, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut};
 
 /// Helper to create a coinbase transaction
 fn create_test_coinbase(height: u32, value: u64) -> Transaction {

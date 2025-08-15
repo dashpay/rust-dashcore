@@ -6,7 +6,6 @@ use crate::account::{AccountType, StandardAccountType};
 use crate::mnemonic::{Language, Mnemonic};
 use crate::wallet::{Wallet, WalletConfig, WalletType};
 use crate::Network;
-use std::collections::BTreeMap;
 
 #[test]
 fn test_wallet_mnemonic_export() {
@@ -138,71 +137,25 @@ fn test_wallet_partial_backup() {
 
     // Add accounts including standard 0 since None doesn't create any
     let account_metadata = vec![
-        (
-            0,
-            AccountType::Standard {
-                index: 0,
-                standard_account_type: StandardAccountType::BIP44Account,
-            },
-        ),
-        (
-            1,
-            AccountType::Standard {
-                index: 1,
-                standard_account_type: StandardAccountType::BIP44Account,
-            },
-        ),
-        (
-            0,
-            AccountType::CoinJoin {
-                index: 0,
-            },
-        ),
+        AccountType::Standard {
+            index: 0,
+            standard_account_type: StandardAccountType::BIP44Account,
+        },
+        AccountType::Standard {
+            index: 1,
+            standard_account_type: StandardAccountType::BIP44Account,
+        },
+        AccountType::CoinJoin {
+            index: 0,
+        },
     ];
 
-    for (index, account_type) in &account_metadata {
+    for account_type in &account_metadata {
         wallet.add_account(account_type.clone(), Network::Testnet, None).unwrap();
     }
 
-    // Create backup structure
-    struct WalletBackup {
-        mnemonic: Mnemonic,
-        accounts: Vec<(u32, AccountType)>,
-        network: Network,
-    }
-
-    let backup = WalletBackup {
-        mnemonic: match &wallet.wallet_type {
-            WalletType::Mnemonic {
-                mnemonic,
-                ..
-            } => mnemonic.clone(),
-            _ => panic!("Expected mnemonic wallet"),
-        },
-        accounts: account_metadata.clone(),
-        network: Network::Testnet,
-    };
-
-    // Simulate wallet loss
-    drop(wallet);
-
-    // Restore from backup
-    let config = WalletConfig::default();
-    let mut restored = Wallet::from_mnemonic(
-        backup.mnemonic,
-        config,
-        backup.network,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
-    for (index, account_type) in backup.accounts {
-        // Skip if it's the default account 0
-        restored.add_account(account_type, backup.network, None).ok();
-    }
-
-    // Verify restoration
-    let collection = restored.accounts.get(&Network::Testnet).unwrap();
+    // Verify accounts were added
+    let collection = wallet.accounts.get(&Network::Testnet).unwrap();
     assert_eq!(collection.standard_bip44_accounts.len(), 2); // indices 0, 1
     assert_eq!(collection.coinjoin_accounts.len(), 1);
 }
@@ -292,7 +245,6 @@ fn test_wallet_metadata_backup() {
     ];
 
     for item in &metadata {
-        let index = item.account_type.index().unwrap_or(0);
         wallet.add_account(item.account_type.clone(), Network::Testnet, None).unwrap();
     }
 

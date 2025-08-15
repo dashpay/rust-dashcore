@@ -6,7 +6,7 @@
 // address pool integration. Simplified for now until the API stabilizes.
 
 use dashcore::hashes::Hash;
-use dashcore::{Address, OutPoint, Script, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use dashcore::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 
 /// Helper to create a simple P2PKH transaction
 fn create_p2pkh_transaction(address: &Address) -> Transaction {

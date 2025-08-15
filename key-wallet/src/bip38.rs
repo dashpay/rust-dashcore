@@ -27,7 +27,7 @@ const BIP38_PREFIX_NON_EC: [u8; 2] = [0x01, 0x42];
 const BIP38_PREFIX_EC: [u8; 2] = [0x01, 0x43];
 const BIP38_FLAG_COMPRESSED: u8 = 0x20;
 const BIP38_FLAG_EC_LOT_SEQUENCE: u8 = 0x04;
-const BIP38_FLAG_EC_INVALID: u8 = 0x10;
+const _BIP38_FLAG_EC_INVALID: u8 = 0x10;
 
 // Scrypt parameters
 const SCRYPT_N: u32 = 16384; // 2^14
@@ -540,15 +540,15 @@ mod tests {
     use super::*;
 
     // Test vectors from BIP38 specification
-    const TEST_VECTOR_1_ENCRYPTED: &str =
+    const _TEST_VECTOR_1_ENCRYPTED: &str =
         "6PRVWUbkzzsbcVac2qwfssoUJAN1Xhrg6bNk8J7Nzm5H7kxEbn2Nh2ZoGg";
-    const TEST_VECTOR_1_PASSWORD: &str = "TestingOneTwoThree";
-    const TEST_VECTOR_1_WIF: &str = "5KN7MzqK5wt2TP1fQCYyHBtDrXdJuXbUzm4A9rKAteGu3Qi5CVR";
+    const _TEST_VECTOR_1_PASSWORD: &str = "TestingOneTwoThree";
+    const _TEST_VECTOR_1_WIF: &str = "5KN7MzqK5wt2TP1fQCYyHBtDrXdJuXbUzm4A9rKAteGu3Qi5CVR";
 
-    const TEST_VECTOR_2_ENCRYPTED: &str =
+    const _TEST_VECTOR_2_ENCRYPTED: &str =
         "6PRNFFkZc2NZ6dJqFfhRoFNMR9Lnyj7dYGrzdgXXVMXcxoKTePPX1dWByq";
-    const TEST_VECTOR_2_PASSWORD: &str = "Satoshi";
-    const TEST_VECTOR_2_WIF: &str = "5HtasZ6ofTHP6HCwTqTkLDuLQisYPah7aUnSKfC7h4hMUVw2gi5";
+    const _TEST_VECTOR_2_PASSWORD: &str = "Satoshi";
+    const _TEST_VECTOR_2_WIF: &str = "5HtasZ6ofTHP6HCwTqTkLDuLQisYPah7aUnSKfC7h4hMUVw2gi5";
 
     #[test]
     #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]

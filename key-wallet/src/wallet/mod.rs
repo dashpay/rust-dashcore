@@ -4,6 +4,7 @@
 //! multiple accounts, seed management, and transaction coordination.
 
 pub mod accounts;
+pub mod backup;
 pub mod balance;
 #[cfg(feature = "bip38")]
 pub mod bip38;
@@ -26,6 +27,8 @@ use crate::seed::Seed;
 use crate::Network;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+#[cfg(feature = "bincode")]
+use bincode_derive::{Decode, Encode};
 use core::fmt;
 use dashcore_hashes::{sha256, Hash};
 #[cfg(feature = "serde")]
@@ -34,6 +37,7 @@ use serde::{Deserialize, Serialize};
 /// Type of wallet based on how it was created
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum WalletType {
     /// Standard mnemonic wallet without passphrase
     Mnemonic {
@@ -66,6 +70,7 @@ pub enum WalletType {
 /// in ManagedWalletInfo.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct Wallet {
     /// Unique wallet ID (SHA256 hash of root public key)
     pub wallet_id: [u8; 32],
@@ -110,7 +115,7 @@ impl fmt::Display for Wallet {
 
         write!(
             f,
-            "Wallet [{}...] ({}) - {} accounts, {} addresses",
+            "Wallet [{}...] ({}) - {} accounts",
             id_hex,
             if self.is_watch_only() {
                 "watch-only"
@@ -118,7 +123,6 @@ impl fmt::Display for Wallet {
                 "full"
             },
             total_accounts,
-            self.all_addresses().len()
         )
     }
 }
@@ -165,7 +169,7 @@ mod tests {
 
         // Default creates multiple accounts
         assert!(wallet.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0) >= 2);
-        let default_account = wallet.default_account(Network::Testnet).unwrap();
+        let default_account = wallet.get_bip44_account(Network::Testnet, 0).unwrap();
         match &default_account.account_type {
             AccountType::Standard {
                 index,
@@ -188,7 +192,7 @@ mod tests {
         let mut wallet = Wallet::new_random(
             config,
             Network::Testnet,
-            initialization::WalletAccountCreationOptions::BIP44AccountsOnly(BTreeSet::new()),
+            initialization::WalletAccountCreationOptions::BIP44AccountsOnly(bip44_set),
         )
         .unwrap();
 
@@ -234,7 +238,7 @@ mod tests {
         .unwrap();
 
         // Verify we have a default account
-        assert!(wallet.get_account(Network::Testnet, 0).is_some());
+        assert!(wallet.get_bip44_account(Network::Testnet, 0).is_some());
 
         // Address generation and tracking would happen through ManagedAccount
         // which is not directly accessible from Wallet in this refactored version
@@ -242,7 +246,6 @@ mod tests {
 
     #[test]
     fn test_wallet_config() {
-        use std::collections::BTreeSet;
         let mut config = WalletConfig::default();
         config.account_default_external_gap_limit = 30;
         config.account_default_internal_gap_limit = 15;
@@ -252,7 +255,7 @@ mod tests {
         let wallet = Wallet::new_random(
             config,
             Network::Testnet,
-            initialization::WalletAccountCreationOptions::BIP44AccountsOnly(BTreeSet::new()),
+            initialization::WalletAccountCreationOptions::BIP44AccountsOnly([0].into()),
         )
         .unwrap();
 
@@ -441,7 +444,7 @@ mod tests {
         assert_eq!(watch_only.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 0);
 
         // But we can add accounts manually by providing their xpubs
-        let account = wallet.get_account(Network::Testnet, 0).unwrap();
+        let account = wallet.get_bip44_account(Network::Testnet, 0).unwrap();
         let account_xpub = account.extended_public_key();
 
         watch_only
@@ -457,7 +460,7 @@ mod tests {
 
         // Now the watch-only wallet has the account
         assert_eq!(watch_only.accounts.get(&Network::Testnet).map(|c| c.count()).unwrap_or(0), 1);
-        let watch_only_account = watch_only.get_account(Network::Testnet, 0).unwrap();
+        let watch_only_account = watch_only.get_bip44_account(Network::Testnet, 0).unwrap();
         assert_eq!(watch_only_account.extended_public_key(), account_xpub);
     }
 
@@ -511,12 +514,11 @@ mod tests {
     // ✓ Test account retrieval and management
     #[test]
     fn test_account_management() {
-        use std::collections::BTreeSet;
         let config = WalletConfig::default();
         let mut wallet = Wallet::new_random(
             config,
             Network::Testnet,
-            initialization::WalletAccountCreationOptions::BIP44AccountsOnly(BTreeSet::new()),
+            initialization::WalletAccountCreationOptions::BIP44AccountsOnly([0].into()),
         )
         .unwrap();
 
@@ -533,13 +535,13 @@ mod tests {
             .unwrap();
 
         // Test getting accounts
-        assert!(wallet.get_account(Network::Testnet, 0).is_some());
-        assert!(wallet.get_account(Network::Testnet, 1).is_some());
-        assert!(wallet.get_account(Network::Testnet, 2).is_none());
+        assert!(wallet.get_bip44_account(Network::Testnet, 0).is_some());
+        assert!(wallet.get_bip44_account(Network::Testnet, 1).is_some());
+        assert!(wallet.get_bip44_account(Network::Testnet, 2).is_none());
 
         // Test mutable access
-        assert!(wallet.get_account_mut(Network::Testnet, 0).is_some());
-        assert!(wallet.get_account_mut(Network::Testnet, 2).is_none());
+        assert!(wallet.get_bip44_account_mut(Network::Testnet, 0).is_some());
+        assert!(wallet.get_bip44_account_mut(Network::Testnet, 2).is_none());
 
         // Test account count
         assert_eq!(wallet.account_count(), 2);

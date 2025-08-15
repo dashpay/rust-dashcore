@@ -5,10 +5,8 @@
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
 use crate::derivation::HDWallet;
-use crate::error::Result;
 use crate::mnemonic::{Language, Mnemonic};
 use crate::Network;
-use dashcore::hashes::{sha256, Hash};
 use secp256k1::Secp256k1;
 
 /// Helper function to create a test wallet with deterministic mnemonic
@@ -397,9 +395,38 @@ fn test_account_network_consistency() {
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
-    // Account should know its network
-    // Note: Account struct doesn't store network directly but uses it for address generation
-    // This would be tested through address generation
+    // Verify account stores the correct network
+    assert_eq!(account.network, network);
+
+    // Test that wrong network would be rejected when deriving addresses
+    // The account should generate addresses for the network it was created with
+    let secp = Secp256k1::new();
+
+    // Derive a child key for address generation (m/44'/1'/0'/0/0 for first receive address)
+    let receive_path = [
+        crate::bip32::ChildNumber::from_normal_idx(0).unwrap(), // receive chain
+        crate::bip32::ChildNumber::from_normal_idx(0).unwrap(), // first address
+    ];
+
+    let address_xpub = account.account_xpub.derive_pub(&secp, &receive_path).unwrap();
+    let pubkey = dashcore::PublicKey::from_slice(&address_xpub.public_key.serialize()).unwrap();
+    let address = dashcore::Address::p2pkh(&pubkey, network.into());
+
+    // Verify the address is for the correct network
+    assert!(
+        address.to_string().starts_with('y') || address.to_string().starts_with('8'),
+        "Testnet addresses should start with 'y' or '8'"
+    );
+
+    // Test creating account with different network
+    let dash_mainnet = Network::Dash;
+    let mainnet_account =
+        Account::from_xpriv(Some([0u8; 32]), account_type.clone(), account_key, dash_mainnet)
+            .unwrap();
+
+    // Verify the mainnet account has the correct network
+    assert_eq!(mainnet_account.network, dash_mainnet);
+    assert_ne!(account.network, mainnet_account.network);
 }
 
 #[test]

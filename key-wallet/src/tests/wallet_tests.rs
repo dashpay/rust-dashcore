@@ -3,21 +3,16 @@
 //! Tests wallet creation, initialization, recovery, and management.
 
 use crate::account::{AccountType, StandardAccountType};
-use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
 use crate::mnemonic::{Language, Mnemonic};
 use crate::seed::Seed;
-use crate::wallet::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
+use crate::wallet::root_extended_keys::RootExtendedPrivKey;
 use crate::wallet::{Wallet, WalletConfig, WalletType};
 use crate::Network;
 use alloc::string::ToString;
-use dashcore::hashes::{sha256, Hash};
 
 /// Known test mnemonic for deterministic testing
 const TEST_MNEMONIC: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-
-/// Another test mnemonic for recovery testing
-const TEST_MNEMONIC_2: &str = "upper renew that grow pelican pave subway relief describe enforce suit hedgehog blossom dose swallow";
 
 #[test]
 fn test_wallet_creation_random() {
@@ -158,7 +153,7 @@ fn test_wallet_creation_watch_only() {
 
     // Verify public key is stored
     match &wallet.wallet_type {
-        WalletType::WatchOnly(wallet_key) => {
+        WalletType::WatchOnly(_) => {
             // Check that it's a watch-only wallet type
             assert!(wallet.is_watch_only());
         }
