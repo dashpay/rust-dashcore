@@ -223,20 +223,38 @@ impl ChainLockValidator {
         // Get the masternode list at or before the height
         let mn_list_height = engine.masternode_lists.range(..=height).rev().next().map(|(h, _)| *h);
 
-        if let Some(list_height) = mn_list_height {
-            if let Some(mn_list) = engine.masternode_lists.get(&list_height) {
-                // Find the chain lock quorum
-                if let Some(quorums) = mn_list.quorums.get(&self.config.required_llmq_type) {
-                    // Get the most recent quorum
-                    if let Some((quorum_hash, entry)) = quorums.iter().next() {
-                        // Get public key from the quorum entry
-                        return Ok(Some((*quorum_hash, entry.quorum_entry.quorum_public_key)));
-                    }
-                }
-            }
-        }
+        let list_height = mn_list_height.ok_or_else(|| {
+            SyncError::Validation(format!(
+                "No masternode list found at or before height {}",
+                height
+            ))
+        })?;
 
-        Ok(None)
+        let mn_list = engine.masternode_lists.get(&list_height).ok_or_else(|| {
+            SyncError::Validation(format!(
+                "Masternode list not found at height {}",
+                list_height
+            ))
+        })?;
+
+        // Find the chain lock quorum
+        let quorums = mn_list.quorums.get(&self.config.required_llmq_type).ok_or_else(|| {
+            SyncError::Validation(format!(
+                "No quorums found for LLMQ type {:?} at masternode list height {}",
+                self.config.required_llmq_type, list_height
+            ))
+        })?;
+
+        // Get the most recent quorum
+        let (quorum_hash, entry) = quorums.iter().next().ok_or_else(|| {
+            SyncError::Validation(format!(
+                "No quorum entries found for LLMQ type {:?}",
+                self.config.required_llmq_type
+            ))
+        })?;
+
+        // Get public key from the quorum entry
+        Ok(Some((*quorum_hash, entry.quorum_entry.quorum_public_key)))
     }
 
     /// Verify chain lock signature using the engine's built-in verification
