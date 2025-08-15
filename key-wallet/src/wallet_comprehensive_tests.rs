@@ -141,6 +141,7 @@ mod tests {
             "".to_string(),
             config.clone(),
             Network::Testnet,
+            Vec::new(),
         )
         .unwrap();
 
@@ -150,6 +151,7 @@ mod tests {
             "TREZOR".to_string(),
             config,
             Network::Testnet,
+            Vec::new(),
         )
         .unwrap();
 

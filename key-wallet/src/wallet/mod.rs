@@ -407,13 +407,19 @@ mod tests {
             "".to_string(),
             config.clone(),
             network,
+            Vec::new(),
         )
         .unwrap();
 
         // Create wallet with passphrase "TREZOR"
-        let wallet2 =
-            Wallet::from_mnemonic_with_passphrase(mnemonic, "TREZOR".to_string(), config, network)
-                .unwrap();
+        let wallet2 = Wallet::from_mnemonic_with_passphrase(
+            mnemonic,
+            "TREZOR".to_string(),
+            config,
+            network,
+            Vec::new(),
+        )
+        .unwrap();
 
         // Different passphrases should generate different account keys
         let xpub1 = wallet1

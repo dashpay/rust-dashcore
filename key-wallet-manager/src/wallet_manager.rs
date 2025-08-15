@@ -10,8 +10,7 @@ use alloc::vec::Vec;
 
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::PublicKey;
-use dashcore::{BlockHash, Txid};
-use key_wallet::account::ManagedAccount;
+use dashcore::Txid;
 use key_wallet::wallet::managed_wallet_info::{
     ManagedWalletInfo, TransactionRecord, Utxo as WalletUtxo,
 };
@@ -93,6 +92,7 @@ impl WalletManager {
             passphrase.to_string(),
             WalletConfig::default(),
             network,
+            Vec::new(), // Empty account types list for backward compatibility
         )
         .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 

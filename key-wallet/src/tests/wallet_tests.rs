@@ -152,6 +152,7 @@ fn test_wallet_creation_with_passphrase() {
         passphrase.to_string(),
         config,
         Network::Testnet,
+        Vec::new(),
     )
     .unwrap();
 

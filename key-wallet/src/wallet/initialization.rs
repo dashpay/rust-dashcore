@@ -140,20 +140,44 @@ impl Wallet {
         passphrase: String,
         config: WalletConfig,
         network: Network,
+        add_account_types: Vec<AccountType>,
     ) -> Result<Self> {
         let seed = mnemonic.to_seed(&passphrase);
         let root_extended_private_key = RootExtendedPrivKey::new_master(&seed)?;
         let root_extended_public_key = root_extended_private_key.to_root_extended_pub_key();
 
         // Store only mnemonic and public key, not the passphrase or private key
-        Self::from_wallet_type(
+        let mut wallet = Self::from_wallet_type(
             WalletType::MnemonicWithPassphrase {
                 mnemonic,
                 root_extended_public_key,
             },
             config,
             network,
-        )
+        )?;
+
+        // Add requested account types
+        for account_type in add_account_types {
+            // Get the account index from the account type
+            let account_index = match &account_type {
+                AccountType::Standard {
+                    index,
+                    ..
+                } => *index,
+                AccountType::CoinJoin {
+                    index,
+                } => *index,
+                AccountType::IdentityTopUp {
+                    registration_index,
+                } => *registration_index,
+                // For other types without an index, use 0
+                _ => 0,
+            };
+
+            wallet.add_account(account_index, account_type, network)?;
+        }
+
+        Ok(wallet)
     }
 
     /// Create a watch-only wallet from extended public key

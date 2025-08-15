@@ -267,6 +267,7 @@ fn test_passphrase_edge_cases() {
         "".to_string(),
         config.clone(),
         Network::Testnet,
+        Vec::new(),
     )
     .unwrap();
 
@@ -277,6 +278,7 @@ fn test_passphrase_edge_cases() {
         long_passphrase,
         config.clone(),
         Network::Testnet,
+        Vec::new(),
     )
     .unwrap();
 
@@ -287,6 +289,7 @@ fn test_passphrase_edge_cases() {
         special_passphrase.to_string(),
         config,
         Network::Testnet,
+        Vec::new(),
     )
     .unwrap();
 

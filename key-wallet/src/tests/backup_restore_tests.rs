@@ -187,6 +187,7 @@ fn test_wallet_encrypted_backup() {
         passphrase.to_string(),
         config.clone(),
         Network::Testnet,
+        Vec::new(),
     )
     .unwrap();
 
@@ -212,6 +213,7 @@ fn test_wallet_encrypted_backup() {
         passphrase.to_string(),
         config,
         backup.network,
+        Vec::new(),
     )
     .unwrap();
 
