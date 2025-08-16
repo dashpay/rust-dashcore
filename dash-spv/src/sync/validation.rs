@@ -233,14 +233,15 @@ impl ValidationEngine {
 
         // Validate masternode list diffs
         for diff in &qr_info.mn_list_diff_list {
+            let block_height = engine.block_container.get_height(&diff.block_hash).unwrap_or(0);
             match self.validate_mn_list_diff(diff, engine) {
                 Ok(true) => items_validated += 1,
                 Ok(false) => errors.push(ValidationError::InvalidMnListDiff(
-                    0, // We don't have block height in MnListDiff
+                    block_height,
                     "Validation failed".to_string(),
                 )),
                 Err(e) => errors.push(ValidationError::InvalidMnListDiff(
-                    0, // We don't have block height in MnListDiff
+                    block_height,
                     e.to_string(),
                 )),
             }
@@ -277,7 +278,8 @@ impl ValidationEngine {
         diff: &MnListDiff,
         engine: &MasternodeListEngine,
     ) -> SyncResult<bool> {
-        let cache_key = ValidationCacheKey::MasternodeList(0); // Use 0 as we don't have block height
+        let block_height = engine.block_container.get_height(&diff.block_hash).unwrap_or(0);
+        let cache_key = ValidationCacheKey::MasternodeList(block_height);
 
         // Check cache
         if let Some(cached) = self.get_cached_result(&cache_key) {
@@ -297,11 +299,11 @@ impl ValidationEngine {
     fn perform_mn_list_diff_validation(
         &self,
         diff: &MnListDiff,
-        _engine: &MasternodeListEngine,
+        engine: &MasternodeListEngine,
     ) -> SyncResult<bool> {
         // Check if we have the base list
-        // Note: We can't check by height as MnListDiff doesn't contain block height
-        // We would need to look up the height from the block hash
+        // We can resolve block height from the diff's block hash using the engine's block container
+        let block_height = engine.block_container.get_height(&diff.block_hash).unwrap_or(0);
 
         // Validate merkle root matches
         // TODO: Implement merkle root validation

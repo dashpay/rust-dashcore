@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use crate::client::ClientConfig;
-    use crate::storage::MemoryStorage;
+    use crate::storage::MemoryStorageManager;
     use crate::sync::chainlock_validation::{ChainLockValidationConfig, ChainLockValidator};
     use crate::sync::masternodes::MasternodeSyncManager;
     use crate::sync::validation::{ValidationConfig, ValidationEngine};
@@ -136,7 +136,7 @@ mod tests {
     async fn test_qr_info_validation() {
         let config = create_test_config();
         let _sync_manager = MasternodeSyncManager::new(&config);
-        let _storage = MemoryStorage::new();
+        let _storage = MemoryStorageManager::new().await.expect("Failed to create MemoryStorageManager");
 
         // Create mock QRInfo
         let _qr_info = create_mock_qr_info();

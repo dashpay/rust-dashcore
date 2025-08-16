@@ -171,9 +171,9 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
                 );
             }
 
-            // Copy the public key directly from the global index
-            let pubkey_ptr = public_key as *const _ as *const u8;
-            std::ptr::copy_nonoverlapping(pubkey_ptr, out_pubkey, QUORUM_PUBKEY_SIZE);
+            // Get the public key's canonical 48-byte representation safely
+            let pubkey_bytes: &[u8; 48] = public_key.as_ref();
+            std::ptr::copy_nonoverlapping(pubkey_bytes.as_ptr(), out_pubkey, QUORUM_PUBKEY_SIZE);
 
             // Return success
             FFIResult {

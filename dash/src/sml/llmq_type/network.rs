@@ -96,16 +96,6 @@ impl NetworkLLMQExt for Network {
         );
 
         for llmq_type in self.enabled_llmq_types() {
-            // Skip platform quorums before activation if needed
-            if self.should_skip_quorum_type(&llmq_type, start) {
-                log::trace!(
-                    "Skipping {:?} for height {} (activation threshold not met)",
-                    llmq_type,
-                    start
-                );
-                continue;
-            }
-
             let type_windows = llmq_type.get_dkg_windows_in_range(start, end);
             log::debug!(
                 "LLMQ type {:?}: found {} DKG windows in range {}-{}",
@@ -116,6 +106,16 @@ impl NetworkLLMQExt for Network {
             );
 
             for window in type_windows {
+                // Skip platform quorums before activation if needed
+                if self.should_skip_quorum_type(&llmq_type, window.mining_start) {
+                    log::trace!(
+                        "Skipping {:?} for height {} (activation threshold not met)",
+                        llmq_type,
+                        window.mining_start
+                    );
+                    continue;
+                }
+
                 // Group windows by their mining start for efficient fetching
                 windows_by_height.entry(window.mining_start).or_insert_with(Vec::new).push(window);
             }
