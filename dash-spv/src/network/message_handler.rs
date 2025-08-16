@@ -92,11 +92,11 @@ impl MessageHandler {
                 self.stats.qrinfo_messages += 1;
                 MessageHandleResult::QRInfo(qr_info)
             }
-            NetworkMessage::GetQRInfo(_) => {
+            NetworkMessage::GetQRInfo(req) => {
                 // We don't serve QRInfo requests, only make them
                 tracing::warn!("Received unexpected GetQRInfo request");
                 self.stats.other_messages += 1;
-                MessageHandleResult::Unhandled(message)
+                MessageHandleResult::Unhandled(NetworkMessage::GetQRInfo(req))
             }
             other => {
                 self.stats.other_messages += 1;

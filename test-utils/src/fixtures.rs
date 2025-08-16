@@ -99,8 +99,26 @@ mod tests {
         let testnet = testnet_genesis_hash();
 
         assert_ne!(mainnet, testnet);
-        assert_eq!(mainnet.to_string(), MAINNET_GENESIS_HASH);
-        assert_eq!(testnet.to_string(), TESTNET_GENESIS_HASH);
+        
+        // Create expected BlockHash instances from the constants for proper comparison
+        let expected_mainnet = {
+            let bytes = decode(MAINNET_GENESIS_HASH).unwrap();
+            let mut reversed = [0u8; 32];
+            reversed.copy_from_slice(&bytes);
+            reversed.reverse();
+            BlockHash::from_slice(&reversed).unwrap()
+        };
+        
+        let expected_testnet = {
+            let bytes = decode(TESTNET_GENESIS_HASH).unwrap();
+            let mut reversed = [0u8; 32];
+            reversed.copy_from_slice(&bytes);
+            reversed.reverse();
+            BlockHash::from_slice(&reversed).unwrap()
+        };
+        
+        assert_eq!(mainnet, expected_mainnet);
+        assert_eq!(testnet, expected_testnet);
     }
 
     #[test]
