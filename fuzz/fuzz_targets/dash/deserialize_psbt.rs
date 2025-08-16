@@ -1,15 +1,15 @@
 use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {
-    let psbt: Result<dashcore::psbt::PartiallySignedTransaction, _> =
-        dashcore::psbt::Psbt::deserialize(data);
+    let psbt: Result<key_wallet::psbt::PartiallySignedTransaction, _> =
+        key_wallet::psbt::Psbt::deserialize(data);
     match psbt {
         Err(_) => {}
         Ok(psbt) => {
-            let ser = dashcore::psbt::Psbt::serialize(&psbt);
-            let deser = dashcore::psbt::Psbt::deserialize(&ser).unwrap();
+            let ser = key_wallet::psbt::Psbt::serialize(&psbt);
+            let deser = key_wallet::psbt::Psbt::deserialize(&ser).unwrap();
             // Since the fuzz data could order psbt fields differently, we compare to our deser/ser instead of data
-            assert_eq!(ser, dashcore::psbt::Psbt::serialize(&deser));
+            assert_eq!(ser, key_wallet::psbt::Psbt::serialize(&deser));
         }
     }
 }

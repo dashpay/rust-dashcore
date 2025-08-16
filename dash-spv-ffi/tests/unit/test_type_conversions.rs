@@ -172,6 +172,8 @@ mod tests {
             current_filter_tip: None,
             masternode_engine: None,
             last_masternode_diff_height: None,
+            sync_base_height: 0,
+            synced_from_checkpoint: false,
         };
 
         let ffi_state = FFIChainState::from(state);
@@ -213,6 +215,10 @@ mod tests {
             pending_filter_requests: 0,
             filter_request_timeouts: u64::MAX,
             filter_requests_retried: u64::MAX,
+            connected_peers: 0,
+            total_peers: 0,
+            header_height: 0,
+            filter_height: 0,
         };
 
         let ffi_stats = FFISpvStats::from(stats);

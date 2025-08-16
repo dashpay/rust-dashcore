@@ -357,10 +357,11 @@ fn test_error_string_lifecycle() {
 fn test_handle_lifecycle() {
     unsafe {
         // Test null handle operations
-        let null_handle = ptr::null_mut();
+        let null_client: *mut FFIDashSpvClient = ptr::null_mut();
+        let null_handle: *mut CoreSDKHandle = ptr::null_mut();
 
         // Getting core handle from null client
-        let handle = ffi_dash_spv_get_core_handle(null_handle);
+        let handle = ffi_dash_spv_get_core_handle(null_client);
         assert!(handle.is_null());
 
         // Releasing null handle should be safe
