@@ -1271,7 +1271,7 @@ impl DerivationPath {
 
     /// Returns derivation path for a master key (i.e. empty derivation path)
     pub fn master() -> DerivationPath {
-        DerivationPath(vec![])
+        DerivationPath(Vec::new())
     }
 
     /// Returns whether derivation path represents master key (i.e. it's length
@@ -2065,7 +2065,7 @@ mod tests {
 
         assert_eq!(DerivationPath::master(), DerivationPath::from_str("m").unwrap());
         assert_eq!(DerivationPath::master(), DerivationPath::default());
-        assert_eq!(DerivationPath::from_str("m"), Ok(vec![].into()));
+        assert_eq!(DerivationPath::from_str("m"), Ok(Vec::new().into()));
         assert_eq!(
             DerivationPath::from_str("m/0'"),
             Ok(vec![ChildNumber::from_hardened_idx(0).unwrap()].into())

@@ -3,214 +3,114 @@
 //! This module contains methods for creating and managing accounts within wallets.
 
 use super::Wallet;
-use crate::account::{Account, AccountType, SpecialPurposeType};
-use crate::bip32::{ChildNumber, DerivationPath};
+use crate::account::account_collection::AccountCollection;
+use crate::account::{Account, AccountType, StandardAccountType};
+use crate::bip32::ExtendedPubKey;
 use crate::derivation::HDWallet;
-use crate::dip9::DerivationPathReference;
 use crate::error::{Error, Result};
 use crate::Network;
 
 impl Wallet {
     /// Add a new account to the wallet
+    ///
+    /// # Arguments
+    /// * `account_type` - The type of account to create
+    /// * `network` - The network for the account
+    /// * `account_xpub` - Optional extended public key for the account. If not provided,
+    ///                    the account will be derived from the wallet's private key.
+    ///                    This will fail if the wallet doesn't have a private key
+    ///                    (watch-only wallets or externally managed wallets where
+    ///                    the private key is stored securely outside of the SDK).
+    ///
+    /// # Returns
+    /// A reference to the newly created account
     pub fn add_account(
         &mut self,
-        index: u32,
         account_type: AccountType,
         network: Network,
+        account_xpub: Option<ExtendedPubKey>,
     ) -> Result<&Account> {
-        // Check if account already exists in either collection for this network
-        let account_exists = match account_type {
-            AccountType::CoinJoin => self.coinjoin_accounts.contains_key(network, index),
-            AccountType::Standard => self.standard_accounts.contains_key(network, index),
-            _ => false,
+        // Get a unique wallet ID for this wallet first
+        let wallet_id = self.get_wallet_id();
+
+        // Create the account based on whether we have an xpub or need to derive
+        let account = if let Some(xpub) = account_xpub {
+            // Use the provided extended public key
+            Account::new(Some(wallet_id), account_type, xpub, network)?
+        } else {
+            // Derive from wallet's private key
+            let derivation_path = account_type.derivation_path(network)?;
+
+            // This will fail if the wallet doesn't have a private key (watch-only or externally managed)
+            let root_key = self.root_extended_priv_key()?;
+            let master_key = root_key.to_extended_priv_key(network);
+            let hd_wallet = HDWallet::new(master_key);
+            let account_xpriv = hd_wallet.derive(&derivation_path)?;
+
+            Account::from_xpriv(Some(wallet_id), account_type, account_xpriv, network)?
         };
 
-        if account_exists {
+        // Now get or create the account collection for this network
+        let collection = self.accounts.entry(network).or_insert_with(AccountCollection::new);
+
+        // Check if account already exists
+        if collection.contains_account_type(&account_type) {
             return Err(Error::InvalidParameter(format!(
-                "Account {} already exists for network {:?}",
-                index, network
+                "Account type {:?} already exists for network {:?}",
+                account_type, network
             )));
         }
 
-        // Get a unique wallet ID for this wallet
-        let wallet_id = self.get_wallet_id();
+        // Insert into the collection
+        collection.insert(account);
 
-        let account = match account_type {
-            AccountType::Standard => {
-                let root_key = self.root_extended_priv_key()?;
-                let master_key = root_key.to_extended_priv_key(network);
-                let hd_wallet = HDWallet::new(master_key);
-                let account_key = hd_wallet.bip44_account(index)?;
-
-                // Create the derivation path for this account
-                let derivation_path = DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(44).map_err(Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(if network == Network::Dash {
-                        5
-                    } else {
-                        1
-                    })
-                    .map_err(Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(index).map_err(Error::Bip32)?,
-                ]);
-
-                let account = Account::new(
-                    Some(wallet_id),
-                    index,
-                    account_key,
-                    network,
-                    DerivationPathReference::BIP44,
-                    derivation_path,
-                )?;
-                account
-            }
-            AccountType::CoinJoin => {
-                let root_key = self.root_extended_priv_key()?;
-                let master_key = root_key.to_extended_priv_key(network);
-                let hd_wallet = HDWallet::new(master_key);
-                let account_key = hd_wallet.coinjoin_account(index)?;
-
-                // Create the derivation path for CoinJoin account
-                let derivation_path = DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(9).map_err(Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(if network == Network::Dash {
-                        5
-                    } else {
-                        1
-                    })
-                    .map_err(Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(index).map_err(Error::Bip32)?,
-                ]);
-
-                let mut account = Account::new(
-                    Some(wallet_id),
-                    index,
-                    account_key,
-                    network,
-                    DerivationPathReference::BIP44CoinType,
-                    derivation_path,
-                )?;
-                account.account_type = AccountType::CoinJoin;
-                account
-            }
-            AccountType::SpecialPurpose(purpose) => {
-                self.add_special_account_internal(index, purpose, network)?
-            }
-        };
-
-        // Insert into the appropriate collection based on account type
-        match account_type {
-            AccountType::CoinJoin => {
-                self.coinjoin_accounts.insert(network, index, account);
-                Ok(self.coinjoin_accounts.get(network, index).unwrap())
-            }
+        // Return a reference to the newly inserted account
+        match &account_type {
+            AccountType::CoinJoin {
+                index,
+            } => Ok(collection.coinjoin_accounts.get(index).unwrap()),
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => match standard_account_type {
+                StandardAccountType::BIP44Account => {
+                    Ok(collection.standard_bip44_accounts.get(index).unwrap())
+                }
+                StandardAccountType::BIP32Account => {
+                    Ok(collection.standard_bip32_accounts.get(index).unwrap())
+                }
+            },
             _ => {
-                self.standard_accounts.insert(network, index, account);
-                Ok(self.standard_accounts.get(network, index).unwrap())
+                // For special account types, we need to return the correct reference
+                match &account_type {
+                    AccountType::IdentityRegistration => {
+                        Ok(collection.identity_registration.as_ref().unwrap())
+                    }
+                    AccountType::IdentityTopUp {
+                        registration_index,
+                    } => Ok(collection.identity_topup.get(registration_index).unwrap()),
+                    AccountType::IdentityTopUpNotBoundToIdentity => {
+                        Ok(collection.identity_topup_not_bound.as_ref().unwrap())
+                    }
+                    AccountType::IdentityInvitation => {
+                        Ok(collection.identity_invitation.as_ref().unwrap())
+                    }
+                    AccountType::ProviderVotingKeys => {
+                        Ok(collection.provider_voting_keys.as_ref().unwrap())
+                    }
+                    AccountType::ProviderOwnerKeys => {
+                        Ok(collection.provider_owner_keys.as_ref().unwrap())
+                    }
+                    AccountType::ProviderOperatorKeys => {
+                        Ok(collection.provider_operator_keys.as_ref().unwrap())
+                    }
+                    AccountType::ProviderPlatformKeys => {
+                        Ok(collection.provider_platform_keys.as_ref().unwrap())
+                    }
+                    _ => unreachable!("All account types should be handled"),
+                }
             }
         }
-    }
-
-    /// Create a special purpose account (internal method returns Account)
-    pub(crate) fn add_special_account_internal(
-        &mut self,
-        index: u32,
-        purpose: SpecialPurposeType,
-        network: Network,
-    ) -> Result<Account> {
-        let wallet_id = self.get_wallet_id();
-
-        let (path, path_ref) = match purpose {
-            SpecialPurposeType::IdentityRegistration => match network {
-                Network::Dash => (
-                    crate::dip9::IDENTITY_REGISTRATION_PATH_MAINNET,
-                    DerivationPathReference::BlockchainIdentityCreditRegistrationFunding,
-                ),
-                Network::Testnet => (
-                    crate::dip9::IDENTITY_REGISTRATION_PATH_TESTNET,
-                    DerivationPathReference::BlockchainIdentityCreditRegistrationFunding,
-                ),
-                _ => return Err(Error::InvalidNetwork),
-            },
-            SpecialPurposeType::IdentityTopUp => match network {
-                Network::Dash => (
-                    crate::dip9::IDENTITY_TOPUP_PATH_MAINNET,
-                    DerivationPathReference::BlockchainIdentityCreditTopupFunding,
-                ),
-                Network::Testnet => (
-                    crate::dip9::IDENTITY_TOPUP_PATH_TESTNET,
-                    DerivationPathReference::BlockchainIdentityCreditTopupFunding,
-                ),
-                _ => return Err(Error::InvalidNetwork),
-            },
-            SpecialPurposeType::IdentityInvitation => match network {
-                Network::Dash => (
-                    crate::dip9::IDENTITY_INVITATION_PATH_MAINNET,
-                    DerivationPathReference::BlockchainIdentityCreditInvitationFunding,
-                ),
-                Network::Testnet => (
-                    crate::dip9::IDENTITY_INVITATION_PATH_TESTNET,
-                    DerivationPathReference::BlockchainIdentityCreditInvitationFunding,
-                ),
-                _ => return Err(Error::InvalidNetwork),
-            },
-            _ => {
-                // For other types, use standard BIP44 with special marking
-                let root_key = self.root_extended_priv_key()?;
-                let master_key = root_key.to_extended_priv_key(network);
-                let hd_wallet = HDWallet::new(master_key);
-                let account_key = hd_wallet.bip44_account(index)?;
-
-                let derivation_path = DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(44).map_err(Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(if network == Network::Dash {
-                        5
-                    } else {
-                        1
-                    })
-                    .map_err(Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(index).map_err(Error::Bip32)?,
-                ]);
-
-                let mut account = Account::new(
-                    Some(wallet_id),
-                    index,
-                    account_key,
-                    network,
-                    DerivationPathReference::BIP44,
-                    derivation_path,
-                )?;
-                account.account_type = AccountType::SpecialPurpose(purpose);
-                return Ok(account);
-            }
-        };
-
-        // Derive the account key from the special path
-        let mut full_path = DerivationPath::from(path);
-        full_path.push(ChildNumber::from_hardened_idx(index).map_err(Error::Bip32)?);
-
-        let root_key = self.root_extended_priv_key()?;
-        let master_key = root_key.to_extended_priv_key(network);
-        let hd_wallet = HDWallet::new(master_key);
-        let account_key = hd_wallet.derive(&full_path)?;
-
-        let mut account =
-            Account::new(Some(wallet_id), index, account_key, network, path_ref, full_path)?;
-
-        account.account_type = AccountType::SpecialPurpose(purpose);
-        Ok(account)
-    }
-
-    /// Add a special purpose account to the wallet
-    pub fn add_special_account(
-        &mut self,
-        index: u32,
-        purpose: SpecialPurposeType,
-        network: Network,
-    ) -> Result<&Account> {
-        let account = self.add_special_account_internal(index, purpose, network)?;
-        self.special_accounts.entry(network).or_insert_with(Vec::new).push(account);
-        Ok(self.special_accounts.get(&network).unwrap().last().unwrap())
     }
 
     /// Get the wallet ID for this wallet

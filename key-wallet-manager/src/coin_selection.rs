@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use core::cmp::Reverse;
 
 use crate::fee::FeeRate;
-use crate::utxo::Utxo;
+use key_wallet::Utxo;
 
 /// UTXO selection strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -335,10 +335,10 @@ impl std::error::Error for SelectionError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utxo::Utxo;
     use dashcore::blockdata::script::ScriptBuf;
     use dashcore::{OutPoint, TxOut, Txid};
     use dashcore_hashes::{sha256d, Hash};
+    use key_wallet::Utxo;
     use key_wallet::{Address, Network};
 
     fn test_utxo(value: u64, confirmed: bool) -> Utxo {

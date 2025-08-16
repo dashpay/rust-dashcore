@@ -27,7 +27,7 @@ const BIP38_PREFIX_NON_EC: [u8; 2] = [0x01, 0x42];
 const BIP38_PREFIX_EC: [u8; 2] = [0x01, 0x43];
 const BIP38_FLAG_COMPRESSED: u8 = 0x20;
 const BIP38_FLAG_EC_LOT_SEQUENCE: u8 = 0x04;
-const BIP38_FLAG_EC_INVALID: u8 = 0x10;
+const _BIP38_FLAG_EC_INVALID: u8 = 0x10;
 
 // Scrypt parameters
 const SCRYPT_N: u32 = 16384; // 2^14
@@ -540,18 +540,18 @@ mod tests {
     use super::*;
 
     // Test vectors from BIP38 specification
-    const TEST_VECTOR_1_ENCRYPTED: &str =
+    const _TEST_VECTOR_1_ENCRYPTED: &str =
         "6PRVWUbkzzsbcVac2qwfssoUJAN1Xhrg6bNk8J7Nzm5H7kxEbn2Nh2ZoGg";
-    const TEST_VECTOR_1_PASSWORD: &str = "TestingOneTwoThree";
-    const TEST_VECTOR_1_WIF: &str = "5KN7MzqK5wt2TP1fQCYyHBtDrXdJuXbUzm4A9rKAteGu3Qi5CVR";
+    const _TEST_VECTOR_1_PASSWORD: &str = "TestingOneTwoThree";
+    const _TEST_VECTOR_1_WIF: &str = "5KN7MzqK5wt2TP1fQCYyHBtDrXdJuXbUzm4A9rKAteGu3Qi5CVR";
 
-    const TEST_VECTOR_2_ENCRYPTED: &str =
+    const _TEST_VECTOR_2_ENCRYPTED: &str =
         "6PRNFFkZc2NZ6dJqFfhRoFNMR9Lnyj7dYGrzdgXXVMXcxoKTePPX1dWByq";
-    const TEST_VECTOR_2_PASSWORD: &str = "Satoshi";
-    const TEST_VECTOR_2_WIF: &str = "5HtasZ6ofTHP6HCwTqTkLDuLQisYPah7aUnSKfC7h4hMUVw2gi5";
+    const _TEST_VECTOR_2_PASSWORD: &str = "Satoshi";
+    const _TEST_VECTOR_2_WIF: &str = "5HtasZ6ofTHP6HCwTqTkLDuLQisYPah7aUnSKfC7h4hMUVw2gi5";
 
     #[test]
-    #[cfg_attr(ci, ignore = "BIP38 tests are slow and skipped in CI")]
+    #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_bip38_encryption() {
         // Create a test private key
         let private_key = SecretKey::from_slice(&[
@@ -570,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(ci, ignore = "BIP38 tests are slow and skipped in CI")]
+    #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_bip38_decryption() {
         // Test with known encrypted key (would need actual test vector)
         // This is a placeholder - in production we'd use actual BIP38 test vectors
@@ -610,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(ci, ignore = "BIP38 tests are slow and skipped in CI")]
+    #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_bip38_compressed_uncompressed() {
         let private_key = SecretKey::from_slice(&[
             0x64, 0x4D, 0xC7, 0x6B, 0x88, 0xDF, 0x64, 0xC3, 0xE4, 0x8A, 0xB6, 0x59, 0x5C, 0xBB,
@@ -641,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(ci, ignore = "BIP38 tests are slow and skipped in CI")]
+    #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_bip38_builder() {
         let private_key = SecretKey::from_slice(&[
             0x0C, 0x28, 0xFC, 0xA3, 0x86, 0xC7, 0xA2, 0x27, 0x60, 0x0B, 0x2F, 0xE5, 0x0B, 0x7C,
@@ -665,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(ci, ignore = "BIP38 tests are slow and skipped in CI")]
+    #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_intermediate_code_generation() {
         let intermediate = generate_intermediate_code("password", None, None).unwrap();
 
@@ -681,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(ci, ignore = "BIP38 tests are slow and skipped in CI")]
+    #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_address_hash() {
         // Test address hash computation
         let secp = Secp256k1::new();
@@ -702,7 +702,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(ci, ignore = "BIP38 tests are slow and skipped in CI")]
+    #[ignore = "BIP38 tests are slow - run with test_bip38.sh script"]
     fn test_scrypt_parameters() {
         // Verify scrypt parameters match BIP38 spec
         assert_eq!(SCRYPT_N, 16384); // 2^14

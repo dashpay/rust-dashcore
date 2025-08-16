@@ -7,9 +7,9 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 
+use crate::Address;
 use dashcore::blockdata::transaction::txout::TxOut;
 use dashcore::blockdata::transaction::OutPoint;
-use key_wallet::Address;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -34,8 +34,6 @@ pub struct Utxo {
     pub is_instantlocked: bool,
     /// Whether this UTXO is locked (not available for spending)
     pub is_locked: bool,
-    /// Optional label for this UTXO
-    pub label: Option<String>,
 }
 
 impl Utxo {
@@ -56,7 +54,6 @@ impl Utxo {
             is_confirmed: false,
             is_instantlocked: false,
             is_locked: false,
-            label: None,
         }
     }
 
@@ -97,11 +94,6 @@ impl Utxo {
     /// Unlock this UTXO to allow it to be selected
     pub fn unlock(&mut self) {
         self.is_locked = false;
-    }
-
-    /// Set a label for this UTXO
-    pub fn set_label(&mut self, label: String) {
-        self.label = Some(label);
     }
 }
 
@@ -315,10 +307,10 @@ impl Default for UtxoSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Network;
     use dashcore::blockdata::script::ScriptBuf;
     use dashcore::Txid;
     use dashcore_hashes::{sha256d, Hash};
-    use key_wallet::Network;
 
     fn test_utxo(value: u64, height: u32) -> Utxo {
         test_utxo_with_vout(value, height, 0)

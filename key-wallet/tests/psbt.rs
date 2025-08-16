@@ -12,8 +12,8 @@ use dashcore::hashes::hex::FromHex;
 use dashcore::script::PushBytes;
 use dashcore::secp256k1::{self, Secp256k1};
 use dashcore::{
-    Amount, Denomination, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Transaction, TxIn,
-    TxOut, Witness,
+    Amount, Denomination, OutPoint, PrivateKey, PublicKey, ScriptBuf, Transaction, TxIn, TxOut,
+    Witness,
 };
 use key_wallet::bip32::{ExtendedPrivKey, ExtendedPubKey, Fingerprint, KeySource};
 use key_wallet::psbt::{PartiallySignedTransaction as Psbt, PsbtSighashType};

@@ -241,8 +241,8 @@ impl PartiallySignedTransaction {
                 xpub: xpub_map,
                 proprietary,
                 unknown: unknowns,
-                inputs: vec![],
-                outputs: vec![],
+                inputs: Vec::new(),
+                outputs: Vec::new(),
             })
         } else {
             Err(Error::MustHaveUnsignedTx)

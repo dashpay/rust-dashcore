@@ -2,48 +2,46 @@
 //!
 //! This module contains helper methods and utility functions for wallets.
 
-use super::balance::WalletBalance;
+use super::initialization::WalletAccountCreationOptions;
 use super::root_extended_keys::RootExtendedPrivKey;
-use super::{Wallet, WalletScanResult, WalletType};
-use crate::account::Account;
-use crate::error::{Error, Result};
+use super::{Wallet, WalletType};
+use crate::account::{Account, AccountType, StandardAccountType};
+use crate::error::Result;
 use crate::Network;
-use dashcore::Address;
+use alloc::vec::Vec;
 
 impl Wallet {
-    /// Get an account by network and index (searches both standard and coinjoin accounts)
-    pub fn get_account(&self, network: Network, index: u32) -> Option<&Account> {
-        self.standard_accounts
-            .get(network, index)
-            .or_else(|| self.coinjoin_accounts.get(network, index))
+    /// Get a bip44 account by network and index
+    pub fn get_bip44_account(&self, network: Network, index: u32) -> Option<&Account> {
+        self.accounts
+            .get(&network)
+            .and_then(|collection| collection.standard_bip44_accounts.get(&index))
     }
 
-    /// Get a standard account by network and index
-    pub fn get_standard_account(&self, network: Network, index: u32) -> Option<&Account> {
-        self.standard_accounts.get(network, index)
+    /// Get a bip32 account by network and index
+    pub fn get_bip32_account(&self, network: Network, index: u32) -> Option<&Account> {
+        self.accounts
+            .get(&network)
+            .and_then(|collection| collection.standard_bip32_accounts.get(&index))
     }
 
     /// Get a coinjoin account by network and index
     pub fn get_coinjoin_account(&self, network: Network, index: u32) -> Option<&Account> {
-        self.coinjoin_accounts.get(network, index)
+        self.accounts.get(&network).and_then(|collection| collection.coinjoin_accounts.get(&index))
     }
 
-    /// Get a mutable account by network and index (searches both standard and coinjoin accounts)
-    pub fn get_account_mut(&mut self, network: Network, index: u32) -> Option<&mut Account> {
-        if self.standard_accounts.contains_key(network, index) {
-            self.standard_accounts.get_mut(network, index)
-        } else {
-            self.coinjoin_accounts.get_mut(network, index)
-        }
+    /// Get a mutable bip44 account by network and index
+    pub fn get_bip44_account_mut(&mut self, network: Network, index: u32) -> Option<&mut Account> {
+        self.accounts
+            .get_mut(&network)
+            .and_then(|collection| collection.standard_bip44_accounts.get_mut(&index))
     }
 
-    /// Get a mutable standard account by network and index
-    pub fn get_standard_account_mut(
-        &mut self,
-        network: Network,
-        index: u32,
-    ) -> Option<&mut Account> {
-        self.standard_accounts.get_mut(network, index)
+    /// Get a mutable bip32 account by network and index
+    pub fn get_bip32_account_mut(&mut self, network: Network, index: u32) -> Option<&mut Account> {
+        self.accounts
+            .get_mut(&network)
+            .and_then(|collection| collection.standard_bip32_accounts.get_mut(&index))
     }
 
     /// Get a mutable coinjoin account by network and index
@@ -52,105 +50,33 @@ impl Wallet {
         network: Network,
         index: u32,
     ) -> Option<&mut Account> {
-        self.coinjoin_accounts.get_mut(network, index)
-    }
-
-    /// Get the default account (index 0, searches standard accounts first)
-    pub fn default_account(&self, network: Network) -> Option<&Account> {
-        self.standard_accounts.get(network, 0).or_else(|| self.coinjoin_accounts.get(network, 0))
-    }
-
-    /// Get the default account mutably
-    pub fn default_account_mut(&mut self, network: Network) -> Option<&mut Account> {
-        if self.standard_accounts.contains_key(network, 0) {
-            self.standard_accounts.get_mut(network, 0)
-        } else {
-            self.coinjoin_accounts.get_mut(network, 0)
-        }
+        self.accounts
+            .get_mut(&network)
+            .and_then(|collection| collection.coinjoin_accounts.get_mut(&index))
     }
 
     /// Get all accounts (both standard and coinjoin)
     pub fn all_accounts(&self) -> Vec<&Account> {
         let mut accounts = Vec::new();
-        accounts.extend(self.standard_accounts.all_accounts());
-        accounts.extend(self.coinjoin_accounts.all_accounts());
+        for collection in self.accounts.values() {
+            accounts.extend(collection.all_accounts());
+        }
         accounts
     }
 
     /// Get the count of accounts (both standard and coinjoin)
     pub fn account_count(&self) -> usize {
-        self.standard_accounts.total_count() + self.coinjoin_accounts.total_count()
+        self.accounts.values().map(|collection| collection.count()).sum()
     }
 
     /// Get all account indices for a network (both standard and coinjoin)
     pub fn account_indices(&self, network: Network) -> Vec<u32> {
         let mut indices = Vec::new();
-        indices.extend(self.standard_accounts.network_indices(network));
-        indices.extend(self.coinjoin_accounts.network_indices(network));
+        if let Some(collection) = self.accounts.get(&network) {
+            indices.extend(collection.all_indices());
+        }
         indices.sort();
         indices
-    }
-
-    /// Get total balance across all accounts
-    /// Note: This would need to be implemented using ManagedAccounts
-    pub fn total_balance(&self) -> WalletBalance {
-        // This would need to be implemented with ManagedAccountCollection
-        // For now, returning default as balances are tracked in ManagedAccount
-        WalletBalance::default()
-    }
-
-    /// Get all addresses across all accounts
-    /// Note: This would need to be implemented using ManagedAccounts
-    pub fn all_addresses(&self) -> Vec<Address> {
-        // This would need to be implemented with ManagedAccountCollection
-        // For now, returning empty as addresses are tracked in ManagedAccount
-        Vec::new()
-    }
-
-    /// Find which account an address belongs to
-    /// Note: This would need to be implemented using ManagedAccounts
-    pub fn find_account_for_address(&self, _address: &Address) -> Option<(&Account, Network, u32)> {
-        // This would need to be implemented with ManagedAccountCollection
-        None
-    }
-
-    /// Mark an address as used across all accounts
-    /// Note: This would need to be implemented using ManagedAccounts
-    pub fn mark_address_used(&mut self, _address: &Address) -> bool {
-        // This would need to be implemented with ManagedAccountCollection
-        false
-    }
-
-    /// Scan all accounts for address activity
-    /// Note: This would need to be implemented using ManagedAccounts
-    pub fn scan_for_activity<F>(&mut self, _check_fn: F) -> WalletScanResult
-    where
-        F: Fn(&Address) -> bool + Clone,
-    {
-        // This would need to be implemented with ManagedAccountCollection
-        WalletScanResult::default()
-    }
-
-    /// Get the next receive address for the default account
-    /// Note: This would need to be implemented using ManagedAccounts
-    pub fn get_next_receive_address(&mut self, _network: Network) -> Result<Address> {
-        Err(Error::InvalidParameter("Address generation needs ManagedAccount".into()))
-    }
-
-    /// Get the next change address for the default account
-    /// Note: This would need to be implemented using ManagedAccounts
-    pub fn get_next_change_address(&mut self, _network: Network) -> Result<Address> {
-        Err(Error::InvalidParameter("Address generation needs ManagedAccount".into()))
-    }
-
-    /// Enable CoinJoin for an account
-    /// Note: This would need to be implemented using ManagedAccounts
-    pub fn enable_coinjoin_for_account(
-        &mut self,
-        _network: Network,
-        _account_index: u32,
-    ) -> Result<()> {
-        Err(Error::InvalidParameter("CoinJoin enabling needs ManagedAccount".into()))
     }
 
     /// Export wallet as watch-only
@@ -181,11 +107,10 @@ impl Wallet {
         watch_only.wallet_type = WalletType::WatchOnly(root_pub_key);
 
         // Convert all accounts to watch-only
-        for account in watch_only.standard_accounts.all_accounts_mut() {
-            *account = account.to_watch_only();
-        }
-        for account in watch_only.coinjoin_accounts.all_accounts_mut() {
-            *account = account.to_watch_only();
+        for collection in watch_only.accounts.values_mut() {
+            for account in collection.all_accounts_mut() {
+                *account = account.to_watch_only();
+            }
         }
 
         watch_only
@@ -221,8 +146,183 @@ impl Wallet {
 
     /// Check if wallet has a seed
     pub fn has_seed(&self) -> bool {
-        matches!(self.wallet_type, WalletType::Seed { .. })
+        matches!(self.wallet_type, WalletType::Seed { .. } | WalletType::Mnemonic { .. })
+    }
+
+    /// Create accounts based on the provided creation options
+    pub(crate) fn create_accounts_from_options(
+        &mut self,
+        options: WalletAccountCreationOptions,
+        network: Network,
+    ) -> Result<()> {
+        match options {
+            WalletAccountCreationOptions::Default => {
+                // Create default BIP44 account 0
+                self.add_account(
+                    AccountType::Standard {
+                        index: 0,
+                        standard_account_type: StandardAccountType::BIP44Account,
+                    },
+                    network,
+                    None,
+                )?;
+
+                // Create default CoinJoin account 0
+                self.add_account(
+                    AccountType::CoinJoin {
+                        index: 0,
+                    },
+                    network,
+                    None,
+                )?;
+
+                // Create all special purpose accounts
+                self.create_special_purpose_accounts(network)?;
+            }
+
+            WalletAccountCreationOptions::AllAccounts(
+                bip44_indices,
+                bip32_indices,
+                coinjoin_indices,
+                top_up_accounts,
+            ) => {
+                // Create specified BIP44 accounts
+                for index in bip44_indices {
+                    self.add_account(
+                        AccountType::Standard {
+                            index,
+                            standard_account_type: StandardAccountType::BIP44Account,
+                        },
+                        network,
+                        None,
+                    )?;
+                }
+
+                // Create specified BIP44 accounts
+                for index in bip32_indices {
+                    self.add_account(
+                        AccountType::Standard {
+                            index,
+                            standard_account_type: StandardAccountType::BIP32Account,
+                        },
+                        network,
+                        None,
+                    )?;
+                }
+
+                // Create specified CoinJoin accounts
+                for index in coinjoin_indices {
+                    self.add_account(
+                        AccountType::CoinJoin {
+                            index,
+                        },
+                        network,
+                        None,
+                    )?;
+                }
+
+                // Create specified CoinJoin accounts
+                for registration_index in top_up_accounts {
+                    self.add_account(
+                        AccountType::IdentityTopUp {
+                            registration_index,
+                        },
+                        network,
+                        None,
+                    )?;
+                }
+
+                // Create all special purpose accounts
+                self.create_special_purpose_accounts(network)?;
+            }
+
+            WalletAccountCreationOptions::BIP44AccountsOnly(bip44_indices) => {
+                // Create BIP44 account 0 if not exists
+                for index in bip44_indices {
+                    self.add_account(
+                        AccountType::Standard {
+                            index,
+                            standard_account_type: StandardAccountType::BIP44Account,
+                        },
+                        network,
+                        None,
+                    )?;
+                }
+            }
+
+            WalletAccountCreationOptions::SpecificAccounts(
+                bip44_indices,
+                coinjoin_indices,
+                topup_indices,
+                special_accounts,
+            ) => {
+                // Create specified BIP44 accounts
+                for index in bip44_indices {
+                    self.add_account(
+                        AccountType::Standard {
+                            index,
+                            standard_account_type: StandardAccountType::BIP44Account,
+                        },
+                        network,
+                        None,
+                    )?;
+                }
+
+                // Create specified CoinJoin accounts
+                for index in coinjoin_indices {
+                    self.add_account(
+                        AccountType::CoinJoin {
+                            index,
+                        },
+                        network,
+                        None,
+                    )?;
+                }
+
+                // Create identity top-up accounts
+                for registration_index in topup_indices {
+                    self.add_account(
+                        AccountType::IdentityTopUp {
+                            registration_index,
+                        },
+                        network,
+                        None,
+                    )?;
+                }
+
+                // Create any additional special accounts if provided
+                if let Some(special_types) = special_accounts {
+                    for account_type in special_types {
+                        self.add_account(account_type, network, None)?;
+                    }
+                }
+            }
+
+            WalletAccountCreationOptions::None => {
+                // Don't create any accounts - useful for tests
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create all special purpose accounts
+    fn create_special_purpose_accounts(&mut self, network: Network) -> Result<()> {
+        // Identity registration account
+        self.add_account(AccountType::IdentityRegistration, network, None)?;
+
+        // Identity invitation account
+        self.add_account(AccountType::IdentityInvitation, network, None)?;
+
+        // Identity top-up not bound to identity
+        self.add_account(AccountType::IdentityTopUpNotBoundToIdentity, network, None)?;
+
+        // Provider keys accounts
+        self.add_account(AccountType::ProviderVotingKeys, network, None)?;
+        self.add_account(AccountType::ProviderOwnerKeys, network, None)?;
+        self.add_account(AccountType::ProviderOperatorKeys, network, None)?;
+        self.add_account(AccountType::ProviderPlatformKeys, network, None)?;
+
+        Ok(())
     }
 }
-
-use alloc::vec::Vec;
