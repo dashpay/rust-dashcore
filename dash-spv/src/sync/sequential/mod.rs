@@ -407,9 +407,8 @@ impl SequentialSyncManager {
             if matches!(self.current_phase, SyncPhase::DownloadingBlocks { .. }) {
                 return self.handle_block_message(block, network, storage).await;
             } else if matches!(self.current_phase, SyncPhase::DownloadingMnList { .. }) {
-                // During masternode sync, blocks are intentionally ignored and not processed
-                // This ensures the MnList phase completes without block-based interruptions
-                tracing::debug!("Block received during MnList phase - intentionally ignoring");
+                // During masternode sync, blocks are not processed
+                tracing::debug!("Block received during MnList phase - ignoring");
                 return Ok(());
             } else {
                 // Otherwise, just track that we received it but don't process for phase transitions
@@ -839,7 +838,12 @@ impl SequentialSyncManager {
                 },
                 NetworkMessage::QRInfo(_),
             ) => true, // Allow QRInfo during masternode sync
-            // Note: Blocks are NOT expected during MnList sync phase as they are intentionally ignored
+            (
+                SyncPhase::DownloadingMnList {
+                    ..
+                },
+                NetworkMessage::Block(_),
+            ) => true, // Allow blocks during masternode sync
             (
                 SyncPhase::DownloadingCFHeaders {
                     ..
