@@ -36,7 +36,7 @@ use dash_spv::network::TcpConnection;
 use dash_spv::storage::{DiskStorageManager, MemoryStorageManager, StorageManager};
 use dash_spv::sync::sequential::phases::SyncPhase;
 use dash_spv::sync::sequential::recovery::{RecoveryManager, RecoveryStrategy};
-use dash_spv::types::{ChainState, MempoolState};
+use dash_spv::types::{ChainState, MempoolState, UnconfirmedTransaction};
 use dash_spv::wallet::Utxo;
 
 /// Mock network manager for testing error scenarios
