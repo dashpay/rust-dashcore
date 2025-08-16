@@ -166,15 +166,16 @@ interface Address {
 };
 
 // Address generator interface
-interface AddressGenerator {
-    // Create new generator
-    constructor(Network network);
-    
-    // Generate address
-    [Throws=KeyWalletError]
-    Address generate(AccountXPub account_xpub, boolean external, u32 index);
-    
-    // Generate a range of addresses
-    [Throws=KeyWalletError]
-    sequence<Address> generate_range(AccountXPub account_xpub, boolean external, u32 start, u32 count);
-};
+// NOTE: AddressGenerator doesn't exist in dashcore, commented out for now
+// interface AddressGenerator {
+//     // Create new generator
+//     constructor(Network network);
+//     
+//     // Generate address
+//     [Throws=KeyWalletError]
+//     Address generate(AccountXPub account_xpub, boolean external, u32 index);
+//     
+//     // Generate a range of addresses
+//     [Throws=KeyWalletError]
+//     sequence<Address> generate_range(AccountXPub account_xpub, boolean external, u32 start, u32 count);
+// };
