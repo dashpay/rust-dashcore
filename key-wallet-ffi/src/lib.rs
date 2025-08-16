@@ -4,9 +4,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use key_wallet::{
-    self as kw, derivation::HDWallet as KwHDWallet, mnemonic as kw_mnemonic,
-    DerivationPath as KwDerivationPath, ExtendedPrivKey, ExtendedPubKey, Network as KwNetwork,
-    Address as KwAddress, AddressType as KwAddressType,
+    self as kw, derivation::HDWallet as KwHDWallet, mnemonic as kw_mnemonic, Address as KwAddress,
+    AddressType as KwAddressType, DerivationPath as KwDerivationPath, ExtendedPrivKey,
+    ExtendedPubKey, Network as KwNetwork,
 };
 use secp256k1::{PublicKey, Secp256k1};
 
@@ -467,8 +467,10 @@ impl Address {
 
         // Convert to expected network and require it
         let expected_network: KwNetwork = network.into();
-        let inner = unchecked_addr.require_network(expected_network).map_err(|e| KeyWalletError::AddressError {
-            message: format!("Address network validation failed: {}", e),
+        let inner = unchecked_addr.require_network(expected_network).map_err(|e| {
+            KeyWalletError::AddressError {
+                message: format!("Address network validation failed: {}", e),
+            }
         })?;
 
         Ok(Self {
@@ -538,19 +540,35 @@ impl AddressGenerator {
         let secp = Secp256k1::new();
 
         // Derive child key: 0 for external (receiving), 1 for internal (change)
-        let chain_code = if external { 0 } else { 1 };
-        let child_chain = xpub.ckd_pub(&secp, kw::ChildNumber::from_normal_idx(chain_code)
-            .map_err(|e| KeyWalletError::InvalidDerivationPath {
-                message: e.to_string(),
-            })?).map_err(|e| KeyWalletError::KeyError {
+        let chain_code = if external {
+            0
+        } else {
+            1
+        };
+        let child_chain = xpub
+            .ckd_pub(
+                &secp,
+                kw::ChildNumber::from_normal_idx(chain_code).map_err(|e| {
+                    KeyWalletError::InvalidDerivationPath {
+                        message: e.to_string(),
+                    }
+                })?,
+            )
+            .map_err(|e| KeyWalletError::KeyError {
                 message: e.to_string(),
             })?;
 
         // Derive specific index
-        let child = child_chain.ckd_pub(&secp, kw::ChildNumber::from_normal_idx(index)
-            .map_err(|e| KeyWalletError::InvalidDerivationPath {
-                message: e.to_string(),
-            })?).map_err(|e| KeyWalletError::KeyError {
+        let child = child_chain
+            .ckd_pub(
+                &secp,
+                kw::ChildNumber::from_normal_idx(index).map_err(|e| {
+                    KeyWalletError::InvalidDerivationPath {
+                        message: e.to_string(),
+                    }
+                })?,
+            )
+            .map_err(|e| KeyWalletError::KeyError {
                 message: e.to_string(),
             })?;
 
