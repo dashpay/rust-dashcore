@@ -7,7 +7,6 @@ use tokio::sync::RwLock;
 use crate::error::{Result, SpvError};
 use crate::storage::StorageManager;
 use crate::types::WatchItem;
-use crate::wallet::Wallet;
 
 /// Type for sending watch item updates to the filter processor.
 pub type WatchItemUpdateSender = tokio::sync::mpsc::UnboundedSender<Vec<WatchItem>>;
@@ -19,7 +18,6 @@ impl WatchManager {
     /// Add a watch item.
     pub async fn add_watch_item(
         watch_items: &Arc<RwLock<HashSet<WatchItem>>>,
-        wallet: &Arc<RwLock<Wallet>>,
         watch_item_updater: &Option<WatchItemUpdateSender>,
         item: WatchItem,
         storage: &mut dyn StorageManager,
@@ -39,18 +37,7 @@ impl WatchManager {
         if is_new {
             tracing::info!("Added watch item: {:?}", item);
 
-            // If the watch item is an address, add it to the wallet as well
-            if let WatchItem::Address {
-                address,
-                ..
-            } = &item
-            {
-                let wallet_guard = wallet.read().await;
-                if let Err(e) = wallet_guard.add_watched_address(address.clone()).await {
-                    tracing::warn!("Failed to add address to wallet: {}", e);
-                    // Continue anyway - the WatchItem is still valid for filter processing
-                }
-            }
+            // Wallet now handles addresses internally via WalletInterface
 
             // Store in persistent storage
             let watch_list = watch_list.ok_or_else(|| {
@@ -80,7 +67,6 @@ impl WatchManager {
     /// Remove a watch item.
     pub async fn remove_watch_item(
         watch_items: &Arc<RwLock<HashSet<WatchItem>>>,
-        wallet: &Arc<RwLock<Wallet>>,
         watch_item_updater: &Option<WatchItemUpdateSender>,
         item: &WatchItem,
         storage: &mut dyn StorageManager,
@@ -100,18 +86,7 @@ impl WatchManager {
         if removed {
             tracing::info!("Removed watch item: {:?}", item);
 
-            // If the watch item is an address, remove it from the wallet as well
-            if let WatchItem::Address {
-                address,
-                ..
-            } = item
-            {
-                let wallet_guard = wallet.read().await;
-                if let Err(e) = wallet_guard.remove_watched_address(address).await {
-                    tracing::warn!("Failed to remove address from wallet: {}", e);
-                    // Continue anyway - the WatchItem removal is still valid
-                }
-            }
+            // Wallet now handles addresses internally via WalletInterface
 
             // Update persistent storage
             let watch_list = watch_list.ok_or_else(|| {
@@ -141,7 +116,6 @@ impl WatchManager {
     /// Load watch items from storage.
     pub async fn load_watch_items(
         watch_items: &Arc<RwLock<HashSet<WatchItem>>>,
-        wallet: &Arc<RwLock<Wallet>>,
         storage: &dyn StorageManager,
     ) -> Result<()> {
         if let Some(data) =
@@ -151,28 +125,7 @@ impl WatchManager {
                 SpvError::Config(format!("Failed to deserialize watch items: {}", e))
             })?;
 
-            let mut addresses_synced = 0;
-
-            // Process each item without holding the write lock
-            for item in &watch_list {
-                // Sync address watch items with the wallet
-                if let WatchItem::Address {
-                    address,
-                    ..
-                } = item
-                {
-                    let wallet_guard = wallet.read().await;
-                    if let Err(e) = wallet_guard.add_watched_address(address.clone()).await {
-                        tracing::warn!(
-                            "Failed to sync address {} with wallet during load: {}",
-                            address,
-                            e
-                        );
-                    } else {
-                        addresses_synced += 1;
-                    }
-                }
-            }
+            // Wallet now handles addresses internally via WalletInterface
 
             // Now insert all items into the watch_items set
             {
@@ -181,11 +134,7 @@ impl WatchManager {
                     watch_items_guard.insert(item);
                 }
 
-                tracing::info!(
-                    "Loaded {} watch items from storage ({} addresses synced with wallet)",
-                    watch_items_guard.len(),
-                    addresses_synced
-                );
+                tracing::info!("Loaded {} watch items from storage", watch_items_guard.len());
             }
         }
 

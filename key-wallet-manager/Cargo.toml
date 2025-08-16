@@ -19,6 +19,7 @@ dashcore = { path = "../dash", default-features = false }
 dashcore_hashes = { path = "../hashes", default-features = false }
 secp256k1 = { version = "0.30.0", default-features = false, features = ["recovery"] }
 serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
+async-trait = "0.1"
 
 [dev-dependencies]
 hex = "0.4"

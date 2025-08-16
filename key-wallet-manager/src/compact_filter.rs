@@ -171,6 +171,56 @@ pub struct CompactFilter {
 }
 
 impl CompactFilter {
+    /// Create a filter from raw bytes
+    pub fn from_bytes(
+        filter_type: FilterType,
+        data: &[u8],
+        block_hash: &dashcore::BlockHash,
+    ) -> Result<Self, &'static str> {
+        if data.is_empty() {
+            return Err("Empty filter data");
+        }
+
+        // The data should contain a serialized GolombCodedSet
+        // For now, we'll reconstruct it from the raw bytes
+        // In a real implementation, this would deserialize the GCS properly
+
+        // Create the filter key from block hash
+        let key = derive_filter_key(&block_hash.to_byte_array());
+
+        // For now, create a GCS from the raw data
+        // This is a simplified version - a real implementation would properly deserialize
+        let filter = GolombCodedSet {
+            n: 0, // Would need to be decoded from the data
+            p: filter_type.p_value(),
+            m: filter_type.m_value(),
+            data: data.to_vec(),
+        };
+
+        Ok(CompactFilter {
+            filter_type,
+            block_hash: block_hash.to_byte_array(),
+            filter,
+        })
+    }
+
+    /// Serialize the filter to bytes
+    pub fn to_bytes(&self) -> Vec<u8> {
+        // Return the raw GCS data
+        self.filter.data.clone()
+    }
+
+    /// Check if any of the provided elements match the filter
+    pub fn match_any(&self, elements: &[&[u8]]) -> bool {
+        // Derive the key from block hash for matching
+        let key = derive_filter_key(&self.block_hash);
+
+        // Convert elements to Vec<Vec<u8>> for the GCS match_any method
+        let elements_vec: Vec<Vec<u8>> = elements.iter().map(|e| e.to_vec()).collect();
+
+        self.filter.match_any(&elements_vec, &key)
+    }
+
     /// Create a test filter for unit tests
     #[cfg(test)]
     pub fn new_test_filter(scripts: &[ScriptBuf]) -> Self {

@@ -23,13 +23,13 @@ extern crate std;
 
 pub mod coin_selection;
 pub mod compact_filter;
-pub mod enhanced_wallet_manager;
 pub mod fee;
-pub mod filter_client;
-pub mod spv_client_integration;
+pub mod spv_wallet_manager;
 pub mod sync;
 pub mod transaction_builder;
 pub mod transaction_handler;
+pub mod utxo_cache;
+pub mod wallet_interface;
 pub mod wallet_manager;
 
 // Re-export key-wallet types
@@ -45,15 +45,10 @@ pub use dashcore::{OutPoint, TxIn, TxOut};
 // Export our high-level types
 pub use coin_selection::{CoinSelector, SelectionResult, SelectionStrategy};
 pub use compact_filter::{CompactFilter, FilterHeader, FilterType, GolombCodedSet};
-pub use enhanced_wallet_manager::{
-    BlockProcessResult, EnhancedWalletManager, TransactionProcessResult,
-};
 pub use fee::{FeeEstimator, FeeRate};
-pub use filter_client::{
-    BlockFetcher, BlockProcessResult as FilterBlockResult, FetchError, FilterClient, FilterFetcher,
-    FilterMatchResult, FilterSPVClient, SyncResult as FilterSyncResult, SyncStatus,
+pub use spv_wallet_manager::{
+    BlockProcessResult, SPVStats, SPVSyncStatus, SPVWalletManager, TransactionProcessResult,
 };
-pub use spv_client_integration::{SPVCallbacks, SPVStats, SPVSyncStatus, SPVWalletIntegration};
 pub use sync::{
     BlockProcessResult as SyncBlockResult, ReorgHandler, SyncManager, SyncState, WalletSynchronizer,
 };

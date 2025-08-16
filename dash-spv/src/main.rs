@@ -3,6 +3,7 @@
 // Removed unused import
 use std::path::PathBuf;
 use std::process;
+use std::sync::Arc;
 
 use clap::{Arg, Command};
 use tokio::signal;
@@ -219,8 +220,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Log the data directory being used
     tracing::info!("Using data directory: {}", data_dir.display());
 
+    // Create the SPV wallet manager
+    let spv_wallet = key_wallet_manager::spv_wallet_manager::SPVWalletManager::new(network);
+    let wallet: Arc<
+        tokio::sync::RwLock<Box<dyn key_wallet_manager::wallet_interface::WalletInterface>>,
+    > = Arc::new(tokio::sync::RwLock::new(Box::new(spv_wallet)));
+
     // Create and start the client
-    let mut client = match DashSpvClient::new(config).await {
+    let mut client = match DashSpvClient::new(config, wallet).await {
         Ok(client) => client,
         Err(e) => {
             eprintln!("Failed to create SPV client: {}", e);

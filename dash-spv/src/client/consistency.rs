@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 use crate::error::{Result, SpvError};
 use crate::storage::StorageManager;
 use crate::types::WatchItem;
-use crate::wallet::Wallet;
+// Wallet removed - consistency checking should be handled by external wallet
 
 /// Report of wallet consistency validation.
 #[derive(Debug, Clone)]
@@ -35,6 +35,8 @@ pub struct ConsistencyRecovery {
     pub success: bool,
 }
 
+// ConsistencyManager removed - consistency checking should be handled by external wallet
+/*
 /// Wallet consistency manager.
 pub struct ConsistencyManager<'a> {
     wallet: &'a Arc<RwLock<Wallet>>,
@@ -212,7 +214,7 @@ impl<'a> ConsistencyManager<'a> {
         }
 
         if recovery.success {
-            tracing::info!("✅ Wallet consistency recovery completed: {} UTXOs synced, {} UTXOs removed, {} addresses synced", 
+            tracing::info!("✅ Wallet consistency recovery completed: {} UTXOs synced, {} UTXOs removed, {} addresses synced",
                           recovery.utxos_synced, recovery.utxos_removed, recovery.addresses_synced);
         } else {
             tracing::error!("❌ Wallet consistency recovery partially failed");
@@ -253,3 +255,4 @@ impl<'a> ConsistencyManager<'a> {
         Ok(())
     }
 }
+*/

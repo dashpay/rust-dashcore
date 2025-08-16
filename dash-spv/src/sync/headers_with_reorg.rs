@@ -22,7 +22,6 @@ use crate::storage::StorageManager;
 use crate::sync::headers2_state::Headers2StateManager;
 use crate::types::ChainState;
 use crate::validation::ValidationManager;
-use crate::wallet::WalletState;
 
 /// Configuration for reorg handling
 pub struct ReorgConfig {
@@ -57,7 +56,7 @@ pub struct HeaderSyncManagerWithReorg {
     checkpoint_manager: CheckpointManager,
     reorg_config: ReorgConfig,
     chain_state: ChainState,
-    wallet_state: WalletState,
+    // WalletState removed - wallet functionality is now handled externally
     headers2_state: Headers2StateManager,
     total_headers_synced: u32,
     last_progress_log: Option<std::time::Instant>,
@@ -70,7 +69,7 @@ impl HeaderSyncManagerWithReorg {
     /// Create a new header sync manager with reorg support
     pub fn new(config: &ClientConfig, reorg_config: ReorgConfig) -> SyncResult<Self> {
         let chain_state = ChainState::new_for_network(config.network);
-        let wallet_state = WalletState::new(config.network);
+        // WalletState removed - wallet functionality is now handled externally
 
         // Create checkpoint manager based on network
         let checkpoints = match config.network {
@@ -93,7 +92,7 @@ impl HeaderSyncManagerWithReorg {
             checkpoint_manager,
             reorg_config,
             chain_state,
-            wallet_state,
+            // WalletState removed
             headers2_state: Headers2StateManager::new(),
             total_headers_synced: 0,
             last_progress_log: None,
@@ -494,26 +493,10 @@ impl HeaderSyncManagerWithReorg {
                         current_tip.chain_work
                     );
 
-                    // Second phase: Perform reorganization using only StorageManager
-                    let event = self
-                        .reorg_manager
-                        .reorganize(
-                            &mut self.chain_state,
-                            &mut self.wallet_state,
-                            &fork_clone,
-                            storage, // Only StorageManager needed now
-                        )
-                        .await
-                        .map_err(|e| {
-                            SyncError::Validation(format!("Reorganization failed: {}", e))
-                        })?;
-
-                    tracing::info!(
-                        "🔄 Reorganization complete - common ancestor: {} at height {}, disconnected: {} blocks, connected: {} blocks",
-                        event.common_ancestor,
-                        event.common_height,
-                        event.disconnected_headers.len(),
-                        event.connected_headers.len()
+                    // Reorganization removed - wallet functionality is now handled externally
+                    // The wallet will handle reorgs via the WalletInterface::handle_reorg method
+                    tracing::warn!(
+                        "🔄 Reorganization detected but not handled internally - wallet should handle via WalletInterface"
                     );
 
                     // Update tip manager with new chain tip
@@ -529,13 +512,7 @@ impl HeaderSyncManagerWithReorg {
                     // Remove the processed fork
                     self.fork_detector.remove_fork(&fork_tip_hash);
 
-                    // Notify about affected transactions
-                    if !event.affected_transactions.is_empty() {
-                        tracing::info!(
-                            "📝 {} transactions affected by reorganization",
-                            event.affected_transactions.len()
-                        );
-                    }
+                    // Note: Transaction notification is now handled by the wallet via WalletInterface
                 }
             }
         }

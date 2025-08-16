@@ -7,7 +7,6 @@ use super::chainlock_manager::ChainLockManager;
 use super::{ChainTip, Fork};
 use crate::storage::{ChainStorage, StorageManager};
 use crate::types::ChainState;
-use crate::wallet::WalletState;
 use dashcore::{BlockHash, Header as BlockHeader, Transaction, Txid};
 use dashcore_hashes::Hash;
 use std::sync::Arc;
@@ -178,6 +177,26 @@ impl ReorgManager {
         Ok(true)
     }
 
+    /// Check if a block is chain-locked
+    pub fn is_chain_locked(
+        &self,
+        header: &BlockHeader,
+        storage: &dyn ChainStorage,
+    ) -> Result<bool, String> {
+        if let Some(ref chain_lock_mgr) = self.chain_lock_manager {
+            // Get the height of this header
+            if let Ok(Some(height)) = storage.get_header_height(&header.block_hash()) {
+                return Ok(chain_lock_mgr.is_block_chain_locked(&header.block_hash(), height));
+            }
+        }
+        // If no chain lock manager or height not found, assume not locked
+        Ok(false)
+    }
+}
+
+// WalletState removed - reorganization should be handled by external wallet
+/*
+impl ReorgManager {
     /// Perform a chain reorganization using a phased approach
     pub async fn reorganize(
         &self,
@@ -477,7 +496,7 @@ impl ReorgManager {
     }
 
     /// Check if a block is chain-locked
-    fn is_chain_locked(
+    pub fn is_chain_locked(
         &self,
         header: &BlockHeader,
         storage: &dyn ChainStorage,
@@ -513,6 +532,7 @@ impl ReorgManager {
         Ok(())
     }
 }
+*/
 
 #[cfg(test)]
 mod tests {
