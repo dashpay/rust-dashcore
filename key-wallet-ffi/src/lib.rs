@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use key_wallet::{
-    self as kw, derivation::HDWallet as KwHDWallet, mnemonic as kw_mnemonic,
+    self as kw, address as kw_address, derivation::HDWallet as KwHDWallet, mnemonic as kw_mnemonic,
     DerivationPath as KwDerivationPath, ExtendedPrivKey, ExtendedPubKey, Network as KwNetwork,
 };
 use secp256k1::{PublicKey, Secp256k1};
@@ -75,20 +75,20 @@ pub enum AddressType {
     P2SH,
 }
 
-impl From<dashcore::AddressType> for AddressType {
-    fn from(t: dashcore::AddressType) -> Self {
+impl From<kw_address::AddressType> for AddressType {
+    fn from(t: kw_address::AddressType) -> Self {
         match t {
-            dashcore::AddressType::P2pkh => AddressType::P2PKH,
-            dashcore::AddressType::P2sh => AddressType::P2SH,
+            kw_address::AddressType::P2PKH => AddressType::P2PKH,
+            kw_address::AddressType::P2SH => AddressType::P2SH,
         }
     }
 }
 
-impl From<AddressType> for dashcore::AddressType {
+impl From<AddressType> for kw_address::AddressType {
     fn from(t: AddressType) -> Self {
         match t {
-            AddressType::P2PKH => dashcore::AddressType::P2pkh,
-            AddressType::P2SH => dashcore::AddressType::P2sh,
+            AddressType::P2PKH => kw_address::AddressType::P2PKH,
+            AddressType::P2SH => kw_address::AddressType::P2SH,
         }
     }
 }
@@ -187,15 +187,6 @@ impl From<kw::Error> for KeyWalletError {
                 message: "Invalid network".into(),
             },
             kw::Error::KeyError(msg) => KeyWalletError::KeyError {
-                message: msg,
-            },
-            kw::Error::CoinJoinNotEnabled => KeyWalletError::InvalidMnemonic {
-                message: "CoinJoin not enabled".into(),
-            },
-            kw::Error::Serialization(msg) => KeyWalletError::KeyError {
-                message: msg,
-            },
-            kw::Error::InvalidParameter(msg) => KeyWalletError::InvalidDerivationPath {
                 message: msg,
             },
         }
@@ -448,14 +439,12 @@ impl ExtPubKey {
 
 // Address wrapper
 pub struct Address {
-    inner: dashcore::Address,
+    inner: kw_address::Address,
 }
 
 impl Address {
     pub fn from_string(address: String, network: Network) -> Result<Self, KeyWalletError> {
-        let inner = dashcore::Address::from_str(&address).map_err(|e| KeyWalletError::AddressError {
-            message: e.to_string(),
-        })?;
+        let inner = kw_address::Address::from_str(&address).map_err(|e| KeyWalletError::from(e))?;
 
         // Validate that the parsed network matches the expected network
         // Note: Testnet, Devnet, and Regtest all share the same address prefixes (140/19)
@@ -496,7 +485,7 @@ impl Address {
             PublicKey::from_slice(&public_key).map_err(|e| KeyWalletError::Secp256k1Error {
                 message: e.to_string(),
             })?;
-        let inner = dashcore::Address::p2pkh(&pubkey, network.into());
+        let inner = kw_address::Address::p2pkh(&pubkey, network.into());
         Ok(Self {
             inner,
         })
@@ -526,75 +515,72 @@ impl Address {
 }
 
 // Address generator wrapper
-// NOTE: AddressGenerator doesn't exist in dashcore, commented out for now
-// pub struct AddressGenerator {
-//     inner: dashcore::address::AddressGenerator,
-// }
+pub struct AddressGenerator {
+    inner: kw_address::AddressGenerator,
+}
 
-// impl AddressGenerator {
-//     pub fn new(network: Network) -> Self {
-//         Self {
-//             inner: dashcore::address::AddressGenerator::new(network.into()),
-//         }
-//     }
+impl AddressGenerator {
+    pub fn new(network: Network) -> Self {
+        Self {
+            inner: kw_address::AddressGenerator::new(network.into()),
+        }
+    }
 
-// AddressGenerator methods commented out since AddressGenerator doesn't exist in dashcore
-// TODO: Implement address generation functionality without AddressGenerator
-//     pub fn generate(
-//         &self,
-//         account_xpub: AccountXPub,
-//         external: bool,
-//         index: u32,
-//     ) -> Result<Arc<Address>, KeyWalletError> {
-//         // Parse the extended public key from string
-//         let xpub =
-//             ExtendedPubKey::from_str(&account_xpub.xpub).map_err(|e| KeyWalletError::KeyError {
-//                 message: e.to_string(),
-//             })?;
-//
-//         // Generate addresses for a single index
-//         let addrs = self
-//             .inner
-//             .generate_range(&xpub, external, index, 1)
-//             .map_err(|e| KeyWalletError::from(e))?;
-//
-//         let addr = addrs.into_iter().next().ok_or_else(|| KeyWalletError::KeyError {
-//             message: "Failed to generate address".into(),
-//         })?;
-//
-//         Ok(Arc::new(Address {
-//             inner: addr,
-//         }))
-//     }
-//
-//     pub fn generate_range(
-//         &self,
-//         account_xpub: AccountXPub,
-//         external: bool,
-//         start: u32,
-//         count: u32,
-//     ) -> Result<Vec<Arc<Address>>, KeyWalletError> {
-//         // Parse the extended public key from string
-//         let xpub =
-//             ExtendedPubKey::from_str(&account_xpub.xpub).map_err(|e| KeyWalletError::KeyError {
-//                 message: e.to_string(),
-//             })?;
-//
-//         let addrs = self
-//             .inner
-//             .generate_range(&xpub, external, start, count)
-//             .map_err(|e| KeyWalletError::from(e))?;
-//
-//         Ok(addrs
-//             .into_iter()
-//             .map(|addr| {
-//                 Arc::new(Address {
-//                     inner: addr,
-//                 })
-//             })
-//             .collect())
-//     }
-// }
+    pub fn generate(
+        &self,
+        account_xpub: AccountXPub,
+        external: bool,
+        index: u32,
+    ) -> Result<Arc<Address>, KeyWalletError> {
+        // Parse the extended public key from string
+        let xpub =
+            ExtendedPubKey::from_str(&account_xpub.xpub).map_err(|e| KeyWalletError::KeyError {
+                message: e.to_string(),
+            })?;
+
+        // Generate addresses for a single index
+        let addrs = self
+            .inner
+            .generate_range(&xpub, external, index, 1)
+            .map_err(|e| KeyWalletError::from(e))?;
+
+        let addr = addrs.into_iter().next().ok_or_else(|| KeyWalletError::KeyError {
+            message: "Failed to generate address".into(),
+        })?;
+
+        Ok(Arc::new(Address {
+            inner: addr,
+        }))
+    }
+
+    pub fn generate_range(
+        &self,
+        account_xpub: AccountXPub,
+        external: bool,
+        start: u32,
+        count: u32,
+    ) -> Result<Vec<Arc<Address>>, KeyWalletError> {
+        // Parse the extended public key from string
+        let xpub =
+            ExtendedPubKey::from_str(&account_xpub.xpub).map_err(|e| KeyWalletError::KeyError {
+                message: e.to_string(),
+            })?;
+
+        let addrs = self
+            .inner
+            .generate_range(&xpub, external, start, count)
+            .map_err(|e| KeyWalletError::from(e))?;
+
+        Ok(addrs
+            .into_iter()
+            .map(|addr| {
+                Arc::new(Address {
+                    inner: addr,
+                })
+            })
+            .collect())
+    }
+}
 
 #[cfg(test)]
 mod network_compatibility_tests {
