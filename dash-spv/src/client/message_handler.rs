@@ -121,6 +121,22 @@ impl<'a> MessageHandler<'a> {
                         SpvError::Sync(e)
                     });
             }
+            NetworkMessage::QRInfo(ref qr_info) => {
+                tracing::info!(
+                    "📨 Received QRInfo message with {} diffs and {} snapshots",
+                    qr_info.mn_list_diff_list.len(),
+                    qr_info.quorum_snapshot_list.len()
+                );
+                // Move to sync manager without cloning
+                return self
+                    .sync_manager
+                    .handle_message(message, &mut *self.network, &mut *self.storage)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Sequential sync manager error handling QRInfo: {}", e);
+                        SpvError::Sync(e)
+                    });
+            }
             _ => {}
         }
 

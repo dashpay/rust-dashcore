@@ -226,19 +226,6 @@ impl TransactionProcessor {
         })
     }
 
-    /// Extract an address from a script pubkey.
-    ///
-    /// This handles common script types like P2PKH, P2SH, etc.
-    /// Returns None if the script type is not supported or doesn't contain an address.
-    #[allow(dead_code)]
-    fn extract_address_from_script(&self, script: &dashcore::ScriptBuf) -> Option<Address> {
-        // Try to get address from script - this handles P2PKH, P2SH, P2WPKH, P2WSH
-        Address::from_script(script, dashcore::Network::Dash)
-            .ok()
-            .or_else(|| Address::from_script(script, dashcore::Network::Testnet).ok())
-            .or_else(|| Address::from_script(script, dashcore::Network::Regtest).ok())
-    }
-
     /// Get statistics about UTXOs for a specific address.
     pub async fn get_address_stats(
         &self,
@@ -354,7 +341,7 @@ mod tests {
     fn create_test_block_with_transactions(transactions: Vec<Transaction>) -> Block {
         let header = BlockHeader {
             version: Version::from_consensus(1),
-            prev_blockhash: dashcore::BlockHash::all_zeros(),
+            prev_blockhash: dashcore::BlockHash::from([0u8; 32]),
             merkle_root: dashcore_hashes::sha256d::Hash::all_zeros().into(),
             time: 1234567890,
             bits: CompactTarget::from_consensus(0x1d00ffff),
@@ -424,20 +411,21 @@ mod tests {
         assert_eq!(std::mem::size_of_val(&processor), 0); // Zero-sized struct
     }
 
-    #[tokio::test]
-    async fn test_extract_address_from_script() {
-        let processor = TransactionProcessor::new();
-        let address = create_test_address();
-        let script = address.script_pubkey();
+    // TODO: Re-enable when extract_address_from_script is added back
+    // #[tokio::test]
+    // async fn test_extract_address_from_script() {
+    //     let processor = TransactionProcessor::new();
+    //     let address = create_test_address();
+    //     let script = address.script_pubkey();
 
-        let extracted = processor.extract_address_from_script(&script);
-        assert!(extracted.is_some());
-        // The extracted address should have the same script, even if it's on a different network
-        assert_eq!(
-            extracted.expect("Address should have been extracted from script").script_pubkey(),
-            script
-        );
-    }
+    //     let extracted = processor.extract_address_from_script(&script);
+    //     assert!(extracted.is_some());
+    //     // The extracted address should have the same script, even if it's on a different network
+    //     assert_eq!(
+    //         extracted.expect("Address should have been extracted from script").script_pubkey(),
+    //         script
+    //     );
+    // }
 
     #[tokio::test]
     async fn test_process_empty_block() {

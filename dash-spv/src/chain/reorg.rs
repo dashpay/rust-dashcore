@@ -409,7 +409,7 @@ impl ReorgManager {
                 current_hash = header.prev_blockhash;
 
                 // Safety check: don't go back too far
-                if current_hash == BlockHash::all_zeros() {
+                if current_hash == BlockHash::from([0u8; 32]) {
                     return Err("Reached genesis without finding common ancestor".to_string());
                 }
 

@@ -40,6 +40,11 @@ pub struct MasternodeListEngineBTreeMapBlockContainer {
 }
 
 impl MasternodeListEngineBTreeMapBlockContainer {
+    /// Stores a block height and its corresponding block hash in the container.
+    ///
+    /// # Parameters
+    /// - `height`: The blockchain height (block number)
+    /// - `block_hash`: The hash of the block at that height
     pub fn feed_block_height(&mut self, height: CoreBlockHeight, block_hash: BlockHash) {
         self.block_heights.insert(block_hash, height);
         self.block_hashes.insert(height, block_hash);
@@ -66,6 +71,14 @@ impl From<MasternodeListEngineBTreeMapBlockContainer> for MasternodeListEngineBl
 }
 
 impl MasternodeListEngineBlockContainer {
+    /// Retrieves the block height for a given block hash.
+    ///
+    /// # Parameters
+    /// - `block_hash`: The hash of the block to look up
+    ///
+    /// # Returns
+    /// The block height if found, or `None` if not in the container.
+    /// Returns `Some(0)` for the genesis block (all zeros hash).
     pub fn get_height(&self, block_hash: &BlockHash) -> Option<CoreBlockHeight> {
         if block_hash.as_byte_array() == &[0; 32] {
             // rep
@@ -79,6 +92,13 @@ impl MasternodeListEngineBlockContainer {
         }
     }
 
+    /// Retrieves the block hash for a given block height.
+    ///
+    /// # Parameters
+    /// - `height`: The blockchain height to look up
+    ///
+    /// # Returns
+    /// A reference to the block hash if found, or `None` if not in the container.
     pub fn get_hash(&self, height: &CoreBlockHeight) -> Option<&BlockHash> {
         match self {
             MasternodeListEngineBlockContainer::BTreeMapContainer(map) => {
@@ -87,6 +107,13 @@ impl MasternodeListEngineBlockContainer {
         }
     }
 
+    /// Checks if the container has a block hash stored.
+    ///
+    /// # Parameters
+    /// - `block`: The block hash to check for
+    ///
+    /// # Returns
+    /// `true` if the block hash exists in the container, `false` otherwise.
     pub fn contains_hash(&self, block: &BlockHash) -> bool {
         match self {
             MasternodeListEngineBlockContainer::BTreeMapContainer(map) => {
@@ -95,6 +122,13 @@ impl MasternodeListEngineBlockContainer {
         }
     }
 
+    /// Checks if the container has a block height stored.
+    ///
+    /// # Parameters
+    /// - `height`: The block height to check for
+    ///
+    /// # Returns
+    /// `true` if the block height exists in the container, `false` otherwise.
     pub fn contains_height(&self, height: &CoreBlockHeight) -> bool {
         match self {
             MasternodeListEngineBlockContainer::BTreeMapContainer(map) => {
@@ -103,6 +137,11 @@ impl MasternodeListEngineBlockContainer {
         }
     }
 
+    /// Stores a block height and its corresponding block hash in the container.
+    ///
+    /// # Parameters
+    /// - `height`: The blockchain height (block number)
+    /// - `block_hash`: The hash of the block at that height
     pub fn feed_block_height(&mut self, height: CoreBlockHeight, block_hash: BlockHash) {
         match self {
             MasternodeListEngineBlockContainer::BTreeMapContainer(map) => {
@@ -111,6 +150,10 @@ impl MasternodeListEngineBlockContainer {
         }
     }
 
+    /// Returns the total number of blocks stored in the container.
+    ///
+    /// # Returns
+    /// The count of block height/hash pairs stored.
     pub fn known_block_count(&self) -> usize {
         match self {
             MasternodeListEngineBlockContainer::BTreeMapContainer(map) => map.block_hashes.len(),
@@ -150,12 +193,28 @@ impl Default for MasternodeListEngine {
 }
 
 impl MasternodeListEngine {
+    /// Creates a new MasternodeListEngine with the specified network configuration.
+    ///
+    /// # Parameters
+    /// - `network`: The Dash network (mainnet, testnet, etc.)
+    ///
+    /// # Returns
+    /// A new MasternodeListEngine instance configured for the specified network.
     pub fn default_for_network(network: Network) -> Self {
         Self {
             network,
             ..Default::default()
         }
     }
+    /// Initializes a new MasternodeListEngine with a masternode list diff.
+    ///
+    /// # Parameters
+    /// - `masternode_list_diff`: The initial masternode list diff to apply
+    /// - `block_height`: The block height where this diff applies
+    /// - `network`: The Dash network configuration
+    ///
+    /// # Returns
+    /// A new MasternodeListEngine instance or an error if initialization fails.
     pub fn initialize_with_diff_to_height(
         masternode_list_diff: MnListDiff,
         block_height: CoreBlockHeight,
@@ -179,10 +238,21 @@ impl MasternodeListEngine {
         })
     }
 
+    /// Gets the most recent masternode list.
+    ///
+    /// # Returns
+    /// A reference to the latest masternode list, or `None` if no lists are stored.
     pub fn latest_masternode_list(&self) -> Option<&MasternodeList> {
         self.masternode_lists.last_key_value().map(|(_, list)| list)
     }
 
+    /// Gets all quorum hashes from the latest masternode list.
+    ///
+    /// # Parameters
+    /// - `exclude_quorum_types`: Types of quorums to exclude from the result
+    ///
+    /// # Returns
+    /// A set of quorum hashes from the latest masternode list.
     pub fn latest_masternode_list_quorum_hashes(
         &self,
         exclude_quorum_types: &[LLMQType],
@@ -192,6 +262,14 @@ impl MasternodeListEngine {
             .unwrap_or_default()
     }
 
+    /// Gets non-rotating quorum hashes from the latest masternode list.
+    ///
+    /// # Parameters
+    /// - `exclude_quorum_types`: Types of quorums to exclude
+    /// - `only_return_block_hashes_with_missing_masternode_lists_from_engine`: If true, only returns hashes for blocks missing from the engine
+    ///
+    /// # Returns
+    /// A set of non-rotating quorum hashes.
     pub fn latest_masternode_list_non_rotating_quorum_hashes(
         &self,
         exclude_quorum_types: &[LLMQType],
@@ -217,6 +295,15 @@ impl MasternodeListEngine {
             .unwrap_or_default()
     }
 
+    /// Gets non-rotating quorum hashes from a masternode list at a specific height.
+    ///
+    /// # Parameters
+    /// - `height`: The block height to get quorum hashes for
+    /// - `exclude_quorum_types`: Types of quorums to exclude
+    /// - `only_return_block_hashes_with_missing_masternode_lists_from_engine`: If true, only returns hashes for blocks missing from the engine
+    ///
+    /// # Returns
+    /// A set of non-rotating quorum hashes at the specified height.
     pub fn masternode_list_non_rotating_quorum_hashes(
         &self,
         height: CoreBlockHeight,
@@ -244,6 +331,13 @@ impl MasternodeListEngine {
             .unwrap_or_default()
     }
 
+    /// Gets rotating quorum hashes from the latest masternode list.
+    ///
+    /// # Parameters
+    /// - `exclude_quorum_types`: Types of quorums to exclude from the result
+    ///
+    /// # Returns
+    /// A set of rotating quorum hashes from the latest masternode list.
     pub fn latest_masternode_list_rotating_quorum_hashes(
         &self,
         exclude_quorum_types: &[LLMQType],
@@ -253,6 +347,13 @@ impl MasternodeListEngine {
             .unwrap_or_default()
     }
 
+    /// Gets the masternode list for a specific block hash.
+    ///
+    /// # Parameters
+    /// - `block_hash`: The block hash to look up
+    ///
+    /// # Returns
+    /// A reference to the masternode list for that block, or `None` if not found.
     pub fn masternode_list_for_block_hash(
         &self,
         block_hash: &BlockHash,
@@ -262,6 +363,13 @@ impl MasternodeListEngine {
             .and_then(|height| self.masternode_lists.get(&height))
     }
 
+    /// Finds a known qualified quorum entry matching the given quorum entry.
+    ///
+    /// # Parameters
+    /// - `quorum_entry`: The quorum entry to search for
+    ///
+    /// # Returns
+    /// The qualified quorum entry if found, or `None` if not found.
     pub fn known_qualified_quorum_entry(
         &self,
         quorum_entry: &QuorumEntry,
@@ -278,10 +386,23 @@ impl MasternodeListEngine {
             .cloned()
     }
 
+    /// Stores a block height and hash mapping in the engine's block container.
+    ///
+    /// # Parameters
+    /// - `height`: The blockchain height (block number)
+    /// - `block_hash`: The hash of the block at that height
     pub fn feed_block_height(&mut self, height: CoreBlockHeight, block_hash: BlockHash) {
         self.block_container.feed_block_height(height, block_hash)
     }
 
+    /// Requests and stores block heights for all hashes referenced in a QRInfo message.
+    ///
+    /// # Parameters
+    /// - `qr_info`: The QRInfo message containing various diffs and quorum entries
+    /// - `fetch_block_height`: Function to fetch block height from block hash
+    ///
+    /// # Returns
+    /// Result indicating success or a data retrieval error.
     fn request_qr_info_block_heights<FH>(
         &mut self,
         qr_info: &QRInfo,
@@ -338,7 +459,14 @@ impl MasternodeListEngine {
         })
     }
 
-    /// **Helper function:** Feeds the quorum hash height of a `QuorumEntry`
+    /// Requests and stores the block height for a quorum entry's hash.
+    ///
+    /// # Parameters
+    /// - `quorum_entry`: The quorum entry containing the hash to look up
+    /// - `fetch_block_height`: Function to fetch block height from block hash
+    ///
+    /// # Returns
+    /// Result indicating success or a data retrieval error.
     fn request_quorum_entry_height<FH>(
         &mut self,
         quorum_entry: &QuorumEntry,
@@ -354,7 +482,14 @@ impl MasternodeListEngine {
         Ok(())
     }
 
-    /// **Helper function:** Requests the base and block hash heights of an `MnListDiff`
+    /// Requests and stores the block heights for a masternode list diff's base and target hashes.
+    ///
+    /// # Parameters
+    /// - `mn_list_diff`: The masternode list diff containing hashes to look up
+    /// - `fetch_block_height`: Function to fetch block height from block hash
+    ///
+    /// # Returns
+    /// Result indicating success or a data retrieval error.
     fn request_mn_list_diff_heights<FH>(
         &mut self,
         mn_list_diff: &MnListDiff,
@@ -377,6 +512,16 @@ impl MasternodeListEngine {
         Ok(())
     }
 
+    /// Processes and applies a QRInfo message to the masternode list engine.
+    ///
+    /// # Parameters
+    /// - `qr_info`: The QRInfo message containing quorum snapshots and diffs
+    /// - `verify_tip_non_rotated_quorums`: Whether to verify non-rotating quorums at the tip
+    /// - `verify_rotated_quorums`: Whether to verify rotating quorums
+    /// - `fetch_block_height`: Optional function to fetch block heights from hashes
+    ///
+    /// # Returns
+    /// Result indicating success or a quorum validation error.
     pub fn feed_qr_info<FH>(
         &mut self,
         qr_info: QRInfo,
@@ -675,6 +820,16 @@ impl MasternodeListEngine {
         Ok(())
     }
 
+    /// Applies a masternode list diff to create or update a masternode list.
+    ///
+    /// # Parameters
+    /// - `masternode_list_diff`: The diff to apply
+    /// - `diff_end_height`: Optional height where the diff applies (will be looked up if None)
+    /// - `verify_quorums`: Whether to verify quorums in the resulting list
+    /// - `previous_chain_lock_sigs`: Optional previous chain lock signatures for rotation validation
+    ///
+    /// # Returns
+    /// Result containing an optional BLS signature for rotation cycles, or an error.
     pub fn apply_diff(
         &mut self,
         masternode_list_diff: MnListDiff,
@@ -838,6 +993,16 @@ impl MasternodeListEngine {
         Ok(rotation_sig)
     }
 
+    /// Verifies non-rotating quorums in a masternode list at a specific block height.
+    ///
+    /// This function is only available when the `quorum_validation` feature is enabled.
+    ///
+    /// # Parameters
+    /// - `block_height`: The block height containing the masternode list to verify
+    /// - `exclude_quorum_types`: Types of quorums to exclude from verification
+    ///
+    /// # Returns
+    /// Result indicating success or a quorum validation error.
     #[cfg(feature = "quorum_validation")]
     pub fn verify_non_rotating_masternode_list_quorums(
         &mut self,

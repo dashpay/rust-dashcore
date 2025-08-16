@@ -20,7 +20,7 @@ use dashcore::{
 use dashcore_hashes::Hash;
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::{MasternodeState, StorageManager, StorageStats, StoredTerminalBlock};
+use crate::storage::{MasternodeState, StorageManager, StorageStats};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
 use crate::wallet::Utxo;
 
@@ -29,10 +29,6 @@ const HEADERS_PER_SEGMENT: u32 = 50_000;
 
 /// Maximum number of segments to keep in memory
 const MAX_ACTIVE_SEGMENTS: usize = 10;
-
-/// How often to save dirty segments (seconds)
-#[allow(dead_code)]
-const SAVE_INTERVAL_SECS: u64 = 10;
 
 /// Commands for the background worker
 #[derive(Debug, Clone)]
@@ -784,19 +780,31 @@ impl DiskStorageManager {
         let mut cached_tip = self.cached_tip_height.write().await;
         let mut reverse_index = self.header_hash_index.write().await;
 
-        let mut next_height = start_height;
-        let initial_height = next_height;
+        // For checkpoint sync, we need to track both:
+        // - blockchain heights (for hash index and logging)
+        // - storage indices (for cached_tip_height)
+        let mut blockchain_height = start_height;
+        let initial_blockchain_height = blockchain_height;
+
+        // Get the current storage index (0-based count of headers in storage)
+        let mut storage_index = match *cached_tip {
+            Some(tip) => tip + 1,
+            None => 0, // Start at index 0 if no headers stored yet
+        };
+        let initial_storage_index = storage_index;
 
         tracing::info!(
-            "DiskStorage: storing {} headers starting at height {} (checkpoint sync)",
+            "DiskStorage: storing {} headers starting at blockchain height {} (storage index {})",
             headers.len(),
-            initial_height
+            initial_blockchain_height,
+            initial_storage_index
         );
 
         // Process each header
         for header in headers {
-            let segment_id = Self::get_segment_id(next_height);
-            let offset = Self::get_segment_offset(next_height);
+            // Use blockchain height for segment calculation
+            let segment_id = Self::get_segment_id(blockchain_height);
+            let offset = Self::get_segment_offset(blockchain_height);
 
             // Ensure segment is loaded
             self.ensure_segment_loaded(segment_id).await?;
@@ -823,29 +831,38 @@ impl DiskStorageManager {
                 }
             }
 
-            // Update reverse index
-            reverse_index.insert(header.block_hash(), next_height);
+            // Update reverse index with blockchain height
+            reverse_index.insert(header.block_hash(), blockchain_height);
 
-            next_height += 1;
+            blockchain_height += 1;
+            storage_index += 1;
         }
 
-        // Update cached tip height atomically with reverse index
+        // Update cached tip height with storage index (not blockchain height)
         // Only update if we actually stored headers
         if !headers.is_empty() {
-            *cached_tip = Some(next_height - 1);
+            *cached_tip = Some(storage_index - 1);
         }
 
-        let final_height = if next_height > 0 {
-            next_height - 1
+        let final_blockchain_height = if blockchain_height > 0 {
+            blockchain_height - 1
+        } else {
+            0 // No headers were stored
+        };
+
+        let final_storage_index = if storage_index > 0 {
+            storage_index - 1
         } else {
             0 // No headers were stored
         };
 
         tracing::info!(
-            "DiskStorage: stored {} headers from checkpoint sync. Height: {} -> {}",
+            "DiskStorage: stored {} headers from checkpoint sync. Blockchain height: {} -> {}, Storage index: {} -> {}",
             headers.len(),
-            initial_height,
-            final_height
+            initial_blockchain_height,
+            final_blockchain_height,
+            initial_storage_index,
+            final_storage_index
         );
 
         // Release locks before saving (to avoid deadlocks during background saves)
@@ -853,7 +870,7 @@ impl DiskStorageManager {
         drop(cached_tip);
 
         // Save dirty segments periodically (every 1000 headers)
-        if headers.len() >= 1000 || next_height % 1000 == 0 {
+        if headers.len() >= 1000 || blockchain_height % 1000 == 0 {
             self.save_dirty_segments().await?;
         }
 
@@ -1103,6 +1120,10 @@ impl StorageManager for DiskStorageManager {
             return Ok(());
         }
 
+        // Load chain state to get sync_base_height for proper blockchain height calculation
+        let chain_state = self.load_chain_state().await?;
+        let sync_base_height = chain_state.as_ref().map(|cs| cs.sync_base_height).unwrap_or(0);
+
         // Acquire write locks for the entire operation to prevent race conditions
         let mut cached_tip = self.cached_tip_height.write().await;
         let mut reverse_index = self.header_hash_index.write().await;
@@ -1113,18 +1134,23 @@ impl StorageManager for DiskStorageManager {
         };
 
         let initial_height = next_height;
+        // Calculate the blockchain height based on sync_base_height + storage index
+        let initial_blockchain_height = sync_base_height + initial_height;
 
         // Use trace for single headers, debug for small batches, info for large batches
         match headers.len() {
-            1 => tracing::trace!("DiskStorage: storing 1 header at height {}", initial_height),
+            1 => tracing::trace!("DiskStorage: storing 1 header at blockchain height {} (storage index {})", 
+                initial_blockchain_height, initial_height),
             2..=10 => tracing::debug!(
-                "DiskStorage: storing {} headers starting at height {}",
+                "DiskStorage: storing {} headers starting at blockchain height {} (storage index {})",
                 headers.len(),
+                initial_blockchain_height,
                 initial_height
             ),
             _ => tracing::info!(
-                "DiskStorage: storing {} headers starting at height {}",
+                "DiskStorage: storing {} headers starting at blockchain height {} (storage index {})",
                 headers.len(),
+                initial_blockchain_height,
                 initial_height
             ),
         }
@@ -1158,8 +1184,9 @@ impl StorageManager for DiskStorageManager {
                 }
             }
 
-            // Update reverse index (atomically with tip height)
-            reverse_index.insert(header.block_hash(), next_height);
+            // Update reverse index with blockchain height (not storage index)
+            let blockchain_height = sync_base_height + next_height;
+            reverse_index.insert(header.block_hash(), blockchain_height);
 
             next_height += 1;
         }
@@ -1176,27 +1203,26 @@ impl StorageManager for DiskStorageManager {
             0 // No headers were stored
         };
 
+        let final_blockchain_height = sync_base_height + final_height;
+
         // Use appropriate log level based on batch size
         match headers.len() {
-            1 => tracing::trace!("DiskStorage: stored header at height {}", final_height),
+            1 => tracing::trace!("DiskStorage: stored header at blockchain height {} (storage index {})", 
+                final_blockchain_height, final_height),
             2..=10 => tracing::debug!(
-                "DiskStorage: stored {} headers. Height: {} -> {}",
+                "DiskStorage: stored {} headers. Blockchain height: {} -> {} (storage index: {} -> {})",
                 headers.len(),
-                if initial_height > 0 {
-                    initial_height - 1
-                } else {
-                    0
-                },
+                initial_blockchain_height,
+                final_blockchain_height,
+                initial_height,
                 final_height
             ),
             _ => tracing::info!(
-                "DiskStorage: stored {} headers. Height: {} -> {}",
+                "DiskStorage: stored {} headers. Blockchain height: {} -> {} (storage index: {} -> {})",
                 headers.len(),
-                if initial_height > 0 {
-                    initial_height - 1
-                } else {
-                    0
-                },
+                initial_blockchain_height,
+                final_blockchain_height,
+                initial_height,
                 final_height
             ),
         }
@@ -1255,6 +1281,9 @@ impl StorageManager for DiskStorageManager {
     }
 
     async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
+        // TODO: This method currently expects storage-relative heights (0-based from sync_base_height).
+        // Consider refactoring to accept blockchain heights and handle conversion internally for better UX.
+
         // First check if this height is within our known range
         let tip_height = self.cached_tip_height.read().await;
         if let Some(tip) = *tip_height {
@@ -1895,72 +1924,6 @@ impl StorageManager for DiskStorageManager {
         })?;
 
         Ok(Some(instant_lock))
-    }
-
-    async fn store_terminal_block(&mut self, block: &StoredTerminalBlock) -> StorageResult<()> {
-        let terminal_blocks_dir = self.base_path.join("terminal_blocks");
-        tokio::fs::create_dir_all(&terminal_blocks_dir).await?;
-
-        let path = terminal_blocks_dir.join(format!("terminal_block_{}.bin", block.height));
-        let data = bincode::serialize(block).map_err(|e| {
-            StorageError::WriteFailed(format!("Failed to serialize terminal block: {}", e))
-        })?;
-
-        tokio::fs::write(&path, data).await?;
-        Ok(())
-    }
-
-    async fn load_terminal_block(&self, height: u32) -> StorageResult<Option<StoredTerminalBlock>> {
-        let path = self.base_path.join(format!("terminal_blocks/terminal_block_{}.bin", height));
-
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let data = tokio::fs::read(&path).await?;
-        let block = bincode::deserialize(&data).map_err(|e| {
-            StorageError::ReadFailed(format!("Failed to deserialize terminal block: {}", e))
-        })?;
-
-        Ok(Some(block))
-    }
-
-    async fn get_all_terminal_blocks(&self) -> StorageResult<Vec<StoredTerminalBlock>> {
-        let terminal_blocks_dir = self.base_path.join("terminal_blocks");
-
-        if !terminal_blocks_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut terminal_blocks: Vec<StoredTerminalBlock> = Vec::new();
-        let mut entries = tokio::fs::read_dir(&terminal_blocks_dir).await?;
-
-        while let Some(entry) = entries.next_entry().await? {
-            let file_name = entry.file_name();
-            let file_name_str = file_name.to_string_lossy();
-
-            // Parse height from filename
-            if let Some(height_str) =
-                file_name_str.strip_prefix("terminal_block_").and_then(|s| s.strip_suffix(".bin"))
-            {
-                if let Ok(_height) = height_str.parse::<u32>() {
-                    let path = entry.path();
-                    let data = tokio::fs::read(&path).await?;
-                    if let Ok(block) = bincode::deserialize(&data) {
-                        terminal_blocks.push(block);
-                    }
-                }
-            }
-        }
-
-        // Sort by height
-        terminal_blocks.sort_by_key(|b| b.height);
-        Ok(terminal_blocks)
-    }
-
-    async fn has_terminal_block(&self, height: u32) -> StorageResult<bool> {
-        let path = self.base_path.join(format!("terminal_blocks/terminal_block_{}.bin", height));
-        Ok(path.exists())
     }
 
     // Mempool storage methods

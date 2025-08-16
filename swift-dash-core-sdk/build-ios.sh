@@ -20,20 +20,40 @@ rustup target add aarch64-apple-ios-sim
 rustup target add aarch64-apple-ios
 rustup target add x86_64-apple-ios
 
+# Function to run cargo build with output suppression
+run_cargo_build() {
+    local target=$1
+    local package=$2
+    local description=$3
+    
+    echo -e "${GREEN}Building $description...${NC}"
+    
+    # Capture output and error
+    local output
+    if output=$(cargo build --release --target "$target" -p "$package" 2>&1); then
+        echo -e "  ✓ $package"
+    else
+        echo -e "${RED}  ✗ $package failed!${NC}"
+        echo -e "${RED}Build output:${NC}"
+        echo "$output"
+        exit 1
+    fi
+}
+
 # Build for iOS Simulator (arm64)
 echo -e "${GREEN}Building for iOS Simulator (arm64)...${NC}"
-cargo build --release --target aarch64-apple-ios-sim -p dash-spv-ffi
-cargo build --release --target aarch64-apple-ios-sim -p key-wallet-ffi
+run_cargo_build "aarch64-apple-ios-sim" "dash-spv-ffi" "dash-spv-ffi for iOS Simulator (arm64)"
+run_cargo_build "aarch64-apple-ios-sim" "key-wallet-ffi" "key-wallet-ffi for iOS Simulator (arm64)"
 
 # Build for iOS Device (arm64)
 echo -e "${GREEN}Building for iOS Device (arm64)...${NC}"
-cargo build --release --target aarch64-apple-ios -p dash-spv-ffi
-cargo build --release --target aarch64-apple-ios -p key-wallet-ffi
+run_cargo_build "aarch64-apple-ios" "dash-spv-ffi" "dash-spv-ffi for iOS Device (arm64)"
+run_cargo_build "aarch64-apple-ios" "key-wallet-ffi" "key-wallet-ffi for iOS Device (arm64)"
 
 # Build for iOS Simulator (x86_64) - for Intel Macs
 echo -e "${GREEN}Building for iOS Simulator (x86_64)...${NC}"
-cargo build --release --target x86_64-apple-ios -p dash-spv-ffi
-cargo build --release --target x86_64-apple-ios -p key-wallet-ffi
+run_cargo_build "x86_64-apple-ios" "dash-spv-ffi" "dash-spv-ffi for iOS Simulator (x86_64)"
+run_cargo_build "x86_64-apple-ios" "key-wallet-ffi" "key-wallet-ffi for iOS Simulator (x86_64)"
 
 # Create universal binary for simulator
 echo -e "${GREEN}Creating universal binary for iOS Simulator...${NC}"

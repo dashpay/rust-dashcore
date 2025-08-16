@@ -167,6 +167,13 @@ pub struct ClientConfig {
     /// Wallet creation time as Unix timestamp.
     /// Used to determine appropriate checkpoint for sync.
     pub wallet_creation_time: Option<u32>,
+
+    // QRInfo configuration (simplified per plan)
+    /// Request extra share data in QRInfo (default: false per DMLviewer.patch).
+    pub qr_info_extra_share: bool,
+
+    /// Timeout for QRInfo requests (default: 30 seconds).
+    pub qr_info_timeout: Duration,
 }
 
 impl Default for ClientConfig {
@@ -221,6 +228,9 @@ impl Default for ClientConfig {
             blocks_request_rate_limit: None,
             start_from_height: None,
             wallet_creation_time: None,
+            // QRInfo defaults (simplified per plan)
+            qr_info_extra_share: false, // Matches DMLviewer.patch default
+            qr_info_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -363,6 +373,18 @@ impl ClientConfig {
     /// Set the starting height for synchronization.
     pub fn with_start_height(mut self, height: u32) -> Self {
         self.start_from_height = Some(height);
+        self
+    }
+
+    /// Set whether to request extra share data in QRInfo.
+    pub fn with_qr_info_extra_share(mut self, enabled: bool) -> Self {
+        self.qr_info_extra_share = enabled;
+        self
+    }
+
+    /// Set QRInfo request timeout.
+    pub fn with_qr_info_timeout(mut self, timeout: Duration) -> Self {
+        self.qr_info_timeout = timeout;
         self
     }
 

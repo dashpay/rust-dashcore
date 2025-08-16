@@ -31,7 +31,9 @@ use crate::types::{
 };
 use crate::validation::ValidationManager;
 use dashcore::network::constants::NetworkExt;
+use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 
 pub use block_processor::{BlockProcessingTask, BlockProcessor};
 pub use config::ClientConfig;
@@ -1899,6 +1901,106 @@ impl DashSpvClient {
         self.sync_manager.masternode_list_engine()
     }
 
+    /// Get the masternode list at a specific block height.
+    /// Returns None if the masternode list for that height is not available.
+    pub fn get_masternode_list_at_height(&self, height: u32) -> Option<&MasternodeList> {
+        self.masternode_list_engine().and_then(|engine| engine.masternode_lists.get(&height))
+    }
+
+    /// Get a quorum entry by type and hash at a specific block height.
+    /// Returns None if the quorum is not found.
+    pub fn get_quorum_at_height(
+        &self,
+        height: u32,
+        quorum_type: u8,
+        quorum_hash: &[u8; 32],
+    ) -> Option<&QualifiedQuorumEntry> {
+        use dashcore::sml::llmq_type::LLMQType;
+        use dashcore::QuorumHash;
+        use dashcore_hashes::Hash;
+
+        let llmq_type = match LLMQType::try_from(quorum_type) {
+            Ok(t) => t,
+            Err(_) => {
+                tracing::warn!(
+                    "Invalid quorum type {} requested at height {}",
+                    quorum_type,
+                    height
+                );
+                return None;
+            }
+        };
+
+        let qhash = QuorumHash::from_byte_array(*quorum_hash);
+
+        // First check if we have the masternode list at this height
+        match self.get_masternode_list_at_height(height) {
+            Some(ml) => {
+                // We have the masternode list, now look for the quorum
+                match ml.quorums.get(&llmq_type) {
+                    Some(quorums) => match quorums.get(&qhash) {
+                        Some(quorum) => {
+                            tracing::debug!(
+                                "Found quorum type {} at height {} with hash {}",
+                                quorum_type,
+                                height,
+                                hex::encode(quorum_hash)
+                            );
+                            Some(quorum)
+                        }
+                        None => {
+                            tracing::warn!(
+                                    "Quorum not found: type {} at height {} with hash {} (masternode list exists with {} quorums of this type)",
+                                    quorum_type,
+                                    height,
+                                    hex::encode(quorum_hash),
+                                    quorums.len()
+                                );
+                            None
+                        }
+                    },
+                    None => {
+                        tracing::warn!(
+                            "No quorums of type {} found at height {} (masternode list exists)",
+                            quorum_type,
+                            height
+                        );
+                        None
+                    }
+                }
+            }
+            None => {
+                // Log available heights for debugging
+                if let Some(engine) = self.masternode_list_engine() {
+                    let available_heights: Vec<u32> = engine
+                        .masternode_lists
+                        .keys()
+                        .filter(|&&h| {
+                            h > height.saturating_sub(100) && h < height.saturating_add(100)
+                        })
+                        .copied()
+                        .collect();
+
+                    tracing::warn!(
+                        "Missing masternode list at height {} for quorum lookup (type: {}, hash: {}). Nearby available heights: {:?}",
+                        height,
+                        quorum_type,
+                        hex::encode(quorum_hash),
+                        available_heights
+                    );
+                } else {
+                    tracing::warn!(
+                        "Missing masternode list at height {} for quorum lookup (type: {}, hash: {}) - no engine available",
+                        height,
+                        quorum_type,
+                        hex::encode(quorum_hash)
+                    );
+                }
+                None
+            }
+        }
+    }
+
     /// Sync compact filters for recent blocks and check for matches.
     /// Sync and check filters with internal monitoring loop management.
     /// This method automatically handles the monitoring loop required for CFilter message processing.
@@ -2596,8 +2698,9 @@ impl DashSpvClient {
                             self.config.network,
                         );
 
-                        // Clone the chain state for storage
-                        let chain_state_for_storage = chain_state.clone();
+                        // Clone the chain state for storage and sync manager
+                        let chain_state_for_storage = (*chain_state).clone();
+                        let checkpoint_chain_state = (*chain_state).clone();
                         drop(chain_state);
 
                         // Update storage with chain state including sync_base_height
@@ -2613,6 +2716,12 @@ impl DashSpvClient {
                             "✅ Initialized from checkpoint at height {}, skipping {} headers",
                             checkpoint.height,
                             checkpoint.height
+                        );
+
+                        // Update the sync manager's chain state with the checkpoint-initialized state
+                        self.sync_manager.set_chain_state(checkpoint_chain_state);
+                        tracing::info!(
+                            "Updated sync manager with checkpoint-initialized chain state"
                         );
 
                         return Ok(());
@@ -2646,7 +2755,7 @@ impl DashSpvClient {
                 // Use the actual Dash mainnet genesis block parameters
                 BlockHeader {
                     version: Version::from_consensus(1),
-                    prev_blockhash: dashcore::BlockHash::all_zeros(),
+                    prev_blockhash: dashcore::BlockHash::from([0u8; 32]),
                     merkle_root: "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
                         .parse()
                         .unwrap_or_else(|_| dashcore::hashes::sha256d::Hash::all_zeros().into()),
@@ -2659,7 +2768,7 @@ impl DashSpvClient {
                 // Use the actual Dash testnet genesis block parameters
                 BlockHeader {
                     version: Version::from_consensus(1),
-                    prev_blockhash: dashcore::BlockHash::all_zeros(),
+                    prev_blockhash: dashcore::BlockHash::from([0u8; 32]),
                     merkle_root: "e0028eb9648db56b1ac77cf090b99048a8007e2bb64b68f092c03c7f56a662c7"
                         .parse()
                         .unwrap_or_else(|_| dashcore::hashes::sha256d::Hash::all_zeros().into()),
@@ -3068,20 +3177,17 @@ impl DashSpvClient {
         &mut self.sync_manager
     }
 
-    /// Get reference to chainlock manager (for testing)
-    #[cfg(test)]
+    /// Get reference to chainlock manager
     pub fn chainlock_manager(&self) -> &Arc<ChainLockManager> {
         &self.chainlock_manager
     }
 
-    /// Get reference to storage manager (for testing)
-    #[cfg(test)]
+    /// Get reference to storage manager
     pub fn storage(&self) -> &dyn StorageManager {
         &*self.storage
     }
 
-    /// Get mutable reference to storage manager (for testing)
-    #[cfg(test)]
+    /// Get mutable reference to storage manager
     pub fn storage_mut(&mut self) -> &mut dyn StorageManager {
         &mut *self.storage
     }
@@ -3133,9 +3239,12 @@ mod tests {
         let wallet = Arc::new(crate::wallet::Wallet::new(storage.clone()));
 
         // Test address
-        let address = dashcore::Address::from_str("yYZqVQcvnDVrPt9fMTxBVLJNr6yL8YFtez")
-            .unwrap()
-            .assume_checked();
+        use dashcore::hashes::Hash;
+        let pubkey_hash = dashcore::PubkeyHash::from_byte_array([0u8; 20]);
+        let address = dashcore::Address::new(
+            dashcore::Network::Dash,
+            dashcore::address::Payload::PubkeyHash(pubkey_hash),
+        );
 
         // Test 1: Simple incoming transaction
         let tx1 = Transaction {
