@@ -8,17 +8,39 @@ use std::time::{Duration, Instant};
 
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
-    network::{NetworkManager, TcpNetworkManager},
+    network::{MultiPeerNetworkManager, NetworkManager, TcpNetworkManager},
     storage::{MemoryStorageManager, StorageManager},
     types::ValidationMode,
 };
 use dashcore::Network;
 use env_logger;
+use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
 use log::{debug, info, warn};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 const DASH_NODE_ADDR: &str = "127.0.0.1:9999";
 const MAX_TEST_HEADERS: u32 = 10000;
 const HEADER_SYNC_TIMEOUT: Duration = Duration::from_secs(120); // 2 minutes for 10k headers
+
+/// Helper function to create a DashSpvClient with all required components
+async fn create_test_client(
+    config: ClientConfig,
+) -> Result<
+    DashSpvClient<SPVWalletManager, MultiPeerNetworkManager, MemoryStorageManager>,
+    Box<dyn std::error::Error>,
+> {
+    // Create network manager
+    let network_manager = MultiPeerNetworkManager::new(&config).await?;
+
+    // Create storage manager
+    let storage_manager = MemoryStorageManager::new().await?;
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+
+    Ok(DashSpvClient::new(config, network_manager, storage_manager, wallet).await?)
+}
 
 /// Helper function to check if the Dash node is available
 async fn check_node_availability() -> bool {
@@ -98,7 +120,7 @@ async fn test_real_header_sync_genesis_to_1000() {
     config.peers.push(peer_addr);
 
     // Create client
-    let mut client = DashSpvClient::new(config).await.expect("Failed to create SPV client");
+    let mut client = create_test_client(config).await.expect("Failed to create SPV client");
 
     // Start the client
     client.start().await.expect("Failed to start client");
@@ -177,7 +199,7 @@ async fn test_real_header_sync_up_to_10k() {
     // Verify starting from empty state
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
 
-    let mut client = DashSpvClient::new(config.clone()).await.expect("Failed to create SPV client");
+    let mut client = create_test_client(config.clone()).await.expect("Failed to create SPV client");
 
     // Start the client
     client.start().await.expect("Failed to start client");
@@ -320,7 +342,7 @@ async fn test_real_header_validation_with_node() {
 
     config.peers.push(peer_addr);
 
-    let mut client = DashSpvClient::new(config).await.expect("Failed to create SPV client");
+    let mut client = create_test_client(config).await.expect("Failed to create SPV client");
 
     client.start().await.expect("Failed to start client");
 
@@ -383,7 +405,7 @@ async fn test_real_header_chain_continuity() {
 
     let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
 
-    let mut client = DashSpvClient::new(config).await.expect("Failed to create SPV client");
+    let mut client = create_test_client(config).await.expect("Failed to create SPV client");
 
     client.start().await.expect("Failed to start client");
 
@@ -456,7 +478,7 @@ async fn test_real_node_sync_resumption() {
     // First sync: Get some headers
     info!("Phase 1: Initial sync");
     let mut client1 =
-        DashSpvClient::new(config.clone()).await.expect("Failed to create first client");
+        create_test_client(config.clone()).await.expect("Failed to create first client");
 
     client1.start().await.expect("Failed to start first client");
 
@@ -475,7 +497,7 @@ async fn test_real_node_sync_resumption() {
 
     // Second sync: Resume from where we left off
     info!("Phase 2: Resume sync");
-    let mut client2 = DashSpvClient::new(config).await.expect("Failed to create second client");
+    let mut client2 = create_test_client(config).await.expect("Failed to create second client");
 
     client2.start().await.expect("Failed to start second client");
 
@@ -518,7 +540,7 @@ async fn test_real_node_performance_benchmarks() {
 
     config.peers.push(peer_addr);
 
-    let mut client = DashSpvClient::new(config).await.expect("Failed to create client");
+    let mut client = create_test_client(config).await.expect("Failed to create client");
 
     client.start().await.expect("Failed to start client");
 

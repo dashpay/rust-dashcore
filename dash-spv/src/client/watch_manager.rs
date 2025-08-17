@@ -59,6 +59,8 @@ impl WatchManager {
                     tracing::error!("Failed to send watch item update to filter processor: {}", e);
                 }
             }
+        } else {
+            return Err(SpvError::WatchItem(format!("Watch item already exists: {:?}", item)));
         }
 
         Ok(())

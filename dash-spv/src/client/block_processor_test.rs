@@ -5,14 +5,16 @@ mod tests {
     use crate::client::block_processor::{BlockProcessingTask, BlockProcessor};
     use crate::error::SpvError;
     use crate::storage::memory::MemoryStorageManager;
+    use crate::storage::StorageManager;
     use crate::types::{SpvEvent, SpvStats, WatchItem};
     use dashcore::{
         blockdata::constants::genesis_block, consensus::encode::serialize, hash_types::FilterHash,
         Address, Block, Network, Transaction,
     };
+    use std::collections::HashSet;
     use std::str::FromStr;
     use std::sync::Arc;
-    use tokio::sync::{mpsc, Mutex, RwLock};
+    use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
     // Mock WalletInterface implementation for testing
     struct MockWallet {
@@ -69,23 +71,27 @@ mod tests {
     }
 
     async fn setup_processor() -> (
-        BlockProcessor,
+        BlockProcessor<MockWallet, MemoryStorageManager>,
         mpsc::UnboundedSender<BlockProcessingTask>,
         mpsc::UnboundedReceiver<SpvEvent>,
-        Arc<RwLock<Box<dyn key_wallet_manager::wallet_interface::WalletInterface>>>,
-        Arc<Mutex<Box<dyn crate::storage::StorageManager>>>,
+        Arc<RwLock<MockWallet>>,
+        Arc<Mutex<MemoryStorageManager>>,
     ) {
         let (task_tx, task_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
-        let wallet = MockWallet::new(Network::Dash);
-        let wallet: Arc<RwLock<Box<dyn key_wallet_manager::wallet_interface::WalletInterface>>> =
-            Arc::new(RwLock::new(Box::new(wallet)));
-        let storage = Arc::new(Mutex::new(Box::new(MemoryStorageManager::new().await.unwrap())
-            as Box<dyn crate::storage::StorageManager>));
+        let wallet = Arc::new(RwLock::new(MockWallet::new(Network::Dash)));
+        let storage = Arc::new(Mutex::new(MemoryStorageManager::new().await.unwrap()));
+        let watch_items = Arc::new(RwLock::new(HashSet::new()));
 
-        let processor =
-            BlockProcessor::new(task_rx, event_tx, stats, wallet.clone(), storage.clone());
+        let processor = BlockProcessor::new(
+            task_rx,
+            wallet.clone(),
+            storage.clone(),
+            watch_items,
+            stats,
+            event_tx,
+        );
 
         (processor, task_tx, event_rx, wallet, storage)
     }
@@ -97,7 +103,6 @@ mod tests {
         // Create a test block
         let block = create_test_block(Network::Dash);
         let block_hash = block.block_hash();
-        let serialized = serialize(&block);
 
         // Store a header for the block first
         {
@@ -106,10 +111,11 @@ mod tests {
         }
 
         // Send block processing task
+        let (response_tx, _response_rx) = oneshot::channel();
         task_tx
             .send(BlockProcessingTask::ProcessBlock {
-                block_hash,
-                block_data: serialized,
+                block: block.clone(),
+                response_tx,
             })
             .unwrap();
 
@@ -124,7 +130,7 @@ mod tests {
                     ..
                 } = event
                 {
-                    assert_eq!(hash, block_hash);
+                    assert_eq!(hash.to_string(), block_hash.to_string());
                     break;
                 }
             }
@@ -135,6 +141,9 @@ mod tests {
         // Verify wallet was called
         {
             let wallet = wallet.read().await;
+            // Since we're using key_wallet_manager::wallet_interface::WalletInterface,
+            // we need to use the trait to access as_any
+            use key_wallet_manager::wallet_interface::WalletInterface;
             let mock_wallet = wallet.as_any().downcast_ref::<MockWallet>().unwrap();
             let processed = mock_wallet.processed_blocks.lock().await;
             assert_eq!(processed.len(), 1);
@@ -148,31 +157,47 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_compact_filter() {
-        let (mut processor, task_tx, mut event_rx, wallet, _storage) = setup_processor().await;
+        let (mut processor, task_tx, mut event_rx, _wallet, _storage) = setup_processor().await;
 
-        let block_hash = create_test_block(Network::Dash).block_hash();
-        let filter_data = vec![1, 2, 3, 4, 5]; // Mock filter data
+        // Create a test block
+        let block = create_test_block(Network::Dash);
+        let block_hash = block.block_hash();
+
+        // Create mock filter data (in real scenario, this would be a GCS filter)
+        // For testing, we just use some dummy data
+        let filter_data = vec![1, 2, 3, 4, 5];
 
         // Send filter processing task
+        let (response_tx, response_rx) = oneshot::channel();
         task_tx
             .send(BlockProcessingTask::ProcessCompactFilter {
-                block_hash,
                 filter_data: filter_data.clone(),
+                block_hash,
+                response_tx,
             })
             .unwrap();
 
         // Process in a separate task
         let processor_handle = tokio::spawn(async move { processor.run().await });
 
+        // Wait for response
+        let matches = tokio::time::timeout(std::time::Duration::from_millis(100), response_rx)
+            .await
+            .expect("Should receive response")
+            .expect("Should receive Ok result")
+            .expect("Should receive Ok from processor");
+
+        // Our mock wallet always returns true for check_compact_filter
+        assert!(matches, "Filter should match (mock wallet returns true)");
+
         // Wait for event
         tokio::time::timeout(std::time::Duration::from_millis(100), async {
             while let Some(event) = event_rx.recv().await {
                 if let SpvEvent::CompactFilterMatched {
                     hash,
-                    ..
                 } = event
                 {
-                    assert_eq!(hash, block_hash);
+                    assert_eq!(hash, block_hash.to_string());
                     break;
                 }
             }
@@ -180,8 +205,84 @@ mod tests {
         .await
         .expect("Should receive filter matched event");
 
-        // Verify wallet check_compact_filter was called (returns true in mock)
-        // The event being received confirms it was called
+        // Shutdown
+        drop(task_tx);
+        let _ = processor_handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_process_compact_filter_no_match() {
+        // Create a custom mock wallet that returns false for filter checks
+        struct NonMatchingWallet {
+            network: Network,
+        }
+
+        #[async_trait::async_trait]
+        impl key_wallet_manager::wallet_interface::WalletInterface for NonMatchingWallet {
+            async fn process_block(&mut self, _block: &Block, _height: u32) -> Vec<dashcore::Txid> {
+                Vec::new()
+            }
+
+            async fn process_mempool_transaction(&mut self, _tx: &Transaction) {}
+
+            async fn handle_reorg(&mut self, _from_height: u32, _to_height: u32) {}
+
+            async fn check_compact_filter(
+                &self,
+                _filter: &[u8],
+                _block_hash: &dashcore::BlockHash,
+            ) -> bool {
+                // Always return false - filter doesn't match
+                false
+            }
+
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let (task_tx, task_rx) = mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let stats = Arc::new(RwLock::new(SpvStats::default()));
+        let wallet = Arc::new(RwLock::new(NonMatchingWallet {
+            network: Network::Dash,
+        }));
+        let storage = Arc::new(Mutex::new(MemoryStorageManager::new().await.unwrap()));
+        let watch_items = Arc::new(RwLock::new(HashSet::new()));
+
+        let mut processor =
+            BlockProcessor::new(task_rx, wallet, storage, watch_items, stats, event_tx);
+
+        let block_hash = create_test_block(Network::Dash).block_hash();
+        let filter_data = vec![1, 2, 3, 4, 5];
+
+        // Send filter processing task
+        let (response_tx, response_rx) = oneshot::channel();
+        task_tx
+            .send(BlockProcessingTask::ProcessCompactFilter {
+                filter_data,
+                block_hash,
+                response_tx,
+            })
+            .unwrap();
+
+        // Process in a separate task
+        let processor_handle = tokio::spawn(async move { processor.run().await });
+
+        // Wait for response
+        let matches = tokio::time::timeout(std::time::Duration::from_millis(100), response_rx)
+            .await
+            .expect("Should receive response")
+            .expect("Should receive Ok result")
+            .expect("Should receive Ok from processor");
+
+        // Should not match
+        assert!(!matches, "Filter should not match");
+
+        // Should NOT receive a CompactFilterMatched event
+        let event_result =
+            tokio::time::timeout(std::time::Duration::from_millis(50), event_rx.recv()).await;
+        assert!(event_result.is_err(), "Should not receive any event for non-matching filter");
 
         // Shutdown
         drop(task_tx);
@@ -198,7 +299,13 @@ mod tests {
         let txid = tx.txid();
 
         // Send mempool transaction task
-        task_tx.send(BlockProcessingTask::ProcessMempoolTransaction(tx.clone())).unwrap();
+        let (response_tx, _response_rx) = oneshot::channel();
+        task_tx
+            .send(BlockProcessingTask::ProcessTransaction {
+                tx: tx.clone(),
+                response_tx,
+            })
+            .unwrap();
 
         // Process in a separate task
         let processor_handle = tokio::spawn(async move { processor.run().await });
@@ -209,6 +316,7 @@ mod tests {
         // Verify wallet was called
         {
             let wallet = wallet.read().await;
+            use key_wallet_manager::wallet_interface::WalletInterface;
             let mock_wallet = wallet.as_any().downcast_ref::<MockWallet>().unwrap();
             let processed = mock_wallet.processed_transactions.lock().await;
             assert_eq!(processed.len(), 1);
@@ -243,15 +351,15 @@ mod tests {
 
         let block = create_test_block(Network::Dash);
         let block_hash = block.block_hash();
-        let serialized = serialize(&block);
 
         // Don't store header - should fail to find height
 
         // Send block processing task
+        let (response_tx, _response_rx) = oneshot::channel();
         task_tx
             .send(BlockProcessingTask::ProcessBlock {
-                block_hash,
-                block_data: serialized,
+                block: block.clone(),
+                response_tx,
             })
             .unwrap();
 
@@ -267,7 +375,7 @@ mod tests {
                     ..
                 } = event
                 {
-                    assert_eq!(hash, block_hash);
+                    assert_eq!(hash.to_string(), block_hash.to_string());
                     assert_eq!(height, 0); // Default height when not found
                     break;
                 }

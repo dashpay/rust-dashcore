@@ -380,12 +380,12 @@ mod tests {
     #[test]
     fn test_address_tracker() {
         let mut tracker = AddressTracker::new(20);
-        let wallet_id = "wallet1".to_string();
+        let wallet_id = [1u8; 32]; // Use byte array for wallet ID
 
         // Mark some addresses as used
-        tracker.mark_address_used(wallet_id.clone(), 0, false, 0);
-        tracker.mark_address_used(wallet_id.clone(), 0, false, 2);
-        tracker.mark_address_used(wallet_id.clone(), 0, false, 5);
+        tracker.mark_address_used(wallet_id, 0, false, 0);
+        tracker.mark_address_used(wallet_id, 0, false, 2);
+        tracker.mark_address_used(wallet_id, 0, false, 5);
 
         // Check next index
         assert_eq!(tracker.next_receive_index(&wallet_id, 0), 6);

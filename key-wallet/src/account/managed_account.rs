@@ -9,11 +9,12 @@ use super::types::ManagedAccountType;
 use crate::gap_limit::GapLimitManager;
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletBalance;
-use crate::Network;
+use crate::{ExtendedPubKey, Network};
 use alloc::collections::{BTreeMap, BTreeSet};
 use dashcore::blockdata::transaction::OutPoint;
-use dashcore::Address;
 use dashcore::Txid;
+use dashcore::{Address, PublicKey};
+use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -86,10 +87,14 @@ impl ManagedAccount {
             ..
         } = &self.account_type
         {
-            external_addresses
-                .get_unused_addresses()
-                .first()
-                .and_then(|addr| external_addresses.get_address_index(addr))
+            // Get the first unused address or the next index after the last used one
+            if let Some(addr) = external_addresses.get_unused_addresses().first() {
+                external_addresses.get_address_index(addr)
+            } else {
+                // If no unused addresses, return the next index based on stats
+                let stats = external_addresses.stats();
+                Some(stats.highest_generated.map(|h| h + 1).unwrap_or(0))
+            }
         } else {
             None
         }
@@ -105,10 +110,14 @@ impl ManagedAccount {
             ..
         } = &self.account_type
         {
-            internal_addresses
-                .get_unused_addresses()
-                .first()
-                .and_then(|addr| internal_addresses.get_address_index(addr))
+            // Get the first unused address or the next index after the last used one
+            if let Some(addr) = internal_addresses.get_unused_addresses().first() {
+                internal_addresses.get_address_index(addr)
+            } else {
+                // If no unused addresses, return the next index based on stats
+                let stats = internal_addresses.stats();
+                Some(stats.highest_generated.map(|h| h + 1).unwrap_or(0))
+            }
         } else {
             None
         }
@@ -219,6 +228,74 @@ impl ManagedAccount {
     /// Check if an address belongs to this account
     pub fn contains_address(&self, address: &Address) -> bool {
         self.account_type.contains_address(address)
+    }
+
+    /// Generate the next receive address using the provided extended public key
+    /// This method derives a new address from the account's xpub but does not add it to the pool
+    /// The address must be added to the pool separately with proper tracking
+    pub fn get_next_receive_address(
+        &mut self,
+        account_xpub: &ExtendedPubKey,
+        network: Network,
+    ) -> Result<Address, &'static str> {
+        // Get the next receive address index
+        let index = self
+            .get_next_receive_address_index()
+            .ok_or("Cannot generate receive address for this account type")?;
+
+        // Derive the address from the account's xpub
+        let secp = Secp256k1::new();
+
+        // Derive m/0/index (receive branch)
+        let receive_xpub = account_xpub
+            .derive_pub(&secp, &[crate::ChildNumber::from_normal_idx(0).unwrap()])
+            .map_err(|_| "Failed to derive receive branch")?;
+
+        let address_xpub = receive_xpub
+            .derive_pub(&secp, &[crate::ChildNumber::from_normal_idx(index).unwrap()])
+            .map_err(|_| "Failed to derive address")?;
+
+        // Convert to public key and create address
+        let pubkey = PublicKey::from_slice(&address_xpub.public_key.serialize())
+            .map_err(|_| "Failed to create public key")?;
+
+        let address = Address::p2pkh(&pubkey, network);
+
+        Ok(address)
+    }
+
+    /// Generate the next change address using the provided extended public key
+    /// This method derives a new address from the account's xpub but does not add it to the pool
+    /// The address must be added to the pool separately with proper tracking
+    pub fn get_next_change_address(
+        &mut self,
+        account_xpub: &ExtendedPubKey,
+        network: Network,
+    ) -> Result<Address, &'static str> {
+        // Get the next change address index
+        let index = self
+            .get_next_change_address_index()
+            .ok_or("Cannot generate change address for this account type")?;
+
+        // Derive the address from the account's xpub
+        let secp = Secp256k1::new();
+
+        // Derive m/1/index (change branch)
+        let change_xpub = account_xpub
+            .derive_pub(&secp, &[crate::ChildNumber::from_normal_idx(1).unwrap()])
+            .map_err(|_| "Failed to derive change branch")?;
+
+        let address_xpub = change_xpub
+            .derive_pub(&secp, &[crate::ChildNumber::from_normal_idx(index).unwrap()])
+            .map_err(|_| "Failed to derive address")?;
+
+        // Convert to public key and create address
+        let pubkey = PublicKey::from_slice(&address_xpub.public_key.serialize())
+            .map_err(|_| "Failed to create public key")?;
+
+        let address = Address::p2pkh(&pubkey, network);
+
+        Ok(address)
     }
 
     /// Get the derivation path for an address if it belongs to this account

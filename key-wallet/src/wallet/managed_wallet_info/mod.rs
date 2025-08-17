@@ -3,12 +3,17 @@
 //! This module contains the mutable metadata and information about a wallet
 //! that is managed separately from the core wallet structure.
 
+pub mod coin_selection;
+pub mod fee;
+pub mod transaction_builder;
+pub mod transaction_building;
+
 use super::balance::WalletBalance;
 use super::immature_transaction::ImmatureTransactionCollection;
 use super::metadata::WalletMetadata;
 use crate::account::{ManagedAccount, ManagedAccountCollection};
 use crate::{Address, Network};
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 #[cfg(feature = "serde")]
@@ -173,19 +178,6 @@ impl ManagedWalletInfo {
             .unwrap_or_else(|_| WalletBalance::default())
     }
 
-    /// Add a monitored address
-    pub fn add_monitored_address(&mut self, _address: Address) {
-        // Find the account that should own this address
-        // For now, we'll store it at the wallet level for simplicity
-        // In a full implementation, this would delegate to the appropriate account
-    }
-
-    /// Add a transaction record to the appropriate account
-    pub fn add_transaction(&mut self, _transaction: TransactionRecord) {
-        // This would need to determine which account owns the transaction
-        // For now, this is a placeholder
-    }
-
     /// Get all transaction history across all accounts
     pub fn get_transaction_history(&self) -> Vec<&TransactionRecord> {
         let mut transactions = Vec::new();
@@ -200,15 +192,9 @@ impl ManagedWalletInfo {
         transactions
     }
 
-    /// Add a UTXO to the appropriate account
-    pub fn add_utxo(&mut self, _utxo: Utxo) {
-        // This would need to determine which account owns the UTXO
-        // For now, this is a placeholder
-    }
-
     /// Get all UTXOs across all accounts
-    pub fn get_utxos(&self) -> Vec<&Utxo> {
-        let mut utxos = Vec::new();
+    pub fn get_utxos(&self) -> BTreeSet<&Utxo> {
+        let mut utxos = BTreeSet::new();
 
         // Collect UTXOs from all accounts across all networks
         for collection in self.accounts.values() {
@@ -336,6 +322,21 @@ impl ManagedWalletInfo {
             .get(&network)
             .map(|collection| collection.total_immature_balance())
             .unwrap_or(0)
+    }
+
+    /// Get monitored addresses for a specific network
+    /// These are automatically collected from all accounts in the network
+    pub fn monitored_addresses(&self, network: Network) -> Vec<Address> {
+        let mut addresses = Vec::new();
+
+        if let Some(collection) = self.accounts.get(&network) {
+            // Collect from all accounts using the account's get_all_addresses method
+            for account in collection.all_accounts() {
+                addresses.extend(account.get_all_addresses());
+            }
+        }
+
+        addresses
     }
 }
 

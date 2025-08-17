@@ -12,6 +12,7 @@ license = "CC0-1.0"
 default = ["std"]
 std = ["key-wallet/std", "dashcore/std", "dashcore_hashes/std", "secp256k1/std"]
 serde = ["dep:serde", "key-wallet/serde", "dashcore/serde"]
+getrandom = ["key-wallet/getrandom"]
 
 [dependencies]
 key-wallet = { path = "../key-wallet", default-features = false }

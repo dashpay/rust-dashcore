@@ -285,14 +285,15 @@ mod tests {
         }
     }
 
-    // MockWallet removed - wallet functionality is now handled externally
-    /*
+    // MockWallet for test purposes only
+    #[cfg(test)]
     struct MockWallet {
         network: Network,
         watched_addresses: HashSet<Address>,
         utxos: HashSet<OutPoint>,
     }
 
+    #[cfg(test)]
     impl MockWallet {
         fn new(network: Network) -> Self {
             Self {
@@ -362,7 +363,6 @@ mod tests {
             net_amount
         }
     }
-    */
 
     #[tokio::test]
     async fn test_selective_strategy() {
@@ -373,6 +373,7 @@ mod tests {
             1000,
             mempool_state.clone(),
             vec![],
+            Network::Dash,
         );
 
         // Generate a test txid
@@ -399,6 +400,7 @@ mod tests {
             2, // Small limit for testing
             mempool_state.clone(),
             vec![],
+            Network::Dash,
         );
 
         // Should fetch any transaction when under limit
@@ -640,6 +642,7 @@ mod tests {
             1000,
             mempool_state,
             watch_items,
+            network,
         );
 
         let mut wallet = MockWallet::new(network);
@@ -665,6 +668,7 @@ mod tests {
             3, // Very small limit
             mempool_state.clone(),
             vec![],
+            Network::Dash,
         );
 
         // Should not be at capacity initially
@@ -710,6 +714,7 @@ mod tests {
             1000,
             mempool_state.clone(),
             vec![],
+            Network::Dash,
         );
 
         // Add some transactions with different ages
@@ -776,6 +781,7 @@ mod tests {
             1000,
             mempool_state,
             vec![],
+            Network::Dash,
         );
 
         // BloomFilter strategy should always return true (actual filtering is done by network layer)

@@ -3,6 +3,7 @@
 //! This module provides serialization and deserialization methods for wallets
 //! using bincode for efficient binary storage.
 
+use crate::error::{Error, Result};
 use crate::wallet::Wallet;
 
 impl Wallet {

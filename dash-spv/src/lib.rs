@@ -13,7 +13,12 @@
 //!
 //! ```no_run
 //! use dash_spv::{DashSpvClient, ClientConfig};
+//! use dash_spv::network::MultiPeerNetworkManager;
+//! use dash_spv::storage::MemoryStorageManager;
 //! use dashcore::Network;
+//! use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
+//! use std::sync::Arc;
+//! use tokio::sync::RwLock;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,8 +27,13 @@
 //!         .with_storage_path("/path/to/data".into())
 //!         .with_log_level("info");
 //!
+//!     // Create the required components
+//!     let network = MultiPeerNetworkManager::new(&config).await?;
+//!     let storage = MemoryStorageManager::new().await?;
+//!     let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+//!
 //!     // Create and start the client
-//!     let mut client = DashSpvClient::new(config).await?;
+//!     let mut client = DashSpvClient::new(config.clone(), network, storage, wallet).await?;
 //!     client.start().await?;
 //!
 //!     // Synchronize to the tip of the blockchain

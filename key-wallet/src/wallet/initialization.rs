@@ -5,12 +5,13 @@
 use super::config::WalletConfig;
 use super::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
 use super::{Wallet, WalletType};
+use crate::account::account_collection::AccountCollection;
 use crate::account::AccountType;
 use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
 use crate::error::Result;
 use crate::mnemonic::{Language, Mnemonic};
 use crate::seed::Seed;
-use crate::Network;
+use crate::{Account, Network};
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use std::collections::BTreeSet;
@@ -28,11 +29,12 @@ pub type WalletAccountCreationCoinjoinAccounts = BTreeSet<u32>;
 pub type WalletAccountCreationTopUpAccounts = BTreeSet<u32>;
 
 /// Options for specifying which accounts to create when initializing a wallet
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum WalletAccountCreationOptions {
     /// Default account creation: Creates account 0 for BIP44, account 0 for CoinJoin,
     /// and all special purpose accounts (Identity Registration, Identity Invitation,
     /// Provider keys, etc.)
+    #[default]
     Default,
 
     /// Create all specified BIP44 and CoinJoin accounts plus all special purpose accounts
@@ -94,7 +96,7 @@ impl Wallet {
                 root_extended_private_key,
             },
             config,
-        )?;
+        );
 
         // Create accounts based on options
         wallet.create_accounts_from_options(account_creation_options, network)?;
@@ -103,7 +105,7 @@ impl Wallet {
     }
 
     /// Create a wallet from a specific wallet type with no accounts
-    pub fn from_wallet_type(wallet_type: WalletType, config: WalletConfig) -> Result<Self> {
+    pub fn from_wallet_type(wallet_type: WalletType, config: WalletConfig) -> Self {
         // Compute wallet ID from root public key
         let root_pub_key = match &wallet_type {
             WalletType::Mnemonic {
@@ -133,8 +135,7 @@ impl Wallet {
             accounts: BTreeMap::new(),
         };
 
-        // Don't create any accounts here - let the WalletAccountCreationOptions handle it
-        Ok(wallet)
+        wallet
     }
 
     /// Create a wallet from a mnemonic phrase
@@ -159,7 +160,7 @@ impl Wallet {
                 root_extended_private_key,
             },
             config,
-        )?;
+        );
 
         // Create accounts based on options
         wallet.create_accounts_from_options(account_creation_options, network)?;
@@ -194,7 +195,7 @@ impl Wallet {
                 root_extended_public_key,
             },
             config,
-        )?;
+        );
 
         // Create accounts based on options
         wallet.create_accounts_from_options(account_creation_options, network)?;
@@ -204,71 +205,84 @@ impl Wallet {
 
     /// Create a watch-only wallet from extended public key
     ///
-    /// # Arguments
-    /// * `master_xpub` - The extended public key
-    /// * `config` - Wallet configuration
-    /// * `network` - Network for the wallet
-    /// * `account_creation_options` - Specifies which accounts to create during initialization
+    /// Watch-only wallets can generate addresses and monitor transactions but cannot sign.
+    /// This is useful for cold storage setups where the private keys are kept offline.
     ///
-    /// Note: Watch-only wallets can only create accounts if the extended public keys are provided
+    /// # Arguments
+    /// * `master_xpub` - The master extended public key for the wallet
+    /// * `config` - Optional wallet configuration (uses default if None)
+    /// * `accounts` - Pre-created account collections mapped by network. Since watch-only wallets
+    ///                cannot derive private keys, all accounts must be provided with their extended
+    ///                public keys already initialized.
+    ///
+    /// # Returns
+    /// A new watch-only wallet instance
+    ///
+    /// # Example
+    /// ```ignore
+    /// let accounts = BTreeMap::from([
+    ///     (Network::Mainnet, account_collection),
+    /// ]);
+    /// let wallet = Wallet::from_xpub(master_xpub, None, accounts)?;
+    /// ```
     pub fn from_xpub(
         master_xpub: ExtendedPubKey,
-        config: WalletConfig,
-        account_creation_options: WalletAccountCreationOptions,
+        config: Option<WalletConfig>,
+        accounts: BTreeMap<Network, AccountCollection>,
     ) -> Result<Self> {
         let root_extended_public_key = RootExtendedPubKey::from_extended_pub_key(&master_xpub);
-        let wallet =
-            Self::from_wallet_type(WalletType::WatchOnly(root_extended_public_key), config)?;
+        let mut wallet = Self::from_wallet_type(
+            WalletType::WatchOnly(root_extended_public_key),
+            config.unwrap_or_default(),
+        );
 
-        // For watch-only wallets, we can only create accounts if we have the xpubs
-        // The Default option won't work as it tries to derive keys
-        match account_creation_options {
-            WalletAccountCreationOptions::Default | WalletAccountCreationOptions::None => {
-                // For watch-only, we can't derive keys, so skip default account creation
-            }
-            _ => {
-                // Other options would need explicit xpubs provided
-                return Err(crate::error::Error::InvalidParameter(
-                    "Watch-only wallets require explicit extended public keys for account creation"
-                        .to_string(),
-                ));
-            }
-        }
+        wallet.accounts = accounts;
 
         Ok(wallet)
     }
 
     /// Create an external signable wallet from extended public key
-    /// This wallet type allows for external signing of transactions
+    ///
+    /// External signable wallets support transaction signing through external devices or services.
+    /// Unlike watch-only wallets which cannot sign at all, these wallets delegate signing to
+    /// hardware wallets, remote signing services, or other external signing mechanisms.
     ///
     /// # Arguments
-    /// * `master_xpub` - The extended public key
-    /// * `config` - Wallet configuration
-    /// * `network` - Network for the wallet
-    /// * `account_creation_options` - Specifies which accounts to create during initialization
+    /// * `master_xpub` - The master extended public key from the external signing device
+    /// * `config` - Optional wallet configuration (uses default if None)
+    /// * `accounts` - Pre-created account collections mapped by network. Since external signable
+    ///                wallets cannot derive private keys, all accounts must be provided with their
+    ///                extended public keys already initialized from the external device.
     ///
-    /// Note: External signable wallets can only create accounts if the extended public keys are provided
+    /// # Returns
+    /// A new external signable wallet instance that can create transactions but requires
+    /// the external device/service for signing
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Get master xpub from hardware wallet
+    /// let master_xpub = hardware_wallet.get_master_xpub()?;
+    ///
+    /// // Create accounts with xpubs from hardware wallet
+    /// let accounts = create_accounts_from_hardware_wallet(&hardware_wallet)?;
+    ///
+    /// let wallet = Wallet::from_external_signable(master_xpub, None, accounts)?;
+    ///
+    /// // Later, when signing is needed:
+    /// // let signature = hardware_wallet.sign_transaction(&tx)?;
+    /// ```
     pub fn from_external_signable(
         master_xpub: ExtendedPubKey,
-        config: WalletConfig,
-        account_creation_options: WalletAccountCreationOptions,
+        config: Option<WalletConfig>,
+        accounts: BTreeMap<Network, AccountCollection>,
     ) -> Result<Self> {
         let root_extended_public_key = RootExtendedPubKey::from_extended_pub_key(&master_xpub);
-        let wallet =
-            Self::from_wallet_type(WalletType::ExternalSignable(root_extended_public_key), config)?;
+        let mut wallet = Self::from_wallet_type(
+            WalletType::ExternalSignable(root_extended_public_key),
+            config.unwrap_or_default(),
+        );
 
-        // For externally signable wallets, we can only create accounts if we have the xpubs
-        match account_creation_options {
-            WalletAccountCreationOptions::Default | WalletAccountCreationOptions::None => {
-                // For externally signable, we can't derive keys, so skip default account creation
-            }
-            _ => {
-                // Other options would need explicit xpubs provided
-                return Err(crate::error::Error::InvalidParameter(
-                    "Externally signable wallets require explicit extended public keys for account creation".to_string()
-                ));
-            }
-        }
+        wallet.accounts = accounts;
 
         Ok(wallet)
     }
@@ -294,7 +308,7 @@ impl Wallet {
                 root_extended_private_key,
             },
             config,
-        )?;
+        );
 
         // Create accounts based on options
         wallet.create_accounts_from_options(account_creation_options, network)?;
@@ -333,7 +347,7 @@ impl Wallet {
     ) -> Result<Self> {
         let root_extended_private_key = RootExtendedPrivKey::from_extended_priv_key(&master_key);
         let mut wallet =
-            Self::from_wallet_type(WalletType::ExtendedPrivKey(root_extended_private_key), config)?;
+            Self::from_wallet_type(WalletType::ExtendedPrivKey(root_extended_private_key), config);
 
         // Create accounts based on options
         wallet.create_accounts_from_options(account_creation_options, network)?;

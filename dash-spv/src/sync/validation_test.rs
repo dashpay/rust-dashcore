@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod tests {
     use crate::client::ClientConfig;
+    use crate::network::TcpNetworkManager;
     use crate::storage::MemoryStorageManager;
     use crate::sync::chainlock_validation::{ChainLockValidationConfig, ChainLockValidator};
     use crate::sync::masternodes::MasternodeSyncManager;
@@ -126,7 +127,8 @@ mod tests {
     #[tokio::test]
     async fn test_masternode_sync_with_validation() {
         let config = create_test_config();
-        let _sync_manager = MasternodeSyncManager::new(&config);
+        let _sync_manager =
+            MasternodeSyncManager::<MemoryStorageManager, TcpNetworkManager>::new(&config);
 
         // Note: get_validation_summary method was removed from MasternodeSyncManager
         // Test that manager is created successfully
@@ -135,7 +137,8 @@ mod tests {
     #[tokio::test]
     async fn test_qr_info_validation() {
         let config = create_test_config();
-        let _sync_manager = MasternodeSyncManager::new(&config);
+        let _sync_manager =
+            MasternodeSyncManager::<MemoryStorageManager, TcpNetworkManager>::new(&config);
         let _storage =
             MemoryStorageManager::new().await.expect("Failed to create MemoryStorageManager");
 
@@ -151,7 +154,8 @@ mod tests {
         let mut config = create_test_config();
         config.validation_mode = ValidationMode::None;
 
-        let _sync_manager = MasternodeSyncManager::new(&config);
+        let _sync_manager =
+            MasternodeSyncManager::<MemoryStorageManager, TcpNetworkManager>::new(&config);
 
         // Note: set_validation_enabled and get_validation_summary methods were removed
         // Test that manager is created successfully with validation disabled

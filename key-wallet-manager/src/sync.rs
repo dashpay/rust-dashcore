@@ -389,9 +389,9 @@ mod tests {
     #[test]
     fn test_sync_state() {
         let mut sync = WalletSynchronizer::new(Network::Testnet, 20);
-        let wallet_id = "wallet1".to_string();
+        let wallet_id = [1u8; 32]; // Use a byte array for wallet ID
 
-        sync.register_wallet(wallet_id.clone(), Vec::new(), 0);
+        sync.register_wallet(wallet_id, Vec::new(), 0);
         sync.start_sync(&wallet_id, 1000);
 
         let state = sync.get_sync_state(&wallet_id).unwrap();

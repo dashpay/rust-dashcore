@@ -20,6 +20,11 @@ pub enum BlockProcessingTask {
         tx: dashcore::Transaction,
         response_tx: oneshot::Sender<Result<()>>,
     },
+    ProcessCompactFilter {
+        filter_data: Vec<u8>,
+        block_hash: dashcore::BlockHash,
+        response_tx: oneshot::Sender<Result<bool>>,
+    },
 }
 
 /// Block processing worker that handles blocks in a separate task.
@@ -90,6 +95,18 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                         let _ = response_tx
                             .send(Err(SpvError::Config("Block processor has failed".to_string())));
                     }
+                    BlockProcessingTask::ProcessCompactFilter {
+                        response_tx,
+                        block_hash,
+                        ..
+                    } => {
+                        tracing::error!(
+                            "❌ Block processor in failed state, rejecting compact filter for block {}",
+                            block_hash
+                        );
+                        let _ = response_tx
+                            .send(Err(SpvError::Config("Block processor has failed".to_string())));
+                    }
                 }
                 continue;
             }
@@ -153,6 +170,29 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
 
                     let _ = response_tx.send(result);
                 }
+                BlockProcessingTask::ProcessCompactFilter {
+                    filter_data,
+                    block_hash,
+                    response_tx,
+                } => {
+                    // Check compact filter with wallet
+                    let wallet = self.wallet.read().await;
+                    let matches = wallet.check_compact_filter(&filter_data, &block_hash).await;
+                    drop(wallet);
+
+                    if matches {
+                        tracing::info!("🎯 Compact filter matched for block {}", block_hash);
+
+                        // Emit event if filter matched
+                        let _ = self.event_tx.send(SpvEvent::CompactFilterMatched {
+                            hash: block_hash.to_string(),
+                        });
+                    } else {
+                        tracing::debug!("Compact filter did not match for block {}", block_hash);
+                    }
+
+                    let _ = response_tx.send(Ok(matches));
+                }
             }
         }
 
@@ -196,6 +236,14 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
         let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
         if !watch_items.is_empty() {
             self.process_block_transactions(&block, &watch_items).await?;
+        } else {
+            // No watch items, but still emit BlockProcessed event
+            let _ = self.event_tx.send(SpvEvent::BlockProcessed {
+                height,
+                hash: block_hash.to_string(),
+                transactions_count: block.txdata.len(),
+                relevant_transactions: 0,
+            });
         }
 
         // Update chain state if needed
@@ -205,12 +253,18 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
     }
 
     /// Process a transaction internally.
-    async fn process_transaction_internal(&mut self, _tx: dashcore::Transaction) -> Result<()> {
-        // TODO: Implement transaction processing
-        // - Check if transaction affects watched addresses/scripts
-        // - Update wallet balance if relevant
-        // - Store relevant transactions
-        tracing::debug!("Transaction processing not yet implemented");
+    async fn process_transaction_internal(&mut self, tx: dashcore::Transaction) -> Result<()> {
+        let txid = tx.txid();
+        tracing::debug!("Processing mempool transaction: {}", txid);
+
+        // Let the wallet process the mempool transaction
+        let mut wallet = self.wallet.write().await;
+        wallet.process_mempool_transaction(&tx).await;
+        drop(wallet);
+
+        // TODO: Check if transaction affects watched addresses/scripts
+        // TODO: Emit appropriate events if transaction is relevant
+
         Ok(())
     }
 
@@ -306,15 +360,15 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
             if !balance_changes.is_empty() {
                 self.report_balance_changes(&balance_changes, block_height).await?;
             }
-
-            // Emit block processed event
-            let _ = self.event_tx.send(SpvEvent::BlockProcessed {
-                height: block_height,
-                hash: block_hash.to_string(),
-                transactions_count: block.txdata.len(),
-                relevant_transactions,
-            });
         }
+
+        // Always emit block processed event (even if no relevant transactions)
+        let _ = self.event_tx.send(SpvEvent::BlockProcessed {
+            height: block_height,
+            hash: block_hash.to_string(),
+            transactions_count: block.txdata.len(),
+            relevant_transactions,
+        });
 
         Ok(())
     }

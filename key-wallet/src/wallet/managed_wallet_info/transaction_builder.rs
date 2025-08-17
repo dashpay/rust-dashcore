@@ -7,16 +7,30 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
+use dashcore::blockdata::transaction::special_transaction::{
+    asset_lock::AssetLockPayload,
+    coinbase::CoinbasePayload,
+    provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
+    provider_update_registrar::ProviderUpdateRegistrarPayload,
+    provider_update_revocation::ProviderUpdateRevocationPayload,
+    provider_update_service::ProviderUpdateServicePayload,
+    TransactionPayload,
+};
 use dashcore::blockdata::transaction::Transaction;
+use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+use dashcore::hash_types::{
+    InputsHash, MerkleRootMasternodeList, MerkleRootQuorums, ProTxHash, PubkeyHash,
+};
 use dashcore::sighash::{EcdsaSighashType, SighashCache};
-use dashcore::{TxIn, TxOut};
+use dashcore::Address;
+use dashcore::{OutPoint, TxIn, TxOut, Txid};
 use dashcore_hashes::Hash;
-use key_wallet::Address;
 use secp256k1::{Message, Secp256k1, SecretKey};
+use std::net::SocketAddr;
 
-use crate::coin_selection::{CoinSelector, SelectionStrategy};
-use crate::fee::FeeLevel;
-use key_wallet::Utxo;
+use crate::wallet::managed_wallet_info::coin_selection::{CoinSelector, SelectionStrategy};
+use crate::wallet::managed_wallet_info::fee::FeeLevel;
+use crate::Utxo;
 
 /// Transaction builder for creating Dash transactions
 pub struct TransactionBuilder {
@@ -32,8 +46,8 @@ pub struct TransactionBuilder {
     lock_time: u32,
     /// Transaction version
     version: u16,
-    /// Whether to enable RBF (Replace-By-Fee)
-    enable_rbf: bool,
+    /// Special transaction payload for Dash-specific transactions
+    special_payload: Option<TransactionPayload>,
 }
 
 impl Default for TransactionBuilder {
@@ -52,7 +66,7 @@ impl TransactionBuilder {
             fee_level: FeeLevel::Normal,
             lock_time: 0,
             version: 2, // Default to version 2 for Dash
-            enable_rbf: true,
+            special_payload: None,
         }
     }
 
@@ -69,14 +83,23 @@ impl TransactionBuilder {
     }
 
     /// Select inputs automatically using coin selection
+    ///
+    /// This method requires outputs to be added first so it knows how much to select.
+    /// For special transactions without regular outputs, add the required inputs manually.
     pub fn select_inputs(
         mut self,
         available_utxos: &[Utxo],
-        target_amount: u64,
         strategy: SelectionStrategy,
         current_height: u32,
         keys: impl Fn(&Utxo) -> Option<SecretKey>,
     ) -> Result<Self, BuilderError> {
+        // Calculate target amount from outputs
+        let target_amount = self.total_output_value();
+
+        if target_amount == 0 && self.special_payload.is_none() {
+            return Err(BuilderError::NoOutputs);
+        }
+
         let fee_rate = self.fee_level.fee_rate();
         let selector = CoinSelector::new(strategy);
 
@@ -152,14 +175,45 @@ impl TransactionBuilder {
         self
     }
 
-    /// Enable or disable RBF
-    pub fn enable_rbf(mut self, enable: bool) -> Self {
-        self.enable_rbf = enable;
+    /// Set the special transaction payload
+    pub fn set_special_payload(mut self, payload: TransactionPayload) -> Self {
+        self.special_payload = Some(payload);
         self
     }
 
+    /// Get the total value of all outputs added so far
+    pub fn total_output_value(&self) -> u64 {
+        self.outputs.iter().map(|out| out.value).sum()
+    }
+
     /// Build the transaction
+    ///
+    /// Uses the special payload if one was set via `set_special_payload`
     pub fn build(self) -> Result<Transaction, BuilderError> {
+        self.build_internal()
+    }
+
+    /// Build the transaction with an explicit special transaction payload
+    ///
+    /// This overrides any payload set via `set_special_payload`.
+    /// Supports Dash-specific transaction types like:
+    /// - ProRegTx (Provider Registration)
+    /// - ProUpServTx (Provider Update Service)
+    /// - ProUpRegTx (Provider Update Registrar)
+    /// - ProUpRevTx (Provider Update Revocation)
+    /// - CoinJoin transactions
+    /// - InstantSend transactions
+    /// - And other special transaction types
+    pub fn build_with_payload(
+        mut self,
+        payload: Option<TransactionPayload>,
+    ) -> Result<Transaction, BuilderError> {
+        self.special_payload = payload;
+        self.build_internal()
+    }
+
+    /// Internal build method that uses the stored special_payload
+    fn build_internal(mut self) -> Result<Transaction, BuilderError> {
         if self.inputs.is_empty() {
             return Err(BuilderError::NoInputs);
         }
@@ -182,11 +236,8 @@ impl TransactionBuilder {
         }
 
         // Create transaction inputs
-        let sequence = if self.enable_rbf {
-            0xfffffffd // RBF enabled
-        } else {
-            0xffffffff // RBF disabled
-        };
+        // Dash doesn't use RBF, so we use the standard sequence number
+        let sequence = 0xffffffff;
 
         let tx_inputs: Vec<TxIn> = self
             .inputs
@@ -222,13 +273,14 @@ impl TransactionBuilder {
             }
         }
 
-        // Create unsigned transaction
+        // Create unsigned transaction with optional special payload
+        // Clone the special_payload to avoid move issues with sign_transaction
         let mut transaction = Transaction {
             version: self.version,
             lock_time: self.lock_time,
             input: tx_inputs,
             output: tx_outputs,
-            special_transaction_payload: None,
+            special_transaction_payload: self.special_payload.take(),
         };
 
         // Sign inputs if keys are provided
@@ -239,9 +291,185 @@ impl TransactionBuilder {
         Ok(transaction)
     }
 
+    /// Build a Provider Registration Transaction (ProRegTx)
+    ///
+    /// Used to register a new masternode on the network
+    ///
+    /// Note: This method intentionally takes many parameters rather than a single
+    /// payload object to make the API more explicit and allow callers to construct
+    /// transactions without needing to build intermediate payload types.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_provider_registration(
+        self,
+        masternode_type: ProviderMasternodeType,
+        masternode_mode: u16,
+        collateral_outpoint: OutPoint,
+        service_address: SocketAddr,
+        owner_key_hash: PubkeyHash,
+        operator_public_key: BLSPublicKey,
+        voting_key_hash: PubkeyHash,
+        operator_reward: u16,
+        script_payout: ScriptBuf,
+        inputs_hash: InputsHash,
+        signature: Vec<u8>,
+        platform_node_id: Option<PubkeyHash>,
+        platform_p2p_port: Option<u16>,
+        platform_http_port: Option<u16>,
+    ) -> Result<Transaction, BuilderError> {
+        let payload = ProviderRegistrationPayload {
+            version: 2,
+            masternode_type,
+            masternode_mode,
+            collateral_outpoint,
+            service_address,
+            owner_key_hash,
+            operator_public_key,
+            voting_key_hash,
+            operator_reward,
+            script_payout,
+            inputs_hash,
+            signature,
+            platform_node_id,
+            platform_p2p_port,
+            platform_http_port,
+        };
+        self.build_with_payload(Some(TransactionPayload::ProviderRegistrationPayloadType(payload)))
+    }
+
+    /// Build a Provider Update Service Transaction (ProUpServTx)
+    ///
+    /// Used to update the service details of an existing masternode
+    ///
+    /// Note: This method intentionally takes many parameters rather than a single
+    /// payload object to make the API more explicit and allow callers to construct
+    /// transactions without needing to build intermediate payload types.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_provider_update_service(
+        self,
+        mn_type: Option<u16>,
+        pro_tx_hash: Txid,
+        ip_address: u128,
+        port: u16,
+        script_payout: ScriptBuf,
+        inputs_hash: InputsHash,
+        platform_node_id: Option<[u8; 20]>,
+        platform_p2p_port: Option<u16>,
+        platform_http_port: Option<u16>,
+        payload_sig: BLSSignature,
+    ) -> Result<Transaction, BuilderError> {
+        let payload = ProviderUpdateServicePayload {
+            version: 2,
+            mn_type,
+            pro_tx_hash,
+            ip_address,
+            port,
+            script_payout,
+            inputs_hash,
+            platform_node_id,
+            platform_p2p_port,
+            platform_http_port,
+            payload_sig,
+        };
+        self.build_with_payload(Some(TransactionPayload::ProviderUpdateServicePayloadType(payload)))
+    }
+
+    /// Build a Provider Update Registrar Transaction (ProUpRegTx)
+    ///
+    /// Used to update the registrar details of an existing masternode
+    ///
+    /// Note: This method intentionally takes many parameters rather than a single
+    /// payload object to make the API more explicit and allow callers to construct
+    /// transactions without needing to build intermediate payload types.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_provider_update_registrar(
+        self,
+        pro_tx_hash: Txid,
+        provider_mode: u16,
+        operator_public_key: BLSPublicKey,
+        voting_key_hash: PubkeyHash,
+        script_payout: ScriptBuf,
+        inputs_hash: InputsHash,
+        payload_sig: Vec<u8>,
+    ) -> Result<Transaction, BuilderError> {
+        let payload = ProviderUpdateRegistrarPayload {
+            version: 2,
+            pro_tx_hash,
+            provider_mode,
+            operator_public_key,
+            voting_key_hash,
+            script_payout,
+            inputs_hash,
+            payload_sig,
+        };
+        self.build_with_payload(Some(TransactionPayload::ProviderUpdateRegistrarPayloadType(
+            payload,
+        )))
+    }
+
+    /// Build a Provider Update Revocation Transaction (ProUpRevTx)
+    ///
+    /// Used to revoke an existing masternode
+    pub fn build_provider_update_revocation(
+        self,
+        pro_tx_hash: Txid,
+        reason: u16,
+        inputs_hash: InputsHash,
+        payload_sig: BLSSignature,
+    ) -> Result<Transaction, BuilderError> {
+        let payload = ProviderUpdateRevocationPayload {
+            version: 2,
+            pro_tx_hash,
+            reason,
+            inputs_hash,
+            payload_sig,
+        };
+        self.build_with_payload(Some(TransactionPayload::ProviderUpdateRevocationPayloadType(
+            payload,
+        )))
+    }
+
+    /// Build a Coinbase Transaction
+    ///
+    /// Used for block rewards and includes additional coinbase-specific data
+    pub fn build_coinbase(
+        self,
+        height: u32,
+        merkle_root_masternode_list: MerkleRootMasternodeList,
+        merkle_root_quorums: MerkleRootQuorums,
+        best_cl_height: Option<u32>,
+        best_cl_signature: Option<BLSSignature>,
+        asset_locked_amount: Option<u64>,
+    ) -> Result<Transaction, BuilderError> {
+        let payload = CoinbasePayload {
+            version: 3, // Current coinbase version
+            height,
+            merkle_root_masternode_list,
+            merkle_root_quorums,
+            best_cl_height,
+            best_cl_signature,
+            asset_locked_amount,
+        };
+        self.build_with_payload(Some(TransactionPayload::CoinbasePayloadType(payload)))
+    }
+
+    /// Build an Asset Lock Transaction
+    ///
+    /// Used to lock Dash for use in Platform (creates Platform credits)
+    pub fn build_asset_lock(self, credit_outputs: Vec<TxOut>) -> Result<Transaction, BuilderError> {
+        let payload = AssetLockPayload {
+            version: 0,
+            credit_outputs,
+        };
+        self.build_with_payload(Some(TransactionPayload::AssetLockPayloadType(payload)))
+    }
+
     /// Estimate transaction size in bytes
     fn estimate_transaction_size(&self, input_count: usize, output_count: usize) -> usize {
-        crate::fee::estimate_tx_size(input_count, output_count, self.change_address.is_some())
+        crate::wallet::managed_wallet_info::fee::estimate_tx_size(
+            input_count,
+            output_count,
+            self.change_address.is_some(),
+        )
     }
 
     /// Sign the transaction
@@ -319,7 +547,7 @@ pub enum BuilderError {
     /// Signing failed
     SigningFailed(String),
     /// Coin selection error
-    CoinSelection(crate::coin_selection::SelectionError),
+    CoinSelection(crate::wallet::managed_wallet_info::coin_selection::SelectionError),
 }
 
 impl fmt::Display for BuilderError {

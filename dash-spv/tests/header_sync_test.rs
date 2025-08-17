@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
+    network::MultiPeerNetworkManager,
     storage::{MemoryStorageManager, StorageManager},
     sync::headers::HeaderSyncManager,
     types::{ChainState, ValidationMode},
@@ -11,7 +12,10 @@ use dash_spv::{
 use dashcore::{block::Header as BlockHeader, block::Version, Network};
 use dashcore_hashes::Hash;
 use env_logger;
+use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
 use log::{debug, info};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn test_header_sync_manager_creation() {
@@ -293,7 +297,18 @@ async fn test_header_sync_with_client_integration() {
         .with_validation_mode(ValidationMode::Basic)
         .with_connection_timeout(Duration::from_secs(10));
 
-    let client = DashSpvClient::new(config).await;
+    // Create network manager
+    let network_manager =
+        MultiPeerNetworkManager::new(&config).await.expect("Failed to create network manager");
+
+    // Create storage manager
+    let storage_manager =
+        MemoryStorageManager::new().await.expect("Failed to create storage manager");
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+
+    let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await;
     assert!(client.is_ok(), "Client creation should succeed");
 
     let client = client.unwrap();

@@ -81,12 +81,11 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     /// Blocks currently being downloaded (map for quick lookup)
     downloading_blocks: HashMap<BlockHash, u32>,
     /// Blocks requested by the filter processing thread
-    pub processing_thread_requests:
-        std::sync::Arc<std::sync::Mutex<std::collections::HashSet<BlockHash>>>,
+    pub processing_thread_requests: std::sync::Arc<std::sync::Mutex<HashSet<BlockHash>>>,
     /// Track requested filter ranges: (start_height, end_height) -> request_time
     requested_filter_ranges: HashMap<(u32, u32), std::time::Instant>,
     /// Track individual filter heights that have been received (shared with stats)
-    received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
+    received_filter_heights: std::sync::Arc<std::sync::Mutex<HashSet<u32>>>,
     /// Maximum retries for a filter range
     max_filter_retries: u32,
     /// Retry attempts per range

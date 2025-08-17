@@ -2902,7 +2902,7 @@ impl<
 
     /// Get mutable reference to sync manager (for testing)
     #[cfg(test)]
-    pub fn sync_manager_mut(&mut self) -> &mut SequentialSyncManager {
+    pub fn sync_manager_mut(&mut self) -> &mut SequentialSyncManager<S, N> {
         &mut self.sync_manager
     }
 
@@ -2937,7 +2937,6 @@ mod tests {
     use super::*;
     use crate::storage::{memory::MemoryStorageManager, StorageManager};
     use crate::types::{MempoolState, UnconfirmedTransaction};
-    use crate::wallet::Wallet;
     use dashcore::blockdata::script::ScriptBuf;
     use dashcore::{Amount, OutPoint, Transaction, TxIn, TxOut};
     use dashcore_hashes::Hash;
@@ -3008,9 +3007,10 @@ mod tests {
 
                 // Check outputs to this address
                 for output in &tx.transaction.output {
-                    if let Ok(out_addr) =
-                        dashcore::Address::from_script(&output.script_pubkey, self.config.network)
-                    {
+                    if let Ok(out_addr) = dashcore::Address::from_script(
+                        &output.script_pubkey,
+                        dashcore::Network::Dash,
+                    ) {
                         if out_addr == address {
                             address_balance_change += output.value as i64;
                         }
@@ -3065,9 +3065,10 @@ mod tests {
                 let mut address_balance_change = 0i64;
 
                 for output in &tx.transaction.output {
-                    if let Ok(out_addr) =
-                        dashcore::Address::from_script(&output.script_pubkey, self.config.network)
-                    {
+                    if let Ok(out_addr) = dashcore::Address::from_script(
+                        &output.script_pubkey,
+                        dashcore::Network::Dash,
+                    ) {
                         if out_addr == address {
                             address_balance_change += output.value as i64;
                         }
@@ -3119,7 +3120,7 @@ mod tests {
         let mut address_balance_change = 0i64;
         for output in &tx.transaction.output {
             if let Ok(out_addr) =
-                dashcore::Address::from_script(&output.script_pubkey, wallet.network())
+                dashcore::Address::from_script(&output.script_pubkey, dashcore::Network::Dash)
             {
                 if out_addr == address {
                     address_balance_change += output.value as i64;

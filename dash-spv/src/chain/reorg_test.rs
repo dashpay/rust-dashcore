@@ -4,7 +4,7 @@
 mod tests {
     use super::super::*;
     use crate::chain::ChainWork;
-    use crate::storage::{MemoryStorageManager, StorageManager};
+    use crate::storage::MemoryStorage;
     use crate::types::ChainState;
     use dashcore::{blockdata::constants::genesis_block, Network};
     use dashcore_hashes::Hash;
@@ -17,13 +17,13 @@ mod tests {
         header
     }
 
-    #[tokio::test]
-    async fn test_should_reorganize() {
+    #[test]
+    fn test_should_reorganize() {
         // Create test components
         let network = Network::Dash;
         let genesis = genesis_block(network).header;
         let chain_state = ChainState::new_for_network(network);
-        let storage = MemoryStorageManager::new().await.unwrap();
+        let storage = MemoryStorage::new();
 
         // Build main chain: genesis -> block1 -> block2
         let block1 = create_test_header(&genesis, 1);
@@ -52,17 +52,17 @@ mod tests {
 
         // Should reorganize because fork has more work
         let should_reorg = reorg_mgr
-            .should_reorganize_with_chain_state(&main_tip, &fork, &*storage, Some(&chain_state))
+            .should_reorganize_with_chain_state(&main_tip, &fork, &storage, Some(&chain_state))
             .unwrap();
         assert!(should_reorg);
     }
 
-    #[tokio::test]
-    async fn test_max_reorg_depth() {
+    #[test]
+    fn test_max_reorg_depth() {
         let network = Network::Dash;
         let genesis = genesis_block(network).header;
         let chain_state = ChainState::new_for_network(network);
-        let storage = MemoryStorageManager::new().await.unwrap();
+        let storage = MemoryStorage::new();
 
         // Create a deep main chain
         let main_tip = ChainTip::new(genesis, 100, ChainWork::from_header(&genesis));
@@ -71,7 +71,7 @@ mod tests {
         let fork = Fork {
             fork_point: genesis.block_hash(),
             fork_height: 0,
-            tip_hash: BlockHash::from(dashcore_hashes::hash_x11::Hash::all_zeros()),
+            tip_hash: BlockHash::from_byte_array([0; 32]),
             tip_height: 101,
             headers: vec![],
             chain_work: ChainWork::from_bytes([255u8; 32]), // Max work
@@ -84,19 +84,19 @@ mod tests {
         let result = reorg_mgr.should_reorganize_with_chain_state(
             &main_tip,
             &fork,
-            &*storage,
+            &storage,
             Some(&chain_state),
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("exceeds maximum"));
     }
 
-    #[tokio::test]
-    async fn test_checkpoint_sync_reorg_protection() {
+    #[test]
+    fn test_checkpoint_sync_reorg_protection() {
         let network = Network::Dash;
         let genesis = genesis_block(network).header;
         let mut chain_state = ChainState::new_for_network(network);
-        let storage = MemoryStorageManager::new().await.unwrap();
+        let storage = MemoryStorage::new();
 
         // Simulate checkpoint sync from height 50000
         chain_state.synced_from_checkpoint = true;
@@ -109,7 +109,7 @@ mod tests {
         let fork = Fork {
             fork_point: genesis.block_hash(),
             fork_height: 49999, // Before checkpoint
-            tip_hash: BlockHash::from(dashcore_hashes::hash_x11::Hash::all_zeros()),
+            tip_hash: BlockHash::from_byte_array([0; 32]),
             tip_height: 50101,
             headers: vec![],
             chain_work: ChainWork::from_bytes([255u8; 32]), // Max work
@@ -121,7 +121,7 @@ mod tests {
         let result = reorg_mgr.should_reorganize_with_chain_state(
             &main_tip,
             &fork,
-            &*storage,
+            &storage,
             Some(&chain_state),
         );
         assert!(result.is_err());

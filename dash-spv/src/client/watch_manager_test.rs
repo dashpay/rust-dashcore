@@ -75,18 +75,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_watch_item() {
-        let watch_items = Arc::new(RwLock::new(Vec::new()));
-        let wallet = Arc::new(RwLock::new(Box::new(MockWallet::new(Network::Dash))
-            as Box<dyn key_wallet_manager::wallet_interface::WalletInterface>));
+        let watch_items = Arc::new(RwLock::new(HashSet::new()));
         let (tx, _rx) = mpsc::unbounded_channel();
-        let updater = WatchItemUpdateSender::new(tx);
+        let updater = Some(tx);
         let mut storage = MemoryStorageManager::new().await.unwrap();
 
         let addr = test_address(Network::Dash);
         let item = WatchItem::address(addr.clone());
 
         // Add watch item
-        WatchManager::add_watch_item(&watch_items, &wallet, &updater, item.clone(), &mut storage)
+        WatchManager::add_watch_item(&watch_items, &updater, item.clone(), &mut storage)
             .await
             .unwrap();
 
@@ -98,26 +96,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_watch_item() {
-        let watch_items = Arc::new(RwLock::new(Vec::new()));
-        let wallet = Arc::new(RwLock::new(Box::new(MockWallet::new(Network::Dash))
-            as Box<dyn key_wallet_manager::wallet_interface::WalletInterface>));
+        let watch_items = Arc::new(RwLock::new(HashSet::new()));
         let (tx, _rx) = mpsc::unbounded_channel();
-        let updater = WatchItemUpdateSender::new(tx);
+        let updater = Some(tx);
         let mut storage = MemoryStorageManager::new().await.unwrap();
 
         let addr = test_address(Network::Dash);
         let item = WatchItem::address(addr.clone());
 
         // Add item first
-        WatchManager::add_watch_item(&watch_items, &wallet, &updater, item.clone(), &mut storage)
+        WatchManager::add_watch_item(&watch_items, &updater, item.clone(), &mut storage)
             .await
             .unwrap();
 
         // Remove item
-        let removed =
-            WatchManager::remove_watch_item(&watch_items, &wallet, &updater, &item, &mut storage)
-                .await
-                .unwrap();
+        let removed = WatchManager::remove_watch_item(&watch_items, &updater, &item, &mut storage)
+            .await
+            .unwrap();
 
         assert!(removed);
 
@@ -128,24 +123,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_duplicate_watch_item() {
-        let watch_items = Arc::new(RwLock::new(Vec::new()));
-        let wallet = Arc::new(RwLock::new(Box::new(MockWallet::new(Network::Dash))
-            as Box<dyn key_wallet_manager::wallet_interface::WalletInterface>));
+        let watch_items = Arc::new(RwLock::new(HashSet::new()));
         let (tx, _rx) = mpsc::unbounded_channel();
-        let updater = WatchItemUpdateSender::new(tx);
+        let updater = Some(tx);
         let mut storage = MemoryStorageManager::new().await.unwrap();
 
         let addr = test_address(Network::Dash);
         let item = WatchItem::address(addr.clone());
 
         // Add item first time
-        WatchManager::add_watch_item(&watch_items, &wallet, &updater, item.clone(), &mut storage)
+        WatchManager::add_watch_item(&watch_items, &updater, item.clone(), &mut storage)
             .await
             .unwrap();
 
         // Try to add same item again - should fail
-        let result =
-            WatchManager::add_watch_item(&watch_items, &wallet, &updater, item, &mut storage).await;
+        let result = WatchManager::add_watch_item(&watch_items, &updater, item, &mut storage).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SpvError::WatchItem(_)));
 
@@ -156,11 +148,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_watch_items() {
-        let watch_items = Arc::new(RwLock::new(Vec::new()));
-        let wallet = Arc::new(RwLock::new(Box::new(MockWallet::new(Network::Dash))
-            as Box<dyn key_wallet_manager::wallet_interface::WalletInterface>));
+        let watch_items = Arc::new(RwLock::new(HashSet::new()));
         let (tx, _rx) = mpsc::unbounded_channel();
-        let updater = WatchItemUpdateSender::new(tx);
+        let updater = Some(tx);
         let mut storage = MemoryStorageManager::new().await.unwrap();
 
         let addr1 = test_address(Network::Dash);
@@ -180,16 +170,16 @@ mod tests {
         let item4 = WatchItem::Outpoint(outpoint);
 
         // Add all items
-        WatchManager::add_watch_item(&watch_items, &wallet, &updater, item1.clone(), &mut storage)
+        WatchManager::add_watch_item(&watch_items, &updater, item1.clone(), &mut storage)
             .await
             .unwrap();
-        WatchManager::add_watch_item(&watch_items, &wallet, &updater, item2.clone(), &mut storage)
+        WatchManager::add_watch_item(&watch_items, &updater, item2.clone(), &mut storage)
             .await
             .unwrap();
-        WatchManager::add_watch_item(&watch_items, &wallet, &updater, item3.clone(), &mut storage)
+        WatchManager::add_watch_item(&watch_items, &updater, item3.clone(), &mut storage)
             .await
             .unwrap();
-        WatchManager::add_watch_item(&watch_items, &wallet, &updater, item4.clone(), &mut storage)
+        WatchManager::add_watch_item(&watch_items, &updater, item4.clone(), &mut storage)
             .await
             .unwrap();
 
@@ -204,18 +194,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_watch_items() {
-        let watch_items = Arc::new(RwLock::new(Vec::new()));
-        let wallet = Arc::new(RwLock::new(Box::new(MockWallet::new(Network::Dash))
-            as Box<dyn key_wallet_manager::wallet_interface::WalletInterface>));
+        let watch_items = Arc::new(RwLock::new(HashSet::new()));
         let (tx, _rx) = mpsc::unbounded_channel();
-        let updater = WatchItemUpdateSender::new(tx);
+        let updater = Some(tx);
         let mut storage = MemoryStorageManager::new().await.unwrap();
 
         let addr = test_address(Network::Dash);
         let item = WatchItem::address(addr.clone());
 
         // Add and persist item
-        WatchManager::add_watch_item(&watch_items, &wallet, &updater, item.clone(), &mut storage)
+        WatchManager::add_watch_item(&watch_items, &updater, item.clone(), &mut storage)
             .await
             .unwrap();
 
@@ -226,7 +214,7 @@ mod tests {
         }
 
         // Load from storage
-        WatchManager::load_watch_items(&watch_items, &wallet, &storage).await.unwrap();
+        WatchManager::load_watch_items(&watch_items, &storage).await.unwrap();
 
         // Verify it was loaded
         let items = watch_items.read().await;
@@ -236,18 +224,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_watch_item_with_earliest_height() {
-        let watch_items = Arc::new(RwLock::new(Vec::new()));
-        let wallet = Arc::new(RwLock::new(Box::new(MockWallet::new(Network::Dash))
-            as Box<dyn key_wallet_manager::wallet_interface::WalletInterface>));
+        let watch_items = Arc::new(RwLock::new(HashSet::new()));
         let (tx, _rx) = mpsc::unbounded_channel();
-        let updater = WatchItemUpdateSender::new(tx);
+        let updater = Some(tx);
         let mut storage = MemoryStorageManager::new().await.unwrap();
 
         let addr = test_address(Network::Dash);
         let item = WatchItem::address_from_height(addr.clone(), 100000);
 
         // Add watch item with height
-        WatchManager::add_watch_item(&watch_items, &wallet, &updater, item.clone(), &mut storage)
+        WatchManager::add_watch_item(&watch_items, &updater, item.clone(), &mut storage)
             .await
             .unwrap();
 
@@ -258,7 +244,7 @@ mod tests {
         if let WatchItem::Address {
             address,
             earliest_height,
-        } = &items[0]
+        } = items.iter().next().unwrap()
         {
             assert_eq!(*address, addr);
             assert_eq!(*earliest_height, Some(100000));
@@ -269,11 +255,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_watch_item_updates() {
-        let watch_items = Arc::new(RwLock::new(Vec::new()));
-        let wallet = Arc::new(RwLock::new(Box::new(MockWallet::new(Network::Dash))
-            as Box<dyn key_wallet_manager::wallet_interface::WalletInterface>));
+        let watch_items = Arc::new(RwLock::new(HashSet::new()));
         let (tx, _rx) = mpsc::unbounded_channel();
-        let updater = WatchItemUpdateSender::new(tx);
+        let updater = Some(tx);
         let storage = Arc::new(tokio::sync::Mutex::new(MemoryStorageManager::new().await.unwrap()));
 
         // Create multiple unique addresses
@@ -284,15 +268,13 @@ mod tests {
         let mut handles = vec![];
         for (i, addr) in addresses.iter().enumerate() {
             let watch_items = watch_items.clone();
-            let wallet = wallet.clone();
             let updater = updater.clone();
             let storage = storage.clone();
             let item = WatchItem::address_from_height(addr.clone(), (i as u32) * 1000);
 
             let handle = tokio::spawn(async move {
                 let mut storage = storage.lock().await;
-                WatchManager::add_watch_item(&watch_items, &wallet, &updater, item, &mut *storage)
-                    .await
+                WatchManager::add_watch_item(&watch_items, &updater, item, &mut *storage).await
             });
             handles.push(handle);
         }

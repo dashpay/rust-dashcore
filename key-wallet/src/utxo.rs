@@ -15,7 +15,7 @@ use dashcore::blockdata::transaction::OutPoint;
 use serde::{Deserialize, Serialize};
 
 /// Unspent Transaction Output
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Utxo {
     /// The outpoint (txid + vout)
@@ -100,7 +100,7 @@ impl Utxo {
 impl Ord for Utxo {
     fn cmp(&self, other: &Self) -> Ordering {
         // Order by value (ascending)
-        self.value().cmp(&other.value())
+        self.outpoint.cmp(&other.outpoint)
     }
 }
 

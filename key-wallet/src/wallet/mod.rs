@@ -432,8 +432,8 @@ mod tests {
         let config2 = WalletConfig::default();
         let mut watch_only = Wallet::from_xpub(
             root_xpub_as_extended,
-            config2,
-            crate::wallet::initialization::WalletAccountCreationOptions::None,
+            Some(config2),
+            BTreeMap::new(), // Empty accounts, will add them later
         )
         .unwrap();
 
