@@ -13,10 +13,10 @@ use crate::sync::sequential::SequentialSyncManager;
 use crate::types::{MempoolState, SpvEvent, SpvStats};
 
 /// Network message handler for processing incoming Dash protocol messages.
-pub struct MessageHandler<'a> {
-    sync_manager: &'a mut SequentialSyncManager,
-    storage: &'a mut dyn StorageManager,
-    network: &'a mut dyn NetworkManager,
+pub struct MessageHandler<'a, S: StorageManager, N: NetworkManager> {
+    sync_manager: &'a mut SequentialSyncManager<S, N>,
+    storage: &'a mut S,
+    network: &'a mut N,
     config: &'a ClientConfig,
     stats: &'a Arc<RwLock<SpvStats>>,
     filter_processor: &'a Option<FilterNotificationSender>,
@@ -26,12 +26,14 @@ pub struct MessageHandler<'a> {
     event_tx: &'a tokio::sync::mpsc::UnboundedSender<SpvEvent>,
 }
 
-impl<'a> MessageHandler<'a> {
+impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
+    MessageHandler<'a, S, N>
+{
     /// Create a new message handler.
     pub fn new(
-        sync_manager: &'a mut SequentialSyncManager,
-        storage: &'a mut dyn StorageManager,
-        network: &'a mut dyn NetworkManager,
+        sync_manager: &'a mut SequentialSyncManager<S, N>,
+        storage: &'a mut S,
+        network: &'a mut N,
         config: &'a ClientConfig,
         stats: &'a Arc<RwLock<SpvStats>>,
         filter_processor: &'a Option<FilterNotificationSender>,
@@ -286,7 +288,7 @@ impl<'a> MessageHandler<'a> {
                 tracing::debug!("Received CFilter for block {}", cfilter.block_hash);
 
                 // Record the height of this received filter for gap tracking
-                crate::sync::filters::FilterSyncManager::record_filter_received_at_height(
+                crate::sync::filters::FilterSyncManager::<S, N>::record_filter_received_at_height(
                     self.stats,
                     &*self.storage,
                     &cfilter.block_hash,

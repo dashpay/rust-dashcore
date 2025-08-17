@@ -11,19 +11,17 @@
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::fmt;
 
 use dashcore::blockdata::block::Block;
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
-use dashcore::{BlockHash, Network as DashNetwork, Txid};
-use dashcore_hashes::Hash;
+use dashcore::{BlockHash, Txid};
 use key_wallet::{Address, Network};
 
 use crate::compact_filter::CompactFilter;
 use crate::wallet_manager::{WalletError, WalletId, WalletManager};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet::{Utxo, Wallet, WalletBalance};
+use key_wallet::{Utxo, Wallet};
 
 /// SPV Wallet Manager
 ///
@@ -260,7 +258,7 @@ impl SPVWalletManager {
         &mut self,
         wallet_id: &WalletId,
     ) -> Result<(), WalletError> {
-        let info = self
+        let _info = self
             .base
             .wallet_infos
             .get(wallet_id)
@@ -403,8 +401,8 @@ impl SPVWalletManager {
         &mut self,
         tx: &Transaction,
         height: Option<u32>,
-        block_hash: Option<BlockHash>,
-        timestamp: u64,
+        _block_hash: Option<BlockHash>,
+        _timestamp: u64,
     ) -> TransactionProcessResult {
         let mut result = TransactionProcessResult {
             is_relevant: false,
@@ -763,7 +761,7 @@ impl crate::wallet_interface::WalletInterface for SPVWalletManager {
         filter_data: &[u8],
         block_hash: &dashcore::BlockHash,
     ) -> bool {
-        use dashcore::bip158::{BlockFilter, BlockFilterReader};
+        use dashcore::bip158::BlockFilter;
 
         // Get all watched scripts
         let scripts = self.get_watched_scripts();

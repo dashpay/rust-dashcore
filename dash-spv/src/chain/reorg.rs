@@ -5,10 +5,9 @@
 
 use super::chainlock_manager::ChainLockManager;
 use super::{ChainTip, Fork};
-use crate::storage::{ChainStorage, StorageManager};
+use crate::storage::ChainStorage;
 use crate::types::ChainState;
 use dashcore::{BlockHash, Header as BlockHeader, Transaction, Txid};
-use dashcore_hashes::Hash;
 use std::sync::Arc;
 use tracing;
 
@@ -28,6 +27,7 @@ pub struct ReorgEvent {
 }
 
 /// Data collected during the read phase of reorganization
+#[allow(dead_code)]
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct ReorgData {
@@ -198,12 +198,12 @@ impl ReorgManager {
 /*
 impl ReorgManager {
     /// Perform a chain reorganization using a phased approach
-    pub async fn reorganize(
+    pub async fn reorganize<S: StorageManager>(
         &self,
         chain_state: &mut ChainState,
         wallet_state: &mut WalletState,
         fork: &Fork,
-        storage_manager: &mut dyn StorageManager,
+        storage_manager: &mut S,
     ) -> Result<ReorgEvent, String> {
         // Phase 1: Collect all necessary data (read-only)
         let reorg_data = self.collect_reorg_data(chain_state, fork, storage_manager).await?;
@@ -215,30 +215,30 @@ impl ReorgManager {
 
     /// Collect all data needed for reorganization (read-only phase)
     #[cfg(test)]
-    pub async fn collect_reorg_data(
+    pub async fn collect_reorg_data<S: StorageManager>(
         &self,
         chain_state: &ChainState,
         fork: &Fork,
-        storage_manager: &dyn StorageManager,
+        storage_manager: &S,
     ) -> Result<ReorgData, String> {
         self.collect_reorg_data_internal(chain_state, fork, storage_manager).await
     }
 
     #[cfg(not(test))]
-    async fn collect_reorg_data(
+    async fn collect_reorg_data<S: StorageManager>(
         &self,
         chain_state: &ChainState,
         fork: &Fork,
-        storage_manager: &dyn StorageManager,
+        storage_manager: &S,
     ) -> Result<ReorgData, String> {
         self.collect_reorg_data_internal(chain_state, fork, storage_manager).await
     }
 
-    async fn collect_reorg_data_internal(
+    async fn collect_reorg_data_internal<S: StorageManager>(
         &self,
         chain_state: &ChainState,
         fork: &Fork,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> Result<ReorgData, String> {
         // Find the common ancestor
         let (common_ancestor, common_height) =
@@ -275,13 +275,13 @@ impl ReorgManager {
     }
 
     /// Apply reorganization using collected data (write-only phase)
-    async fn apply_reorg_with_data(
+    async fn apply_reorg_with_data<S: StorageManager>(
         &self,
         chain_state: &mut ChainState,
         wallet_state: &mut WalletState,
         fork: &Fork,
         reorg_data: ReorgData,
-        storage_manager: &mut dyn StorageManager,
+        storage_manager: &mut S,
     ) -> Result<ReorgEvent, String> {
         // Create a checkpoint of the current chain state before making any changes
         let chain_state_checkpoint = chain_state.clone();

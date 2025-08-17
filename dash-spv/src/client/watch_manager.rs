@@ -16,11 +16,11 @@ pub struct WatchManager;
 
 impl WatchManager {
     /// Add a watch item.
-    pub async fn add_watch_item(
+    pub async fn add_watch_item<S: StorageManager>(
         watch_items: &Arc<RwLock<HashSet<WatchItem>>>,
         watch_item_updater: &Option<WatchItemUpdateSender>,
         item: WatchItem,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
     ) -> Result<()> {
         // Check if the item is new and collect the watch list in a limited scope
         let (is_new, watch_list) = {
@@ -65,11 +65,11 @@ impl WatchManager {
     }
 
     /// Remove a watch item.
-    pub async fn remove_watch_item(
+    pub async fn remove_watch_item<S: StorageManager>(
         watch_items: &Arc<RwLock<HashSet<WatchItem>>>,
         watch_item_updater: &Option<WatchItemUpdateSender>,
         item: &WatchItem,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
     ) -> Result<bool> {
         // Remove the item and collect the watch list in a limited scope
         let (removed, watch_list) = {
@@ -114,9 +114,9 @@ impl WatchManager {
     }
 
     /// Load watch items from storage.
-    pub async fn load_watch_items(
+    pub async fn load_watch_items<S: StorageManager>(
         watch_items: &Arc<RwLock<HashSet<WatchItem>>>,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> Result<()> {
         if let Some(data) =
             storage.load_metadata("watch_items").await.map_err(|e| SpvError::Storage(e))?

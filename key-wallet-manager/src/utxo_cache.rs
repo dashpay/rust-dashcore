@@ -3,7 +3,6 @@
 //! This module provides an in-memory cache for UTXOs with address indexing
 //! for fast lookups and efficient transaction processing.
 
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 #[cfg(feature = "std")]

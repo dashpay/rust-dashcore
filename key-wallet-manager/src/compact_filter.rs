@@ -4,16 +4,13 @@
 //! Compact filters allow light clients to determine whether a block contains transactions
 //! relevant to them without downloading the full block.
 
-use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 use core::convert::TryInto;
 
 use dashcore::blockdata::block::Block;
 use dashcore::blockdata::script::ScriptBuf;
-use dashcore::blockdata::transaction::Transaction;
-use dashcore::{OutPoint, Txid};
+use dashcore::OutPoint;
 use dashcore_hashes::{sha256, Hash};
-use key_wallet::Address;
 
 /// Filter type as defined in BIP 158
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,7 +183,7 @@ impl CompactFilter {
         // In a real implementation, this would deserialize the GCS properly
 
         // Create the filter key from block hash
-        let key = derive_filter_key(&block_hash.to_byte_array());
+        let _key = derive_filter_key(&block_hash.to_byte_array());
 
         // For now, create a GCS from the raw data
         // This is a simplified version - a real implementation would properly deserialize

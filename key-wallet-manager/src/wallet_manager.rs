@@ -124,7 +124,7 @@ impl WalletManager {
                 .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
         }
 
-        let account = wallet_mut.get_bip44_account(network, 0).ok_or_else(|| {
+        let _account = wallet_mut.get_bip44_account(network, 0).ok_or_else(|| {
             WalletError::AccountCreation("Failed to get default account".to_string())
         })?;
 
@@ -353,7 +353,7 @@ impl WalletManager {
         // Track the address in the managed account's address pool
         // Note: AddressPool doesn't have a simple add method, so we need to track it differently
         // For now, just track in monitored addresses
-        let path = DerivationPath::bip_44_payment_path(
+        let _path = DerivationPath::bip_44_payment_path(
             self.default_network,
             account_index,
             false,
@@ -400,7 +400,7 @@ impl WalletManager {
         )?;
 
         // Track the address in the managed account's address pool
-        let path = DerivationPath::bip_44_payment_path(
+        let _path = DerivationPath::bip_44_payment_path(
             self.default_network,
             account_index,
             true,
@@ -421,7 +421,7 @@ impl WalletManager {
         _fee_level: FeeLevel,
     ) -> Result<Transaction, WalletError> {
         // Get change address first
-        let change_address = self.get_change_address(wallet_id, account_index)?;
+        let _change_address = self.get_change_address(wallet_id, account_index)?;
 
         let managed_info = self
             .wallet_infos
@@ -459,6 +459,7 @@ impl WalletManager {
         ));
 
         #[allow(unreachable_code)]
+        #[allow(unused_variables)]
         {
             let tx: Transaction = unimplemented!("Transaction building needs implementation");
 

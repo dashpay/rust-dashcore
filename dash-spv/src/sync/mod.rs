@@ -35,15 +35,19 @@ pub use state::SyncState;
 /// Legacy sync manager - kept for compatibility but simplified.
 /// Use SequentialSyncManager for all synchronization needs.
 #[deprecated(note = "Use SequentialSyncManager instead")]
-pub struct SyncManager {
-    header_sync: HeaderSyncManagerWithReorg,
-    filter_sync: FilterSyncManager,
-    masternode_sync: MasternodeSyncManager,
+pub struct SyncManager<S: StorageManager, N: NetworkManager> {
+    header_sync: HeaderSyncManagerWithReorg<S, N>,
+    filter_sync: FilterSyncManager<S, N>,
+    masternode_sync: MasternodeSyncManager<S, N>,
+    _phantom_s: std::marker::PhantomData<S>,
+    _phantom_n: std::marker::PhantomData<N>,
     state: SyncState,
     config: ClientConfig,
 }
 
-impl SyncManager {
+impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
+    SyncManager<S, N>
+{
     /// Create a new sync manager.
     pub fn new(
         config: &ClientConfig,
@@ -60,6 +64,8 @@ impl SyncManager {
             masternode_sync: MasternodeSyncManager::new(config),
             state: SyncState::new(),
             config: config.clone(),
+            _phantom_s: std::marker::PhantomData,
+            _phantom_n: std::marker::PhantomData,
         })
     }
 
@@ -67,8 +73,8 @@ impl SyncManager {
     pub async fn handle_headers_message(
         &mut self,
         headers: Vec<dashcore::block::Header>,
-        storage: &mut dyn StorageManager,
-        network: &mut dyn NetworkManager,
+        storage: &mut S,
+        network: &mut N,
     ) -> SyncResult<bool> {
         // Simply forward to the header sync manager
         self.header_sync.handle_headers_message(headers, storage, network).await
@@ -78,8 +84,8 @@ impl SyncManager {
     pub async fn handle_cfheaders_message(
         &mut self,
         cf_headers: dashcore::network::message_filter::CFHeaders,
-        storage: &mut dyn StorageManager,
-        network: &mut dyn NetworkManager,
+        storage: &mut S,
+        network: &mut N,
     ) -> SyncResult<bool> {
         self.filter_sync.handle_cfheaders_message(cf_headers, storage, network).await
     }
@@ -89,8 +95,8 @@ impl SyncManager {
     pub async fn handle_cfilter_message(
         &mut self,
         block_hash: dashcore::BlockHash,
-        storage: &mut dyn StorageManager,
-        network: &mut dyn NetworkManager,
+        storage: &mut S,
+        network: &mut N,
     ) -> SyncResult<()> {
         // Check if this completes any active filter requests
         let completed_requests = self.filter_sync.mark_filter_received(block_hash, storage).await?;
@@ -118,8 +124,8 @@ impl SyncManager {
     pub async fn handle_mnlistdiff_message(
         &mut self,
         diff: dashcore::network::message_sml::MnListDiff,
-        storage: &mut dyn StorageManager,
-        network: &mut dyn NetworkManager,
+        storage: &mut S,
+        network: &mut N,
     ) -> SyncResult<bool> {
         self.masternode_sync.handle_mnlistdiff_message(diff, storage, network).await
     }
@@ -127,8 +133,8 @@ impl SyncManager {
     /// Check for sync timeouts and handle recovery across all sync managers.
     pub async fn check_sync_timeouts(
         &mut self,
-        storage: &mut dyn StorageManager,
-        network: &mut dyn NetworkManager,
+        storage: &mut S,
+        network: &mut N,
     ) -> SyncResult<()> {
         // Check all sync managers for timeouts
         let _ = self.header_sync.check_sync_timeout(storage, network).await;
@@ -148,11 +154,7 @@ impl SyncManager {
 
     /// Synchronize all components to the tip.
     /// This method is deprecated - use SequentialSyncManager instead.
-    pub async fn sync_all(
-        &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
-    ) -> SyncResult<SyncProgress> {
+    pub async fn sync_all(&mut self, network: &mut N, storage: &mut S) -> SyncResult<SyncProgress> {
         let mut progress = SyncProgress::default();
 
         // Sequential sync: headers first, then filter headers, then masternodes
@@ -175,8 +177,8 @@ impl SyncManager {
     /// Synchronize headers using the new state-based approach.
     pub async fn sync_headers(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<SyncProgress> {
         // Check if header sync is already in progress using the HeaderSyncManager's internal state
         if self.header_sync.is_syncing() {
@@ -225,8 +227,8 @@ impl SyncManager {
     /// This method is deprecated and only kept for compatibility.
     async fn sync_headers_and_filter_headers_impl(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<SyncProgress> {
         tracing::info!("Starting sequential header and filter header synchronization");
 
@@ -299,8 +301,8 @@ impl SyncManager {
     /// Synchronize filter headers using the new state-based approach.
     pub async fn sync_filter_headers(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<SyncProgress> {
         if self.state.is_syncing(SyncComponent::FilterHeaders) {
             return Err(SyncError::SyncInProgress);
@@ -357,8 +359,8 @@ impl SyncManager {
     /// Synchronize compact filters.
     pub async fn sync_filters(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
         start_height: Option<u32>,
         count: Option<u32>,
     ) -> SyncResult<SyncProgress> {
@@ -379,7 +381,7 @@ impl SyncManager {
     /// Check filters for matches against watch items.
     pub async fn check_filter_matches(
         &self,
-        storage: &dyn StorageManager,
+        storage: &S,
         watch_items: &[crate::types::WatchItem],
         start_height: u32,
         end_height: u32,
@@ -393,7 +395,7 @@ impl SyncManager {
     pub async fn request_block_downloads(
         &mut self,
         filter_matches: Vec<crate::types::FilterMatch>,
-        network: &mut dyn NetworkManager,
+        network: &mut N,
     ) -> SyncResult<Vec<crate::types::FilterMatch>> {
         self.filter_sync.process_filter_matches_and_download(filter_matches, network).await
     }
@@ -419,8 +421,8 @@ impl SyncManager {
     /// Synchronize masternode list using the new state-based approach.
     pub async fn sync_masternodes(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<SyncProgress> {
         if self.state.is_syncing(SyncComponent::Masternodes) {
             return Err(SyncError::SyncInProgress);
@@ -489,22 +491,22 @@ impl SyncManager {
     }
 
     /// Get a reference to the header sync manager.
-    pub fn header_sync(&self) -> &HeaderSyncManagerWithReorg {
+    pub fn header_sync(&self) -> &HeaderSyncManagerWithReorg<S, N> {
         &self.header_sync
     }
 
     /// Get a mutable reference to the header sync manager.
-    pub fn header_sync_mut(&mut self) -> &mut HeaderSyncManagerWithReorg {
+    pub fn header_sync_mut(&mut self) -> &mut HeaderSyncManagerWithReorg<S, N> {
         &mut self.header_sync
     }
 
     /// Get a mutable reference to the filter sync manager.
-    pub fn filter_sync_mut(&mut self) -> &mut FilterSyncManager {
+    pub fn filter_sync_mut(&mut self) -> &mut FilterSyncManager<S, N> {
         &mut self.filter_sync
     }
 
     /// Get a reference to the filter sync manager.
-    pub fn filter_sync(&self) -> &FilterSyncManager {
+    pub fn filter_sync(&self) -> &FilterSyncManager<S, N> {
         &self.filter_sync
     }
 }

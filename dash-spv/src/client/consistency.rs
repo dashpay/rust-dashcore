@@ -1,12 +1,5 @@
 //! Wallet consistency validation and recovery functionality.
 
-use std::collections::HashSet;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
-use crate::error::{Result, SpvError};
-use crate::storage::StorageManager;
-use crate::types::WatchItem;
 // Wallet removed - consistency checking should be handled by external wallet
 
 /// Report of wallet consistency validation.

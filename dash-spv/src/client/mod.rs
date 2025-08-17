@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use crate::terminal::TerminalUI;
 
 use crate::chain::ChainLockManager;
-use crate::error::{Result, SpvError, StorageError};
+use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
@@ -33,6 +33,7 @@ use dashcore::network::constants::NetworkExt;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use key_wallet_manager::wallet_interface::WalletInterface;
 
 pub use block_processor::{BlockProcessingTask, BlockProcessor};
 pub use config::ClientConfig;
@@ -43,14 +44,14 @@ pub use status_display::StatusDisplay;
 pub use watch_manager::{WatchItemUpdateSender, WatchManager};
 
 /// Main Dash SPV client.
-pub struct DashSpvClient {
+pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManager> {
     config: ClientConfig,
     state: Arc<RwLock<ChainState>>,
     stats: Arc<RwLock<SpvStats>>,
-    network: Box<dyn NetworkManager>,
-    storage: Arc<Mutex<Box<dyn StorageManager>>>,
+    network: N,
+    storage: Arc<Mutex<S>>,
     // External wallet implementation (required)
-    wallet: Arc<RwLock<Box<dyn key_wallet_manager::wallet_interface::WalletInterface>>>,
+    wallet: Arc<RwLock<W>>,
     /// Synchronization manager for coordinating blockchain sync operations.
     ///
     /// # Architectural Design
@@ -77,7 +78,7 @@ pub struct DashSpvClient {
     /// - Implementing a message-passing architecture for sync commands
     ///
     /// The current design prioritizes simplicity and correctness over concurrent access.
-    sync_manager: SequentialSyncManager,
+    sync_manager: SequentialSyncManager<S, N>,
     validation: ValidationManager,
     chainlock_manager: Arc<ChainLockManager>,
     running: Arc<RwLock<bool>>,
@@ -95,7 +96,12 @@ pub struct DashSpvClient {
     last_sync_state_save: Arc<RwLock<u64>>,
 }
 
-impl DashSpvClient {
+impl<
+        W: WalletInterface + Send + Sync + 'static,
+        N: NetworkManager + Send + Sync + 'static,
+        S: StorageManager + Send + Sync + 'static,
+    > DashSpvClient<W, N, S>
+{
     /// Take the progress receiver for external consumption.
     pub fn take_progress_receiver(
         &mut self,
@@ -122,7 +128,7 @@ impl DashSpvClient {
     }
 
     /// Helper to create a StatusDisplay instance.
-    async fn create_status_display(&self) -> StatusDisplay {
+    async fn create_status_display(&self) -> StatusDisplay<'_, S> {
         StatusDisplay::new(
             &self.state,
             &self.stats,
@@ -214,12 +220,12 @@ impl DashSpvClient {
     }
     */
 
-    /// Create a new SPV client with the given configuration and wallet.
+    /// Create a new SPV client with the given configuration, network, storage, and wallet.
     pub async fn new(
         config: ClientConfig,
-        wallet: Arc<
-            tokio::sync::RwLock<Box<dyn key_wallet_manager::wallet_interface::WalletInterface>>,
-        >,
+        network: N,
+        storage: S,
+        wallet: Arc<RwLock<W>>,
     ) -> Result<Self> {
         // Validate configuration
         config.validate().map_err(|e| SpvError::Config(e))?;
@@ -228,32 +234,8 @@ impl DashSpvClient {
         let state = Arc::new(RwLock::new(ChainState::new_for_network(config.network)));
         let stats = Arc::new(RwLock::new(SpvStats::default()));
 
-        // Create network manager (use multi-peer by default)
-        let network = crate::network::multi_peer::MultiPeerNetworkManager::new(&config).await?;
-
-        // Create storage manager
-        let storage_inner: Box<dyn StorageManager> = if config.enable_persistence {
-            if let Some(path) = &config.storage_path {
-                Box::new(
-                    crate::storage::DiskStorageManager::new(path.clone())
-                        .await
-                        .map_err(|e| SpvError::Storage(e))?,
-                )
-            } else {
-                Box::new(
-                    crate::storage::MemoryStorageManager::new()
-                        .await
-                        .map_err(|e| SpvError::Storage(e))?,
-                )
-            }
-        } else {
-            Box::new(
-                crate::storage::MemoryStorageManager::new()
-                    .await
-                    .map_err(|e| SpvError::Storage(e))?,
-            )
-        };
-        let storage = Arc::new(Mutex::new(storage_inner));
+        // Wrap storage in Arc<Mutex>
+        let storage = Arc::new(Mutex::new(storage));
 
         // Create shared data structures
         let watch_items = Arc::new(RwLock::new(HashSet::new()));
@@ -286,7 +268,7 @@ impl DashSpvClient {
             config,
             state,
             stats,
-            network: Box::new(network),
+            network,
             storage,
             wallet,
             sync_manager,
@@ -426,7 +408,7 @@ impl DashSpvClient {
             tracing::info!("Found {} headers in storage, loading into sync manager...", tip_height);
             let loaded_count = {
                 let mut storage = self.storage.lock().await;
-                self.sync_manager.load_headers_from_storage(&mut **storage).await
+                self.sync_manager.load_headers_from_storage(&mut *storage).await
             };
 
             match loaded_count {
@@ -541,7 +523,7 @@ impl DashSpvClient {
         &self,
         address: &dashcore::Address,
     ) -> Result<crate::types::MempoolBalance> {
-        let wallet = self.wallet.read().await;
+        let _wallet = self.wallet.read().await;
         let mempool_state = self.mempool_state.read().await;
 
         let mut pending = 0i64;
@@ -826,14 +808,14 @@ impl DashSpvClient {
 
                 // Start initial sync with sequential sync manager
                 let mut storage = self.storage.lock().await;
-                match self.sync_manager.start_sync(&mut *self.network, &mut **storage).await {
+                match self.sync_manager.start_sync(&mut self.network, &mut *storage).await {
                     Ok(started) => {
                         tracing::info!("✅ Sequential sync start_sync returned: {}", started);
 
                         // Send initial requests after sync is prepared
                         if let Err(e) = self
                             .sync_manager
-                            .send_initial_requests(&mut *self.network, &mut **storage)
+                            .send_initial_requests(&mut self.network, &mut *storage)
                             .await
                         {
                             tracing::error!("Failed to send initial sync requests: {}", e);
@@ -1019,7 +1001,7 @@ impl DashSpvClient {
             // Check for sync timeouts and handle recovery (only periodically, not every loop)
             if last_timeout_check.elapsed() >= timeout_check_interval {
                 let mut storage = self.storage.lock().await;
-                let _ = self.sync_manager.check_timeout(&mut *self.network, &mut **storage).await;
+                let _ = self.sync_manager.check_timeout(&mut self.network, &mut *storage).await;
                 drop(storage);
             }
 
@@ -1187,8 +1169,8 @@ impl DashSpvClient {
             // Create a MessageHandler instance with all required parameters
             let mut handler = MessageHandler::new(
                 &mut self.sync_manager,
-                &mut **storage,
-                &mut *self.network,
+                &mut *storage,
+                &mut self.network,
                 &self.config,
                 &self.stats,
                 &self.filter_processor,
@@ -1252,7 +1234,7 @@ impl DashSpvClient {
         {
             let mut storage = self.storage.lock().await;
             self.sync_manager
-                .handle_message(headers_msg, &mut *self.network, &mut **storage)
+                .handle_message(headers_msg, &mut self.network, &mut *storage)
                 .await
                 .map_err(|e| SpvError::Sync(e))?;
         }
@@ -1325,7 +1307,7 @@ impl DashSpvClient {
         {
             let mut storage = self.storage.lock().await;
             self.sync_manager
-                .handle_message(cfheaders_msg, &mut *self.network, &mut **storage)
+                .handle_message(cfheaders_msg, &mut self.network, &mut *storage)
                 .await
                 .map_err(|e| SpvError::Sync(e))?;
         }
@@ -1617,7 +1599,7 @@ impl DashSpvClient {
         {
             let mut storage = self.storage.lock().await;
             self.chainlock_manager
-                .process_chain_lock(chainlock.clone(), &*chain_state, &mut **storage)
+                .process_chain_lock(chainlock.clone(), &*chain_state, &mut *storage)
                 .await
                 .map_err(|e| SpvError::Validation(e))?;
         }
@@ -1714,10 +1696,7 @@ impl DashSpvClient {
         let chain_state = self.state.read().await;
 
         let mut storage = self.storage.lock().await;
-        match self
-            .chainlock_manager
-            .validate_pending_chainlocks(&*chain_state, &mut **storage)
-            .await
+        match self.chainlock_manager.validate_pending_chainlocks(&*chain_state, &mut *storage).await
         {
             Ok(_) => {
                 info!("Successfully validated pending ChainLocks");
@@ -1744,7 +1723,7 @@ impl DashSpvClient {
                 &self.watch_items,
                 &self.watch_item_updater,
                 item,
-                &mut **storage,
+                &mut *storage,
             )
             .await?;
         }
@@ -1765,7 +1744,7 @@ impl DashSpvClient {
                 &self.watch_items,
                 &self.watch_item_updater,
                 item,
-                &mut **storage,
+                &mut *storage,
             )
             .await?
         };
@@ -1959,7 +1938,7 @@ impl DashSpvClient {
 
     pub async fn sync_and_check_filters(
         &mut self,
-        num_blocks: Option<u32>,
+        _num_blocks: Option<u32>,
     ) -> Result<Vec<crate::types::FilterMatch>> {
         // Sequential sync handles filter sync internally
         tracing::info!("Sequential sync mode: filter sync handled internally");
@@ -1969,8 +1948,8 @@ impl DashSpvClient {
     /// Sync filters for a specific height range.
     pub async fn sync_filters_range(
         &mut self,
-        start_height: Option<u32>,
-        count: Option<u32>,
+        _start_height: Option<u32>,
+        _count: Option<u32>,
     ) -> Result<()> {
         // Sequential sync handles filter range sync internally
         tracing::info!("Sequential sync mode: filter range sync handled internally");
@@ -2341,7 +2320,7 @@ impl DashSpvClient {
         if saved_state.chain_tip.height > 0 {
             tracing::info!("Loading headers into sync manager...");
             let mut storage = self.storage.lock().await;
-            match self.sync_manager.load_headers_from_storage(&mut **storage).await {
+            match self.sync_manager.load_headers_from_storage(&mut *storage).await {
                 Ok(loaded_count) => {
                     tracing::info!("✅ Sync manager loaded {} headers from storage", loaded_count);
                 }
@@ -2792,14 +2771,14 @@ impl DashSpvClient {
     /// Load watch items from storage.
     async fn load_watch_items(&mut self) -> Result<()> {
         let storage = self.storage.lock().await;
-        WatchManager::load_watch_items(&self.watch_items, &**storage).await
+        WatchManager::load_watch_items(&self.watch_items, &*storage).await
     }
 
     /// Load wallet data from storage.
     async fn load_wallet_data(&self) -> Result<()> {
         tracing::info!("Loading wallet data from storage...");
 
-        let wallet = self.wallet.read().await;
+        let _wallet = self.wallet.read().await;
 
         // The wallet implementation is responsible for managing its own persistent state
         // The SPV client will notify it of new blocks/transactions through the WalletInterface
@@ -2933,7 +2912,7 @@ impl DashSpvClient {
     }
 
     /// Get access to storage manager (requires locking)
-    pub fn storage(&self) -> Arc<Mutex<Box<dyn StorageManager>>> {
+    pub fn storage(&self) -> Arc<Mutex<S>> {
         self.storage.clone()
     }
 }

@@ -7,6 +7,7 @@ use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use crate::error::{Result, SpvError};
 use crate::storage::StorageManager;
 use crate::types::{AddressBalance, SpvEvent, SpvStats, WatchItem};
+use key_wallet_manager::wallet_interface::WalletInterface;
 
 /// Task for the block processing worker.
 #[derive(Debug)]
@@ -22,10 +23,10 @@ pub enum BlockProcessingTask {
 }
 
 /// Block processing worker that handles blocks in a separate task.
-pub struct BlockProcessor {
+pub struct BlockProcessor<W: WalletInterface, S: StorageManager> {
     receiver: mpsc::UnboundedReceiver<BlockProcessingTask>,
-    wallet: Arc<RwLock<Box<dyn key_wallet_manager::wallet_interface::WalletInterface>>>,
-    storage: Arc<Mutex<Box<dyn StorageManager>>>,
+    wallet: Arc<RwLock<W>>,
+    storage: Arc<Mutex<S>>,
     watch_items: Arc<RwLock<HashSet<WatchItem>>>,
     stats: Arc<RwLock<SpvStats>>,
     event_tx: mpsc::UnboundedSender<SpvEvent>,
@@ -33,12 +34,14 @@ pub struct BlockProcessor {
     failed: bool,
 }
 
-impl BlockProcessor {
+impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync + 'static>
+    BlockProcessor<W, S>
+{
     /// Create a new block processor.
     pub fn new(
         receiver: mpsc::UnboundedReceiver<BlockProcessingTask>,
-        wallet: Arc<RwLock<Box<dyn key_wallet_manager::wallet_interface::WalletInterface>>>,
-        storage: Arc<Mutex<Box<dyn StorageManager>>>,
+        wallet: Arc<RwLock<W>>,
+        storage: Arc<Mutex<S>>,
         watch_items: Arc<RwLock<HashSet<WatchItem>>>,
         stats: Arc<RwLock<SpvStats>>,
         event_tx: mpsc::UnboundedSender<SpvEvent>,

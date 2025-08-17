@@ -2,7 +2,7 @@
 
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_headers2::Headers2Message;
-use dashcore::network::message_qrinfo::{GetQRInfo, QRInfo};
+use dashcore::network::message_qrinfo::QRInfo;
 use tracing;
 
 /// Handles incoming network messages and routes them appropriately.

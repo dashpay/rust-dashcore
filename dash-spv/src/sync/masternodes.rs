@@ -7,7 +7,7 @@ use dashcore::{
     network::constants::NetworkExt,
     network::message::NetworkMessage,
     network::message_qrinfo::{GetQRInfo, QRInfo},
-    network::message_sml::{GetMnListDiff, MnListDiff},
+    network::message_sml::MnListDiff,
     sml::masternode_list_engine::MasternodeListEngine,
     BlockHash, QuorumHash,
 };
@@ -20,7 +20,9 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 
 /// Simplified masternode synchronization following dash-evo-tool pattern.
-pub struct MasternodeSyncManager {
+pub struct MasternodeSyncManager<S: StorageManager, N: NetworkManager> {
+    _phantom_s: std::marker::PhantomData<S>,
+    _phantom_n: std::marker::PhantomData<N>,
     config: ClientConfig,
     engine: Option<MasternodeListEngine>,
 
@@ -39,7 +41,9 @@ pub struct MasternodeSyncManager {
     last_sync_time: Option<Instant>,
 }
 
-impl MasternodeSyncManager {
+impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
+    MasternodeSyncManager<S, N>
+{
     /// Create a new masternode sync manager.
     pub fn new(config: &ClientConfig) -> Self {
         let (engine, mnlist_diffs) = if config.enable_masternodes {
@@ -101,6 +105,8 @@ impl MasternodeSyncManager {
             error: None,
             sync_in_progress: false,
             last_sync_time: None,
+            _phantom_s: std::marker::PhantomData,
+            _phantom_n: std::marker::PhantomData,
         }
     }
 
@@ -135,11 +141,7 @@ impl MasternodeSyncManager {
     }
 
     /// Insert masternode list diff - direct translation of dash-evo-tool implementation
-    async fn insert_mn_list_diff(
-        &mut self,
-        mn_list_diff: &MnListDiff,
-        storage: &dyn StorageManager,
-    ) {
+    async fn insert_mn_list_diff(&mut self, mn_list_diff: &MnListDiff, storage: &S) {
         let base_block_hash = mn_list_diff.base_block_hash;
         let base_height = match self.get_height_for_hash(&base_block_hash, storage).await {
             Ok(height) => height,
@@ -178,7 +180,7 @@ impl MasternodeSyncManager {
     async fn get_height_for_hash(
         &self,
         block_hash: &BlockHash,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> Result<u32, String> {
         // Special case: Handle genesis block which isn't stored when syncing from checkpoints
         if let Some(genesis_hash) = self.config.network.known_genesis_block_hash() {
@@ -257,7 +259,7 @@ impl MasternodeSyncManager {
     async fn feed_qrinfo_block_heights(
         &mut self,
         qr_info: &QRInfo,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
     ) -> Result<(), String> {
         if let Some(engine) = &mut self.engine {
             tracing::debug!("🔗 Feeding QRInfo block heights to masternode engine");
@@ -368,7 +370,7 @@ impl MasternodeSyncManager {
     pub async fn start_sync(
         &mut self,
         network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
     ) -> SyncResult<bool> {
         if self.sync_in_progress {
             return Err(SyncError::SyncInProgress);
@@ -427,7 +429,7 @@ impl MasternodeSyncManager {
     pub async fn handle_mnlistdiff_message(
         &mut self,
         diff: MnListDiff,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
         _network: &mut dyn NetworkManager,
     ) -> SyncResult<bool> {
         self.insert_mn_list_diff(&diff, storage).await;
@@ -471,7 +473,7 @@ impl MasternodeSyncManager {
     pub async fn handle_qrinfo_message(
         &mut self,
         qr_info: QRInfo,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
         network: &mut dyn NetworkManager,
         sync_base_height: u32,
     ) {
@@ -534,7 +536,7 @@ impl MasternodeSyncManager {
     async fn feed_qrinfo_and_get_additional_diffs(
         &mut self,
         qr_info: &QRInfo,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
         network: &mut dyn NetworkManager,
         sync_base_height: u32,
     ) -> Result<(), String> {
@@ -543,7 +545,7 @@ impl MasternodeSyncManager {
         );
 
         // Step 1: Feed QRInfo to masternode list engine with dynamic on-demand height callback
-        let (quorum_hashes, rotating_quorum_hashes) = if let Some(engine) = &mut self.engine {
+        let (quorum_hashes, _rotating_quorum_hashes) = if let Some(engine) = &mut self.engine {
             // Create dynamic callback that fetches heights on-demand from storage
             let height_lookup = |block_hash: &BlockHash| -> Result<
                 u32,
@@ -618,7 +620,7 @@ impl MasternodeSyncManager {
     async fn fetch_diffs_with_hashes(
         &mut self,
         quorum_hashes: &std::collections::BTreeSet<QuorumHash>,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
         network: &mut dyn NetworkManager,
         sync_base_height: u32,
     ) -> Result<(), String> {

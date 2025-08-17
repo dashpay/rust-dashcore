@@ -47,7 +47,9 @@ impl Default for ReorgConfig {
 }
 
 /// Manages header synchronization with reorg support
-pub struct HeaderSyncManagerWithReorg {
+pub struct HeaderSyncManagerWithReorg<S: StorageManager, N: NetworkManager> {
+    _phantom_s: std::marker::PhantomData<S>,
+    _phantom_n: std::marker::PhantomData<N>,
     config: ClientConfig,
     validation: ValidationManager,
     fork_detector: ForkDetector,
@@ -65,7 +67,9 @@ pub struct HeaderSyncManagerWithReorg {
     headers2_failed: bool,
 }
 
-impl HeaderSyncManagerWithReorg {
+impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
+    HeaderSyncManagerWithReorg<S, N>
+{
     /// Create a new header sync manager with reorg support
     pub fn new(config: &ClientConfig, reorg_config: ReorgConfig) -> SyncResult<Self> {
         let chain_state = ChainState::new_for_network(config.network);
@@ -99,14 +103,13 @@ impl HeaderSyncManagerWithReorg {
             syncing_headers: false,
             last_sync_progress: std::time::Instant::now(),
             headers2_failed: false,
+            _phantom_s: std::marker::PhantomData,
+            _phantom_n: std::marker::PhantomData,
         })
     }
 
     /// Load headers from storage into the chain state
-    pub async fn load_headers_from_storage(
-        &mut self,
-        storage: &dyn StorageManager,
-    ) -> SyncResult<u32> {
+    pub async fn load_headers_from_storage(&mut self, storage: &S) -> SyncResult<u32> {
         // First, try to load the persisted chain state which may contain sync_base_height
         if let Ok(Some(stored_chain_state)) = storage.load_chain_state().await {
             tracing::info!(
@@ -243,8 +246,8 @@ impl HeaderSyncManagerWithReorg {
     pub async fn handle_headers_message(
         &mut self,
         headers: Vec<BlockHeader>,
-        storage: &mut dyn StorageManager,
-        network: &mut dyn NetworkManager,
+        storage: &mut S,
+        network: &mut N,
     ) -> SyncResult<bool> {
         tracing::info!("🔍 Handle headers message with {} headers (reorg-aware)", headers.len());
 
@@ -357,7 +360,7 @@ impl HeaderSyncManagerWithReorg {
         if let Some(last_header) = headers.last() {
             let final_height = self.chain_state.get_height();
             let chain_work = ChainWork::from_height_and_header(final_height, last_header);
-            let tip = crate::chain::ChainTip::new(*last_header, final_height, chain_work);
+            let tip = ChainTip::new(*last_header, final_height, chain_work);
             self.tip_manager
                 .add_tip(tip)
                 .map_err(|e| SyncError::Storage(format!("Failed to update tip: {}", e)))?;
@@ -381,7 +384,7 @@ impl HeaderSyncManagerWithReorg {
     async fn process_header_with_fork_detection(
         &mut self,
         header: &BlockHeader,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
     ) -> SyncResult<HeaderProcessResult> {
         // First validate the header structure
         self.validation
@@ -419,7 +422,7 @@ impl HeaderSyncManagerWithReorg {
 
                 // Update chain tip manager
                 let chain_work = ChainWork::from_height_and_header(height, header);
-                let tip = crate::chain::ChainTip::new(*header, height, chain_work);
+                let tip = ChainTip::new(*header, height, chain_work);
                 self.tip_manager
                     .add_tip(tip)
                     .map_err(|e| SyncError::Storage(format!("Failed to update tip: {}", e)))?;
@@ -464,7 +467,7 @@ impl HeaderSyncManagerWithReorg {
     }
 
     /// Check if any fork should trigger a reorganization
-    async fn check_for_reorg(&mut self, storage: &mut dyn StorageManager) -> SyncResult<()> {
+    async fn check_for_reorg(&mut self, storage: &mut S) -> SyncResult<()> {
         if let Some(strongest_fork) = self.fork_detector.get_strongest_fork() {
             if let Some(current_tip) = self.tip_manager.get_active_tip() {
                 // First phase: Check if reorganization is needed (read-only)
@@ -523,7 +526,7 @@ impl HeaderSyncManagerWithReorg {
     /// Request headers from the network
     pub async fn request_headers(
         &mut self,
-        network: &mut dyn NetworkManager,
+        network: &mut N,
         base_hash: Option<BlockHash>,
     ) -> SyncResult<()> {
         let block_locator = match base_hash {
@@ -662,8 +665,8 @@ impl HeaderSyncManagerWithReorg {
         &mut self,
         headers2: dashcore::network::message_headers2::Headers2Message,
         peer_id: crate::types::PeerId,
-        storage: &mut dyn StorageManager,
-        network: &mut dyn NetworkManager,
+        _storage: &mut S,
+        _network: &mut N,
     ) -> SyncResult<bool> {
         tracing::warn!(
             "⚠️ Headers2 support is currently NON-FUNCTIONAL. Received {} compressed headers from peer {} but cannot process them.",
@@ -678,40 +681,46 @@ impl HeaderSyncManagerWithReorg {
         return Err(SyncError::Headers2DecompressionFailed(
             "Headers2 is currently disabled due to protocol compatibility issues".to_string(),
         ));
-        // If this is the first headers2 message and we need to initialize compression state
-        if !headers2.headers.is_empty() {
-            // Check if we need to initialize the compression state
-            let state = self.headers2_state.get_state(peer_id);
-            if state.prev_header.is_none() {
-                // If we're syncing from genesis (height 0), initialize with genesis header
-                if self.chain_state.tip_height() == 0 {
-                    // We have genesis header at index 0
-                    if let Some(genesis_header) = self.chain_state.header_at_height(0) {
-                        tracing::info!(
+
+        #[allow(unreachable_code)]
+        {
+            // If this is the first headers2 message, and we need to initialize compression state
+            if !headers2.headers.is_empty() {
+                // Check if we need to initialize the compression state
+                let state = self.headers2_state.get_state(peer_id);
+                if state.prev_header.is_none() {
+                    // If we're syncing from genesis (height 0), initialize with genesis header
+                    if self.chain_state.tip_height() == 0 {
+                        // We have genesis header at index 0
+                        if let Some(genesis_header) = self.chain_state.header_at_height(0) {
+                            tracing::info!(
                             "Initializing headers2 compression state for peer {} with genesis header",
                             peer_id
                         );
-                        self.headers2_state.init_peer_state(peer_id, genesis_header.clone());
-                    }
-                } else if self.chain_state.tip_height() > 0 {
-                    // Get our current tip to use as the base for compression
-                    if let Some(tip_header) = self.chain_state.get_tip_header() {
-                        tracing::info!(
+                            self.headers2_state.init_peer_state(peer_id, genesis_header.clone());
+                        }
+                    } else if self.chain_state.tip_height() > 0 {
+                        // Get our current tip to use as the base for compression
+                        if let Some(tip_header) = self.chain_state.get_tip_header() {
+                            tracing::info!(
                             "Initializing headers2 compression state for peer {} with tip header at height {}",
                             peer_id,
                             self.chain_state.tip_height()
                         );
-                        self.headers2_state.init_peer_state(peer_id, tip_header);
+                            self.headers2_state.init_peer_state(peer_id, tip_header);
+                        }
                     }
                 }
             }
-        }
 
-        // Decompress headers using the peer's compression state
-        let headers = match self.headers2_state.process_headers(peer_id, headers2.headers.clone()) {
-            Ok(headers) => headers,
-            Err(e) => {
-                tracing::error!(
+            // Decompress headers using the peer's compression state
+            let headers = match self
+                .headers2_state
+                .process_headers(peer_id, headers2.headers.clone())
+            {
+                Ok(headers) => headers,
+                Err(e) => {
+                    tracing::error!(
                     "Failed to decompress headers2 from peer {}: {}. Headers count: {}, first header compressed: {}, chain height: {}",
                     peer_id,
                     e,
@@ -724,44 +733,44 @@ impl HeaderSyncManagerWithReorg {
                     self.chain_state.tip_height()
                 );
 
-                // If we failed due to missing previous header and we're at genesis,
-                // this might be a protocol issue where peer expects us to have genesis in compression state
-                if matches!(e, crate::sync::headers2_state::ProcessError::DecompressionError(0, _))
-                    && self.chain_state.tip_height() == 0
-                {
-                    tracing::warn!(
+                    // If we failed due to missing previous header, and we're at genesis,
+                    // this might be a protocol issue where peer expects us to have genesis in compression state
+                    if matches!(
+                        e,
+                        crate::sync::headers2_state::ProcessError::DecompressionError(0, _)
+                    ) && self.chain_state.tip_height() == 0
+                    {
+                        tracing::warn!(
                         "Headers2 decompression failed at genesis. Peer may be sending compressed headers that reference genesis. Consider falling back to regular headers."
                     );
+                    }
+
+                    // Return a specific error that can trigger fallback
+                    // Mark that headers2 failed for this sync session
+                    self.headers2_failed = true;
+                    return Err(SyncError::Headers2DecompressionFailed(format!(
+                        "Failed to decompress headers: {}",
+                        e
+                    )));
                 }
+            };
 
-                // Return a specific error that can trigger fallback
-                // Mark that headers2 failed for this sync session
-                self.headers2_failed = true;
-                return Err(SyncError::Headers2DecompressionFailed(format!(
-                    "Failed to decompress headers: {}",
-                    e
-                )));
-            }
-        };
+            // Log compression statistics
+            let stats = self.headers2_state.get_stats();
+            tracing::info!(
+                "📊 Headers2 compression stats: {:.1}% bandwidth saved, {:.1}% compression ratio",
+                stats.bandwidth_savings,
+                stats.compression_ratio * 100.0
+            );
 
-        // Log compression statistics
-        let stats = self.headers2_state.get_stats();
-        tracing::info!(
-            "📊 Headers2 compression stats: {:.1}% bandwidth saved, {:.1}% compression ratio",
-            stats.bandwidth_savings,
-            stats.compression_ratio * 100.0
-        );
-
-        // Process decompressed headers through the normal flow
-        self.handle_headers_message(headers, storage, network).await
+            // Process decompressed headers through the normal flow
+            self.handle_headers_message(headers, _storage, _network).await
+        }
     }
 
     /// Prepare sync state without sending network requests.
     /// This allows monitoring to be set up before requests are sent.
-    pub async fn prepare_sync(
-        &mut self,
-        storage: &mut dyn StorageManager,
-    ) -> SyncResult<Option<BlockHash>> {
+    pub async fn prepare_sync(&mut self, storage: &mut S) -> SyncResult<Option<BlockHash>> {
         if self.syncing_headers {
             return Err(SyncError::SyncInProgress);
         }
@@ -920,11 +929,7 @@ impl HeaderSyncManagerWithReorg {
     }
 
     /// Start synchronizing headers (initialize the sync state).
-    pub async fn start_sync(
-        &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
-    ) -> SyncResult<bool> {
+    pub async fn start_sync(&mut self, network: &mut N, storage: &mut S) -> SyncResult<bool> {
         tracing::info!("Starting header synchronization with reorg support");
 
         // Prepare sync state (this will check if sync is already in progress)
@@ -939,8 +944,8 @@ impl HeaderSyncManagerWithReorg {
     /// Check if a sync timeout has occurred and handle recovery.
     pub async fn check_sync_timeout(
         &mut self,
-        storage: &mut dyn StorageManager,
-        network: &mut dyn NetworkManager,
+        storage: &mut S,
+        network: &mut N,
     ) -> SyncResult<bool> {
         if !self.syncing_headers {
             return Ok(false);
@@ -1085,10 +1090,7 @@ impl HeaderSyncManagerWithReorg {
 
     /// Pre-populate headers from checkpoints for fast initial sync
     /// Note: This requires having prev_blockhash data for checkpoints
-    pub async fn prepopulate_from_checkpoints(
-        &mut self,
-        storage: &dyn StorageManager,
-    ) -> SyncResult<u32> {
+    pub async fn prepopulate_from_checkpoints(&mut self, storage: &S) -> SyncResult<u32> {
         // Check if we already have headers
         if let Some(tip_height) = storage
             .get_tip_height()
@@ -1148,7 +1150,7 @@ impl HeaderSyncManagerWithReorg {
         // TODO: Implement batch storage operation
         // For now, we'll need to store them one by one
         let mut count = 0;
-        for (height, header) in headers_to_insert {
+        for (height, _header) in headers_to_insert {
             // Note: This would need proper storage implementation
             tracing::debug!("Would store checkpoint header at height {}", height);
             count += 1;
@@ -1166,8 +1168,8 @@ impl HeaderSyncManagerWithReorg {
     pub async fn download_single_header(
         &mut self,
         block_hash: BlockHash,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         // Check if we already have this header using the efficient reverse index
         if let Some(height) = storage

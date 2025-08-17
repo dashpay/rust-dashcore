@@ -10,20 +10,20 @@ use crate::terminal::TerminalUI;
 use crate::types::{ChainState, SpvStats, SyncProgress};
 
 /// Status display manager for updating UI and reporting sync progress.
-pub struct StatusDisplay<'a> {
+pub struct StatusDisplay<'a, S: StorageManager> {
     state: &'a Arc<RwLock<ChainState>>,
     stats: &'a Arc<RwLock<SpvStats>>,
-    storage: Arc<Mutex<Box<dyn StorageManager>>>,
+    storage: Arc<Mutex<S>>,
     terminal_ui: &'a Option<Arc<TerminalUI>>,
     config: &'a ClientConfig,
 }
 
-impl<'a> StatusDisplay<'a> {
+impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
     /// Create a new status display manager.
     pub fn new(
         state: &'a Arc<RwLock<ChainState>>,
         stats: &'a Arc<RwLock<SpvStats>>,
-        storage: Arc<Mutex<Box<dyn StorageManager>>>,
+        storage: Arc<Mutex<S>>,
         terminal_ui: &'a Option<Arc<TerminalUI>>,
         config: &'a ClientConfig,
     ) -> Self {

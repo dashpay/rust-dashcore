@@ -25,7 +25,7 @@ use crate::sync::{
 };
 use crate::types::{ChainState, SyncProgress};
 
-use phases::{HybridSyncStrategy, PhaseTransition, SyncPhase};
+use phases::{PhaseTransition, SyncPhase};
 use request_control::RequestController;
 use transitions::TransitionManager;
 
@@ -35,7 +35,9 @@ use transitions::TransitionManager;
 const CHAINLOCK_VALIDATION_MASTERNODE_OFFSET: u32 = 8;
 
 /// Manages sequential synchronization of all data types
-pub struct SequentialSyncManager {
+pub struct SequentialSyncManager<S: StorageManager, N: NetworkManager> {
+    _phantom_s: std::marker::PhantomData<S>,
+    _phantom_n: std::marker::PhantomData<N>,
     /// Current synchronization phase
     current_phase: SyncPhase,
 
@@ -46,9 +48,9 @@ pub struct SequentialSyncManager {
     request_controller: RequestController,
 
     /// Existing sync managers (wrapped and controlled)
-    header_sync: HeaderSyncManagerWithReorg,
-    filter_sync: FilterSyncManager,
-    masternode_sync: MasternodeSyncManager,
+    header_sync: HeaderSyncManagerWithReorg<S, N>,
+    filter_sync: FilterSyncManager<S, N>,
+    masternode_sync: MasternodeSyncManager<S, N>,
 
     /// Configuration
     config: ClientConfig,
@@ -69,7 +71,9 @@ pub struct SequentialSyncManager {
     current_phase_retries: u32,
 }
 
-impl SequentialSyncManager {
+impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
+    SequentialSyncManager<S, N>
+{
     /// Create a new sequential sync manager
     pub fn new(
         config: &ClientConfig,
@@ -93,14 +97,13 @@ impl SequentialSyncManager {
             phase_timeout: Duration::from_secs(60), // 1 minute default timeout per phase
             max_phase_retries: 3,
             current_phase_retries: 0,
+            _phantom_s: std::marker::PhantomData,
+            _phantom_n: std::marker::PhantomData,
         })
     }
 
     /// Load headers from storage into the sync managers
-    pub async fn load_headers_from_storage(
-        &mut self,
-        storage: &dyn StorageManager,
-    ) -> SyncResult<u32> {
+    pub async fn load_headers_from_storage(&mut self, storage: &S) -> SyncResult<u32> {
         // Load headers into the header sync manager
         let loaded_count = self.header_sync.load_headers_from_storage(storage).await?;
 
@@ -125,11 +128,7 @@ impl SequentialSyncManager {
     }
 
     /// Start the sequential sync process
-    pub async fn start_sync(
-        &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
-    ) -> SyncResult<bool> {
+    pub async fn start_sync(&mut self, network: &mut N, storage: &mut S) -> SyncResult<bool> {
         if self.current_phase.is_syncing() {
             return Err(SyncError::SyncInProgress);
         }
@@ -168,8 +167,8 @@ impl SequentialSyncManager {
     /// Send initial sync requests (called after peers are connected)
     pub async fn send_initial_requests(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         match &self.current_phase {
             SyncPhase::DownloadingHeaders {
@@ -196,11 +195,7 @@ impl SequentialSyncManager {
     }
 
     /// Execute the current sync phase
-    async fn execute_current_phase(
-        &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
-    ) -> SyncResult<()> {
+    async fn execute_current_phase(&mut self, network: &mut N, storage: &mut S) -> SyncResult<()> {
         match &self.current_phase {
             SyncPhase::DownloadingHeaders {
                 ..
@@ -248,7 +243,7 @@ impl SequentialSyncManager {
                 );
 
                 // Use the minimum of effective height and what's actually in storage
-                let safe_height = if let Some(tip) = storage_tip {
+                let _safe_height = if let Some(tip) = storage_tip {
                     let storage_based_height = sync_base_height + tip;
                     if storage_based_height < effective_height {
                         tracing::warn!(
@@ -390,8 +385,8 @@ impl SequentialSyncManager {
     pub async fn handle_message(
         &mut self,
         message: NetworkMessage,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         // Special handling for blocks - they can arrive at any time due to filter matches
         if let NetworkMessage::Block(block) = message {
@@ -404,18 +399,18 @@ impl SequentialSyncManager {
             );
 
             // If we're in the DownloadingBlocks phase, handle it there
-            if matches!(self.current_phase, SyncPhase::DownloadingBlocks { .. }) {
-                return self.handle_block_message(block, network, storage).await;
+            return if matches!(self.current_phase, SyncPhase::DownloadingBlocks { .. }) {
+                self.handle_block_message(block, network, storage).await
             } else if matches!(self.current_phase, SyncPhase::DownloadingMnList { .. }) {
                 // During masternode sync, blocks are not processed
                 tracing::debug!("Block received during MnList phase - ignoring");
-                return Ok(());
+                Ok(())
             } else {
                 // Otherwise, just track that we received it but don't process for phase transitions
                 // The block will be processed by the client's block processor
                 tracing::debug!("Block received outside of DownloadingBlocks phase - will be processed by block processor");
-                return Ok(());
-            }
+                Ok(())
+            };
         }
 
         // Check if this message is expected in the current phase
@@ -557,11 +552,7 @@ impl SequentialSyncManager {
     }
 
     /// Check for timeouts and handle recovery
-    pub async fn check_timeout(
-        &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
-    ) -> SyncResult<()> {
+    pub async fn check_timeout(&mut self, network: &mut N, storage: &mut S) -> SyncResult<()> {
         // First check if the current phase needs to be executed (e.g., after a transition)
         if self.current_phase_needs_execution() {
             tracing::info!("Executing phase {} after transition", self.current_phase.name());
@@ -906,8 +897,8 @@ impl SequentialSyncManager {
     /// Transition to the next phase
     async fn transition_to_next_phase(
         &mut self,
-        storage: &mut dyn StorageManager,
-        network: &dyn NetworkManager,
+        storage: &mut S,
+        network: &N,
         reason: &str,
     ) -> SyncResult<()> {
         // Get the next phase
@@ -992,11 +983,7 @@ impl SequentialSyncManager {
     }
 
     /// Recover from a timeout
-    async fn recover_from_timeout(
-        &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
-    ) -> SyncResult<()> {
+    async fn recover_from_timeout(&mut self, network: &mut N, storage: &mut S) -> SyncResult<()> {
         self.current_phase_retries += 1;
 
         if self.current_phase_retries > self.max_phase_retries {
@@ -1048,8 +1035,8 @@ impl SequentialSyncManager {
         &mut self,
         headers2: dashcore::network::message_headers2::Headers2Message,
         peer_id: crate::types::PeerId,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         let continue_sync = match self
             .header_sync
@@ -1060,7 +1047,7 @@ impl SequentialSyncManager {
             Err(SyncError::Headers2DecompressionFailed(e)) => {
                 // Headers2 decompression failed - we should fall back to regular headers
                 tracing::warn!("Headers2 decompression failed: {} - peer may not properly support headers2 or connection issue", e);
-                // For now, just return the error. In future, we could trigger a fallback here
+                // For now, just return the error. In the future, we could trigger a fallback here
                 return Err(SyncError::Headers2DecompressionFailed(e));
             }
             Err(e) => return Err(e),
@@ -1072,10 +1059,7 @@ impl SequentialSyncManager {
         // Update phase state and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingHeaders {
             current_height,
-            headers_downloaded,
-            start_time,
-            headers_per_second,
-            received_empty_response,
+
             last_progress,
             ..
         } = &mut self.current_phase
@@ -1109,8 +1093,8 @@ impl SequentialSyncManager {
     async fn handle_headers_message(
         &mut self,
         headers: Vec<dashcore::block::Header>,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         let continue_sync =
             self.header_sync.handle_headers_message(headers.clone(), storage, network).await?;
@@ -1166,8 +1150,8 @@ impl SequentialSyncManager {
     async fn handle_mnlistdiff_message(
         &mut self,
         diff: dashcore::network::message_sml::MnListDiff,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         let continue_sync =
             self.masternode_sync.handle_mnlistdiff_message(diff, storage, network).await?;
@@ -1216,8 +1200,8 @@ impl SequentialSyncManager {
     async fn handle_qrinfo_message(
         &mut self,
         qr_info: dashcore::network::message_qrinfo::QRInfo,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         tracing::info!("🔄 Sequential sync manager handling QRInfo message (unified processing)");
 
@@ -1265,8 +1249,8 @@ impl SequentialSyncManager {
     async fn handle_cfheaders_message(
         &mut self,
         cfheaders: dashcore::network::message_filter::CFHeaders,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         let continue_sync =
             self.filter_sync.handle_cfheaders_message(cfheaders.clone(), storage, network).await?;
@@ -1310,8 +1294,8 @@ impl SequentialSyncManager {
     async fn handle_cfilter_message(
         &mut self,
         cfilter: dashcore::network::message_filter::CFilter,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         tracing::debug!("📨 Received CFilter for block {}", cfilter.block_hash);
 
@@ -1489,8 +1473,8 @@ impl SequentialSyncManager {
     async fn handle_block_message(
         &mut self,
         block: dashcore::block::Block,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         let block_hash = block.block_hash();
 
@@ -1566,10 +1550,7 @@ impl SequentialSyncManager {
     }
 
     /// Helper method to get base hash from storage
-    async fn get_base_hash_from_storage(
-        &self,
-        storage: &dyn StorageManager,
-    ) -> SyncResult<Option<BlockHash>> {
+    async fn get_base_hash_from_storage(&self, storage: &S) -> SyncResult<Option<BlockHash>> {
         let current_tip_height = storage
             .get_tip_height()
             .await
@@ -1593,8 +1574,8 @@ impl SequentialSyncManager {
     pub async fn handle_inventory(
         &mut self,
         inv: Vec<Inventory>,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         // Only process inventory when we're fully synced
         if !matches!(self.current_phase, SyncPhase::FullySynced { .. }) {
@@ -1626,7 +1607,7 @@ impl SequentialSyncManager {
 
                     // Request headers starting from our tip
                     // Use the same protocol version as during initial sync
-                    let get_headers = dashcore::network::message::NetworkMessage::GetHeaders(
+                    let get_headers = NetworkMessage::GetHeaders(
                         dashcore::network::message_blockdata::GetHeadersMessage {
                             version: dashcore::network::constants::PROTOCOL_VERSION,
                             locator_hashes,
@@ -1652,9 +1633,8 @@ impl SequentialSyncManager {
                 Inventory::ChainLock(chainlock_hash) => {
                     tracing::info!("🔒 ChainLock announced: {}", chainlock_hash);
                     // Request the ChainLock
-                    let get_data = dashcore::network::message::NetworkMessage::GetData(vec![
-                        Inventory::ChainLock(chainlock_hash),
-                    ]);
+                    let get_data =
+                        NetworkMessage::GetData(vec![Inventory::ChainLock(chainlock_hash)]);
                     network.send_message(get_data).await.map_err(|e| {
                         SyncError::Network(format!("Failed to request chainlock: {}", e))
                     })?;
@@ -1666,9 +1646,8 @@ impl SequentialSyncManager {
                 Inventory::InstantSendLock(islock_hash) => {
                     tracing::info!("⚡ InstantSend lock announced: {}", islock_hash);
                     // Request the InstantSend lock
-                    let get_data = dashcore::network::message::NetworkMessage::GetData(vec![
-                        Inventory::InstantSendLock(islock_hash),
-                    ]);
+                    let get_data =
+                        NetworkMessage::GetData(vec![Inventory::InstantSendLock(islock_hash)]);
                     network.send_message(get_data).await.map_err(|e| {
                         SyncError::Network(format!("Failed to request islock: {}", e))
                     })?;
@@ -1692,8 +1671,8 @@ impl SequentialSyncManager {
     pub async fn handle_new_headers(
         &mut self,
         headers: Vec<BlockHeader>,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         // Only process new headers when we're fully synced
         if !matches!(self.current_phase, SyncPhase::FullySynced { .. }) {
@@ -1789,13 +1768,12 @@ impl SequentialSyncManager {
                             catch_up_end
                         );
 
-                        let catch_up_request =
-                            dashcore::network::message::NetworkMessage::GetMnListD(
-                                dashcore::network::message_sml::GetMnListDiff {
-                                    base_block_hash: base_hash,
-                                    block_hash: stop_hash,
-                                },
-                            );
+                        let catch_up_request = NetworkMessage::GetMnListD(
+                            dashcore::network::message_sml::GetMnListDiff {
+                                base_block_hash: base_hash,
+                                block_hash: stop_hash,
+                            },
+                        );
 
                         network.send_message(catch_up_request).await.map_err(|e| {
                             SyncError::Network(format!(
@@ -1836,8 +1814,7 @@ impl SequentialSyncManager {
                         .ok_or(SyncError::InvalidState("Previous block not found".to_string()))?
                 } else {
                     // Genesis block case
-                    dashcore::blockdata::constants::genesis_block(self.config.network.into())
-                        .block_hash()
+                    dashcore::blockdata::constants::genesis_block(self.config.network).block_hash()
                 };
 
                 tracing::info!(
@@ -1845,12 +1822,11 @@ impl SequentialSyncManager {
                     blockchain_height
                 );
 
-                let getmnlistdiff = dashcore::network::message::NetworkMessage::GetMnListD(
-                    dashcore::network::message_sml::GetMnListDiff {
+                let getmnlistdiff =
+                    NetworkMessage::GetMnListD(dashcore::network::message_sml::GetMnListDiff {
                         base_block_hash,
                         block_hash: header.block_hash(),
-                    },
-                );
+                    });
 
                 network.send_message(getmnlistdiff).await.map_err(|e| {
                     SyncError::Network(format!("Failed to request masternode diff: {}", e))
@@ -1872,13 +1848,12 @@ impl SequentialSyncManager {
                     stop_hash
                 );
 
-                let get_cfheaders = dashcore::network::message::NetworkMessage::GetCFHeaders(
-                    dashcore::network::message_filter::GetCFHeaders {
+                let get_cfheaders =
+                    NetworkMessage::GetCFHeaders(dashcore::network::message_filter::GetCFHeaders {
                         filter_type: 0, // Basic filter
                         start_height,
                         stop_hash,
-                    },
-                );
+                    });
 
                 network.send_message(get_cfheaders).await.map_err(|e| {
                     SyncError::Network(format!("Failed to request filter headers: {}", e))
@@ -1898,8 +1873,8 @@ impl SequentialSyncManager {
     async fn handle_post_sync_cfheaders(
         &mut self,
         cfheaders: dashcore::network::message_filter::CFHeaders,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         tracing::info!("📥 Processing filter headers for new block after sync");
 
@@ -1914,13 +1889,12 @@ impl SequentialSyncManager {
             .map_err(|e| SyncError::Storage(format!("Failed to get filter header height: {}", e)))?
         {
             // Request the actual filter for this block
-            let get_cfilters = dashcore::network::message::NetworkMessage::GetCFilters(
-                dashcore::network::message_filter::GetCFilters {
+            let get_cfilters =
+                NetworkMessage::GetCFilters(dashcore::network::message_filter::GetCFilters {
                     filter_type: 0, // Basic filter
                     start_height: height,
                     stop_hash,
-                },
-            );
+                });
 
             network
                 .send_message(get_cfilters)
@@ -1935,8 +1909,8 @@ impl SequentialSyncManager {
     async fn handle_post_sync_cfilter(
         &mut self,
         cfilter: dashcore::network::message_filter::CFilter,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         tracing::info!("📥 Processing filter for new block after sync");
 
@@ -1994,10 +1968,7 @@ impl SequentialSyncManager {
                 tracing::info!("🎯 Filter matches! Requesting block {}", cfilter.block_hash);
 
                 // Request the full block
-                let get_data =
-                    dashcore::network::message::NetworkMessage::GetData(vec![Inventory::Block(
-                        cfilter.block_hash,
-                    )]);
+                let get_data = NetworkMessage::GetData(vec![Inventory::Block(cfilter.block_hash)]);
 
                 network
                     .send_message(get_data)
@@ -2020,8 +1991,8 @@ impl SequentialSyncManager {
     async fn handle_post_sync_mnlistdiff(
         &mut self,
         diff: dashcore::network::message_sml::MnListDiff,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         // Get block heights for better logging (get_header_height_by_hash returns blockchain heights)
         let base_blockchain_height =
@@ -2081,7 +2052,7 @@ impl SequentialSyncManager {
     /// Reset any pending requests after restart.
     pub fn reset_pending_requests(&mut self) {
         // Reset all sync manager states
-        self.header_sync.reset_pending_requests();
+        let _ = self.header_sync.reset_pending_requests();
         self.filter_sync.reset_pending_requests();
         // Masternode sync doesn't have pending requests to reset
 
@@ -2127,15 +2098,12 @@ impl SequentialSyncManager {
 
     /// Get mutable reference to masternode sync manager (for testing)
     #[cfg(test)]
-    pub fn masternode_sync_mut(&mut self) -> &mut MasternodeSyncManager {
+    pub fn masternode_sync_mut(&mut self) -> &mut MasternodeSyncManager<S, N> {
         &mut self.masternode_sync
     }
 
     /// Get the actual blockchain height from storage height, accounting for checkpoints
-    pub(crate) async fn get_blockchain_height_from_storage(
-        &self,
-        storage: &dyn StorageManager,
-    ) -> SyncResult<u32> {
+    pub(crate) async fn get_blockchain_height_from_storage(&self, storage: &S) -> SyncResult<u32> {
         let storage_height = storage
             .get_tip_height()
             .await

@@ -4,21 +4,19 @@
 //! with the blockchain using compact filters and block scanning.
 
 use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::string::String;
 use alloc::vec::Vec;
 use core::cmp;
 
-use dashcore::blockdata::block::{Block, Header};
+use dashcore::blockdata::block::Block;
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::{BlockHash, Txid};
+use dashcore::BlockHash;
 use dashcore_hashes::Hash;
 use key_wallet::{Address, Network, Utxo};
 
-use crate::compact_filter::{CompactFilter, FilterHeader, FilterType};
-use crate::transaction_handler::{AddressTracker, TransactionHandler, TransactionProcessResult};
-use crate::wallet_manager::{WalletId, WalletManager};
-use key_wallet::UtxoSet;
+use crate::compact_filter::CompactFilter;
+use crate::transaction_handler::{AddressTracker, TransactionHandler};
+use crate::wallet_manager::WalletId;
 
 /// Sync state for a wallet
 #[derive(Debug, Clone)]
@@ -56,11 +54,11 @@ impl Default for SyncState {
 /// Wallet synchronizer using compact filters
 pub struct WalletSynchronizer {
     /// Network we're operating on
-    network: Network,
+    _network: Network,
     /// Transaction handler
     tx_handler: TransactionHandler,
     /// Address tracker
-    address_tracker: AddressTracker,
+    _address_tracker: AddressTracker,
     /// Sync state for each wallet
     sync_states: BTreeMap<WalletId, SyncState>,
     /// Scripts we're monitoring across all wallets
@@ -73,9 +71,9 @@ impl WalletSynchronizer {
     /// Create a new wallet synchronizer
     pub fn new(network: Network, gap_limit: u32) -> Self {
         Self {
-            network,
+            _network: network,
             tx_handler: TransactionHandler::new(network),
-            address_tracker: AddressTracker::new(gap_limit),
+            _address_tracker: AddressTracker::new(gap_limit),
             sync_states: BTreeMap::new(),
             monitored_scripts: BTreeSet::new(),
             wallet_birth_heights: BTreeMap::new(),

@@ -11,7 +11,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::ops::Range;
 
-use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, Address, OutPoint, Txid};
+use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, Txid};
 
 use crate::error::StorageResult;
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};

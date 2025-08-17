@@ -4,9 +4,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::ops::Range;
 
-use dashcore::{
-    block::Header as BlockHeader, hash_types::FilterHeader, Address, BlockHash, OutPoint, Txid,
-};
+use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
 use crate::storage::{MasternodeState, StorageManager, StorageStats};

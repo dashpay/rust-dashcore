@@ -4,15 +4,12 @@
 //! matching them against wallet addresses, and updating wallet state.
 
 use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::string::String;
 use alloc::vec::Vec;
-use core::convert::TryFrom;
 
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::Transaction;
+use dashcore::OutPoint;
 use dashcore::{Address as DashAddress, Txid};
-use dashcore::{OutPoint, TxOut};
-use dashcore_hashes::Hash;
 use key_wallet::{Address, Network};
 
 use crate::wallet_manager::WalletId;
@@ -21,7 +18,7 @@ use key_wallet::{Utxo, UtxoSet};
 /// Transaction handler for processing incoming transactions
 pub struct TransactionHandler {
     /// Network we're operating on
-    network: Network,
+    _network: Network,
     /// Address to wallet mapping for quick lookups
     address_index: BTreeMap<Address, WalletId>,
     /// Script to address mapping
@@ -77,7 +74,7 @@ impl TransactionHandler {
     /// Create a new transaction handler
     pub fn new(network: Network) -> Self {
         Self {
-            network,
+            _network: network,
             address_index: BTreeMap::new(),
             script_index: BTreeMap::new(),
             pending_txs: BTreeMap::new(),
@@ -88,7 +85,7 @@ impl TransactionHandler {
     pub fn register_wallet_addresses(&mut self, wallet_id: WalletId, addresses: Vec<Address>) {
         for address in addresses {
             self.address_index.insert(address.clone(), wallet_id.clone());
-            let script = ScriptBuf::from(address.script_pubkey());
+            let script = address.script_pubkey();
             self.script_index.insert(script, address);
         }
     }
@@ -105,7 +102,7 @@ impl TransactionHandler {
             .collect();
 
         for address in addresses_to_remove {
-            let script = ScriptBuf::from(address.script_pubkey());
+            let script = address.script_pubkey();
             self.script_index.remove(&script);
         }
     }
@@ -229,10 +226,7 @@ impl AddressTracker {
         let key = (wallet_id, account_index);
 
         if is_change {
-            self.used_change_addresses
-                .entry(key.clone())
-                .or_insert_with(BTreeSet::new)
-                .insert(address_index);
+            self.used_change_addresses.entry(key.clone()).or_default().insert(address_index);
 
             // Update index if needed
             let current = self.change_indices.entry(key).or_insert(0);
@@ -240,10 +234,7 @@ impl AddressTracker {
                 *current = address_index + 1;
             }
         } else {
-            self.used_receive_addresses
-                .entry(key.clone())
-                .or_insert_with(BTreeSet::new)
-                .insert(address_index);
+            self.used_receive_addresses.entry(key.clone()).or_default().insert(address_index);
 
             // Update index if needed
             let current = self.receive_indices.entry(key).or_insert(0);
@@ -354,18 +345,13 @@ pub fn match_transaction(
 
     // Check outputs
     for (idx, output) in tx.output.iter().enumerate() {
-        // Try to extract address from script
-        if let Ok(_dash_addr) =
-            DashAddress::from_script(&output.script_pubkey, dashcore::Network::Dash)
-        {
-            // Convert to our Address type (this needs proper implementation)
-            // For now, check if script matches any of our addresses
-            for addr in addresses {
-                if ScriptBuf::from(addr.script_pubkey()) == output.script_pubkey {
-                    matching_outputs.push((idx, addr.clone(), output.value));
-                    output_value += output.value;
-                    break;
-                }
+        // Convert to our Address type (this needs proper implementation)
+        // For now, check if script matches any of our addresses
+        for addr in addresses {
+            if addr.script_pubkey() == output.script_pubkey {
+                matching_outputs.push((idx, addr.clone(), output.value));
+                output_value += output.value;
+                break;
             }
         }
     }

@@ -15,7 +15,7 @@ use dashcore::{
     consensus::{encode, Decodable, Encodable},
     hash_types::FilterHeader,
     pow::CompactTarget,
-    Address, BlockHash, OutPoint, Txid,
+    BlockHash, Txid,
 };
 use dashcore_hashes::Hash;
 

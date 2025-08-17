@@ -11,7 +11,7 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::sighash::{EcdsaSighashType, SighashCache};
 use dashcore::{TxIn, TxOut};
 use dashcore_hashes::Hash;
-use key_wallet::{Address, Network};
+use key_wallet::Address;
 use secp256k1::{Message, Secp256k1, SecretKey};
 
 use crate::coin_selection::{CoinSelector, SelectionStrategy};
@@ -20,8 +20,6 @@ use key_wallet::Utxo;
 
 /// Transaction builder for creating Dash transactions
 pub struct TransactionBuilder {
-    /// Network
-    network: Network,
     /// Selected UTXOs with their private keys
     inputs: Vec<(Utxo, Option<SecretKey>)>,
     /// Outputs to create
@@ -38,11 +36,16 @@ pub struct TransactionBuilder {
     enable_rbf: bool,
 }
 
+impl Default for TransactionBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TransactionBuilder {
     /// Create a new transaction builder
-    pub fn new(network: Network) -> Self {
+    pub fn new() -> Self {
         Self {
-            network,
             inputs: Vec::new(),
             outputs: Vec::new(),
             change_address: None,
@@ -96,7 +99,7 @@ impl TransactionBuilder {
             return Err(BuilderError::InvalidAmount("Output amount cannot be zero".into()));
         }
 
-        let script_pubkey = ScriptBuf::from(address.script_pubkey());
+        let script_pubkey = address.script_pubkey();
         self.outputs.push(TxOut {
             value: amount,
             script_pubkey,
@@ -209,7 +212,7 @@ impl TransactionBuilder {
         if change_amount > 546 {
             // Above dust threshold
             if let Some(change_addr) = &self.change_address {
-                let change_script = ScriptBuf::from(change_addr.script_pubkey());
+                let change_script = change_addr.script_pubkey();
                 tx_outputs.push(TxOut {
                     value: change_amount,
                     script_pubkey: change_script,
@@ -257,11 +260,7 @@ impl TransactionBuilder {
 
                     // Create signature hash for P2PKH
                     let sighash = cache
-                        .legacy_signature_hash(
-                            index,
-                            &script_pubkey,
-                            EcdsaSighashType::All.to_u32(),
-                        )
+                        .legacy_signature_hash(index, script_pubkey, EcdsaSighashType::All.to_u32())
                         .map_err(|e| {
                             BuilderError::SigningFailed(format!("Failed to compute sighash: {}", e))
                         })?;
@@ -280,7 +279,7 @@ impl TransactionBuilder {
                         .push_slice(<&PushBytes>::try_from(sig_bytes.as_slice()).map_err(|_| {
                             BuilderError::SigningFailed("Invalid signature length".into())
                         })?)
-                        .push_slice(&pubkey.serialize())
+                        .push_slice(pubkey.serialize())
                         .into_script();
 
                     signatures.push((index, script_sig));
@@ -349,6 +348,7 @@ impl std::error::Error for BuilderError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Network;
     use dashcore::blockdata::script::ScriptBuf;
     use dashcore::{OutPoint, TxOut, Txid};
     use dashcore_hashes::{sha256d, Hash};
@@ -397,7 +397,7 @@ mod tests {
         let destination = test_address();
         let change = test_address();
 
-        let tx = TransactionBuilder::new(Network::Testnet)
+        let tx = TransactionBuilder::new()
             .add_input(utxo, None)
             .add_output(&destination, 50000)
             .unwrap()
@@ -415,7 +415,7 @@ mod tests {
         let utxo = test_utxo(10000);
         let destination = test_address();
 
-        let result = TransactionBuilder::new(Network::Testnet)
+        let result = TransactionBuilder::new()
             .add_input(utxo, None)
             .add_output(&destination, 50000)
             .unwrap()

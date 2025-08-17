@@ -136,7 +136,8 @@ mod tests {
     async fn test_qr_info_validation() {
         let config = create_test_config();
         let _sync_manager = MasternodeSyncManager::new(&config);
-        let _storage = MemoryStorageManager::new().await.expect("Failed to create MemoryStorageManager");
+        let _storage =
+            MemoryStorageManager::new().await.expect("Failed to create MemoryStorageManager");
 
         // Create mock QRInfo
         let _qr_info = create_mock_qr_info();

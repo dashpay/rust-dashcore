@@ -38,7 +38,6 @@
 
 use core::convert::From;
 use core::fmt::Display;
-use core::str::FromStr;
 use core::{fmt, ops};
 
 use hashes::Hash;
@@ -46,12 +45,10 @@ use hashes::Hash;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::constants::ChainHash;
 use crate::error::impl_std_error;
-use crate::prelude::ToOwned;
 use crate::{BlockHash, io};
 use dash_network::Network;
 
 // Re-export NODE_HEADERS_COMPRESSED for convenience
-pub use ServiceFlags as _;
 pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COMPRESSED;
 
 /// Version of the protocol as appearing in network message headers
