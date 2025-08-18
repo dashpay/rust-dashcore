@@ -7,7 +7,7 @@ mod tests {
     use crate::types::ChainState;
     use dashcore::blockdata::constants::genesis_block;
     use dashcore::{BlockHash, Header as BlockHeader, Network};
-    use dashcore_hashes::{Hash, HashEngine};
+    use dashcore_hashes::Hash;
     use std::sync::{Arc, Mutex};
     use std::thread;
 

@@ -5,7 +5,9 @@ use dash_spv::network::MultiPeerNetworkManager;
 use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::ValidationMode;
 use dashcore::Network;
+use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
+use key_wallet_manager::wallet_manager::WalletManager;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::RwLock;
@@ -50,7 +52,9 @@ async fn test_chainlock_validation_flow() {
         DiskStorageManager::new(config.storage_path.clone().unwrap()).await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
+        ManagedWalletInfo,
+    >::new())));
 
     // Create the SPV client
     let mut client =
@@ -100,7 +104,9 @@ async fn test_chainlock_manager_initialization() {
         DiskStorageManager::new(config.storage_path.clone().unwrap()).await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
+        ManagedWalletInfo,
+    >::new())));
 
     // Create the SPV client
     let client =

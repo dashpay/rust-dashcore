@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_statistics() {
-        let mut manager = Headers2StateManager::new();
+        let manager = Headers2StateManager::new();
         let stats = manager.get_stats();
 
         assert_eq!(stats.total_headers, 0);

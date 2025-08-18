@@ -7,7 +7,7 @@ mod tests {
     use dashcore::{Address, Network};
     use std::net::SocketAddr;
     use std::path::PathBuf;
-    use std::str::FromStr;
+
     use std::time::Duration;
 
     #[test]

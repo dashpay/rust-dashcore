@@ -12,6 +12,7 @@ rust-version = "1.80"
 # Core Dash libraries
 dashcore = { path = "../dash", features = ["std", "serde", "core-block-hash-use-x11", "message_verification", "bls", "quorum_validation"] }
 dashcore_hashes = { path = "../hashes" }
+key-wallet = { path = "../key-wallet" }
 key-wallet-manager = { path = "../key-wallet-manager" }
 
 # BLS signatures

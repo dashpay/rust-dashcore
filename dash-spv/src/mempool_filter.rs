@@ -237,7 +237,7 @@ impl MempoolFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::{hashes::Hash, Network, OutPoint, Script, ScriptBuf, TxIn, TxOut, Witness};
+    use dashcore::{Network, OutPoint, ScriptBuf, TxIn, TxOut, Witness};
     use std::str::FromStr;
 
     // Helper to create a test address

@@ -3,6 +3,7 @@ use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Block, BlockHash, Txid};
 use key_wallet::transaction_checking::TransactionContext;
+use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 
 impl WalletManager {
     pub fn process_block(&mut self, block: &Block, height: u32, network: Network) -> Vec<Txid> {

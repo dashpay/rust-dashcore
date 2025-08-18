@@ -3,16 +3,13 @@
 #[cfg(test)]
 mod tests {
     use crate::client::block_processor::{BlockProcessingTask, BlockProcessor};
-    use crate::error::SpvError;
+
     use crate::storage::memory::MemoryStorageManager;
     use crate::storage::StorageManager;
-    use crate::types::{SpvEvent, SpvStats, WatchItem};
-    use dashcore::{
-        blockdata::constants::genesis_block, consensus::encode::serialize, hash_types::FilterHash,
-        Address, Block, Network, Transaction,
-    };
+    use crate::types::{SpvEvent, SpvStats};
+    use dashcore::{blockdata::constants::genesis_block, Block, Network, Transaction};
     use std::collections::HashSet;
-    use std::str::FromStr;
+
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
@@ -105,7 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_block() {
-        let (mut processor, task_tx, mut event_rx, wallet, storage) = setup_processor().await;
+        let (processor, task_tx, mut event_rx, wallet, storage) = setup_processor().await;
 
         // Create a test block
         let block = create_test_block(Network::Dash);
@@ -164,7 +161,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_compact_filter() {
-        let (mut processor, task_tx, mut event_rx, _wallet, _storage) = setup_processor().await;
+        let (processor, task_tx, mut event_rx, _wallet, _storage) = setup_processor().await;
 
         // Create a test block
         let block = create_test_block(Network::Dash);
@@ -270,7 +267,7 @@ mod tests {
         let storage = Arc::new(Mutex::new(MemoryStorageManager::new().await.unwrap()));
         let watch_items = Arc::new(RwLock::new(HashSet::new()));
 
-        let mut processor = BlockProcessor::new(
+        let processor = BlockProcessor::new(
             task_rx,
             wallet,
             storage,
@@ -319,7 +316,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_mempool_transaction() {
-        let (mut processor, task_tx, mut event_rx, wallet, _storage) = setup_processor().await;
+        let (processor, task_tx, event_rx, wallet, _storage) = setup_processor().await;
 
         // Create a test transaction
         let block = create_test_block(Network::Dash);
@@ -358,7 +355,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_shutdown() {
-        let (mut processor, task_tx, _event_rx, _wallet, _storage) = setup_processor().await;
+        let (processor, task_tx, _event_rx, _wallet, _storage) = setup_processor().await;
 
         // Start processor
         let processor_handle = tokio::spawn(async move { processor.run().await });
@@ -375,7 +372,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_block_not_found_in_storage() {
-        let (mut processor, task_tx, mut event_rx, _wallet, _storage) = setup_processor().await;
+        let (processor, task_tx, mut event_rx, _wallet, _storage) = setup_processor().await;
 
         let block = create_test_block(Network::Dash);
         let block_hash = block.block_hash();

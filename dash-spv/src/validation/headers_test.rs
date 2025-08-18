@@ -8,7 +8,7 @@ mod tests {
     use dashcore::{
         block::{Header as BlockHeader, Version},
         blockdata::constants::genesis_block,
-        Network, Target,
+        Network,
     };
     use dashcore_hashes::Hash;
 

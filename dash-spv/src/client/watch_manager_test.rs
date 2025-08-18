@@ -2,12 +2,12 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::client::watch_manager::{WatchItemUpdateSender, WatchManager};
+    use crate::client::watch_manager::WatchManager;
     use crate::error::SpvError;
     use crate::storage::memory::MemoryStorageManager;
     use crate::storage::StorageManager;
     use crate::types::WatchItem;
-    use dashcore::{Address, Network, OutPoint, Script, ScriptBuf, Txid};
+    use dashcore::{Address, Network, OutPoint, Txid};
     use std::collections::HashSet;
     use std::str::FromStr;
     use std::sync::Arc;

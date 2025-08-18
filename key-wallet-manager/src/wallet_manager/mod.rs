@@ -10,7 +10,6 @@ mod transaction_building;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
-
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::Txid;
 use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
@@ -19,6 +18,7 @@ use key_wallet::{Account, AccountType, Address, Mnemonic, Network, Wallet, Walle
 
 use key_wallet::transaction_checking::{TransactionContext, WalletTransactionChecker};
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
+use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::{Utxo, UtxoSet};
 
 /// Unique identifier for a wallet (32-byte hash)

@@ -5,18 +5,18 @@ mod tests {
     use crate::bloom::{
         builder::BloomFilterBuilder,
         manager::{BloomFilterConfig, BloomFilterManager},
-        stats::{BloomFilterStats, BloomStatsTracker, DetailedBloomStats},
+        stats::BloomStatsTracker,
         utils,
     };
-    use crate::error::SpvError;
+
     use dashcore::{
         address::{Address, Payload},
-        blockdata::script::{Script, ScriptBuf},
-        bloom::{BloomFilter, BloomFlags},
+        blockdata::script::ScriptBuf,
+        bloom::BloomFlags,
         hash_types::PubkeyHash,
         OutPoint, Txid,
     };
-    use std::str::FromStr;
+
     use std::sync::Arc;
 
     // Test data helpers
