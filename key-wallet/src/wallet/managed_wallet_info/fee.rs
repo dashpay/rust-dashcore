@@ -16,6 +16,14 @@ pub struct FeeRate {
     sat_per_kb: u64,
 }
 
+impl Default for FeeRate {
+    fn default() -> Self {
+        Self {
+            sat_per_kb: 1000,
+        }
+    }
+}
+
 impl FeeRate {
     /// Create a new fee rate
     pub fn new(sat_per_kb: u64) -> Self {
@@ -64,13 +72,6 @@ impl FeeRate {
         }
     }
 
-    /// Default fee rate (1 sat/byte)
-    pub fn default() -> Self {
-        Self {
-            sat_per_kb: 1000,
-        }
-    }
-
     /// Economy fee rate (0.5 sat/byte)
     pub fn economy() -> Self {
         Self {
@@ -90,12 +91,6 @@ impl FeeRate {
         Self {
             sat_per_kb: 2000,
         }
-    }
-}
-
-impl Default for FeeRate {
-    fn default() -> Self {
-        Self::default()
     }
 }
 

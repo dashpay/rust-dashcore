@@ -1,6 +1,11 @@
 //! Simple header synchronization example.
 
+use dash_spv::network::MultiPeerNetworkManager;
+use dash_spv::storage::MemoryStorageManager;
 use dash_spv::{init_logging, ClientConfig, DashSpvClient};
+use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,8 +17,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .without_filters() // Skip filter sync for this example
         .without_masternodes(); // Skip masternode sync for this example
 
+    // Create network manager
+    let network_manager = MultiPeerNetworkManager::new(&config).await?;
+
+    // Create storage manager
+    let storage_manager = MemoryStorageManager::new().await?;
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
+
     // Create the client
-    let mut client = DashSpvClient::new(config).await?;
+    let mut client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await?;
 
     // Start the client
     client.start().await?;

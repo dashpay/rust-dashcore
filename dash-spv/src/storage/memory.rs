@@ -4,14 +4,11 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::ops::Range;
 
-use dashcore::{
-    block::Header as BlockHeader, hash_types::FilterHeader, Address, BlockHash, OutPoint, Txid,
-};
+use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, BlockHash, Txid};
 
 use crate::error::{StorageError, StorageResult};
 use crate::storage::{MasternodeState, StorageManager, StorageStats};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
-use crate::wallet::Utxo;
 
 /// In-memory storage manager.
 pub struct MemoryStorageManager {
@@ -23,10 +20,6 @@ pub struct MemoryStorageManager {
     metadata: HashMap<String, Vec<u8>>,
     // Reverse indexes for O(1) lookups
     header_hash_index: HashMap<BlockHash, u32>,
-    // UTXO storage
-    utxos: HashMap<OutPoint, Utxo>,
-    // Index for efficient UTXO lookups by address
-    utxo_address_index: HashMap<Address, Vec<OutPoint>>,
     // Mempool storage
     mempool_transactions: HashMap<Txid, UnconfirmedTransaction>,
     mempool_state: Option<MempoolState>,
@@ -43,8 +36,6 @@ impl MemoryStorageManager {
             chain_state: None,
             metadata: HashMap::new(),
             header_hash_index: HashMap::new(),
-            utxos: HashMap::new(),
-            utxo_address_index: HashMap::new(),
             mempool_transactions: HashMap::new(),
             mempool_state: None,
         })
@@ -196,8 +187,8 @@ impl StorageManager for MemoryStorageManager {
         self.chain_state = None;
         self.metadata.clear();
         self.header_hash_index.clear();
-        self.utxos.clear();
-        self.utxo_address_index.clear();
+        self.mempool_transactions.clear();
+        self.mempool_state = None;
         Ok(())
     }
 
@@ -228,18 +219,9 @@ impl StorageManager for MemoryStorageManager {
         let header_hash_index_size = self.header_hash_index.len()
             * (std::mem::size_of::<BlockHash>() + std::mem::size_of::<u32>());
 
-        // Calculate size of utxos
-        let utxo_size =
-            self.utxos.len() * (std::mem::size_of::<OutPoint>() + std::mem::size_of::<Utxo>());
-
-        // Calculate size of utxo_address_index
-        let utxo_address_index_size: usize = self
-            .utxo_address_index
-            .iter()
-            .map(|(_addr, outpoints)| {
-                std::mem::size_of::<Address>() + outpoints.len() * std::mem::size_of::<OutPoint>()
-            })
-            .sum();
+        // UTXO size calculation removed - UTXO management is now handled externally
+        let utxo_size = 0;
+        let utxo_address_index_size = 0;
 
         // Insert all component sizes
         component_sizes.insert("headers".to_string(), header_size as u64);
@@ -296,51 +278,7 @@ impl StorageManager for MemoryStorageManager {
         Ok(results)
     }
 
-    async fn store_utxo(&mut self, outpoint: &OutPoint, utxo: &Utxo) -> StorageResult<()> {
-        // Store the UTXO
-        self.utxos.insert(*outpoint, utxo.clone());
-
-        // Update the address index
-        let address_utxos =
-            self.utxo_address_index.entry(utxo.address.clone()).or_insert_with(Vec::new);
-        if !address_utxos.contains(outpoint) {
-            address_utxos.push(*outpoint);
-        }
-
-        Ok(())
-    }
-
-    async fn remove_utxo(&mut self, outpoint: &OutPoint) -> StorageResult<()> {
-        if let Some(utxo) = self.utxos.remove(outpoint) {
-            // Update the address index
-            if let Some(address_utxos) = self.utxo_address_index.get_mut(&utxo.address) {
-                address_utxos.retain(|op| op != outpoint);
-                // Remove the address entry if it's empty
-                if address_utxos.is_empty() {
-                    self.utxo_address_index.remove(&utxo.address);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn get_utxos_for_address(&self, address: &Address) -> StorageResult<Vec<Utxo>> {
-        let mut utxos = Vec::new();
-
-        if let Some(outpoints) = self.utxo_address_index.get(address) {
-            for outpoint in outpoints {
-                if let Some(utxo) = self.utxos.get(outpoint) {
-                    utxos.push(utxo.clone());
-                }
-            }
-        }
-
-        Ok(utxos)
-    }
-
-    async fn get_all_utxos(&self) -> StorageResult<HashMap<OutPoint, Utxo>> {
-        Ok(self.utxos.clone())
-    }
+    // UTXO methods removed - handled by external wallet
 
     async fn store_sync_state(
         &mut self,
@@ -539,6 +477,10 @@ impl StorageManager for MemoryStorageManager {
     async fn clear_mempool(&mut self) -> StorageResult<()> {
         self.mempool_transactions.clear();
         self.mempool_state = None;
+        Ok(())
+    }
+
+    async fn shutdown(&mut self) -> StorageResult<()> {
         Ok(())
     }
 }

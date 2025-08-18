@@ -252,7 +252,10 @@ impl StorageManager for MockStorageManager {
         Ok(())
     }
 
-    async fn load_filter_headers(&self, _range: std::ops::Range<u32>) -> StorageResult<Vec<FilterHeader>> {
+    async fn load_filter_headers(
+        &self,
+        _range: std::ops::Range<u32>,
+    ) -> StorageResult<Vec<FilterHeader>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
         }
@@ -375,42 +378,19 @@ impl StorageManager for MockStorageManager {
         Ok(vec![])
     }
 
-    async fn store_utxo(&mut self, _outpoint: &OutPoint, _utxo: &Utxo) -> StorageResult<()> {
+    async fn store_sync_state(
+        &mut self,
+        _state: &dash_spv::storage::PersistentSyncState,
+    ) -> StorageResult<()> {
         if self.fail_on_write {
             return Err(StorageError::WriteFailed("Mock write failure".to_string()));
         }
         Ok(())
     }
 
-    async fn remove_utxo(&mut self, _outpoint: &OutPoint) -> StorageResult<()> {
-        if self.fail_on_write {
-            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
-        }
-        Ok(())
-    }
-
-    async fn get_utxos_for_address(&self, _address: &Address) -> StorageResult<Vec<Utxo>> {
-        if self.fail_on_read {
-            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
-        }
-        Ok(vec![])
-    }
-
-    async fn get_all_utxos(&self) -> StorageResult<HashMap<OutPoint, Utxo>> {
-        if self.fail_on_read {
-            return Err(StorageError::ReadFailed("Mock read failure".to_string()));
-        }
-        Ok(HashMap::new())
-    }
-
-    async fn store_sync_state(&mut self, _state: &dash_spv::storage::PersistentSyncState) -> StorageResult<()> {
-        if self.fail_on_write {
-            return Err(StorageError::WriteFailed("Mock write failure".to_string()));
-        }
-        Ok(())
-    }
-
-    async fn load_sync_state(&self) -> StorageResult<Option<dash_spv::storage::PersistentSyncState>> {
+    async fn load_sync_state(
+        &self,
+    ) -> StorageResult<Option<dash_spv::storage::PersistentSyncState>> {
         if self.fail_on_read {
             return Err(StorageError::ReadFailed("Mock read failure".to_string()));
         }

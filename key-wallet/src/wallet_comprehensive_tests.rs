@@ -10,6 +10,7 @@ mod tests {
     use crate::mnemonic::{Language, Mnemonic};
     use crate::wallet::{Wallet, WalletConfig};
     use crate::Network;
+    use alloc::collections::BTreeMap;
 
     // Test vectors from DashSync
     const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -142,8 +143,8 @@ mod tests {
         // Create watch-only wallet from the root xpub
         let watch_only = Wallet::from_xpub(
             root_xpub_as_extended,
-            config,
-            crate::wallet::initialization::WalletAccountCreationOptions::None,
+            Some(config),
+            BTreeMap::new(), // Empty accounts for watch-only wallet
         )
         .unwrap();
 

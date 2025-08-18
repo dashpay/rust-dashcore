@@ -15,14 +15,13 @@ use dashcore::{
     consensus::{encode, Decodable, Encodable},
     hash_types::FilterHeader,
     pow::CompactTarget,
-    Address, BlockHash, OutPoint, Txid,
+    BlockHash, Txid,
 };
 use dashcore_hashes::Hash;
 
 use crate::error::{StorageError, StorageResult};
 use crate::storage::{MasternodeState, StorageManager, StorageStats};
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
-use crate::wallet::Utxo;
 
 /// Number of headers per segment file
 const HEADERS_PER_SEGMENT: u32 = 50_000;
@@ -44,9 +43,7 @@ enum WorkerCommand {
     SaveIndex {
         index: HashMap<BlockHash, u32>,
     },
-    SaveUtxoCache {
-        utxos: HashMap<OutPoint, Utxo>,
-    },
+    // Removed: SaveUtxoCache - UTXO management is now handled externally
     Shutdown,
 }
 
@@ -60,7 +57,7 @@ enum WorkerNotification {
         segment_id: u32,
     },
     IndexSaved,
-    UtxoCacheSaved,
+    // Removed: UtxoCacheSaved - UTXO management is now handled externally
 }
 
 /// State of a segment in memory
@@ -111,11 +108,6 @@ pub struct DiskStorageManager {
     // Cached values
     cached_tip_height: Arc<RwLock<Option<u32>>>,
     cached_filter_tip_height: Arc<RwLock<Option<u32>>>,
-
-    // In-memory UTXO cache for high performance
-    utxo_cache: Arc<RwLock<HashMap<OutPoint, Utxo>>>,
-    utxo_address_index: Arc<RwLock<HashMap<Address, Vec<OutPoint>>>>,
-    utxo_cache_dirty: Arc<RwLock<bool>>,
 
     // Mempool storage
     mempool_transactions: Arc<RwLock<HashMap<Txid, UnconfirmedTransaction>>>,
@@ -218,19 +210,7 @@ impl DiskStorageManager {
                                 worker_notification_tx.send(WorkerNotification::IndexSaved).await;
                         }
                     }
-                    WorkerCommand::SaveUtxoCache {
-                        utxos,
-                    } => {
-                        let path = worker_base_path.join("state/utxos.dat");
-                        if let Err(e) = save_utxo_cache_to_disk(&path, &utxos).await {
-                            eprintln!("Failed to save UTXO cache: {}", e);
-                        } else {
-                            tracing::trace!("Background worker completed saving UTXO cache");
-                            let _ = worker_notification_tx
-                                .send(WorkerNotification::UtxoCacheSaved)
-                                .await;
-                        }
-                    }
+                    // Removed: SaveUtxoCache handling - UTXO management is now handled externally
                     WorkerCommand::Shutdown => {
                         break;
                     }
@@ -248,18 +228,12 @@ impl DiskStorageManager {
             notification_rx: Arc::new(RwLock::new(notification_rx)),
             cached_tip_height: Arc::new(RwLock::new(None)),
             cached_filter_tip_height: Arc::new(RwLock::new(None)),
-            utxo_cache: Arc::new(RwLock::new(HashMap::new())),
-            utxo_address_index: Arc::new(RwLock::new(HashMap::new())),
-            utxo_cache_dirty: Arc::new(RwLock::new(false)),
             mempool_transactions: Arc::new(RwLock::new(HashMap::new())),
             mempool_state: Arc::new(RwLock::new(None)),
         };
 
         // Load segment metadata and rebuild index
         storage.load_segment_metadata().await?;
-
-        // Load UTXO cache from disk
-        storage.load_utxo_cache_into_memory().await?;
 
         Ok(storage)
     }
@@ -581,10 +555,7 @@ impl DiskStorageManager {
                 }
                 WorkerNotification::IndexSaved => {
                     tracing::debug!("Index save completed");
-                }
-                WorkerNotification::UtxoCacheSaved => {
-                    tracing::debug!("UTXO cache save completed");
-                }
+                } // Removed: UtxoCacheSaved - UTXO management is now handled externally
             }
         }
     }
@@ -667,17 +638,7 @@ impl DiskStorageManager {
                 })
                 .await;
 
-            // Save UTXO cache if dirty
-            let is_dirty = *self.utxo_cache_dirty.read().await;
-            if is_dirty {
-                let utxos = self.utxo_cache.read().await.clone();
-                let _ = tx
-                    .send(WorkerCommand::SaveUtxoCache {
-                        utxos,
-                    })
-                    .await;
-                *self.utxo_cache_dirty.write().await = false;
-            }
+            // Removed: UTXO cache saving - UTXO management is now handled externally
         }
 
         Ok(())
@@ -877,130 +838,7 @@ impl DiskStorageManager {
         Ok(())
     }
 
-    /// Shutdown the storage manager.
-    pub async fn shutdown(&mut self) -> StorageResult<()> {
-        // Save all dirty segments
-        self.save_dirty_segments().await?;
-
-        // Persist UTXO cache if dirty
-        self.persist_utxo_cache_if_dirty().await?;
-
-        // Shutdown background worker
-        if let Some(tx) = self.worker_tx.take() {
-            let _ = tx.send(WorkerCommand::Shutdown).await;
-        }
-
-        if let Some(handle) = self.worker_handle.take() {
-            let _ = handle.await;
-        }
-
-        Ok(())
-    }
-
-    /// Load the consolidated UTXO cache from disk.
-    async fn load_utxo_cache(&self) -> StorageResult<HashMap<OutPoint, Utxo>> {
-        let path = self.base_path.join("state/utxos.dat");
-        if !path.exists() {
-            return Ok(HashMap::new());
-        }
-
-        let data = tokio::fs::read(path).await?;
-        if data.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        let utxos = bincode::deserialize::<HashMap<OutPoint, Utxo>>(&data).map_err(|e| {
-            StorageError::Serialization(format!("Failed to deserialize UTXO cache: {}", e))
-        })?;
-
-        Ok(utxos)
-    }
-
-    /// Store the consolidated UTXO cache to disk.
-    async fn store_utxo_cache(&self, utxos: &HashMap<OutPoint, Utxo>) -> StorageResult<()> {
-        let path = self.base_path.join("state/utxos.dat");
-
-        // Ensure the directory exists
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
-        let data = bincode::serialize(utxos).map_err(|e| {
-            StorageError::Serialization(format!("Failed to serialize UTXO cache: {}", e))
-        })?;
-
-        // Atomic write using temporary file
-        let temp_path = path.with_extension("tmp");
-        tokio::fs::write(&temp_path, &data).await?;
-        tokio::fs::rename(&temp_path, &path).await?;
-
-        Ok(())
-    }
-
-    /// Load UTXO cache from disk into memory on startup.
-    async fn load_utxo_cache_into_memory(&self) -> StorageResult<()> {
-        let utxos = self.load_utxo_cache().await?;
-
-        // Populate in-memory cache
-        {
-            let mut cache = self.utxo_cache.write().await;
-            *cache = utxos.clone();
-        }
-
-        // Build address index
-        {
-            let mut address_index = self.utxo_address_index.write().await;
-            address_index.clear();
-
-            for (outpoint, utxo) in &utxos {
-                let entry = address_index.entry(utxo.address.clone()).or_insert_with(Vec::new);
-                entry.push(*outpoint);
-            }
-        }
-
-        // Mark cache as clean
-        *self.utxo_cache_dirty.write().await = false;
-
-        tracing::info!("Loaded {} UTXOs into memory cache with address indexing", utxos.len());
-        Ok(())
-    }
-
-    /// Persist UTXO cache to disk if dirty.
-    async fn persist_utxo_cache_if_dirty(&self) -> StorageResult<()> {
-        let is_dirty = *self.utxo_cache_dirty.read().await;
-        if !is_dirty {
-            return Ok(());
-        }
-
-        let utxos = self.utxo_cache.read().await.clone();
-        self.store_utxo_cache(&utxos).await?;
-
-        // Mark as clean after successful persist
-        *self.utxo_cache_dirty.write().await = false;
-
-        tracing::debug!("Persisted {} UTXOs to disk", utxos.len());
-        Ok(())
-    }
-
-    /// Update the address index when adding a UTXO.
-    async fn update_address_index_add(&self, outpoint: OutPoint, utxo: &Utxo) {
-        let mut address_index = self.utxo_address_index.write().await;
-        let entry = address_index.entry(utxo.address.clone()).or_insert_with(Vec::new);
-        if !entry.contains(&outpoint) {
-            entry.push(outpoint);
-        }
-    }
-
-    /// Update the address index when removing a UTXO.
-    async fn update_address_index_remove(&self, outpoint: &OutPoint, utxo: &Utxo) {
-        let mut address_index = self.utxo_address_index.write().await;
-        if let Some(entry) = address_index.get_mut(&utxo.address) {
-            entry.retain(|op| op != outpoint);
-            if entry.is_empty() {
-                address_index.remove(&utxo.address);
-            }
-        }
-    }
+    // UTXO methods removed - handled by external wallet
 }
 
 /// Save a segment of headers to disk.
@@ -1071,36 +909,6 @@ async fn save_index_to_disk(path: &Path, index: &HashMap<BlockHash, u32>) -> Sto
                 StorageError::WriteFailed(format!("Failed to serialize index: {}", e))
             })?;
             fs::write(&path, data)?;
-            Ok(())
-        }
-    })
-    .await
-    .map_err(|e| StorageError::WriteFailed(format!("Task join error: {}", e)))?
-}
-
-/// Save UTXO cache to disk.
-async fn save_utxo_cache_to_disk(
-    path: &Path,
-    utxos: &HashMap<OutPoint, Utxo>,
-) -> StorageResult<()> {
-    tokio::task::spawn_blocking({
-        let path = path.to_path_buf();
-        let utxos = utxos.clone();
-        move || {
-            // Ensure the directory exists
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-
-            let data = bincode::serialize(&utxos).map_err(|e| {
-                StorageError::WriteFailed(format!("Failed to serialize UTXO cache: {}", e))
-            })?;
-
-            // Atomic write using temporary file
-            let temp_path = path.with_extension("tmp");
-            std::fs::write(&temp_path, &data)?;
-            std::fs::rename(&temp_path, &path)?;
-
             Ok(())
         }
     })
@@ -1566,10 +1374,7 @@ impl StorageManager for DiskStorageManager {
         *self.cached_tip_height.write().await = None;
         *self.cached_filter_tip_height.write().await = None;
 
-        // Clear UTXO cache
-        self.utxo_cache.write().await.clear();
-        self.utxo_address_index.write().await.clear();
-        *self.utxo_cache_dirty.write().await = false;
+        // UTXO cache removed - UTXO management is now handled externally
 
         // Clear mempool
         self.mempool_transactions.write().await.clear();
@@ -1647,68 +1452,7 @@ impl StorageManager for DiskStorageManager {
         Ok(results)
     }
 
-    // High-performance UTXO storage using in-memory cache with address indexing
-
-    async fn store_utxo(&mut self, outpoint: &OutPoint, utxo: &Utxo) -> StorageResult<()> {
-        // Add to in-memory cache
-        {
-            let mut cache = self.utxo_cache.write().await;
-            cache.insert(*outpoint, utxo.clone());
-        }
-
-        // Update address index
-        self.update_address_index_add(*outpoint, utxo).await;
-
-        // Mark cache as dirty for background persistence
-        *self.utxo_cache_dirty.write().await = true;
-
-        Ok(())
-    }
-
-    async fn remove_utxo(&mut self, outpoint: &OutPoint) -> StorageResult<()> {
-        // Get the UTXO before removing to update address index
-        let utxo = {
-            let cache = self.utxo_cache.read().await;
-            cache.get(outpoint).cloned()
-        };
-
-        if let Some(utxo) = utxo {
-            // Remove from in-memory cache
-            {
-                let mut cache = self.utxo_cache.write().await;
-                cache.remove(outpoint);
-            }
-
-            // Update address index
-            self.update_address_index_remove(outpoint, &utxo).await;
-
-            // Mark cache as dirty for background persistence
-            *self.utxo_cache_dirty.write().await = true;
-        }
-
-        Ok(())
-    }
-
-    async fn get_utxos_for_address(&self, address: &Address) -> StorageResult<Vec<Utxo>> {
-        // Use address index for O(1) lookup
-        let outpoints = {
-            let address_index = self.utxo_address_index.read().await;
-            address_index.get(address).cloned().unwrap_or_default()
-        };
-
-        // Fetch UTXOs from cache
-        let cache = self.utxo_cache.read().await;
-        let utxos: Vec<Utxo> =
-            outpoints.into_iter().filter_map(|outpoint| cache.get(&outpoint).cloned()).collect();
-
-        Ok(utxos)
-    }
-
-    async fn get_all_utxos(&self) -> StorageResult<HashMap<OutPoint, Utxo>> {
-        // Return a clone of the in-memory cache
-        let cache = self.utxo_cache.read().await;
-        Ok(cache.clone())
-    }
+    // UTXO methods removed - handled by external wallet
 
     async fn store_sync_state(
         &mut self,
@@ -1966,6 +1710,23 @@ impl StorageManager for DiskStorageManager {
     async fn clear_mempool(&mut self) -> StorageResult<()> {
         self.mempool_transactions.write().await.clear();
         *self.mempool_state.write().await = None;
+        Ok(())
+    }
+
+    /// Shutdown the storage manager.
+    async fn shutdown(&mut self) -> StorageResult<()> {
+        // Save all dirty segments
+        self.save_dirty_segments().await?;
+
+        // Shutdown background worker
+        if let Some(tx) = self.worker_tx.take() {
+            let _ = tx.send(WorkerCommand::Shutdown).await;
+        }
+
+        if let Some(handle) = self.worker_handle.take() {
+            let _ = handle.await;
+        }
+
         Ok(())
     }
 }

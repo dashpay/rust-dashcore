@@ -9,7 +9,6 @@ use tokio::sync::RwLock;
 
 use crate::client::config::MempoolStrategy;
 use crate::types::{MempoolState, UnconfirmedTransaction, WatchItem};
-use crate::wallet::Wallet;
 
 /// Filter for deciding which mempool transactions to fetch and track.
 pub struct MempoolFilter {
@@ -23,6 +22,8 @@ pub struct MempoolFilter {
     mempool_state: Arc<RwLock<MempoolState>>,
     /// Watched items.
     watch_items: Vec<WatchItem>,
+    /// Network to use for address parsing.
+    network: Network,
 }
 
 impl MempoolFilter {
@@ -33,6 +34,7 @@ impl MempoolFilter {
         max_transactions: usize,
         mempool_state: Arc<RwLock<MempoolState>>,
         watch_items: Vec<WatchItem>,
+        network: Network,
     ) -> Self {
         Self {
             strategy,
@@ -40,6 +42,7 @@ impl MempoolFilter {
             max_transactions,
             mempool_state,
             watch_items,
+            network,
         }
     }
 
@@ -140,15 +143,11 @@ impl MempoolFilter {
     }
 
     /// Process a new transaction for the mempool.
-    pub async fn process_transaction(
-        &self,
-        tx: Transaction,
-        wallet: &Wallet,
-    ) -> Option<UnconfirmedTransaction> {
+    pub async fn process_transaction(&self, tx: Transaction) -> Option<UnconfirmedTransaction> {
         let txid = tx.txid();
 
         // Check if transaction is relevant to our watched addresses
-        let is_relevant = self.is_transaction_relevant(&tx, wallet.network());
+        let is_relevant = self.is_transaction_relevant(&tx, self.network);
 
         tracing::debug!("Processing mempool transaction {}: strategy={:?}, is_relevant={}, watch_items_count={}", 
                        txid, self.strategy, is_relevant, self.watch_items.len());
@@ -166,42 +165,19 @@ impl MempoolFilter {
             }
         }
 
-        // Calculate fee using wallet's method, falling back to partial calculation if needed
-        let fee = wallet
-            .calculate_transaction_fee(&tx)
-            .or_else(|| {
-                // Try partial fee calculation if full calculation fails
-                let partial_fee = wallet.calculate_partial_transaction_fee(&tx);
-                if let Some(fee) = partial_fee {
-                    tracing::debug!(
-                        "Transaction {}: using partial fee calculation: {} sats",
-                        txid,
-                        fee.to_sat()
-                    );
-                } else {
-                    tracing::debug!(
-                        "Transaction {}: unable to calculate fee (no available input UTXOs)",
-                        txid
-                    );
-                }
-                partial_fee
-            })
-            .unwrap_or_else(|| {
-                // If both full and partial calculations fail, use 0 as last resort
-                tracing::debug!("Transaction {}: defaulting to 0 fee", txid);
-                dashcore::Amount::from_sat(0)
-            });
+        // Fee calculation removed - would require wallet implementation
+        let fee = 0;
 
-        // Check if this is an InstantSend transaction
-        let is_instant_send = wallet.has_instant_lock(&txid).await;
+        // InstantSend check removed - would require wallet implementation
+        let is_instant_send = false;
 
-        // Determine if this is outgoing (we're spending)
-        let is_outgoing = tx.input.iter().any(|input| wallet.has_utxo(&input.previous_output));
+        // Outgoing check removed - would require wallet implementation
+        let is_outgoing = false;
 
         // Get affected addresses
         let mut addresses = Vec::new();
         for output in &tx.output {
-            if let Ok(address) = Address::from_script(&output.script_pubkey, wallet.network()) {
+            if let Ok(address) = Address::from_script(&output.script_pubkey, self.network) {
                 // For FetchAll strategy, include all addresses, not just watched ones
                 if self.strategy == MempoolStrategy::FetchAll || self.is_address_watched(&address) {
                     addresses.push(address);
@@ -209,8 +185,8 @@ impl MempoolFilter {
             }
         }
 
-        // Calculate net amount change for our wallet
-        let net_amount = wallet.calculate_net_amount(&tx);
+        // Net amount calculation removed - would require wallet implementation
+        let net_amount = 0i64;
 
         // For FetchAll strategy, only return transaction if it's relevant
         // This ensures callbacks are only triggered for watched addresses
@@ -220,7 +196,7 @@ impl MempoolFilter {
 
         Some(UnconfirmedTransaction::new(
             tx,
-            fee,
+            dashcore::Amount::from_sat(fee),
             is_instant_send,
             is_outgoing,
             addresses,
@@ -309,13 +285,15 @@ mod tests {
         }
     }
 
-    // Helper to create a mock wallet
+    // MockWallet for test purposes only
+    #[cfg(test)]
     struct MockWallet {
         network: Network,
         watched_addresses: HashSet<Address>,
         utxos: HashSet<OutPoint>,
     }
 
+    #[cfg(test)]
     impl MockWallet {
         fn new(network: Network) -> Self {
             Self {
@@ -395,6 +373,7 @@ mod tests {
             1000,
             mempool_state.clone(),
             vec![],
+            Network::Dash,
         );
 
         // Generate a test txid
@@ -421,6 +400,7 @@ mod tests {
             2, // Small limit for testing
             mempool_state.clone(),
             vec![],
+            Network::Dash,
         );
 
         // Should fetch any transaction when under limit
@@ -484,18 +464,16 @@ mod tests {
             1000,
             mempool_state,
             watch_items,
+            network,
         );
-
-        let mut wallet = MockWallet::new(network);
-        wallet.add_watched_address(addr1.clone());
 
         // Transaction sending to watched address should be relevant
         let tx1 = create_test_transaction(vec![(addr1.clone(), 50000)], vec![]);
-        assert!(filter.is_transaction_relevant(&tx1, wallet.network()));
+        assert!(filter.is_transaction_relevant(&tx1, network));
 
         // Transaction sending to unwatched address should not be relevant
         let tx2 = create_test_transaction(vec![(addr2, 50000)], vec![]);
-        assert!(!filter.is_transaction_relevant(&tx2, wallet.network()));
+        assert!(!filter.is_transaction_relevant(&tx2, network));
     }
 
     #[tokio::test]
@@ -513,18 +491,17 @@ mod tests {
             1000,
             mempool_state,
             watch_items,
+            network,
         );
-
-        let wallet = MockWallet::new(network);
 
         // Transaction with watched script should be relevant
         let tx = create_test_transaction(vec![(addr, 50000)], vec![]);
-        assert!(filter.is_transaction_relevant(&tx, wallet.network()));
+        assert!(filter.is_transaction_relevant(&tx, network));
 
         // Transaction without watched script should not be relevant
         let addr2 = test_address2(network);
         let tx2 = create_test_transaction(vec![(addr2, 50000)], vec![]);
-        assert!(!filter.is_transaction_relevant(&tx2, wallet.network()));
+        assert!(!filter.is_transaction_relevant(&tx2, network));
     }
 
     #[tokio::test]
@@ -550,13 +527,12 @@ mod tests {
             1000,
             mempool_state,
             watch_items,
+            network,
         );
-
-        let wallet = MockWallet::new(network);
 
         // Transaction spending watched outpoint should be relevant
         let tx = create_test_transaction(vec![(addr.clone(), 50000)], vec![watched_outpoint]);
-        assert!(filter.is_transaction_relevant(&tx, wallet.network()));
+        assert!(filter.is_transaction_relevant(&tx, network));
 
         // Transaction not spending watched outpoint should not be relevant
         let other_outpoint = OutPoint {
@@ -567,7 +543,7 @@ mod tests {
             vout: 1,
         };
         let tx2 = create_test_transaction(vec![(addr, 50000)], vec![other_outpoint]);
-        assert!(!filter.is_transaction_relevant(&tx2, wallet.network()));
+        assert!(!filter.is_transaction_relevant(&tx2, network));
     }
 
     #[tokio::test]
@@ -585,6 +561,7 @@ mod tests {
             1000,
             mempool_state,
             watch_items,
+            network,
         );
 
         let mut wallet = MockWallet::new(network);
@@ -629,6 +606,7 @@ mod tests {
             1000,
             mempool_state,
             watch_items,
+            network,
         );
 
         let mut wallet = MockWallet::new(network);
@@ -664,6 +642,7 @@ mod tests {
             1000,
             mempool_state,
             watch_items,
+            network,
         );
 
         let mut wallet = MockWallet::new(network);
@@ -689,6 +668,7 @@ mod tests {
             3, // Very small limit
             mempool_state.clone(),
             vec![],
+            Network::Dash,
         );
 
         // Should not be at capacity initially
@@ -734,6 +714,7 @@ mod tests {
             1000,
             mempool_state.clone(),
             vec![],
+            Network::Dash,
         );
 
         // Add some transactions with different ages
@@ -800,6 +781,7 @@ mod tests {
             1000,
             mempool_state,
             vec![],
+            Network::Dash,
         );
 
         // BloomFilter strategy should always return true (actual filtering is done by network layer)
@@ -823,6 +805,7 @@ mod tests {
             1000,
             mempool_state,
             watch_items,
+            network,
         );
 
         let mut wallet = MockWallet::new(network);
@@ -860,6 +843,7 @@ mod tests {
             1000,
             mempool_state,
             watch_items,
+            network,
         );
 
         let mut wallet = MockWallet::new(network);

@@ -2,12 +2,15 @@
 
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
+    network::MultiPeerNetworkManager,
     storage::{MemoryStorageManager, StorageManager},
     types::ValidationMode,
 };
 use dashcore::Network;
+use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
 use log::info;
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
+use tokio::sync::RwLock;
 
 const DASH_NODE_ADDR: &str = "127.0.0.1:9999";
 
@@ -51,7 +54,16 @@ async fn test_simple_header_sync() {
     // Verify starting from empty state
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
 
-    let mut client = DashSpvClient::new(config.clone()).await.expect("Failed to create SPV client");
+    // Create network manager
+    let network_manager =
+        MultiPeerNetworkManager::new(&config).await.expect("Failed to create network manager");
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
+
+    let mut client = DashSpvClient::new(config.clone(), network_manager, storage, wallet)
+        .await
+        .expect("Failed to create SPV client");
 
     // Start the client
     client.start().await.expect("Failed to start client");
@@ -80,7 +92,8 @@ async fn test_simple_header_sync() {
         }
 
         // Check final state
-        let final_height = storage.get_tip_height().await.expect("Failed to get tip height");
+        let final_height =
+            client.storage().lock().await.get_tip_height().await.expect("Failed to get tip height");
 
         info!("Final header height: {:?}", final_height);
 

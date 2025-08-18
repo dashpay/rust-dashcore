@@ -3,6 +3,7 @@
 // Removed unused import
 use std::path::PathBuf;
 use std::process;
+use std::sync::Arc;
 
 use clap::{Arg, Command};
 use tokio::signal;
@@ -219,8 +220,89 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Log the data directory being used
     tracing::info!("Using data directory: {}", data_dir.display());
 
+    // Create the SPV wallet manager
+    let spv_wallet = key_wallet_manager::spv_wallet_manager::SPVWalletManager::new();
+    let wallet = Arc::new(tokio::sync::RwLock::new(spv_wallet));
+
+    // Create network manager
+    let network_manager =
+        match dash_spv::network::multi_peer::MultiPeerNetworkManager::new(&config).await {
+            Ok(nm) => nm,
+            Err(e) => {
+                eprintln!("Failed to create network manager: {}", e);
+                process::exit(1);
+            }
+        };
+
+    // Create and start the client based on storage type
+    if config.enable_persistence {
+        if let Some(path) = &config.storage_path {
+            let storage_manager =
+                match dash_spv::storage::DiskStorageManager::new(path.clone()).await {
+                    Ok(sm) => sm,
+                    Err(e) => {
+                        eprintln!("Failed to create disk storage manager: {}", e);
+                        process::exit(1);
+                    }
+                };
+            run_client(
+                config,
+                network_manager,
+                storage_manager,
+                wallet,
+                enable_terminal_ui,
+                &matches,
+            )
+            .await?;
+        } else {
+            let storage_manager = match dash_spv::storage::MemoryStorageManager::new().await {
+                Ok(sm) => sm,
+                Err(e) => {
+                    eprintln!("Failed to create memory storage manager: {}", e);
+                    process::exit(1);
+                }
+            };
+            run_client(
+                config,
+                network_manager,
+                storage_manager,
+                wallet,
+                enable_terminal_ui,
+                &matches,
+            )
+            .await?;
+        }
+    } else {
+        let storage_manager = match dash_spv::storage::MemoryStorageManager::new().await {
+            Ok(sm) => sm,
+            Err(e) => {
+                eprintln!("Failed to create memory storage manager: {}", e);
+                process::exit(1);
+            }
+        };
+        run_client(config, network_manager, storage_manager, wallet, enable_terminal_ui, &matches)
+            .await?;
+    }
+
+    Ok(())
+}
+
+async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static>(
+    config: ClientConfig,
+    network_manager: dash_spv::network::multi_peer::MultiPeerNetworkManager,
+    storage_manager: S,
+    wallet: Arc<tokio::sync::RwLock<key_wallet_manager::spv_wallet_manager::SPVWalletManager>>,
+    enable_terminal_ui: bool,
+    matches: &clap::ArgMatches,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Create and start the client
-    let mut client = match DashSpvClient::new(config).await {
+    let mut client = match DashSpvClient::<
+        key_wallet_manager::spv_wallet_manager::SPVWalletManager,
+        dash_spv::network::multi_peer::MultiPeerNetworkManager,
+        S,
+    >::new(config.clone(), network_manager, storage_manager, wallet)
+    .await
+    {
         Ok(client) => client,
         Err(e) => {
             eprintln!("Failed to create SPV client: {}", e);
@@ -237,7 +319,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             match TerminalGuard::new(ui.clone()) {
                 Ok(guard) => {
                     // Initial update with network info
-                    let network_name = format!("{:?}", client.network());
+                    let network_name = format!("{:?}", config.network);
                     let _ = ui
                         .update_status(|status| {
                             status.network = network_name;
@@ -271,6 +353,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         for addr_str in addresses {
             match addr_str.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>() {
                 Ok(addr) => {
+                    let network = config.network;
                     let checked_addr = addr.require_network(network).map_err(|_| {
                         format!("Address '{}' is not valid for network {:?}", addr_str, network)
                     });
@@ -303,6 +386,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add example addresses for testing if requested
     if matches.get_flag("add-example-addresses") {
+        let network = config.network;
         let example_addresses = match network {
             dashcore::Network::Dash => vec![
                 // Some example mainnet addresses (these are from block explorers/faucets)

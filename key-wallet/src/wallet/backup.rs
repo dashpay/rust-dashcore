@@ -5,7 +5,6 @@
 
 use crate::error::{Error, Result};
 use crate::wallet::Wallet;
-use alloc::vec::Vec;
 
 impl Wallet {
     /// Create a backup of this wallet

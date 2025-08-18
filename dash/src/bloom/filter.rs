@@ -7,7 +7,7 @@ use bitvec::prelude::*;
 
 use super::error::BloomError;
 use super::hash::murmur3;
-use crate::consensus::{Decodable, Encodable, ReadExt, encode};
+use crate::consensus::{Decodable, Encodable, encode};
 use crate::network::message_bloom::BloomFlags;
 
 /// Maximum size of a bloom filter in bytes (36KB)

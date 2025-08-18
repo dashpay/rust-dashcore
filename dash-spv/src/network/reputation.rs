@@ -500,14 +500,17 @@ impl PeerReputationManager {
 /// Helper trait for reputation-aware peer selection
 pub trait ReputationAware {
     /// Select best peers based on reputation
-    async fn select_best_peers(
+    fn select_best_peers(
         &self,
         available_peers: Vec<SocketAddr>,
         count: usize,
-    ) -> Vec<SocketAddr>;
+    ) -> impl std::future::Future<Output = Vec<SocketAddr>> + Send;
 
     /// Check if we should connect to a peer based on reputation
-    async fn should_connect_to_peer(&self, peer: &SocketAddr) -> bool;
+    fn should_connect_to_peer(
+        &self,
+        peer: &SocketAddr,
+    ) -> impl std::future::Future<Output = bool> + Send;
 }
 
 impl ReputationAware for PeerReputationManager {

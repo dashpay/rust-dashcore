@@ -10,4 +10,4 @@ pub mod wallet_checker;
 
 pub use account_checker::AccountTransactionChecker;
 pub use transaction_router::{TransactionRouter, TransactionType};
-pub use wallet_checker::WalletTransactionChecker;
+pub use wallet_checker::{TransactionContext, WalletTransactionChecker};

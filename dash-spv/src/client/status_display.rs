@@ -1,7 +1,7 @@
 //! Status display and progress reporting for the Dash SPV client.
 
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::client::ClientConfig;
 use crate::error::Result;
@@ -10,20 +10,20 @@ use crate::terminal::TerminalUI;
 use crate::types::{ChainState, SpvStats, SyncProgress};
 
 /// Status display manager for updating UI and reporting sync progress.
-pub struct StatusDisplay<'a> {
+pub struct StatusDisplay<'a, S: StorageManager> {
     state: &'a Arc<RwLock<ChainState>>,
     stats: &'a Arc<RwLock<SpvStats>>,
-    storage: &'a dyn StorageManager,
+    storage: Arc<Mutex<S>>,
     terminal_ui: &'a Option<Arc<TerminalUI>>,
     config: &'a ClientConfig,
 }
 
-impl<'a> StatusDisplay<'a> {
+impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
     /// Create a new status display manager.
     pub fn new(
         state: &'a Arc<RwLock<ChainState>>,
         stats: &'a Arc<RwLock<SpvStats>>,
-        storage: &'a dyn StorageManager,
+        storage: Arc<Mutex<S>>,
         terminal_ui: &'a Option<Arc<TerminalUI>>,
         config: &'a ClientConfig,
     ) -> Self {
@@ -46,7 +46,8 @@ impl<'a> StatusDisplay<'a> {
         // Unified formula for both checkpoint and genesis sync:
         // For genesis sync: sync_base_height = 0, so height = 0 + storage_count
         // For checkpoint sync: height = checkpoint_height + storage_count
-        if let Ok(Some(storage_tip)) = self.storage.get_tip_height().await {
+        let storage = self.storage.lock().await;
+        if let Ok(Some(storage_tip)) = storage.get_tip_height().await {
             let blockchain_height = state.sync_base_height + storage_tip;
             if with_logging {
                 tracing::debug!(
@@ -137,16 +138,17 @@ impl<'a> StatusDisplay<'a> {
             };
 
             // Get latest chainlock height from storage metadata (in case state wasn't updated)
-            let stored_chainlock_height = if let Ok(Some(data)) =
-                self.storage.load_metadata("latest_chainlock_height").await
-            {
-                if data.len() >= 4 {
-                    Some(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
+            let stored_chainlock_height = {
+                let storage = self.storage.lock().await;
+                if let Ok(Some(data)) = storage.load_metadata("latest_chainlock_height").await {
+                    if data.len() >= 4 {
+                        Some(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
-            } else {
-                None
             };
 
             // Use the higher of the two chainlock heights
@@ -217,7 +219,8 @@ impl<'a> StatusDisplay<'a> {
         // Unified formula for both checkpoint and genesis sync:
         // For genesis sync: sync_base_height = 0, so height = 0 + storage_count
         // For checkpoint sync: height = checkpoint_height + storage_count
-        if let Ok(Some(storage_height)) = self.storage.get_filter_tip_height().await {
+        let storage = self.storage.lock().await;
+        if let Ok(Some(storage_height)) = storage.get_filter_tip_height().await {
             // The blockchain height is sync_base_height + storage_height
             state.sync_base_height + storage_height
         } else {

@@ -327,7 +327,7 @@ impl SyncPhase {
                 target_height,
                 ..
             } => {
-                let (method_description, efficiency_note) = match sync_strategy {
+                let (_method_description, _efficiency_note) = match sync_strategy {
                     Some(HybridSyncStrategy::EngineDiscovery {
                         qr_info_requests,
                         mn_diff_requests,

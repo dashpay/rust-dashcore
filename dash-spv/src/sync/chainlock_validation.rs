@@ -6,11 +6,10 @@
 use crate::error::{SyncError, SyncResult};
 use crate::storage::StorageManager;
 use dashcore::{
-    bls_sig_utils::{BLSPublicKey, BLSSignature},
+    bls_sig_utils::BLSPublicKey,
     sml::{llmq_type::LLMQType, masternode_list_engine::MasternodeListEngine},
     BlockHash, ChainLock,
 };
-use dashcore_hashes::Hash;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use tracing;
@@ -231,10 +230,7 @@ impl ChainLockValidator {
         })?;
 
         let mn_list = engine.masternode_lists.get(&list_height).ok_or_else(|| {
-            SyncError::Validation(format!(
-                "Masternode list not found at height {}",
-                list_height
-            ))
+            SyncError::Validation(format!("Masternode list not found at height {}", list_height))
         })?;
 
         // Find the chain lock quorum

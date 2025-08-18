@@ -1,9 +1,14 @@
 //! Simple integration test for ChainLock validation flow
 
 use dash_spv::client::{ClientConfig, DashSpvClient};
+use dash_spv::network::MultiPeerNetworkManager;
+use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::ValidationMode;
 use dashcore::Network;
+use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
+use std::sync::Arc;
 use tempfile::TempDir;
+use tokio::sync::RwLock;
 use tracing::Level;
 
 fn init_logging() {
@@ -37,8 +42,19 @@ async fn test_chainlock_validation_flow() {
         ..Default::default()
     };
 
+    // Create network manager
+    let network_manager = MultiPeerNetworkManager::new(&config).await.unwrap();
+
+    // Create storage manager
+    let storage_manager =
+        DiskStorageManager::new(config.storage_path.clone().unwrap()).await.unwrap();
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
+
     // Create the SPV client
-    let mut client = DashSpvClient::new(config).await.unwrap();
+    let mut client =
+        DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
 
     // Test that update_chainlock_validation works
     let updated = client.update_chainlock_validation().unwrap();
@@ -76,8 +92,19 @@ async fn test_chainlock_manager_initialization() {
         ..Default::default()
     };
 
+    // Create network manager
+    let network_manager = MultiPeerNetworkManager::new(&config).await.unwrap();
+
+    // Create storage manager
+    let storage_manager =
+        DiskStorageManager::new(config.storage_path.clone().unwrap()).await.unwrap();
+
+    // Create wallet manager
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
+
     // Create the SPV client
-    let client = DashSpvClient::new(config).await.unwrap();
+    let client =
+        DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
 
     // Verify chainlock manager is initialized
     // We can't directly access it from tests, but we can verify the client works

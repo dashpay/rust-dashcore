@@ -27,7 +27,9 @@ fn create_mock_header(height: u32) -> BlockHeader {
 async fn test_basic_gap_detection() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync = FilterSyncManager::new(&config, received_heights);
+    use dash_spv::network::MultiPeerNetworkManager;
+    let filter_sync: FilterSyncManager<MemoryStorageManager, MultiPeerNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     let mut storage = MemoryStorageManager::new().await.unwrap();
 

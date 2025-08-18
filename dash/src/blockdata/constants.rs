@@ -57,7 +57,7 @@ pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 19;
 // 0x13
 /// The maximum allowed script size.
 pub const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
-/// How may blocks between halvings.
+/// How many blocks between halvings.
 pub const SUBSIDY_HALVING_INTERVAL: u32 = 210_000;
 /// Maximum allowed value for an integer in Script.
 pub const MAX_SCRIPTNUM_VALUE: u32 = 0x80000000;
@@ -180,7 +180,7 @@ pub fn genesis_block(network: Network) -> Block {
             }
         }
         // Any new network variant must be handled explicitly.
-        other => unreachable!("genesis_block(): unsupported network variant {other:?}"),
+        _ => unreachable!("genesis_block(): unsupported network variant {network:?}"),
     }
 }
 
@@ -235,7 +235,6 @@ impl ChainHash {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::consensus::encode::serialize;
     use crate::internal_macros::hex;
     use dash_network::Network;
 
@@ -330,7 +329,7 @@ mod test {
     // The *_chain_hash tests are sanity/regression tests, they verify that the const byte array
     // representing the genesis block is the same as that created by hashing the genesis block.
     fn chain_hash_and_genesis_block(network: Network) {
-        // The genesis block hash is a double-sha256 and it is displayed backwards.
+        // The genesis block hash is a double-sha256, and it is displayed backwards.
         let genesis_hash = genesis_block(network).block_hash();
         let want = format!("{:02x}", genesis_hash);
 

@@ -2,7 +2,6 @@
 
 use super::utils::{extract_pubkey_hash, outpoint_to_bytes};
 use crate::error::SpvError;
-use crate::wallet::Wallet;
 use dashcore::address::Address;
 use dashcore::bloom::{BloomFilter, BloomFlags};
 use dashcore::OutPoint;
@@ -93,25 +92,8 @@ impl BloomFilterBuilder {
         self
     }
 
-    /// Build a bloom filter from wallet state
-    pub async fn from_wallet(wallet: &Wallet) -> Result<Self, SpvError> {
-        let mut builder = Self::new();
-
-        // Add all wallet addresses
-        let addresses = wallet.get_all_addresses().await?;
-        builder = builder.add_addresses(addresses);
-
-        // Add unspent outputs
-        let utxos = wallet.get_unspent_outputs().await?;
-        let outpoints = utxos.into_iter().map(|utxo| utxo.outpoint);
-        builder = builder.add_outpoints(outpoints);
-
-        // Set reasonable parameters based on wallet size
-        let total_elements = builder.addresses.len() + builder.outpoints.len();
-        builder = builder.elements(std::cmp::max(100, total_elements as u32 * 2));
-
-        Ok(builder)
-    }
+    // Removed: from_wallet - wallet functionality is now handled externally
+    // The wallet interface doesn't expose addresses and UTXOs directly
 
     /// Build the bloom filter
     pub fn build(self) -> Result<BloomFilter, SpvError> {

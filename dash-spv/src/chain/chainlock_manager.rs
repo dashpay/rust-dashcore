@@ -96,10 +96,10 @@ impl ChainLockManager {
     }
 
     /// Validate all pending ChainLocks after masternode sync
-    pub async fn validate_pending_chainlocks(
+    pub async fn validate_pending_chainlocks<S: StorageManager>(
         &self,
         chain_state: &ChainState,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
     ) -> ValidationResult<()> {
         let pending = {
             let mut pending_guard = self
@@ -142,11 +142,11 @@ impl ChainLockManager {
     }
 
     /// Process a new chain lock
-    pub async fn process_chain_lock(
+    pub async fn process_chain_lock<S: StorageManager>(
         &self,
         chain_lock: ChainLock,
         chain_state: &ChainState,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
     ) -> ValidationResult<()> {
         info!(
             "Processing ChainLock for height {} hash {}",
@@ -265,10 +265,10 @@ impl ChainLockManager {
     }
 
     /// Store a chain lock with validation status
-    async fn store_chain_lock_with_validation(
+    async fn store_chain_lock_with_validation<S: StorageManager>(
         &self,
         chain_lock: ChainLock,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
         validated: bool,
     ) -> StorageResult<()> {
         let entry = ChainLockEntry {
@@ -281,20 +281,21 @@ impl ChainLockManager {
     }
 
     /// Store a chain lock (deprecated, use store_chain_lock_with_validation)
-    async fn store_chain_lock(
+    #[allow(dead_code)]
+    async fn store_chain_lock<S: StorageManager>(
         &self,
         chain_lock: ChainLock,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
     ) -> StorageResult<()> {
         self.store_chain_lock_with_validation(chain_lock, storage, true).await
     }
 
     /// Internal method to store a chain lock entry
-    async fn store_chain_lock_internal(
+    async fn store_chain_lock_internal<S: StorageManager>(
         &self,
         chain_lock: ChainLock,
         entry: ChainLockEntry,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
     ) -> StorageResult<()> {
         // Store in memory caches
         {
@@ -403,9 +404,9 @@ impl ChainLockManager {
     }
 
     /// Load chain locks from storage
-    pub async fn load_from_storage(
+    pub async fn load_from_storage<S: StorageManager>(
         &self,
-        storage: &dyn StorageManager,
+        storage: &S,
         start_height: u32,
         end_height: u32,
     ) -> StorageResult<Vec<ChainLock>> {

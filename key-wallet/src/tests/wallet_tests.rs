@@ -8,6 +8,7 @@ use crate::seed::Seed;
 use crate::wallet::root_extended_keys::RootExtendedPrivKey;
 use crate::wallet::{Wallet, WalletConfig, WalletType};
 use crate::Network;
+use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
 /// Known test mnemonic for deterministic testing
@@ -140,8 +141,8 @@ fn test_wallet_creation_watch_only() {
     let config = WalletConfig::default();
     let wallet = Wallet::from_xpub(
         master_xpub,
-        config,
-        crate::wallet::initialization::WalletAccountCreationOptions::Default,
+        Some(config),
+        BTreeMap::new(), // Empty accounts for watch-only wallet
     )
     .unwrap();
 
@@ -513,8 +514,8 @@ fn test_wallet_external_signable() {
     let xpub = root_pub_key.to_extended_pub_key(Network::Testnet);
     let wallet = Wallet::from_external_signable(
         xpub,
-        config,
-        crate::wallet::initialization::WalletAccountCreationOptions::Default,
+        Some(config),
+        BTreeMap::new(), // Empty accounts for external signable wallet
     )
     .unwrap();
 

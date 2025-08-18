@@ -56,7 +56,9 @@ struct ActiveRequest {
 }
 
 /// Manages BIP157 filter synchronization.
-pub struct FilterSyncManager {
+pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
+    _phantom_s: std::marker::PhantomData<S>,
+    _phantom_n: std::marker::PhantomData<N>,
     _config: ClientConfig,
     /// Whether filter header sync is currently in progress
     syncing_filter_headers: bool,
@@ -79,12 +81,11 @@ pub struct FilterSyncManager {
     /// Blocks currently being downloaded (map for quick lookup)
     downloading_blocks: HashMap<BlockHash, u32>,
     /// Blocks requested by the filter processing thread
-    pub processing_thread_requests:
-        std::sync::Arc<std::sync::Mutex<std::collections::HashSet<BlockHash>>>,
+    pub processing_thread_requests: std::sync::Arc<std::sync::Mutex<HashSet<BlockHash>>>,
     /// Track requested filter ranges: (start_height, end_height) -> request_time
     requested_filter_ranges: HashMap<(u32, u32), std::time::Instant>,
     /// Track individual filter heights that have been received (shared with stats)
-    received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
+    received_filter_heights: std::sync::Arc<std::sync::Mutex<HashSet<u32>>>,
     /// Maximum retries for a filter range
     max_filter_retries: u32,
     /// Retry attempts per range
@@ -105,7 +106,9 @@ pub struct FilterSyncManager {
     max_gap_restart_attempts: u32,
 }
 
-impl FilterSyncManager {
+impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
+    FilterSyncManager<S, N>
+{
     /// Calculate the start height of a CFHeaders batch.
     fn calculate_batch_start_height(cf_headers: &CFHeaders, stop_height: u32) -> u32 {
         stop_height.saturating_sub(cf_headers.filter_hashes.len() as u32 - 1)
@@ -115,7 +118,7 @@ impl FilterSyncManager {
     async fn get_batch_height_range(
         &self,
         cf_headers: &CFHeaders,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> SyncResult<(u32, u32, u32)> {
         let header_tip_height = storage
             .get_tip_height()
@@ -170,6 +173,8 @@ impl FilterSyncManager {
             ),
             gap_restart_failure_count: 0,
             max_gap_restart_attempts: config.max_cfheader_gap_restart_attempts,
+            _phantom_s: std::marker::PhantomData,
+            _phantom_n: std::marker::PhantomData,
         }
     }
 
@@ -189,7 +194,7 @@ impl FilterSyncManager {
     }
 
     /// Check if filter sync is available (any peer supports compact filters).
-    pub async fn is_filter_sync_available(&self, network: &dyn NetworkManager) -> bool {
+    pub async fn is_filter_sync_available(&self, network: &N) -> bool {
         network
             .has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS)
             .await
@@ -200,8 +205,8 @@ impl FilterSyncManager {
     pub async fn handle_cfheaders_message(
         &mut self,
         cf_headers: CFHeaders,
-        storage: &mut dyn StorageManager,
-        network: &mut dyn NetworkManager,
+        storage: &mut S,
+        network: &mut N,
     ) -> SyncResult<bool> {
         if !self.syncing_filter_headers {
             // Not currently syncing, ignore
@@ -449,8 +454,8 @@ impl FilterSyncManager {
     /// Check if a sync timeout has occurred and handle recovery.
     pub async fn check_sync_timeout(
         &mut self,
-        storage: &mut dyn StorageManager,
-        network: &mut dyn NetworkManager,
+        storage: &mut S,
+        network: &mut N,
     ) -> SyncResult<bool> {
         if !self.syncing_filter_headers {
             return Ok(false);
@@ -595,8 +600,8 @@ impl FilterSyncManager {
     /// This replaces the old sync_headers method but doesn't loop for messages.
     pub async fn start_sync_headers(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<bool> {
         if self.syncing_filter_headers {
             return Err(SyncError::SyncInProgress);
@@ -739,7 +744,7 @@ impl FilterSyncManager {
     /// Request filter headers from the network.
     pub async fn request_filter_headers(
         &mut self,
-        network: &mut dyn NetworkManager,
+        network: &mut N,
         start_height: u32,
         stop_hash: BlockHash,
     ) -> SyncResult<()> {
@@ -774,7 +779,7 @@ impl FilterSyncManager {
         &self,
         cf_headers: &CFHeaders,
         start_height: u32,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> SyncResult<Vec<FilterHeader>> {
         if cf_headers.filter_hashes.is_empty() {
             return Ok(Vec::new());
@@ -837,7 +842,7 @@ impl FilterSyncManager {
         &self,
         cf_headers: &CFHeaders,
         expected_start_height: u32,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
     ) -> SyncResult<(usize, u32)> {
         // Get the height range for this batch
         let (batch_start_height, stop_height, _header_tip_height) =
@@ -928,7 +933,7 @@ impl FilterSyncManager {
         &self,
         cf_headers: &CFHeaders,
         start_height: u32,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> SyncResult<bool> {
         if cf_headers.filter_hashes.is_empty() {
             return Ok(true);
@@ -998,8 +1003,8 @@ impl FilterSyncManager {
     /// Synchronize compact filters for recent blocks or specific range.
     pub async fn sync_filters(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
         start_height: Option<u32>,
         count: Option<u32>,
     ) -> SyncResult<SyncProgress> {
@@ -1081,8 +1086,8 @@ impl FilterSyncManager {
     /// Synchronize compact filters with flow control to prevent overwhelming peers.
     pub async fn sync_filters_with_flow_control(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
         start_height: Option<u32>,
         count: Option<u32>,
     ) -> SyncResult<SyncProgress> {
@@ -1126,7 +1131,7 @@ impl FilterSyncManager {
     /// Build queue of filter requests from the specified range.
     async fn build_filter_request_queue(
         &mut self,
-        storage: &dyn StorageManager,
+        storage: &S,
         start_height: Option<u32>,
         count: Option<u32>,
     ) -> SyncResult<()> {
@@ -1224,8 +1229,8 @@ impl FilterSyncManager {
     /// Process the filter request queue with flow control.
     async fn process_filter_request_queue(
         &mut self,
-        network: &mut dyn NetworkManager,
-        _storage: &dyn StorageManager,
+        network: &mut N,
+        _storage: &S,
     ) -> SyncResult<()> {
         // Send initial batch up to MAX_CONCURRENT_FILTER_REQUESTS
         let initial_send_count =
@@ -1250,7 +1255,7 @@ impl FilterSyncManager {
     /// Send a single filter request and track it as active.
     async fn send_filter_request(
         &mut self,
-        network: &mut dyn NetworkManager,
+        network: &mut N,
         request: FilterRequest,
     ) -> SyncResult<()> {
         // Send the actual network request
@@ -1288,7 +1293,7 @@ impl FilterSyncManager {
     pub async fn mark_filter_received(
         &mut self,
         block_hash: BlockHash,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> SyncResult<Vec<(u32, u32)>> {
         if !self.flow_control_enabled {
             return Ok(Vec::new());
@@ -1356,7 +1361,7 @@ impl FilterSyncManager {
     async fn record_individual_filter_received(
         &mut self,
         block_hash: BlockHash,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> SyncResult<()> {
         // Look up height for the block hash
         if let Some(height) = storage.get_header_height_by_hash(&block_hash).await.map_err(|e| {
@@ -1379,10 +1384,7 @@ impl FilterSyncManager {
     }
 
     /// Process next requests from the queue when active requests complete.
-    pub async fn process_next_queued_requests(
-        &mut self,
-        network: &mut dyn NetworkManager,
-    ) -> SyncResult<()> {
+    pub async fn process_next_queued_requests(&mut self, network: &mut N) -> SyncResult<()> {
         if !self.flow_control_enabled {
             return Ok(());
         }
@@ -1424,8 +1426,8 @@ impl FilterSyncManager {
     /// Check for timed out filter requests and handle recovery.
     pub async fn check_filter_request_timeouts(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &dyn StorageManager,
+        network: &mut N,
+        storage: &S,
     ) -> SyncResult<()> {
         if !self.flow_control_enabled {
             // Fall back to original timeout checking
@@ -1459,7 +1461,7 @@ impl FilterSyncManager {
         &mut self,
         range: (u32, u32),
         _network: &mut dyn NetworkManager,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> SyncResult<()> {
         let (start, end) = range;
         let retry_count = self.filter_retry_counts.get(&range).copied().unwrap_or(0);
@@ -1526,7 +1528,7 @@ impl FilterSyncManager {
     /// Check filters against watch list and return matches.
     pub async fn check_filters_for_matches(
         &self,
-        storage: &dyn StorageManager,
+        storage: &S,
         watch_items: &[crate::types::WatchItem],
         start_height: u32,
         end_height: u32,
@@ -1582,7 +1584,7 @@ impl FilterSyncManager {
     /// Request compact filters from the network.
     pub async fn request_filters(
         &mut self,
-        network: &mut dyn NetworkManager,
+        network: &mut N,
         start_height: u32,
         stop_hash: BlockHash,
     ) -> SyncResult<()> {
@@ -1605,8 +1607,8 @@ impl FilterSyncManager {
     /// Request compact filters with range tracking.
     pub async fn request_filters_with_tracking(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &dyn StorageManager,
+        network: &mut N,
+        storage: &S,
         start_height: u32,
         stop_hash: BlockHash,
     ) -> SyncResult<()> {
@@ -1647,7 +1649,7 @@ impl FilterSyncManager {
     async fn find_height_for_block_hash(
         &self,
         block_hash: &BlockHash,
-        storage: &dyn StorageManager,
+        storage: &S,
         start_height: u32,
         end_height: u32,
     ) -> SyncResult<Option<u32>> {
@@ -1667,8 +1669,8 @@ impl FilterSyncManager {
     pub async fn download_filter_header_for_block(
         &mut self,
         block_hash: BlockHash,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<()> {
         // Get the block height for this hash by scanning headers
         let header_tip_height = storage
@@ -1715,8 +1717,8 @@ impl FilterSyncManager {
         &mut self,
         block_hash: BlockHash,
         watch_items: &[crate::types::WatchItem],
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<bool> {
         if watch_items.is_empty() {
             tracing::debug!(
@@ -1765,7 +1767,7 @@ impl FilterSyncManager {
         filter_data: &[u8],
         block_hash: &BlockHash,
         watch_items: &[crate::types::WatchItem],
-        _storage: &dyn StorageManager,
+        _storage: &S,
     ) -> SyncResult<bool> {
         if watch_items.is_empty() {
             return Ok(false);
@@ -1887,7 +1889,7 @@ impl FilterSyncManager {
     pub async fn store_filter_headers(
         &mut self,
         cfheaders: dashcore::network::message_filter::CFHeaders,
-        storage: &mut dyn StorageManager,
+        storage: &mut S,
     ) -> SyncResult<()> {
         if cfheaders.filter_hashes.is_empty() {
             tracing::debug!("No filter headers to store");
@@ -2009,7 +2011,7 @@ impl FilterSyncManager {
     pub async fn request_block_download(
         &mut self,
         filter_match: crate::types::FilterMatch,
-        network: &mut dyn NetworkManager,
+        network: &mut N,
     ) -> SyncResult<()> {
         // Check if already downloading or queued
         if self.downloading_blocks.contains_key(&filter_match.block_hash) {
@@ -2138,10 +2140,7 @@ impl FilterSyncManager {
     }
 
     /// Send the next batch of filter requests from the queue.
-    pub async fn send_next_filter_batch(
-        &mut self,
-        network: &mut dyn NetworkManager,
-    ) -> SyncResult<()> {
+    pub async fn send_next_filter_batch(&mut self, network: &mut N) -> SyncResult<()> {
         let available_slots = self.get_available_request_slots();
         let requests_to_send = available_slots.min(self.pending_filter_requests.len());
 
@@ -2167,7 +2166,7 @@ impl FilterSyncManager {
     pub async fn process_filter_matches_and_download(
         &mut self,
         filter_matches: Vec<crate::types::FilterMatch>,
-        network: &mut dyn NetworkManager,
+        network: &mut N,
     ) -> SyncResult<Vec<crate::types::FilterMatch>> {
         if filter_matches.is_empty() {
             return Ok(filter_matches);
@@ -2461,10 +2460,7 @@ impl FilterSyncManager {
 
     /// Check if filter header sync is stable (tip height hasn't changed for 3+ seconds).
     /// This prevents premature completion detection when filter headers are still arriving.
-    async fn check_filter_header_stability(
-        &mut self,
-        storage: &dyn StorageManager,
-    ) -> SyncResult<bool> {
+    async fn check_filter_header_stability(&mut self, storage: &S) -> SyncResult<bool> {
         let current_filter_tip = storage
             .get_filter_tip_height()
             .await
@@ -2556,7 +2552,7 @@ impl FilterSyncManager {
     /// Record filter received at specific height (used by processing thread).
     pub async fn record_filter_received_at_height(
         stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
-        storage: &dyn StorageManager,
+        storage: &S,
         block_hash: &BlockHash,
     ) {
         // Look up height for the block hash
@@ -2644,7 +2640,7 @@ impl FilterSyncManager {
     /// Returns: (filters_requested, filters_received, basic_progress, timeout, total_missing, actual_coverage, missing_ranges)
     pub async fn get_filter_sync_status_with_gaps(
         stats: &std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
-        filter_sync: &FilterSyncManager,
+        filter_sync: &FilterSyncManager<S, N>,
     ) -> (u64, u64, f64, bool, u32, f64, Vec<(u32, u32)>) {
         let stats_lock = stats.read().await;
         let basic_progress = if stats_lock.filters_requested == 0 {
@@ -2812,10 +2808,7 @@ impl FilterSyncManager {
 
     /// Check if there's a gap between block headers and filter headers
     /// Returns (has_gap, block_height, filter_height, gap_size)
-    pub async fn check_cfheader_gap(
-        &self,
-        storage: &dyn StorageManager,
-    ) -> SyncResult<(bool, u32, u32, u32)> {
+    pub async fn check_cfheader_gap(&self, storage: &S) -> SyncResult<(bool, u32, u32, u32)> {
         let block_height = storage
             .get_tip_height()
             .await
@@ -2850,7 +2843,7 @@ impl FilterSyncManager {
     /// Check if there's a gap between synced filters and filter headers.
     pub async fn check_filter_gap(
         &self,
-        storage: &dyn StorageManager,
+        storage: &S,
         progress: &crate::types::SyncProgress,
     ) -> SyncResult<(bool, u32, u32, u32)> {
         // Get filter header tip height
@@ -2880,8 +2873,8 @@ impl FilterSyncManager {
     /// Attempt to restart filter header sync if there's a gap and conditions are met
     pub async fn maybe_restart_cfheader_sync_for_gap(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &mut dyn StorageManager,
+        network: &mut N,
+        storage: &mut S,
     ) -> SyncResult<bool> {
         // Check if we're already syncing
         if self.syncing_filter_headers {
@@ -2951,11 +2944,7 @@ impl FilterSyncManager {
     }
 
     /// Retry missing or timed out filter ranges.
-    pub async fn retry_missing_filters(
-        &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &dyn StorageManager,
-    ) -> SyncResult<u32> {
+    pub async fn retry_missing_filters(&mut self, network: &mut N, storage: &S) -> SyncResult<u32> {
         let missing = self.find_missing_ranges();
         let timed_out = self.get_timed_out_ranges(std::time::Duration::from_secs(30));
 
@@ -3061,8 +3050,8 @@ impl FilterSyncManager {
     /// Check and retry missing filters (main entry point for monitoring loop).
     pub async fn check_and_retry_missing_filters(
         &mut self,
-        network: &mut dyn NetworkManager,
-        storage: &dyn StorageManager,
+        network: &mut N,
+        storage: &S,
     ) -> SyncResult<()> {
         let missing_ranges = self.find_missing_ranges();
         let total_missing = self.get_total_missing_filters();

@@ -1,5 +1,7 @@
 //! Filter synchronization and management for the Dash SPV client.
 
+#![allow(deprecated)]
+
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -11,21 +13,23 @@ use crate::types::SpvStats;
 use crate::types::{FilterMatch, WatchItem};
 
 /// Filter synchronization manager for coordinating filter downloads and checking.
-pub struct FilterSyncCoordinator<'a> {
-    sync_manager: &'a mut SyncManager,
-    storage: &'a mut dyn StorageManager,
-    network: &'a mut dyn NetworkManager,
+pub struct FilterSyncCoordinator<'a, S: StorageManager, N: NetworkManager> {
+    sync_manager: &'a mut SyncManager<S, N>,
+    storage: &'a mut S,
+    network: &'a mut N,
     watch_items: &'a Arc<RwLock<std::collections::HashSet<WatchItem>>>,
     stats: &'a Arc<RwLock<SpvStats>>,
     running: &'a Arc<RwLock<bool>>,
 }
 
-impl<'a> FilterSyncCoordinator<'a> {
+impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
+    FilterSyncCoordinator<'a, S, N>
+{
     /// Create a new filter sync coordinator.
     pub fn new(
-        sync_manager: &'a mut SyncManager,
-        storage: &'a mut dyn StorageManager,
-        network: &'a mut dyn NetworkManager,
+        sync_manager: &'a mut SyncManager<S, N>,
+        storage: &'a mut S,
+        network: &'a mut N,
         watch_items: &'a Arc<RwLock<std::collections::HashSet<WatchItem>>>,
         stats: &'a Arc<RwLock<SpvStats>>,
         running: &'a Arc<RwLock<bool>>,
@@ -130,7 +134,7 @@ impl<'a> FilterSyncCoordinator<'a> {
                       start_height, start_height + count - 1, count);
 
         // Start tracking filter sync progress
-        crate::sync::filters::FilterSyncManager::start_filter_sync_tracking(
+        crate::sync::filters::FilterSyncManager::<S, N>::start_filter_sync_tracking(
             self.stats,
             count as u64,
         )

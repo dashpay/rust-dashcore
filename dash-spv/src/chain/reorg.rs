@@ -5,9 +5,8 @@
 
 use super::chainlock_manager::ChainLockManager;
 use super::{ChainTip, Fork};
-use crate::storage::{ChainStorage, StorageManager};
+use crate::storage::ChainStorage;
 use crate::types::ChainState;
-use crate::wallet::WalletState;
 use dashcore::{BlockHash, Header as BlockHeader, Transaction, Txid};
 use dashcore_hashes::Hash;
 use std::sync::Arc;
@@ -29,6 +28,7 @@ pub struct ReorgEvent {
 }
 
 /// Data collected during the read phase of reorganization
+#[allow(dead_code)]
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct ReorgData {
@@ -178,13 +178,33 @@ impl ReorgManager {
         Ok(true)
     }
 
+    /// Check if a block is chain-locked
+    pub fn is_chain_locked(
+        &self,
+        header: &BlockHeader,
+        storage: &dyn ChainStorage,
+    ) -> Result<bool, String> {
+        if let Some(ref chain_lock_mgr) = self.chain_lock_manager {
+            // Get the height of this header
+            if let Ok(Some(height)) = storage.get_header_height(&header.block_hash()) {
+                return Ok(chain_lock_mgr.is_block_chain_locked(&header.block_hash(), height));
+            }
+        }
+        // If no chain lock manager or height not found, assume not locked
+        Ok(false)
+    }
+}
+
+// WalletState removed - reorganization should be handled by external wallet
+/*
+impl ReorgManager {
     /// Perform a chain reorganization using a phased approach
-    pub async fn reorganize(
+    pub async fn reorganize<S: StorageManager>(
         &self,
         chain_state: &mut ChainState,
         wallet_state: &mut WalletState,
         fork: &Fork,
-        storage_manager: &mut dyn StorageManager,
+        storage_manager: &mut S,
     ) -> Result<ReorgEvent, String> {
         // Phase 1: Collect all necessary data (read-only)
         let reorg_data = self.collect_reorg_data(chain_state, fork, storage_manager).await?;
@@ -196,30 +216,30 @@ impl ReorgManager {
 
     /// Collect all data needed for reorganization (read-only phase)
     #[cfg(test)]
-    pub async fn collect_reorg_data(
+    pub async fn collect_reorg_data<S: StorageManager>(
         &self,
         chain_state: &ChainState,
         fork: &Fork,
-        storage_manager: &dyn StorageManager,
+        storage_manager: &S,
     ) -> Result<ReorgData, String> {
         self.collect_reorg_data_internal(chain_state, fork, storage_manager).await
     }
 
     #[cfg(not(test))]
-    async fn collect_reorg_data(
+    async fn collect_reorg_data<S: StorageManager>(
         &self,
         chain_state: &ChainState,
         fork: &Fork,
-        storage_manager: &dyn StorageManager,
+        storage_manager: &S,
     ) -> Result<ReorgData, String> {
         self.collect_reorg_data_internal(chain_state, fork, storage_manager).await
     }
 
-    async fn collect_reorg_data_internal(
+    async fn collect_reorg_data_internal<S: StorageManager>(
         &self,
         chain_state: &ChainState,
         fork: &Fork,
-        storage: &dyn StorageManager,
+        storage: &S,
     ) -> Result<ReorgData, String> {
         // Find the common ancestor
         let (common_ancestor, common_height) =
@@ -256,13 +276,13 @@ impl ReorgManager {
     }
 
     /// Apply reorganization using collected data (write-only phase)
-    async fn apply_reorg_with_data(
+    async fn apply_reorg_with_data<S: StorageManager>(
         &self,
         chain_state: &mut ChainState,
         wallet_state: &mut WalletState,
         fork: &Fork,
         reorg_data: ReorgData,
-        storage_manager: &mut dyn StorageManager,
+        storage_manager: &mut S,
     ) -> Result<ReorgEvent, String> {
         // Create a checkpoint of the current chain state before making any changes
         let chain_state_checkpoint = chain_state.clone();
@@ -477,7 +497,7 @@ impl ReorgManager {
     }
 
     /// Check if a block is chain-locked
-    fn is_chain_locked(
+    pub fn is_chain_locked(
         &self,
         header: &BlockHeader,
         storage: &dyn ChainStorage,
@@ -513,6 +533,7 @@ impl ReorgManager {
         Ok(())
     }
 }
+*/
 
 #[cfg(test)]
 mod tests {
@@ -530,8 +551,8 @@ mod tests {
         header
     }
 
-    #[tokio::test]
-    async fn test_reorg_validation() {
+    #[test]
+    fn test_reorg_validation() {
         let reorg_mgr = ReorgManager::new(100, false);
 
         let genesis = genesis_block(Network::Dash).header;
@@ -539,7 +560,7 @@ mod tests {
 
         // Create a fork with less work - should not reorg
         let fork = Fork {
-            fork_point: BlockHash::from(dashcore_hashes::hash_x11::Hash::all_zeros()),
+            fork_point: BlockHash::from_byte_array([0; 32]),
             fork_height: 0,
             tip_hash: genesis.block_hash(),
             tip_height: 1,
@@ -547,13 +568,15 @@ mod tests {
             chain_work: ChainWork::zero(), // Less work
         };
 
-        let result = reorg_mgr.validate_reorg(&tip, &fork);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("does not have more work"));
+        let storage = MemoryStorage::new();
+        let result = reorg_mgr.should_reorganize(&tip, &fork, &storage);
+        // Fork has less work, so should return Ok(false), not an error
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), false);
     }
 
-    #[tokio::test]
-    async fn test_max_reorg_depth() {
+    #[test]
+    fn test_max_reorg_depth() {
         let reorg_mgr = ReorgManager::new(10, false);
 
         let genesis = genesis_block(Network::Dash).header;
@@ -563,14 +586,15 @@ mod tests {
         let fork = Fork {
             fork_point: genesis.block_hash(),
             fork_height: 0, // Fork from genesis
-            tip_hash: BlockHash::from(dashcore_hashes::hash_x11::Hash::all_zeros()),
+            tip_hash: BlockHash::from_byte_array([0; 32]),
             tip_height: 101,
             headers: vec![],
             chain_work: ChainWork::from_bytes([255u8; 32]), // Max work
         };
 
-        let result = reorg_mgr.validate_reorg(&tip, &fork);
+        let storage = MemoryStorage::new();
+        let result = reorg_mgr.should_reorganize(&tip, &fork, &storage);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("exceeds maximum allowed"));
+        assert!(result.unwrap_err().contains("exceeds maximum"));
     }
 }

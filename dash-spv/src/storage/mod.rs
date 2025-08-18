@@ -11,11 +11,10 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::ops::Range;
 
-use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, Address, OutPoint, Txid};
+use dashcore::{block::Header as BlockHeader, hash_types::FilterHeader, Txid};
 
 use crate::error::StorageResult;
 use crate::types::{ChainState, MempoolState, UnconfirmedTransaction};
-use crate::wallet::Utxo;
 
 pub use disk::DiskStorageManager;
 pub use memory::MemoryStorageManager;
@@ -177,17 +176,7 @@ pub trait StorageManager: Send + Sync {
         end_height: u32,
     ) -> StorageResult<Vec<(u32, BlockHeader)>>;
 
-    /// Store a UTXO.
-    async fn store_utxo(&mut self, outpoint: &OutPoint, utxo: &Utxo) -> StorageResult<()>;
-
-    /// Remove a UTXO.
-    async fn remove_utxo(&mut self, outpoint: &OutPoint) -> StorageResult<()>;
-
-    /// Get UTXOs for a specific address.
-    async fn get_utxos_for_address(&self, address: &Address) -> StorageResult<Vec<Utxo>>;
-
-    /// Get all UTXOs.
-    async fn get_all_utxos(&self) -> StorageResult<HashMap<OutPoint, Utxo>>;
+    // UTXO methods removed - handled by external wallet
 
     /// Store persistent sync state.
     async fn store_sync_state(&mut self, state: &PersistentSyncState) -> StorageResult<()>;
@@ -272,6 +261,9 @@ pub trait StorageManager: Send + Sync {
 
     /// Clear all mempool data.
     async fn clear_mempool(&mut self) -> StorageResult<()>;
+
+    /// Shutdown the storage manager
+    async fn shutdown(&mut self) -> StorageResult<()>;
 }
 
 /// Helper trait to provide as_any_mut for all StorageManager implementations

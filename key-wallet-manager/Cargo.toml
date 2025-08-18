@@ -12,6 +12,7 @@ license = "CC0-1.0"
 default = ["std"]
 std = ["key-wallet/std", "dashcore/std", "dashcore_hashes/std", "secp256k1/std"]
 serde = ["dep:serde", "key-wallet/serde", "dashcore/serde"]
+getrandom = ["key-wallet/getrandom"]
 
 [dependencies]
 key-wallet = { path = "../key-wallet", default-features = false }
@@ -19,6 +20,7 @@ dashcore = { path = "../dash", default-features = false }
 dashcore_hashes = { path = "../hashes", default-features = false }
 secp256k1 = { version = "0.30.0", default-features = false, features = ["recovery"] }
 serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
+async-trait = "0.1"
 
 [dev-dependencies]
 hex = "0.4"

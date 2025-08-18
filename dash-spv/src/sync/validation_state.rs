@@ -5,7 +5,6 @@
 //! across sync operations.
 
 use crate::error::{SyncError, SyncResult};
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::{sml::llmq_type::LLMQType, BlockHash};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};

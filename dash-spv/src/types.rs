@@ -1023,6 +1023,12 @@ pub enum SpvEvent {
         /// Reason for removal.
         reason: MempoolRemovalReason,
     },
+
+    /// Compact filter matched for a block.
+    CompactFilterMatched {
+        /// Block hash that matched.
+        hash: String,
+    },
 }
 
 /// Reason for removing a transaction from mempool.

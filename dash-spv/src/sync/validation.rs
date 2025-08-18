@@ -240,10 +240,9 @@ impl ValidationEngine {
                     block_height,
                     "Validation failed".to_string(),
                 )),
-                Err(e) => errors.push(ValidationError::InvalidMnListDiff(
-                    block_height,
-                    e.to_string(),
-                )),
+                Err(e) => {
+                    errors.push(ValidationError::InvalidMnListDiff(block_height, e.to_string()))
+                }
             }
         }
 
@@ -303,7 +302,7 @@ impl ValidationEngine {
     ) -> SyncResult<bool> {
         // Check if we have the base list
         // We can resolve block height from the diff's block hash using the engine's block container
-        let block_height = engine.block_container.get_height(&diff.block_hash).unwrap_or(0);
+        let _block_height = engine.block_container.get_height(&diff.block_hash).unwrap_or(0);
 
         // Validate merkle root matches
         // TODO: Implement merkle root validation

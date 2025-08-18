@@ -11,7 +11,6 @@
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::Hash;
 
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::{Decodable, Encodable, encode};
@@ -76,6 +75,7 @@ impl Decodable for MnhfSignalPayload {
 mod tests {
     use super::*;
     use crate::consensus::{Decodable, Encodable};
+    use crate::hashes::Hash;
 
     #[test]
     fn test_mnhf_signal_payload_size() {
