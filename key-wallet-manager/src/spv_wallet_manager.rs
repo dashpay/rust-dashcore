@@ -46,6 +46,16 @@ pub struct SPVWalletManager {
     stats: BTreeMap<Network, SPVStats>,
 }
 
+impl From<WalletManager> for SPVWalletManager {
+    fn from(manager: WalletManager) -> Self {
+        Self {
+            base: manager,
+            max_download_queue: 100,
+            ..Default::default()
+        }
+    }
+}
+
 /// SPV synchronization statistics
 #[derive(Debug, Clone, Default)]
 pub struct SPVStats {
@@ -100,7 +110,7 @@ impl SPVWalletManager {
 
     /// Queue a block for download
     pub fn queue_block_download(&mut self, network: Network, block_hash: BlockHash) -> bool {
-        let queue = self.download_queues.entry(network).or_insert_with(VecDeque::new);
+        let queue = self.download_queues.entry(network).or_default();
 
         if queue.len() >= self.max_download_queue {
             return false;
@@ -126,10 +136,7 @@ impl SPVWalletManager {
         block: Block,
         hash: BlockHash,
     ) {
-        self.pending_blocks
-            .entry(network)
-            .or_insert_with(BTreeMap::new)
-            .insert(height, (block, hash));
+        self.pending_blocks.entry(network).or_default().insert(height, (block, hash));
     }
 
     /// Get and remove a pending block
@@ -180,7 +187,7 @@ impl SPVWalletManager {
 
     /// Set target sync height
     pub fn set_target_height(&mut self, network: Network, height: u32) {
-        self.stats.entry(network).or_insert_with(SPVStats::default).target_height = height;
+        self.stats.entry(network).or_default().target_height = height;
     }
 }
 
