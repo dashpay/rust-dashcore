@@ -179,7 +179,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                     response_tx,
                 } => {
                     // Check compact filter with wallet
-                    let wallet = self.wallet.read().await;
+                    let mut wallet = self.wallet.write().await;
                     let matches =
                         wallet.check_compact_filter(&filter, &block_hash, self.network).await;
                     drop(wallet);

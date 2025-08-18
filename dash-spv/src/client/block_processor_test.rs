@@ -58,7 +58,7 @@ mod tests {
         }
 
         async fn check_compact_filter(
-            &self,
+            &mut self,
             _filter: &dashcore::bip158::BlockFilter,
             _block_hash: &dashcore::BlockHash,
             _network: Network,
@@ -247,7 +247,7 @@ mod tests {
             }
 
             async fn check_compact_filter(
-                &self,
+                &mut self,
                 _filter: &dashcore::bip158::BlockFilter,
                 _block_hash: &dashcore::BlockHash,
                 _network: Network,
