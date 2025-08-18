@@ -37,7 +37,7 @@ async fn create_test_client(
     let storage_manager = MemoryStorageManager::new().await?;
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
 
     Ok(DashSpvClient::new(config, network_manager, storage_manager, wallet).await?)
 }
@@ -194,7 +194,7 @@ async fn test_real_header_sync_up_to_10k() {
     config.peers.push(peer_addr);
 
     // Create fresh storage and client
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let storage = MemoryStorageManager::new().await.expect("Failed to create storage");
 
     // Verify starting from empty state
     assert_eq!(storage.get_tip_height().await.unwrap(), None);
@@ -403,7 +403,7 @@ async fn test_real_header_chain_continuity() {
 
     config.peers.push(peer_addr);
 
-    let mut storage = MemoryStorageManager::new().await.expect("Failed to create storage");
+    let storage = MemoryStorageManager::new().await.expect("Failed to create storage");
 
     let mut client = create_test_client(config).await.expect("Failed to create SPV client");
 

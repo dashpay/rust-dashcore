@@ -221,7 +221,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Using data directory: {}", data_dir.display());
 
     // Create the SPV wallet manager
-    let spv_wallet = key_wallet_manager::spv_wallet_manager::SPVWalletManager::new(network);
+    let spv_wallet = key_wallet_manager::spv_wallet_manager::SPVWalletManager::new();
     let wallet = Arc::new(tokio::sync::RwLock::new(spv_wallet));
 
     // Create network manager

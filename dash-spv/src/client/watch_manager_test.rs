@@ -34,22 +34,33 @@ mod tests {
             &mut self,
             _block: &dashcore::Block,
             _height: u32,
+            _network: dashcore::Network,
         ) -> Vec<dashcore::Txid> {
             Vec::new()
         }
 
-        async fn process_mempool_transaction(&mut self, _tx: &dashcore::Transaction) {
+        async fn process_mempool_transaction(
+            &mut self,
+            _tx: &dashcore::Transaction,
+            _network: dashcore::Network,
+        ) {
             // Not used in these tests
         }
 
-        async fn handle_reorg(&mut self, _from_height: u32, _to_height: u32) {
+        async fn handle_reorg(
+            &mut self,
+            _from_height: u32,
+            _to_height: u32,
+            _network: dashcore::Network,
+        ) {
             // Not used in these tests
         }
 
         async fn check_compact_filter(
             &self,
-            _filter: &[u8],
+            _filter: &dashcore::bip158::BlockFilter,
             _block_hash: &dashcore::BlockHash,
+            _network: dashcore::Network,
         ) -> bool {
             false
         }

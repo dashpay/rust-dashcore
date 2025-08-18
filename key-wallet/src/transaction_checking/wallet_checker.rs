@@ -5,7 +5,7 @@
 
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_router::TransactionRouter;
-use crate::wallet::immature_transaction::{AffectedAccounts, ImmatureTransaction};
+use crate::wallet::immature_transaction::ImmatureTransaction;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::Network;
 use dashcore::blockdata::transaction::Transaction;
@@ -21,13 +21,13 @@ pub enum TransactionContext {
     InBlock {
         height: u32,
         block_hash: Option<BlockHash>,
-        timestamp: Option<u64>,
+        timestamp: Option<u32>,
     },
     /// Transaction is in a chain-locked block at the given height
     InChainLockedBlock {
         height: u32,
         block_hash: Option<BlockHash>,
-        timestamp: Option<u64>,
+        timestamp: Option<u32>,
     },
 }
 
@@ -117,7 +117,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
                             // Extract height, block hash, and timestamp from context
                             let (height, block_hash, timestamp) = match context {
-                                TransactionContext::Mempool => (None, None, 0),
+                                TransactionContext::Mempool => (None, None, 0u64),
                                 TransactionContext::InBlock {
                                     height,
                                     block_hash,
@@ -127,7 +127,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                                     height,
                                     block_hash,
                                     timestamp,
-                                } => (Some(height), block_hash, timestamp.unwrap_or(0)),
+                                } => (Some(height), block_hash, timestamp.unwrap_or(0) as u64),
                             };
 
                             let tx_record = crate::account::TransactionRecord {
@@ -169,7 +169,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                                         tx.clone(),
                                         height,
                                         block_hash.unwrap_or_else(BlockHash::all_zeros),
-                                        timestamp.unwrap_or(0),
+                                        timestamp.unwrap_or(0) as u64,
                                         100,  // Standard coinbase maturity
                                         true, // is_coinbase
                                     );

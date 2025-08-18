@@ -13,6 +13,7 @@ impl WalletManager {
     ///
     /// This method delegates to the ManagedWalletInfo's create_payment_transaction method
     /// If account_type_pref is None, defaults to BIP44
+    #[allow(clippy::too_many_arguments)]
     pub fn create_unsigned_payment_transaction(
         &mut self,
         wallet_id: &WalletId,
@@ -24,14 +25,11 @@ impl WalletManager {
         current_block_height: u32,
     ) -> Result<Transaction, WalletError> {
         // Get the wallet
-        let wallet =
-            self.wallets.get(wallet_id).ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get the managed wallet info
-        let managed_info = self
-            .wallet_infos
-            .get_mut(wallet_id)
-            .ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let managed_info =
+            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Delegate to the managed wallet info's method
         managed_info

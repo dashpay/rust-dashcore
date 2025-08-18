@@ -4,21 +4,18 @@
 //! each of which can have multiple accounts. This follows the architecture
 //! pattern where a manager oversees multiple distinct wallets.
 
+mod process_block;
 mod transaction_building;
 
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::PublicKey;
 use dashcore::Txid;
 use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
 use key_wallet::WalletBalance;
-use key_wallet::{
-    Account, AccountType, Address, ExtendedPubKey, Mnemonic, Network, Wallet, WalletConfig,
-};
-use secp256k1::Secp256k1;
+use key_wallet::{Account, AccountType, Address, Mnemonic, Network, Wallet, WalletConfig};
 
 use key_wallet::transaction_checking::{TransactionContext, WalletTransactionChecker};
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
@@ -59,6 +56,12 @@ pub struct NetworkState {
     pub current_height: u32,
 }
 
+impl Default for NetworkState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetworkState {
     /// Create a new network state
     pub fn new() -> Self {
@@ -82,6 +85,12 @@ pub struct WalletManager {
     pub(crate) wallet_infos: BTreeMap<WalletId, ManagedWalletInfo>,
     /// Network-specific state (UTXO sets, transactions, heights)
     network_states: BTreeMap<Network, NetworkState>,
+}
+
+impl Default for WalletManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WalletManager {
@@ -250,14 +259,10 @@ impl WalletManager {
         &mut self,
         wallet_id: &WalletId,
     ) -> Result<(Wallet, ManagedWalletInfo), WalletError> {
-        let wallet = self
-            .wallets
-            .remove(wallet_id)
-            .ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
-        let info = self
-            .wallet_infos
-            .remove(wallet_id)
-            .ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let wallet =
+            self.wallets.remove(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
+        let info =
+            self.wallet_infos.remove(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
         Ok((wallet, info))
     }
 
@@ -353,12 +358,9 @@ impl WalletManager {
         index: u32,
         account_type: AccountType,
     ) -> Result<(), WalletError> {
-        let wallet =
-            self.wallets.get(wallet_id).ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
-        let managed_info = self
-            .wallet_infos
-            .get_mut(wallet_id)
-            .ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
+        let managed_info =
+            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Clone wallet to mutate it
         let mut wallet_mut = wallet.clone();
@@ -387,8 +389,7 @@ impl WalletManager {
 
     /// Get all accounts in a specific wallet
     pub fn get_accounts(&self, wallet_id: &WalletId) -> Result<Vec<&Account>, WalletError> {
-        let wallet =
-            self.wallets.get(wallet_id).ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         Ok(wallet.all_accounts())
     }
@@ -399,8 +400,7 @@ impl WalletManager {
         wallet_id: &WalletId,
         index: u32,
     ) -> Result<Option<&Account>, WalletError> {
-        let wallet =
-            self.wallets.get(wallet_id).ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Try to find the account in any network
         for network in wallet.accounts.keys() {
@@ -421,13 +421,10 @@ impl WalletManager {
         mark_as_used: bool,
     ) -> Result<AddressGenerationResult, WalletError> {
         // Get the wallet account to access the xpub
-        let wallet =
-            self.wallets.get(wallet_id).ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
-        let managed_info = self
-            .wallet_infos
-            .get_mut(wallet_id)
-            .ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let managed_info =
+            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get the account collection for the network
         let collection =
@@ -592,12 +589,9 @@ impl WalletManager {
         mark_as_used: bool,
     ) -> Result<AddressGenerationResult, WalletError> {
         // Get the wallet account to access the xpub
-        let wallet =
-            self.wallets.get(wallet_id).ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
-        let managed_info = self
-            .wallet_infos
-            .get_mut(wallet_id)
-            .ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
+        let managed_info =
+            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get the account collection for the network
         let collection =
@@ -766,10 +760,8 @@ impl WalletManager {
         &self,
         wallet_id: &WalletId,
     ) -> Result<Vec<&TransactionRecord>, WalletError> {
-        let managed_info = self
-            .wallet_infos
-            .get(wallet_id)
-            .ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let managed_info =
+            self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         Ok(managed_info.get_transaction_history())
     }
@@ -786,10 +778,8 @@ impl WalletManager {
     /// Get UTXOs for a specific wallet
     pub fn get_wallet_utxos(&self, wallet_id: &WalletId) -> Result<Vec<Utxo>, WalletError> {
         // Get the wallet info
-        let wallet_info = self
-            .wallet_infos
-            .get(wallet_id)
-            .ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let wallet_info =
+            self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get UTXOs from the wallet info and clone them
         let utxos = wallet_info.get_utxos().into_iter().cloned().collect();
@@ -805,10 +795,8 @@ impl WalletManager {
     /// Get balance for a specific wallet
     pub fn get_wallet_balance(&self, wallet_id: &WalletId) -> Result<WalletBalance, WalletError> {
         // Get the wallet info
-        let wallet_info = self
-            .wallet_infos
-            .get(wallet_id)
-            .ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let wallet_info =
+            self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get balance from the wallet info
         Ok(wallet_info.get_balance())
@@ -816,10 +804,8 @@ impl WalletManager {
 
     /// Update the cached balance for a specific wallet
     pub fn update_wallet_balance(&mut self, wallet_id: &WalletId) -> Result<(), WalletError> {
-        let managed_info = self
-            .wallet_infos
-            .get_mut(wallet_id)
-            .ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let managed_info =
+            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         managed_info.update_balance();
         Ok(())
@@ -832,10 +818,8 @@ impl WalletManager {
         name: Option<String>,
         description: Option<String>,
     ) -> Result<(), WalletError> {
-        let managed_info = self
-            .wallet_infos
-            .get_mut(wallet_id)
-            .ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+        let managed_info =
+            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         if let Some(new_name) = name {
             managed_info.set_name(new_name);
@@ -862,19 +846,18 @@ impl WalletManager {
     }
 
     /// Get or create network state for a specific network
-    fn get_or_create_network_state(&mut self, network: Network) -> &mut NetworkState {
-        self.network_states.entry(network).or_insert_with(NetworkState::new)
+    pub(crate) fn get_or_create_network_state(&mut self, network: Network) -> &mut NetworkState {
+        self.network_states.entry(network).or_default()
     }
 
-    /// Get the primary network for a wallet (based on where it has accounts)
-    fn get_wallet_primary_network(&self, wallet_id: &WalletId) -> Result<Network, WalletError> {
-        let wallet =
-            self.wallets.get(wallet_id).ok_or_else(|| WalletError::WalletNotFound(*wallet_id))?;
+    /// Get network state for a specific network (public for SPVWalletManager)
+    pub fn get_network_state(&self, network: Network) -> Option<&NetworkState> {
+        self.network_states.get(&network)
+    }
 
-        // Return the first network with accounts
-        wallet.accounts.keys().next().copied().ok_or(WalletError::InvalidParameter(
-            "Wallet has no accounts in any network".to_string(),
-        ))
+    /// Get mutable network state for a specific network (public for SPVWalletManager)
+    pub fn get_network_state_mut(&mut self, network: Network) -> Option<&mut NetworkState> {
+        self.network_states.get_mut(&network)
     }
 
     /// Get monitored addresses for all wallets for a specific network
@@ -957,37 +940,6 @@ fn current_timestamp() -> u64 {
     {
         0 // In no_std environment, timestamp would need to be provided externally
     }
-}
-
-/// Derive an address from an account's extended public key
-fn derive_address_from_account(
-    account_xpub: &ExtendedPubKey,
-    is_change: bool,
-    index: u32,
-    network: Network,
-) -> Result<Address, WalletError> {
-    let secp = Secp256k1::new();
-
-    // Derive change/receive branch (account xpub is already at m/44'/5'/account')
-    let change_num = if is_change {
-        1
-    } else {
-        0
-    };
-    let branch_xpub = account_xpub
-        .derive_pub(&secp, &[key_wallet::ChildNumber::from_normal_idx(change_num).unwrap()])
-        .map_err(|e| WalletError::AddressGeneration(format!("Failed to derive branch: {}", e)))?;
-
-    // Derive the specific address index
-    let address_xpub = branch_xpub
-        .derive_pub(&secp, &[key_wallet::ChildNumber::from_normal_idx(index).unwrap()])
-        .map_err(|e| WalletError::AddressGeneration(format!("Failed to derive address: {}", e)))?;
-
-    // Convert to public key and create address
-    let pubkey = PublicKey::from_slice(&address_xpub.public_key.serialize())
-        .map_err(|e| WalletError::AddressGeneration(format!("Failed to create pubkey: {}", e)))?;
-
-    Ok(Address::p2pkh(&pubkey, network))
 }
 
 #[cfg(feature = "std")]

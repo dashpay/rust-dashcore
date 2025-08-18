@@ -23,7 +23,7 @@ async fn create_test_client(
     let storage_manager = MemoryStorageManager::new().await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
 
     DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap()
 }
@@ -60,14 +60,16 @@ async fn test_spv_client_start_stop() {
 #[tokio::test]
 async fn test_wallet_manager_basic_operations() {
     // Test basic wallet manager operations
-    let wallet_manager = SPVWalletManager::new(Network::Testnet);
+    let mut wallet_manager = SPVWalletManager::new();
 
     // Test that we can create a wallet manager
-    assert_eq!(wallet_manager.get_watched_scripts().len(), 0);
+    // SPVWalletManager doesn't have get_watched_scripts method anymore
+    // Check wallet count instead
+    assert_eq!(wallet_manager.base.wallet_count(), 0);
 
     // Test adding a wallet (this would need actual wallet creation logic)
     // For now, just verify the manager is working
-    let balance = wallet_manager.get_total_balance();
+    let balance = wallet_manager.base.get_total_balance();
     assert_eq!(balance, 0);
 }
 

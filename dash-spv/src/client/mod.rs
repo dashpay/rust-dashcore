@@ -359,6 +359,7 @@ impl<
             self.watch_items.clone(),
             self.stats.clone(),
             self.event_tx.clone(),
+            self.config.network,
         );
 
         tokio::spawn(async move {

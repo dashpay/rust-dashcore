@@ -59,7 +59,7 @@ async fn test_simple_header_sync() {
         MultiPeerNetworkManager::new(&config).await.expect("Failed to create network manager");
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
 
     let mut client = DashSpvClient::new(config.clone(), network_manager, storage, wallet)
         .await

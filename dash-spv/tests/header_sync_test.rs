@@ -306,7 +306,7 @@ async fn test_header_sync_with_client_integration() {
         MemoryStorageManager::new().await.expect("Failed to create storage manager");
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
 
     let client = DashSpvClient::new(config, network_manager, storage_manager, wallet).await;
     assert!(client.is_ok(), "Client creation should succeed");

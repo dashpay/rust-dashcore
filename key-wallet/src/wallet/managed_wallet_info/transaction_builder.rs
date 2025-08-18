@@ -316,7 +316,7 @@ impl TransactionBuilder {
                     // version (1) + creditOutputsCount + creditOutputs
                     1 + varint_size(p.credit_outputs.len()) + p.credit_outputs.len() * 34
                 }
-                TransactionPayload::AssetUnlockPayloadType(p) => {
+                TransactionPayload::AssetUnlockPayloadType(_p) => {
                     // version (1) + index (8) + fee (4) + requestHeight (4) + quorumHash (32) + quorumSig (96)
                     1 + 8 + 4 + 4 + 32 + 96
                 }

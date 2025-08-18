@@ -44,7 +44,7 @@ async fn test_multi_peer_connection() {
     let storage_manager = DiskStorageManager::new(temp_path).await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
 
     let mut client =
         DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
@@ -91,7 +91,7 @@ async fn test_peer_persistence() {
         let storage_manager = DiskStorageManager::new(temp_path.clone()).await.unwrap();
 
         // Create wallet manager
-        let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+        let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
 
         let mut client =
             DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
@@ -117,7 +117,7 @@ async fn test_peer_persistence() {
         let storage_manager = DiskStorageManager::new(temp_path).await.unwrap();
 
         // Create wallet manager
-        let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+        let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
 
         let mut client =
             DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
@@ -157,7 +157,7 @@ async fn test_peer_disconnection() {
     let storage_manager = DiskStorageManager::new(temp_path).await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
 
     let client =
         DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
@@ -193,7 +193,7 @@ async fn test_max_peer_limit() {
     let storage_manager = MemoryStorageManager::new().await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
 
     let _client =
         DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();

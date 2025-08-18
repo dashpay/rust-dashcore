@@ -35,7 +35,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl key_wallet_manager::wallet_interface::WalletInterface for MockWallet {
-        async fn process_block(&mut self, block: &Block, height: u32) -> Vec<dashcore::Txid> {
+        async fn process_block(
+            &mut self,
+            block: &Block,
+            height: u32,
+            _network: Network,
+        ) -> Vec<dashcore::Txid> {
             let mut processed = self.processed_blocks.lock().await;
             processed.push((block.block_hash(), height));
 
@@ -43,19 +48,20 @@ mod tests {
             block.txdata.iter().map(|tx| tx.txid()).collect()
         }
 
-        async fn process_mempool_transaction(&mut self, tx: &Transaction) {
+        async fn process_mempool_transaction(&mut self, tx: &Transaction, _network: Network) {
             let mut processed = self.processed_transactions.lock().await;
             processed.push(tx.txid());
         }
 
-        async fn handle_reorg(&mut self, _from_height: u32, _to_height: u32) {
+        async fn handle_reorg(&mut self, _from_height: u32, _to_height: u32, _network: Network) {
             // Not tested here
         }
 
         async fn check_compact_filter(
             &self,
-            _filter: &[u8],
+            _filter: &dashcore::bip158::BlockFilter,
             _block_hash: &dashcore::BlockHash,
+            _network: Network,
         ) -> bool {
             // Return true for all filters in test
             true
@@ -91,6 +97,7 @@ mod tests {
             watch_items,
             stats,
             event_tx,
+            Network::Dash,
         );
 
         (processor, task_tx, event_rx, wallet, storage)
@@ -169,9 +176,10 @@ mod tests {
 
         // Send filter processing task
         let (response_tx, response_rx) = oneshot::channel();
+        let filter = dashcore::bip158::BlockFilter::new(&filter_data);
         task_tx
             .send(BlockProcessingTask::ProcessCompactFilter {
-                filter_data: filter_data.clone(),
+                filter,
                 block_hash,
                 response_tx,
             })
@@ -219,18 +227,30 @@ mod tests {
 
         #[async_trait::async_trait]
         impl key_wallet_manager::wallet_interface::WalletInterface for NonMatchingWallet {
-            async fn process_block(&mut self, _block: &Block, _height: u32) -> Vec<dashcore::Txid> {
+            async fn process_block(
+                &mut self,
+                _block: &Block,
+                _height: u32,
+                _network: Network,
+            ) -> Vec<dashcore::Txid> {
                 Vec::new()
             }
 
-            async fn process_mempool_transaction(&mut self, _tx: &Transaction) {}
+            async fn process_mempool_transaction(&mut self, _tx: &Transaction, _network: Network) {}
 
-            async fn handle_reorg(&mut self, _from_height: u32, _to_height: u32) {}
+            async fn handle_reorg(
+                &mut self,
+                _from_height: u32,
+                _to_height: u32,
+                _network: Network,
+            ) {
+            }
 
             async fn check_compact_filter(
                 &self,
-                _filter: &[u8],
+                _filter: &dashcore::bip158::BlockFilter,
                 _block_hash: &dashcore::BlockHash,
+                _network: Network,
             ) -> bool {
                 // Always return false - filter doesn't match
                 false
@@ -250,17 +270,25 @@ mod tests {
         let storage = Arc::new(Mutex::new(MemoryStorageManager::new().await.unwrap()));
         let watch_items = Arc::new(RwLock::new(HashSet::new()));
 
-        let mut processor =
-            BlockProcessor::new(task_rx, wallet, storage, watch_items, stats, event_tx);
+        let mut processor = BlockProcessor::new(
+            task_rx,
+            wallet,
+            storage,
+            watch_items,
+            stats,
+            event_tx,
+            Network::Dash,
+        );
 
         let block_hash = create_test_block(Network::Dash).block_hash();
         let filter_data = vec![1, 2, 3, 4, 5];
 
         // Send filter processing task
         let (response_tx, response_rx) = oneshot::channel();
+        let filter = dashcore::bip158::BlockFilter::new(&filter_data);
         task_tx
             .send(BlockProcessingTask::ProcessCompactFilter {
-                filter_data,
+                filter,
                 block_hash,
                 response_tx,
             })

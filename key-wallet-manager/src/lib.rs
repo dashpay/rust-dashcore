@@ -21,11 +21,7 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
-pub mod compact_filter;
 pub mod spv_wallet_manager;
-pub mod sync;
-pub mod transaction_handler;
-pub mod utxo_cache;
 pub mod wallet_interface;
 pub mod wallet_manager;
 
@@ -40,20 +36,10 @@ pub use dashcore::blockdata::transaction::Transaction;
 pub use dashcore::{OutPoint, TxIn, TxOut};
 
 // Export our high-level types
-pub use compact_filter::{CompactFilter, FilterHeader, FilterType, GolombCodedSet};
 pub use key_wallet::wallet::managed_wallet_info::coin_selection::{
     CoinSelector, SelectionResult, SelectionStrategy,
 };
 pub use key_wallet::wallet::managed_wallet_info::fee::{FeeEstimator, FeeRate};
 pub use key_wallet::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
-pub use spv_wallet_manager::{
-    BlockProcessResult, SPVStats, SPVSyncStatus, SPVWalletManager, TransactionProcessResult,
-};
-pub use sync::{
-    BlockProcessResult as SyncBlockResult, ReorgHandler, SyncManager, SyncState, WalletSynchronizer,
-};
-pub use transaction_handler::{
-    AddressTracker, TransactionHandler, TransactionMatch,
-    TransactionProcessResult as HandlerTransactionResult,
-};
+pub use spv_wallet_manager::{ProcessBlockResult, SPVStats, SPVSyncStatus, SPVWalletManager};
 pub use wallet_manager::{WalletError, WalletManager};

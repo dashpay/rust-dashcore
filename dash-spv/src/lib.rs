@@ -30,7 +30,7 @@
 //!     // Create the required components
 //!     let network = MultiPeerNetworkManager::new(&config).await?;
 //!     let storage = MemoryStorageManager::new().await?;
-//!     let wallet = Arc::new(RwLock::new(SPVWalletManager::new(config.network)));
+//!     let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
 //!
 //!     // Create and start the client
 //!     let mut client = DashSpvClient::new(config.clone(), network, storage, wallet).await?;
