@@ -11,7 +11,7 @@ use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
 use crate::error::Result;
 use crate::mnemonic::{Language, Mnemonic};
 use crate::seed::Seed;
-use crate::{Account, Network};
+use crate::Network;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use std::collections::BTreeSet;

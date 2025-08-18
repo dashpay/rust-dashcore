@@ -18,9 +18,7 @@ use dashcore::blockdata::transaction::special_transaction::{
 };
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
-use dashcore::hash_types::{
-    InputsHash, MerkleRootMasternodeList, MerkleRootQuorums, ProTxHash, PubkeyHash,
-};
+use dashcore::hash_types::{InputsHash, MerkleRootMasternodeList, MerkleRootQuorums, PubkeyHash};
 use dashcore::sighash::{EcdsaSighashType, SighashCache};
 use dashcore::Address;
 use dashcore::{OutPoint, TxIn, TxOut, Txid};
@@ -32,7 +30,21 @@ use crate::wallet::managed_wallet_info::coin_selection::{CoinSelector, Selection
 use crate::wallet::managed_wallet_info::fee::FeeLevel;
 use crate::Utxo;
 
+/// Calculate varint size for a given number
+fn varint_size(n: usize) -> usize {
+    match n {
+        0..=0xFC => 1,
+        0xFD..=0xFFFF => 3,
+        0x10000..=0xFFFFFFFF => 5,
+        _ => 9,
+    }
+}
+
 /// Transaction builder for creating Dash transactions
+///
+/// This builder implements BIP-69 (Lexicographical Indexing of Transaction Inputs and Outputs)
+/// to ensure deterministic ordering and improve privacy by preventing information leakage
+/// through predictable input/output ordering patterns.
 pub struct TransactionBuilder {
     /// Selected UTXOs with their private keys
     inputs: Vec<(Utxo, Option<SecretKey>)>,
@@ -100,11 +112,23 @@ impl TransactionBuilder {
             return Err(BuilderError::NoOutputs);
         }
 
-        let fee_rate = self.fee_level.fee_rate();
-        let selector = CoinSelector::new(strategy);
+        // Calculate the base transaction size including existing outputs and special payload
+        let base_size = self.calculate_base_size();
+        let input_size = 148; // Size per P2PKH input
 
+        let fee_rate = self.fee_level.fee_rate();
+
+        // Use the CoinSelector with the proper size context
+        let selector = CoinSelector::new(strategy);
         let selection = selector
-            .select_coins(available_utxos, target_amount, fee_rate, current_height)
+            .select_coins_with_size(
+                available_utxos,
+                target_amount,
+                fee_rate,
+                current_height,
+                base_size,
+                input_size,
+            )
             .map_err(BuilderError::CoinSelection)?;
 
         // Add selected UTXOs with their keys
@@ -117,6 +141,10 @@ impl TransactionBuilder {
     }
 
     /// Add an output to a specific address
+    ///
+    /// Note: Outputs will be sorted according to BIP-69 when the transaction is built:
+    /// - First by amount (ascending)
+    /// - Then by scriptPubKey (lexicographically)
     pub fn add_output(mut self, address: &Address, amount: u64) -> Result<Self, BuilderError> {
         if amount == 0 {
             return Err(BuilderError::InvalidAmount("Output amount cannot be zero".into()));
@@ -131,6 +159,10 @@ impl TransactionBuilder {
     }
 
     /// Add a data output (OP_RETURN)
+    ///
+    /// Note: Outputs will be sorted according to BIP-69 when the transaction is built:
+    /// - First by amount (ascending) - data outputs have 0 value
+    /// - Then by scriptPubKey (lexicographically)
     pub fn add_data_output(mut self, data: Vec<u8>) -> Result<Self, BuilderError> {
         if data.len() > 80 {
             return Err(BuilderError::InvalidData("Data output too large (max 80 bytes)".into()));
@@ -186,6 +218,118 @@ impl TransactionBuilder {
         self.outputs.iter().map(|out| out.value).sum()
     }
 
+    /// Calculate the base transaction size excluding inputs
+    /// Based on dashsync/DashSync/shared/Models/Transactions/Base/DSTransaction.m
+    fn calculate_base_size(&self) -> usize {
+        // Base: version (2) + type (2) + locktime (4) = 8 bytes
+        let mut size = 8;
+
+        // Add varint for input count (will be added later, typically 1 byte)
+        size += 1;
+
+        // Add varint for output count
+        size += varint_size(
+            self.outputs.len()
+                + if self.change_address.is_some() {
+                    1
+                } else {
+                    0
+                },
+        );
+
+        // Add outputs size (TX_OUTPUT_SIZE = 34 bytes per P2PKH output)
+        size += self.outputs.len() * 34;
+
+        // Add change output if we have a change address
+        if self.change_address.is_some() {
+            size += 34; // TX_OUTPUT_SIZE
+        }
+
+        // Add special payload size if present
+        // Based on dashsync payload size calculations
+        if let Some(ref payload) = self.special_payload {
+            let payload_size = match payload {
+                TransactionPayload::CoinbasePayloadType(p) => {
+                    // version (2) + height (4) + merkleRootMasternodeList (32) + merkleRootQuorums (32)
+                    let mut size = 2 + 4 + 32 + 32;
+                    // Optional fields for newer versions
+                    if p.best_cl_height.is_some() {
+                        size += 4; // best_cl_height
+                        size += 96; // best_cl_signature (BLS)
+                    }
+                    if p.asset_locked_amount.is_some() {
+                        size += 8; // asset_locked_amount
+                    }
+                    size
+                }
+                TransactionPayload::ProviderRegistrationPayloadType(p) => {
+                    // Base payload + signature
+                    // version (2) + type (2) + mode (2) + collateralHash (32) + collateralIndex (4)
+                    // + ipAddress (16) + port (2) + KeyIDOwner (20) + KeyIDOperator (20) + KeyIDVoting (20)
+                    // + operatorReward (2) + scriptPayoutSize + scriptPayout + inputsHash (32)
+                    // + payloadSigSize (1-9) + payloadSig (up to 75)
+                    let script_size = p.script_payout.len();
+                    let base = 2
+                        + 2
+                        + 2
+                        + 32
+                        + 4
+                        + 16
+                        + 2
+                        + 20
+                        + 20
+                        + 20
+                        + 2
+                        + varint_size(script_size)
+                        + script_size
+                        + 32;
+                    base + varint_size(75) + 75 // MAX_ECDSA_SIGNATURE_SIZE = 75
+                }
+                TransactionPayload::ProviderUpdateServicePayloadType(p) => {
+                    // version (2) + optionally mn_type (2) + proTxHash (32) + ipAddress (16) + port (2)
+                    // + scriptPayoutSize + scriptPayout + inputsHash (32) + payloadSig (96 for BLS)
+                    let script_size = p.script_payout.len();
+                    let mut size =
+                        2 + 32 + 16 + 2 + varint_size(script_size) + script_size + 32 + 96;
+                    if p.mn_type.is_some() {
+                        size += 2; // mn_type for BasicBLS version
+                    }
+                    // Platform fields for Evo masternodes
+                    if p.platform_node_id.is_some() {
+                        size += 20; // platform_node_id
+                        size += 2; // platform_p2p_port
+                        size += 2; // platform_http_port
+                    }
+                    size
+                }
+                TransactionPayload::ProviderUpdateRegistrarPayloadType(p) => {
+                    // version (2) + proTxHash (32) + mode (2) + PubKeyOperator (48) + KeyIDVoting (20)
+                    // + scriptPayoutSize + scriptPayout + inputsHash (32) + payloadSig (up to 75)
+                    let script_size = p.script_payout.len();
+                    2 + 32 + 2 + 48 + 20 + varint_size(script_size) + script_size + 32 + 75
+                }
+                TransactionPayload::ProviderUpdateRevocationPayloadType(_) => {
+                    // version (2) + proTxHash (32) + reason (2) + inputsHash (32) + payloadSig (96 for BLS)
+                    2 + 32 + 2 + 32 + 96
+                }
+                TransactionPayload::AssetLockPayloadType(p) => {
+                    // version (1) + creditOutputsCount + creditOutputs
+                    1 + varint_size(p.credit_outputs.len()) + p.credit_outputs.len() * 34
+                }
+                TransactionPayload::AssetUnlockPayloadType(p) => {
+                    // version (1) + index (8) + fee (4) + requestHeight (4) + quorumHash (32) + quorumSig (96)
+                    1 + 8 + 4 + 4 + 32 + 96
+                }
+                _ => 100, // Default estimate for unknown types
+            };
+
+            // Add varint for payload length
+            size += varint_size(payload_size) + payload_size;
+        }
+
+        size
+    }
+
     /// Build the transaction
     ///
     /// Uses the special payload if one was set via `set_special_payload`
@@ -235,12 +379,28 @@ impl TransactionBuilder {
             });
         }
 
-        // Create transaction inputs
+        // BIP-69: Sort inputs by transaction hash (reversed) and then by output index
+        // We need to maintain the association between UTXOs and their keys
+        let mut sorted_inputs = self.inputs.clone();
+        sorted_inputs.sort_by(|a, b| {
+            // First compare by transaction hash (reversed byte order)
+            let tx_hash_a = a.0.outpoint.txid.to_byte_array();
+            let tx_hash_b = b.0.outpoint.txid.to_byte_array();
+
+            match tx_hash_a.cmp(&tx_hash_b) {
+                std::cmp::Ordering::Equal => {
+                    // If transaction hashes match, compare by output index
+                    a.0.outpoint.vout.cmp(&b.0.outpoint.vout)
+                }
+                other => other,
+            }
+        });
+
+        // Create transaction inputs from sorted inputs
         // Dash doesn't use RBF, so we use the standard sequence number
         let sequence = 0xffffffff;
 
-        let tx_inputs: Vec<TxIn> = self
-            .inputs
+        let tx_inputs: Vec<TxIn> = sorted_inputs
             .iter()
             .map(|(utxo, _)| TxIn {
                 previous_output: utxo.outpoint,
@@ -273,8 +433,19 @@ impl TransactionBuilder {
             }
         }
 
+        // BIP-69: Sort outputs by amount first, then by scriptPubKey lexicographically
+        tx_outputs.sort_by(|a, b| {
+            match a.value.cmp(&b.value) {
+                std::cmp::Ordering::Equal => {
+                    // If amounts match, compare scriptPubKeys lexicographically
+                    a.script_pubkey.as_bytes().cmp(b.script_pubkey.as_bytes())
+                }
+                other => other,
+            }
+        });
+
         // Create unsigned transaction with optional special payload
-        // Clone the special_payload to avoid move issues with sign_transaction
+        // Update sorted_inputs to maintain the key association after sorting
         let mut transaction = Transaction {
             version: self.version,
             lock_time: self.lock_time,
@@ -284,8 +455,8 @@ impl TransactionBuilder {
         };
 
         // Sign inputs if keys are provided
-        if self.inputs.iter().any(|(_, key)| key.is_some()) {
-            transaction = self.sign_transaction(transaction)?;
+        if sorted_inputs.iter().any(|(_, key)| key.is_some()) {
+            transaction = self.sign_transaction_with_sorted_inputs(transaction, sorted_inputs)?;
         }
 
         Ok(transaction)
@@ -465,15 +636,86 @@ impl TransactionBuilder {
 
     /// Estimate transaction size in bytes
     fn estimate_transaction_size(&self, input_count: usize, output_count: usize) -> usize {
-        crate::wallet::managed_wallet_info::fee::estimate_tx_size(
-            input_count,
-            output_count,
-            self.change_address.is_some(),
-        )
+        // Base: version (2) + type (2) + locktime (4) = 8 bytes
+        let mut size = 8;
+
+        // Add varints for input/output counts
+        size += varint_size(input_count);
+        size += varint_size(output_count);
+
+        // Add inputs (TX_INPUT_SIZE = 148 bytes per P2PKH input)
+        size += input_count * 148;
+
+        // Add outputs (TX_OUTPUT_SIZE = 34 bytes per P2PKH output)
+        size += output_count * 34;
+
+        // Add special payload size if present (same logic as calculate_base_size)
+        if let Some(ref payload) = self.special_payload {
+            let payload_size = match payload {
+                TransactionPayload::CoinbasePayloadType(p) => {
+                    let mut size = 2 + 4 + 32 + 32;
+                    if p.best_cl_height.is_some() {
+                        size += 4 + 96;
+                    }
+                    if p.asset_locked_amount.is_some() {
+                        size += 8;
+                    }
+                    size
+                }
+                TransactionPayload::ProviderRegistrationPayloadType(p) => {
+                    let script_size = p.script_payout.len();
+                    let base = 2
+                        + 2
+                        + 2
+                        + 32
+                        + 4
+                        + 16
+                        + 2
+                        + 20
+                        + 20
+                        + 20
+                        + 2
+                        + varint_size(script_size)
+                        + script_size
+                        + 32;
+                    base + varint_size(75) + 75
+                }
+                TransactionPayload::ProviderUpdateServicePayloadType(p) => {
+                    let script_size = p.script_payout.len();
+                    let mut size =
+                        2 + 32 + 16 + 2 + varint_size(script_size) + script_size + 32 + 96;
+                    if p.mn_type.is_some() {
+                        size += 2;
+                    }
+                    if p.platform_node_id.is_some() {
+                        size += 20 + 2 + 2;
+                    }
+                    size
+                }
+                TransactionPayload::ProviderUpdateRegistrarPayloadType(p) => {
+                    let script_size = p.script_payout.len();
+                    2 + 32 + 2 + 48 + 20 + varint_size(script_size) + script_size + 32 + 75
+                }
+                TransactionPayload::ProviderUpdateRevocationPayloadType(_) => 2 + 32 + 2 + 32 + 96,
+                TransactionPayload::AssetLockPayloadType(p) => {
+                    1 + varint_size(p.credit_outputs.len()) + p.credit_outputs.len() * 34
+                }
+                TransactionPayload::AssetUnlockPayloadType(_) => 1 + 8 + 4 + 4 + 32 + 96,
+                _ => 100,
+            };
+
+            size += varint_size(payload_size) + payload_size;
+        }
+
+        size
     }
 
-    /// Sign the transaction
-    fn sign_transaction(&self, mut tx: Transaction) -> Result<Transaction, BuilderError> {
+    /// Sign the transaction with sorted inputs (for BIP-69 compliance)
+    fn sign_transaction_with_sorted_inputs(
+        &self,
+        mut tx: Transaction,
+        sorted_inputs: Vec<(Utxo, Option<SecretKey>)>,
+    ) -> Result<Transaction, BuilderError> {
         let secp = Secp256k1::new();
 
         // Collect all signatures first, then apply them
@@ -481,7 +723,7 @@ impl TransactionBuilder {
         {
             let cache = SighashCache::new(&tx);
 
-            for (index, (utxo, key_opt)) in self.inputs.iter().enumerate() {
+            for (index, (utxo, key_opt)) in sorted_inputs.iter().enumerate() {
                 if let Some(key) = key_opt {
                     // Get the script pubkey from the UTXO
                     let script_pubkey = &utxo.txout.script_pubkey;
@@ -523,6 +765,23 @@ impl TransactionBuilder {
         }
 
         Ok(tx)
+    }
+
+    /// Sign the transaction (legacy method for backward compatibility)
+    fn sign_transaction(&self, tx: Transaction) -> Result<Transaction, BuilderError> {
+        // For backward compatibility, we sort the inputs according to BIP-69 before signing
+        let mut sorted_inputs = self.inputs.clone();
+        sorted_inputs.sort_by(|a, b| {
+            let tx_hash_a = a.0.outpoint.txid.to_byte_array();
+            let tx_hash_b = b.0.outpoint.txid.to_byte_array();
+
+            match tx_hash_a.cmp(&tx_hash_b) {
+                std::cmp::Ordering::Equal => a.0.outpoint.vout.cmp(&b.0.outpoint.vout),
+                other => other,
+            }
+        });
+
+        self.sign_transaction_with_sorted_inputs(tx, sorted_inputs)
     }
 }
 
@@ -578,8 +837,10 @@ mod tests {
     use super::*;
     use crate::Network;
     use dashcore::blockdata::script::ScriptBuf;
+    use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
     use dashcore::{OutPoint, TxOut, Txid};
     use dashcore_hashes::{sha256d, Hash};
+    use hex;
 
     fn test_utxo(value: u64) -> Utxo {
         let outpoint = OutPoint {
@@ -650,5 +911,417 @@ mod tests {
             .build();
 
         assert!(matches!(result, Err(BuilderError::InsufficientFunds { .. })));
+    }
+
+    #[test]
+    fn test_asset_lock_transaction() {
+        // Test based on DSTransactionTests.m testAssetLockTx1
+        use dashcore::consensus::Decodable;
+        let hex_data = hex::decode("0300080001eecf4e8f1ffd3a3a4e5033d618231fd05e5f08c1a727aac420f9a26db9bf39eb010000006a473044022026f169570532332f857cb64a0b7d9c0837d6f031633e1d6c395d7c03b799460302207eba4c4575a66803cecf50b61ff5f2efc2bd4e61dff00d9d4847aa3d8b1a5e550121036cd0b73d304bacc80fa747d254fbc5f0bf944dd8c8b925cd161bb499b790d08d0000000002317dd0be030000002321022ca85dba11c4e5a6da3a00e73a08765319a5d66c2f6434b288494337b0c9ed2dac6df29c3b00000000026a000000000046010200e1f505000000001976a9147c75beb097957cc09537b615dde9ea6807719cdf88ac6d11a735000000001976a9147c75beb097957cc09537b615dde9ea6807719cdf88ac").unwrap();
+
+        let mut cursor = std::io::Cursor::new(hex_data);
+        let tx = Transaction::consensus_decode(&mut cursor).unwrap();
+
+        assert_eq!(tx.version, 3);
+        assert_eq!(tx.lock_time, 0);
+        assert_eq!(tx.input.len(), 1);
+        assert_eq!(tx.output.len(), 2);
+
+        // Verify it's an asset lock transaction
+        if let Some(TransactionPayload::AssetLockPayloadType(payload)) =
+            &tx.special_transaction_payload
+        {
+            assert_eq!(payload.version, 1);
+            assert_eq!(payload.credit_outputs.len(), 2);
+            assert_eq!(payload.credit_outputs[0].value, 100000000);
+            assert_eq!(payload.credit_outputs[1].value, 900141421);
+        } else {
+            panic!("Expected AssetLockPayload");
+        }
+    }
+
+    #[test]
+    fn test_coinbase_transaction() {
+        // Test based on DSTransactionTests.m testCoinbaseTransaction
+        use dashcore::consensus::Decodable;
+        let hex_data = hex::decode("03000500010000000000000000000000000000000000000000000000000000000000000000ffffffff0502f6050105ffffffff0200c11a3d050000002321038df098a36af5f1b7271e32ad52947f64c1ad70c16a8a1a987105eaab5daa7ad2ac00c11a3d050000001976a914bfb885c89c83cd44992a8ade29b610e6ddf00c5788ac00000000260100f6050000aaaec8d6a8535a01bd844817dea1faed66f6c397b1dcaec5fe8c5af025023c35").unwrap();
+
+        let mut cursor = std::io::Cursor::new(hex_data);
+        let tx = Transaction::consensus_decode(&mut cursor).unwrap();
+
+        assert_eq!(tx.version, 3);
+        assert_eq!(tx.lock_time, 0);
+        // Check if it's a coinbase transaction by checking if first input has null previous_output
+        assert_eq!(
+            tx.input[0].previous_output.txid,
+            Txid::from_raw_hash(sha256d::Hash::from_slice(&[0u8; 32]).unwrap())
+        );
+        assert_eq!(tx.input[0].previous_output.vout, 0xffffffff);
+        assert_eq!(tx.output.len(), 2);
+
+        // Verify txid matches expected
+        let expected_txid = "5b4e5e99e967e01e27627621df00c44525507a31201ceb7b96c6e1a452e82bef";
+        assert_eq!(tx.txid().to_string(), expected_txid);
+    }
+
+    #[test]
+    fn test_transaction_size_estimation() {
+        // Test that transaction size estimation is accurate
+        let utxos = vec![test_utxo(100000), test_utxo(200000)];
+
+        let recipient_address = test_address();
+        let change_address = test_address();
+
+        let builder = TransactionBuilder::new()
+            .set_fee_level(FeeLevel::Normal)
+            .set_change_address(change_address.clone())
+            .add_output(&recipient_address, 150000)
+            .unwrap()
+            .add_inputs(utxos.into_iter().map(|u| (u, None)).collect());
+
+        // Test calculate_base_size
+        let base_size = builder.calculate_base_size();
+        // Base (8) + input varint (1) + output varint (1) + 1 output (34) + 1 change (34) = 78 bytes
+        assert!(
+            base_size > 70 && base_size < 85,
+            "Base size should be around 78 bytes, got {}",
+            base_size
+        );
+
+        // Test estimate_transaction_size
+        let estimated_size = builder.estimate_transaction_size(2, 2);
+        // Base (8) + varints (2) + 2 inputs (296) + 2 outputs (68) = ~374 bytes
+        assert!(
+            estimated_size > 370 && estimated_size < 380,
+            "Estimated size should be around 374 bytes, got {}",
+            estimated_size
+        );
+    }
+
+    #[test]
+    fn test_fee_calculation() {
+        // Test that fees are calculated correctly
+        let utxos = vec![test_utxo(1000000)];
+
+        let recipient_address = test_address();
+        let change_address = test_address();
+
+        let tx = TransactionBuilder::new()
+            .set_fee_level(FeeLevel::Normal) // 1 duff per byte
+            .set_change_address(change_address.clone())
+            .add_inputs(utxos.into_iter().map(|u| (u, None)).collect())
+            .add_output(&recipient_address, 500000)
+            .unwrap()
+            .build()
+            .unwrap();
+
+        // Total input: 1000000
+        // Output to recipient: 500000
+        // Change output should be approximately: 1000000 - 500000 - fee
+        // Fee should be roughly 226 duffs for a 1-input, 2-output transaction
+        let total_output: u64 = tx.output.iter().map(|o| o.value).sum();
+        let fee = 1000000 - total_output;
+
+        assert!(fee > 200 && fee < 300, "Fee should be around 226 duffs, got {}", fee);
+    }
+
+    #[test]
+    fn test_exact_change_no_change_output() {
+        // Test when the exact amount is used (no change output needed)
+        let utxos = vec![test_utxo(150226)]; // Exact amount for output + fee
+
+        let recipient_address = test_address();
+        let change_address = test_address();
+
+        let tx = TransactionBuilder::new()
+            .set_fee_level(FeeLevel::Normal)
+            .set_change_address(change_address.clone())
+            .add_inputs(utxos.into_iter().map(|u| (u, None)).collect())
+            .add_output(&recipient_address, 150000)
+            .unwrap()
+            .build()
+            .unwrap();
+
+        // Should only have 1 output (no change) because change is below dust threshold
+        assert_eq!(tx.output.len(), 1);
+        assert_eq!(tx.output[0].value, 150000);
+    }
+
+    #[test]
+    fn test_special_payload_size_calculations() {
+        // Test that special payload sizes are calculated correctly
+        let utxo = test_utxo(100000);
+        let destination = test_address();
+        let change = test_address();
+
+        // Test with AssetLock payload
+        let credit_outputs = vec![
+            TxOut {
+                value: 100000000,
+                script_pubkey: ScriptBuf::new(),
+            },
+            TxOut {
+                value: 895000941,
+                script_pubkey: ScriptBuf::new(),
+            },
+        ];
+
+        let asset_lock_payload = AssetLockPayload {
+            version: 1,
+            credit_outputs: credit_outputs.clone(),
+        };
+
+        let builder = TransactionBuilder::new()
+            .add_input(utxo.clone(), None)
+            .add_output(&destination, 50000)
+            .unwrap()
+            .set_change_address(change.clone())
+            .set_special_payload(TransactionPayload::AssetLockPayloadType(asset_lock_payload));
+
+        let base_size = builder.calculate_base_size();
+        // Should include special payload size
+        assert!(base_size > 100, "Base size with AssetLock payload should be larger");
+
+        // Test with CoinbasePayload
+        use dashcore::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
+        use dashcore::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+
+        let coinbase_payload = CoinbasePayload {
+            version: 3,
+            height: 1526,
+            merkle_root_masternode_list: MerkleRootMasternodeList::from_raw_hash(
+                sha256d::Hash::from_slice(&[0xaa; 32]).unwrap(),
+            ),
+            merkle_root_quorums: MerkleRootQuorums::from_raw_hash(
+                sha256d::Hash::from_slice(&[0xbb; 32]).unwrap(),
+            ),
+            best_cl_height: Some(1500),
+            best_cl_signature: Some(dashcore::bls_sig_utils::BLSSignature::from([0; 96])),
+            asset_locked_amount: Some(1000000),
+        };
+
+        let builder2 = TransactionBuilder::new()
+            .add_input(utxo, None)
+            .add_output(&destination, 50000)
+            .unwrap()
+            .set_change_address(change)
+            .set_special_payload(TransactionPayload::CoinbasePayloadType(coinbase_payload));
+
+        let base_size2 = builder2.calculate_base_size();
+        // Coinbase payload: 2 + 4 + 32 + 32 + 4 + 96 + 8 = 178 bytes + varint
+        assert!(base_size2 > 180, "Base size with Coinbase payload should be larger");
+    }
+
+    #[test]
+    fn test_build_with_payload_override() {
+        // Test that build_with_payload overrides set_special_payload
+        let utxo = test_utxo(100000);
+        let destination = test_address();
+        let change = test_address();
+
+        let credit_outputs = vec![TxOut {
+            value: 50000,
+            script_pubkey: ScriptBuf::new(),
+        }];
+
+        let original_payload = AssetLockPayload {
+            version: 1,
+            credit_outputs: credit_outputs.clone(),
+        };
+
+        let override_payload = AssetLockPayload {
+            version: 2,
+            credit_outputs: vec![TxOut {
+                value: 75000,
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let tx = TransactionBuilder::new()
+            .add_input(utxo, None)
+            .add_output(&destination, 30000)
+            .unwrap()
+            .set_change_address(change)
+            .set_special_payload(TransactionPayload::AssetLockPayloadType(original_payload))
+            .build_with_payload(Some(TransactionPayload::AssetLockPayloadType(override_payload)))
+            .unwrap();
+
+        // Should use the override payload
+        if let Some(TransactionPayload::AssetLockPayloadType(payload)) =
+            &tx.special_transaction_payload
+        {
+            assert_eq!(payload.version, 2);
+            assert_eq!(payload.credit_outputs.len(), 1);
+            assert_eq!(payload.credit_outputs[0].value, 75000);
+        } else {
+            panic!("Expected AssetLockPayload");
+        }
+    }
+
+    #[test]
+    fn test_bip69_output_ordering() {
+        // Test that outputs are sorted according to BIP-69
+        let utxo = test_utxo(1000000);
+        let address1 = test_address();
+        let address2 = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[
+                0x02, 0x60, 0x86, 0x3a, 0xd6, 0x4a, 0x87, 0xae, 0x8a, 0x2f, 0xe8, 0x3c, 0x1a, 0xf1,
+                0xa8, 0x40, 0x3c, 0xb5, 0x3f, 0x53, 0xe4, 0x86, 0xd8, 0x51, 0x1d, 0xad, 0x8a, 0x04,
+                0x88, 0x7e, 0x5b, 0x23, 0x52,
+            ])
+            .unwrap(),
+            Network::Testnet,
+        );
+        let change_address = test_address();
+
+        let tx = TransactionBuilder::new()
+            .set_fee_level(FeeLevel::Normal)
+            .set_change_address(change_address)
+            .add_input(utxo, None)
+            // Add outputs in non-sorted order
+            .add_output(&address1, 300000)
+            .unwrap() // Higher amount
+            .add_output(&address2, 100000)
+            .unwrap() // Lower amount
+            .add_output(&address1, 200000)
+            .unwrap() // Middle amount
+            .build()
+            .unwrap();
+
+        // Verify outputs are sorted by amount (ascending)
+        assert!(tx.output[0].value <= tx.output[1].value);
+        assert!(tx.output[1].value <= tx.output[2].value);
+
+        // The lowest value should be 100000
+        assert_eq!(tx.output[0].value, 100000);
+    }
+
+    #[test]
+    fn test_bip69_input_ordering() {
+        // Test that inputs are sorted according to BIP-69
+        let utxo1 = Utxo::new(
+            OutPoint {
+                txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[2u8; 32]).unwrap()),
+                vout: 1,
+            },
+            TxOut {
+                value: 100000,
+                script_pubkey: ScriptBuf::new(),
+            },
+            test_address(),
+            100,
+            false,
+        );
+
+        let utxo2 = Utxo::new(
+            OutPoint {
+                txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
+                vout: 2,
+            },
+            TxOut {
+                value: 200000,
+                script_pubkey: ScriptBuf::new(),
+            },
+            test_address(),
+            100,
+            false,
+        );
+
+        let utxo3 = Utxo::new(
+            OutPoint {
+                txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
+                vout: 0,
+            },
+            TxOut {
+                value: 300000,
+                script_pubkey: ScriptBuf::new(),
+            },
+            test_address(),
+            100,
+            false,
+        );
+
+        let destination = test_address();
+        let change = test_address();
+
+        let tx = TransactionBuilder::new()
+            .set_fee_level(FeeLevel::Normal)
+            .set_change_address(change)
+            // Add inputs in non-sorted order
+            .add_input(utxo1.clone(), None)
+            .add_input(utxo2.clone(), None)
+            .add_input(utxo3.clone(), None)
+            .add_output(&destination, 500000)
+            .unwrap()
+            .build()
+            .unwrap();
+
+        // Verify inputs are sorted by txid first, then by vout
+        // Expected order: [1u8; 32]:0, [1u8; 32]:2, [2u8; 32]:1
+        assert_eq!(
+            tx.input[0].previous_output.txid,
+            Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap())
+        );
+        assert_eq!(tx.input[0].previous_output.vout, 0);
+
+        assert_eq!(
+            tx.input[1].previous_output.txid,
+            Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap())
+        );
+        assert_eq!(tx.input[1].previous_output.vout, 2);
+
+        assert_eq!(
+            tx.input[2].previous_output.txid,
+            Txid::from_raw_hash(sha256d::Hash::from_slice(&[2u8; 32]).unwrap())
+        );
+        assert_eq!(tx.input[2].previous_output.vout, 1);
+    }
+
+    #[test]
+    fn test_coin_selection_with_special_payload() {
+        // Test that coin selection considers special payload size
+        let utxos = vec![test_utxo(50000), test_utxo(60000), test_utxo(70000)];
+
+        let recipient_address = test_address();
+        let change_address = test_address();
+
+        // Create a large special payload that affects fee calculation
+        let credit_outputs = vec![
+            TxOut {
+                value: 10000,
+                script_pubkey: ScriptBuf::new(),
+            },
+            TxOut {
+                value: 20000,
+                script_pubkey: ScriptBuf::new(),
+            },
+            TxOut {
+                value: 30000,
+                script_pubkey: ScriptBuf::new(),
+            },
+        ];
+
+        let asset_lock_payload = AssetLockPayload {
+            version: 1,
+            credit_outputs,
+        };
+
+        let result = TransactionBuilder::new()
+            .set_fee_level(FeeLevel::Normal)
+            .set_change_address(change_address)
+            .set_special_payload(TransactionPayload::AssetLockPayloadType(asset_lock_payload))
+            .add_output(&recipient_address, 50000)
+            .unwrap()
+            .select_inputs(&utxos, SelectionStrategy::SmallestFirst, 200, |_| None);
+
+        assert!(result.is_ok());
+        let builder = result.unwrap();
+        let tx = builder.build().unwrap();
+
+        // Should have selected enough inputs to cover output + fees for larger transaction
+        assert!(
+            tx.input.len() >= 2,
+            "Should select multiple inputs to cover fees for special payload"
+        );
     }
 }

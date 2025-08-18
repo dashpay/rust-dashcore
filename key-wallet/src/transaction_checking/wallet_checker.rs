@@ -153,7 +153,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
                             if needs_maturity {
                                 // Handle as immature transaction
-                                if let (TransactionContext::InBlock {
+                                if let TransactionContext::InBlock {
                                     height,
                                     block_hash,
                                     timestamp,
@@ -162,7 +162,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                                     height,
                                     block_hash,
                                     timestamp,
-                                }) = context
+                                } = context
                                 {
                                     // Create immature transaction
                                     let mut immature_tx = ImmatureTransaction::new(
