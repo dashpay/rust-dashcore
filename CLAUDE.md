@@ -153,7 +153,7 @@ cargo doc --open
 - **Async/Await**: Modern async Rust throughout
 - **FFI Support**: C and Swift bindings for cross-platform usage
 - **Comprehensive Testing**: Unit, integration, and fuzz testing
-- **MSRV**: Rust 1.80 minimum supported version
+- **MSRV**: Rust 1.89 minimum supported version
 
 ## Code Style Guidelines
 

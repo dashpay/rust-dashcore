@@ -4,13 +4,14 @@
 //! works correctly with the low-level key-wallet primitives.
 
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
+use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{mnemonic::Language, Mnemonic, Network};
 use key_wallet_manager::wallet_manager::{WalletError, WalletId, WalletManager};
 
 #[test]
 fn test_wallet_manager_creation() {
     // Create a wallet manager
-    let manager = WalletManager::new();
+    let manager = WalletManager::<ManagedWalletInfo>::new();
 
     // WalletManager::new returns Self, not Result
     assert_eq!(manager.current_height(Network::Testnet), 0);
@@ -21,7 +22,7 @@ fn test_wallet_manager_creation() {
 fn test_wallet_manager_from_mnemonic() {
     // Create from a test mnemonic
     let mnemonic = Mnemonic::generate(12, Language::English).unwrap();
-    let mut manager = WalletManager::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
     // Create a wallet ID
     let wallet_id: WalletId = [1u8; 32];
@@ -41,7 +42,7 @@ fn test_wallet_manager_from_mnemonic() {
 
 #[test]
 fn test_account_management() {
-    let mut manager = WalletManager::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
     // Create a wallet ID
     let wallet_id: WalletId = [1u8; 32];
@@ -70,7 +71,7 @@ fn test_account_management() {
 
 #[test]
 fn test_address_generation() {
-    let mut manager = WalletManager::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
     // Create a wallet ID
     let wallet_id: WalletId = [1u8; 32];
@@ -126,7 +127,7 @@ fn test_address_generation() {
 fn test_utxo_management() {
     // Unused imports removed - UTXOs are created by processing transactions
 
-    let mut manager = WalletManager::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
     // Create a wallet ID
     let wallet_id: WalletId = [1u8; 32];
@@ -151,7 +152,7 @@ fn test_utxo_management() {
 
 #[test]
 fn test_balance_calculation() {
-    let mut manager = WalletManager::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
     // Create a wallet ID
     let wallet_id: WalletId = [1u8; 32];
@@ -175,7 +176,7 @@ fn test_balance_calculation() {
 
 #[test]
 fn test_block_height_tracking() {
-    let mut manager = WalletManager::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
     assert_eq!(manager.current_height(Network::Testnet), 0);
 

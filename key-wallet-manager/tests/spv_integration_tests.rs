@@ -8,10 +8,11 @@ use dashcore::{TxIn, TxOut};
 use dashcore_hashes::Hash;
 
 use dashcore::bip158::{BlockFilter, BlockFilterWriter};
+use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
 use key_wallet_manager::spv_wallet_manager::{SPVSyncStatus, SPVWalletManager};
 use key_wallet_manager::wallet_interface::WalletInterface;
-use key_wallet_manager::wallet_manager::WalletId;
+use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
 
 /// Create a test transaction
 fn create_test_transaction(value: u64) -> Transaction {
@@ -69,7 +70,7 @@ fn create_mock_filter(block: &Block) -> BlockFilter {
 
 #[test]
 fn test_spv_integration_basic() {
-    let mut spv = SPVWalletManager::new();
+    let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Create a test wallet
     let wallet_id: WalletId = [1u8; 32];
@@ -82,7 +83,7 @@ fn test_spv_integration_basic() {
 
 #[tokio::test]
 async fn test_filter_checking() {
-    let mut spv = SPVWalletManager::new();
+    let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Create a test wallet
     let wallet_id: WalletId = [1u8; 32];
@@ -109,7 +110,7 @@ async fn test_filter_checking() {
 
 #[tokio::test]
 async fn test_block_processing() {
-    let mut spv = SPVWalletManager::new();
+    let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Create a test wallet
     let wallet_id: WalletId = [1u8; 32];
@@ -136,7 +137,7 @@ fn test_mempool_transaction() {
 
 #[test]
 fn test_queued_blocks() {
-    let mut spv = SPVWalletManager::new();
+    let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Create blocks
     let block1 = create_test_block(101, vec![create_test_transaction(1000)]);
@@ -159,7 +160,7 @@ fn test_queued_blocks() {
 
 #[test]
 fn test_sync_status_tracking() {
-    let mut spv = SPVWalletManager::new();
+    let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Set target height
     spv.set_target_height(Network::Testnet, 1000);
@@ -217,7 +218,7 @@ fn test_reorg_handling() {
 
 #[tokio::test]
 async fn test_multiple_wallets() {
-    let mut spv = SPVWalletManager::new();
+    let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Create and add multiple wallets
     for i in 0..3 {
@@ -250,7 +251,7 @@ async fn test_multiple_wallets() {
 async fn test_spent_utxo_tracking() {
     // This test requires more complex UTXO tracking that's not fully implemented
     // We'll create a simpler version
-    let mut spv = SPVWalletManager::new();
+    let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Create a test wallet
     let wallet_id: WalletId = [1u8; 32];

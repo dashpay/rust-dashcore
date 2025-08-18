@@ -1,6 +1,7 @@
 //! Transaction building functionality for the wallet manager
 
 use super::{WalletError, WalletId, WalletManager};
+use crate::wallet_info_trait::WalletInfoInterface;
 use dashcore::Transaction;
 use key_wallet::wallet::managed_wallet_info::fee::FeeLevel;
 use key_wallet::wallet::managed_wallet_info::transaction_building::{
@@ -9,7 +10,7 @@ use key_wallet::wallet::managed_wallet_info::transaction_building::{
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::{Address, Network};
 
-impl WalletManager {
+impl<T: WalletInfoInterface> WalletManager<T> {
     /// Creates an unsigned transaction from a specific wallet and account
     ///
     /// This method delegates to the ManagedWalletInfo's create_payment_transaction method

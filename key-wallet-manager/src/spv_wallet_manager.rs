@@ -15,6 +15,7 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::{BlockHash, Txid};
 use key_wallet::Network;
 
+use crate::wallet_info_trait::WalletInfoInterface;
 use crate::wallet_interface::WalletInterface;
 use crate::wallet_manager::{WalletId, WalletManager};
 use key_wallet::transaction_checking::TransactionContext;
@@ -31,9 +32,9 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 /// All wallet state, UTXO tracking, and transaction processing is delegated
 /// to the underlying WalletManager.
 #[derive(Debug)]
-pub struct SPVWalletManager {
+pub struct SPVWalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     /// Base wallet manager (handles all wallet state)
-    pub base: WalletManager,
+    pub base: WalletManager<T>,
 
     // SPV-specific fields only
     /// Block download queue (per network)
@@ -48,12 +49,15 @@ pub struct SPVWalletManager {
     stats: BTreeMap<Network, SPVStats>,
 }
 
-impl From<WalletManager> for SPVWalletManager {
-    fn from(manager: WalletManager) -> Self {
+impl<T: WalletInfoInterface> From<WalletManager<T>> for SPVWalletManager<T> {
+    fn from(manager: WalletManager<T>) -> Self {
         Self {
             base: manager,
+            download_queues: BTreeMap::new(),
+            pending_blocks: BTreeMap::new(),
+            filter_matches: BTreeMap::new(),
             max_download_queue: 100,
-            ..Default::default()
+            stats: BTreeMap::new(),
         }
     }
 }
@@ -97,17 +101,25 @@ pub enum SPVSyncStatus {
     Error(String),
 }
 
-impl SPVWalletManager {
-    /// Create a new SPV wallet manager
-    pub fn new() -> Self {
+impl<T: WalletInfoInterface> SPVWalletManager<T> {
+    /// Create a new SPV wallet manager from a WalletManager
+    pub fn with_base(base: WalletManager<T>) -> Self {
         Self {
-            base: WalletManager::new(),
+            base,
             download_queues: BTreeMap::new(),
             pending_blocks: BTreeMap::new(),
             filter_matches: BTreeMap::new(),
             max_download_queue: 100,
             stats: BTreeMap::new(),
         }
+    }
+
+    /// Create a new SPV wallet manager (only available when T implements Default)
+    pub fn new() -> Self
+    where
+        T: Default,
+    {
+        Self::with_base(WalletManager::new())
     }
 
     /// Queue a block for download
@@ -202,14 +214,14 @@ pub struct ProcessBlockResult {
     pub affected_wallets: Vec<WalletId>,
 }
 
-impl Default for SPVWalletManager {
+impl<T: WalletInfoInterface + Default> Default for SPVWalletManager<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl WalletInterface for SPVWalletManager {
+impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for SPVWalletManager<T> {
     /// Process a block and return relevant transaction IDs
     async fn process_block(
         &mut self,

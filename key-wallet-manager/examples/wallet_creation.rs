@@ -9,6 +9,7 @@
 use hex;
 use key_wallet::account::StandardAccountType;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
+use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{AccountType, Network};
 use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
 use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
@@ -19,7 +20,7 @@ fn main() {
     // Example 1: Basic wallet creation with WalletManager
     println!("1. Creating a basic wallet with WalletManager...");
 
-    let mut manager = WalletManager::new();
+    let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
     // Create a wallet ID (32 bytes)
     let wallet_id: WalletId = [1u8; 32];
@@ -124,7 +125,7 @@ fn main() {
     // Example 5: Using SPVWalletManager
     println!("\n5. Using SPVWalletManager for SPV functionality...");
 
-    let mut spv_manager = SPVWalletManager::new();
+    let mut spv_manager = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     let wallet_id3: WalletId = [3u8; 32];
 
