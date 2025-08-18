@@ -838,23 +838,6 @@ impl DiskStorageManager {
         Ok(())
     }
 
-    /// Shutdown the storage manager.
-    pub async fn shutdown(&mut self) -> StorageResult<()> {
-        // Save all dirty segments
-        self.save_dirty_segments().await?;
-
-        // Shutdown background worker
-        if let Some(tx) = self.worker_tx.take() {
-            let _ = tx.send(WorkerCommand::Shutdown).await;
-        }
-
-        if let Some(handle) = self.worker_handle.take() {
-            let _ = handle.await;
-        }
-
-        Ok(())
-    }
-
     // UTXO methods removed - handled by external wallet
 }
 
@@ -1727,6 +1710,23 @@ impl StorageManager for DiskStorageManager {
     async fn clear_mempool(&mut self) -> StorageResult<()> {
         self.mempool_transactions.write().await.clear();
         *self.mempool_state.write().await = None;
+        Ok(())
+    }
+
+    /// Shutdown the storage manager.
+    async fn shutdown(&mut self) -> StorageResult<()> {
+        // Save all dirty segments
+        self.save_dirty_segments().await?;
+
+        // Shutdown background worker
+        if let Some(tx) = self.worker_tx.take() {
+            let _ = tx.send(WorkerCommand::Shutdown).await;
+        }
+
+        if let Some(handle) = self.worker_handle.take() {
+            let _ = handle.await;
+        }
+
         Ok(())
     }
 }

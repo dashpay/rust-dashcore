@@ -479,4 +479,8 @@ impl StorageManager for MemoryStorageManager {
         self.mempool_state = None;
         Ok(())
     }
+
+    async fn shutdown(&mut self) -> StorageResult<()> {
+        Ok(())
+    }
 }

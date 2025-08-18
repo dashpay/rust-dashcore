@@ -261,6 +261,9 @@ pub trait StorageManager: Send + Sync {
 
     /// Clear all mempool data.
     async fn clear_mempool(&mut self) -> StorageResult<()>;
+
+    /// Shutdown the storage manager
+    async fn shutdown(&mut self) -> StorageResult<()>;
 }
 
 /// Helper trait to provide as_any_mut for all StorageManager implementations

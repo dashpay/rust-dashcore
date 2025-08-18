@@ -3,14 +3,15 @@
 use dashcore::blockdata::block::{Block, Header};
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
-use dashcore::{BlockHash, Network as DashNetwork, Txid};
+use dashcore::{BlockHash, Txid};
 use dashcore::{TxIn, TxOut};
 use dashcore_hashes::Hash;
 
 use dashcore::bip158::{BlockFilter, BlockFilterWriter};
 use key_wallet::Network;
 use key_wallet_manager::spv_wallet_manager::{SPVSyncStatus, SPVWalletManager};
-use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
+use key_wallet_manager::wallet_interface::WalletInterface;
+use key_wallet_manager::wallet_manager::WalletId;
 
 /// Create a test transaction
 fn create_test_transaction(value: u64) -> Transaction {
@@ -79,8 +80,8 @@ fn test_spv_integration_basic() {
     assert_eq!(spv.sync_height(Network::Testnet), 0);
 }
 
-#[test]
-fn test_filter_checking() {
+#[tokio::test]
+async fn test_filter_checking() {
     let mut spv = SPVWalletManager::new();
 
     // Create a test wallet
@@ -98,7 +99,7 @@ fn test_filter_checking() {
     let block_hash = block.block_hash();
 
     // Check the filter
-    let should_download = spv.check_filter(&filter, &block_hash, Network::Testnet);
+    let should_download = spv.check_compact_filter(&filter, &block_hash, Network::Testnet).await;
 
     // The filter matching depends on whether the wallet has any addresses
     // being watched. Since we just created an empty wallet, it may or may not match.
@@ -106,8 +107,8 @@ fn test_filter_checking() {
     let _ = should_download;
 }
 
-#[test]
-fn test_block_processing() {
+#[tokio::test]
+async fn test_block_processing() {
     let mut spv = SPVWalletManager::new();
 
     // Create a test wallet
@@ -121,11 +122,10 @@ fn test_block_processing() {
     let block = create_test_block(100, vec![tx.clone()]);
 
     // Process the block
-    let result = spv.process_block(&block, 100, Network::Testnet);
+    let result = spv.process_block(&block, 100, Network::Testnet).await;
 
     // Since we're not watching specific addresses, no transactions should be relevant
-    assert_eq!(result.relevant_transactions, 0);
-    assert!(result.affected_wallets.is_empty());
+    assert_eq!(result.len(), 0);
 }
 
 #[test]
@@ -215,8 +215,8 @@ fn test_reorg_handling() {
     // For now, we'll skip the full implementation
 }
 
-#[test]
-fn test_multiple_wallets() {
+#[tokio::test]
+async fn test_multiple_wallets() {
     let mut spv = SPVWalletManager::new();
 
     // Create and add multiple wallets
@@ -240,14 +240,14 @@ fn test_multiple_wallets() {
     let block = create_test_block(100, transactions);
 
     // Process the block
-    let result = spv.process_block(&block, 100, Network::Testnet);
+    let result = spv.process_block(&block, 100, Network::Testnet).await;
 
     // Without watching specific addresses, transactions won't be relevant
-    assert_eq!(result.affected_wallets.len(), 0);
+    assert_eq!(result.len(), 0);
 }
 
-#[test]
-fn test_spent_utxo_tracking() {
+#[tokio::test]
+async fn test_spent_utxo_tracking() {
     // This test requires more complex UTXO tracking that's not fully implemented
     // We'll create a simpler version
     let mut spv = SPVWalletManager::new();
@@ -261,7 +261,8 @@ fn test_spent_utxo_tracking() {
     let tx1_id = tx1.txid();
 
     let block1 = create_test_block(100, vec![tx1]);
-    let _result1 = spv.process_block(&block1, 100, Network::Testnet);
+    let result1 = spv.process_block(&block1, 100, Network::Testnet).await;
+    assert_eq!(result1.len(), 0);
 
     // Create a transaction that spends the first
     let tx2 = Transaction {
@@ -284,7 +285,8 @@ fn test_spent_utxo_tracking() {
     };
 
     let block2 = create_test_block(101, vec![tx2]);
-    let _result2 = spv.process_block(&block2, 101, Network::Testnet);
+    let result2 = spv.process_block(&block2, 101, Network::Testnet).await;
+    assert_eq!(result2.len(), 0);
 
     // Without proper UTXO tracking in wallets, we can't verify spent status
     // This is a simplified test

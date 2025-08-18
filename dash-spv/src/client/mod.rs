@@ -2,7 +2,6 @@
 
 pub mod block_processor;
 pub mod config;
-pub mod consistency;
 pub mod filter_sync;
 pub mod message_handler;
 pub mod status_display;
@@ -11,11 +10,9 @@ pub mod watch_manager;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tracing::{debug, error, info, warn};
-
-use std::collections::HashSet;
 
 use crate::terminal::TerminalUI;
+use std::collections::HashSet;
 
 use crate::chain::ChainLockManager;
 use crate::error::{Result, SpvError};
@@ -37,7 +34,6 @@ use key_wallet_manager::wallet_interface::WalletInterface;
 
 pub use block_processor::{BlockProcessingTask, BlockProcessor};
 pub use config::ClientConfig;
-pub use consistency::{ConsistencyRecovery, ConsistencyReport};
 pub use filter_sync::FilterSyncCoordinator;
 pub use message_handler::MessageHandler;
 pub use status_display::StatusDisplay;
@@ -138,11 +134,6 @@ impl<
         )
     }
 
-    /// Helper to map storage errors to SpvError.
-    fn storage_to_spv_error(e: crate::error::StorageError) -> SpvError {
-        SpvError::Storage(e)
-    }
-
     /// Helper to get block height with a sensible default.
     async fn get_block_height_or_default(&self, block_hash: dashcore::BlockHash) -> u32 {
         self.find_height_for_block_hash(block_hash).await.unwrap_or(0)
@@ -228,7 +219,7 @@ impl<
         wallet: Arc<RwLock<W>>,
     ) -> Result<Self> {
         // Validate configuration
-        config.validate().map_err(|e| SpvError::Config(e))?;
+        config.validate().map_err(SpvError::Config)?;
 
         // Initialize state for the network
         let state = Arc::new(RwLock::new(ChainState::new_for_network(config.network)));
@@ -243,8 +234,8 @@ impl<
         // Create sync manager
         let received_filter_heights = stats.read().await.received_filter_heights.clone();
         tracing::info!("Creating sequential sync manager");
-        let sync_manager = SequentialSyncManager::new(&config, received_filter_heights)
-            .map_err(|e| SpvError::Sync(e))?;
+        let sync_manager =
+            SequentialSyncManager::new(&config, received_filter_heights).map_err(SpvError::Sync)?;
 
         // Create validation manager
         let validation = ValidationManager::new(config.validation_mode);
@@ -272,7 +263,7 @@ impl<
             storage,
             wallet,
             sync_manager,
-            validation: validation,
+            validation,
             chainlock_manager,
             running: Arc::new(RwLock::new(false)),
             watch_items,
@@ -329,20 +320,6 @@ impl<
                 {
                     *self.mempool_state.write().await = state;
                 }
-            }
-        }
-
-        // Validate and recover wallet consistency if needed
-        match self.ensure_wallet_consistency().await {
-            Ok(_) => {
-                tracing::info!("✅ Wallet consistency validated successfully");
-            }
-            Err(e) => {
-                tracing::error!("❌ Wallet consistency check failed: {}", e);
-                tracing::warn!("Continuing startup despite wallet consistency issues");
-                tracing::warn!("You may experience balance calculation discrepancies");
-                tracing::warn!("Consider running manual consistency recovery later");
-                // Continue anyway - the client can still function with inconsistencies
             }
         }
 
@@ -403,13 +380,13 @@ impl<
         // This ensures the ChainState has headers loaded for both checkpoint and normal sync
         let tip_height = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0)
+            storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
         };
         if tip_height > 0 {
             tracing::info!("Found {} headers in storage, loading into sync manager...", tip_height);
             let loaded_count = {
-                let mut storage = self.storage.lock().await;
-                self.sync_manager.load_headers_from_storage(&mut *storage).await
+                let storage = self.storage.lock().await;
+                self.sync_manager.load_headers_from_storage(&storage).await
             };
 
             match loaded_count {
@@ -457,12 +434,9 @@ impl<
             let (header_height, filter_height) = {
                 let storage = self.storage.lock().await;
                 let h_height =
-                    storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0);
-                let f_height = storage
-                    .get_filter_tip_height()
-                    .await
-                    .map_err(|e| SpvError::Storage(e))?
-                    .unwrap_or(0);
+                    storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
+                let f_height =
+                    storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
                 (h_height, f_height)
             };
 
@@ -497,7 +471,7 @@ impl<
     /// Enable mempool tracking with the specified strategy.
     pub async fn enable_mempool_tracking(
         &mut self,
-        strategy: crate::client::config::MempoolStrategy,
+        strategy: config::MempoolStrategy,
     ) -> Result<()> {
         // Update config
         self.config.enable_mempool_tracking = true;
@@ -506,7 +480,7 @@ impl<
         // Initialize mempool filter if not already done
         if self.mempool_filter.is_none() {
             let watch_items = self.watch_items.read().await.iter().cloned().collect();
-            self.mempool_filter = Some(Arc::new(crate::mempool_filter::MempoolFilter::new(
+            self.mempool_filter = Some(Arc::new(MempoolFilter::new(
                 self.config.mempool_strategy,
                 Duration::from_secs(self.config.recent_send_window_secs),
                 self.config.max_mempool_transactions,
@@ -577,7 +551,7 @@ impl<
                         pending += address_balance_change;
                     }
                 } else if tx.net_amount != 0 && tx.is_outgoing {
-                    // Edge case: If we calculated zero change but net_amount is non-zero
+                    // Edge case: If we calculated zero change but net_amount is non-zero,
                     // and it's an outgoing transaction, it might be a fee-only transaction
                     // In this case, we should not affect the balance for this address
                     // unless it's the sender paying the fee
@@ -662,12 +636,8 @@ impl<
         // Shutdown storage to ensure all data is persisted
         {
             let mut storage = self.storage.lock().await;
-            if let Some(disk_storage) =
-                storage.as_any_mut().downcast_mut::<crate::storage::DiskStorageManager>()
-            {
-                disk_storage.shutdown().await.map_err(|e| SpvError::Storage(e))?;
-                tracing::info!("Storage shutdown completed - all data persisted");
-            }
+            storage.shutdown().await.map_err(SpvError::Storage)?;
+            tracing::info!("Storage shutdown completed - all data persisted");
         }
 
         // Mark as stopped
@@ -701,15 +671,11 @@ impl<
         let result = SyncProgress {
             header_height: {
                 let storage = self.storage.lock().await;
-                storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0)
+                storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
             },
             filter_header_height: {
                 let storage = self.storage.lock().await;
-                storage
-                    .get_filter_tip_height()
-                    .await
-                    .map_err(|e| SpvError::Storage(e))?
-                    .unwrap_or(0)
+                storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
             },
             headers_synced: false, // Will be synced by monitoring loop
             filter_headers_synced: false,
@@ -750,24 +716,24 @@ impl<
 
         // Timer for periodic status updates
         let mut last_status_update = Instant::now();
-        let status_update_interval = std::time::Duration::from_millis(500);
+        let status_update_interval = Duration::from_millis(500);
 
         // Timer for request timeout checking
         let mut last_timeout_check = Instant::now();
-        let timeout_check_interval = std::time::Duration::from_secs(1);
+        let timeout_check_interval = Duration::from_secs(1);
 
         // Timer for periodic consistency checks
         let mut last_consistency_check = Instant::now();
-        let consistency_check_interval = std::time::Duration::from_secs(300); // Every 5 minutes
+        let consistency_check_interval = Duration::from_secs(300); // Every 5 minutes
 
         // Timer for filter gap checking
         let mut last_filter_gap_check = Instant::now();
         let filter_gap_check_interval =
-            std::time::Duration::from_secs(self.config.cfheader_gap_check_interval_secs);
+            Duration::from_secs(self.config.cfheader_gap_check_interval_secs);
 
         // Timer for pending ChainLock validation
         let mut last_chainlock_validation_check = Instant::now();
-        let chainlock_validation_interval = std::time::Duration::from_secs(30); // Every 30 seconds
+        let chainlock_validation_interval = Duration::from_secs(30); // Every 30 seconds
 
         // Progress tracking variables
         let sync_start_time = SystemTime::now();
@@ -873,7 +839,7 @@ impl<
                                       basic_progress, filters_received, filters_requested, actual_coverage, total_missing, missing_ranges.len());
 
                         // Show first few missing ranges for debugging
-                        if missing_ranges.len() > 0 {
+                        if !missing_ranges.is_empty() {
                             let show_count = missing_ranges.len().min(3);
                             for (i, (start, end)) in
                                 missing_ranges.iter().enumerate().take(show_count)
@@ -947,7 +913,7 @@ impl<
                         crate::types::SyncStage::Complete
                     };
 
-                    let progress = crate::types::DetailedSyncProgress {
+                    let progress = DetailedSyncProgress {
                         current_height,
                         peer_best_height: peer_best,
                         percentage: if peer_best > 0 {
@@ -1041,11 +1007,13 @@ impl<
                 if let Ok(has_engine) = self.update_chainlock_validation() {
                     if has_engine {
                         masternode_engine_updated = true;
-                        info!("✅ Masternode sync complete - ChainLock validation enabled");
+                        tracing::info!(
+                            "✅ Masternode sync complete - ChainLock validation enabled"
+                        );
 
                         // Validate any pending ChainLocks
                         if let Err(e) = self.validate_pending_chainlocks().await {
-                            error!(
+                            tracing::error!(
                                 "Failed to validate pending ChainLocks after masternode sync: {}",
                                 e
                             );
@@ -1058,19 +1026,16 @@ impl<
             if masternode_engine_updated
                 && last_chainlock_validation_check.elapsed() >= chainlock_validation_interval
             {
-                debug!("Checking for pending ChainLocks to validate...");
+                tracing::debug!("Checking for pending ChainLocks to validate...");
                 if let Err(e) = self.validate_pending_chainlocks().await {
-                    debug!("Periodic pending ChainLock validation check failed: {}", e);
+                    tracing::debug!("Periodic pending ChainLock validation check failed: {}", e);
                 }
                 last_chainlock_validation_check = Instant::now();
             }
 
             // Handle network messages with timeout for responsiveness
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(1000),
-                self.network.receive_message(),
-            )
-            .await
+            match tokio::time::timeout(Duration::from_millis(1000), self.network.receive_message())
+                .await
             {
                 Ok(msg_result) => match msg_result {
                     Ok(Some(message)) => {
@@ -1107,7 +1072,7 @@ impl<
                     }
                     Ok(None) => {
                         // No message available, brief pause before continuing
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                     Err(e) => {
                         // Handle specific network error types
@@ -1119,7 +1084,7 @@ impl<
                                 // Wait for potential reconnection
                                 let mut wait_count = 0;
                                 while wait_count < 10 && self.network.peer_count() == 0 {
-                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                    tokio::time::sleep(Duration::from_millis(500)).await;
                                     wait_count += 1;
                                 }
 
@@ -1138,7 +1103,7 @@ impl<
                         }
 
                         tracing::error!("Network error during monitoring: {}", e);
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        tokio::time::sleep(Duration::from_secs(5)).await;
                     }
                 },
                 Err(_) => {
@@ -1227,7 +1192,7 @@ impl<
         // Get the height before storing new headers
         let initial_height = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0)
+            storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
         };
 
         // For sequential sync, route headers through the message handler
@@ -1237,7 +1202,7 @@ impl<
             self.sync_manager
                 .handle_message(headers_msg, &mut self.network, &mut *storage)
                 .await
-                .map_err(|e| SpvError::Sync(e))?;
+                .map_err(SpvError::Sync)?;
         }
 
         // Check if filters are enabled and request filter headers for new blocks
@@ -1245,7 +1210,7 @@ impl<
             // Get the new tip height after storing headers
             let new_height = {
                 let storage = self.storage.lock().await;
-                storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0)
+                storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
             };
 
             // If we stored new headers, request filter headers for them
@@ -1261,7 +1226,7 @@ impl<
                     let storage = self.storage.lock().await;
                     for height in (initial_height + 1)..=new_height {
                         if let Some(header) =
-                            storage.get_header(height).await.map_err(|e| SpvError::Storage(e))?
+                            storage.get_header(height).await.map_err(SpvError::Storage)?
                         {
                             let block_hash = header.block_hash();
                             tracing::debug!(
@@ -1310,7 +1275,7 @@ impl<
             self.sync_manager
                 .handle_message(cfheaders_msg, &mut self.network, &mut *storage)
                 .await
-                .map_err(|e| SpvError::Sync(e))?;
+                .map_err(SpvError::Sync)?;
         }
 
         Ok(())
@@ -1366,7 +1331,7 @@ impl<
 
             // Process inputs first (spending UTXOs)
             if !is_coinbase {
-                for (_vin, input) in transaction.input.iter().enumerate() {
+                for input in transaction.input.iter() {
                     // UTXO tracking is now handled internally by the wallet
                     // Check against explicitly watched outpoints
                     for watch_item in watch_items {
@@ -1480,7 +1445,7 @@ impl<
 
         for (address, change_sat) in balance_changes {
             if *change_sat != 0 {
-                let change_amount = dashcore::Amount::from_sat(change_sat.abs() as u64);
+                let change_amount = dashcore::Amount::from_sat(change_sat.unsigned_abs());
                 let sign = if *change_sat > 0 {
                     "+"
                 } else {
@@ -1493,7 +1458,7 @@ impl<
         // Calculate and report current balances for all watched addresses
         let addresses = self.get_watched_addresses_from_items().await;
         for address in addresses {
-            if let Some(_) = self
+            if self
                 .process_address_balance(&address, |balance| {
                     tracing::info!(
                         "  💼 Address {} balance: {} (confirmed: {}, unconfirmed: {})",
@@ -1504,6 +1469,7 @@ impl<
                     );
                 })
                 .await
+                .is_some()
             {
                 // Balance reported successfully
             } else {
@@ -1600,9 +1566,9 @@ impl<
         {
             let mut storage = self.storage.lock().await;
             self.chainlock_manager
-                .process_chain_lock(chainlock.clone(), &*chain_state, &mut *storage)
+                .process_chain_lock(chainlock.clone(), &chain_state, &mut *storage)
                 .await
-                .map_err(|e| SpvError::Validation(e))?;
+                .map_err(SpvError::Validation)?;
         }
         drop(chain_state);
 
@@ -1678,7 +1644,7 @@ impl<
             let engine_arc = Arc::new(engine.clone());
             self.chainlock_manager.set_masternode_engine(engine_arc);
 
-            info!("Updated ChainLockManager with masternode engine for full validation");
+            tracing::info!("Updated ChainLockManager with masternode engine for full validation");
 
             // Note: Pending ChainLocks will be validated when they are next processed
             // or can be triggered by calling validate_pending_chainlocks separately
@@ -1686,7 +1652,7 @@ impl<
 
             Ok(true)
         } else {
-            warn!("Masternode engine not available for ChainLock validation update");
+            tracing::warn!("Masternode engine not available for ChainLock validation update");
             Ok(false)
         }
     }
@@ -1697,14 +1663,14 @@ impl<
         let chain_state = self.state.read().await;
 
         let mut storage = self.storage.lock().await;
-        match self.chainlock_manager.validate_pending_chainlocks(&*chain_state, &mut *storage).await
+        match self.chainlock_manager.validate_pending_chainlocks(&chain_state, &mut *storage).await
         {
             Ok(_) => {
-                info!("Successfully validated pending ChainLocks");
+                tracing::info!("Successfully validated pending ChainLocks");
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to validate pending ChainLocks: {}", e);
+                tracing::error!("Failed to validate pending ChainLocks: {}", e);
                 Err(SpvError::Validation(e))
             }
         }
@@ -1775,45 +1741,6 @@ impl<
         Ok(addresses.len())
     }
 
-    /// Manually trigger wallet consistency validation and recovery.
-    /// This is a public method that users can call if they suspect wallet issues.
-    pub async fn check_and_fix_wallet_consistency(
-        &self,
-    ) -> Result<(ConsistencyReport, Option<ConsistencyRecovery>)> {
-        tracing::info!("Manual wallet consistency check requested");
-
-        let report = match self.validate_wallet_consistency().await {
-            Ok(report) => report,
-            Err(e) => {
-                tracing::error!("Failed to validate wallet consistency: {}", e);
-                return Err(e);
-            }
-        };
-
-        if report.is_consistent {
-            tracing::info!("✅ Wallet is consistent - no recovery needed");
-            return Ok((report, None));
-        }
-
-        tracing::warn!("Wallet inconsistencies detected, attempting recovery...");
-
-        let recovery = match self.recover_wallet_consistency().await {
-            Ok(recovery) => recovery,
-            Err(e) => {
-                tracing::error!("Failed to recover wallet consistency: {}", e);
-                return Err(e);
-            }
-        };
-
-        if recovery.success {
-            tracing::info!("✅ Wallet consistency recovery completed successfully");
-        } else {
-            tracing::warn!("⚠️ Wallet consistency recovery partially failed");
-        }
-
-        Ok((report, Some(recovery)))
-    }
-
     // Wallet-specific methods removed - use external wallet interface directly
 
     /// Get the number of connected peers.
@@ -1845,16 +1772,10 @@ impl<
         use dashcore::QuorumHash;
         use dashcore_hashes::Hash;
 
-        let llmq_type = match LLMQType::try_from(quorum_type) {
-            Ok(t) => t,
-            Err(_) => {
-                tracing::warn!(
-                    "Invalid quorum type {} requested at height {}",
-                    quorum_type,
-                    height
-                );
-                return None;
-            }
+        let llmq_type: LLMQType = LLMQType::from(quorum_type);
+        if llmq_type == LLMQType::LlmqtypeUnknown {
+            tracing::warn!("Invalid quorum type {} requested at height {}", quorum_type, height);
+            return None;
         };
 
         let qhash = QuorumHash::from_byte_array(*quorum_hash);
@@ -2007,7 +1928,7 @@ impl<
         // Load sync state from storage
         let sync_state = {
             let storage = self.storage.lock().await;
-            storage.load_sync_state().await.map_err(|e| SpvError::Storage(e))?
+            storage.load_sync_state().await.map_err(SpvError::Storage)?
         };
 
         let Some(saved_state) = sync_state else {
@@ -2025,18 +1946,18 @@ impl<
 
             // Handle recovery based on suggestion
             if let Some(suggestion) = validation.recovery_suggestion {
-                match suggestion {
+                return match suggestion {
                     crate::storage::RecoverySuggestion::StartFresh => {
                         tracing::warn!("Recovery: Starting fresh sync");
-                        return Ok((None, false));
+                        Ok((None, false))
                     }
                     crate::storage::RecoverySuggestion::RollbackToHeight(height) => {
                         let recovered = self.handle_rollback_recovery(height).await?;
-                        return Ok((None, recovered));
+                        Ok((None, recovered))
                     }
                     crate::storage::RecoverySuggestion::UseCheckpoint(height) => {
                         let recovered = self.handle_checkpoint_recovery(height).await?;
-                        return Ok((None, recovered));
+                        Ok((None, recovered))
                     }
                     crate::storage::RecoverySuggestion::PartialRecovery => {
                         tracing::warn!("Recovery: Attempting partial recovery");
@@ -2044,9 +1965,9 @@ impl<
                         if let Err(e) = self.reset_filter_sync_state().await {
                             tracing::error!("Failed to reset filter sync state: {}", e);
                         }
-                        return Ok((Some(saved_state), true));
+                        Ok((Some(saved_state), true))
                     }
-                }
+                };
             }
 
             return Ok((None, false));
@@ -2073,7 +1994,7 @@ impl<
         // Get current height from storage to validate against
         let current_height = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0)
+            storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
         };
 
         if height > current_height {
@@ -2110,7 +2031,7 @@ impl<
         // Check if checkpoint height is reasonable (not in the future)
         let current_height = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?.unwrap_or(0)
+            storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
         };
 
         if current_height > 0 && height > current_height {
@@ -2144,7 +2065,7 @@ impl<
         }
 
         tracing::info!("Loading headers from storage into ChainState...");
-        let start_time = std::time::Instant::now();
+        let start_time = Instant::now();
 
         // Load headers in batches to avoid memory spikes
         const BATCH_SIZE: u32 = 10_000;
@@ -2163,7 +2084,7 @@ impl<
                 storage
                     .load_headers(current_height..end_height + 1)
                     .await
-                    .map_err(|e| SpvError::Storage(e))?
+                    .map_err(SpvError::Storage)?
             };
 
             if headers.is_empty() {
@@ -2261,7 +2182,7 @@ impl<
             storage
                 .load_filter_headers(0..saved_state.sync_progress.filter_header_height + 1)
                 .await
-                .map_err(|e| SpvError::Storage(e))?
+                .map_err(SpvError::Storage)?
         };
 
         if !filter_headers.is_empty() {
@@ -2320,8 +2241,8 @@ impl<
         // CRITICAL: Load headers into the sync manager's chain state
         if saved_state.chain_tip.height > 0 {
             tracing::info!("Loading headers into sync manager...");
-            let mut storage = self.storage.lock().await;
-            match self.sync_manager.load_headers_from_storage(&mut *storage).await {
+            let storage = self.storage.lock().await;
+            match self.sync_manager.load_headers_from_storage(&storage).await {
                 Ok(loaded_count) => {
                     tracing::info!("✅ Sync manager loaded {} headers from storage", loaded_count);
                 }
@@ -2343,7 +2264,7 @@ impl<
         }
 
         tracing::debug!("Loading {} headers from storage into client ChainState", tip_height);
-        let start_time = std::time::Instant::now();
+        let start_time = Instant::now();
 
         // Load headers in batches to avoid memory spikes
         const BATCH_SIZE: u32 = 10_000;
@@ -2361,7 +2282,7 @@ impl<
                 storage
                     .load_headers(current_height..end_height + 1)
                     .await
-                    .map_err(|e| SpvError::Storage(e))?
+                    .map_err(SpvError::Storage)?
             };
 
             if headers.is_empty() {
@@ -2452,7 +2373,7 @@ impl<
         // Store the updated chain state
         {
             let mut storage = self.storage.lock().await;
-            storage.store_chain_state(&updated_state).await.map_err(|e| SpvError::Storage(e))?;
+            storage.store_chain_state(&updated_state).await.map_err(SpvError::Storage)?;
         }
 
         // Clear any cached filter data above the target height
@@ -2473,7 +2394,7 @@ impl<
             storage
                 .get_sync_checkpoints(checkpoint_height, checkpoint_height)
                 .await
-                .map_err(|e| SpvError::Storage(e))?
+                .map_err(SpvError::Storage)?
         };
 
         if checkpoints.is_empty() {
@@ -2543,7 +2464,7 @@ impl<
 
         // Create persistent sync state
         let persistent_state = crate::storage::PersistentSyncState::from_chain_state(
-            &*chain_state,
+            &chain_state,
             &sync_progress,
             self.config.network,
         );
@@ -2556,7 +2477,7 @@ impl<
                     storage
                         .store_sync_checkpoint(checkpoint.height, checkpoint)
                         .await
-                        .map_err(|e| SpvError::Storage(e))?;
+                        .map_err(SpvError::Storage)?;
                     tracing::info!("Created sync checkpoint at height {}", checkpoint.height);
                 }
             }
@@ -2564,7 +2485,7 @@ impl<
             // Save the sync state
             {
                 let mut storage = self.storage.lock().await;
-                storage.store_sync_state(&state).await.map_err(|e| SpvError::Storage(e))?;
+                storage.store_sync_state(&state).await.map_err(SpvError::Storage)?;
             }
 
             tracing::debug!(
@@ -2583,7 +2504,7 @@ impl<
         // Check if we already have any headers in storage
         let current_tip = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?
+            storage.get_tip_height().await.map_err(SpvError::Storage)?
         };
 
         if current_tip.is_some() {
@@ -2620,14 +2541,14 @@ impl<
 
                     // Build header from checkpoint
                     let checkpoint_header = dashcore::block::Header {
-                        version: dashcore::block::Version::from_consensus(536870912), // Version 0x20000000 is common for modern blocks
+                        version: Version::from_consensus(536870912), // Version 0x20000000 is common for modern blocks
                         prev_blockhash: checkpoint.prev_blockhash,
                         merkle_root: checkpoint
                             .merkle_root
                             .map(|h| dashcore::TxMerkleNode::from_byte_array(*h.as_byte_array()))
-                            .unwrap_or_else(|| dashcore::TxMerkleNode::all_zeros()),
+                            .unwrap_or_else(dashcore::TxMerkleNode::all_zeros),
                         time: checkpoint.timestamp,
-                        bits: dashcore::pow::CompactTarget::from_consensus(
+                        bits: CompactTarget::from_consensus(
                             checkpoint.target.to_compact_lossy().to_consensus(),
                         ),
                         nonce: checkpoint.nonce,
@@ -2661,7 +2582,7 @@ impl<
                             storage
                                 .store_chain_state(&chain_state_for_storage)
                                 .await
-                                .map_err(|e| SpvError::Storage(e))?;
+                                .map_err(SpvError::Storage)?;
                         }
 
                         // Don't store the checkpoint header itself - we'll request headers from peers
@@ -2753,13 +2674,13 @@ impl<
         let genesis_headers = vec![genesis_header];
         {
             let mut storage = self.storage.lock().await;
-            storage.store_headers(&genesis_headers).await.map_err(|e| SpvError::Storage(e))?;
+            storage.store_headers(&genesis_headers).await.map_err(SpvError::Storage)?;
         }
 
         // Verify it was stored correctly
         let stored_height = {
             let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(|e| SpvError::Storage(e))?
+            storage.get_tip_height().await.map_err(SpvError::Storage)?
         };
         tracing::info!(
             "✅ Genesis block initialized at height 0, storage reports tip height: {:?}",
@@ -2785,42 +2706,6 @@ impl<
         // The SPV client will notify it of new blocks/transactions through the WalletInterface
         tracing::info!("Wallet data loading is handled by the wallet implementation");
 
-        Ok(())
-    }
-
-    /// Validate wallet and storage consistency.
-    /// NOTE: Wallet consistency is now managed by the wallet itself.
-    /// This function returns a dummy report for backward compatibility.
-    pub async fn validate_wallet_consistency(&self) -> Result<ConsistencyReport> {
-        tracing::info!("Wallet consistency validation is now managed by the wallet");
-
-        Ok(ConsistencyReport {
-            utxo_mismatches: Vec::new(),
-            address_mismatches: Vec::new(),
-            balance_mismatches: Vec::new(),
-            is_consistent: true,
-        })
-    }
-
-    /// Attempt to recover from wallet consistency issues.
-    /// NOTE: Wallet consistency is now managed by the wallet itself.
-    /// This function returns a success for backward compatibility.
-    pub async fn recover_wallet_consistency(&self) -> Result<ConsistencyRecovery> {
-        tracing::info!("Wallet consistency recovery is now managed by the wallet");
-
-        Ok(ConsistencyRecovery {
-            utxos_synced: 0,
-            addresses_synced: 0,
-            utxos_removed: 0,
-            success: true,
-        })
-    }
-
-    /// Ensure wallet consistency by validating and recovering if necessary.
-    /// NOTE: Wallet consistency is now managed by the wallet itself.
-    async fn ensure_wallet_consistency(&self) -> Result<()> {
-        // Wallet manages its own consistency now
-        tracing::debug!("Wallet manages its own consistency");
         Ok(())
     }
 
@@ -2928,20 +2813,12 @@ mod watch_manager_test;
 mod block_processor_test;
 
 #[cfg(test)]
-mod consistency_test;
-
-#[cfg(test)]
 mod message_handler_test;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::storage::{memory::MemoryStorageManager, StorageManager};
     use crate::types::{MempoolState, UnconfirmedTransaction};
-    use dashcore::blockdata::script::ScriptBuf;
-    use dashcore::{Amount, OutPoint, Transaction, TxIn, TxOut};
-    use dashcore_hashes::Hash;
-    use std::str::FromStr;
+    use dashcore::{Amount, Transaction, TxOut};
     use std::sync::Arc;
     use tokio::sync::RwLock;
 

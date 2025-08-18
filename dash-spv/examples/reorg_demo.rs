@@ -38,7 +38,7 @@ mod disabled_example {
         let network = Network::Dash;
         let genesis = genesis_block(network).header;
         let mut chain_state = ChainState::new_for_network(network);
-        let wallet_manager = Arc::new(RwLock::new(SPVWalletManager::new(network)));
+        let wallet_manager = Arc::new(RwLock::new(SPVWalletManager::new()));
         let mut storage = MemoryStorageManager::new().await?;
 
         println!("📦 Building main chain: genesis -> block1 -> block2");

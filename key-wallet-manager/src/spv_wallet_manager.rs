@@ -98,99 +98,6 @@ impl SPVWalletManager {
         }
     }
 
-    /// Check if a compact filter matches any of our wallets
-    ///
-    /// This checks the filter against all watched addresses from all wallets
-    /// for the specified network.
-    pub fn check_filter(
-        &self,
-        filter: &BlockFilter,
-        block_hash: &BlockHash,
-        network: Network,
-    ) -> bool {
-        // Check if we've already evaluated this filter
-        if let Some(network_cache) = self.filter_matches.get(&network) {
-            if let Some(&matched) = network_cache.get(block_hash) {
-                return matched;
-            }
-        }
-
-        // Collect all scripts we're watching from all wallets for this network
-        let mut script_bytes = Vec::new();
-
-        // Get all wallet addresses for this network
-        for (wallet_id, info) in &self.base.wallet_infos {
-            // Get monitored addresses for this wallet and network
-            let monitored = info.monitored_addresses(network);
-            for address in monitored {
-                script_bytes.push(address.script_pubkey().as_bytes().to_vec());
-            }
-
-            // Also check wallet's own addresses if available
-            if let Some(wallet) = self.base.wallets.get(wallet_id) {
-                // Get addresses from the wallet's accounts
-                if let Some(collection) = wallet.accounts.get(&network) {
-                    // Check BIP44 accounts
-                    for account in collection.standard_bip44_accounts.values() {
-                        // You would need to derive addresses here based on the account
-                        // This is simplified - in practice you'd derive up to the gap limit
-                    }
-                }
-            }
-        }
-
-        // Check if any of our scripts match the filter
-        filter
-            .match_any(block_hash, &mut script_bytes.iter().map(|s| s.as_slice()))
-            .unwrap_or(false)
-    }
-
-    /// Process a block and its transactions
-    ///
-    /// Delegates transaction processing to the base WalletManager
-    pub fn process_block(
-        &mut self,
-        block: &Block,
-        height: u32,
-        network: Network,
-    ) -> ProcessBlockResult {
-        let mut result = ProcessBlockResult::default();
-        let block_hash = Some(block.block_hash());
-        let timestamp = block.header.time;
-
-        // Process each transaction using the base manager
-        for tx in &block.txdata {
-            let context = TransactionContext::InBlock {
-                height,
-                block_hash,
-                timestamp: Some(timestamp),
-            };
-
-            let affected_wallets = self.base.check_transaction_in_all_wallets(
-                tx, network, context, true, // update state
-            );
-
-            if !affected_wallets.is_empty() {
-                result.relevant_transactions += 1;
-                result.affected_wallets.extend(affected_wallets);
-            }
-        }
-
-        // Update statistics
-        if let Some(stats) = self.stats.get_mut(&network) {
-            stats.blocks_downloaded += 1;
-            stats.transactions_found += result.relevant_transactions as u64;
-            stats.sync_height = height;
-        }
-
-        // Update network state height in base manager
-        if let Some(state) = self.base.get_network_state_mut(network) {
-            state.current_height = height;
-        }
-
-        result
-    }
-
     /// Queue a block for download
     pub fn queue_block_download(&mut self, network: Network, block_hash: BlockHash) -> bool {
         let queue = self.download_queues.entry(network).or_insert_with(VecDeque::new);
@@ -262,7 +169,7 @@ impl SPVWalletManager {
     where
         F: FnOnce(&mut SPVStats),
     {
-        let stats = self.stats.entry(network).or_insert_with(SPVStats::default);
+        let stats = self.stats.entry(network).or_default();
         update(stats);
     }
 
