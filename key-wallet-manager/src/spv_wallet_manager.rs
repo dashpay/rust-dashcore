@@ -249,7 +249,7 @@ impl WalletInterface for SPVWalletManager {
 
     /// Check if a compact filter matches any watched addresses
     async fn check_compact_filter(
-        &self,
+        &mut self,
         filter: &BlockFilter,
         block_hash: &BlockHash,
         network: Network,
@@ -261,7 +261,11 @@ impl WalletInterface for SPVWalletManager {
             }
         }
 
-        self.base.check_compact_filter(filter, block_hash, network)
+        let hit = self.base.check_compact_filter(filter, block_hash, network);
+
+        self.filter_matches.entry(network).or_default().insert(*block_hash, hit);
+
+        hit
     }
 
     /// Get a reference to self as Any for downcasting in tests

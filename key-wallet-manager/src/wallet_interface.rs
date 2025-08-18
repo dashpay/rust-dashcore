@@ -34,7 +34,7 @@ pub trait WalletInterface: Send + Sync {
     /// Check if a compact filter matches any watched items
     /// Returns true if the block should be downloaded
     async fn check_compact_filter(
-        &self,
+        &mut self,
         filter: &BlockFilter,
         block_hash: &dashcore::BlockHash,
         network: Network,
