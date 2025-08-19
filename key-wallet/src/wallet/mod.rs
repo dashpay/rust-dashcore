@@ -132,6 +132,7 @@ mod tests {
     use super::*;
     use crate::account::{AccountType, StandardAccountType};
     use crate::mnemonic::Language;
+    use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 
     #[test]
     fn test_wallet_creation() {
@@ -394,7 +395,7 @@ mod tests {
         // Create managed info from the wallet
         let mut managed_info = ManagedWalletInfo::from_wallet(&wallet);
         managed_info.set_name("Test Wallet".to_string());
-        managed_info.set_description("A test wallet".to_string());
+        managed_info.set_description(Some("A test wallet".to_string()));
 
         // Test initial managed info
         assert_eq!(managed_info.wallet_id, wallet.wallet_id);

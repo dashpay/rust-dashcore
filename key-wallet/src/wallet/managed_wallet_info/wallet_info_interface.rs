@@ -4,15 +4,16 @@
 
 use crate::account::managed_account_collection::ManagedAccountCollection;
 use crate::transaction_checking::WalletTransactionChecker;
+use crate::wallet::immature_transaction::{ImmatureTransaction, ImmatureTransactionCollection};
 use crate::wallet::managed_wallet_info::fee::FeeLevel;
 use crate::wallet::managed_wallet_info::transaction_building::{
     AccountTypePreference, TransactionError,
 };
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
-use crate::{Address, Network, Utxo, Wallet, WalletBalance};
-use dashcore::blockdata::transaction::Transaction;
-use dashcore::Address as DashAddress;
+use crate::{Network, Utxo, Wallet, WalletBalance};
+use dashcore::{Address as DashAddress, Address, Transaction};
+use std::collections::BTreeSet;
 
 /// Trait that wallet info types must implement to work with WalletManager
 pub trait WalletInfoInterface: Sized + WalletTransactionChecker {
@@ -52,16 +53,19 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker {
     fn monitored_addresses(&self, network: Network) -> Vec<DashAddress>;
 
     /// Get all UTXOs for the wallet
-    fn get_utxos(&self) -> Vec<Utxo>;
+    fn utxos(&self) -> BTreeSet<&Utxo>;
+
+    /// Get spendable UTXOs (confirmed and not locked)
+    fn get_spendable_utxos(&self) -> BTreeSet<&Utxo>;
 
     /// Get the wallet balance
-    fn get_balance(&self) -> WalletBalance;
+    fn balance(&self) -> WalletBalance;
 
     /// Update the wallet balance
     fn update_balance(&mut self);
 
     /// Get transaction history
-    fn get_transaction_history(&self) -> Vec<&TransactionRecord>;
+    fn transaction_history(&self) -> Vec<&TransactionRecord>;
 
     /// Get accounts for a network (mutable)
     fn accounts_mut(&mut self, network: Network) -> Option<&mut ManagedAccountCollection>;
@@ -69,7 +73,22 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker {
     /// Get accounts for a network (immutable)
     fn accounts(&self, network: Network) -> Option<&ManagedAccountCollection>;
 
-    /// Create an unsigned payment transaction
+    /// Process matured transactions for a given chain height
+    fn process_matured_transactions(
+        &mut self,
+        network: Network,
+        current_height: u32,
+    ) -> Vec<ImmatureTransaction>;
+
+    /// Add an immature transaction
+    fn add_immature_transaction(&mut self, network: Network, tx: ImmatureTransaction);
+    /// Get immature transactions for a network
+    fn immature_transactions(&self, network: Network) -> Option<&ImmatureTransactionCollection>;
+
+    /// Get immature balance for a specific network
+    fn network_immature_balance(&self, network: Network) -> u64;
+
+    /// Get immature balance for a specific network
     #[allow(clippy::too_many_arguments)]
     fn create_unsigned_payment_transaction(
         &mut self,
@@ -125,27 +144,82 @@ impl WalletInfoInterface for ManagedWalletInfo {
     }
 
     fn update_last_synced(&mut self, timestamp: u64) {
-        self.update_last_synced(timestamp);
+        self.metadata.last_synced = Some(timestamp);
     }
 
     fn monitored_addresses(&self, network: Network) -> Vec<DashAddress> {
-        self.monitored_addresses(network).into_iter().collect()
+        let mut addresses = Vec::new();
+
+        if let Some(collection) = self.accounts.get(&network) {
+            // Collect from all accounts using the account's get_all_addresses method
+            for account in collection.all_accounts() {
+                addresses.extend(account.get_all_addresses());
+            }
+        }
+
+        addresses
     }
 
-    fn get_utxos(&self) -> Vec<Utxo> {
-        self.get_utxos().into_iter().cloned().collect()
+    fn utxos(&self) -> BTreeSet<&Utxo> {
+        let mut utxos = BTreeSet::new();
+
+        // Collect UTXOs from all accounts across all networks
+        for collection in self.accounts.values() {
+            for account in collection.all_accounts() {
+                utxos.extend(account.utxos.values());
+            }
+        }
+
+        utxos
+    }
+    fn get_spendable_utxos(&self) -> BTreeSet<&Utxo> {
+        self.utxos()
+            .into_iter()
+            .filter(|utxo| !utxo.is_locked && (utxo.is_confirmed || utxo.is_instantlocked))
+            .collect()
     }
 
-    fn get_balance(&self) -> WalletBalance {
-        self.get_balance()
+    fn balance(&self) -> WalletBalance {
+        self.balance
     }
 
     fn update_balance(&mut self) {
-        self.update_balance();
+        let mut confirmed = 0u64;
+        let mut unconfirmed = 0u64;
+        let mut locked = 0u64;
+
+        // Sum balances from all accounts across all networks
+        for collection in self.accounts.values() {
+            for account in collection.all_accounts() {
+                for utxo in account.utxos.values() {
+                    let value = utxo.txout.value;
+                    if utxo.is_locked {
+                        locked += value;
+                    } else if utxo.is_confirmed {
+                        confirmed += value;
+                    } else {
+                        unconfirmed += value;
+                    }
+                }
+            }
+        }
+
+        // Update balance, ignoring overflow errors as we're recalculating from scratch
+        self.balance = WalletBalance::new(confirmed, unconfirmed, locked)
+            .unwrap_or_else(|_| WalletBalance::default());
     }
 
-    fn get_transaction_history(&self) -> Vec<&TransactionRecord> {
-        self.get_transaction_history()
+    fn transaction_history(&self) -> Vec<&TransactionRecord> {
+        let mut transactions = Vec::new();
+
+        // Collect transactions from all accounts across all networks
+        for collection in self.accounts.values() {
+            for account in collection.all_accounts() {
+                transactions.extend(account.transactions.values());
+            }
+        }
+
+        transactions
     }
 
     fn accounts_mut(&mut self, network: Network) -> Option<&mut ManagedAccountCollection> {
@@ -154,6 +228,95 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn accounts(&self, network: Network) -> Option<&ManagedAccountCollection> {
         self.accounts.get(&network)
+    }
+
+    fn process_matured_transactions(
+        &mut self,
+        network: Network,
+        current_height: u32,
+    ) -> Vec<ImmatureTransaction> {
+        if let Some(collection) = self.immature_transactions.get_mut(&network) {
+            let matured = collection.remove_matured(current_height);
+
+            // Update accounts with matured transactions
+            if let Some(account_collection) = self.accounts.get_mut(&network) {
+                for tx in &matured {
+                    // Process BIP44 accounts
+                    for &index in &tx.affected_accounts.bip44_accounts {
+                        if let Some(account) =
+                            account_collection.standard_bip44_accounts.get_mut(&index)
+                        {
+                            // Add transaction record as confirmed
+                            let tx_record = TransactionRecord::new_confirmed(
+                                tx.transaction.clone(),
+                                tx.height,
+                                tx.block_hash,
+                                tx.timestamp,
+                                tx.total_received as i64,
+                                false, // Not ours (we received)
+                            );
+                            account.transactions.insert(tx.txid, tx_record);
+                        }
+                    }
+
+                    // Process BIP32 accounts
+                    for &index in &tx.affected_accounts.bip32_accounts {
+                        if let Some(account) =
+                            account_collection.standard_bip32_accounts.get_mut(&index)
+                        {
+                            let tx_record = TransactionRecord::new_confirmed(
+                                tx.transaction.clone(),
+                                tx.height,
+                                tx.block_hash,
+                                tx.timestamp,
+                                tx.total_received as i64,
+                                false,
+                            );
+                            account.transactions.insert(tx.txid, tx_record);
+                        }
+                    }
+
+                    // Process CoinJoin accounts
+                    for &index in &tx.affected_accounts.coinjoin_accounts {
+                        if let Some(account) = account_collection.coinjoin_accounts.get_mut(&index)
+                        {
+                            let tx_record = TransactionRecord::new_confirmed(
+                                tx.transaction.clone(),
+                                tx.height,
+                                tx.block_hash,
+                                tx.timestamp,
+                                tx.total_received as i64,
+                                false,
+                            );
+                            account.transactions.insert(tx.txid, tx_record);
+                        }
+                    }
+                }
+            }
+
+            // Update balance after processing matured transactions
+            self.update_balance();
+
+            matured
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Add an immature transaction
+    fn add_immature_transaction(&mut self, network: Network, tx: ImmatureTransaction) {
+        self.immature_transactions.entry(network).or_default().insert(tx);
+    }
+
+    fn immature_transactions(&self, network: Network) -> Option<&ImmatureTransactionCollection> {
+        self.immature_transactions.get(&network)
+    }
+
+    fn network_immature_balance(&self, network: Network) -> u64 {
+        self.immature_transactions
+            .get(&network)
+            .map(|collection| collection.total_immature_balance())
+            .unwrap_or(0)
     }
 
     fn create_unsigned_payment_transaction(
@@ -166,7 +329,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         fee_level: FeeLevel,
         current_block_height: u32,
     ) -> Result<Transaction, TransactionError> {
-        self.create_unsigned_payment_transaction(
+        self.create_unsigned_payment_transaction_internal(
             wallet,
             network,
             account_index,

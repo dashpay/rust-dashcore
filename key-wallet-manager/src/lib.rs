@@ -22,7 +22,6 @@ extern crate alloc;
 extern crate std;
 
 pub mod spv_wallet_manager;
-pub mod wallet_info_trait;
 pub mod wallet_interface;
 pub mod wallet_manager;
 

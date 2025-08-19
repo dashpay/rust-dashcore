@@ -1,4 +1,3 @@
-use crate::wallet_info_trait::WalletInfoInterface;
 use crate::{Network, WalletManager};
 use dashcore::bip158::BlockFilter;
 use dashcore::prelude::CoreBlockHeight;

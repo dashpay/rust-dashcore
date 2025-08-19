@@ -140,7 +140,7 @@ fn test_utxo_management() {
     // The WalletManager doesn't have an add_utxo method directly
     // Instead, UTXOs are created by processing transactions
 
-    let utxos = manager.get_wallet_utxos(&wallet_id);
+    let utxos = manager.wallet_utxos(&wallet_id);
     assert!(utxos.is_ok());
     // Initially empty
     assert_eq!(utxos.unwrap().len(), 0);

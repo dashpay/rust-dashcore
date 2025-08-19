@@ -1,7 +1,6 @@
 //! Transaction building functionality for the wallet manager
 
 use super::{WalletError, WalletId, WalletManager};
-use crate::wallet_info_trait::WalletInfoInterface;
 use dashcore::Transaction;
 use key_wallet::wallet::managed_wallet_info::fee::FeeLevel;
 use key_wallet::wallet::managed_wallet_info::transaction_building::{

@@ -15,7 +15,6 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::{BlockHash, Txid};
 use key_wallet::Network;
 
-use crate::wallet_info_trait::WalletInfoInterface;
 use crate::wallet_interface::WalletInterface;
 use crate::wallet_manager::{WalletId, WalletManager};
 use key_wallet::transaction_checking::TransactionContext;

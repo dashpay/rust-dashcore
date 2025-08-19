@@ -39,7 +39,7 @@ pub enum TransactionError {
 impl ManagedWalletInfo {
     /// Create an unsigned payment transaction
     #[allow(clippy::too_many_arguments)]
-    pub fn create_unsigned_payment_transaction(
+    pub(crate) fn create_unsigned_payment_transaction_internal(
         &mut self,
         wallet: &Wallet,
         network: Network,
@@ -169,15 +169,11 @@ impl ManagedWalletInfo {
 mod tests {
     use super::*;
     use crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
-    use crate::wallet::Wallet;
     use crate::Utxo;
     use dashcore::blockdata::script::ScriptBuf;
-    use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
     use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
     use dashcore::{Address, Network, OutPoint, Transaction, TxOut, Txid};
     use dashcore_hashes::{sha256d, Hash};
-    use secp256k1::SecretKey;
-    use std::collections::BTreeMap;
     use std::str::FromStr;
 
     fn test_utxo(value: u64, confirmed: bool) -> Utxo {

@@ -15,10 +15,9 @@ use dashcore::Txid;
 use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
 use key_wallet::WalletBalance;
 use key_wallet::{Account, AccountType, Address, Mnemonic, Network, Wallet, WalletConfig};
+use std::collections::BTreeSet;
 
-use crate::wallet_info_trait::WalletInfoInterface;
-
-use key_wallet::transaction_checking::{TransactionContext, WalletTransactionChecker};
+use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::{Utxo, UtxoSet};
@@ -301,24 +300,8 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         for wallet_id in wallet_ids {
             // Check the transaction for this wallet
             if let Some(wallet_info) = self.wallet_infos.get_mut(&wallet_id) {
-                // Convert TransactionContext to the expected format
-                let context_tuple = match context {
-                    TransactionContext::InBlock {
-                        height,
-                        ..
-                    }
-                    | TransactionContext::InChainLockedBlock {
-                        height,
-                        ..
-                    } => Some((height, tx.txid())),
-                    TransactionContext::Mempool => None,
-                };
-                let result = wallet_info.check_transaction(
-                    tx,
-                    network,
-                    context_tuple,
-                    update_state_if_found,
-                );
+                let result =
+                    wallet_info.check_transaction(tx, network, context, update_state_if_found);
 
                 // If the transaction is relevant
                 if result.is_relevant {
@@ -776,7 +759,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         let managed_info =
             self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
-        Ok(managed_info.get_transaction_history())
+        Ok(managed_info.transaction_history())
     }
 
     /// Get UTXOs for all wallets across all networks
@@ -789,13 +772,13 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     }
 
     /// Get UTXOs for a specific wallet
-    pub fn get_wallet_utxos(&self, wallet_id: &WalletId) -> Result<Vec<Utxo>, WalletError> {
+    pub fn wallet_utxos(&self, wallet_id: &WalletId) -> Result<BTreeSet<&Utxo>, WalletError> {
         // Get the wallet info
         let wallet_info =
             self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get UTXOs from the wallet info and clone them
-        let utxos = wallet_info.get_utxos();
+        let utxos = wallet_info.utxos();
 
         Ok(utxos)
     }
@@ -812,7 +795,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get balance from the wallet info
-        Ok(wallet_info.get_balance())
+        Ok(wallet_info.balance())
     }
 
     /// Update the cached balance for a specific wallet
