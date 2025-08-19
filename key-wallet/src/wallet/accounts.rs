@@ -17,10 +17,10 @@ impl Wallet {
     /// * `account_type` - The type of account to create
     /// * `network` - The network for the account
     /// * `account_xpub` - Optional extended public key for the account. If not provided,
-    ///                    the account will be derived from the wallet's private key.
-    ///                    This will fail if the wallet doesn't have a private key
-    ///                    (watch-only wallets or externally managed wallets where
-    ///                    the private key is stored securely outside of the SDK).
+    ///   the account will be derived from the wallet's private key.
+    ///   This will fail if the wallet doesn't have a private key
+    ///   (watch-only wallets or externally managed wallets where
+    ///   the private key is stored securely outside of the SDK).
     ///
     /// # Returns
     /// A reference to the newly created account
