@@ -6,6 +6,7 @@
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_router::TransactionRouter;
 use crate::wallet::immature_transaction::ImmatureTransaction;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::Network;
 use dashcore::blockdata::transaction::Transaction;

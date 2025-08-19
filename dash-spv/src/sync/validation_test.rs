@@ -208,18 +208,18 @@ mod tests {
 /// Performance tests for validation
 #[cfg(test)]
 mod perf_tests {
-    use super::tests::*;
+
     use crate::sync::chainlock_validation::{ChainLockValidationConfig, ChainLockValidator};
     use crate::sync::validation::{ValidationConfig, ValidationEngine};
-    use dashcore::network::message_qrinfo::QRInfo;
-    use dashcore::{BlockHash, Network};
+
+    use dashcore::BlockHash;
     use std::time::Instant;
 
     #[tokio::test]
     #[ignore] // Run with --ignored flag for performance tests
     async fn test_validation_performance() {
         let config = ValidationConfig::default();
-        let mut engine = ValidationEngine::new(config);
+        let engine = ValidationEngine::new(config);
 
         let start = Instant::now();
 
@@ -244,7 +244,7 @@ mod perf_tests {
         let mut config = ChainLockValidationConfig::default();
         config.cache_size = 10000;
 
-        let mut validator = ChainLockValidator::new(config);
+        let validator = ChainLockValidator::new(config);
 
         let start = Instant::now();
 

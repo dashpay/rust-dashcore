@@ -9,8 +9,9 @@ use dash_spv::network::MultiPeerNetworkManager;
 use dash_spv::storage::MemoryStorageManager;
 use dash_spv::{ClientConfig, DashSpvClient};
 use dashcore::{Block, Network};
+use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
-
+use key_wallet_manager::wallet_manager::WalletManager;
 /// Create a test SPV client with memory storage for integration testing.
 async fn create_test_client(
 ) -> DashSpvClient<SPVWalletManager, MultiPeerNetworkManager, MemoryStorageManager> {
@@ -23,7 +24,9 @@ async fn create_test_client(
     let storage_manager = MemoryStorageManager::new().await.unwrap();
 
     // Create wallet manager
-    let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
+    let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
+        ManagedWalletInfo,
+    >::new())));
 
     DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap()
 }
@@ -60,7 +63,7 @@ async fn test_spv_client_start_stop() {
 #[tokio::test]
 async fn test_wallet_manager_basic_operations() {
     // Test basic wallet manager operations
-    let mut wallet_manager = SPVWalletManager::new();
+    let mut wallet_manager = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Test that we can create a wallet manager
     // SPVWalletManager doesn't have get_watched_scripts method anymore

@@ -6,8 +6,7 @@ mod qrinfo_tests {
     use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_qrinfo::{MNSkipListMode, QRInfo, QuorumSnapshot};
     use dashcore::network::message_sml::MnListDiff;
-    use dashcore::sml::llmq_type::LLMQType;
-    use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
+
     use dashcore::BlockHash;
 
     fn create_test_qr_info() -> QRInfo {

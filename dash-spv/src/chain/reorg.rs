@@ -8,7 +8,6 @@ use super::{ChainTip, Fork};
 use crate::storage::ChainStorage;
 use crate::types::ChainState;
 use dashcore::{BlockHash, Header as BlockHeader, Transaction, Txid};
-use dashcore_hashes::Hash;
 use std::sync::Arc;
 use tracing;
 
@@ -539,9 +538,10 @@ impl ReorgManager {
 mod tests {
     use super::*;
     use crate::chain::ChainWork;
-    use crate::storage::{MemoryStorage, MemoryStorageManager};
+    use crate::storage::MemoryStorage;
     use dashcore::blockdata::constants::genesis_block;
     use dashcore::Network;
+    use dashcore_hashes::Hash;
 
     fn create_test_header(prev: &BlockHeader, nonce: u32) -> BlockHeader {
         let mut header = prev.clone();

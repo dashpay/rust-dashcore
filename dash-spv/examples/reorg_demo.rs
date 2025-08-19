@@ -18,7 +18,9 @@ mod disabled_example {
     use dash_spv::types::ChainState;
     use dashcore::{blockdata::constants::genesis_block, Header as BlockHeader, Network};
     use dashcore_hashes::Hash;
+    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
+    use key_wallet_manager::wallet_manager::WalletManager;
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
@@ -38,7 +40,9 @@ mod disabled_example {
         let network = Network::Dash;
         let genesis = genesis_block(network).header;
         let mut chain_state = ChainState::new_for_network(network);
-        let wallet_manager = Arc::new(RwLock::new(SPVWalletManager::new()));
+        let wallet_manager = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<
+            ManagedWalletInfo,
+        >::new())));
         let mut storage = MemoryStorageManager::new().await?;
 
         println!("📦 Building main chain: genesis -> block1 -> block2");

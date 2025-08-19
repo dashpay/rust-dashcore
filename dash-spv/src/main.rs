@@ -10,6 +10,8 @@ use tokio::signal;
 
 use dash_spv::terminal::TerminalGuard;
 use dash_spv::{ClientConfig, DashSpvClient, Network};
+use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet_manager::wallet_manager::WalletManager;
 
 #[tokio::main]
 async fn main() {
@@ -221,7 +223,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Using data directory: {}", data_dir.display());
 
     // Create the SPV wallet manager
-    let spv_wallet = key_wallet_manager::spv_wallet_manager::SPVWalletManager::new();
+    let spv_wallet =
+        key_wallet_manager::spv_wallet_manager::SPVWalletManager::with_base(WalletManager::<
+            ManagedWalletInfo,
+        >::new());
     let wallet = Arc::new(tokio::sync::RwLock::new(spv_wallet));
 
     // Create network manager

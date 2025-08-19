@@ -178,7 +178,7 @@ Use domain-specific error types:
 
 ## MSRV and Dependencies
 
-- **Minimum Rust Version**: 1.80
+- **Minimum Rust Version**: 1.89
 - **Core dependencies**: `dashcore`, `tokio`, `async-trait`, `thiserror`
 - **Built on**: `dashcore` library with Dash-specific features enabled
 - **Async runtime**: Tokio with full feature set

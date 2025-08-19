@@ -147,8 +147,21 @@ fn test_wallet_recovery_performance() {
 
     let metrics = PerformanceMetrics::from_times("Wallet Recovery", times);
 
+    // Print detailed performance metrics before assertion
+    println!("\n=== Wallet Recovery Performance ===");
+    println!("Average time: {:?}", metrics.avg_time);
+    println!("Total time for {} iterations: {:?}", iterations, metrics.total_time);
+    println!("Operations per second: {:.2}", metrics.ops_per_second);
+    println!("Min/Max times: {:?} / {:?}", metrics.min_time, metrics.max_time);
+    println!("Expected: < 50ms per recovery");
+    println!("===================================\n");
+
     // Assert performance requirements
-    assert!(metrics.avg_time < Duration::from_millis(50), "Wallet recovery too slow");
+    assert!(
+        metrics.avg_time < Duration::from_millis(50),
+        "Wallet recovery too slow: avg {:?}, expected < 50ms",
+        metrics.avg_time
+    );
 }
 
 #[test]
@@ -349,8 +362,20 @@ fn test_transaction_checking_performance() {
     let elapsed = start.elapsed();
     let ops_per_second = num_transactions as f64 / elapsed.as_secs_f64();
 
+    // Print detailed performance metrics before assertion
+    println!("\n=== Transaction Checking Performance ===");
+    println!("Checked {} transactions in {:?}", num_transactions, elapsed);
+    println!("Transactions per second: {:.2}", ops_per_second);
+    println!("Average time per transaction: {:?}", elapsed / num_transactions as u32);
+    println!("Expected: > 10,000 transactions/sec");
+    println!("=========================================\n");
+
     // Assert transaction checking performance
-    assert!(ops_per_second > 10000.0, "Should check >10000 transactions/sec");
+    assert!(
+        ops_per_second > 10000.0,
+        "Should check >10000 transactions/sec, but got {:.2} tx/sec",
+        ops_per_second
+    );
 }
 
 #[test]

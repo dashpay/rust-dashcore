@@ -31,7 +31,7 @@ use rand::thread_rng;
 
 /// Helper to create a test wallet manager.
 fn create_test_wallet() -> Arc<RwLock<SPVWalletManager>> {
-    Arc::new(RwLock::new(SPVWalletManager::new()))
+    Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new())))
 }
 
 /// Create a deterministic test address.

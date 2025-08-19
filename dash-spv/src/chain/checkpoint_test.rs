@@ -77,7 +77,7 @@ mod tests {
             create_test_checkpoint(300000, 1700000000), // Nov 2023
         ];
 
-        let mut manager = CheckpointManager::new(checkpoints);
+        let manager = CheckpointManager::new(checkpoints);
 
         // Test wallet created in 2019
         let wallet_time_2019 = 1550000000u32;

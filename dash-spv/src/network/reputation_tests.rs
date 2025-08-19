@@ -4,7 +4,6 @@
 mod tests {
     use super::super::*;
     use std::net::SocketAddr;
-    use std::time::Duration;
 
     #[tokio::test]
     async fn test_basic_reputation_operations() {

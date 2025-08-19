@@ -134,7 +134,7 @@ architectural mismatches.
 
 ## Minimum Supported Rust Version (MSRV)
 
-This library should always compile with any combination of features on **Rust 1.80**.
+This library should always compile with any combination of features on **Rust 1.89**.
 
 ## Installing Rust
 

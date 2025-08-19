@@ -17,6 +17,8 @@
 //! use dash_spv::storage::MemoryStorageManager;
 //! use dashcore::Network;
 //! use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
+//! use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+//! use key_wallet_manager::wallet_manager::WalletManager;
 //! use std::sync::Arc;
 //! use tokio::sync::RwLock;
 //!
@@ -30,7 +32,7 @@
 //!     // Create the required components
 //!     let network = MultiPeerNetworkManager::new(&config).await?;
 //!     let storage = MemoryStorageManager::new().await?;
-//!     let wallet = Arc::new(RwLock::new(SPVWalletManager::new()));
+//!     let wallet = Arc::new(RwLock::new(SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new())));
 //!
 //!     // Create and start the client
 //!     let mut client = DashSpvClient::new(config.clone(), network, storage, wallet).await?;

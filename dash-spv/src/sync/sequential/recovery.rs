@@ -504,7 +504,7 @@ mod tests {
         let mut recovery_manager = RecoveryManager::new();
 
         // Create a test phase
-        let mut phase = SyncPhase::DownloadingHeaders {
+        let phase = SyncPhase::DownloadingHeaders {
             start_time: std::time::Instant::now(),
             start_height: 50,
             current_height: 100,

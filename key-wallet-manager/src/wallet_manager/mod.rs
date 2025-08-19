@@ -10,15 +10,16 @@ mod transaction_building;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
-
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::Txid;
 use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
 use key_wallet::WalletBalance;
 use key_wallet::{Account, AccountType, Address, Mnemonic, Network, Wallet, WalletConfig};
+use std::collections::BTreeSet;
 
-use key_wallet::transaction_checking::{TransactionContext, WalletTransactionChecker};
+use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
+use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::{Utxo, UtxoSet};
 
 /// Unique identifier for a wallet (32-byte hash)
@@ -78,22 +79,25 @@ impl NetworkState {
 /// Each wallet can contain multiple accounts following BIP44 standard.
 /// This is the main entry point for wallet operations.
 #[derive(Debug)]
-pub struct WalletManager {
+pub struct WalletManager<T: WalletInfoInterface = ManagedWalletInfo> {
     /// Immutable wallets indexed by wallet ID
     pub(crate) wallets: BTreeMap<WalletId, Wallet>,
     /// Mutable wallet info indexed by wallet ID
-    pub(crate) wallet_infos: BTreeMap<WalletId, ManagedWalletInfo>,
+    pub(crate) wallet_infos: BTreeMap<WalletId, T>,
     /// Network-specific state (UTXO sets, transactions, heights)
     network_states: BTreeMap<Network, NetworkState>,
 }
 
-impl Default for WalletManager {
+impl<T: WalletInfoInterface> Default for WalletManager<T>
+where
+    T: Default,
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl WalletManager {
+impl<T: WalletInfoInterface> WalletManager<T> {
     /// Create a new wallet manager
     pub fn new() -> Self {
         Self {
@@ -112,7 +116,7 @@ impl WalletManager {
         passphrase: &str,
         network: Option<Network>,
         birth_height: Option<u32>,
-    ) -> Result<&ManagedWalletInfo, WalletError> {
+    ) -> Result<&T, WalletError> {
         if self.wallets.contains_key(&wallet_id) {
             return Err(WalletError::WalletExists(wallet_id));
         }
@@ -145,9 +149,9 @@ impl WalletManager {
         };
 
         // Create managed wallet info
-        let mut managed_info = ManagedWalletInfo::with_name(wallet.wallet_id, name);
-        managed_info.metadata.birth_height = birth_height;
-        managed_info.metadata.first_loaded_at = current_timestamp();
+        let mut managed_info = T::with_name(wallet.wallet_id, name);
+        managed_info.set_birth_height(birth_height);
+        managed_info.set_first_loaded_at(current_timestamp());
 
         // Create default account in the wallet
         let mut wallet_mut = wallet.clone();
@@ -181,7 +185,7 @@ impl WalletManager {
         wallet_id: WalletId,
         name: String,
         network: Network,
-    ) -> Result<&ManagedWalletInfo, WalletError> {
+    ) -> Result<&T, WalletError> {
         if self.wallets.contains_key(&wallet_id) {
             return Err(WalletError::WalletExists(wallet_id));
         }
@@ -202,10 +206,10 @@ impl WalletManager {
         .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
         // Create managed wallet info
-        let mut managed_info = ManagedWalletInfo::with_name(wallet.wallet_id, name);
+        let mut managed_info = T::with_name(wallet.wallet_id, name);
         let network_state = self.get_or_create_network_state(network);
-        managed_info.metadata.birth_height = Some(network_state.current_height);
-        managed_info.metadata.first_loaded_at = current_timestamp();
+        managed_info.set_birth_height(Some(network_state.current_height));
+        managed_info.set_first_loaded_at(current_timestamp());
 
         // Check if account 0 already exists (from_mnemonic might create it)
         let mut wallet_mut = wallet.clone();
@@ -234,20 +238,17 @@ impl WalletManager {
     }
 
     /// Get wallet info by ID
-    pub fn get_wallet_info(&self, wallet_id: &WalletId) -> Option<&ManagedWalletInfo> {
+    pub fn get_wallet_info(&self, wallet_id: &WalletId) -> Option<&T> {
         self.wallet_infos.get(wallet_id)
     }
 
     /// Get mutable wallet info by ID
-    pub fn get_wallet_info_mut(&mut self, wallet_id: &WalletId) -> Option<&mut ManagedWalletInfo> {
+    pub fn get_wallet_info_mut(&mut self, wallet_id: &WalletId) -> Option<&mut T> {
         self.wallet_infos.get_mut(wallet_id)
     }
 
     /// Get both wallet and info by ID
-    pub fn get_wallet_and_info(
-        &self,
-        wallet_id: &WalletId,
-    ) -> Option<(&Wallet, &ManagedWalletInfo)> {
+    pub fn get_wallet_and_info(&self, wallet_id: &WalletId) -> Option<(&Wallet, &T)> {
         match (self.wallets.get(wallet_id), self.wallet_infos.get(wallet_id)) {
             (Some(wallet), Some(info)) => Some((wallet, info)),
             _ => None,
@@ -255,10 +256,7 @@ impl WalletManager {
     }
 
     /// Remove a wallet
-    pub fn remove_wallet(
-        &mut self,
-        wallet_id: &WalletId,
-    ) -> Result<(Wallet, ManagedWalletInfo), WalletError> {
+    pub fn remove_wallet(&mut self, wallet_id: &WalletId) -> Result<(Wallet, T), WalletError> {
         let wallet =
             self.wallets.remove(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
         let info =
@@ -277,7 +275,7 @@ impl WalletManager {
     }
 
     /// Get all wallet infos
-    pub fn get_all_wallet_infos(&self) -> &BTreeMap<WalletId, ManagedWalletInfo> {
+    pub fn get_all_wallet_infos(&self) -> &BTreeMap<WalletId, T> {
         &self.wallet_infos
     }
 
@@ -427,8 +425,7 @@ impl WalletManager {
             self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get the account collection for the network
-        let collection =
-            managed_info.accounts.get_mut(&network).ok_or(WalletError::InvalidNetwork)?;
+        let collection = managed_info.accounts_mut(network).ok_or(WalletError::InvalidNetwork)?;
 
         // Try to get address based on preference
         let (address_opt, account_type_used) = match account_type_pref {
@@ -550,7 +547,7 @@ impl WalletManager {
         if let Some(ref address) = address_opt {
             if mark_as_used {
                 // Get the account collection again for marking
-                if let Some(collection) = managed_info.accounts.get_mut(&network) {
+                if let Some(collection) = managed_info.accounts_mut(network) {
                     // Mark address as used in the appropriate account type
                     match account_type_used {
                         Some(AccountTypeUsed::BIP44) => {
@@ -594,8 +591,7 @@ impl WalletManager {
             self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get the account collection for the network
-        let collection =
-            managed_info.accounts.get_mut(&network).ok_or(WalletError::InvalidNetwork)?;
+        let collection = managed_info.accounts_mut(network).ok_or(WalletError::InvalidNetwork)?;
 
         // Try to get address based on preference
         let (address_opt, account_type_used) = match account_type_pref {
@@ -717,7 +713,7 @@ impl WalletManager {
         if let Some(ref address) = address_opt {
             if mark_as_used {
                 // Get the account collection again for marking
-                if let Some(collection) = managed_info.accounts.get_mut(&network) {
+                if let Some(collection) = managed_info.accounts_mut(network) {
                     // Mark address as used in the appropriate account type
                     match account_type_used {
                         Some(AccountTypeUsed::BIP44) => {
@@ -763,7 +759,7 @@ impl WalletManager {
         let managed_info =
             self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
-        Ok(managed_info.get_transaction_history())
+        Ok(managed_info.transaction_history())
     }
 
     /// Get UTXOs for all wallets across all networks
@@ -776,13 +772,13 @@ impl WalletManager {
     }
 
     /// Get UTXOs for a specific wallet
-    pub fn get_wallet_utxos(&self, wallet_id: &WalletId) -> Result<Vec<Utxo>, WalletError> {
+    pub fn wallet_utxos(&self, wallet_id: &WalletId) -> Result<BTreeSet<&Utxo>, WalletError> {
         // Get the wallet info
         let wallet_info =
             self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get UTXOs from the wallet info and clone them
-        let utxos = wallet_info.get_utxos().into_iter().cloned().collect();
+        let utxos = wallet_info.utxos();
 
         Ok(utxos)
     }
@@ -799,7 +795,7 @@ impl WalletManager {
             self.wallet_infos.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         // Get balance from the wallet info
-        Ok(wallet_info.get_balance())
+        Ok(wallet_info.balance())
     }
 
     /// Update the cached balance for a specific wallet
@@ -826,7 +822,7 @@ impl WalletManager {
         }
 
         if let Some(desc) = description {
-            managed_info.set_description(desc);
+            managed_info.set_description(Some(desc));
         }
 
         managed_info.update_last_synced(current_timestamp());

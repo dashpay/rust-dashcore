@@ -150,7 +150,6 @@ impl Default for ConnectionPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::Network;
 
     #[tokio::test]
     async fn test_connection_pool_basic() {
