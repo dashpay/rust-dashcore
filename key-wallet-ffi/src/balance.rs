@@ -54,8 +54,8 @@ pub extern "C" fn wallet_get_balance(
     }
 
     unsafe {
-        let wallet = &*wallet;
-        let network_rust: key_wallet::Network = network.into();
+        let _wallet = &*wallet;
+        let _network_rust: key_wallet::Network = network.into();
 
         // Note: get_balance is not directly available on Wallet
         // Would need to aggregate from accounts
@@ -85,7 +85,7 @@ pub extern "C" fn wallet_get_account_balance(
         let network_rust: key_wallet::Network = network.into();
 
         use key_wallet::account::types::{AccountType, StandardAccountType};
-        let account_type = AccountType::Standard {
+        let _account_type = AccountType::Standard {
             index: account_index,
             standard_account_type: StandardAccountType::BIP44Account,
         };

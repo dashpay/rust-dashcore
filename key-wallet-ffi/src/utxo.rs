@@ -72,12 +72,12 @@ pub extern "C" fn wallet_add_utxo(
     wallet: *mut FFIWallet,
     network: FFINetwork,
     txid: *const u8,
-    vout: u32,
-    amount: u64,
+    _vout: u32,
+    _amount: u64,
     address: *const c_char,
     script_pubkey: *const u8,
-    script_len: usize,
-    height: u32,
+    _script_len: usize,
+    _height: u32,
     error: *mut FFIError,
 ) -> bool {
     if wallet.is_null() || txid.is_null() || address.is_null() || script_pubkey.is_null() {

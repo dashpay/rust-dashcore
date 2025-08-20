@@ -37,7 +37,7 @@ pub extern "C" fn wallet_get_account(
             }
         };
 
-        let account_type = account_type_enum.to_account_type(account_index);
+        let _account_type = account_type_enum.to_account_type(account_index);
 
         // Note: get_or_create_account is not available, just check if it exists
         match wallet.inner().get_bip44_account(network_rust, account_index) {

@@ -7,6 +7,30 @@ use std::ptr;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFINetwork, FFIWallet};
 
+/// Opaque type for a private key (SecretKey)
+#[repr(C)]
+pub struct FFIPrivateKey {
+    inner: secp256k1::SecretKey,
+}
+
+/// Opaque type for an extended private key
+#[repr(C)]
+pub struct FFIExtendedPrivateKey {
+    inner: key_wallet::bip32::ExtendedPrivKey,
+}
+
+/// Opaque type for a public key
+#[repr(C)]
+pub struct FFIPublicKey {
+    inner: secp256k1::PublicKey,
+}
+
+/// Opaque type for an extended public key
+#[repr(C)]
+pub struct FFIExtendedPublicKey {
+    inner: key_wallet::bip32::ExtendedPubKey,
+}
+
 /// Get extended private key for account
 #[no_mangle]
 pub extern "C" fn wallet_get_account_xpriv(
@@ -94,20 +118,21 @@ pub extern "C" fn wallet_get_account_xpub(
     }
 }
 
-/// Derive private key for address
+/// Derive private key at a specific path
+/// Returns an opaque FFIPrivateKey pointer that must be freed with private_key_free
 #[no_mangle]
 pub extern "C" fn wallet_derive_private_key(
     wallet: *const FFIWallet,
     network: FFINetwork,
     derivation_path: *const c_char,
     error: *mut FFIError,
-) -> *mut c_char {
+) -> *mut FFIPrivateKey {
     if wallet.is_null() || derivation_path.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return ptr::null_mut();
     }
 
-    let _path_str = unsafe {
+    let path_str = unsafe {
         match CStr::from_ptr(derivation_path).to_str() {
             Ok(s) => s,
             Err(_) => {
@@ -121,28 +146,57 @@ pub extern "C" fn wallet_derive_private_key(
         }
     };
 
-    // For now, return not implemented until we can properly access the wallet's private keys
-    // The root_extended_priv_key() method is not publicly accessible
-    FFIError::set_error(
-        error,
-        FFIErrorCode::WalletError,
-        "Private key derivation not yet implemented".to_string(),
-    );
-    ptr::null_mut()
+    // Parse the derivation path
+    use key_wallet::DerivationPath;
+    use std::str::FromStr;
+    let path = match DerivationPath::from_str(path_str) {
+        Ok(p) => p,
+        Err(e) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                format!("Invalid derivation path: {}", e),
+            );
+            return ptr::null_mut();
+        }
+    };
+
+    unsafe {
+        let wallet = &*wallet;
+        let network_rust: key_wallet::Network = network.into();
+
+        // Use the new wallet method to derive the private key
+        match wallet.inner().derive_private_key(network_rust, &path) {
+            Ok(private_key) => {
+                FFIError::set_success(error);
+                Box::into_raw(Box::new(FFIPrivateKey {
+                    inner: private_key,
+                }))
+            }
+            Err(e) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Failed to derive private key: {:?}", e),
+                );
+                ptr::null_mut()
+            }
+        }
+    }
 }
 
-/// Derive public key for address
+/// Derive extended private key at a specific path
+/// Returns an opaque FFIExtendedPrivateKey pointer that must be freed with extended_private_key_free
 #[no_mangle]
-pub extern "C" fn wallet_derive_public_key(
+pub extern "C" fn wallet_derive_extended_private_key(
     wallet: *const FFIWallet,
     network: FFINetwork,
     derivation_path: *const c_char,
-    key_out: *mut u8,
     error: *mut FFIError,
-) -> bool {
-    if wallet.is_null() || derivation_path.is_null() || key_out.is_null() {
+) -> *mut FFIExtendedPrivateKey {
+    if wallet.is_null() || derivation_path.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
+        return ptr::null_mut();
     }
 
     let path_str = unsafe {
@@ -154,8 +208,23 @@ pub extern "C" fn wallet_derive_public_key(
                     FFIErrorCode::InvalidInput,
                     "Invalid UTF-8 in derivation path".to_string(),
                 );
-                return false;
+                return ptr::null_mut();
             }
+        }
+    };
+
+    // Parse the derivation path
+    use key_wallet::DerivationPath;
+    use std::str::FromStr;
+    let path = match DerivationPath::from_str(path_str) {
+        Ok(p) => p,
+        Err(e) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                format!("Invalid derivation path: {}", e),
+            );
+            return ptr::null_mut();
         }
     };
 
@@ -163,109 +232,410 @@ pub extern "C" fn wallet_derive_public_key(
         let wallet = &*wallet;
         let network_rust: key_wallet::Network = network.into();
 
-        // Parse the derivation path to determine account and indices
-        // Expected format: m/44'/5'/account'/change/index
-        let parts: Vec<&str> = path_str.trim_start_matches("m/").split('/').collect();
-        if parts.len() < 5 {
+        // Use the new wallet method to derive the extended private key
+        match wallet.inner().derive_extended_private_key(network_rust, &path) {
+            Ok(extended_private_key) => {
+                FFIError::set_success(error);
+                Box::into_raw(Box::new(FFIExtendedPrivateKey {
+                    inner: extended_private_key,
+                }))
+            }
+            Err(e) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Failed to derive extended private key: {:?}", e),
+                );
+                ptr::null_mut()
+            }
+        }
+    }
+}
+
+/// Derive private key at a specific path and return as WIF string
+#[no_mangle]
+pub extern "C" fn wallet_derive_private_key_as_wif(
+    wallet: *const FFIWallet,
+    network: FFINetwork,
+    derivation_path: *const c_char,
+    error: *mut FFIError,
+) -> *mut c_char {
+    if wallet.is_null() || derivation_path.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return ptr::null_mut();
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(derivation_path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    "Invalid UTF-8 in derivation path".to_string(),
+                );
+                return ptr::null_mut();
+            }
+        }
+    };
+
+    // Parse the derivation path
+    use key_wallet::DerivationPath;
+    use std::str::FromStr;
+    let path = match DerivationPath::from_str(path_str) {
+        Ok(p) => p,
+        Err(e) => {
             FFIError::set_error(
                 error,
-                FFIErrorCode::InvalidDerivationPath,
-                "Invalid BIP44 path format".to_string(),
+                FFIErrorCode::InvalidInput,
+                format!("Invalid derivation path: {}", e),
             );
-            return false;
+            return ptr::null_mut();
         }
+    };
 
-        // Extract account index from path (third component, remove ')
-        let account_str = parts[2].trim_end_matches('\'');
-        let account_index: u32 = match account_str.parse() {
-            Ok(idx) => idx,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidDerivationPath,
-                    "Invalid account index in path".to_string(),
-                );
-                return false;
-            }
-        };
+    unsafe {
+        let wallet = &*wallet;
+        let network_rust: key_wallet::Network = network.into();
 
-        // Extract change index (0 for receive, 1 for change)
-        let change_index: u32 = match parts[3].parse() {
-            Ok(idx) => idx,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidDerivationPath,
-                    "Invalid change index in path".to_string(),
-                );
-                return false;
-            }
-        };
-
-        // Extract address index
-        let address_index: u32 = match parts[4].parse() {
-            Ok(idx) => idx,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidDerivationPath,
-                    "Invalid address index in path".to_string(),
-                );
-                return false;
-            }
-        };
-
-        match wallet.inner().get_bip44_account(network_rust, account_index) {
-            Some(account) => {
-                use key_wallet::ChildNumber;
-                use secp256k1::Secp256k1;
-                let secp = Secp256k1::new();
-
-                let child_change = match ChildNumber::from_normal_idx(change_index) {
-                    Ok(c) => c,
-                    Err(e) => {
+        // Use the new wallet method to derive the private key as WIF
+        match wallet.inner().derive_private_key_as_wif(network_rust, &path) {
+            Ok(wif) => {
+                FFIError::set_success(error);
+                match CString::new(wif) {
+                    Ok(c_str) => c_str.into_raw(),
+                    Err(_) => {
                         FFIError::set_error(
                             error,
-                            FFIErrorCode::WalletError,
-                            format!("Failed to create child number: {}", e),
+                            FFIErrorCode::AllocationFailed,
+                            "Failed to allocate string".to_string(),
                         );
-                        return false;
-                    }
-                };
-
-                let child_index = match ChildNumber::from_normal_idx(address_index) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        FFIError::set_error(
-                            error,
-                            FFIErrorCode::WalletError,
-                            format!("Failed to create child number: {}", e),
-                        );
-                        return false;
-                    }
-                };
-
-                match account.account_xpub.derive_pub(&secp, &[child_change, child_index]) {
-                    Ok(derived_key) => {
-                        let public_key_bytes = derived_key.public_key.serialize();
-                        ptr::copy_nonoverlapping(public_key_bytes.as_ptr(), key_out, 33);
-
-                        FFIError::set_success(error);
-                        true
-                    }
-                    Err(e) => {
-                        FFIError::set_error(
-                            error,
-                            FFIErrorCode::WalletError,
-                            format!("Failed to derive public key: {}", e),
-                        );
-                        false
+                        ptr::null_mut()
                     }
                 }
             }
-            None => {
-                FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
-                false
+            Err(e) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Failed to derive private key: {:?}", e),
+                );
+                ptr::null_mut()
+            }
+        }
+    }
+}
+
+/// Free a private key
+#[no_mangle]
+pub extern "C" fn private_key_free(key: *mut FFIPrivateKey) {
+    if !key.is_null() {
+        unsafe {
+            let _ = Box::from_raw(key);
+        }
+    }
+}
+
+/// Free an extended private key
+#[no_mangle]
+pub extern "C" fn extended_private_key_free(key: *mut FFIExtendedPrivateKey) {
+    if !key.is_null() {
+        unsafe {
+            let _ = Box::from_raw(key);
+        }
+    }
+}
+
+/// Get private key as WIF string from FFIPrivateKey
+#[no_mangle]
+pub extern "C" fn private_key_to_wif(
+    key: *const FFIPrivateKey,
+    network: FFINetwork,
+    error: *mut FFIError,
+) -> *mut c_char {
+    if key.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Private key is null".to_string());
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        let key = &*key;
+        let network_rust: key_wallet::Network = network.into();
+
+        // Convert to WIF format
+        use dashcore::PrivateKey as DashPrivateKey;
+        let dash_key = DashPrivateKey {
+            compressed: true,
+            network: network_rust,
+            inner: key.inner,
+        };
+
+        let wif = dash_key.to_wif();
+        FFIError::set_success(error);
+        match CString::new(wif) {
+            Ok(c_str) => c_str.into_raw(),
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::AllocationFailed,
+                    "Failed to allocate string".to_string(),
+                );
+                ptr::null_mut()
+            }
+        }
+    }
+}
+
+/// Derive public key at a specific path
+/// Returns an opaque FFIPublicKey pointer that must be freed with public_key_free
+#[no_mangle]
+pub extern "C" fn wallet_derive_public_key(
+    wallet: *const FFIWallet,
+    network: FFINetwork,
+    derivation_path: *const c_char,
+    error: *mut FFIError,
+) -> *mut FFIPublicKey {
+    if wallet.is_null() || derivation_path.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return ptr::null_mut();
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(derivation_path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    "Invalid UTF-8 in derivation path".to_string(),
+                );
+                return ptr::null_mut();
+            }
+        }
+    };
+
+    // Parse the derivation path
+    use key_wallet::DerivationPath;
+    use std::str::FromStr;
+    let path = match DerivationPath::from_str(path_str) {
+        Ok(p) => p,
+        Err(e) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                format!("Invalid derivation path: {}", e),
+            );
+            return ptr::null_mut();
+        }
+    };
+
+    unsafe {
+        let wallet = &*wallet;
+        let network_rust: key_wallet::Network = network.into();
+
+        // Use the new wallet method to derive the public key
+        match wallet.inner().derive_public_key(network_rust, &path) {
+            Ok(public_key) => {
+                FFIError::set_success(error);
+                Box::into_raw(Box::new(FFIPublicKey {
+                    inner: public_key,
+                }))
+            }
+            Err(e) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Failed to derive public key: {:?}", e),
+                );
+                ptr::null_mut()
+            }
+        }
+    }
+}
+
+/// Derive extended public key at a specific path
+/// Returns an opaque FFIExtendedPublicKey pointer that must be freed with extended_public_key_free
+#[no_mangle]
+pub extern "C" fn wallet_derive_extended_public_key(
+    wallet: *const FFIWallet,
+    network: FFINetwork,
+    derivation_path: *const c_char,
+    error: *mut FFIError,
+) -> *mut FFIExtendedPublicKey {
+    if wallet.is_null() || derivation_path.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return ptr::null_mut();
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(derivation_path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    "Invalid UTF-8 in derivation path".to_string(),
+                );
+                return ptr::null_mut();
+            }
+        }
+    };
+
+    // Parse the derivation path
+    use key_wallet::DerivationPath;
+    use std::str::FromStr;
+    let path = match DerivationPath::from_str(path_str) {
+        Ok(p) => p,
+        Err(e) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                format!("Invalid derivation path: {}", e),
+            );
+            return ptr::null_mut();
+        }
+    };
+
+    unsafe {
+        let wallet = &*wallet;
+        let network_rust: key_wallet::Network = network.into();
+
+        // Use the new wallet method to derive the extended public key
+        match wallet.inner().derive_extended_public_key(network_rust, &path) {
+            Ok(extended_public_key) => {
+                FFIError::set_success(error);
+                Box::into_raw(Box::new(FFIExtendedPublicKey {
+                    inner: extended_public_key,
+                }))
+            }
+            Err(e) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Failed to derive extended public key: {:?}", e),
+                );
+                ptr::null_mut()
+            }
+        }
+    }
+}
+
+/// Derive public key at a specific path and return as hex string
+#[no_mangle]
+pub extern "C" fn wallet_derive_public_key_as_hex(
+    wallet: *const FFIWallet,
+    network: FFINetwork,
+    derivation_path: *const c_char,
+    error: *mut FFIError,
+) -> *mut c_char {
+    if wallet.is_null() || derivation_path.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return ptr::null_mut();
+    }
+
+    let path_str = unsafe {
+        match CStr::from_ptr(derivation_path).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    "Invalid UTF-8 in derivation path".to_string(),
+                );
+                return ptr::null_mut();
+            }
+        }
+    };
+
+    // Parse the derivation path
+    use key_wallet::DerivationPath;
+    use std::str::FromStr;
+    let path = match DerivationPath::from_str(path_str) {
+        Ok(p) => p,
+        Err(e) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                format!("Invalid derivation path: {}", e),
+            );
+            return ptr::null_mut();
+        }
+    };
+
+    unsafe {
+        let wallet = &*wallet;
+        let network_rust: key_wallet::Network = network.into();
+
+        // Use the new wallet method to derive the public key as hex
+        match wallet.inner().derive_public_key_as_hex(network_rust, &path) {
+            Ok(hex) => {
+                FFIError::set_success(error);
+                match CString::new(hex) {
+                    Ok(c_str) => c_str.into_raw(),
+                    Err(_) => {
+                        FFIError::set_error(
+                            error,
+                            FFIErrorCode::AllocationFailed,
+                            "Failed to allocate string".to_string(),
+                        );
+                        ptr::null_mut()
+                    }
+                }
+            }
+            Err(e) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Failed to derive public key: {:?}", e),
+                );
+                ptr::null_mut()
+            }
+        }
+    }
+}
+
+/// Free a public key
+#[no_mangle]
+pub extern "C" fn public_key_free(key: *mut FFIPublicKey) {
+    if !key.is_null() {
+        unsafe {
+            let _ = Box::from_raw(key);
+        }
+    }
+}
+
+/// Free an extended public key
+#[no_mangle]
+pub extern "C" fn extended_public_key_free(key: *mut FFIExtendedPublicKey) {
+    if !key.is_null() {
+        unsafe {
+            let _ = Box::from_raw(key);
+        }
+    }
+}
+
+/// Get public key as hex string from FFIPublicKey
+#[no_mangle]
+pub extern "C" fn public_key_to_hex(key: *const FFIPublicKey, error: *mut FFIError) -> *mut c_char {
+    if key.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Public key is null".to_string());
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        let key = &*key;
+        let hex = format!("{:x}", key.inner);
+
+        FFIError::set_success(error);
+        match CString::new(hex) {
+            Ok(c_str) => c_str.into_raw(),
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::AllocationFailed,
+                    "Failed to allocate string".to_string(),
+                );
+                ptr::null_mut()
             }
         }
     }

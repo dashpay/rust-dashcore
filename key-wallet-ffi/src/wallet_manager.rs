@@ -4,17 +4,16 @@
 #[path = "wallet_manager_tests.rs"]
 mod tests;
 
-use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint, c_ulong};
 use std::ptr;
 use std::sync::Mutex;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetwork, FFIWallet};
+use crate::types::FFINetwork;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
-use key_wallet_manager::wallet_manager::{WalletError, WalletId, WalletManager};
+use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
 
 /// FFI wrapper for WalletManager
 #[repr(C)]

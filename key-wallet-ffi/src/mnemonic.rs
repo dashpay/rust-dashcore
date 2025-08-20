@@ -7,9 +7,8 @@ mod tests;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
-use std::slice;
 
-use key_wallet::{Mnemonic, Seed};
+use key_wallet::Mnemonic;
 
 use crate::error::{FFIError, FFIErrorCode};
 
@@ -120,9 +119,9 @@ pub extern "C" fn mnemonic_generate_with_language(
         }
     };
 
-    // For now, just use the default generation
-    // Language support would need to be added to key_wallet
+    // Convert FFILanguage to key_wallet Language
     use key_wallet::mnemonic::Language;
+    let lang: Language = language.into();
     let word_count = match entropy_bits {
         128 => 12,
         160 => 15,
@@ -131,7 +130,7 @@ pub extern "C" fn mnemonic_generate_with_language(
         256 => 24,
         _ => 12,
     };
-    match Mnemonic::generate(word_count, Language::English) {
+    match Mnemonic::generate(word_count, lang) {
         Ok(mnemonic) => {
             FFIError::set_success(error);
             match CString::new(mnemonic.to_string()) {
@@ -180,20 +179,33 @@ pub extern "C" fn mnemonic_validate(mnemonic: *const c_char, error: *mut FFIErro
     };
 
     use key_wallet::mnemonic::Language;
-    match Mnemonic::from_phrase(mnemonic_str, Language::English) {
-        Ok(_) => {
+
+    // Try validation against all supported languages
+    let languages = [
+        Language::English,
+        Language::ChineseSimplified,
+        Language::ChineseTraditional,
+        Language::French,
+        Language::Italian,
+        Language::Japanese,
+        Language::Korean,
+        Language::Spanish,
+    ];
+
+    for language in languages.iter() {
+        if Mnemonic::validate(mnemonic_str, *language) {
             FFIError::set_success(error);
-            true
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidMnemonic,
-                format!("Invalid mnemonic: {}", e),
-            );
-            false
+            return true;
         }
     }
+
+    // If no language validates, return error
+    FFIError::set_error(
+        error,
+        FFIErrorCode::InvalidMnemonic,
+        "Invalid mnemonic: does not match any supported language".to_string(),
+    );
+    false
 }
 
 /// Convert mnemonic to seed with optional passphrase

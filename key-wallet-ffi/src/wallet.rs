@@ -523,7 +523,7 @@ pub extern "C" fn wallet_add_account(
         let network_rust: key_wallet::Network = network.into();
 
         use crate::types::FFIAccountType;
-        use key_wallet::account::types::{AccountType, StandardAccountType};
+        use key_wallet::account::types::AccountType;
 
         let account_type_enum = match account_type {
             0 => FFIAccountType::Standard,

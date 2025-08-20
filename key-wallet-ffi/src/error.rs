@@ -24,6 +24,7 @@ pub enum FFIErrorCode {
 
 /// FFI Error structure
 #[repr(C)]
+#[derive(Debug)]
 pub struct FFIError {
     pub code: FFIErrorCode,
     pub message: *mut c_char,

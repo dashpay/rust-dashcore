@@ -521,4 +521,231 @@ impl Wallet {
 
         Ok(())
     }
+
+    /// Derive an extended private key at a specific derivation path
+    ///
+    /// This will return the extended private key for the given derivation path.
+    /// Only works for wallets that have access to the private keys (not watch-only).
+    /// For MnemonicWithPassphrase wallets, you must provide the passphrase.
+    ///
+    /// # Arguments
+    /// * `network` - The network to derive for
+    /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
+    /// * `passphrase` - Optional passphrase for MnemonicWithPassphrase wallets
+    ///
+    /// # Returns
+    /// The extended private key, or an error if the wallet is watch-only or path is invalid
+    pub fn derive_extended_private_key_with_passphrase(
+        &self,
+        network: Network,
+        path: &crate::DerivationPath,
+        passphrase: Option<&str>,
+    ) -> Result<crate::bip32::ExtendedPrivKey> {
+        use crate::bip32::ExtendedPrivKey;
+        use secp256k1::Secp256k1;
+
+        // Get the master private key based on wallet type
+        let master = match &self.wallet_type {
+            WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.to_extended_priv_key(network),
+            WalletType::MnemonicWithPassphrase {
+                mnemonic,
+                ..
+            } => {
+                let pass = passphrase.ok_or(Error::InvalidParameter(
+                    "Passphrase required for this wallet type".to_string(),
+                ))?;
+                let seed = mnemonic.to_seed(pass);
+                ExtendedPrivKey::new_master(network, &seed)?
+            }
+            WalletType::Seed {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.to_extended_priv_key(network),
+            WalletType::ExtendedPrivKey(root_priv) => root_priv.to_extended_priv_key(network),
+            WalletType::ExternalSignable(_) | WalletType::WatchOnly(_) => {
+                return Err(Error::InvalidParameter(
+                    "Cannot derive private keys from watch-only wallet".to_string(),
+                ));
+            }
+        };
+
+        // Derive the private key at the specified path
+        let secp = Secp256k1::new();
+        master.derive_priv(&secp, path).map_err(|e| e.into())
+    }
+
+    /// Derive an extended private key at a specific derivation path
+    ///
+    /// This will return the extended private key for the given derivation path.
+    /// Only works for wallets that have access to the private keys (not watch-only).
+    /// For MnemonicWithPassphrase wallets, this will fail.
+    ///
+    /// # Arguments
+    /// * `network` - The network to derive for
+    /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
+    ///
+    /// # Returns
+    /// The extended private key, or an error if the wallet is watch-only or path is invalid
+    pub fn derive_extended_private_key(
+        &self,
+        network: Network,
+        path: &crate::DerivationPath,
+    ) -> Result<crate::bip32::ExtendedPrivKey> {
+        self.derive_extended_private_key_with_passphrase(network, path, None)
+    }
+
+    /// Derive a private key at a specific derivation path
+    ///
+    /// This will return the private key (SecretKey) for the given derivation path.
+    /// Only works for wallets that have access to the private keys (not watch-only).
+    /// For MnemonicWithPassphrase wallets, this will fail.
+    ///
+    /// # Arguments
+    /// * `network` - The network to derive for
+    /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
+    ///
+    /// # Returns
+    /// The private key (SecretKey), or an error if the wallet is watch-only or path is invalid
+    pub fn derive_private_key(
+        &self,
+        network: Network,
+        path: &crate::DerivationPath,
+    ) -> Result<secp256k1::SecretKey> {
+        let extended = self.derive_extended_private_key(network, path)?;
+        Ok(extended.private_key)
+    }
+
+    /// Derive a private key at a specific derivation path and return as WIF
+    ///
+    /// This will return the private key in WIF format for the given derivation path.
+    /// Only works for wallets that have access to the private keys (not watch-only).
+    /// For MnemonicWithPassphrase wallets, this will fail.
+    ///
+    /// # Arguments
+    /// * `network` - The network to derive for
+    /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
+    ///
+    /// # Returns
+    /// The private key in WIF format, or an error if the wallet is watch-only or path is invalid
+    pub fn derive_private_key_as_wif(
+        &self,
+        network: Network,
+        path: &crate::DerivationPath,
+    ) -> Result<String> {
+        let private_key = self.derive_private_key(network, path)?;
+
+        // Convert to WIF format
+        use dashcore::PrivateKey as DashPrivateKey;
+        let dash_key = DashPrivateKey {
+            compressed: true,
+            network,
+            inner: private_key,
+        };
+        Ok(dash_key.to_wif())
+    }
+
+    /// Derive an extended public key at a specific derivation path
+    ///
+    /// For hardened derivation paths, this requires private key access.
+    /// For non-hardened paths, this works with watch-only wallets.
+    ///
+    /// # Arguments
+    /// * `network` - The network to derive for
+    /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
+    ///
+    /// # Returns
+    /// The extended public key, or an error if the path is invalid
+    pub fn derive_extended_public_key(
+        &self,
+        network: Network,
+        path: &crate::DerivationPath,
+    ) -> Result<crate::bip32::ExtendedPubKey> {
+        use secp256k1::Secp256k1;
+
+        // Check if the path contains hardened derivation
+        let has_hardened = path.into_iter().any(|child| child.is_hardened());
+
+        if has_hardened && !self.can_sign() {
+            return Err(Error::InvalidParameter(
+                "Cannot derive hardened extended public keys from watch-only wallet".to_string(),
+            ));
+        }
+
+        if has_hardened {
+            // For hardened paths, derive the extended private key first, then get extended public key
+            let extended_private = self.derive_extended_private_key(network, path)?;
+            use crate::bip32::ExtendedPubKey;
+            let secp = Secp256k1::new();
+            Ok(ExtendedPubKey::from_priv(&secp, &extended_private))
+        } else {
+            // For non-hardened paths, derive directly from public key
+            let secp = Secp256k1::new();
+            let xpub = self.root_extended_pub_key().to_extended_pub_key(network);
+            xpub.derive_pub(&secp, path).map_err(|e| e.into())
+        }
+    }
+
+    /// Derive a public key at a specific derivation path
+    ///
+    /// For hardened derivation paths, this requires private key access.
+    /// For non-hardened paths, this works with watch-only wallets.
+    ///
+    /// # Arguments
+    /// * `network` - The network to derive for
+    /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
+    ///
+    /// # Returns
+    /// The public key (secp256k1::PublicKey), or an error if the path is invalid
+    pub fn derive_public_key(
+        &self,
+        network: Network,
+        path: &crate::DerivationPath,
+    ) -> Result<secp256k1::PublicKey> {
+        // Check if the path contains hardened derivation
+        let has_hardened = path.into_iter().any(|child| child.is_hardened());
+
+        if has_hardened && !self.can_sign() {
+            return Err(Error::InvalidParameter(
+                "Cannot derive hardened public keys from watch-only wallet".to_string(),
+            ));
+        }
+
+        if has_hardened {
+            // For hardened paths, derive the private key first, then get public key
+            let private_key = self.derive_private_key(network, path)?;
+            use secp256k1::Secp256k1;
+            let secp = Secp256k1::new();
+            Ok(secp256k1::PublicKey::from_secret_key(&secp, &private_key))
+        } else {
+            // For non-hardened paths, derive directly from public key
+            let extended = self.derive_extended_public_key(network, path)?;
+            Ok(extended.public_key)
+        }
+    }
+
+    /// Derive a public key at a specific derivation path and return as hex string
+    ///
+    /// For hardened derivation paths, this requires private key access.
+    /// For non-hardened paths, this works with watch-only wallets.
+    ///
+    /// # Arguments
+    /// * `network` - The network to derive for
+    /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
+    ///
+    /// # Returns
+    /// The public key as hex string, or an error if the path is invalid
+    pub fn derive_public_key_as_hex(
+        &self,
+        network: Network,
+        path: &crate::DerivationPath,
+    ) -> Result<String> {
+        let public_key = self.derive_public_key(network, path)?;
+
+        // Return as hex string
+        use alloc::format;
+        Ok(format!("{:x}", public_key))
+    }
 }

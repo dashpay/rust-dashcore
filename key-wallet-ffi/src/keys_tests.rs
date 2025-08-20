@@ -77,9 +77,9 @@ mod tests {
         }
     }
 
-    // Note: wallet_derive_private_key is not implemented
+    // wallet_derive_private_key is now implemented
     #[test]
-    fn test_wallet_derive_private_key_not_implemented() {
+    fn test_wallet_derive_private_key_now_implemented() {
         let mut error = FFIError::success();
 
         // Create a wallet
@@ -95,18 +95,26 @@ mod tests {
             )
         };
 
-        // Try to derive private key - should fail
-        let path = CString::new("m/44'/1'/0'/0/0").unwrap();
-        let privkey_str = unsafe {
+        // Try to derive private key - should now succeed (44'/5'/0'/0/0 for Dash)
+        let path = CString::new("m/44'/5'/0'/0/0").unwrap();
+        let privkey_ptr = unsafe {
             wallet_derive_private_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
         };
 
-        // Should return null (not implemented)
-        assert!(privkey_str.is_null());
-        assert_eq!(error.code, FFIErrorCode::WalletError);
+        // Should succeed and return a valid pointer
+        assert!(!privkey_ptr.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
+
+        // Convert to WIF to verify it's valid
+        let wif_str = unsafe { private_key_to_wif(privkey_ptr, FFINetwork::Testnet, &mut error) };
+        assert!(!wif_str.is_null());
 
         // Clean up
         unsafe {
+            if !wif_str.is_null() {
+                let _ = CString::from_raw(wif_str);
+            }
+            private_key_free(privkey_ptr);
             wallet::wallet_free(wallet);
         }
     }
@@ -128,22 +136,37 @@ mod tests {
             )
         };
 
-        // Derive public key using derivation path
-        let path = CString::new("m/44'/1'/0'/0/0").unwrap();
-        let mut pubkey = [0u8; 33]; // Compressed public key
-        let success = unsafe {
-            wallet_derive_public_key(
-                wallet,
-                FFINetwork::Testnet,
-                path.as_ptr(),
-                pubkey.as_mut_ptr(),
-                &mut error,
-            )
+        // Ensure wallet was created successfully
+        assert!(!wallet.is_null(), "Failed to create wallet");
+        assert_eq!(error.code, FFIErrorCode::Success, "Wallet creation error: {:?}", error.code);
+
+        // Derive public key using derivation path (44'/5'/0'/0/0 for Dash)
+        let path = CString::new("m/44'/5'/0'/0/0").unwrap();
+        let pubkey_ptr = unsafe {
+            wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
         };
 
-        assert!(success);
-        // Public key should start with 0x02 or 0x03 (compressed)
-        assert!(pubkey[0] == 0x02 || pubkey[0] == 0x03);
+        if pubkey_ptr.is_null() {
+            panic!("pubkey_ptr is null, error: {:?}", error);
+        }
+        assert_eq!(error.code, FFIErrorCode::Success);
+
+        // Get the hex representation to verify
+        let hex_str = unsafe { public_key_to_hex(pubkey_ptr, &mut error) };
+        assert!(!hex_str.is_null());
+
+        let hex = unsafe { CStr::from_ptr(hex_str).to_str().unwrap() };
+        // Public key should start with 02 or 03 (compressed)
+        assert!(hex.starts_with("02") || hex.starts_with("03"));
+        assert_eq!(hex.len(), 66); // 33 bytes * 2 hex chars
+
+        // Clean up
+        unsafe {
+            if !hex_str.is_null() {
+                let _ = CString::from_raw(hex_str);
+            }
+            public_key_free(pubkey_ptr);
+        }
 
         // Clean up
         unsafe {
@@ -261,20 +284,13 @@ mod tests {
     fn test_wallet_derive_public_key_null_inputs() {
         let mut error = FFIError::success();
 
-        // Test with null wallet
-        let mut pubkey = [0u8; 33];
-        let path = CString::new("m/44'/1'/0'/0/0").unwrap();
-        let success = unsafe {
-            wallet_derive_public_key(
-                ptr::null(),
-                FFINetwork::Testnet,
-                path.as_ptr(),
-                pubkey.as_mut_ptr(),
-                &mut error,
-            )
+        // Test with null wallet (44'/5'/0'/0/0 for Dash)
+        let path = CString::new("m/44'/5'/0'/0/0").unwrap();
+        let pubkey_ptr = unsafe {
+            wallet_derive_public_key(ptr::null(), FFINetwork::Testnet, path.as_ptr(), &mut error)
         };
 
-        assert!(!success);
+        assert!(pubkey_ptr.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Create a wallet for subsequent tests
@@ -291,31 +307,11 @@ mod tests {
         };
 
         // Test with null path
-        let success = unsafe {
-            wallet_derive_public_key(
-                wallet,
-                FFINetwork::Testnet,
-                ptr::null(),
-                pubkey.as_mut_ptr(),
-                &mut error,
-            )
+        let pubkey_ptr = unsafe {
+            wallet_derive_public_key(wallet, FFINetwork::Testnet, ptr::null(), &mut error)
         };
 
-        assert!(!success);
-        assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        // Test with null pubkey buffer
-        let success = unsafe {
-            wallet_derive_public_key(
-                wallet,
-                FFINetwork::Testnet,
-                path.as_ptr(),
-                ptr::null_mut(),
-                &mut error,
-            )
-        };
-
-        assert!(!success);
+        assert!(pubkey_ptr.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Clean up
@@ -494,33 +490,38 @@ mod tests {
             )
         };
 
-        // Test different derivation paths
+        // Test different derivation paths (Dash coin type 5)
         let test_paths = [
-            "m/44'/1'/0'/0/0",
-            "m/44'/1'/0'/0/1",
-            "m/44'/1'/0'/1/0", // Change address
-            "m/44'/1'/1'/0/0", // Different account
+            "m/44'/5'/0'/0/0",
+            "m/44'/5'/0'/0/1",
+            "m/44'/5'/0'/1/0", // Change address
+            "m/44'/5'/1'/0/0", // Different account
         ];
 
         for path_str in test_paths.iter() {
             let path = CString::new(*path_str).unwrap();
-            let mut pubkey = [0u8; 33];
 
-            let success = unsafe {
-                wallet_derive_public_key(
-                    wallet,
-                    FFINetwork::Testnet,
-                    path.as_ptr(),
-                    pubkey.as_mut_ptr(),
-                    &mut error,
-                )
+            let pubkey_ptr = unsafe {
+                wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
             };
 
-            if success {
-                // Public key should start with 0x02 or 0x03 (compressed)
-                assert!(pubkey[0] == 0x02 || pubkey[0] == 0x03);
-                // Should not be all zeros
-                assert_ne!(pubkey, [0u8; 33]);
+            if !pubkey_ptr.is_null() {
+                // Get hex representation to verify
+                let hex_str = unsafe { public_key_to_hex(pubkey_ptr, &mut error) };
+                assert!(!hex_str.is_null());
+
+                let hex = unsafe { CStr::from_ptr(hex_str).to_str().unwrap() };
+                // Public key should start with 02 or 03 (compressed)
+                assert!(hex.starts_with("02") || hex.starts_with("03"));
+                assert_eq!(hex.len(), 66); // 33 bytes * 2 hex chars
+
+                // Clean up
+                unsafe {
+                    if !hex_str.is_null() {
+                        let _ = CString::from_raw(hex_str);
+                    }
+                    public_key_free(pubkey_ptr);
+                }
             }
         }
 

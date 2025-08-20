@@ -1,6 +1,6 @@
 //! Transaction building and management
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
 use std::slice;
