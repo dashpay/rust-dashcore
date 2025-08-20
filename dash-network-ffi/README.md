@@ -1,6 +1,6 @@
 # dash-network-ffi
 
-FFI bindings for the dash-network crate, providing language bindings via UniFFI.
+FFI bindings for the dash-network crate, providing C-compatible language bindings.
 
 ## Overview
 
@@ -8,7 +8,7 @@ This crate provides Foreign Function Interface (FFI) bindings for the `dash-netw
 
 ## Features
 
-- UniFFI-based bindings for the Network enum
+- C-compatible FFI bindings for the Network enum
 - Network information and utilities exposed through FFI
 - Support for magic bytes operations
 - Core version activation queries
@@ -19,16 +19,6 @@ This crate provides Foreign Function Interface (FFI) bindings for the `dash-netw
 
 ```bash
 cargo build --release
-```
-
-### Generating Bindings
-
-To generate bindings for your target language:
-
-```bash
-cargo run --bin uniffi-bindgen generate src/dash_network.udl --language swift
-cargo run --bin uniffi-bindgen generate src/dash_network.udl --language python
-cargo run --bin uniffi-bindgen generate src/dash_network.udl --language kotlin
 ```
 
 ### Example Usage (Swift)

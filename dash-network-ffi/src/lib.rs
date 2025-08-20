@@ -2,15 +2,12 @@
 
 use dash_network::Network as DashNetwork;
 
-// Include the UniFFI scaffolding
-uniffi::include_scaffolding!("dash_network");
-
 // Initialize function
 pub fn initialize() {
     // Any global initialization if needed
 }
 
-// Re-export Network enum for UniFFI
+// Re-export Network enum for FFI
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Network {
     Dash,

@@ -10,6 +10,7 @@ use bincode_derive::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 use crate::account::Account;
+use crate::AccountType;
 
 /// Collection of accounts organized by type
 #[derive(Debug, Clone, Default)]
@@ -137,6 +138,62 @@ impl AccountCollection {
             AccountType::ProviderOwnerKeys => self.provider_owner_keys.is_some(),
             AccountType::ProviderOperatorKeys => self.provider_operator_keys.is_some(),
             AccountType::ProviderPlatformKeys => self.provider_platform_keys.is_some(),
+        }
+    }
+
+    /// Get an account with a specific type
+    pub fn account_of_type(&self, account_type: AccountType) -> Option<&Account> {
+        use crate::account::{AccountType, StandardAccountType};
+
+        match account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => match standard_account_type {
+                StandardAccountType::BIP44Account => self.standard_bip44_accounts.get(&index),
+                StandardAccountType::BIP32Account => self.standard_bip32_accounts.get(&index),
+            },
+            AccountType::CoinJoin {
+                index,
+            } => self.coinjoin_accounts.get(&index),
+            AccountType::IdentityRegistration => self.identity_registration.as_ref(),
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => self.identity_topup.get(&registration_index),
+            AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.as_ref(),
+            AccountType::IdentityInvitation => self.identity_invitation.as_ref(),
+            AccountType::ProviderVotingKeys => self.provider_voting_keys.as_ref(),
+            AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_ref(),
+            AccountType::ProviderOperatorKeys => self.provider_operator_keys.as_ref(),
+            AccountType::ProviderPlatformKeys => self.provider_platform_keys.as_ref(),
+        }
+    }
+
+    /// Get an account with a specific type (mutable)
+    pub fn account_of_type_mut(&mut self, account_type: AccountType) -> Option<&mut Account> {
+        use crate::account::{AccountType, StandardAccountType};
+
+        match account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => match standard_account_type {
+                StandardAccountType::BIP44Account => self.standard_bip44_accounts.get_mut(&index),
+                StandardAccountType::BIP32Account => self.standard_bip32_accounts.get_mut(&index),
+            },
+            AccountType::CoinJoin {
+                index,
+            } => self.coinjoin_accounts.get_mut(&index),
+            AccountType::IdentityRegistration => self.identity_registration.as_mut(),
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => self.identity_topup.get_mut(&registration_index),
+            AccountType::IdentityTopUpNotBoundToIdentity => self.identity_topup_not_bound.as_mut(),
+            AccountType::IdentityInvitation => self.identity_invitation.as_mut(),
+            AccountType::ProviderVotingKeys => self.provider_voting_keys.as_mut(),
+            AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_mut(),
+            AccountType::ProviderOperatorKeys => self.provider_operator_keys.as_mut(),
+            AccountType::ProviderPlatformKeys => self.provider_platform_keys.as_mut(),
         }
     }
 

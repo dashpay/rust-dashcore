@@ -504,18 +504,19 @@ pub extern "C" fn wallet_free(wallet: *mut FFIWallet) {
     }
 }
 
-/// Add an account to the wallet
+/// Add an account to the wallet without xpub
 #[no_mangle]
 pub extern "C" fn wallet_add_account(
     wallet: *mut FFIWallet,
     network: FFINetwork,
     account_type: c_uint,
     account_index: c_uint,
-    error: *mut FFIError,
-) -> bool {
+) -> crate::types::FFIAccountResult {
     if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return false;
+        return crate::types::FFIAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Wallet is null".to_string(),
+        );
     }
 
     unsafe {
@@ -523,70 +524,275 @@ pub extern "C" fn wallet_add_account(
         let network_rust: key_wallet::Network = network.into();
 
         use crate::types::FFIAccountType;
-        use key_wallet::account::types::AccountType;
 
         let account_type_enum = match account_type {
-            0 => FFIAccountType::Standard,
-            1 => FFIAccountType::CoinJoin,
-            2 => FFIAccountType::Identity,
+            0 => FFIAccountType::StandardBIP44,
+            1 => FFIAccountType::StandardBIP32,
+            2 => FFIAccountType::CoinJoin,
+            3 => FFIAccountType::IdentityRegistration,
+            4 => {
+                // IdentityTopUp requires a registration_index
+                return crate::types::FFIAccountResult::error(
+                    FFIErrorCode::InvalidInput,
+                    "IdentityTopUp accounts require a registration_index. Use a specialized function instead".to_string(),
+                );
+            }
+            5 => FFIAccountType::IdentityTopUpNotBoundToIdentity,
+            6 => FFIAccountType::IdentityInvitation,
+            7 => FFIAccountType::ProviderVotingKeys,
+            8 => FFIAccountType::ProviderOwnerKeys,
+            9 => FFIAccountType::ProviderOperatorKeys,
+            10 => FFIAccountType::ProviderPlatformKeys,
             _ => {
-                FFIError::set_error(
-                    error,
+                return crate::types::FFIAccountResult::error(
                     FFIErrorCode::InvalidInput,
                     format!("Invalid account type: {}", account_type),
                 );
-                return false;
             }
         };
 
-        let account_type = account_type_enum.to_account_type(account_index);
+        let account_type = match account_type_enum.to_account_type(account_index, None) {
+            Some(at) => at,
+            None => {
+                return crate::types::FFIAccountResult::error(
+                    FFIErrorCode::InvalidInput,
+                    format!("Missing required parameters for account type {}", account_type),
+                );
+            }
+        };
 
         match wallet.inner_mut() {
             Some(w) => {
-                // Get or create the account collection for this network
-                let accounts = w.accounts.entry(network_rust).or_insert_with(|| {
-                    // Create empty account collection
-                    Default::default()
-                });
-
-                // Create the account (this would need proper implementation based on account type)
-                // For now, we'll return success if the account already exists
-                match account_type {
-                    AccountType::Standard {
-                        index,
-                        ..
-                    } => {
-                        if accounts.standard_bip44_accounts.contains_key(&index) {
-                            FFIError::set_success(error);
-                            true
-                        } else {
-                            // Would need to create the account here
-                            FFIError::set_error(
-                                error,
-                                FFIErrorCode::WalletError,
-                                "Account creation not yet fully implemented".to_string(),
-                            );
-                            false
-                        }
+                // Use the proper add_account method
+                match w.add_account(account_type, network_rust, None) {
+                    Ok(account) => {
+                        let ffi_account = crate::types::FFIAccount::new(account);
+                        crate::types::FFIAccountResult::success(Box::into_raw(Box::new(
+                            ffi_account,
+                        )))
                     }
-                    _ => {
-                        FFIError::set_error(
-                            error,
-                            FFIErrorCode::WalletError,
-                            "Only standard accounts supported for now".to_string(),
-                        );
-                        false
-                    }
+                    Err(e) => crate::types::FFIAccountResult::error(
+                        FFIErrorCode::WalletError,
+                        format!("Failed to add account: {}", e),
+                    ),
                 }
             }
-            None => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidState,
-                    "Cannot modify wallet".to_string(),
+            None => crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidState,
+                "Cannot modify wallet".to_string(),
+            ),
+        }
+    }
+}
+
+/// Add an account to the wallet with xpub as byte array
+#[no_mangle]
+pub extern "C" fn wallet_add_account_with_xpub_bytes(
+    wallet: *mut FFIWallet,
+    network: FFINetwork,
+    account_type: c_uint,
+    account_index: c_uint,
+    xpub_bytes: *const u8,
+    xpub_len: usize,
+) -> crate::types::FFIAccountResult {
+    if wallet.is_null() {
+        return crate::types::FFIAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Wallet is null".to_string(),
+        );
+    }
+
+    if xpub_bytes.is_null() {
+        return crate::types::FFIAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Xpub bytes are null".to_string(),
+        );
+    }
+
+    unsafe {
+        let wallet = &mut *wallet;
+        let network_rust: key_wallet::Network = network.into();
+
+        use crate::types::FFIAccountType;
+        use key_wallet::ExtendedPubKey;
+
+        let account_type_enum = match account_type {
+            0 => FFIAccountType::StandardBIP44,
+            1 => FFIAccountType::StandardBIP32,
+            2 => FFIAccountType::CoinJoin,
+            3 => FFIAccountType::IdentityRegistration,
+            4 => {
+                return crate::types::FFIAccountResult::error(
+                    FFIErrorCode::InvalidInput,
+                    "IdentityTopUp accounts require a registration_index. Use a specialized function instead".to_string(),
                 );
-                false
             }
+            5 => FFIAccountType::IdentityTopUpNotBoundToIdentity,
+            6 => FFIAccountType::IdentityInvitation,
+            7 => FFIAccountType::ProviderVotingKeys,
+            8 => FFIAccountType::ProviderOwnerKeys,
+            9 => FFIAccountType::ProviderOperatorKeys,
+            10 => FFIAccountType::ProviderPlatformKeys,
+            _ => {
+                return crate::types::FFIAccountResult::error(
+                    FFIErrorCode::InvalidInput,
+                    format!("Invalid account type: {}", account_type),
+                );
+            }
+        };
+
+        let account_type = match account_type_enum.to_account_type(account_index, None) {
+            Some(at) => at,
+            None => {
+                return crate::types::FFIAccountResult::error(
+                    FFIErrorCode::InvalidInput,
+                    format!("Missing required parameters for account type {}", account_type),
+                );
+            }
+        };
+
+        // Parse the xpub from bytes (assuming it's a string representation)
+        let xpub_slice = slice::from_raw_parts(xpub_bytes, xpub_len);
+        let xpub_str = match std::str::from_utf8(xpub_slice) {
+            Ok(s) => s,
+            Err(_) => {
+                return crate::types::FFIAccountResult::error(
+                    FFIErrorCode::InvalidInput,
+                    "Invalid UTF-8 in xpub bytes".to_string(),
+                );
+            }
+        };
+
+        let xpub = match xpub_str.parse::<ExtendedPubKey>() {
+            Ok(xpub) => xpub,
+            Err(e) => {
+                return crate::types::FFIAccountResult::error(
+                    FFIErrorCode::InvalidInput,
+                    format!("Invalid extended public key: {}", e),
+                );
+            }
+        };
+
+        match wallet.inner_mut() {
+            Some(w) => match w.add_account(account_type, network_rust, Some(xpub)) {
+                Ok(account) => {
+                    let ffi_account = crate::types::FFIAccount::new(account);
+                    crate::types::FFIAccountResult::success(Box::into_raw(Box::new(ffi_account)))
+                }
+                Err(e) => crate::types::FFIAccountResult::error(
+                    FFIErrorCode::WalletError,
+                    format!("Failed to add account with xpub: {}", e),
+                ),
+            },
+            None => crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidState,
+                "Cannot modify wallet".to_string(),
+            ),
+        }
+    }
+}
+
+/// Add an account to the wallet with xpub as string
+#[no_mangle]
+pub extern "C" fn wallet_add_account_with_string_xpub(
+    wallet: *mut FFIWallet,
+    network: FFINetwork,
+    account_type: c_uint,
+    account_index: c_uint,
+    xpub_string: *const c_char,
+) -> crate::types::FFIAccountResult {
+    if wallet.is_null() {
+        return crate::types::FFIAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Wallet is null".to_string(),
+        );
+    }
+
+    if xpub_string.is_null() {
+        return crate::types::FFIAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Xpub string is null".to_string(),
+        );
+    }
+
+    unsafe {
+        let wallet = &mut *wallet;
+        let network_rust: key_wallet::Network = network.into();
+
+        use crate::types::FFIAccountType;
+        use key_wallet::ExtendedPubKey;
+
+        let account_type_enum = match account_type {
+            0 => FFIAccountType::StandardBIP44,
+            1 => FFIAccountType::StandardBIP32,
+            2 => FFIAccountType::CoinJoin,
+            3 => FFIAccountType::IdentityRegistration,
+            4 => {
+                return crate::types::FFIAccountResult::error(
+                    FFIErrorCode::InvalidInput,
+                    "IdentityTopUp accounts require a registration_index. Use a specialized function instead".to_string(),
+                );
+            }
+            5 => FFIAccountType::IdentityTopUpNotBoundToIdentity,
+            6 => FFIAccountType::IdentityInvitation,
+            7 => FFIAccountType::ProviderVotingKeys,
+            8 => FFIAccountType::ProviderOwnerKeys,
+            9 => FFIAccountType::ProviderOperatorKeys,
+            10 => FFIAccountType::ProviderPlatformKeys,
+            _ => {
+                return crate::types::FFIAccountResult::error(
+                    FFIErrorCode::InvalidInput,
+                    format!("Invalid account type: {}", account_type),
+                );
+            }
+        };
+
+        let account_type = match account_type_enum.to_account_type(account_index, None) {
+            Some(at) => at,
+            None => {
+                return crate::types::FFIAccountResult::error(
+                    FFIErrorCode::InvalidInput,
+                    format!("Missing required parameters for account type {}", account_type),
+                );
+            }
+        };
+
+        // Parse the xpub from C string
+        let xpub_str = match CStr::from_ptr(xpub_string).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                return crate::types::FFIAccountResult::error(
+                    FFIErrorCode::InvalidInput,
+                    "Invalid UTF-8 in xpub string".to_string(),
+                );
+            }
+        };
+
+        let xpub = match xpub_str.parse::<ExtendedPubKey>() {
+            Ok(xpub) => xpub,
+            Err(e) => {
+                return crate::types::FFIAccountResult::error(
+                    FFIErrorCode::InvalidInput,
+                    format!("Invalid extended public key: {}", e),
+                );
+            }
+        };
+
+        match wallet.inner_mut() {
+            Some(w) => match w.add_account(account_type, network_rust, Some(xpub)) {
+                Ok(account) => {
+                    let ffi_account = crate::types::FFIAccount::new(account);
+                    crate::types::FFIAccountResult::success(Box::into_raw(Box::new(ffi_account)))
+                }
+                Err(e) => crate::types::FFIAccountResult::error(
+                    FFIErrorCode::WalletError,
+                    format!("Failed to add account with xpub: {}", e),
+                ),
+            },
+            None => crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidState,
+                "Cannot modify wallet".to_string(),
+            ),
         }
     }
 }

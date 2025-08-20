@@ -1,3 +1,4 @@
 fn main() {
-    uniffi::generate_scaffolding("src/dash_network.udl").unwrap();
+    // Build script for dash-network-ffi
+    // Standard FFI compilation without uniffi
 }

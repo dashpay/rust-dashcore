@@ -60,28 +60,186 @@ impl FFIWallet {
     }
 }
 
-/// Account type enumeration
+/// FFI Result type for Account operations
+#[repr(C)]
+pub struct FFIAccountResult {
+    /// The account handle if successful, NULL if error
+    pub account: *mut FFIAccount,
+    /// Error code (0 = success)
+    pub error_code: i32,
+    /// Error message (NULL if success, must be freed by caller if not NULL)
+    pub error_message: *mut std::os::raw::c_char,
+}
+
+impl FFIAccountResult {
+    /// Create a success result
+    pub fn success(account: *mut FFIAccount) -> Self {
+        FFIAccountResult {
+            account,
+            error_code: 0,
+            error_message: std::ptr::null_mut(),
+        }
+    }
+
+    /// Create an error result
+    pub fn error(code: crate::error::FFIErrorCode, message: String) -> Self {
+        use std::ffi::CString;
+        let c_message =
+            CString::new(message).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+        FFIAccountResult {
+            account: std::ptr::null_mut(),
+            error_code: code as i32,
+            error_message: c_message.into_raw(),
+        }
+    }
+}
+
+/// Opaque account handle
+pub struct FFIAccount {
+    pub(crate) account: Arc<key_wallet::Account>,
+}
+
+impl FFIAccount {
+    /// Create a new FFI account handle
+    pub fn new(account: &key_wallet::Account) -> Self {
+        FFIAccount {
+            account: Arc::new(account.clone()),
+        }
+    }
+
+    /// Get a reference to the inner account
+    pub fn inner(&self) -> &key_wallet::Account {
+        &self.account
+    }
+}
+
+/// Standard account sub-type
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub enum FFIStandardAccountType {
+    BIP44 = 0,
+    BIP32 = 1,
+}
+
+/// Account type enumeration matching all key_wallet AccountType variants
+///
+/// This enum provides a complete FFI representation of all account types
+/// supported by the key_wallet library:
+///
+/// - Standard accounts: BIP44 and BIP32 variants for regular transactions
+/// - CoinJoin: Privacy-enhanced transactions
+/// - Identity accounts: Registration, top-up, and invitation funding
+/// - Provider accounts: Various masternode provider key types (voting, owner, operator, platform)
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub enum FFIAccountType {
-    Standard = 0,
-    CoinJoin = 1,
-    Identity = 2,
+    /// Standard BIP44 account (m/44'/coin_type'/account'/x/x)
+    StandardBIP44 = 0,
+    /// Standard BIP32 account (m/account'/x/x)
+    StandardBIP32 = 1,
+    /// CoinJoin account for private transactions
+    CoinJoin = 2,
+    /// Identity registration funding
+    IdentityRegistration = 3,
+    /// Identity top-up funding (requires registration_index)
+    IdentityTopUp = 4,
+    /// Identity top-up funding not bound to a specific identity
+    IdentityTopUpNotBoundToIdentity = 5,
+    /// Identity invitation funding
+    IdentityInvitation = 6,
+    /// Provider voting keys (DIP-3) - Path: m/9'/5'/3'/1'/[key_index]
+    ProviderVotingKeys = 7,
+    /// Provider owner keys (DIP-3) - Path: m/9'/5'/3'/2'/[key_index]
+    ProviderOwnerKeys = 8,
+    /// Provider operator keys (DIP-3) - Path: m/9'/5'/3'/3'/[key_index]
+    ProviderOperatorKeys = 9,
+    /// Provider platform P2P keys (DIP-3, ED25519) - Path: m/9'/5'/3'/4'/[key_index]
+    ProviderPlatformKeys = 10,
 }
 
 impl FFIAccountType {
-    /// Convert to AccountType with an index
-    pub fn to_account_type(self, index: u32) -> key_wallet::AccountType {
+    /// Convert to AccountType with optional indices
+    /// Returns None if required parameters are missing (e.g., registration_index for IdentityTopUp)
+    pub fn to_account_type(
+        self,
+        index: u32,
+        registration_index: Option<u32>,
+    ) -> Option<key_wallet::AccountType> {
         use key_wallet::account::types::StandardAccountType;
         match self {
-            FFIAccountType::Standard => key_wallet::AccountType::Standard {
+            FFIAccountType::StandardBIP44 => Some(key_wallet::AccountType::Standard {
                 index,
                 standard_account_type: StandardAccountType::BIP44Account,
-            },
-            FFIAccountType::CoinJoin => key_wallet::AccountType::CoinJoin {
+            }),
+            FFIAccountType::StandardBIP32 => Some(key_wallet::AccountType::Standard {
                 index,
+                standard_account_type: StandardAccountType::BIP32Account,
+            }),
+            FFIAccountType::CoinJoin => Some(key_wallet::AccountType::CoinJoin {
+                index,
+            }),
+            FFIAccountType::IdentityRegistration => {
+                Some(key_wallet::AccountType::IdentityRegistration)
+            }
+            FFIAccountType::IdentityTopUp => {
+                // IdentityTopUp requires a registration_index
+                registration_index.map(|reg_idx| key_wallet::AccountType::IdentityTopUp {
+                    registration_index: reg_idx,
+                })
+            }
+            FFIAccountType::IdentityTopUpNotBoundToIdentity => {
+                Some(key_wallet::AccountType::IdentityTopUpNotBoundToIdentity)
+            }
+            FFIAccountType::IdentityInvitation => Some(key_wallet::AccountType::IdentityInvitation),
+            FFIAccountType::ProviderVotingKeys => Some(key_wallet::AccountType::ProviderVotingKeys),
+            FFIAccountType::ProviderOwnerKeys => Some(key_wallet::AccountType::ProviderOwnerKeys),
+            FFIAccountType::ProviderOperatorKeys => {
+                Some(key_wallet::AccountType::ProviderOperatorKeys)
+            }
+            FFIAccountType::ProviderPlatformKeys => {
+                Some(key_wallet::AccountType::ProviderPlatformKeys)
+            }
+        }
+    }
+
+    /// Convert from AccountType
+    pub fn from_account_type(account_type: &key_wallet::AccountType) -> (Self, u32, Option<u32>) {
+        use key_wallet::account::types::StandardAccountType;
+        match account_type {
+            key_wallet::AccountType::Standard {
+                index,
+                standard_account_type,
+            } => match standard_account_type {
+                StandardAccountType::BIP44Account => (FFIAccountType::StandardBIP44, *index, None),
+                StandardAccountType::BIP32Account => (FFIAccountType::StandardBIP32, *index, None),
             },
-            FFIAccountType::Identity => key_wallet::AccountType::IdentityRegistration,
+            key_wallet::AccountType::CoinJoin {
+                index,
+            } => (FFIAccountType::CoinJoin, *index, None),
+            key_wallet::AccountType::IdentityRegistration => {
+                (FFIAccountType::IdentityRegistration, 0, None)
+            }
+            key_wallet::AccountType::IdentityTopUp {
+                registration_index,
+            } => (FFIAccountType::IdentityTopUp, 0, Some(*registration_index)),
+            key_wallet::AccountType::IdentityTopUpNotBoundToIdentity => {
+                (FFIAccountType::IdentityTopUpNotBoundToIdentity, 0, None)
+            }
+            key_wallet::AccountType::IdentityInvitation => {
+                (FFIAccountType::IdentityInvitation, 0, None)
+            }
+            key_wallet::AccountType::ProviderVotingKeys => {
+                (FFIAccountType::ProviderVotingKeys, 0, None)
+            }
+            key_wallet::AccountType::ProviderOwnerKeys => {
+                (FFIAccountType::ProviderOwnerKeys, 0, None)
+            }
+            key_wallet::AccountType::ProviderOperatorKeys => {
+                (FFIAccountType::ProviderOperatorKeys, 0, None)
+            }
+            key_wallet::AccountType::ProviderPlatformKeys => {
+                (FFIAccountType::ProviderPlatformKeys, 0, None)
+            }
         }
     }
 }
@@ -262,7 +420,10 @@ impl FFIWalletAccountCreationOptions {
                     let mut accounts = Vec::new();
                     for &ffi_type in slice {
                         // Use a dummy index for special accounts that don't need one
-                        accounts.push(ffi_type.to_account_type(0));
+                        // Skip accounts that require parameters we don't have
+                        if let Some(account_type) = ffi_type.to_account_type(0, None) {
+                            accounts.push(account_type);
+                        }
                     }
                     Some(accounts)
                 } else {

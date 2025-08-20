@@ -24,13 +24,13 @@ rust-dashcore is a Rust implementation of the Dash cryptocurrency protocol libra
 
 ### Network & SPV
 - `dash-network/` - Network protocol abstractions
-- `dash-network-ffi/` - Network FFI bindings using UniFFI
+- `dash-network-ffi/` - C-compatible FFI bindings for network types
 - `dash-spv/` - SPV client implementation
 - `dash-spv-ffi/` - C-compatible FFI bindings for SPV client
 
 ### Wallet & Keys
 - `key-wallet/` - HD wallet implementation
-- `key-wallet-ffi/` - FFI bindings for wallet functionality
+- `key-wallet-ffi/` - C-compatible FFI bindings for wallet functionality
 
 ### RPC & Integration
 - `rpc-client/` - JSON-RPC client for Dash Core nodes

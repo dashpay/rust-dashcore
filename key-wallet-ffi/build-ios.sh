@@ -27,15 +27,7 @@ cp target/aarch64-apple-ios-sim/release/libkey_wallet_ffi.a target/universal/rel
 # Copy device library
 cp target/aarch64-apple-ios/release/libkey_wallet_ffi.a target/universal/release/libkey_wallet_ffi_device.a
 
-# Generate Swift bindings
-echo "Generating Swift bindings..."
-cargo run --features uniffi/cli --bin uniffi-bindgen generate \
-    src/key_wallet.udl \
-    --language swift \
-    --out-dir target/swift-bindings
-
 echo "Build complete!"
 echo "Libraries available at:"
 echo "  - Device: target/universal/release/libkey_wallet_ffi_device.a"
 echo "  - Simulator: target/universal/release/libkey_wallet_ffi_sim.a"
-echo "  - Swift bindings: target/swift-bindings/"

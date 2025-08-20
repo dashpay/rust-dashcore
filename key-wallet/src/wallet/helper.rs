@@ -7,10 +7,14 @@ use super::root_extended_keys::RootExtendedPrivKey;
 use super::{Wallet, WalletType};
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::error::Result;
-use crate::{Error, Network};
+use crate::{AccountCollection, Error, Network};
 use alloc::vec::Vec;
 
 impl Wallet {
+    /// Get the collection of accounts on a network
+    pub fn accounts_on_network(&self, network: Network) -> Option<&AccountCollection> {
+        self.accounts.get(&network)
+    }
     /// Get a bip44 account by network and index
     pub fn get_bip44_account(&self, network: Network, index: u32) -> Option<&Account> {
         self.accounts
