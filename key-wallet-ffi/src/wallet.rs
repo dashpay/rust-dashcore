@@ -261,25 +261,29 @@ pub extern "C" fn wallet_create_from_xpub(
         }
     };
 
-    // Create a watch-only wallet with the given xpub
-    // Since we can't directly create AccountCollection, we'll create an empty wallet
-    // and add the account afterwards
-    let accounts = std::collections::BTreeMap::new();
+    // Create a watch-only wallet with the given xpub as account 0
+    use key_wallet::account::StandardAccountType;
+    use key_wallet::{Account, AccountCollection, AccountType};
 
-    match Wallet::from_xpub(xpub, Some(config), accounts) {
-        Ok(mut wallet) => {
-            // Now add account 0 with the provided xpub
-            use key_wallet::account::StandardAccountType;
-            use key_wallet::AccountType;
+    let account_type = AccountType::Standard {
+        index: 0,
+        standard_account_type: StandardAccountType::BIP44Account,
+    };
 
-            let account_type = AccountType::Standard {
-                index: 0,
-                standard_account_type: StandardAccountType::BIP44Account,
-            };
+    // Create account 0 with the provided xpub
+    match Account::new(None, account_type, xpub, network_rust) {
+        Ok(account) => {
+            // Create an AccountCollection and add the account
+            let mut account_collection = AccountCollection::new();
+            account_collection.insert(account);
 
-            // Add the account to the wallet
-            match wallet.add_account(account_type, network_rust, Some(xpub)) {
-                Ok(_) => {
+            // Create the accounts map
+            let mut accounts = std::collections::BTreeMap::new();
+            accounts.insert(network_rust, account_collection);
+
+            // Create the watch-only wallet
+            match Wallet::from_xpub(xpub, Some(config), accounts) {
+                Ok(wallet) => {
                     FFIError::set_success(error);
                     Box::into_raw(Box::new(FFIWallet::new(wallet)))
                 }
@@ -287,7 +291,7 @@ pub extern "C" fn wallet_create_from_xpub(
                     FFIError::set_error(
                         error,
                         FFIErrorCode::WalletError,
-                        format!("Failed to add account to watch-only wallet: {}", e),
+                        format!("Failed to create watch-only wallet: {}", e),
                     );
                     ptr::null_mut()
                 }
@@ -297,7 +301,7 @@ pub extern "C" fn wallet_create_from_xpub(
             FFIError::set_error(
                 error,
                 FFIErrorCode::WalletError,
-                format!("Failed to create watch-only wallet: {}", e),
+                format!("Failed to create account: {}", e),
             );
             ptr::null_mut()
         }

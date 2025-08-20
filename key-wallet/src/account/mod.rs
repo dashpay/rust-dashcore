@@ -27,6 +27,7 @@ use crate::dip9::DerivationPathReference;
 use crate::error::Result;
 use crate::Network;
 
+pub use account_collection::AccountCollection;
 pub use coinjoin::CoinJoinPools;
 pub use managed_account::ManagedAccount;
 pub use managed_account_collection::ManagedAccountCollection;

@@ -128,6 +128,9 @@ impl fmt::Display for Wallet {
 }
 
 #[cfg(test)]
+mod passphrase_test;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::account::{AccountType, StandardAccountType};
