@@ -211,7 +211,7 @@ mod tests {
         assert!(!wallet.is_null());
 
         // Create managed wallet
-        let managed_wallet = unsafe { managed_wallet_create(wallet, &mut error) };
+        let managed_wallet = managed_wallet_create(wallet, &mut error);
 
         // Should succeed
         assert!(!managed_wallet.is_null());
@@ -228,7 +228,7 @@ mod tests {
     fn test_managed_wallet_create_null_wallet() {
         let mut error = FFIError::success();
 
-        let managed_wallet = unsafe { managed_wallet_create(ptr::null(), &mut error) };
+        let managed_wallet = managed_wallet_create(ptr::null(), &mut error);
 
         assert!(managed_wallet.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -251,7 +251,7 @@ mod tests {
             )
         };
 
-        let managed_wallet = unsafe { managed_wallet_create(wallet, &mut error) };
+        let managed_wallet = managed_wallet_create(wallet, &mut error);
 
         // Test with a valid testnet address
         let address = CString::new("yXdxAYfK7KGx7gNpVHUfRsQMNpMj5cAadG").unwrap();
@@ -297,7 +297,7 @@ mod tests {
             )
         };
 
-        let managed_wallet = unsafe { managed_wallet_create(wallet, &mut error) };
+        let managed_wallet = managed_wallet_create(wallet, &mut error);
 
         // Test with invalid address
         let address = CString::new("invalid_address").unwrap();
@@ -435,9 +435,7 @@ mod tests {
     #[test]
     fn test_managed_wallet_free_null() {
         // Should handle null gracefully
-        unsafe {
-            managed_wallet_free(ptr::null_mut());
-        }
+        managed_wallet_free(ptr::null_mut());
     }
 
     #[test]
@@ -457,13 +455,11 @@ mod tests {
             )
         };
 
-        let managed_wallet = unsafe { managed_wallet_create(wallet, &mut error) };
+        let managed_wallet = managed_wallet_create(wallet, &mut error);
         assert!(!managed_wallet.is_null());
 
         // Free managed wallet - should not crash
-        unsafe {
-            managed_wallet_free(managed_wallet);
-        }
+        managed_wallet_free(managed_wallet);
 
         // Clean up wallet
         unsafe {
@@ -488,7 +484,7 @@ mod tests {
             )
         };
 
-        let managed_wallet = unsafe { managed_wallet_create(wallet, &mut error) };
+        let managed_wallet = managed_wallet_create(wallet, &mut error);
         assert!(!managed_wallet.is_null());
 
         // Test that we can access the inner methods
@@ -524,7 +520,7 @@ mod tests {
             )
         };
 
-        let managed_wallet = unsafe { managed_wallet_create(wallet, &mut error) };
+        let managed_wallet = managed_wallet_create(wallet, &mut error);
 
         // Create invalid UTF-8 string
         let invalid_utf8 = vec![0xFF, 0xFE, 0xFD, 0x00]; // Invalid UTF-8 bytes with null terminator
@@ -564,7 +560,7 @@ mod tests {
             )
         };
 
-        let managed_wallet = unsafe { managed_wallet_create(wallet, &mut error) };
+        let managed_wallet = managed_wallet_create(wallet, &mut error);
         assert!(!managed_wallet.is_null());
 
         // Test get_next_receive_address with real wallet (should still fail as not implemented)

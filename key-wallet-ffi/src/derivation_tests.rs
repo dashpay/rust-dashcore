@@ -734,19 +734,17 @@ mod tests {
 
         // Test with invalid path - try a path that should fail
         let invalid_path = CString::new("").unwrap();
-        let xpriv = unsafe {
-            derivation_derive_private_key_from_seed(
-                seed.as_ptr(),
-                seed.len(),
-                invalid_path.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let xpriv = derivation_derive_private_key_from_seed(
+            seed.as_ptr(),
+            seed.len(),
+            invalid_path.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
         // Don't assert specific behavior since we're not sure what the implementation does
         // Just exercise the code path
         if !xpriv.is_null() {
-            unsafe { derivation_xpriv_free(xpriv) };
+            derivation_xpriv_free(xpriv);
         }
     }
 
@@ -755,17 +753,15 @@ mod tests {
         let mut error = FFIError::success();
 
         // Test with null seed
-        let identity_key = unsafe {
-            dip9_derive_identity_key(
-                ptr::null(),
-                64,
-                FFINetwork::Testnet,
-                0,
-                0,
-                FFIDerivationPathType::BlockchainIdentities,
-                &mut error,
-            )
-        };
+        let identity_key = dip9_derive_identity_key(
+            ptr::null(),
+            64,
+            FFINetwork::Testnet,
+            0,
+            0,
+            FFIDerivationPathType::BlockchainIdentities,
+            &mut error,
+        );
         assert!(identity_key.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
     }
@@ -779,22 +775,18 @@ mod tests {
         }
 
         // Test the main derivation path type that we know works
-        let identity_key = unsafe {
-            dip9_derive_identity_key(
-                seed.as_ptr(),
-                seed.len(),
-                FFINetwork::Testnet,
-                0,
-                0,
-                FFIDerivationPathType::BlockchainIdentities,
-                &mut error,
-            )
-        };
+        let identity_key = dip9_derive_identity_key(
+            seed.as_ptr(),
+            seed.len(),
+            FFINetwork::Testnet,
+            0,
+            0,
+            FFIDerivationPathType::BlockchainIdentities,
+            &mut error,
+        );
 
         if !identity_key.is_null() {
-            unsafe {
-                derivation_xpriv_free(identity_key);
-            }
+            derivation_xpriv_free(identity_key);
         }
     }
 
@@ -803,43 +795,37 @@ mod tests {
         let mut error = FFIError::success();
 
         // Test identity registration with null buffer
-        let success = unsafe {
-            derivation_identity_registration_path(
-                FFINetwork::Testnet,
-                0,
-                ptr::null_mut(),
-                256,
-                &mut error,
-            )
-        };
+        let success = derivation_identity_registration_path(
+            FFINetwork::Testnet,
+            0,
+            ptr::null_mut(),
+            256,
+            &mut error,
+        );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Test identity topup with null buffer
-        let success = unsafe {
-            derivation_identity_topup_path(
-                FFINetwork::Testnet,
-                0,
-                0,
-                ptr::null_mut(),
-                256,
-                &mut error,
-            )
-        };
+        let success = derivation_identity_topup_path(
+            FFINetwork::Testnet,
+            0,
+            0,
+            ptr::null_mut(),
+            256,
+            &mut error,
+        );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Test identity authentication with null buffer
-        let success = unsafe {
-            derivation_identity_authentication_path(
-                FFINetwork::Testnet,
-                0,
-                0,
-                ptr::null_mut(),
-                256,
-                &mut error,
-            )
-        };
+        let success = derivation_identity_authentication_path(
+            FFINetwork::Testnet,
+            0,
+            0,
+            ptr::null_mut(),
+            256,
+            &mut error,
+        );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
     }
@@ -850,43 +836,37 @@ mod tests {
         let mut small_buffer = [0i8; 5];
 
         // Test identity registration with small buffer
-        let success = unsafe {
-            derivation_identity_registration_path(
-                FFINetwork::Testnet,
-                0,
-                small_buffer.as_mut_ptr(),
-                small_buffer.len(),
-                &mut error,
-            )
-        };
+        let success = derivation_identity_registration_path(
+            FFINetwork::Testnet,
+            0,
+            small_buffer.as_mut_ptr(),
+            small_buffer.len(),
+            &mut error,
+        );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Test identity topup with small buffer
-        let success = unsafe {
-            derivation_identity_topup_path(
-                FFINetwork::Testnet,
-                0,
-                0,
-                small_buffer.as_mut_ptr(),
-                small_buffer.len(),
-                &mut error,
-            )
-        };
+        let success = derivation_identity_topup_path(
+            FFINetwork::Testnet,
+            0,
+            0,
+            small_buffer.as_mut_ptr(),
+            small_buffer.len(),
+            &mut error,
+        );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Test identity authentication with small buffer
-        let success = unsafe {
-            derivation_identity_authentication_path(
-                FFINetwork::Testnet,
-                0,
-                0,
-                small_buffer.as_mut_ptr(),
-                small_buffer.len(),
-                &mut error,
-            )
-        };
+        let success = derivation_identity_authentication_path(
+            FFINetwork::Testnet,
+            0,
+            0,
+            small_buffer.as_mut_ptr(),
+            small_buffer.len(),
+            &mut error,
+        );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
     }
@@ -898,26 +878,22 @@ mod tests {
         let mut buffer2 = vec![0u8; 256];
 
         // Test BIP44 account path with different account indices
-        let success1 = unsafe {
-            derivation_bip44_account_path(
-                FFINetwork::Testnet,
-                0,
-                buffer1.as_mut_ptr() as *mut i8,
-                buffer1.len(),
-                &mut error,
-            )
-        };
+        let success1 = derivation_bip44_account_path(
+            FFINetwork::Testnet,
+            0,
+            buffer1.as_mut_ptr() as *mut i8,
+            buffer1.len(),
+            &mut error,
+        );
         assert!(success1);
 
-        let success2 = unsafe {
-            derivation_bip44_account_path(
-                FFINetwork::Testnet,
-                5,
-                buffer2.as_mut_ptr() as *mut i8,
-                buffer2.len(),
-                &mut error,
-            )
-        };
+        let success2 = derivation_bip44_account_path(
+            FFINetwork::Testnet,
+            5,
+            buffer2.as_mut_ptr() as *mut i8,
+            buffer2.len(),
+            &mut error,
+        );
         assert!(success2);
 
         let path1 = unsafe { CStr::from_ptr(buffer1.as_ptr() as *const i8).to_str().unwrap() };
@@ -934,34 +910,30 @@ mod tests {
 
         // Test receive address path
         let mut buffer = vec![0u8; 256];
-        let success = unsafe {
-            derivation_bip44_payment_path(
-                FFINetwork::Testnet,
-                0,     // account_index
-                false, // is_change (receive)
-                5,     // address_index
-                buffer.as_mut_ptr() as *mut i8,
-                buffer.len(),
-                &mut error,
-            )
-        };
+        let success = derivation_bip44_payment_path(
+            FFINetwork::Testnet,
+            0,     // account_index
+            false, // is_change (receive)
+            5,     // address_index
+            buffer.as_mut_ptr() as *mut i8,
+            buffer.len(),
+            &mut error,
+        );
         assert!(success);
         let path_str = unsafe { CStr::from_ptr(buffer.as_ptr() as *const i8).to_str().unwrap() };
         assert_eq!(path_str, "m/44'/1'/0'/0/5");
 
         // Test change address path
         let mut buffer = vec![0u8; 256];
-        let success = unsafe {
-            derivation_bip44_payment_path(
-                FFINetwork::Testnet,
-                0,    // account_index
-                true, // is_change
-                3,    // address_index
-                buffer.as_mut_ptr() as *mut i8,
-                buffer.len(),
-                &mut error,
-            )
-        };
+        let success = derivation_bip44_payment_path(
+            FFINetwork::Testnet,
+            0,    // account_index
+            true, // is_change
+            3,    // address_index
+            buffer.as_mut_ptr() as *mut i8,
+            buffer.len(),
+            &mut error,
+        );
         assert!(success);
         let path_str = unsafe { CStr::from_ptr(buffer.as_ptr() as *const i8).to_str().unwrap() };
         assert_eq!(path_str, "m/44'/1'/0'/1/3");
@@ -978,44 +950,40 @@ mod tests {
         }
 
         // Create master key
-        let master_xprv = unsafe {
-            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
-        };
+        let master_xprv =
+            derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error);
         assert!(!master_xprv.is_null());
 
         // Convert to public key
-        let master_xpub = unsafe { derivation_xpriv_to_xpub(master_xprv, &mut error) };
+        let master_xpub = derivation_xpriv_to_xpub(master_xprv, &mut error);
         assert!(!master_xpub.is_null());
 
         // Get fingerprint
         let mut fingerprint = [0u8; 4];
-        let success = unsafe {
-            derivation_xpub_fingerprint(master_xpub, fingerprint.as_mut_ptr(), &mut error)
-        };
+        let success =
+            derivation_xpub_fingerprint(master_xpub, fingerprint.as_mut_ptr(), &mut error);
         assert!(success);
 
         // Derive child key using path
         let path = CString::new("m/44'/1'/0'/0/0").unwrap();
-        let child_xprv = unsafe {
-            derivation_derive_private_key_from_seed(
-                seed.as_ptr(),
-                seed.len(),
-                path.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let child_xprv = derivation_derive_private_key_from_seed(
+            seed.as_ptr(),
+            seed.len(),
+            path.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
         assert!(!child_xprv.is_null());
 
         // Convert child to public
-        let child_xpub = unsafe { derivation_xpriv_to_xpub(child_xprv, &mut error) };
+        let child_xpub = derivation_xpriv_to_xpub(child_xprv, &mut error);
         assert!(!child_xpub.is_null());
 
         // Convert to strings
-        let master_xprv_str = unsafe { derivation_xpriv_to_string(master_xprv, &mut error) };
-        let master_xpub_str = unsafe { derivation_xpub_to_string(master_xpub, &mut error) };
-        let child_xprv_str = unsafe { derivation_xpriv_to_string(child_xprv, &mut error) };
-        let child_xpub_str = unsafe { derivation_xpub_to_string(child_xpub, &mut error) };
+        let master_xprv_str = derivation_xpriv_to_string(master_xprv, &mut error);
+        let master_xpub_str = derivation_xpub_to_string(master_xpub, &mut error);
+        let child_xprv_str = derivation_xpriv_to_string(child_xprv, &mut error);
+        let child_xpub_str = derivation_xpub_to_string(child_xpub, &mut error);
 
         // Verify all strings are different and have correct prefixes
         let master_prv_s = unsafe { CStr::from_ptr(master_xprv_str).to_str().unwrap() };
@@ -1032,15 +1000,13 @@ mod tests {
         assert_ne!(master_pub_s, child_pub_s);
 
         // Clean up
-        unsafe {
-            derivation_string_free(master_xprv_str);
-            derivation_string_free(master_xpub_str);
-            derivation_string_free(child_xprv_str);
-            derivation_string_free(child_xpub_str);
-            derivation_xpub_free(child_xpub);
-            derivation_xpriv_free(child_xprv);
-            derivation_xpub_free(master_xpub);
-            derivation_xpriv_free(master_xprv);
-        }
+        derivation_string_free(master_xprv_str);
+        derivation_string_free(master_xpub_str);
+        derivation_string_free(child_xprv_str);
+        derivation_string_free(child_xpub_str);
+        derivation_xpub_free(child_xpub);
+        derivation_xpriv_free(child_xprv);
+        derivation_xpub_free(master_xpub);
+        derivation_xpriv_free(master_xprv);
     }
 }

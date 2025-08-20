@@ -5,6 +5,7 @@ mod more_tests {
     use crate::types::{FFINetwork, FFIWallet};
     use crate::wallet;
     use std::ffi::{CStr, CString};
+    use std::os::raw::c_char;
     use std::ptr;
 
     #[test]

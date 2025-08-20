@@ -121,7 +121,7 @@ pub extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
         let creation_options = if account_options.is_null() {
             key_wallet::wallet::initialization::WalletAccountCreationOptions::Default
         } else {
-            unsafe { (*account_options).to_wallet_options() }
+            (*account_options).to_wallet_options()
         };
 
         // Use the WalletManager's public method to create the wallet

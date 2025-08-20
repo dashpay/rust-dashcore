@@ -11,15 +11,13 @@ mod tests {
     fn test_wallet_get_account_null_wallet() {
         let mut error = FFIError::success();
 
-        let success = unsafe {
-            wallet_get_account(
-                ptr::null_mut(),
-                FFINetwork::Testnet,
-                0,
-                0, // Standard account
-                &mut error,
-            )
-        };
+        let success = wallet_get_account(
+            ptr::null_mut(),
+            FFINetwork::Testnet,
+            0,
+            0, // Standard account
+            &mut error,
+        );
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -33,24 +31,20 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let wallet = wallet::wallet_create_from_mnemonic(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
 
-        let success = unsafe {
-            wallet_get_account(
-                wallet,
-                FFINetwork::Testnet,
-                0,
-                99, // Invalid account type
-                &mut error,
-            )
-        };
+        let success = wallet_get_account(
+            wallet,
+            FFINetwork::Testnet,
+            0,
+            99, // Invalid account type
+            &mut error,
+        );
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -69,25 +63,21 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let wallet = wallet::wallet_create_from_mnemonic(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
 
         // Try to get the default account (should exist)
-        let success = unsafe {
-            wallet_get_account(
-                wallet,
-                FFINetwork::Testnet,
-                0,
-                0, // Standard account
-                &mut error,
-            )
-        };
+        let success = wallet_get_account(
+            wallet,
+            FFINetwork::Testnet,
+            0,
+            0, // Standard account
+            &mut error,
+        );
 
         assert!(success);
         assert_eq!(error.code, FFIErrorCode::Success);
@@ -102,8 +92,7 @@ mod tests {
     fn test_wallet_get_account_count_null_wallet() {
         let mut error = FFIError::success();
 
-        let count =
-            unsafe { wallet_get_account_count(ptr::null(), FFINetwork::Testnet, &mut error) };
+        let count = wallet_get_account_count(ptr::null(), FFINetwork::Testnet, &mut error);
 
         assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -117,16 +106,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let wallet = wallet::wallet_create_from_mnemonic(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
 
-        let count = unsafe { wallet_get_account_count(wallet, FFINetwork::Testnet, &mut error) };
+        let count = wallet_get_account_count(wallet, FFINetwork::Testnet, &mut error);
 
         // Should have at least one default account
         assert!(count >= 1);
@@ -146,23 +133,19 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let wallet = wallet::wallet_create_from_mnemonic(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
 
         // Try to get account count for a different network (Mainnet)
-        let count = unsafe {
-            wallet_get_account_count(
-                wallet,
-                FFINetwork::Dash, // Different network
-                &mut error,
-            )
-        };
+        let count = wallet_get_account_count(
+            wallet,
+            FFINetwork::Dash, // Different network
+            &mut error,
+        );
 
         // Should return 0 for network with no accounts
         assert_eq!(count, 0);

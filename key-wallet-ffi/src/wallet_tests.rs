@@ -205,7 +205,7 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
-        let wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, error) };
+        let wallet = wallet::wallet_create_random(FFINetwork::Testnet, error);
         assert!(!wallet.is_null());
 
         // Get wallet ID
@@ -333,7 +333,7 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
-        let wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, error) };
+        let wallet = wallet::wallet_create_random(FFINetwork::Testnet, error);
         assert!(!wallet.is_null());
 
         // Test adding account - check if it succeeds or fails gracefully
@@ -405,7 +405,7 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
-        let wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, error) };
+        let wallet = wallet::wallet_create_random(FFINetwork::Testnet, error);
         assert!(!wallet.is_null());
 
         // Get xpub for account 0
