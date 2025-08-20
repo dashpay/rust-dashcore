@@ -35,14 +35,14 @@ pub extern "C" fn wallet_manager_create(error: *mut FFIError) -> *mut FFIWalletM
     }))
 }
 
-/// Add a wallet from mnemonic to the manager
+/// Add a wallet from mnemonic to the manager with options
 #[no_mangle]
-pub extern "C" fn wallet_manager_add_wallet_from_mnemonic(
+pub extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
     manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
     network: FFINetwork,
-    _account_count: c_uint,
+    account_options: *const crate::types::FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> bool {
     if manager.is_null() || mnemonic.is_null() {
@@ -118,6 +118,13 @@ pub extern "C" fn wallet_manager_add_wallet_from_mnemonic(
             return false;
         }
 
+        // Convert account creation options
+        let creation_options = if account_options.is_null() {
+            key_wallet::wallet::initialization::WalletAccountCreationOptions::Default
+        } else {
+            unsafe { (*account_options).to_wallet_options() }
+        };
+
         // Use the WalletManager's public method to create the wallet
         match manager_guard.create_wallet_from_mnemonic(
             wallet_id,
@@ -126,6 +133,7 @@ pub extern "C" fn wallet_manager_add_wallet_from_mnemonic(
             passphrase_str,
             Some(network_rust),
             None, // birth_height
+            creation_options,
         ) {
             Ok(_) => {
                 // Track the wallet ID
@@ -155,6 +163,25 @@ pub extern "C" fn wallet_manager_add_wallet_from_mnemonic(
             }
         }
     }
+}
+
+/// Add a wallet from mnemonic to the manager (backward compatibility)
+#[no_mangle]
+pub extern "C" fn wallet_manager_add_wallet_from_mnemonic(
+    manager: *mut FFIWalletManager,
+    mnemonic: *const c_char,
+    passphrase: *const c_char,
+    network: FFINetwork,
+    error: *mut FFIError,
+) -> bool {
+    wallet_manager_add_wallet_from_mnemonic_with_options(
+        manager,
+        mnemonic,
+        passphrase,
+        network,
+        std::ptr::null(), // Use default options
+        error,
+    )
 }
 
 /// Get wallet IDs

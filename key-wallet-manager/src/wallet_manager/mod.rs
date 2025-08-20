@@ -108,6 +108,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     }
 
     /// Create a new wallet from mnemonic and add it to the manager
+    #[allow(clippy::too_many_arguments)]
     pub fn create_wallet_from_mnemonic(
         &mut self,
         wallet_id: WalletId,
@@ -116,6 +117,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         passphrase: &str,
         network: Option<Network>,
         birth_height: Option<u32>,
+        account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<&T, WalletError> {
         if self.wallets.contains_key(&wallet_id) {
             return Err(WalletError::WalletExists(wallet_id));
@@ -133,17 +135,17 @@ impl<T: WalletInfoInterface> WalletManager<T> {
                 mnemonic_obj,
                 WalletConfig::default(),
                 network,
-                key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
+                account_creation_options,
             )
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?
         } else {
-            // For wallets with passphrase, use None since they can't derive accounts without the passphrase
+            // For wallets with passphrase, use the provided options
             Wallet::from_mnemonic_with_passphrase(
                 mnemonic_obj,
                 passphrase.to_string(),
                 WalletConfig::default(),
                 network,
-                key_wallet::wallet::initialization::WalletAccountCreationOptions::None,
+                account_creation_options,
             )
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?
         };
@@ -154,28 +156,9 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         managed_info.set_birth_height(birth_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
-        // Create default account in the wallet
-        // Skip account creation for wallets with passphrases as they need the passphrase to derive accounts
-        let mut wallet_mut = wallet.clone();
-        if !passphrase.is_empty() {
-            // For wallets with passphrase, accounts can't be created without the passphrase
-            // The wallet is already set up correctly with WalletAccountCreationOptions::None
-        } else {
-            if wallet_mut.get_bip44_account(network, 0).is_none() {
-                use key_wallet::account::StandardAccountType;
-                let account_type = AccountType::Standard {
-                    index: 0,
-                    standard_account_type: StandardAccountType::BIP44Account,
-                };
-                wallet_mut
-                    .add_account(account_type, network, None)
-                    .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
-            }
-
-            let _account = wallet_mut.get_bip44_account(network, 0).ok_or_else(|| {
-                WalletError::AccountCreation("Failed to get default account".to_string())
-            })?;
-        }
+        // The wallet already has accounts created according to the provided options
+        // No need to manually add accounts here since that's handled by from_mnemonic/from_mnemonic_with_passphrase
+        let wallet_mut = wallet.clone();
 
         // Add the account to managed info and generate initial addresses
         // Note: Address generation would need to be done through proper derivation from the account's xpub

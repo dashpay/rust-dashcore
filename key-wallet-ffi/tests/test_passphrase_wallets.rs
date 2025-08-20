@@ -83,8 +83,7 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
             manager,
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            1, // account_count (ignored)
+            FFINetwork::Testnet, // account_count (ignored)
             error,
         )
     };
@@ -108,8 +107,8 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
     assert_eq!(count, 1);
 
     // Try to get a receive address from the wallet
-    // Note: wallet_manager doesn't create accounts automatically for wallets with passphrases
-    // This is expected behavior - the wallet manager lets you add accounts manually later
+    // With the updated implementation, wallet_manager now creates accounts for passphrase wallets
+    // using the Default options, so this should succeed
     let addr = unsafe {
         key_wallet_ffi::wallet_manager::wallet_manager_get_receive_address(
             manager,
@@ -120,22 +119,19 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
         )
     };
 
-    // This will fail because wallet_manager doesn't auto-create accounts for passphrase wallets
-    // This is by design - accounts need to be added manually after wallet creation
-    assert!(addr.is_null());
+    // This should now succeed because wallet_manager creates accounts with Default options
+    assert!(!addr.is_null(), "Should be able to get address from wallet with passphrase");
+    assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
-    // The error could be NotFound (account not found) or WalletError (no accounts in wallet)
-    // Both are acceptable for this situation
-    let error_code = unsafe { (*error).code };
-    assert!(
-        error_code == FFIErrorCode::NotFound || error_code == FFIErrorCode::WalletError,
-        "Expected NotFound or WalletError, got {:?}",
-        error_code
-    );
+    if !addr.is_null() {
+        let addr_str = unsafe { CStr::from_ptr(addr).to_str().unwrap() };
+        println!("Successfully got address from wallet manager: {}", addr_str);
+        assert!(!addr_str.is_empty());
 
-    if !unsafe { (*error).message.is_null() } {
-        let error_msg = unsafe { CStr::from_ptr((*error).message).to_str().unwrap() };
-        println!("Expected error (wallet_manager doesn't auto-create accounts): {}", error_msg);
+        // Clean up address
+        unsafe {
+            key_wallet_ffi::address::address_free(addr);
+        }
     }
 
     // Clean up

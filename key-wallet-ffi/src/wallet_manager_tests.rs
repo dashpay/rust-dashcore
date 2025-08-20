@@ -53,8 +53,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                3, // Create 3 accounts
+                FFINetwork::Testnet, // Create 3 accounts
                 error,
             )
         };
@@ -93,7 +92,6 @@ mod tests {
                     mnemonic.as_ptr(),
                     ptr::null(), // No passphrase
                     FFINetwork::Testnet,
-                    1,
                     error,
                 )
             };
@@ -169,7 +167,6 @@ mod tests {
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
                 FFINetwork::Testnet,
-                1,
                 error,
             )
         };
@@ -252,7 +249,6 @@ mod tests {
                 mnemonic.as_ptr(),
                 ptr::null(),
                 FFINetwork::Testnet,
-                1,
                 error,
             )
         };
@@ -309,7 +305,6 @@ mod tests {
                 mnemonic.as_ptr(),
                 ptr::null(),
                 FFINetwork::Testnet,
-                1,
                 error,
             )
         };
@@ -376,7 +371,6 @@ mod tests {
                     mnemonic.as_ptr(),
                     ptr::null(),
                     FFINetwork::Testnet,
-                    1,
                     error,
                 )
             };
@@ -427,7 +421,6 @@ mod tests {
                 mnemonic.as_ptr(),
                 ptr::null(),
                 FFINetwork::Testnet,
-                1,
                 error,
             )
         };
@@ -552,7 +545,6 @@ mod tests {
                 invalid_mnemonic.as_ptr(),
                 ptr::null(),
                 FFINetwork::Testnet,
-                1,
                 error,
             )
         };
@@ -586,9 +578,8 @@ mod tests {
                 wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                     manager,
                     mnemonic.as_ptr(),
-                    ptr::null(), // No passphrase
-                    FFINetwork::Testnet,
-                    2, // 2 accounts per wallet
+                    ptr::null(),         // No passphrase
+                    FFINetwork::Testnet, // 2 accounts per wallet
                     error,
                 )
             };
@@ -659,8 +650,7 @@ mod tests {
                 manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                1, // account_count
+                FFINetwork::Testnet, // account_count
                 error,
             )
         };
@@ -693,7 +683,6 @@ mod tests {
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
                 FFINetwork::Testnet,
-                1,
                 error,
             )
         };
@@ -742,7 +731,6 @@ mod tests {
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
                 FFINetwork::Testnet,
-                1,
                 error,
             )
         };
@@ -805,7 +793,6 @@ mod tests {
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
                 FFINetwork::Testnet,
-                1,
                 error,
             )
         };
@@ -903,8 +890,7 @@ mod tests {
                 ptr::null_mut(),
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                1, // account_count
+                FFINetwork::Testnet, // account_count
                 error,
             )
         };

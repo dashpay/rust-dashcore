@@ -35,6 +35,7 @@ fn test_wallet_manager_from_mnemonic() {
         "",
         Some(Network::Testnet),
         None, // birth_height
+        key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
     );
     assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
     assert_eq!(manager.wallet_count(), 1);

@@ -22,7 +22,6 @@ fn test_debug_wallet_add() {
             mnemonic.as_ptr(),
             passphrase.as_ptr(),
             FFINetwork::Testnet,
-            1,
             error,
         )
     };
