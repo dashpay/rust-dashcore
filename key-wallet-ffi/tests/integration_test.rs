@@ -151,11 +151,13 @@ fn test_watch_only_wallet() {
     assert!(!source_wallet.is_null());
 
     // 2. Get xpub
-    let xpub = key_wallet_ffi::wallet::wallet_get_xpub(source_wallet, FFINetwork::Testnet, 0, error);
+    let xpub =
+        key_wallet_ffi::wallet::wallet_get_xpub(source_wallet, FFINetwork::Testnet, 0, error);
     assert!(!xpub.is_null());
 
     // 3. Create watch-only wallet from xpub
-    let watch_wallet = key_wallet_ffi::wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, error);
+    let watch_wallet =
+        key_wallet_ffi::wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, error);
     assert!(!watch_wallet.is_null());
 
     // 4. Verify it's watch-only
@@ -225,17 +227,15 @@ fn test_derivation_paths() {
 
     // Payment path
     path_buffer.fill(0);
-    let success = unsafe {
-        key_wallet_ffi::derivation::derivation_bip44_payment_path(
-            FFINetwork::Dash,
-            0,
-            false,
-            5,
-            path_buffer.as_mut_ptr() as *mut std::os::raw::c_char,
-            path_buffer.len(),
-            error,
-        )
-    };
+    let success = key_wallet_ffi::derivation::derivation_bip44_payment_path(
+        FFINetwork::Dash,
+        0,
+        false,
+        5,
+        path_buffer.as_mut_ptr() as *mut std::os::raw::c_char,
+        path_buffer.len(),
+        error,
+    );
     assert!(success);
 
     let path_str = unsafe {

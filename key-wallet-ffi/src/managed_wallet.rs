@@ -200,14 +200,12 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let wallet = wallet::wallet_create_from_mnemonic(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
         assert!(!wallet.is_null());
 
         // Create managed wallet
@@ -218,10 +216,8 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Clean up
-        unsafe {
-            managed_wallet_free(managed_wallet);
-            wallet::wallet_free(wallet);
-        }
+        managed_wallet_free(managed_wallet);
+        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -242,27 +238,23 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let wallet = wallet::wallet_create_from_mnemonic(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
 
         let managed_wallet = managed_wallet_create(wallet, &mut error);
 
         // Test with a valid testnet address
         let address = CString::new("yXdxAYfK7KGx7gNpVHUfRsQMNpMj5cAadG").unwrap();
-        let success = unsafe {
-            managed_wallet_mark_address_used(
-                managed_wallet,
-                FFINetwork::Testnet,
-                address.as_ptr(),
-                &mut error,
-            )
-        };
+        let success = managed_wallet_mark_address_used(
+            managed_wallet,
+            FFINetwork::Testnet,
+            address.as_ptr(),
+            &mut error,
+        );
 
         // Should succeed or fail gracefully depending on address validation
         // The function validates the address format internally
@@ -274,10 +266,8 @@ mod tests {
         }
 
         // Clean up
-        unsafe {
-            managed_wallet_free(managed_wallet);
-            wallet::wallet_free(wallet);
-        }
+        managed_wallet_free(managed_wallet);
+        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -288,50 +278,42 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let wallet = wallet::wallet_create_from_mnemonic(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
 
         let managed_wallet = managed_wallet_create(wallet, &mut error);
 
         // Test with invalid address
         let address = CString::new("invalid_address").unwrap();
-        let success = unsafe {
-            managed_wallet_mark_address_used(
-                managed_wallet,
-                FFINetwork::Testnet,
-                address.as_ptr(),
-                &mut error,
-            )
-        };
+        let success = managed_wallet_mark_address_used(
+            managed_wallet,
+            FFINetwork::Testnet,
+            address.as_ptr(),
+            &mut error,
+        );
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidAddress);
 
         // Clean up
-        unsafe {
-            managed_wallet_free(managed_wallet);
-            wallet::wallet_free(wallet);
-        }
+        managed_wallet_free(managed_wallet);
+        wallet::wallet_free(wallet);
     }
 
     #[test]
     fn test_managed_wallet_mark_address_used_null_address() {
         let mut error = FFIError::success();
 
-        let success = unsafe {
-            managed_wallet_mark_address_used(
-                ptr::null_mut(),
-                FFINetwork::Testnet,
-                ptr::null(),
-                &mut error,
-            )
-        };
+        let success = managed_wallet_mark_address_used(
+            ptr::null_mut(),
+            FFINetwork::Testnet,
+            ptr::null(),
+            &mut error,
+        );
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -341,15 +323,13 @@ mod tests {
     fn test_managed_wallet_get_next_receive_address_not_implemented() {
         let mut error = FFIError::success();
 
-        let address = unsafe {
-            managed_wallet_get_next_receive_address(
-                ptr::null_mut(),
-                ptr::null(),
-                FFINetwork::Testnet,
-                0,
-                &mut error,
-            )
-        };
+        let address = managed_wallet_get_next_receive_address(
+            ptr::null_mut(),
+            ptr::null(),
+            FFINetwork::Testnet,
+            0,
+            &mut error,
+        );
 
         assert!(address.is_null());
         assert_eq!(error.code, FFIErrorCode::WalletError);
@@ -359,15 +339,13 @@ mod tests {
     fn test_managed_wallet_get_next_change_address_not_implemented() {
         let mut error = FFIError::success();
 
-        let address = unsafe {
-            managed_wallet_get_next_change_address(
-                ptr::null_mut(),
-                ptr::null(),
-                FFINetwork::Testnet,
-                0,
-                &mut error,
-            )
-        };
+        let address = managed_wallet_get_next_change_address(
+            ptr::null_mut(),
+            ptr::null(),
+            FFINetwork::Testnet,
+            0,
+            &mut error,
+        );
 
         assert!(address.is_null());
         assert_eq!(error.code, FFIErrorCode::WalletError);
@@ -379,16 +357,14 @@ mod tests {
         let mut addresses_out: *mut *mut std::os::raw::c_char = ptr::null_mut();
         let mut count_out: usize = 0;
 
-        let success = unsafe {
-            managed_wallet_get_all_addresses(
-                ptr::null(),
-                FFINetwork::Testnet,
-                0,
-                &mut addresses_out,
-                &mut count_out,
-                &mut error,
-            )
-        };
+        let success = managed_wallet_get_all_addresses(
+            ptr::null(),
+            FFINetwork::Testnet,
+            0,
+            &mut addresses_out,
+            &mut count_out,
+            &mut error,
+        );
 
         assert!(success);
         assert_eq!(count_out, 0);
@@ -401,32 +377,28 @@ mod tests {
         let mut error = FFIError::success();
 
         // Test with null addresses_out
-        let success = unsafe {
-            managed_wallet_get_all_addresses(
-                ptr::null(),
-                FFINetwork::Testnet,
-                0,
-                ptr::null_mut(),
-                &mut 0,
-                &mut error,
-            )
-        };
+        let success = managed_wallet_get_all_addresses(
+            ptr::null(),
+            FFINetwork::Testnet,
+            0,
+            ptr::null_mut(),
+            &mut 0,
+            &mut error,
+        );
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Test with null count_out
         let mut addresses_out: *mut *mut std::os::raw::c_char = ptr::null_mut();
-        let success = unsafe {
-            managed_wallet_get_all_addresses(
-                ptr::null(),
-                FFINetwork::Testnet,
-                0,
-                &mut addresses_out,
-                ptr::null_mut(),
-                &mut error,
-            )
-        };
+        let success = managed_wallet_get_all_addresses(
+            ptr::null(),
+            FFINetwork::Testnet,
+            0,
+            &mut addresses_out,
+            ptr::null_mut(),
+            &mut error,
+        );
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -446,14 +418,12 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let wallet = wallet::wallet_create_from_mnemonic(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
 
         let managed_wallet = managed_wallet_create(wallet, &mut error);
         assert!(!managed_wallet.is_null());
@@ -462,9 +432,7 @@ mod tests {
         managed_wallet_free(managed_wallet);
 
         // Clean up wallet
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
+        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -475,14 +443,12 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let wallet = wallet::wallet_create_from_mnemonic(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
 
         let managed_wallet = managed_wallet_create(wallet, &mut error);
         assert!(!managed_wallet.is_null());
@@ -497,10 +463,8 @@ mod tests {
         }
 
         // Clean up
-        unsafe {
-            managed_wallet_free(managed_wallet);
-            wallet::wallet_free(wallet);
-        }
+        managed_wallet_free(managed_wallet);
+        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -511,36 +475,30 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let wallet = wallet::wallet_create_from_mnemonic(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
 
         let managed_wallet = managed_wallet_create(wallet, &mut error);
 
         // Create invalid UTF-8 string
         let invalid_utf8 = vec![0xFF, 0xFE, 0xFD, 0x00]; // Invalid UTF-8 bytes with null terminator
-        let success = unsafe {
-            managed_wallet_mark_address_used(
-                managed_wallet,
-                FFINetwork::Testnet,
-                invalid_utf8.as_ptr() as *const std::os::raw::c_char,
-                &mut error,
-            )
-        };
+        let success = managed_wallet_mark_address_used(
+            managed_wallet,
+            FFINetwork::Testnet,
+            invalid_utf8.as_ptr() as *const std::os::raw::c_char,
+            &mut error,
+        );
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Clean up
-        unsafe {
-            managed_wallet_free(managed_wallet);
-            wallet::wallet_free(wallet);
-        }
+        managed_wallet_free(managed_wallet);
+        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -551,50 +509,42 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let wallet = wallet::wallet_create_from_mnemonic(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
 
         let managed_wallet = managed_wallet_create(wallet, &mut error);
         assert!(!managed_wallet.is_null());
 
         // Test get_next_receive_address with real wallet (should still fail as not implemented)
-        let address = unsafe {
-            managed_wallet_get_next_receive_address(
-                managed_wallet,
-                wallet,
-                FFINetwork::Testnet,
-                0,
-                &mut error,
-            )
-        };
+        let address = managed_wallet_get_next_receive_address(
+            managed_wallet,
+            wallet,
+            FFINetwork::Testnet,
+            0,
+            &mut error,
+        );
 
         assert!(address.is_null());
         assert_eq!(error.code, FFIErrorCode::WalletError);
 
         // Test get_next_change_address with real wallet (should still fail as not implemented)
-        let address = unsafe {
-            managed_wallet_get_next_change_address(
-                managed_wallet,
-                wallet,
-                FFINetwork::Testnet,
-                0,
-                &mut error,
-            )
-        };
+        let address = managed_wallet_get_next_change_address(
+            managed_wallet,
+            wallet,
+            FFINetwork::Testnet,
+            0,
+            &mut error,
+        );
 
         assert!(address.is_null());
         assert_eq!(error.code, FFIErrorCode::WalletError);
 
         // Clean up
-        unsafe {
-            managed_wallet_free(managed_wallet);
-            wallet::wallet_free(wallet);
-        }
+        managed_wallet_free(managed_wallet);
+        wallet::wallet_free(wallet);
     }
 }

@@ -50,9 +50,7 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Clean up
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
+        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -83,9 +81,7 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Clean up
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
+        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -120,9 +116,7 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Clean up
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
+        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -152,9 +146,7 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Clean up
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
+        wallet::wallet_free(wallet);
     }
 
     #[test]

@@ -76,20 +76,18 @@ mod tests {
         let address = CString::new("yXdxAYfK7KGx7gNpVHUfRsQMNpMj5cAadG").unwrap();
         let script = vec![0x76, 0xa9];
 
-        let success = unsafe {
-            wallet_add_utxo(
-                ptr::null_mut(),
-                FFINetwork::Testnet,
-                txid.as_ptr(),
-                0,
-                100000,
-                address.as_ptr(),
-                script.as_ptr(),
-                script.len(),
-                12345,
-                &mut error,
-            )
-        };
+        let success = wallet_add_utxo(
+            ptr::null_mut(),
+            FFINetwork::Testnet,
+            txid.as_ptr(),
+            0,
+            100000,
+            address.as_ptr(),
+            script.as_ptr(),
+            script.len(),
+            12345,
+            &mut error,
+        );
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -103,40 +101,34 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
-        };
+        let wallet = wallet::wallet_create_from_mnemonic(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            FFINetwork::Testnet,
+            &mut error,
+        );
 
         let address = CString::new("yXdxAYfK7KGx7gNpVHUfRsQMNpMj5cAadG").unwrap();
         let script = vec![0x76, 0xa9];
 
-        let success = unsafe {
-            wallet_add_utxo(
-                wallet,
-                FFINetwork::Testnet,
-                ptr::null(),
-                0,
-                100000,
-                address.as_ptr(),
-                script.as_ptr(),
-                script.len(),
-                12345,
-                &mut error,
-            )
-        };
+        let success = wallet_add_utxo(
+            wallet,
+            FFINetwork::Testnet,
+            ptr::null(),
+            0,
+            100000,
+            address.as_ptr(),
+            script.as_ptr(),
+            script.len(),
+            12345,
+            &mut error,
+        );
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Clean up
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
+        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -145,15 +137,13 @@ mod tests {
         let mut utxos_out: *mut FFIUTXO = ptr::null_mut();
         let mut count_out: usize = 0;
 
-        let success = unsafe {
-            wallet_get_utxos(
-                ptr::null(),
-                FFINetwork::Testnet,
-                &mut utxos_out,
-                &mut count_out,
-                &mut error,
-            )
-        };
+        let success = wallet_get_utxos(
+            ptr::null(),
+            FFINetwork::Testnet,
+            &mut utxos_out,
+            &mut count_out,
+            &mut error,
+        );
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -164,9 +154,8 @@ mod tests {
         let mut error = FFIError::success();
         let txid = [4u8; 32];
 
-        let success = unsafe {
-            wallet_remove_utxo(ptr::null_mut(), FFINetwork::Testnet, txid.as_ptr(), 0, &mut error)
-        };
+        let success =
+            wallet_remove_utxo(ptr::null_mut(), FFINetwork::Testnet, txid.as_ptr(), 0, &mut error);
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -197,16 +186,12 @@ mod tests {
         std::mem::forget(utxos_ptrs);
 
         // Free the UTXOs
-        unsafe {
-            utxo_array_free(utxos_ptr, count);
-        }
+        utxo_array_free(utxos_ptr, count);
     }
 
     #[test]
     fn test_utxo_array_free_null() {
         // Should handle null gracefully
-        unsafe {
-            utxo_array_free(ptr::null_mut(), 0);
-        }
+        utxo_array_free(ptr::null_mut(), 0);
     }
 }

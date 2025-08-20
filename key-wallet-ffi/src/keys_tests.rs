@@ -64,9 +64,9 @@ mod tests {
 
         // Clean up
         unsafe {
-            CString::from_raw(xpub_str);
-            wallet::wallet_free(wallet);
+            let _ = CString::from_raw(xpub_str);
         }
+        wallet::wallet_free(wallet);
     }
 
     // wallet_derive_private_key is now implemented
@@ -277,9 +277,8 @@ mod tests {
         );
 
         // Test with null path
-        let pubkey_ptr = unsafe {
-            wallet_derive_public_key(wallet, FFINetwork::Testnet, ptr::null(), &mut error)
-        };
+        let pubkey_ptr =
+            wallet_derive_public_key(wallet, FFINetwork::Testnet, ptr::null(), &mut error);
 
         assert!(pubkey_ptr.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -399,9 +398,8 @@ mod tests {
 
         // Test different account indices
         for account_index in 0..3 {
-            let xpub_str = unsafe {
-                wallet_get_account_xpub(wallet, FFINetwork::Testnet, account_index, &mut error)
-            };
+            let xpub_str =
+                wallet_get_account_xpub(wallet, FFINetwork::Testnet, account_index, &mut error);
 
             if !xpub_str.is_null() {
                 let xpub = unsafe { CStr::from_ptr(xpub_str).to_str().unwrap() };
@@ -409,14 +407,13 @@ mod tests {
 
                 // Clean up
                 unsafe {
-                    CString::from_raw(xpub_str);
+                    let _ = CString::from_raw(xpub_str);
                 }
             }
         }
 
         // Test with null wallet
-        let xpub_str =
-            unsafe { wallet_get_account_xpub(ptr::null(), FFINetwork::Testnet, 0, &mut error) };
+        let xpub_str = wallet_get_account_xpub(ptr::null(), FFINetwork::Testnet, 0, &mut error);
 
         assert!(xpub_str.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -451,13 +448,12 @@ mod tests {
         for path_str in test_paths.iter() {
             let path = CString::new(*path_str).unwrap();
 
-            let pubkey_ptr = unsafe {
-                wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
-            };
+            let pubkey_ptr =
+                wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error);
 
             if !pubkey_ptr.is_null() {
                 // Get hex representation to verify
-                let hex_str = unsafe { public_key_to_hex(pubkey_ptr, &mut error) };
+                let hex_str = public_key_to_hex(pubkey_ptr, &mut error);
                 assert!(!hex_str.is_null());
 
                 let hex = unsafe { CStr::from_ptr(hex_str).to_str().unwrap() };
@@ -466,12 +462,12 @@ mod tests {
                 assert_eq!(hex.len(), 66); // 33 bytes * 2 hex chars
 
                 // Clean up
-                unsafe {
-                    if !hex_str.is_null() {
+                if !hex_str.is_null() {
+                    unsafe {
                         let _ = CString::from_raw(hex_str);
                     }
-                    public_key_free(pubkey_ptr);
                 }
+                public_key_free(pubkey_ptr);
             }
         }
 
@@ -482,15 +478,11 @@ mod tests {
     #[test]
     fn test_derivation_path_free_edge_cases() {
         // Test freeing null pointers
-        unsafe {
-            derivation_path_free(ptr::null_mut(), ptr::null_mut(), 0);
-        }
+        derivation_path_free(ptr::null_mut(), ptr::null_mut(), 0);
 
         // Test freeing with zero count
         let dummy_ptr = 1 as *mut u32;
         let dummy_bool_ptr = 1 as *mut bool;
-        unsafe {
-            derivation_path_free(dummy_ptr, dummy_bool_ptr, 0);
-        }
+        derivation_path_free(dummy_ptr, dummy_bool_ptr, 0);
     }
 }

@@ -54,7 +54,7 @@ mod tests {
         assert_eq!(word_count, 12);
 
         // Validate the generated mnemonic
-        let is_valid = unsafe { mnemonic::mnemonic_validate(mnemonic_12, error) };
+        let is_valid = mnemonic::mnemonic_validate(mnemonic_12, error);
         assert!(is_valid);
 
         mnemonic::mnemonic_free(mnemonic_12);
@@ -155,7 +155,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Test with null mnemonic
-        let success = unsafe { mnemonic::mnemonic_validate(ptr::null(), error) };
+        let success = mnemonic::mnemonic_validate(ptr::null(), error);
         assert!(!success);
 
         // Test with empty mnemonic
@@ -173,15 +173,13 @@ mod tests {
         let mut seed = [0u8; 64];
         let mut seed_len: usize = 0;
 
-        let success = unsafe {
-            mnemonic::mnemonic_to_seed(
-                mnemonic.as_ptr(),
-                ptr::null(), // null passphrase
-                seed.as_mut_ptr(),
-                &mut seed_len,
-                error,
-            )
-        };
+        let success = mnemonic::mnemonic_to_seed(
+            mnemonic.as_ptr(),
+            ptr::null(), // null passphrase
+            seed.as_mut_ptr(),
+            &mut seed_len,
+            error,
+        );
         assert!(success);
         assert_eq!(seed_len, 64);
     }
@@ -209,7 +207,7 @@ mod tests {
             assert_eq!(error.code, FFIErrorCode::Success);
 
             // Verify it's valid
-            let is_valid = unsafe { mnemonic::mnemonic_validate(mnemonic_ptr, &mut error) };
+            let is_valid = mnemonic::mnemonic_validate(mnemonic_ptr, &mut error);
             assert!(is_valid);
 
             // Clean up
@@ -222,31 +220,25 @@ mod tests {
         let mut error = FFIError::success();
 
         // Generate a mnemonic with a specific language
-        let mnemonic_ptr = unsafe {
-            mnemonic::mnemonic_generate_with_language(
-                12,
-                mnemonic::FFILanguage::Spanish,
-                &mut error,
-            )
-        };
+        let mnemonic_ptr = mnemonic::mnemonic_generate_with_language(
+            12,
+            mnemonic::FFILanguage::Spanish,
+            &mut error,
+        );
         assert!(!mnemonic_ptr.is_null());
 
         // Validate it (validation doesn't need language since it checks all word lists)
-        let is_valid = unsafe { mnemonic::mnemonic_validate(mnemonic_ptr, &mut error) };
+        let is_valid = mnemonic::mnemonic_validate(mnemonic_ptr, &mut error);
         assert!(is_valid);
 
         // Clean up
-        unsafe {
-            mnemonic::mnemonic_free(mnemonic_ptr);
-        }
+        mnemonic::mnemonic_free(mnemonic_ptr);
     }
 
     #[test]
     fn test_mnemonic_free_null() {
         // Should handle null gracefully
-        unsafe {
-            mnemonic::mnemonic_free(ptr::null_mut());
-        }
+        mnemonic::mnemonic_free(ptr::null_mut());
     }
 
     #[test]
@@ -259,15 +251,13 @@ mod tests {
         let mut seed1 = [0u8; 64];
         let mut seed_len = 64usize;
 
-        let success = unsafe {
-            mnemonic::mnemonic_to_seed(
-                mnemonic.as_ptr(),
-                empty_pass.as_ptr(),
-                seed1.as_mut_ptr(),
-                &mut seed_len,
-                &mut error,
-            )
-        };
+        let success = mnemonic::mnemonic_to_seed(
+            mnemonic.as_ptr(),
+            empty_pass.as_ptr(),
+            seed1.as_mut_ptr(),
+            &mut seed_len,
+            &mut error,
+        );
         assert!(success);
 
         // Test with non-empty passphrase
@@ -275,15 +265,13 @@ mod tests {
         let mut seed2 = [0u8; 64];
         seed_len = 64;
 
-        let success = unsafe {
-            mnemonic::mnemonic_to_seed(
-                mnemonic.as_ptr(),
-                pass.as_ptr(),
-                seed2.as_mut_ptr(),
-                &mut seed_len,
-                &mut error,
-            )
-        };
+        let success = mnemonic::mnemonic_to_seed(
+            mnemonic.as_ptr(),
+            pass.as_ptr(),
+            seed2.as_mut_ptr(),
+            &mut seed_len,
+            &mut error,
+        );
         assert!(success);
 
         // Seeds should be different
@@ -328,12 +316,10 @@ mod tests {
 
         // Create invalid UTF-8 string
         let invalid_utf8 = vec![0xFF, 0xFE, 0xFD, 0x00];
-        let count = unsafe {
-            mnemonic::mnemonic_word_count(
-                invalid_utf8.as_ptr() as *const std::os::raw::c_char,
-                &mut error,
-            )
-        };
+        let count = mnemonic::mnemonic_word_count(
+            invalid_utf8.as_ptr() as *const std::os::raw::c_char,
+            &mut error,
+        );
 
         assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -346,42 +332,36 @@ mod tests {
         let mut seed_len = 0usize;
 
         // Test null mnemonic
-        let success = unsafe {
-            mnemonic::mnemonic_to_seed(
-                ptr::null(),
-                ptr::null(),
-                seed.as_mut_ptr(),
-                &mut seed_len,
-                &mut error,
-            )
-        };
+        let success = mnemonic::mnemonic_to_seed(
+            ptr::null(),
+            ptr::null(),
+            seed.as_mut_ptr(),
+            &mut seed_len,
+            &mut error,
+        );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Test null seed_out
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let success = unsafe {
-            mnemonic::mnemonic_to_seed(
-                mnemonic.as_ptr(),
-                ptr::null(),
-                ptr::null_mut(),
-                &mut seed_len,
-                &mut error,
-            )
-        };
+        let success = mnemonic::mnemonic_to_seed(
+            mnemonic.as_ptr(),
+            ptr::null(),
+            ptr::null_mut(),
+            &mut seed_len,
+            &mut error,
+        );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Test null seed_len
-        let success = unsafe {
-            mnemonic::mnemonic_to_seed(
-                mnemonic.as_ptr(),
-                ptr::null(),
-                seed.as_mut_ptr(),
-                ptr::null_mut(),
-                &mut error,
-            )
-        };
+        let success = mnemonic::mnemonic_to_seed(
+            mnemonic.as_ptr(),
+            ptr::null(),
+            seed.as_mut_ptr(),
+            ptr::null_mut(),
+            &mut error,
+        );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
     }
@@ -393,15 +373,13 @@ mod tests {
         let mut seed_len = 0usize;
 
         let invalid_mnemonic = CString::new("invalid mnemonic phrase").unwrap();
-        let success = unsafe {
-            mnemonic::mnemonic_to_seed(
-                invalid_mnemonic.as_ptr(),
-                ptr::null(),
-                seed.as_mut_ptr(),
-                &mut seed_len,
-                &mut error,
-            )
-        };
+        let success = mnemonic::mnemonic_to_seed(
+            invalid_mnemonic.as_ptr(),
+            ptr::null(),
+            seed.as_mut_ptr(),
+            &mut seed_len,
+            &mut error,
+        );
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidMnemonic);
@@ -415,29 +393,25 @@ mod tests {
 
         // Test invalid UTF-8 in mnemonic
         let invalid_utf8 = vec![0xFF, 0xFE, 0xFD, 0x00];
-        let success = unsafe {
-            mnemonic::mnemonic_to_seed(
-                invalid_utf8.as_ptr() as *const std::os::raw::c_char,
-                ptr::null(),
-                seed.as_mut_ptr(),
-                &mut seed_len,
-                &mut error,
-            )
-        };
+        let success = mnemonic::mnemonic_to_seed(
+            invalid_utf8.as_ptr() as *const std::os::raw::c_char,
+            ptr::null(),
+            seed.as_mut_ptr(),
+            &mut seed_len,
+            &mut error,
+        );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Test invalid UTF-8 in passphrase
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-        let success = unsafe {
-            mnemonic::mnemonic_to_seed(
-                mnemonic.as_ptr(),
-                invalid_utf8.as_ptr() as *const std::os::raw::c_char,
-                seed.as_mut_ptr(),
-                &mut seed_len,
-                &mut error,
-            )
-        };
+        let success = mnemonic::mnemonic_to_seed(
+            mnemonic.as_ptr(),
+            invalid_utf8.as_ptr() as *const std::os::raw::c_char,
+            seed.as_mut_ptr(),
+            &mut seed_len,
+            &mut error,
+        );
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
     }
@@ -448,12 +422,10 @@ mod tests {
 
         // Create invalid UTF-8 string
         let invalid_utf8 = vec![0xFF, 0xFE, 0xFD, 0x00];
-        let is_valid = unsafe {
-            mnemonic::mnemonic_validate(
-                invalid_utf8.as_ptr() as *const std::os::raw::c_char,
-                &mut error,
-            )
-        };
+        let is_valid = mnemonic::mnemonic_validate(
+            invalid_utf8.as_ptr() as *const std::os::raw::c_char,
+            &mut error,
+        );
 
         assert!(!is_valid);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -464,13 +436,11 @@ mod tests {
         let mut error = FFIError::success();
 
         // Test invalid word count with language
-        let mnemonic = unsafe {
-            mnemonic::mnemonic_generate_with_language(
-                13,
-                mnemonic::FFILanguage::English,
-                &mut error,
-            )
-        };
+        let mnemonic = mnemonic::mnemonic_generate_with_language(
+            13,
+            mnemonic::FFILanguage::English,
+            &mut error,
+        );
 
         assert!(mnemonic.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -484,13 +454,11 @@ mod tests {
         let valid_counts = [12, 15, 18, 21, 24];
 
         for word_count in valid_counts {
-            let mnemonic = unsafe {
-                mnemonic::mnemonic_generate_with_language(
-                    word_count,
-                    mnemonic::FFILanguage::English,
-                    &mut error,
-                )
-            };
+            let mnemonic = mnemonic::mnemonic_generate_with_language(
+                word_count,
+                mnemonic::FFILanguage::English,
+                &mut error,
+            );
 
             assert!(!mnemonic.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
@@ -530,7 +498,7 @@ mod tests {
                 assert_eq!(mnemonic_str.split_whitespace().count(), 12);
 
                 // Verify it validates
-                let is_valid = unsafe { mnemonic::mnemonic_validate(mnemonic_ptr, &mut error) };
+                let is_valid = mnemonic::mnemonic_validate(mnemonic_ptr, &mut error);
                 assert!(is_valid);
 
                 mnemonic::mnemonic_free(mnemonic_ptr);
@@ -553,25 +521,21 @@ mod tests {
         let mut seed2 = [0u8; 64];
         let mut seed_len2 = 0usize;
 
-        let success1 = unsafe {
-            mnemonic::mnemonic_to_seed(
-                mnemonic,
-                passphrase.as_ptr(),
-                seed1.as_mut_ptr(),
-                &mut seed_len1,
-                &mut error,
-            )
-        };
+        let success1 = mnemonic::mnemonic_to_seed(
+            mnemonic,
+            passphrase.as_ptr(),
+            seed1.as_mut_ptr(),
+            &mut seed_len1,
+            &mut error,
+        );
 
-        let success2 = unsafe {
-            mnemonic::mnemonic_to_seed(
-                mnemonic,
-                passphrase.as_ptr(),
-                seed2.as_mut_ptr(),
-                &mut seed_len2,
-                &mut error,
-            )
-        };
+        let success2 = mnemonic::mnemonic_to_seed(
+            mnemonic,
+            passphrase.as_ptr(),
+            seed2.as_mut_ptr(),
+            &mut seed_len2,
+            &mut error,
+        );
 
         assert!(success1);
         assert!(success2);
@@ -597,7 +561,7 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Check word count
-        let word_count = unsafe { mnemonic::mnemonic_word_count(mnemonic, &mut error) };
+        let word_count = mnemonic::mnemonic_word_count(mnemonic, &mut error);
         assert_eq!(word_count, 15);
         assert_eq!(error.code, FFIErrorCode::Success);
 
@@ -606,15 +570,13 @@ mod tests {
         let mut seed_len = 0usize;
         let passphrase = CString::new("workflow_test").unwrap();
 
-        let success = unsafe {
-            mnemonic::mnemonic_to_seed(
-                mnemonic,
-                passphrase.as_ptr(),
-                seed.as_mut_ptr(),
-                &mut seed_len,
-                &mut error,
-            )
-        };
+        let success = mnemonic::mnemonic_to_seed(
+            mnemonic,
+            passphrase.as_ptr(),
+            seed.as_mut_ptr(),
+            &mut seed_len,
+            &mut error,
+        );
 
         assert!(success);
         assert_eq!(seed_len, 64);

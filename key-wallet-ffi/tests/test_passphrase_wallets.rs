@@ -97,15 +97,13 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
     // Try to get a receive address from the wallet
     // With the updated implementation, wallet_manager now creates accounts for passphrase wallets
     // using the Default options, so this should succeed
-    let addr = unsafe {
-        key_wallet_ffi::wallet_manager::wallet_manager_get_receive_address(
-            manager,
-            wallet_ids_ptr, // First wallet ID
-            FFINetwork::Testnet,
-            0, // account_index
-            error,
-        )
-    };
+    let addr = key_wallet_ffi::wallet_manager::wallet_manager_get_receive_address(
+        manager,
+        wallet_ids_ptr, // First wallet ID
+        FFINetwork::Testnet,
+        0, // account_index
+        error,
+    );
 
     // This should now succeed because wallet_manager creates accounts with Default options
     assert!(!addr.is_null(), "Should be able to get address from wallet with passphrase");
@@ -121,12 +119,10 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
     }
 
     // Clean up
-    unsafe {
-        if !wallet_ids_ptr.is_null() && count > 0 {
-            key_wallet_ffi::wallet_manager::wallet_manager_free_wallet_ids(wallet_ids_ptr, count);
-        }
-        key_wallet_ffi::wallet_manager::wallet_manager_free(manager);
+    if !wallet_ids_ptr.is_null() && count > 0 {
+        key_wallet_ffi::wallet_manager::wallet_manager_free_wallet_ids(wallet_ids_ptr, count);
     }
+    key_wallet_ffi::wallet_manager::wallet_manager_free(manager);
 }
 
 #[test]
@@ -140,14 +136,12 @@ fn test_ffi_wallet_with_passphrase_ideal_workflow() {
     let passphrase = CString::new("my_passphrase").unwrap();
 
     // Create wallet with passphrase
-    let wallet = unsafe {
-        key_wallet_ffi::wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            error,
-        )
-    };
+    let wallet = key_wallet_ffi::wallet::wallet_create_from_mnemonic(
+        mnemonic.as_ptr(),
+        passphrase.as_ptr(),
+        FFINetwork::Testnet,
+        error,
+    );
     assert!(!wallet.is_null());
 
     // IDEAL: There should be a way to either:
@@ -157,26 +151,22 @@ fn test_ffi_wallet_with_passphrase_ideal_workflow() {
     // 3. Have a callback mechanism to request the passphrase when needed
 
     // Then we should be able to derive addresses
-    let addr = unsafe {
-        key_wallet_ffi::address::wallet_derive_receive_address(
-            wallet,
-            FFINetwork::Testnet,
-            0,
-            0,
-            error,
-        )
-    };
+    let addr = key_wallet_ffi::address::wallet_derive_receive_address(
+        wallet,
+        FFINetwork::Testnet,
+        0,
+        0,
+        error,
+    );
 
     // This should work in an ideal implementation
     assert!(!addr.is_null());
 
     // Clean up
-    unsafe {
-        if !addr.is_null() {
-            key_wallet_ffi::address::address_free(addr);
-        }
-        key_wallet_ffi::wallet::wallet_free(wallet);
+    if !addr.is_null() {
+        key_wallet_ffi::address::address_free(addr);
     }
+    key_wallet_ffi::wallet::wallet_free(wallet);
 }
 
 #[test]
@@ -192,43 +182,35 @@ fn test_demonstrate_passphrase_issue_with_account_creation() {
     let actual_passphrase = CString::new("test123").unwrap();
 
     // Wallet WITHOUT passphrase
-    let wallet_no_pass = unsafe {
-        key_wallet_ffi::wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            empty_passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            error,
-        )
-    };
+    let wallet_no_pass = key_wallet_ffi::wallet::wallet_create_from_mnemonic(
+        mnemonic.as_ptr(),
+        empty_passphrase.as_ptr(),
+        FFINetwork::Testnet,
+        error,
+    );
     assert!(!wallet_no_pass.is_null());
 
     // Wallet WITH passphrase
-    let wallet_with_pass = unsafe {
-        key_wallet_ffi::wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            actual_passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            error,
-        )
-    };
+    let wallet_with_pass = key_wallet_ffi::wallet::wallet_create_from_mnemonic(
+        mnemonic.as_ptr(),
+        actual_passphrase.as_ptr(),
+        FFINetwork::Testnet,
+        error,
+    );
     assert!(!wallet_with_pass.is_null());
 
     // Try to get account count for both wallets
-    let count_no_pass = unsafe {
-        key_wallet_ffi::account::wallet_get_account_count(
-            wallet_no_pass,
-            FFINetwork::Testnet,
-            error,
-        )
-    };
+    let count_no_pass = key_wallet_ffi::account::wallet_get_account_count(
+        wallet_no_pass,
+        FFINetwork::Testnet,
+        error,
+    );
 
-    let count_with_pass = unsafe {
-        key_wallet_ffi::account::wallet_get_account_count(
-            wallet_with_pass,
-            FFINetwork::Testnet,
-            error,
-        )
-    };
+    let count_with_pass = key_wallet_ffi::account::wallet_get_account_count(
+        wallet_with_pass,
+        FFINetwork::Testnet,
+        error,
+    );
 
     println!("Account count without passphrase: {}", count_no_pass);
     println!("Account count with passphrase: {}", count_with_pass);
@@ -242,8 +224,6 @@ fn test_demonstrate_passphrase_issue_with_account_creation() {
     // Verify the accounts are actually different (different derivation due to passphrase)
 
     // Clean up
-    unsafe {
-        key_wallet_ffi::wallet::wallet_free(wallet_no_pass);
-        key_wallet_ffi::wallet::wallet_free(wallet_with_pass);
-    }
+    key_wallet_ffi::wallet::wallet_free(wallet_no_pass);
+    key_wallet_ffi::wallet::wallet_free(wallet_with_pass);
 }

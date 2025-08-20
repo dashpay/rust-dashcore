@@ -18,24 +18,18 @@ mod tests {
         assert_eq!(retrieved, test_str);
 
         // Free the string
-        unsafe {
-            utils::string_free(raw_ptr);
-        }
+        utils::string_free(raw_ptr);
     }
 
     #[test]
     fn test_string_free() {
         // Test freeing null pointer (should not crash)
-        unsafe {
-            utils::string_free(ptr::null_mut());
-        }
+        utils::string_free(ptr::null_mut());
 
         // Test freeing valid string
         let c_string = CString::new("test").unwrap();
         let raw_ptr = c_string.into_raw();
-        unsafe {
-            utils::string_free(raw_ptr);
-        }
+        utils::string_free(raw_ptr);
     }
 
     #[test]
@@ -51,7 +45,7 @@ mod tests {
 
     #[test]
     fn test_version() {
-        let version = unsafe { crate::key_wallet_ffi_version() };
+        let version = crate::key_wallet_ffi_version();
         assert!(!version.is_null());
 
         let version_str = unsafe { std::ffi::CStr::from_ptr(version).to_str().unwrap() };

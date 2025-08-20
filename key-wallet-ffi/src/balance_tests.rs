@@ -12,7 +12,7 @@ mod tests {
         let mut error = FFIError::success();
         let error_ptr = &mut error as *mut FFIError;
 
-        let wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, error_ptr) };
+        let wallet = wallet::wallet_create_random(FFINetwork::Testnet, error_ptr);
 
         (wallet, error_ptr)
     }
@@ -24,9 +24,7 @@ mod tests {
 
         let mut balance = FFIBalance::default();
 
-        let success = unsafe {
-            balance::wallet_get_balance(wallet, FFINetwork::Testnet, &mut balance, error)
-        };
+        let success = balance::wallet_get_balance(wallet, FFINetwork::Testnet, &mut balance, error);
 
         assert!(success);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
@@ -37,9 +35,7 @@ mod tests {
         assert_eq!(balance.total, 0);
 
         // Clean up
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
+        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -49,15 +45,13 @@ mod tests {
 
         let mut balance = FFIBalance::default();
 
-        let success = unsafe {
-            balance::wallet_get_account_balance(
-                wallet,
-                FFINetwork::Testnet,
-                0, // account_index
-                &mut balance,
-                error,
-            )
-        };
+        let success = balance::wallet_get_account_balance(
+            wallet,
+            FFINetwork::Testnet,
+            0, // account_index
+            &mut balance,
+            error,
+        );
 
         assert!(success);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
@@ -67,23 +61,19 @@ mod tests {
         assert_eq!(balance.unconfirmed, 0);
 
         // Test non-existent account
-        let success = unsafe {
-            balance::wallet_get_account_balance(
-                wallet,
-                FFINetwork::Testnet,
-                999, // non-existent account
-                &mut balance,
-                error,
-            )
-        };
+        let success = balance::wallet_get_account_balance(
+            wallet,
+            FFINetwork::Testnet,
+            999, // non-existent account
+            &mut balance,
+            error,
+        );
 
         assert!(!success);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::NotFound);
 
         // Clean up
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
+        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -96,8 +86,7 @@ mod tests {
         for network in networks.iter() {
             let mut balance = FFIBalance::default();
 
-            let success =
-                unsafe { balance::wallet_get_balance(wallet, *network, &mut balance, error) };
+            let success = balance::wallet_get_balance(wallet, *network, &mut balance, error);
 
             assert!(success);
             assert_eq!(balance.confirmed, 0);
@@ -105,9 +94,7 @@ mod tests {
         }
 
         // Clean up
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
+        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -116,9 +103,8 @@ mod tests {
         let error = &mut error as *mut FFIError;
         let mut balance = FFIBalance::default();
 
-        let success = unsafe {
-            balance::wallet_get_balance(ptr::null(), FFINetwork::Testnet, &mut balance, error)
-        };
+        let success =
+            balance::wallet_get_balance(ptr::null(), FFINetwork::Testnet, &mut balance, error);
 
         assert!(!success);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
@@ -133,30 +119,25 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Test with null balance output
-        let success = unsafe {
-            balance::wallet_get_balance(wallet, FFINetwork::Testnet, ptr::null_mut(), error)
-        };
+        let success =
+            balance::wallet_get_balance(wallet, FFINetwork::Testnet, ptr::null_mut(), error);
 
         assert!(!success);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Test account balance with null output
-        let success = unsafe {
-            balance::wallet_get_account_balance(
-                wallet,
-                FFINetwork::Testnet,
-                0,
-                ptr::null_mut(),
-                error,
-            )
-        };
+        let success = balance::wallet_get_account_balance(
+            wallet,
+            FFINetwork::Testnet,
+            0,
+            ptr::null_mut(),
+            error,
+        );
 
         assert!(!success);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Clean up
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
+        wallet::wallet_free(wallet);
     }
 }
