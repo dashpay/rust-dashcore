@@ -6,7 +6,7 @@
 //! NOTE: This is a placeholder implementation. Full implementation requires
 //! proper integration with WalletManager which handles the managed wallet state.
 
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::ptr;
 

@@ -2,7 +2,7 @@
 mod tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::types::{FFINetwork, FFIWallet};
+    use crate::types::FFINetwork;
     use crate::wallet;
     use std::ffi::CString;
     use std::ptr;

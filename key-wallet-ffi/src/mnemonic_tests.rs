@@ -5,7 +5,7 @@ mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::mnemonic;
     use std::ffi::CString;
-    use std::os::raw::c_char;
+
     use std::ptr;
 
     const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";

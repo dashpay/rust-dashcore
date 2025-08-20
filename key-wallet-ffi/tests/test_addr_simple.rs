@@ -1,6 +1,6 @@
 #[test]
 fn test_address_simple() {
-    use key_wallet_ffi::error::{FFIError, FFIErrorCode};
+    use key_wallet_ffi::error::FFIError;
     use key_wallet_ffi::types::FFINetwork;
     use std::ffi::CStr;
 

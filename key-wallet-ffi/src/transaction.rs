@@ -1,8 +1,6 @@
 //! Transaction building and management
 
-use std::ffi::CString;
 use std::os::raw::{c_char, c_uint};
-use std::ptr;
 use std::slice;
 
 use crate::error::{FFIError, FFIErrorCode};
