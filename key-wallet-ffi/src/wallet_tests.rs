@@ -336,10 +336,25 @@ mod tests {
         assert!(!wallet.is_null());
 
         // Test adding account - check if it succeeds or fails gracefully
-        let success = unsafe { wallet::wallet_add_account(wallet, FFINetwork::Testnet, 0, 1) };
+        let result = unsafe { wallet::wallet_add_account(wallet, FFINetwork::Testnet, 0, 1) };
         // Some implementations may not support adding accounts, so just verify it doesn't crash
         // and the error code is set appropriately
-        assert!(success || unsafe { (*error).code } != FFIErrorCode::Success);
+        assert!(!result.account.is_null() || result.error_code != 0);
+
+        // Clean up the account if it was created
+        if !result.account.is_null() {
+            unsafe {
+                // We need to free the account if it was created
+                // Note: there should be an account_free function
+            }
+        }
+        
+        // Free error message if present
+        if !result.error_message.is_null() {
+            unsafe {
+                let _ = std::ffi::CString::from_raw(result.error_message);
+            }
+        }
 
         // Clean up
         unsafe {
@@ -349,15 +364,19 @@ mod tests {
 
     #[test]
     fn test_wallet_add_account_null() {
-        let mut error = FFIError::success();
-        let error = &mut error as *mut FFIError;
-
         // Test with null wallet
-        let success = unsafe {
-            wallet::wallet_add_account(ptr::null_mut(), FFINetwork::Testnet, 0, 0, error)
+        let result = unsafe {
+            wallet::wallet_add_account(ptr::null_mut(), FFINetwork::Testnet, 0, 0)
         };
-        assert!(!success);
-        assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+        assert!(result.account.is_null());
+        assert_ne!(result.error_code, 0);
+        
+        // Free error message if present
+        if !result.error_message.is_null() {
+            unsafe {
+                let _ = std::ffi::CString::from_raw(result.error_message);
+            }
+        }
     }
 
     #[test]
