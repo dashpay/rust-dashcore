@@ -7,7 +7,7 @@ use super::root_extended_keys::RootExtendedPrivKey;
 use super::{Wallet, WalletType};
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::error::Result;
-use crate::Network;
+use crate::{Error, Network};
 use alloc::vec::Vec;
 
 impl Wallet {
@@ -155,6 +155,11 @@ impl Wallet {
         options: WalletAccountCreationOptions,
         network: Network,
     ) -> Result<()> {
+        if matches!(self.wallet_type, WalletType::MnemonicWithPassphrase { .. }) {
+            return Err(Error::InvalidParameter(
+                "create_accounts_from_options can not be used on wallets with a mnemonic and a passphrase".to_string()
+            ));
+        }
         match options {
             WalletAccountCreationOptions::Default => {
                 // Create default BIP44 account 0
@@ -306,6 +311,169 @@ impl Wallet {
         Ok(())
     }
 
+    /// Create accounts based on the provided creation options with passphrase
+    pub fn create_accounts_with_passphrase_from_options(
+        &mut self,
+        options: WalletAccountCreationOptions,
+        passphrase: &str,
+        network: Network,
+    ) -> Result<()> {
+        if !matches!(self.wallet_type, WalletType::MnemonicWithPassphrase { .. }) {
+            return Err(Error::InvalidParameter(
+                "create_accounts_with_passphrase_from_options can only be used with wallets created with a passphrase".to_string()
+            ));
+        }
+        match options {
+            WalletAccountCreationOptions::Default => {
+                // Create default BIP44 account 0
+                self.add_account_with_passphrase(
+                    AccountType::Standard {
+                        index: 0,
+                        standard_account_type: StandardAccountType::BIP44Account,
+                    },
+                    network,
+                    passphrase,
+                )?;
+
+                // Create default CoinJoin account 0
+                self.add_account_with_passphrase(
+                    AccountType::CoinJoin {
+                        index: 0,
+                    },
+                    network,
+                    passphrase,
+                )?;
+
+                // Create all special purpose accounts
+                self.create_special_purpose_accounts_with_passphrase(passphrase, network)?;
+            }
+
+            WalletAccountCreationOptions::AllAccounts(
+                bip44_indices,
+                bip32_indices,
+                coinjoin_indices,
+                top_up_accounts,
+            ) => {
+                // Create specified BIP44 accounts
+                for index in bip44_indices {
+                    self.add_account_with_passphrase(
+                        AccountType::Standard {
+                            index,
+                            standard_account_type: StandardAccountType::BIP44Account,
+                        },
+                        network,
+                        passphrase,
+                    )?;
+                }
+
+                // Create specified BIP32 accounts
+                for index in bip32_indices {
+                    self.add_account_with_passphrase(
+                        AccountType::Standard {
+                            index,
+                            standard_account_type: StandardAccountType::BIP32Account,
+                        },
+                        network,
+                        passphrase,
+                    )?;
+                }
+
+                // Create specified CoinJoin accounts
+                for index in coinjoin_indices {
+                    self.add_account_with_passphrase(
+                        AccountType::CoinJoin {
+                            index,
+                        },
+                        network,
+                        passphrase,
+                    )?;
+                }
+
+                // Create specified CoinJoin accounts
+                for registration_index in top_up_accounts {
+                    self.add_account_with_passphrase(
+                        AccountType::IdentityTopUp {
+                            registration_index,
+                        },
+                        network,
+                        passphrase,
+                    )?;
+                }
+
+                // Create all special purpose accounts
+                self.create_special_purpose_accounts_with_passphrase(passphrase, network)?;
+            }
+
+            WalletAccountCreationOptions::BIP44AccountsOnly(bip44_indices) => {
+                // Create BIP44 account 0 if not exists
+                for index in bip44_indices {
+                    self.add_account_with_passphrase(
+                        AccountType::Standard {
+                            index,
+                            standard_account_type: StandardAccountType::BIP44Account,
+                        },
+                        network,
+                        passphrase,
+                    )?;
+                }
+            }
+
+            WalletAccountCreationOptions::SpecificAccounts(
+                bip44_indices,
+                coinjoin_indices,
+                topup_indices,
+                special_accounts,
+            ) => {
+                // Create specified BIP44 accounts
+                for index in bip44_indices {
+                    self.add_account_with_passphrase(
+                        AccountType::Standard {
+                            index,
+                            standard_account_type: StandardAccountType::BIP44Account,
+                        },
+                        network,
+                        passphrase,
+                    )?;
+                }
+
+                // Create specified CoinJoin accounts
+                for index in coinjoin_indices {
+                    self.add_account_with_passphrase(
+                        AccountType::CoinJoin {
+                            index,
+                        },
+                        network,
+                        passphrase,
+                    )?;
+                }
+
+                // Create identity top-up accounts
+                for registration_index in topup_indices {
+                    self.add_account_with_passphrase(
+                        AccountType::IdentityTopUp {
+                            registration_index,
+                        },
+                        network,
+                        passphrase,
+                    )?;
+                }
+
+                // Create any additional special accounts if provided
+                if let Some(special_types) = special_accounts {
+                    for account_type in special_types {
+                        self.add_account_with_passphrase(account_type, network, passphrase)?;
+                    }
+                }
+            }
+
+            WalletAccountCreationOptions::None => {
+                // Don't create any accounts - useful for tests
+            }
+        }
+
+        Ok(())
+    }
+
     /// Create all special purpose accounts
     fn create_special_purpose_accounts(&mut self, network: Network) -> Result<()> {
         // Identity registration account
@@ -322,6 +490,34 @@ impl Wallet {
         self.add_account(AccountType::ProviderOwnerKeys, network, None)?;
         self.add_account(AccountType::ProviderOperatorKeys, network, None)?;
         self.add_account(AccountType::ProviderPlatformKeys, network, None)?;
+
+        Ok(())
+    }
+
+    /// Create all special purpose accounts
+    fn create_special_purpose_accounts_with_passphrase(
+        &mut self,
+        passphrase: &str,
+        network: Network,
+    ) -> Result<()> {
+        // Identity registration account
+        self.add_account_with_passphrase(AccountType::IdentityRegistration, network, passphrase)?;
+
+        // Identity invitation account
+        self.add_account_with_passphrase(AccountType::IdentityInvitation, network, passphrase)?;
+
+        // Identity top-up not bound to identity
+        self.add_account_with_passphrase(
+            AccountType::IdentityTopUpNotBoundToIdentity,
+            network,
+            passphrase,
+        )?;
+
+        // Provider keys accounts
+        self.add_account_with_passphrase(AccountType::ProviderVotingKeys, network, passphrase)?;
+        self.add_account_with_passphrase(AccountType::ProviderOwnerKeys, network, passphrase)?;
+        self.add_account_with_passphrase(AccountType::ProviderOperatorKeys, network, passphrase)?;
+        self.add_account_with_passphrase(AccountType::ProviderPlatformKeys, network, passphrase)?;
 
         Ok(())
     }

@@ -13,14 +13,15 @@ use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::{Mnemonic, Network, Seed, Wallet, WalletConfig};
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetwork, FFIWallet};
+use crate::types::{FFINetwork, FFIWallet, FFIWalletAccountCreationOptions};
 
-/// Create a new wallet from mnemonic
+/// Create a new wallet from mnemonic with options
 #[no_mangle]
-pub extern "C" fn wallet_create_from_mnemonic(
+pub extern "C" fn wallet_create_from_mnemonic_with_options(
     mnemonic: *const c_char,
     passphrase: *const c_char,
     network: FFINetwork,
+    account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     if mnemonic.is_null() {
@@ -76,13 +77,15 @@ pub extern "C" fn wallet_create_from_mnemonic(
     let network_rust: key_wallet::Network = network.into();
     let config = WalletConfig::default();
 
+    // Convert account creation options
+    let creation_options = if account_options.is_null() {
+        WalletAccountCreationOptions::Default
+    } else {
+        unsafe { (*account_options).to_wallet_options() }
+    };
+
     let wallet = if passphrase_str.is_empty() {
-        match Wallet::from_mnemonic(
-            mnemonic,
-            config,
-            network_rust,
-            WalletAccountCreationOptions::Default,
-        ) {
+        match Wallet::from_mnemonic(mnemonic, config, network_rust, creation_options) {
             Ok(w) => w,
             Err(e) => {
                 FFIError::set_error(
@@ -94,19 +97,21 @@ pub extern "C" fn wallet_create_from_mnemonic(
             }
         }
     } else {
+        // For wallets with passphrase, we need to handle account creation differently
+        // First create the wallet without accounts
         match Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             passphrase_str.to_string(),
             config,
             network_rust,
-            WalletAccountCreationOptions::None, // Can't create accounts with passphrase
+            creation_options,
         ) {
             Ok(w) => w,
             Err(e) => {
                 FFIError::set_error(
                     error,
                     FFIErrorCode::WalletError,
-                    format!("Failed to create wallet: {}", e),
+                    format!("Failed to create wallet with passphrase: {}", e),
                 );
                 return ptr::null_mut();
             }
@@ -117,12 +122,30 @@ pub extern "C" fn wallet_create_from_mnemonic(
     Box::into_raw(Box::new(FFIWallet::new(wallet)))
 }
 
-/// Create a new wallet from seed
+/// Create a new wallet from mnemonic (backward compatibility)
 #[no_mangle]
-pub extern "C" fn wallet_create_from_seed(
+pub extern "C" fn wallet_create_from_mnemonic(
+    mnemonic: *const c_char,
+    passphrase: *const c_char,
+    network: FFINetwork,
+    error: *mut FFIError,
+) -> *mut FFIWallet {
+    wallet_create_from_mnemonic_with_options(
+        mnemonic,
+        passphrase,
+        network,
+        ptr::null(), // Use default options
+        error,
+    )
+}
+
+/// Create a new wallet from seed with options
+#[no_mangle]
+pub extern "C" fn wallet_create_from_seed_with_options(
     seed: *const u8,
     seed_len: usize,
     network: FFINetwork,
+    account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     if seed.is_null() {
@@ -146,7 +169,14 @@ pub extern "C" fn wallet_create_from_seed(
     let network_rust: key_wallet::Network = network.into();
     let config = WalletConfig::default();
 
-    match Wallet::from_seed(seed, config, network_rust, WalletAccountCreationOptions::Default) {
+    // Convert account creation options
+    let creation_options = if account_options.is_null() {
+        WalletAccountCreationOptions::Default
+    } else {
+        unsafe { (*account_options).to_wallet_options() }
+    };
+
+    match Wallet::from_seed(seed, config, network_rust, creation_options) {
         Ok(wallet) => {
             FFIError::set_success(error);
             Box::into_raw(Box::new(FFIWallet::new(wallet)))
@@ -160,6 +190,23 @@ pub extern "C" fn wallet_create_from_seed(
             ptr::null_mut()
         }
     }
+}
+
+/// Create a new wallet from seed (backward compatibility)
+#[no_mangle]
+pub extern "C" fn wallet_create_from_seed(
+    seed: *const u8,
+    seed_len: usize,
+    network: FFINetwork,
+    error: *mut FFIError,
+) -> *mut FFIWallet {
+    wallet_create_from_seed_with_options(
+        seed,
+        seed_len,
+        network,
+        ptr::null(), // Use default options
+        error,
+    )
 }
 
 /// Create a new wallet from seed bytes
@@ -308,16 +355,24 @@ pub extern "C" fn wallet_create_from_xpub(
     }
 }
 
-/// Create a new random wallet
+/// Create a new random wallet with options
 #[no_mangle]
-pub extern "C" fn wallet_create_random(
+pub extern "C" fn wallet_create_random_with_options(
     network: FFINetwork,
+    account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     let network_rust: key_wallet::Network = network.into();
     let config = WalletConfig::default();
 
-    match Wallet::new_random(config, network_rust, WalletAccountCreationOptions::Default) {
+    // Convert account creation options
+    let creation_options = if account_options.is_null() {
+        WalletAccountCreationOptions::Default
+    } else {
+        unsafe { (*account_options).to_wallet_options() }
+    };
+
+    match Wallet::new_random(config, network_rust, creation_options) {
         Ok(wallet) => {
             FFIError::set_success(error);
             Box::into_raw(Box::new(FFIWallet::new(wallet)))
@@ -331,6 +386,19 @@ pub extern "C" fn wallet_create_random(
             ptr::null_mut()
         }
     }
+}
+
+/// Create a new random wallet (backward compatibility)
+#[no_mangle]
+pub extern "C" fn wallet_create_random(
+    network: FFINetwork,
+    error: *mut FFIError,
+) -> *mut FFIWallet {
+    wallet_create_random_with_options(
+        network,
+        ptr::null(), // Use default options
+        error,
+    )
 }
 
 /// Get wallet ID (32-byte hash)

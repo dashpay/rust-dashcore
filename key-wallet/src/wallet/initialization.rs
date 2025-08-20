@@ -198,7 +198,11 @@ impl Wallet {
         );
 
         // Create accounts based on options
-        wallet.create_accounts_from_options(account_creation_options, network)?;
+        wallet.create_accounts_with_passphrase_from_options(
+            account_creation_options,
+            passphrase.as_str(),
+            network,
+        )?;
 
         Ok(wallet)
     }

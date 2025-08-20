@@ -112,3 +112,170 @@ impl From<FFIAddressType> for key_wallet::AddressType {
         }
     }
 }
+
+/// FFI Account Creation Option Type
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub enum FFIAccountCreationOptionType {
+    /// Create default accounts (BIP44 account 0, CoinJoin account 0, and special accounts)
+    Default = 0,
+    /// Create all specified accounts plus all special purpose accounts
+    AllAccounts = 1,
+    /// Create only BIP44 accounts (no CoinJoin or special accounts)
+    BIP44AccountsOnly = 2,
+    /// Create specific accounts with full control
+    SpecificAccounts = 3,
+    /// Create no accounts at all
+    None = 4,
+}
+
+/// FFI structure for wallet account creation options
+/// This single struct represents all possible account creation configurations
+#[repr(C)]
+pub struct FFIWalletAccountCreationOptions {
+    /// The type of account creation option
+    pub option_type: FFIAccountCreationOptionType,
+
+    /// Array of BIP44 account indices to create
+    pub bip44_indices: *const u32,
+    pub bip44_count: usize,
+
+    /// Array of BIP32 account indices to create
+    pub bip32_indices: *const u32,
+    pub bip32_count: usize,
+
+    /// Array of CoinJoin account indices to create
+    pub coinjoin_indices: *const u32,
+    pub coinjoin_count: usize,
+
+    /// Array of identity top-up registration indices to create
+    pub topup_indices: *const u32,
+    pub topup_count: usize,
+
+    /// For SpecificAccounts: Additional special account types to create
+    /// (e.g., IdentityRegistration, ProviderKeys, etc.)
+    /// This is an array of FFIAccountType values
+    pub special_account_types: *const FFIAccountType,
+    pub special_account_types_count: usize,
+}
+
+impl FFIWalletAccountCreationOptions {
+    /// Create default options
+    pub fn default_options() -> Self {
+        FFIWalletAccountCreationOptions {
+            option_type: FFIAccountCreationOptionType::Default,
+            bip44_indices: std::ptr::null(),
+            bip44_count: 0,
+            bip32_indices: std::ptr::null(),
+            bip32_count: 0,
+            coinjoin_indices: std::ptr::null(),
+            coinjoin_count: 0,
+            topup_indices: std::ptr::null(),
+            topup_count: 0,
+            special_account_types: std::ptr::null(),
+            special_account_types_count: 0,
+        }
+    }
+
+    /// Convert FFI options to Rust WalletAccountCreationOptions
+    pub unsafe fn to_wallet_options(
+        &self,
+    ) -> key_wallet::wallet::initialization::WalletAccountCreationOptions {
+        use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+        use std::collections::BTreeSet;
+
+        match self.option_type {
+            FFIAccountCreationOptionType::Default => WalletAccountCreationOptions::Default,
+            FFIAccountCreationOptionType::None => WalletAccountCreationOptions::None,
+            FFIAccountCreationOptionType::BIP44AccountsOnly => {
+                let mut bip44_set = BTreeSet::new();
+                if !self.bip44_indices.is_null() && self.bip44_count > 0 {
+                    let slice = std::slice::from_raw_parts(self.bip44_indices, self.bip44_count);
+                    bip44_set.extend(slice.iter().copied());
+                } else {
+                    // Default to account 0 if no indices provided
+                    bip44_set.insert(0);
+                }
+                WalletAccountCreationOptions::BIP44AccountsOnly(bip44_set)
+            }
+            FFIAccountCreationOptionType::AllAccounts => {
+                let mut bip44_set = BTreeSet::new();
+                if !self.bip44_indices.is_null() && self.bip44_count > 0 {
+                    let slice = std::slice::from_raw_parts(self.bip44_indices, self.bip44_count);
+                    bip44_set.extend(slice.iter().copied());
+                }
+
+                let mut bip32_set = BTreeSet::new();
+                if !self.bip32_indices.is_null() && self.bip32_count > 0 {
+                    let slice = std::slice::from_raw_parts(self.bip32_indices, self.bip32_count);
+                    bip32_set.extend(slice.iter().copied());
+                }
+
+                let mut coinjoin_set = BTreeSet::new();
+                if !self.coinjoin_indices.is_null() && self.coinjoin_count > 0 {
+                    let slice =
+                        std::slice::from_raw_parts(self.coinjoin_indices, self.coinjoin_count);
+                    coinjoin_set.extend(slice.iter().copied());
+                }
+
+                let mut topup_set = BTreeSet::new();
+                if !self.topup_indices.is_null() && self.topup_count > 0 {
+                    let slice = std::slice::from_raw_parts(self.topup_indices, self.topup_count);
+                    topup_set.extend(slice.iter().copied());
+                }
+
+                WalletAccountCreationOptions::AllAccounts(
+                    bip44_set,
+                    bip32_set,
+                    coinjoin_set,
+                    topup_set,
+                )
+            }
+            FFIAccountCreationOptionType::SpecificAccounts => {
+                let mut bip44_set = BTreeSet::new();
+                if !self.bip44_indices.is_null() && self.bip44_count > 0 {
+                    let slice = std::slice::from_raw_parts(self.bip44_indices, self.bip44_count);
+                    bip44_set.extend(slice.iter().copied());
+                }
+
+                let mut coinjoin_set = BTreeSet::new();
+                if !self.coinjoin_indices.is_null() && self.coinjoin_count > 0 {
+                    let slice =
+                        std::slice::from_raw_parts(self.coinjoin_indices, self.coinjoin_count);
+                    coinjoin_set.extend(slice.iter().copied());
+                }
+
+                let mut topup_set = BTreeSet::new();
+                if !self.topup_indices.is_null() && self.topup_count > 0 {
+                    let slice = std::slice::from_raw_parts(self.topup_indices, self.topup_count);
+                    topup_set.extend(slice.iter().copied());
+                }
+
+                // Convert special account types if provided
+                let special_accounts = if !self.special_account_types.is_null()
+                    && self.special_account_types_count > 0
+                {
+                    let slice = std::slice::from_raw_parts(
+                        self.special_account_types,
+                        self.special_account_types_count,
+                    );
+                    let mut accounts = Vec::new();
+                    for &ffi_type in slice {
+                        // Use a dummy index for special accounts that don't need one
+                        accounts.push(ffi_type.to_account_type(0));
+                    }
+                    Some(accounts)
+                } else {
+                    None
+                };
+
+                WalletAccountCreationOptions::SpecificAccounts(
+                    bip44_set,
+                    coinjoin_set,
+                    topup_set,
+                    special_accounts,
+                )
+            }
+        }
+    }
+}

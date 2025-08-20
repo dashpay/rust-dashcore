@@ -190,6 +190,146 @@ impl Account {
         let secp = Secp256k1::new();
         self.account_xpub.derive_pub(&secp, child_path).map_err(|e| crate::error::Error::Bip32(e))
     }
+
+    /// Derive a receive (external) address at a specific index
+    ///
+    /// This is a convenience method that derives an address at m/0/index
+    /// (external chain) from the account.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let address = account.derive_receive_address(5)?;
+    /// // This derives the address at m/44'/1'/0'/0/5 for a BIP44 testnet account
+    /// ```
+    pub fn derive_receive_address(&self, index: u32) -> Result<dashcore::Address> {
+        use crate::bip32::ChildNumber;
+
+        // Build path: 0/index (external chain)
+        let path = DerivationPath::from(vec![
+            ChildNumber::from_normal_idx(0)?, // External chain
+            ChildNumber::from_normal_idx(index)?,
+        ]);
+
+        let xpub = self.derive_child_xpub(&path)?;
+        // Convert secp256k1::PublicKey to dashcore::PublicKey
+        let pubkey =
+            dashcore::PublicKey::from_slice(&xpub.public_key.serialize()).map_err(|e| {
+                crate::error::Error::InvalidParameter(format!("Invalid public key: {}", e))
+            })?;
+        Ok(dashcore::Address::p2pkh(&pubkey, self.network))
+    }
+
+    /// Derive a change (internal) address at a specific index
+    ///
+    /// This is a convenience method that derives an address at m/1/index
+    /// (internal/change chain) from the account.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let address = account.derive_change_address(3)?;
+    /// // This derives the address at m/44'/1'/0'/1/3 for a BIP44 testnet account
+    /// ```
+    pub fn derive_change_address(&self, index: u32) -> Result<dashcore::Address> {
+        use crate::bip32::ChildNumber;
+
+        // Build path: 1/index (internal/change chain)
+        let path = DerivationPath::from(vec![
+            ChildNumber::from_normal_idx(1)?, // Internal chain
+            ChildNumber::from_normal_idx(index)?,
+        ]);
+
+        let xpub = self.derive_child_xpub(&path)?;
+        // Convert secp256k1::PublicKey to dashcore::PublicKey
+        let pubkey =
+            dashcore::PublicKey::from_slice(&xpub.public_key.serialize()).map_err(|e| {
+                crate::error::Error::InvalidParameter(format!("Invalid public key: {}", e))
+            })?;
+        Ok(dashcore::Address::p2pkh(&pubkey, self.network))
+    }
+
+    /// Derive multiple receive addresses starting from a specific index
+    ///
+    /// This is useful for pre-generating a batch of addresses.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let addresses = account.derive_receive_addresses(0, 10)?;
+    /// // This derives 10 addresses from index 0 to 9
+    /// ```
+    pub fn derive_receive_addresses(
+        &self,
+        start_index: u32,
+        count: u32,
+    ) -> Result<alloc::vec::Vec<dashcore::Address>> {
+        let mut addresses = alloc::vec::Vec::with_capacity(count as usize);
+        for i in 0..count {
+            addresses.push(self.derive_receive_address(start_index + i)?);
+        }
+        Ok(addresses)
+    }
+
+    /// Derive multiple change addresses starting from a specific index
+    ///
+    /// This is useful for pre-generating a batch of change addresses.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let addresses = account.derive_change_addresses(0, 5)?;
+    /// // This derives 5 change addresses from index 0 to 4
+    /// ```
+    pub fn derive_change_addresses(
+        &self,
+        start_index: u32,
+        count: u32,
+    ) -> Result<alloc::vec::Vec<dashcore::Address>> {
+        let mut addresses = alloc::vec::Vec::with_capacity(count as usize);
+        for i in 0..count {
+            addresses.push(self.derive_change_address(start_index + i)?);
+        }
+        Ok(addresses)
+    }
+
+    /// Derive an address at a specific chain and index
+    ///
+    /// # Arguments
+    /// * `is_internal` - If true, derives from internal chain (1), otherwise external chain (0)
+    /// * `index` - The address index
+    ///
+    /// # Example
+    /// ```ignore
+    /// let external_addr = account.derive_address_at(false, 5)?;  // Same as derive_receive_address(5)
+    /// let internal_addr = account.derive_address_at(true, 3)?;   // Same as derive_change_address(3)
+    /// ```
+    pub fn derive_address_at(&self, is_internal: bool, index: u32) -> Result<dashcore::Address> {
+        if is_internal {
+            self.derive_change_address(index)
+        } else {
+            self.derive_receive_address(index)
+        }
+    }
+
+    /// Get the extended public key for a specific chain
+    ///
+    /// # Arguments
+    /// * `is_internal` - If true, returns the internal chain xpub, otherwise external chain xpub
+    ///
+    /// # Example
+    /// ```ignore
+    /// let external_chain_xpub = account.get_chain_xpub(false)?;
+    /// let internal_chain_xpub = account.get_chain_xpub(true)?;
+    /// ```
+    pub fn get_chain_xpub(&self, is_internal: bool) -> Result<ExtendedPubKey> {
+        use crate::bip32::ChildNumber;
+
+        let chain = if is_internal {
+            1
+        } else {
+            0
+        };
+        let path = DerivationPath::from(vec![ChildNumber::from_normal_idx(chain)?]);
+
+        self.derive_child_xpub(&path)
+    }
 }
 
 impl fmt::Display for Account {
@@ -277,5 +417,119 @@ mod tests {
 
         assert_eq!(account.index(), deserialized.index());
         assert_eq!(account.account_type, deserialized.account_type);
+    }
+
+    #[test]
+    fn test_derive_receive_address() {
+        let account = test_account();
+
+        // Derive receive address at index 0
+        let addr0 = account.derive_receive_address(0).unwrap();
+        assert!(!addr0.to_string().is_empty());
+
+        // Derive receive address at index 5
+        let addr5 = account.derive_receive_address(5).unwrap();
+        assert!(!addr5.to_string().is_empty());
+
+        // Addresses at different indices should be different
+        assert_ne!(addr0, addr5);
+    }
+
+    #[test]
+    fn test_derive_change_address() {
+        let account = test_account();
+
+        // Derive change address at index 0
+        let addr0 = account.derive_change_address(0).unwrap();
+        assert!(!addr0.to_string().is_empty());
+
+        // Derive change address at index 3
+        let addr3 = account.derive_change_address(3).unwrap();
+        assert!(!addr3.to_string().is_empty());
+
+        // Addresses at different indices should be different
+        assert_ne!(addr0, addr3);
+
+        // Change address should be different from receive address at same index
+        let receive0 = account.derive_receive_address(0).unwrap();
+        assert_ne!(addr0, receive0);
+    }
+
+    #[test]
+    fn test_derive_multiple_addresses() {
+        let account = test_account();
+
+        // Derive 5 receive addresses starting from index 0
+        let receive_addrs = account.derive_receive_addresses(0, 5).unwrap();
+        assert_eq!(receive_addrs.len(), 5);
+
+        // All addresses should be unique
+        let unique: std::collections::HashSet<_> = receive_addrs.iter().collect();
+        assert_eq!(unique.len(), 5);
+
+        // Derive 3 change addresses starting from index 2
+        let change_addrs = account.derive_change_addresses(2, 3).unwrap();
+        assert_eq!(change_addrs.len(), 3);
+
+        // Verify the addresses match individual derivation
+        assert_eq!(change_addrs[0], account.derive_change_address(2).unwrap());
+        assert_eq!(change_addrs[1], account.derive_change_address(3).unwrap());
+        assert_eq!(change_addrs[2], account.derive_change_address(4).unwrap());
+    }
+
+    #[test]
+    fn test_derive_address_at() {
+        let account = test_account();
+
+        // External address at index 5
+        let external5 = account.derive_address_at(false, 5).unwrap();
+        let receive5 = account.derive_receive_address(5).unwrap();
+        assert_eq!(external5, receive5);
+
+        // Internal address at index 3
+        let internal3 = account.derive_address_at(true, 3).unwrap();
+        let change3 = account.derive_change_address(3).unwrap();
+        assert_eq!(internal3, change3);
+    }
+
+    #[test]
+    fn test_get_chain_xpub() {
+        let account = test_account();
+
+        // Get external chain xpub
+        let external_xpub = account.get_chain_xpub(false).unwrap();
+
+        // Get internal chain xpub
+        let internal_xpub = account.get_chain_xpub(true).unwrap();
+
+        // They should be different
+        assert_ne!(external_xpub, internal_xpub);
+
+        // Derive an address manually from the external chain xpub
+        let secp = Secp256k1::new();
+        let path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let addr_xpub = external_xpub.derive_pub(&secp, &path).unwrap();
+        let pubkey = dashcore::PublicKey::from_slice(&addr_xpub.public_key.serialize()).unwrap();
+        let manual_addr = dashcore::Address::p2pkh(&pubkey, Network::Testnet);
+
+        // Should match the address derived using derive_receive_address
+        let derived_addr = account.derive_receive_address(0).unwrap();
+        assert_eq!(manual_addr, derived_addr);
+    }
+
+    #[test]
+    fn test_address_derivation_consistency() {
+        // Test that addresses are derived consistently
+        let account = test_account();
+
+        // Derive the same address multiple times
+        let addr1 = account.derive_receive_address(42).unwrap();
+        let addr2 = account.derive_receive_address(42).unwrap();
+        assert_eq!(addr1, addr2, "Same index should always produce same address");
+
+        // Test with change addresses too
+        let change1 = account.derive_change_address(17).unwrap();
+        let change2 = account.derive_change_address(17).unwrap();
+        assert_eq!(change1, change2, "Same change index should always produce same address");
     }
 }

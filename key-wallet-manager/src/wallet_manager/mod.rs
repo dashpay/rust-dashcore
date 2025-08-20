@@ -947,3 +947,35 @@ fn current_timestamp() -> u64 {
 
 #[cfg(feature = "std")]
 impl std::error::Error for WalletError {}
+
+/// Conversion from key_wallet::Error to WalletError
+impl From<key_wallet::Error> for WalletError {
+    fn from(err: key_wallet::Error) -> Self {
+        use key_wallet::Error;
+
+        match err {
+            Error::InvalidMnemonic(msg) => WalletError::InvalidMnemonic(msg),
+            Error::InvalidDerivationPath(msg) => {
+                WalletError::InvalidParameter(format!("Invalid derivation path: {}", msg))
+            }
+            Error::InvalidAddress(msg) => {
+                WalletError::AddressGeneration(format!("Invalid address: {}", msg))
+            }
+            Error::InvalidNetwork => WalletError::InvalidNetwork,
+            Error::InvalidParameter(msg) => WalletError::InvalidParameter(msg),
+            Error::WatchOnly => WalletError::InvalidParameter(
+                "Operation not supported on watch-only wallet".to_string(),
+            ),
+            Error::CoinJoinNotEnabled => {
+                WalletError::InvalidParameter("CoinJoin not enabled".to_string())
+            }
+            Error::KeyError(msg) => WalletError::AccountCreation(format!("Key error: {}", msg)),
+            Error::Serialization(msg) => {
+                WalletError::InvalidParameter(format!("Serialization error: {}", msg))
+            }
+            Error::Bip32(e) => WalletError::AccountCreation(format!("BIP32 error: {}", e)),
+            Error::Secp256k1(e) => WalletError::AccountCreation(format!("Secp256k1 error: {}", e)),
+            Error::Base58 => WalletError::InvalidParameter("Base58 decoding error".to_string()),
+        }
+    }
+}
