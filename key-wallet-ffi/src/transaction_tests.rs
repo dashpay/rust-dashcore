@@ -48,12 +48,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         let mut tx_bytes_out: *mut u8 = ptr::null_mut();
         let mut tx_len_out: usize = 0;
@@ -74,7 +76,9 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -107,12 +111,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         let mut signed_tx_out: *mut u8 = ptr::null_mut();
         let mut signed_len_out: usize = 0;
@@ -131,7 +137,9 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -150,12 +158,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         let output = FFITxOutput {
             address: CString::new("yXdxAYfK7KGx7gNpVHUfRsQMNpMj5cAadG").unwrap().into_raw(),
@@ -196,12 +206,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         let tx_bytes = vec![0u8; 100];
         let mut signed_tx_out: *mut u8 = ptr::null_mut();
@@ -222,6 +234,8 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::WalletError);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 }

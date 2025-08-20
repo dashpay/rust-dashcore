@@ -41,8 +41,15 @@ impl From<key_wallet::WalletBalance> for FFIBalance {
 }
 
 /// Get wallet balance
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet instance
+/// - `balance_out` must be a valid pointer to an FFIBalance structure
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
-pub extern "C" fn wallet_get_balance(
+pub unsafe extern "C" fn wallet_get_balance(
     wallet: *const FFIWallet,
     network: FFINetwork,
     balance_out: *mut FFIBalance,
@@ -53,22 +60,27 @@ pub extern "C" fn wallet_get_balance(
         return false;
     }
 
-    unsafe {
-        let _wallet = &*wallet;
-        let _network_rust: key_wallet::Network = network.into();
+    let _wallet = &*wallet;
+    let _network_rust: key_wallet::Network = network.into();
 
-        // Note: get_balance is not directly available on Wallet
-        // Would need to aggregate from accounts
-        *balance_out = FFIBalance::default();
+    // Note: get_balance is not directly available on Wallet
+    // Would need to aggregate from accounts
+    *balance_out = FFIBalance::default();
 
-        FFIError::set_success(error);
-        true
-    }
+    FFIError::set_success(error);
+    true
 }
 
 /// Get account balance
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet instance
+/// - `balance_out` must be a valid pointer to an FFIBalance structure
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
-pub extern "C" fn wallet_get_account_balance(
+pub unsafe extern "C" fn wallet_get_account_balance(
     wallet: *const FFIWallet,
     network: FFINetwork,
     account_index: c_uint,
@@ -80,28 +92,26 @@ pub extern "C" fn wallet_get_account_balance(
         return false;
     }
 
-    unsafe {
-        let wallet = &*wallet;
-        let network_rust: key_wallet::Network = network.into();
+    let wallet = &*wallet;
+    let network_rust: key_wallet::Network = network.into();
 
-        use key_wallet::account::types::{AccountType, StandardAccountType};
-        let _account_type = AccountType::Standard {
-            index: account_index,
-            standard_account_type: StandardAccountType::BIP44Account,
-        };
+    use key_wallet::account::types::{AccountType, StandardAccountType};
+    let _account_type = AccountType::Standard {
+        index: account_index,
+        standard_account_type: StandardAccountType::BIP44Account,
+    };
 
-        match wallet.inner().get_bip44_account(network_rust, account_index) {
-            Some(_account) => {
-                // Note: get_balance is not directly available on Account
-                // Would need to implement balance tracking
-                *balance_out = FFIBalance::default();
-                FFIError::set_success(error);
-                true
-            }
-            None => {
-                FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
-                false
-            }
+    match wallet.inner().get_bip44_account(network_rust, account_index) {
+        Some(_account) => {
+            // Note: get_balance is not directly available on Account
+            // Would need to implement balance tracking
+            *balance_out = FFIBalance::default();
+            FFIError::set_success(error);
+            true
+        }
+        None => {
+            FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
+            false
         }
     }
 }

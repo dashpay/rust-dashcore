@@ -18,18 +18,22 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                error,
+            )
+        };
 
         assert!(!wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -39,14 +43,17 @@ mod tests {
 
         let seed = vec![0x01u8; 64];
 
-        let wallet =
-            wallet::wallet_create_from_seed(seed.as_ptr(), seed.len(), FFINetwork::Testnet, error);
+        let wallet = unsafe {
+            wallet::wallet_create_from_seed(seed.as_ptr(), seed.len(), FFINetwork::Testnet, error)
+        };
 
         assert!(!wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -56,26 +63,29 @@ mod tests {
 
         // Create a wallet first to get an xpub
         let seed = vec![0x02u8; 64];
-        let source_wallet =
-            wallet::wallet_create_from_seed(seed.as_ptr(), seed.len(), FFINetwork::Testnet, error);
+        let source_wallet = unsafe {
+            wallet::wallet_create_from_seed(seed.as_ptr(), seed.len(), FFINetwork::Testnet, error)
+        };
         assert!(!source_wallet.is_null());
 
         // Get xpub
-        let xpub = wallet::wallet_get_xpub(source_wallet, FFINetwork::Testnet, 0, error);
+        let xpub = unsafe { wallet::wallet_get_xpub(source_wallet, FFINetwork::Testnet, 0, error) };
         assert!(!xpub.is_null());
 
         // Create watch-only wallet from xpub
-        let watch_wallet = wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, error);
+        let watch_wallet =
+            unsafe { wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, error) };
         assert!(!watch_wallet.is_null());
 
         // Verify it's watch-only
-        let is_watch_only = wallet::wallet_is_watch_only(watch_wallet, error);
+        let is_watch_only = unsafe { wallet::wallet_is_watch_only(watch_wallet, error) };
         assert!(is_watch_only);
 
         // Clean up
-        wallet::wallet_free(source_wallet);
-        wallet::wallet_free(watch_wallet);
         unsafe {
+            wallet::wallet_free(source_wallet);
+            wallet::wallet_free(watch_wallet);
+
             let _ = CString::from_raw(xpub);
         }
     }
@@ -86,16 +96,18 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Test random wallet creation
-        let random_wallet = wallet::wallet_create_random(FFINetwork::Testnet, error);
+        let random_wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, error) };
         assert!(!random_wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
         // Verify it's not watch-only
-        let is_watch_only = wallet::wallet_is_watch_only(random_wallet, error);
+        let is_watch_only = unsafe { wallet::wallet_is_watch_only(random_wallet, error) };
         assert!(!is_watch_only);
 
         // Clean up
-        wallet::wallet_free(random_wallet);
+        unsafe {
+            wallet::wallet_free(random_wallet);
+        }
     }
 
     #[test]
@@ -106,19 +118,21 @@ mod tests {
         let seed = vec![0x03u8; 64];
 
         // Create wallet with multiple accounts
-        for _account_index in 0..3 {
-            let wallet = wallet::wallet_create_from_seed(
-                seed.as_ptr(),
-                seed.len(),
-                FFINetwork::Testnet,
-                error,
-            );
+        unsafe {
+            for _account_index in 0..3 {
+                let wallet = wallet::wallet_create_from_seed(
+                    seed.as_ptr(),
+                    seed.len(),
+                    FFINetwork::Testnet,
+                    error,
+                );
 
-            assert!(!wallet.is_null());
-            assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
+                assert!(!wallet.is_null());
+                assert_eq!((*error).code, FFIErrorCode::Success);
 
-            // Clean up
-            wallet::wallet_free(wallet);
+                // Clean up
+                wallet::wallet_free(wallet);
+            }
         }
     }
 
@@ -130,18 +144,22 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("test passphrase").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                error,
+            )
+        };
 
         assert!(!wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -150,28 +168,33 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Test with null mnemonic
-        let wallet = wallet::wallet_create_from_mnemonic(
-            ptr::null(),
-            ptr::null(),
-            FFINetwork::Testnet,
-            error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                ptr::null(),
+                ptr::null(),
+                FFINetwork::Testnet,
+                error,
+            )
+        };
         assert!(wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Test with invalid mnemonic
         let invalid_mnemonic = CString::new("invalid mnemonic").unwrap();
-        let wallet = wallet::wallet_create_from_mnemonic(
-            invalid_mnemonic.as_ptr(),
-            ptr::null(),
-            FFINetwork::Testnet,
-            error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                invalid_mnemonic.as_ptr(),
+                ptr::null(),
+                FFINetwork::Testnet,
+                error,
+            )
+        };
         assert!(wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidMnemonic);
 
         // Test with null seed
-        let wallet = wallet::wallet_create_from_seed(ptr::null(), 64, FFINetwork::Testnet, error);
+        let wallet =
+            unsafe { wallet::wallet_create_from_seed(ptr::null(), 64, FFINetwork::Testnet, error) };
         assert!(wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
     }
@@ -181,24 +204,26 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
-        let wallet = wallet::wallet_create_random(FFINetwork::Testnet, error);
+        let wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, error) };
         assert!(!wallet.is_null());
 
         // Get wallet ID
         let mut id = [0u8; 32];
-        let success = wallet::wallet_get_id(wallet, id.as_mut_ptr(), error);
+        let success = unsafe { wallet::wallet_get_id(wallet, id.as_mut_ptr(), error) };
         assert!(success);
 
         // ID should not be all zeros
         assert_ne!(id, [0u8; 32]);
 
         // Test with null buffer
-        let success = wallet::wallet_get_id(wallet, ptr::null_mut(), error);
+        let success = unsafe { wallet::wallet_get_id(wallet, ptr::null_mut(), error) };
         assert!(!success);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -209,18 +234,22 @@ mod tests {
         // Create seed bytes directly
         let seed_bytes = vec![0x05u8; 64];
 
-        let wallet = wallet::wallet_create_from_seed_bytes(
-            seed_bytes.as_ptr(),
-            seed_bytes.len(),
-            FFINetwork::Testnet,
-            error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_seed_bytes(
+                seed_bytes.as_ptr(),
+                seed_bytes.len(),
+                FFINetwork::Testnet,
+                error,
+            )
+        };
 
         assert!(!wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -229,8 +258,9 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Test with null seed bytes
-        let wallet =
-            wallet::wallet_create_from_seed_bytes(ptr::null(), 64, FFINetwork::Testnet, error);
+        let wallet = unsafe {
+            wallet::wallet_create_from_seed_bytes(ptr::null(), 64, FFINetwork::Testnet, error)
+        };
 
         assert!(wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
@@ -245,37 +275,43 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet_with_mnemonic = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            error,
-        );
+        let wallet_with_mnemonic = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                error,
+            )
+        };
         assert!(!wallet_with_mnemonic.is_null());
 
         // Test has_mnemonic - should return true
-        let has_mnemonic = wallet::wallet_has_mnemonic(wallet_with_mnemonic, error);
+        let has_mnemonic = unsafe { wallet::wallet_has_mnemonic(wallet_with_mnemonic, error) };
         assert!(has_mnemonic);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
         // Clean up
-        wallet::wallet_free(wallet_with_mnemonic);
+        unsafe {
+            wallet::wallet_free(wallet_with_mnemonic);
+        }
 
         // Create watch-only wallet (no mnemonic)
         let seed = vec![0x06u8; 64];
-        let source_wallet =
-            wallet::wallet_create_from_seed(seed.as_ptr(), seed.len(), FFINetwork::Testnet, error);
-        let xpub = wallet::wallet_get_xpub(source_wallet, FFINetwork::Testnet, 0, error);
-        let watch_wallet = wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, error);
+        let source_wallet = unsafe {
+            wallet::wallet_create_from_seed(seed.as_ptr(), seed.len(), FFINetwork::Testnet, error)
+        };
+        let xpub = unsafe { wallet::wallet_get_xpub(source_wallet, FFINetwork::Testnet, 0, error) };
+        let watch_wallet =
+            unsafe { wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, error) };
 
         // Test has_mnemonic - should return false for watch-only
-        let has_mnemonic = wallet::wallet_has_mnemonic(watch_wallet, error);
+        let has_mnemonic = unsafe { wallet::wallet_has_mnemonic(watch_wallet, error) };
         assert!(!has_mnemonic);
 
         // Clean up
-        wallet::wallet_free(source_wallet);
-        wallet::wallet_free(watch_wallet);
         unsafe {
+            wallet::wallet_free(source_wallet);
+            wallet::wallet_free(watch_wallet);
             let _ = CString::from_raw(xpub);
         }
     }
@@ -286,7 +322,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Test with null wallet
-        let has_mnemonic = wallet::wallet_has_mnemonic(ptr::null(), error);
+        let has_mnemonic = unsafe { wallet::wallet_has_mnemonic(ptr::null(), error) };
         assert!(!has_mnemonic);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
     }
@@ -296,17 +332,19 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
-        let wallet = wallet::wallet_create_random(FFINetwork::Testnet, error);
+        let wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, error) };
         assert!(!wallet.is_null());
 
         // Test adding account - check if it succeeds or fails gracefully
-        let success = wallet::wallet_add_account(wallet, FFINetwork::Testnet, 0, 1, error);
+        let success = unsafe { wallet::wallet_add_account(wallet, FFINetwork::Testnet, 0, 1) };
         // Some implementations may not support adding accounts, so just verify it doesn't crash
         // and the error code is set appropriately
         assert!(success || unsafe { (*error).code } != FFIErrorCode::Success);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -315,7 +353,9 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Test with null wallet
-        let success = wallet::wallet_add_account(ptr::null_mut(), FFINetwork::Testnet, 0, 0, error);
+        let success = unsafe {
+            wallet::wallet_add_account(ptr::null_mut(), FFINetwork::Testnet, 0, 0, error)
+        };
         assert!(!success);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
     }
@@ -327,26 +367,34 @@ mod tests {
 
         // Test creating from normal seed size
         let normal_seed = vec![0x07u8; 64]; // Standard seed size
-        let wallet = wallet::wallet_create_from_seed(
-            normal_seed.as_ptr(),
-            normal_seed.len(),
-            FFINetwork::Testnet,
-            error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_seed(
+                normal_seed.as_ptr(),
+                normal_seed.len(),
+                FFINetwork::Testnet,
+                error,
+            )
+        };
         assert!(!wallet.is_null());
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
 
         // Test creating from larger seed
         let large_seed = vec![0x08u8; 128];
-        let wallet = wallet::wallet_create_from_seed(
-            large_seed.as_ptr(),
-            large_seed.len(),
-            FFINetwork::Testnet,
-            error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_seed(
+                large_seed.as_ptr(),
+                large_seed.len(),
+                FFINetwork::Testnet,
+                error,
+            )
+        };
         // Large seeds may or may not be accepted - just test it doesn't crash
         if !wallet.is_null() {
-            wallet::wallet_free(wallet);
+            unsafe {
+                wallet::wallet_free(wallet);
+            }
         }
     }
 
@@ -355,11 +403,11 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
-        let wallet = wallet::wallet_create_random(FFINetwork::Testnet, error);
+        let wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, error) };
         assert!(!wallet.is_null());
 
         // Get xpub for account 0
-        let xpub = wallet::wallet_get_xpub(wallet, FFINetwork::Testnet, 0, error);
+        let xpub = unsafe { wallet::wallet_get_xpub(wallet, FFINetwork::Testnet, 0, error) };
         assert!(!xpub.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
@@ -370,8 +418,8 @@ mod tests {
         // Clean up
         unsafe {
             let _ = CString::from_raw(xpub);
+            wallet::wallet_free(wallet);
         }
-        wallet::wallet_free(wallet);
     }
 
     #[test]
@@ -380,7 +428,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Test with null wallet
-        let xpub = wallet::wallet_get_xpub(ptr::null(), FFINetwork::Testnet, 0, error);
+        let xpub = unsafe { wallet::wallet_get_xpub(ptr::null(), FFINetwork::Testnet, 0, error) };
         assert!(xpub.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
     }
@@ -388,6 +436,8 @@ mod tests {
     #[test]
     fn test_wallet_free_null() {
         // Should handle null gracefully
-        wallet::wallet_free(ptr::null_mut());
+        unsafe {
+            wallet::wallet_free(ptr::null_mut());
+        }
     }
 }

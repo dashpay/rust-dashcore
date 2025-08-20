@@ -41,7 +41,7 @@ mod tests {
         // Clean up
         unsafe {
             managed_wallet_free(managed_wallet);
-            wallet::wallet_free(wallet);
+            unsafe {wallet::wallet_free(wallet);}
         }
     }
 
@@ -101,7 +101,7 @@ mod tests {
         // Clean up
         unsafe {
             managed_wallet_free(managed_wallet);
-            wallet::wallet_free(wallet);
+            unsafe {wallet::wallet_free(wallet);}
         }
     }
 
@@ -143,7 +143,7 @@ mod tests {
         // Clean up
         unsafe {
             managed_wallet_free(managed_wallet);
-            wallet::wallet_free(wallet);
+            unsafe {wallet::wallet_free(wallet);}
         }
     }
 
@@ -296,7 +296,7 @@ mod tests {
         
         // Clean up wallet
         unsafe {
-            wallet::wallet_free(wallet);
+            unsafe {wallet::wallet_free(wallet);}
         }
     }
 
@@ -334,7 +334,7 @@ mod tests {
         // Clean up
         unsafe {
             managed_wallet_free(managed_wallet);
-            wallet::wallet_free(wallet);
+            unsafe {wallet::wallet_free(wallet);}
         }
     }
 
@@ -376,7 +376,7 @@ mod tests {
         // Clean up
         unsafe {
             managed_wallet_free(managed_wallet);
-            wallet::wallet_free(wallet);
+            unsafe {wallet::wallet_free(wallet);}
         }
     }
 
@@ -433,7 +433,7 @@ mod tests {
         // Clean up
         unsafe {
             managed_wallet_free(managed_wallet);
-            wallet::wallet_free(wallet);
+            unsafe {wallet::wallet_free(wallet);}
         }
     }
 }

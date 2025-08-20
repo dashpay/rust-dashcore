@@ -42,8 +42,14 @@ pub struct FFIExtendedPubKey {
 }
 
 /// Create a new master extended private key from seed
+///
+/// # Safety
+///
+/// - `seed` must be a valid pointer to a byte array of `seed_len` length
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure the seed pointer remains valid for the duration of this call
 #[no_mangle]
-pub extern "C" fn derivation_new_master_key(
+pub unsafe extern "C" fn derivation_new_master_key(
     seed: *const u8,
     seed_len: usize,
     network: FFINetwork,
@@ -54,7 +60,7 @@ pub extern "C" fn derivation_new_master_key(
         return ptr::null_mut();
     }
 
-    let seed_slice = unsafe { slice::from_raw_parts(seed, seed_len) };
+    let seed_slice = slice::from_raw_parts(seed, seed_len);
     let network_rust: key_wallet::Network = network.into();
 
     match key_wallet::bip32::ExtendedPrivKey::new_master(network_rust, seed_slice) {
@@ -417,8 +423,15 @@ pub extern "C" fn derivation_identity_authentication_path(
 }
 
 /// Derive private key for a specific path from seed
+///
+/// # Safety
+///
+/// - `seed` must be a valid pointer to a byte array of `seed_len` length
+/// - `path` must be a valid pointer to a null-terminated C string
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
-pub extern "C" fn derivation_derive_private_key_from_seed(
+pub unsafe extern "C" fn derivation_derive_private_key_from_seed(
     seed: *const u8,
     seed_len: usize,
     path: *const c_char,
@@ -430,20 +443,18 @@ pub extern "C" fn derivation_derive_private_key_from_seed(
         return ptr::null_mut();
     }
 
-    let seed_slice = unsafe { slice::from_raw_parts(seed, seed_len) };
+    let seed_slice = slice::from_raw_parts(seed, seed_len);
     let network_rust: key_wallet::Network = network.into();
 
-    let path_str = unsafe {
-        match CStr::from_ptr(path).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid UTF-8 in path".to_string(),
-                );
-                return ptr::null_mut();
-            }
+    let path_str = match CStr::from_ptr(path).to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Invalid UTF-8 in path".to_string(),
+            );
+            return ptr::null_mut();
         }
     };
 
@@ -621,38 +632,56 @@ pub extern "C" fn derivation_xpub_fingerprint(
 }
 
 /// Free extended private key
+///
+/// # Safety
+///
+/// - `xpriv` must be a valid pointer to an FFIExtendedPrivKey that was allocated by this library
+/// - The pointer must not be used after calling this function
+/// - This function must only be called once per allocation
 #[no_mangle]
-pub extern "C" fn derivation_xpriv_free(xpriv: *mut FFIExtendedPrivKey) {
+pub unsafe extern "C" fn derivation_xpriv_free(xpriv: *mut FFIExtendedPrivKey) {
     if !xpriv.is_null() {
-        unsafe {
-            let _ = Box::from_raw(xpriv);
-        }
+        let _ = Box::from_raw(xpriv);
     }
 }
 
 /// Free extended public key
+///
+/// # Safety
+///
+/// - `xpub` must be a valid pointer to an FFIExtendedPubKey that was allocated by this library
+/// - The pointer must not be used after calling this function
+/// - This function must only be called once per allocation
 #[no_mangle]
-pub extern "C" fn derivation_xpub_free(xpub: *mut FFIExtendedPubKey) {
+pub unsafe extern "C" fn derivation_xpub_free(xpub: *mut FFIExtendedPubKey) {
     if !xpub.is_null() {
-        unsafe {
-            let _ = Box::from_raw(xpub);
-        }
+        let _ = Box::from_raw(xpub);
     }
 }
 
 /// Free derivation path string
+///
+/// # Safety
+///
+/// - `s` must be a valid pointer to a C string that was allocated by this library
+/// - The pointer must not be used after calling this function
+/// - This function must only be called once per allocation
 #[no_mangle]
-pub extern "C" fn derivation_string_free(s: *mut c_char) {
+pub unsafe extern "C" fn derivation_string_free(s: *mut c_char) {
     if !s.is_null() {
-        unsafe {
-            let _ = CString::from_raw(s);
-        }
+        let _ = CString::from_raw(s);
     }
 }
 
 /// Derive key using DIP9 path constants for identity
+///
+/// # Safety
+///
+/// - `seed` must be a valid pointer to a byte array of `seed_len` length
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure the seed pointer remains valid for the duration of this call
 #[no_mangle]
-pub extern "C" fn dip9_derive_identity_key(
+pub unsafe extern "C" fn dip9_derive_identity_key(
     seed: *const u8,
     seed_len: usize,
     network: FFINetwork,
@@ -666,7 +695,7 @@ pub extern "C" fn dip9_derive_identity_key(
         return ptr::null_mut();
     }
 
-    let seed_slice = unsafe { slice::from_raw_parts(seed, seed_len) };
+    let seed_slice = slice::from_raw_parts(seed, seed_len);
     let network_rust: key_wallet::Network = network.into();
 
     use key_wallet::bip32::{ChildNumber, DerivationPath};

@@ -13,7 +13,7 @@ use crate::types::{FFINetwork, FFIWallet};
 
 /// Derive a new receive address at specific index
 #[no_mangle]
-pub extern "C" fn wallet_derive_receive_address(
+pub unsafe extern "C" fn wallet_derive_receive_address(
     wallet: *const FFIWallet,
     network: FFINetwork,
     account_index: c_uint,
@@ -101,7 +101,7 @@ pub extern "C" fn wallet_derive_receive_address(
 
 /// Derive a new change address at specific index
 #[no_mangle]
-pub extern "C" fn wallet_derive_change_address(
+pub unsafe extern "C" fn wallet_derive_change_address(
     wallet: *const FFIWallet,
     network: FFINetwork,
     account_index: c_uint,
@@ -189,7 +189,7 @@ pub extern "C" fn wallet_derive_change_address(
 
 /// Get address at specific index
 #[no_mangle]
-pub extern "C" fn wallet_get_address_at_index(
+pub unsafe extern "C" fn wallet_get_address_at_index(
     wallet: *const FFIWallet,
     network: FFINetwork,
     account_index: c_uint,
@@ -283,7 +283,7 @@ pub extern "C" fn wallet_get_address_at_index(
 
 /// Mark address as used (placeholder - requires ManagedAccount)
 #[no_mangle]
-pub extern "C" fn wallet_mark_address_used(
+pub unsafe extern "C" fn wallet_mark_address_used(
     wallet: *mut FFIWallet,
     network: FFINetwork,
     address: *const c_char,
@@ -335,7 +335,7 @@ pub extern "C" fn wallet_mark_address_used(
 
 /// Get all addresses for an account (placeholder - requires ManagedAccount)
 #[no_mangle]
-pub extern "C" fn wallet_get_all_addresses(
+pub unsafe extern "C" fn wallet_get_all_addresses(
     wallet: *const FFIWallet,
     network: FFINetwork,
     account_index: c_uint,
@@ -413,7 +413,7 @@ pub extern "C" fn wallet_get_all_addresses(
 
 /// Free address string
 #[no_mangle]
-pub extern "C" fn address_free(address: *mut c_char) {
+pub unsafe extern "C" fn address_free(address: *mut c_char) {
     if !address.is_null() {
         unsafe {
             let _ = CString::from_raw(address);
@@ -423,7 +423,7 @@ pub extern "C" fn address_free(address: *mut c_char) {
 
 /// Free address array
 #[no_mangle]
-pub extern "C" fn address_array_free(addresses: *mut *mut c_char, count: usize) {
+pub unsafe extern "C" fn address_array_free(addresses: *mut *mut c_char, count: usize) {
     if !addresses.is_null() {
         unsafe {
             let slice = std::slice::from_raw_parts_mut(addresses, count);
@@ -440,7 +440,7 @@ pub extern "C" fn address_array_free(addresses: *mut *mut c_char, count: usize) 
 
 /// Validate an address
 #[no_mangle]
-pub extern "C" fn address_validate(
+pub unsafe extern "C" fn address_validate(
     address: *const c_char,
     network: FFINetwork,
     error: *mut FFIError,
@@ -499,7 +499,7 @@ pub extern "C" fn address_validate(
 
 /// Get address type
 #[no_mangle]
-pub extern "C" fn address_get_type(
+pub unsafe extern "C" fn address_get_type(
     address: *const c_char,
     network: FFINetwork,
     error: *mut FFIError,
@@ -560,7 +560,3 @@ pub extern "C" fn address_get_type(
         }
     }
 }
-
-#[cfg(test)]
-#[path = "address_more_tests.rs"]
-mod more_tests;

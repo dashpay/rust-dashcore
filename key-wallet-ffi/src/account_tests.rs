@@ -9,12 +9,14 @@ mod tests {
 
     #[test]
     fn test_wallet_get_account_null_wallet() {
-        let result = wallet_get_account(
-            ptr::null(),
-            FFINetwork::Testnet,
-            0,
-            0, // StandardBIP44
-        );
+        let result = unsafe {
+            wallet_get_account(
+                ptr::null(),
+                FFINetwork::Testnet,
+                0,
+                0, // StandardBIP44
+            )
+        };
 
         assert!(result.account.is_null());
         assert_ne!(result.error_code, 0);
@@ -23,7 +25,7 @@ mod tests {
         // Clean up error message if present
         if !result.error_message.is_null() {
             unsafe {
-                let _ = std::ffi::CString::from_raw(result.error_message);
+                let _ = CString::from_raw(result.error_message);
             }
         }
     }
@@ -36,19 +38,23 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
-        let result = wallet_get_account(
-            wallet,
-            FFINetwork::Testnet,
-            0,
-            99, // Invalid account type
-        );
+        let result = unsafe {
+            wallet_get_account(
+                wallet,
+                FFINetwork::Testnet,
+                0,
+                99, // Invalid account type
+            )
+        };
 
         assert!(result.account.is_null());
         assert_ne!(result.error_code, 0);
@@ -57,12 +63,14 @@ mod tests {
         // Clean up error message if present
         if !result.error_message.is_null() {
             unsafe {
-                let _ = std::ffi::CString::from_raw(result.error_message);
+                let _ = CString::from_raw(result.error_message);
             }
         }
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -73,20 +81,24 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         // Try to get the default account (should exist)
-        let result = wallet_get_account(
-            wallet,
-            FFINetwork::Testnet,
-            0,
-            0, // StandardBIP44
-        );
+        let result = unsafe {
+            wallet_get_account(
+                wallet,
+                FFINetwork::Testnet,
+                0,
+                0, // StandardBIP44
+            )
+        };
 
         // Note: Since the account may not exist yet (depends on wallet creation logic),
         // we just check that the call doesn't return an error for invalid parameters
@@ -94,25 +106,30 @@ mod tests {
 
         // Clean up the account if it was returned
         if !result.account.is_null() {
-            account_free(result.account);
+            unsafe {
+                account_free(result.account);
+            }
         }
 
         // Clean up error message if present
         if !result.error_message.is_null() {
             unsafe {
-                let _ = std::ffi::CString::from_raw(result.error_message);
+                let _ = CString::from_raw(result.error_message);
             }
         }
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
     fn test_wallet_get_account_count_null_wallet() {
         let mut error = FFIError::success();
 
-        let count = wallet_get_account_count(ptr::null(), FFINetwork::Testnet, &mut error);
+        let count =
+            unsafe { wallet_get_account_count(ptr::null(), FFINetwork::Testnet, &mut error) };
 
         assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -126,21 +143,25 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
-        let count = wallet_get_account_count(wallet, FFINetwork::Testnet, &mut error);
+        let count = unsafe { wallet_get_account_count(wallet, FFINetwork::Testnet, &mut error) };
 
         // Should have at least one default account
         assert!(count >= 1);
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -151,26 +172,32 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         // Try to get account count for a different network (Mainnet)
-        let count = wallet_get_account_count(
-            wallet,
-            FFINetwork::Dash, // Different network
-            &mut error,
-        );
+        let count = unsafe {
+            wallet_get_account_count(
+                wallet,
+                FFINetwork::Dash, // Different network
+                &mut error,
+            )
+        };
 
         // Should return 0 for network with no accounts
         assert_eq!(count, 0);
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -181,20 +208,24 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         // Try to get an IdentityTopUp account (should fail with helpful error)
-        let result = wallet_get_account(
-            wallet,
-            FFINetwork::Testnet,
-            0,
-            4, // IdentityTopUp
-        );
+        let result = unsafe {
+            wallet_get_account(
+                wallet,
+                FFINetwork::Testnet,
+                0,
+                4, // IdentityTopUp
+            )
+        };
 
         assert!(result.account.is_null());
         assert_ne!(result.error_code, 0);
@@ -206,12 +237,14 @@ mod tests {
                 let c_str = std::ffi::CStr::from_ptr(result.error_message);
                 let msg = c_str.to_string_lossy();
                 assert!(msg.contains("wallet_get_top_up_account_with_registration_index"));
-                let _ = std::ffi::CString::from_raw(result.error_message);
+                let _ = CString::from_raw(result.error_message);
             }
         }
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]

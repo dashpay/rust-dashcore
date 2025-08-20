@@ -19,12 +19,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
         assert!(!wallet.is_null());
 
         // Try to get account xpriv - should fail
@@ -35,7 +37,9 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::WalletError);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -46,12 +50,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
         assert!(!wallet.is_null());
 
         // Get account xpub
@@ -65,8 +71,9 @@ mod tests {
         // Clean up
         unsafe {
             let _ = CString::from_raw(xpub_str);
+
+            wallet::wallet_free(wallet);
         }
-        wallet::wallet_free(wallet);
     }
 
     // wallet_derive_private_key is now implemented
@@ -78,12 +85,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         // Try to derive private key - should now succeed (44'/5'/0'/0/0 for Dash)
         let path = CString::new("m/44'/5'/0'/0/0").unwrap();
@@ -105,7 +114,9 @@ mod tests {
             }
         }
         private_key_free(privkey_ptr);
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -116,12 +127,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         // Ensure wallet was created successfully
         assert!(!wallet.is_null(), "Failed to create wallet");
@@ -155,7 +168,9 @@ mod tests {
         public_key_free(pubkey_ptr);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -269,12 +284,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = crate::wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         // Test with null path
         let pubkey_ptr =
@@ -284,7 +301,9 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Clean up
-        crate::wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -388,12 +407,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = crate::wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
         assert!(!wallet.is_null());
 
         // Test different account indices
@@ -419,7 +440,9 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Clean up
-        crate::wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -430,12 +453,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = crate::wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         // Test different derivation paths (Dash coin type 5)
         let test_paths = [
@@ -472,7 +497,9 @@ mod tests {
         }
 
         // Clean up
-        crate::wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]

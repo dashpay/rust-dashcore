@@ -101,12 +101,14 @@ mod tests {
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         let address = CString::new("yXdxAYfK7KGx7gNpVHUfRsQMNpMj5cAadG").unwrap();
         let script = vec![0x76, 0xa9];
@@ -128,7 +130,9 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Clean up
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]

@@ -200,12 +200,14 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
         assert!(!wallet.is_null());
 
         // Create managed wallet
@@ -217,7 +219,9 @@ mod tests {
 
         // Clean up
         managed_wallet_free(managed_wallet);
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -238,12 +242,14 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         let managed_wallet = managed_wallet_create(wallet, &mut error);
 
@@ -267,7 +273,9 @@ mod tests {
 
         // Clean up
         managed_wallet_free(managed_wallet);
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -278,12 +286,14 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         let managed_wallet = managed_wallet_create(wallet, &mut error);
 
@@ -301,7 +311,9 @@ mod tests {
 
         // Clean up
         managed_wallet_free(managed_wallet);
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -418,12 +430,14 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         let managed_wallet = managed_wallet_create(wallet, &mut error);
         assert!(!managed_wallet.is_null());
@@ -432,7 +446,9 @@ mod tests {
         managed_wallet_free(managed_wallet);
 
         // Clean up wallet
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -443,12 +459,14 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         let managed_wallet = managed_wallet_create(wallet, &mut error);
         assert!(!managed_wallet.is_null());
@@ -464,7 +482,9 @@ mod tests {
 
         // Clean up
         managed_wallet_free(managed_wallet);
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -475,12 +495,14 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         let managed_wallet = managed_wallet_create(wallet, &mut error);
 
@@ -498,7 +520,9 @@ mod tests {
 
         // Clean up
         managed_wallet_free(managed_wallet);
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 
     #[test]
@@ -509,12 +533,14 @@ mod tests {
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
-        let wallet = wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            &mut error,
-        );
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
 
         let managed_wallet = managed_wallet_create(wallet, &mut error);
         assert!(!managed_wallet.is_null());
@@ -545,6 +571,8 @@ mod tests {
 
         // Clean up
         managed_wallet_free(managed_wallet);
-        wallet::wallet_free(wallet);
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
     }
 }

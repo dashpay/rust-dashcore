@@ -48,6 +48,7 @@ impl FFIError {
     }
 
     /// Set error on a mutable pointer if it's not null
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn set_error(error_ptr: *mut FFIError, code: FFIErrorCode, msg: String) {
         if !error_ptr.is_null() {
             unsafe {
@@ -57,6 +58,7 @@ impl FFIError {
     }
 
     /// Set success on a mutable pointer if it's not null
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn set_success(error_ptr: *mut FFIError) {
         if !error_ptr.is_null() {
             unsafe {
@@ -67,12 +69,16 @@ impl FFIError {
 }
 
 /// Free an error message
+///
+/// # Safety
+///
+/// - `message` must be a valid pointer to a C string that was allocated by this library
+/// - The pointer must not be used after calling this function
+/// - This function must only be called once per allocation
 #[no_mangle]
-pub extern "C" fn error_message_free(message: *mut c_char) {
+pub unsafe extern "C" fn error_message_free(message: *mut c_char) {
     if !message.is_null() {
-        unsafe {
-            let _ = CString::from_raw(message);
-        }
+        let _ = CString::from_raw(message);
     }
 }
 
