@@ -9,26 +9,22 @@ fn test_address_simple() {
 
     // Create a wallet to get a valid address
     let seed = vec![0x42u8; 64];
-    let wallet = unsafe {
-        key_wallet_ffi::wallet::wallet_create_from_seed(
-            seed.as_ptr(),
-            seed.len(),
-            FFINetwork::Testnet,
-            error,
-        )
-    };
+    let wallet = key_wallet_ffi::wallet::wallet_create_from_seed(
+        seed.as_ptr(),
+        seed.len(),
+        FFINetwork::Testnet,
+        error,
+    );
     assert!(!wallet.is_null());
 
     // Get an address from the wallet
-    let addr = unsafe {
-        key_wallet_ffi::address::wallet_derive_receive_address(
-            wallet,
-            FFINetwork::Testnet,
-            0,
-            0,
-            error,
-        )
-    };
+    let addr = key_wallet_ffi::address::wallet_derive_receive_address(
+        wallet,
+        FFINetwork::Testnet,
+        0,
+        0,
+        error,
+    );
     assert!(!addr.is_null());
 
     // Convert to string and verify
@@ -40,10 +36,8 @@ fn test_address_simple() {
     assert!(addr_str.len() > 20);
 
     // Clean up
-    unsafe {
-        key_wallet_ffi::address::address_free(addr);
-        key_wallet_ffi::wallet::wallet_free(wallet);
-    }
+    key_wallet_ffi::address::address_free(addr);
+    key_wallet_ffi::wallet::wallet_free(wallet);
 
     println!("Test passed!");
 }

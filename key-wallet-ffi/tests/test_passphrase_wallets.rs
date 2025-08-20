@@ -16,14 +16,12 @@ fn test_ffi_wallet_create_from_mnemonic_with_passphrase() {
     let passphrase = CString::new("my_secure_passphrase").unwrap();
 
     // Create wallet with passphrase using default options (which creates account 0)
-    let wallet = unsafe {
-        key_wallet_ffi::wallet::wallet_create_from_mnemonic(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            error,
-        )
-    };
+    let wallet = key_wallet_ffi::wallet::wallet_create_from_mnemonic(
+        mnemonic.as_ptr(),
+        passphrase.as_ptr(),
+        FFINetwork::Testnet,
+        error,
+    );
 
     // Wallet should be created successfully
     assert!(!wallet.is_null());
@@ -31,15 +29,13 @@ fn test_ffi_wallet_create_from_mnemonic_with_passphrase() {
 
     // Try to derive an address from account 0
     // This should NOW SUCCEED because the default options create account 0
-    let addr = unsafe {
-        key_wallet_ffi::address::wallet_derive_receive_address(
-            wallet,
-            FFINetwork::Testnet,
-            0, // account 0
-            0, // address index
-            error,
-        )
-    };
+    let addr = key_wallet_ffi::address::wallet_derive_receive_address(
+        wallet,
+        FFINetwork::Testnet,
+        0, // account 0
+        0, // address index
+        error,
+    );
 
     // Should succeed now
     assert!(!addr.is_null(), "Address derivation should succeed with fixed passphrase handling");
@@ -52,15 +48,11 @@ fn test_ffi_wallet_create_from_mnemonic_with_passphrase() {
         assert!(!addr_str.is_empty());
 
         // Clean up address
-        unsafe {
-            key_wallet_ffi::address::address_free(addr);
-        }
+        key_wallet_ffi::address::address_free(addr);
     }
 
     // Clean up
-    unsafe {
-        key_wallet_ffi::wallet::wallet_free(wallet);
-    }
+    key_wallet_ffi::wallet::wallet_free(wallet);
 }
 
 #[test]
@@ -71,22 +63,20 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
     let error = &mut error as *mut FFIError;
 
     // Create wallet manager
-    let manager = unsafe { key_wallet_ffi::wallet_manager::wallet_manager_create(error) };
+    let manager = key_wallet_ffi::wallet_manager::wallet_manager_create(error);
     assert!(!manager.is_null());
 
     let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let passphrase = CString::new("test_passphrase_123").unwrap();
 
     // Add wallet with passphrase to manager
-    let success = unsafe {
-        key_wallet_ffi::wallet_manager::wallet_manager_add_wallet_from_mnemonic(
-            manager,
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet, // account_count (ignored)
-            error,
-        )
-    };
+    let success = key_wallet_ffi::wallet_manager::wallet_manager_add_wallet_from_mnemonic(
+        manager,
+        mnemonic.as_ptr(),
+        passphrase.as_ptr(),
+        FFINetwork::Testnet, // account_count (ignored)
+        error,
+    );
 
     // This should succeed after our previous fix
     assert!(success);
@@ -95,14 +85,12 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
     // Get wallet IDs
     let mut wallet_ids_ptr = std::ptr::null_mut();
     let mut count = 0usize;
-    let success = unsafe {
-        key_wallet_ffi::wallet_manager::wallet_manager_get_wallet_ids(
-            manager,
-            &mut wallet_ids_ptr,
-            &mut count,
-            error,
-        )
-    };
+    let success = key_wallet_ffi::wallet_manager::wallet_manager_get_wallet_ids(
+        manager,
+        &mut wallet_ids_ptr,
+        &mut count,
+        error,
+    );
     assert!(success);
     assert_eq!(count, 1);
 
@@ -129,9 +117,7 @@ fn test_ffi_wallet_manager_add_wallet_with_passphrase() {
         assert!(!addr_str.is_empty());
 
         // Clean up address
-        unsafe {
-            key_wallet_ffi::address::address_free(addr);
-        }
+        key_wallet_ffi::address::address_free(addr);
     }
 
     // Clean up

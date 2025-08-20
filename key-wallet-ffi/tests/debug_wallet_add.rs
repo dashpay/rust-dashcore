@@ -8,7 +8,7 @@ fn test_debug_wallet_add() {
     let mut error = FFIError::success();
     let error = &mut error as *mut FFIError;
 
-    let manager = unsafe { wallet_manager::wallet_manager_create(error) };
+    let manager = wallet_manager::wallet_manager_create(error);
     assert!(!manager.is_null());
     println!("Manager created successfully");
 
@@ -16,15 +16,13 @@ fn test_debug_wallet_add() {
     let passphrase = CString::new("pass1").unwrap();
 
     println!("Adding wallet with passphrase 'pass1'");
-    let success = unsafe {
-        wallet_manager::wallet_manager_add_wallet_from_mnemonic(
-            manager,
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            FFINetwork::Testnet,
-            error,
-        )
-    };
+    let success = wallet_manager::wallet_manager_add_wallet_from_mnemonic(
+        manager,
+        mnemonic.as_ptr(),
+        passphrase.as_ptr(),
+        FFINetwork::Testnet,
+        error,
+    );
 
     if !success {
         unsafe {
@@ -41,7 +39,5 @@ fn test_debug_wallet_add() {
     assert!(success);
 
     // Clean up
-    unsafe {
-        wallet_manager::wallet_manager_free(manager);
-    }
+    wallet_manager::wallet_manager_free(manager);
 }
