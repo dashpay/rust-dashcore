@@ -147,6 +147,48 @@ impl Account {
     pub fn extended_public_key(&self) -> ExtendedPubKey {
         self.account_xpub
     }
+
+    /// Derive an extended private key from a wallet's master private key
+    ///
+    /// This requires the wallet to have the master private key available.
+    /// Returns None for watch-only wallets.
+    pub fn derive_xpriv_from_master_xpriv(
+        &self,
+        master_xpriv: &ExtendedPrivKey,
+    ) -> Result<ExtendedPrivKey> {
+        if self.is_watch_only {
+            return Err(crate::error::Error::WatchOnly);
+        }
+
+        let secp = Secp256k1::new();
+        let path = self.derivation_path()?;
+        master_xpriv.derive_priv(&secp, &path).map_err(|e| crate::error::Error::Bip32(e))
+    }
+
+    /// Derive a child private key at a specific path from the account
+    ///
+    /// This requires providing the account's extended private key.
+    /// The path should be relative to the account (e.g., "0/5" for external address 5)
+    pub fn derive_child_xpriv_from_account_xpriv(
+        &self,
+        account_xpriv: &ExtendedPrivKey,
+        child_path: &DerivationPath,
+    ) -> Result<ExtendedPrivKey> {
+        if self.is_watch_only {
+            return Err(crate::error::Error::WatchOnly);
+        }
+
+        let secp = Secp256k1::new();
+        account_xpriv.derive_priv(&secp, child_path).map_err(|e| crate::error::Error::Bip32(e))
+    }
+
+    /// Derive a child public key at a specific path from the account
+    ///
+    /// The path should be relative to the account (e.g., "0/5" for external address 5)
+    pub fn derive_child_xpub(&self, child_path: &DerivationPath) -> Result<ExtendedPubKey> {
+        let secp = Secp256k1::new();
+        self.account_xpub.derive_pub(&secp, child_path).map_err(|e| crate::error::Error::Bip32(e))
+    }
 }
 
 impl fmt::Display for Account {

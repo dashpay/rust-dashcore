@@ -99,7 +99,7 @@ pub extern "C" fn wallet_create_from_mnemonic(
             passphrase_str.to_string(),
             config,
             network_rust,
-            WalletAccountCreationOptions::Default,
+            WalletAccountCreationOptions::None, // Can't create accounts with passphrase
         ) {
             Ok(w) => w,
             Err(e) => {
@@ -261,14 +261,37 @@ pub extern "C" fn wallet_create_from_xpub(
         }
     };
 
-    // from_xpub takes xpub, config, and accounts
-    let mut accounts = std::collections::BTreeMap::new();
-    accounts.insert(network_rust, Default::default());
+    // Create a watch-only wallet with the given xpub
+    // Since we can't directly create AccountCollection, we'll create an empty wallet
+    // and add the account afterwards
+    let accounts = std::collections::BTreeMap::new();
 
     match Wallet::from_xpub(xpub, Some(config), accounts) {
-        Ok(wallet) => {
-            FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIWallet::new(wallet)))
+        Ok(mut wallet) => {
+            // Now add account 0 with the provided xpub
+            use key_wallet::account::StandardAccountType;
+            use key_wallet::AccountType;
+
+            let account_type = AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            };
+
+            // Add the account to the wallet
+            match wallet.add_account(account_type, network_rust, Some(xpub)) {
+                Ok(_) => {
+                    FFIError::set_success(error);
+                    Box::into_raw(Box::new(FFIWallet::new(wallet)))
+                }
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        format!("Failed to add account to watch-only wallet: {}", e),
+                    );
+                    ptr::null_mut()
+                }
+            }
         }
         Err(e) => {
             FFIError::set_error(

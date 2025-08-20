@@ -148,27 +148,34 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?
         };
 
-        // Create managed wallet info
-        let mut managed_info = T::with_name(wallet.wallet_id, name);
+        // Create managed wallet info from the wallet to properly initialize accounts
+        // This ensures the ManagedAccountCollection is synchronized with the Wallet's accounts
+        let mut managed_info = T::from_wallet_with_name(&wallet, name);
         managed_info.set_birth_height(birth_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
         // Create default account in the wallet
+        // Skip account creation for wallets with passphrases as they need the passphrase to derive accounts
         let mut wallet_mut = wallet.clone();
-        if wallet_mut.get_bip44_account(network, 0).is_none() {
-            use key_wallet::account::StandardAccountType;
-            let account_type = AccountType::Standard {
-                index: 0,
-                standard_account_type: StandardAccountType::BIP44Account,
-            };
-            wallet_mut
-                .add_account(account_type, network, None)
-                .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
-        }
+        if !passphrase.is_empty() {
+            // For wallets with passphrase, accounts can't be created without the passphrase
+            // The wallet is already set up correctly with WalletAccountCreationOptions::None
+        } else {
+            if wallet_mut.get_bip44_account(network, 0).is_none() {
+                use key_wallet::account::StandardAccountType;
+                let account_type = AccountType::Standard {
+                    index: 0,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                };
+                wallet_mut
+                    .add_account(account_type, network, None)
+                    .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
+            }
 
-        let _account = wallet_mut.get_bip44_account(network, 0).ok_or_else(|| {
-            WalletError::AccountCreation("Failed to get default account".to_string())
-        })?;
+            let _account = wallet_mut.get_bip44_account(network, 0).ok_or_else(|| {
+                WalletError::AccountCreation("Failed to get default account".to_string())
+            })?;
+        }
 
         // Add the account to managed info and generate initial addresses
         // Note: Address generation would need to be done through proper derivation from the account's xpub

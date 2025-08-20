@@ -179,3 +179,7 @@ pub extern "C" fn utxo_array_free(utxos: *mut *mut FFIUTXO, count: usize) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "utxo_tests.rs"]
+mod tests;

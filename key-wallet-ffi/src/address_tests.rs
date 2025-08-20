@@ -1,7 +1,7 @@
 //! Unit tests for address FFI module
 
 #[cfg(test)]
-mod tests {
+mod address_tests {
     use crate::address;
     use crate::error::{FFIError, FFIErrorCode};
     use crate::types::FFINetwork;
@@ -13,7 +13,7 @@ mod tests {
         let mut error = FFIError::success();
         let error_ptr = &mut error as *mut FFIError;
 
-        let seed = vec![0x01u8; 64];
+        let seed = [0x01u8; 64];
         let wallet = unsafe {
             wallet::wallet_create_from_seed(
                 seed.as_ptr(),
@@ -168,8 +168,8 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
-        // Test valid testnet address
-        let valid_addr = CString::new("yTw7Kn5CrQvpBQy5dNMT8A3PQnU3kEj7jJ").unwrap();
+        // Test valid testnet address (generated from test mnemonic)
+        let valid_addr = CString::new("yRd4FhXfVGHXpsuZXPNkMrfD9GVj46pnjt").unwrap();
         let is_valid =
             unsafe { address::address_validate(valid_addr.as_ptr(), FFINetwork::Testnet, error) };
         assert!(is_valid);
@@ -193,8 +193,8 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
-        // Test P2PKH address
-        let p2pkh_addr = CString::new("yTw7Kn5CrQvpBQy5dNMT8A3PQnU3kEj7jJ").unwrap();
+        // Test P2PKH address (generated from test mnemonic)
+        let p2pkh_addr = CString::new("yRd4FhXfVGHXpsuZXPNkMrfD9GVj46pnjt").unwrap();
         let addr_type =
             unsafe { address::address_get_type(p2pkh_addr.as_ptr(), FFINetwork::Testnet, error) };
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
@@ -239,20 +239,28 @@ mod tests {
         let mut addresses_out: *mut *mut std::os::raw::c_char = ptr::null_mut();
         let mut count_out: usize = 0;
 
-        // Get all addresses (currently returns empty list as placeholder)
+        // Get all addresses
         let success = unsafe {
             address::wallet_get_all_addresses(
                 wallet,
                 FFINetwork::Testnet,
                 0, // account_index
-                addresses_out,
+                &mut addresses_out as *mut *mut *mut std::os::raw::c_char,
                 &mut count_out,
                 error,
             )
         };
         assert!(success);
-        assert_eq!(count_out, 0);
-        assert!(addresses_out.is_null());
+        // We generate 5 addresses in the implementation
+        assert_eq!(count_out, 5);
+        assert!(!addresses_out.is_null());
+
+        // Clean up addresses if any were returned
+        if !addresses_out.is_null() && count_out > 0 {
+            unsafe {
+                address::address_array_free(addresses_out, count_out);
+            }
+        }
 
         // Clean up
         unsafe {

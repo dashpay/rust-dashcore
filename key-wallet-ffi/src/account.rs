@@ -87,3 +87,7 @@ pub extern "C" fn wallet_get_account_count(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "account_tests.rs"]
+mod tests;

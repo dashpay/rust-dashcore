@@ -73,15 +73,31 @@ impl ManagedWalletInfo {
 
     /// Create managed wallet info from a Wallet
     pub fn from_wallet(wallet: &super::super::Wallet) -> Self {
+        let mut managed_accounts = BTreeMap::new();
+
+        // Initialize ManagedAccountCollection for each network that has accounts
+        for (network, account_collection) in &wallet.accounts {
+            let managed_collection =
+                ManagedAccountCollection::from_account_collection(account_collection);
+            managed_accounts.insert(*network, managed_collection);
+        }
+
         Self {
             wallet_id: wallet.wallet_id,
             name: None,
             description: None,
             metadata: WalletMetadata::default(),
-            accounts: BTreeMap::new(),
+            accounts: managed_accounts,
             immature_transactions: BTreeMap::new(),
             balance: WalletBalance::default(),
         }
+    }
+
+    /// Create managed wallet info from a Wallet with a name
+    pub fn from_wallet_with_name(wallet: &super::super::Wallet, name: String) -> Self {
+        let mut info = Self::from_wallet(wallet);
+        info.name = Some(name);
+        info
     }
 
     /// Create managed wallet info with birth height

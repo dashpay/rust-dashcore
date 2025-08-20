@@ -313,7 +313,7 @@ pub extern "C" fn wallet_mark_address_used(
         let _network_rust: key_wallet::Network = network.into();
 
         use std::str::FromStr;
-        let addr = match key_wallet::Address::from_str(address_str) {
+        let _addr = match key_wallet::Address::from_str(address_str) {
             Ok(a) => a,
             Err(e) => {
                 FFIError::set_error(
@@ -339,7 +339,7 @@ pub extern "C" fn wallet_get_all_addresses(
     wallet: *const FFIWallet,
     network: FFINetwork,
     account_index: c_uint,
-    addresses_out: *mut *mut c_char,
+    addresses_out: *mut *mut *mut c_char,
     count_out: *mut usize,
     error: *mut FFIError,
 ) -> bool {
@@ -349,17 +349,65 @@ pub extern "C" fn wallet_get_all_addresses(
     }
 
     unsafe {
-        let _wallet = &*wallet;
-        let _network_rust: key_wallet::Network = network.into();
+        let wallet = &*wallet;
+        let network_rust: key_wallet::Network = network.into();
 
-        // Note: Getting all addresses requires ManagedAccount with address pools
-        // The basic Account structure doesn't maintain address lists
-        // Return empty list for now
-        *count_out = 0;
-        *addresses_out = ptr::null_mut();
+        // Generate a few addresses to return (this is a simplified implementation)
+        // In a real implementation, you'd track all generated addresses
+        match wallet.inner().get_bip44_account(network_rust, account_index) {
+            Some(account) => {
+                use key_wallet::ChildNumber;
+                use secp256k1::Secp256k1;
+                let secp = Secp256k1::new();
 
-        FFIError::set_success(error);
-        true
+                let mut addresses: Vec<*mut c_char> = Vec::new();
+
+                // Generate first 5 receive addresses
+                for i in 0..5 {
+                    let child_external = match ChildNumber::from_normal_idx(0) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+
+                    let child_index = match ChildNumber::from_normal_idx(i) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+
+                    if let Ok(derived_key) =
+                        account.account_xpub.derive_pub(&secp, &[child_external, child_index])
+                    {
+                        let public_key = derived_key.public_key;
+                        let dash_pubkey = dashcore::PublicKey::new(public_key);
+                        let dash_network = dashcore::Network::from(network_rust);
+                        let address = key_wallet::Address::p2pkh(&dash_pubkey, dash_network);
+
+                        if let Ok(c_str) = CString::new(address.to_string()) {
+                            addresses.push(c_str.into_raw());
+                        }
+                    }
+                }
+
+                if addresses.is_empty() {
+                    *count_out = 0;
+                    *addresses_out = ptr::null_mut();
+                } else {
+                    *count_out = addresses.len();
+                    // addresses is Vec<*mut c_char>
+                    // We need to get a raw pointer to the array and leak it
+                    let ptr = addresses.as_mut_ptr(); // This is *mut *mut c_char
+                    std::mem::forget(addresses);
+                    *addresses_out = ptr;
+                }
+
+                FFIError::set_success(error);
+                true
+            }
+            None => {
+                FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
+                false
+            }
+        }
     }
 }
 
@@ -416,13 +464,27 @@ pub extern "C" fn address_validate(
         }
     };
 
-    let _network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = network.into();
     use std::str::FromStr;
 
     match key_wallet::Address::from_str(address_str) {
-        Ok(_) => {
-            FFIError::set_success(error);
-            true
+        Ok(addr) => {
+            // Check if address is valid for the given network
+            let dash_network = dashcore::Network::from(network_rust);
+            match addr.require_network(dash_network) {
+                Ok(_) => {
+                    FFIError::set_success(error);
+                    true
+                }
+                Err(_) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidAddress,
+                        format!("Address not valid for network {:?}", network_rust),
+                    );
+                    false
+                }
+            }
         }
         Err(e) => {
             FFIError::set_error(
@@ -461,15 +523,32 @@ pub extern "C" fn address_get_type(
         }
     };
 
-    let _network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = network.into();
     use std::str::FromStr;
 
     match key_wallet::Address::from_str(address_str) {
         Ok(addr) => {
-            FFIError::set_success(error);
-            // Address type detection would require additional implementation
-            // For now, assume P2PKH which is the default
-            0 // P2PKH
+            let dash_network = dashcore::Network::from(network_rust);
+            match addr.require_network(dash_network) {
+                Ok(checked_addr) => {
+                    FFIError::set_success(error);
+                    // Get the actual address type
+                    match checked_addr.address_type() {
+                        Some(key_wallet::AddressType::P2pkh) => 0,
+                        Some(key_wallet::AddressType::P2sh) => 1,
+                        Some(_) => 2, // Other address type
+                        None => 2,    // Unknown type
+                    }
+                }
+                Err(_) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidAddress,
+                        "Address not valid for network".to_string(),
+                    );
+                    2 // Invalid
+                }
+            }
         }
         Err(e) => {
             FFIError::set_error(
@@ -477,7 +556,11 @@ pub extern "C" fn address_get_type(
                 FFIErrorCode::InvalidAddress,
                 format!("Invalid address: {}", e),
             );
-            0
+            2 // Invalid
         }
     }
 }
+
+#[cfg(test)]
+#[path = "address_more_tests.rs"]
+mod more_tests;

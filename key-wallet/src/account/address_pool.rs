@@ -196,12 +196,26 @@ impl AddressPool {
             return Ok(info.address.clone());
         }
 
-        // Build the full path
+        // Build the full path for record keeping
         let mut full_path = self.base_path.clone();
         full_path.push(ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?);
 
-        // Derive the key
-        let pubkey = key_source.derive_at_path(&full_path)?;
+        // For derivation, we only need the relative path from where the key_source is
+        // The key_source xpub is at account level (e.g., m/44'/1'/0')
+        // We need to derive the receive/change branch and then the index
+        // So the relative path should be [0, index] for external or [1, index] for internal
+        let branch_num = if self.is_internal {
+            1
+        } else {
+            0
+        };
+        let relative_path = DerivationPath::from(vec![
+            ChildNumber::from_normal_idx(branch_num).map_err(Error::Bip32)?,
+            ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?,
+        ]);
+
+        // Derive the key using the relative path
+        let pubkey = key_source.derive_at_path(&relative_path)?;
 
         // Generate the address
         let dash_pubkey = dashcore::PublicKey::new(pubkey.public_key);

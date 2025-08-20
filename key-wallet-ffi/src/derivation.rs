@@ -759,3 +759,7 @@ pub extern "C" fn dip9_derive_identity_key(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "derivation_tests.rs"]
+mod tests;

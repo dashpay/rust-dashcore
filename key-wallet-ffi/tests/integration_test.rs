@@ -204,6 +204,7 @@ fn test_watch_only_wallet() {
             error,
         )
     };
+    assert!(!addr1.is_null());
 
     let addr2 = unsafe {
         key_wallet_ffi::address::wallet_derive_receive_address(
@@ -214,6 +215,7 @@ fn test_watch_only_wallet() {
             error,
         )
     };
+    assert!(!addr2.is_null());
 
     let addr1_str = unsafe { std::ffi::CStr::from_ptr(addr1).to_str().unwrap() };
     let addr2_str = unsafe { std::ffi::CStr::from_ptr(addr2).to_str().unwrap() };
@@ -226,7 +228,7 @@ fn test_watch_only_wallet() {
         key_wallet_ffi::address::address_free(addr2);
         key_wallet_ffi::wallet::wallet_free(source_wallet);
         key_wallet_ffi::wallet::wallet_free(watch_wallet);
-        CString::from_raw(xpub);
+        key_wallet_ffi::utils::string_free(xpub);
     }
 }
 

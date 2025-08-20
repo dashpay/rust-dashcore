@@ -227,3 +227,7 @@ pub extern "C" fn transaction_bytes_free(tx_bytes: *mut u8) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "transaction_tests.rs"]
+mod tests;

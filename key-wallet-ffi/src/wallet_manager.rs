@@ -1,56 +1,57 @@
 //! FFI bindings for WalletManager from key-wallet-manager crate
-//!
-//! NOTE: This is a placeholder implementation. Full implementation requires
-//! fixing the API mismatches with the actual WalletManager implementation.
 
 #[cfg(test)]
 #[path = "wallet_manager_tests.rs"]
 mod tests;
 
-use std::ffi::CString;
+use std::collections::BTreeMap;
+use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint, c_ulong};
 use std::ptr;
+use std::sync::Mutex;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::FFINetwork;
+use crate::types::{FFINetwork, FFIWallet};
+use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::Network;
+use key_wallet_manager::wallet_manager::{WalletError, WalletId, WalletManager};
 
-/// Placeholder FFI wrapper for WalletManager
+/// FFI wrapper for WalletManager
 #[repr(C)]
 pub struct FFIWalletManager {
-    _placeholder: u8,
+    manager: Mutex<WalletManager<ManagedWalletInfo>>,
+    // Track wallet IDs for FFI purposes
+    wallet_ids: Mutex<Vec<WalletId>>,
 }
 
 /// Create a new wallet manager
-///
-/// NOTE: This is a placeholder implementation
 #[no_mangle]
 pub extern "C" fn wallet_manager_create(error: *mut FFIError) -> *mut FFIWalletManager {
+    let manager = WalletManager::new();
     FFIError::set_success(error);
     Box::into_raw(Box::new(FFIWalletManager {
-        _placeholder: 0,
+        manager: Mutex::new(manager),
+        wallet_ids: Mutex::new(Vec::new()),
     }))
 }
 
 /// Add a wallet from mnemonic to the manager
-///
-/// NOTE: This is a placeholder implementation
 #[no_mangle]
 pub extern "C" fn wallet_manager_add_wallet_from_mnemonic(
-    _manager: *mut FFIWalletManager,
+    manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
-    _passphrase: *const c_char,
-    _network: FFINetwork,
+    passphrase: *const c_char,
+    network: FFINetwork,
     _account_count: c_uint,
     error: *mut FFIError,
 ) -> bool {
-    if mnemonic.is_null() {
+    if manager.is_null() || mnemonic.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return false;
     }
 
-    // Placeholder: Just validate the mnemonic
     let mnemonic_str = unsafe {
-        match std::ffi::CStr::from_ptr(mnemonic).to_str() {
+        match CStr::from_ptr(mnemonic).to_str() {
             Ok(s) => s,
             Err(_) => {
                 FFIError::set_error(
@@ -63,40 +64,143 @@ pub extern "C" fn wallet_manager_add_wallet_from_mnemonic(
         }
     };
 
-    // Basic validation - check word count
-    let word_count = mnemonic_str.split_whitespace().count();
-    if ![12, 15, 18, 21, 24].contains(&word_count) {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidMnemonic,
-            "Invalid mnemonic word count".to_string(),
-        );
-        return false;
-    }
+    let passphrase_str = if passphrase.is_null() {
+        ""
+    } else {
+        unsafe {
+            match CStr::from_ptr(passphrase).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidInput,
+                        "Invalid UTF-8 in passphrase".to_string(),
+                    );
+                    return false;
+                }
+            }
+        }
+    };
 
-    FFIError::set_success(error);
-    true
+    // Generate wallet ID from mnemonic + passphrase
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(mnemonic_str.as_bytes());
+    hasher.update(passphrase_str.as_bytes());
+    let hash = hasher.finalize();
+    let mut wallet_id = [0u8; 32];
+    wallet_id.copy_from_slice(&hash);
+
+    let network_rust: Network = network.into();
+    let name = format!("Wallet {}", hex::encode(&wallet_id[0..4]));
+
+    unsafe {
+        let manager_ref = &*manager;
+        let mut manager_guard = match manager_ref.manager.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    "Failed to lock manager".to_string(),
+                );
+                return false;
+            }
+        };
+
+        // Check if wallet already exists
+        if manager_guard.get_wallet(&wallet_id).is_some() {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::WalletError,
+                "Wallet already exists".to_string(),
+            );
+            return false;
+        }
+
+        // Use the WalletManager's public method to create the wallet
+        match manager_guard.create_wallet_from_mnemonic(
+            wallet_id,
+            name,
+            mnemonic_str,
+            passphrase_str,
+            Some(network_rust),
+            None, // birth_height
+        ) {
+            Ok(_) => {
+                // Track the wallet ID
+                let mut ids_guard = match manager_ref.wallet_ids.lock() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        FFIError::set_error(
+                            error,
+                            FFIErrorCode::WalletError,
+                            "Failed to lock wallet IDs".to_string(),
+                        );
+                        return false;
+                    }
+                };
+                ids_guard.push(wallet_id);
+
+                FFIError::set_success(error);
+                true
+            }
+            Err(e) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Failed to create wallet: {:?}", e),
+                );
+                false
+            }
+        }
+    }
 }
 
 /// Get wallet IDs
-///
-/// NOTE: This is a placeholder implementation
 #[no_mangle]
 pub extern "C" fn wallet_manager_get_wallet_ids(
-    _manager: *const FFIWalletManager,
+    manager: *const FFIWalletManager,
     wallet_ids_out: *mut *mut u8,
     count_out: *mut usize,
     error: *mut FFIError,
 ) -> bool {
-    if wallet_ids_out.is_null() || count_out.is_null() {
+    if manager.is_null() || wallet_ids_out.is_null() || count_out.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return false;
     }
 
     unsafe {
-        // Return empty list as placeholder
-        *count_out = 0;
-        *wallet_ids_out = ptr::null_mut();
+        let manager_ref = &*manager;
+        let ids_guard = match manager_ref.wallet_ids.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    "Failed to lock wallet IDs".to_string(),
+                );
+                return false;
+            }
+        };
+
+        let count = ids_guard.len();
+        if count == 0 {
+            *count_out = 0;
+            *wallet_ids_out = ptr::null_mut();
+        } else {
+            // Allocate memory for wallet IDs (32 bytes each)
+            let mut ids_buffer = Vec::with_capacity(count * 32);
+            for wallet_id in ids_guard.iter() {
+                ids_buffer.extend_from_slice(wallet_id);
+            }
+            let ids_ptr = ids_buffer.as_mut_ptr();
+            std::mem::forget(ids_buffer);
+
+            *wallet_ids_out = ids_ptr;
+            *count_out = count;
+        }
+
         FFIError::set_success(error);
         true
     }
@@ -120,33 +224,159 @@ pub extern "C" fn wallet_manager_get_wallet(
 }
 
 /// Get next receive address for a wallet
-///
-/// NOTE: This is a placeholder implementation
 #[no_mangle]
 pub extern "C" fn wallet_manager_get_receive_address(
-    _manager: *mut FFIWalletManager,
-    _wallet_id: *const u8,
-    _network: FFINetwork,
-    _account_index: c_uint,
+    manager: *mut FFIWalletManager,
+    wallet_id: *const u8,
+    network: FFINetwork,
+    account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
-    FFIError::set_error(error, FFIErrorCode::WalletError, "Not implemented".to_string());
-    ptr::null_mut()
+    if manager.is_null() || wallet_id.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return ptr::null_mut();
+    }
+
+    let wallet_id_slice = unsafe { std::slice::from_raw_parts(wallet_id, 32) };
+    let mut wallet_id_array = [0u8; 32];
+    wallet_id_array.copy_from_slice(wallet_id_slice);
+
+    unsafe {
+        let manager_ref = &*manager;
+        let mut manager_guard = match manager_ref.manager.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    "Failed to lock manager".to_string(),
+                );
+                return ptr::null_mut();
+            }
+        };
+
+        let network_rust: Network = network.into();
+
+        // Use the WalletManager's public method to get next receive address
+        use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
+        match manager_guard.get_receive_address(
+            &wallet_id_array,
+            network_rust,
+            account_index,
+            AccountTypePreference::BIP44,
+            true, // mark_as_used
+        ) {
+            Ok(result) => {
+                if let Some(address) = result.address {
+                    FFIError::set_success(error);
+                    match CString::new(address.to_string()) {
+                        Ok(c_str) => c_str.into_raw(),
+                        Err(_) => {
+                            FFIError::set_error(
+                                error,
+                                FFIErrorCode::AllocationFailed,
+                                "Failed to allocate string".to_string(),
+                            );
+                            ptr::null_mut()
+                        }
+                    }
+                } else {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::NotFound,
+                        "Failed to generate address".to_string(),
+                    );
+                    ptr::null_mut()
+                }
+            }
+            Err(e) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Failed to get receive address: {:?}", e),
+                );
+                ptr::null_mut()
+            }
+        }
+    }
 }
 
 /// Get next change address for a wallet
-///
-/// NOTE: This is a placeholder implementation
 #[no_mangle]
 pub extern "C" fn wallet_manager_get_change_address(
-    _manager: *mut FFIWalletManager,
-    _wallet_id: *const u8,
-    _network: FFINetwork,
-    _account_index: c_uint,
+    manager: *mut FFIWalletManager,
+    wallet_id: *const u8,
+    network: FFINetwork,
+    account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
-    FFIError::set_error(error, FFIErrorCode::WalletError, "Not implemented".to_string());
-    ptr::null_mut()
+    if manager.is_null() || wallet_id.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return ptr::null_mut();
+    }
+
+    let wallet_id_slice = unsafe { std::slice::from_raw_parts(wallet_id, 32) };
+    let mut wallet_id_array = [0u8; 32];
+    wallet_id_array.copy_from_slice(wallet_id_slice);
+
+    unsafe {
+        let manager_ref = &*manager;
+        let mut manager_guard = match manager_ref.manager.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    "Failed to lock manager".to_string(),
+                );
+                return ptr::null_mut();
+            }
+        };
+
+        let network_rust: Network = network.into();
+
+        // Use the WalletManager's public method to get next change address
+        use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
+        match manager_guard.get_change_address(
+            &wallet_id_array,
+            network_rust,
+            account_index,
+            AccountTypePreference::BIP44,
+            true, // mark_as_used
+        ) {
+            Ok(result) => {
+                if let Some(address) = result.address {
+                    FFIError::set_success(error);
+                    match CString::new(address.to_string()) {
+                        Ok(c_str) => c_str.into_raw(),
+                        Err(_) => {
+                            FFIError::set_error(
+                                error,
+                                FFIErrorCode::AllocationFailed,
+                                "Failed to allocate string".to_string(),
+                            );
+                            ptr::null_mut()
+                        }
+                    }
+                } else {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::NotFound,
+                        "Failed to generate address".to_string(),
+                    );
+                    ptr::null_mut()
+                }
+            }
+            Err(e) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    format!("Failed to get change address: {:?}", e),
+                );
+                ptr::null_mut()
+            }
+        }
+    }
 }
 
 /// Get wallet balance
@@ -202,59 +432,162 @@ pub extern "C" fn wallet_manager_process_transaction(
 }
 
 /// Get monitored addresses for a network
-///
-/// NOTE: This is a placeholder implementation
 #[no_mangle]
 pub extern "C" fn wallet_manager_get_monitored_addresses(
-    _manager: *const FFIWalletManager,
-    _network: FFINetwork,
-    addresses_out: *mut *mut c_char,
+    manager: *const FFIWalletManager,
+    network: FFINetwork,
+    addresses_out: *mut *mut *mut c_char,
     count_out: *mut usize,
     error: *mut FFIError,
 ) -> bool {
-    if addresses_out.is_null() || count_out.is_null() {
+    if manager.is_null() || addresses_out.is_null() || count_out.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return false;
     }
 
     unsafe {
-        *count_out = 0;
-        *addresses_out = ptr::null_mut();
+        let manager_ref = &*manager;
+        let manager_guard = match manager_ref.manager.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    "Failed to lock manager".to_string(),
+                );
+                return false;
+            }
+        };
+
+        let network_rust: Network = network.into();
+        let mut all_addresses: Vec<*mut c_char> = Vec::new();
+
+        // Collect addresses from all wallets for this network
+        for wallet in manager_guard.get_all_wallets().values() {
+            if let Some(account) = wallet.get_bip44_account(network_rust, 0) {
+                // Generate a few addresses from each wallet (simplified)
+                use key_wallet::ChildNumber;
+                use secp256k1::Secp256k1;
+                let secp = Secp256k1::new();
+
+                // Generate first 3 receive addresses
+                for i in 0..3 {
+                    let child_external = match ChildNumber::from_normal_idx(0) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+
+                    let child_index = match ChildNumber::from_normal_idx(i) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+
+                    if let Ok(derived_key) =
+                        account.account_xpub.derive_pub(&secp, &[child_external, child_index])
+                    {
+                        let public_key = derived_key.public_key;
+                        let dash_pubkey = dashcore::PublicKey::new(public_key);
+                        let dash_network = dashcore::Network::from(network_rust);
+                        let address = key_wallet::Address::p2pkh(&dash_pubkey, dash_network);
+
+                        if let Ok(c_str) = CString::new(address.to_string()) {
+                            all_addresses.push(c_str.into_raw());
+                        }
+                    }
+                }
+            }
+        }
+
+        if all_addresses.is_empty() {
+            *count_out = 0;
+            *addresses_out = ptr::null_mut();
+        } else {
+            *count_out = all_addresses.len();
+            let ptr = all_addresses.as_mut_ptr();
+            std::mem::forget(all_addresses);
+            *addresses_out = ptr;
+        }
+
         FFIError::set_success(error);
         true
     }
 }
 
 /// Update block height for a network
-///
-/// NOTE: This is a placeholder implementation
 #[no_mangle]
 pub extern "C" fn wallet_manager_update_height(
-    _manager: *mut FFIWalletManager,
-    _network: FFINetwork,
-    _height: c_uint,
+    manager: *mut FFIWalletManager,
+    network: FFINetwork,
+    height: c_uint,
     error: *mut FFIError,
 ) -> bool {
-    FFIError::set_success(error);
-    true
+    if manager.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Manager is null".to_string());
+        return false;
+    }
+
+    unsafe {
+        let manager_ref = &*manager;
+        let mut manager_guard = match manager_ref.manager.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    "Failed to lock manager".to_string(),
+                );
+                return false;
+            }
+        };
+
+        let network_rust: Network = network.into();
+        manager_guard.update_height(network_rust, height);
+
+        FFIError::set_success(error);
+        true
+    }
 }
 
 /// Get current height for a network
-///
-/// NOTE: This is a placeholder implementation
 #[no_mangle]
 pub extern "C" fn wallet_manager_current_height(
-    _manager: *const FFIWalletManager,
-    _network: FFINetwork,
+    manager: *const FFIWalletManager,
+    network: FFINetwork,
     error: *mut FFIError,
 ) -> c_uint {
-    FFIError::set_success(error);
-    0
+    if manager.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Manager is null".to_string());
+        return 0;
+    }
+
+    unsafe {
+        let manager_ref = &*manager;
+        let manager_guard = match manager_ref.manager.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    "Failed to lock manager".to_string(),
+                );
+                return 0;
+            }
+        };
+
+        let network_rust: Network = network.into();
+
+        // Get current height from network state if it exists
+        let height = manager_guard
+            .get_network_state(network_rust)
+            .map(|state| state.current_height)
+            .unwrap_or(0);
+
+        FFIError::set_success(error);
+        height
+    }
 }
 
 /// Get wallet count
-///
-/// NOTE: This is a placeholder implementation
 #[no_mangle]
 pub extern "C" fn wallet_manager_wallet_count(
     manager: *const FFIWalletManager,
@@ -265,8 +598,23 @@ pub extern "C" fn wallet_manager_wallet_count(
         return 0;
     }
 
-    FFIError::set_success(error);
-    0
+    unsafe {
+        let manager_ref = &*manager;
+        let manager_guard = match manager_ref.manager.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::WalletError,
+                    "Failed to lock manager".to_string(),
+                );
+                return 0;
+            }
+        };
+
+        FFIError::set_success(error);
+        manager_guard.wallet_count()
+    }
 }
 
 /// Free wallet manager

@@ -121,18 +121,14 @@ pub extern "C" fn wallet_derive_private_key(
         }
     };
 
-    unsafe {
-        let _wallet = &*wallet;
-        let _network_rust: key_wallet::Network = network.into();
-
-        // Note: Direct key derivation not exposed in key_wallet
-        FFIError::set_error(
-            error,
-            FFIErrorCode::WalletError,
-            "Direct key derivation not yet implemented".to_string(),
-        );
-        ptr::null_mut()
-    }
+    // For now, return not implemented until we can properly access the wallet's private keys
+    // The root_extended_priv_key() method is not publicly accessible
+    FFIError::set_error(
+        error,
+        FFIErrorCode::WalletError,
+        "Private key derivation not yet implemented".to_string(),
+    );
+    ptr::null_mut()
 }
 
 /// Derive public key for address
@@ -340,8 +336,14 @@ pub extern "C" fn derivation_path_parse(
 
     unsafe {
         *count_out = count;
-        *indices_out = Box::into_raw(indices.into_boxed_slice()) as *mut u32;
-        *hardened_out = Box::into_raw(hardened.into_boxed_slice()) as *mut bool;
+        if count > 0 {
+            *indices_out = Box::into_raw(indices.into_boxed_slice()) as *mut u32;
+            *hardened_out = Box::into_raw(hardened.into_boxed_slice()) as *mut bool;
+        } else {
+            // For empty paths, set to null
+            *indices_out = ptr::null_mut();
+            *hardened_out = ptr::null_mut();
+        }
     }
 
     FFIError::set_success(error);
@@ -349,16 +351,22 @@ pub extern "C" fn derivation_path_parse(
 }
 
 /// Free derivation path arrays
+/// Note: This function expects the count to properly free the slices
+/// For now, we're leaking memory as we don't have the count parameter
 #[no_mangle]
-pub extern "C" fn derivation_path_free(indices: *mut u32, hardened: *mut bool) {
-    if !indices.is_null() {
+pub extern "C" fn derivation_path_free(indices: *mut u32, hardened: *mut bool, count: usize) {
+    if !indices.is_null() && count > 0 {
         unsafe {
-            let _ = Box::from_raw(indices);
+            let _ = Vec::from_raw_parts(indices, count, count);
         }
     }
-    if !hardened.is_null() {
+    if !hardened.is_null() && count > 0 {
         unsafe {
-            let _ = Box::from_raw(hardened);
+            let _ = Vec::from_raw_parts(hardened, count, count);
         }
     }
 }
+
+#[cfg(test)]
+#[path = "keys_tests.rs"]
+mod tests;
