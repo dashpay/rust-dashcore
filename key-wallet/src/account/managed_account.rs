@@ -12,9 +12,8 @@ use crate::wallet::balance::WalletBalance;
 use crate::{ExtendedPubKey, Network};
 use alloc::collections::{BTreeMap, BTreeSet};
 use dashcore::blockdata::transaction::OutPoint;
+use dashcore::Address;
 use dashcore::Txid;
-use dashcore::{Address, PublicKey};
-use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -236,7 +235,6 @@ impl ManagedAccount {
     pub fn get_next_receive_address(
         &mut self,
         account_xpub: &ExtendedPubKey,
-        network: Network,
     ) -> Result<Address, &'static str> {
         // For standard accounts, use the address pool to get the next unused address
         if let ManagedAccountType::Standard {
@@ -259,7 +257,6 @@ impl ManagedAccount {
     pub fn get_next_change_address(
         &mut self,
         account_xpub: &ExtendedPubKey,
-        network: Network,
     ) -> Result<Address, &'static str> {
         // For standard accounts, use the address pool to get the next unused address
         if let ManagedAccountType::Standard {

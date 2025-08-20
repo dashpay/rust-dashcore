@@ -12,11 +12,10 @@ pub mod wallet_info_interface;
 use super::balance::WalletBalance;
 use super::immature_transaction::ImmatureTransactionCollection;
 use super::metadata::WalletMetadata;
-use crate::account::{ManagedAccount, ManagedAccountCollection};
-use crate::{Address, Network};
-use alloc::collections::{BTreeMap, BTreeSet};
+use crate::account::ManagedAccountCollection;
+use crate::Network;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
-use alloc::vec::Vec;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 

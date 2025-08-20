@@ -768,7 +768,7 @@ impl TransactionBuilder {
     }
 
     /// Sign the transaction (legacy method for backward compatibility)
-    fn sign_transaction(&self, tx: Transaction) -> Result<Transaction, BuilderError> {
+    pub fn sign_transaction(&self, tx: Transaction) -> Result<Transaction, BuilderError> {
         // For backward compatibility, we sort the inputs according to BIP-69 before signing
         let mut sorted_inputs = self.inputs.clone();
         sorted_inputs.sort_by(|a, b| {

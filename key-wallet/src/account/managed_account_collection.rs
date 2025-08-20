@@ -6,7 +6,7 @@
 use super::account_collection::AccountCollection;
 use super::address_pool::AddressPool;
 use super::managed_account::ManagedAccount;
-use super::types::{AccountType, ManagedAccountType, StandardAccountType};
+use super::types::{AccountType, ManagedAccountType};
 use crate::gap_limit::GapLimitManager;
 use crate::Network;
 use alloc::collections::BTreeMap;
