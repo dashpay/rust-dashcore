@@ -30,7 +30,8 @@ mod tests {
         assert!(!wallet.is_null());
 
         // Try to get account xpriv - should fail
-        let xpriv_str = wallet_get_account_xpriv(wallet, FFINetwork::Testnet, 0, &mut error);
+        let xpriv_str =
+            unsafe { wallet_get_account_xpriv(wallet, FFINetwork::Testnet, 0, &mut error) };
 
         // Should return null (not implemented for security)
         assert!(xpriv_str.is_null());
@@ -61,7 +62,8 @@ mod tests {
         assert!(!wallet.is_null());
 
         // Get account xpub
-        let xpub_str = wallet_get_account_xpub(wallet, FFINetwork::Testnet, 0, &mut error);
+        let xpub_str =
+            unsafe { wallet_get_account_xpub(wallet, FFINetwork::Testnet, 0, &mut error) };
 
         assert!(!xpub_str.is_null());
 
@@ -96,15 +98,16 @@ mod tests {
 
         // Try to derive private key - should now succeed (44'/5'/0'/0/0 for Dash)
         let path = CString::new("m/44'/5'/0'/0/0").unwrap();
-        let privkey_ptr =
-            wallet_derive_private_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error);
+        let privkey_ptr = unsafe {
+            wallet_derive_private_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
+        };
 
         // Should succeed and return a valid pointer
         assert!(!privkey_ptr.is_null());
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Convert to WIF to verify it's valid
-        let wif_str = private_key_to_wif(privkey_ptr, FFINetwork::Testnet, &mut error);
+        let wif_str = unsafe { private_key_to_wif(privkey_ptr, FFINetwork::Testnet, &mut error) };
         assert!(!wif_str.is_null());
 
         // Clean up
@@ -113,7 +116,9 @@ mod tests {
                 let _ = CString::from_raw(wif_str);
             }
         }
-        private_key_free(privkey_ptr);
+        unsafe {
+            private_key_free(privkey_ptr);
+        }
         unsafe {
             wallet::wallet_free(wallet);
         }
@@ -142,8 +147,9 @@ mod tests {
 
         // Derive public key using derivation path (44'/5'/0'/0/0 for Dash)
         let path = CString::new("m/44'/5'/0'/0/0").unwrap();
-        let pubkey_ptr =
-            wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error);
+        let pubkey_ptr = unsafe {
+            wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
+        };
 
         if pubkey_ptr.is_null() {
             panic!("pubkey_ptr is null, error: {:?}", error);
@@ -151,7 +157,7 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Get the hex representation to verify
-        let hex_str = public_key_to_hex(pubkey_ptr, &mut error);
+        let hex_str = unsafe { public_key_to_hex(pubkey_ptr, &mut error) };
         assert!(!hex_str.is_null());
 
         let hex = unsafe { CStr::from_ptr(hex_str).to_str().unwrap() };
@@ -165,7 +171,9 @@ mod tests {
                 let _ = CString::from_raw(hex_str);
             }
         }
-        public_key_free(pubkey_ptr);
+        unsafe {
+            public_key_free(pubkey_ptr);
+        }
 
         // Clean up
         unsafe {
@@ -184,13 +192,15 @@ mod tests {
         let mut hardened_out: *mut bool = ptr::null_mut();
         let mut count_out: usize = 0;
 
-        let success = derivation_path_parse(
-            path.as_ptr(),
-            &mut indices_out,
-            &mut hardened_out,
-            &mut count_out,
-            &mut error,
-        );
+        let success = unsafe {
+            derivation_path_parse(
+                path.as_ptr(),
+                &mut indices_out,
+                &mut hardened_out,
+                &mut count_out,
+                &mut error,
+            )
+        };
 
         assert!(success);
         assert_eq!(count_out, 5);
@@ -213,7 +223,9 @@ mod tests {
         assert!(!hardened[4]); // 5
 
         // Clean up
-        derivation_path_free(indices_out, hardened_out, count_out);
+        unsafe {
+            derivation_path_free(indices_out, hardened_out, count_out);
+        }
     }
 
     #[test]
@@ -227,19 +239,23 @@ mod tests {
         let mut hardened_out: *mut bool = ptr::null_mut();
         let mut count_out: usize = 0;
 
-        let success = derivation_path_parse(
-            path.as_ptr(),
-            &mut indices_out,
-            &mut hardened_out,
-            &mut count_out,
-            &mut error,
-        );
+        let success = unsafe {
+            derivation_path_parse(
+                path.as_ptr(),
+                &mut indices_out,
+                &mut hardened_out,
+                &mut count_out,
+                &mut error,
+            )
+        };
 
         assert!(success);
         assert_eq!(count_out, 0); // Root path has no indices
 
         // Clean up (should handle null pointers gracefully)
-        derivation_path_free(indices_out, hardened_out, count_out);
+        unsafe {
+            derivation_path_free(indices_out, hardened_out, count_out);
+        }
     }
 
     #[test]
@@ -247,7 +263,8 @@ mod tests {
         let mut error = FFIError::success();
 
         // Test with null wallet
-        let xpriv = wallet_get_account_xpriv(ptr::null(), FFINetwork::Testnet, 0, &mut error);
+        let xpriv =
+            unsafe { wallet_get_account_xpriv(ptr::null(), FFINetwork::Testnet, 0, &mut error) };
         assert!(xpriv.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
@@ -257,13 +274,15 @@ mod tests {
         let mut hardened_out: *mut bool = ptr::null_mut();
         let mut count_out: usize = 0;
 
-        let success = derivation_path_parse(
-            invalid_path.as_ptr(),
-            &mut indices_out,
-            &mut hardened_out,
-            &mut count_out,
-            &mut error,
-        );
+        let success = unsafe {
+            derivation_path_parse(
+                invalid_path.as_ptr(),
+                &mut indices_out,
+                &mut hardened_out,
+                &mut count_out,
+                &mut error,
+            )
+        };
 
         assert!(!success);
     }
@@ -274,8 +293,9 @@ mod tests {
 
         // Test with null wallet (44'/5'/0'/0/0 for Dash)
         let path = CString::new("m/44'/5'/0'/0/0").unwrap();
-        let pubkey_ptr =
-            wallet_derive_public_key(ptr::null(), FFINetwork::Testnet, path.as_ptr(), &mut error);
+        let pubkey_ptr = unsafe {
+            wallet_derive_public_key(ptr::null(), FFINetwork::Testnet, path.as_ptr(), &mut error)
+        };
 
         assert!(pubkey_ptr.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -294,8 +314,9 @@ mod tests {
         };
 
         // Test with null path
-        let pubkey_ptr =
-            wallet_derive_public_key(wallet, FFINetwork::Testnet, ptr::null(), &mut error);
+        let pubkey_ptr = unsafe {
+            wallet_derive_public_key(wallet, FFINetwork::Testnet, ptr::null(), &mut error)
+        };
 
         assert!(pubkey_ptr.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -315,26 +336,30 @@ mod tests {
         let mut hardened_out: *mut bool = ptr::null_mut();
         let mut count_out: usize = 0;
 
-        let success = derivation_path_parse(
-            ptr::null(),
-            &mut indices_out,
-            &mut hardened_out,
-            &mut count_out,
-            &mut error,
-        );
+        let success = unsafe {
+            derivation_path_parse(
+                ptr::null(),
+                &mut indices_out,
+                &mut hardened_out,
+                &mut count_out,
+                &mut error,
+            )
+        };
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         // Test with null output pointers
         let path = CString::new("m/44'/1'/0'").unwrap();
-        let success = derivation_path_parse(
-            path.as_ptr(),
-            ptr::null_mut(),
-            &mut hardened_out,
-            &mut count_out,
-            &mut error,
-        );
+        let success = unsafe {
+            derivation_path_parse(
+                path.as_ptr(),
+                ptr::null_mut(),
+                &mut hardened_out,
+                &mut count_out,
+                &mut error,
+            )
+        };
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -351,13 +376,15 @@ mod tests {
         let mut hardened_out: *mut bool = ptr::null_mut();
         let mut count_out: usize = 0;
 
-        let success = derivation_path_parse(
-            path.as_ptr(),
-            &mut indices_out,
-            &mut hardened_out,
-            &mut count_out,
-            &mut error,
-        );
+        let success = unsafe {
+            derivation_path_parse(
+                path.as_ptr(),
+                &mut indices_out,
+                &mut hardened_out,
+                &mut count_out,
+                &mut error,
+            )
+        };
 
         assert!(success);
         assert_eq!(count_out, 1);
@@ -369,18 +396,22 @@ mod tests {
         assert!(hardened[0]);
 
         // Clean up
-        derivation_path_free(indices_out, hardened_out, count_out);
+        unsafe {
+            derivation_path_free(indices_out, hardened_out, count_out);
+        }
 
         // Test mixed hardened and non-hardened
         let path = CString::new("m/1'/2/3'").unwrap();
 
-        let success = derivation_path_parse(
-            path.as_ptr(),
-            &mut indices_out,
-            &mut hardened_out,
-            &mut count_out,
-            &mut error,
-        );
+        let success = unsafe {
+            derivation_path_parse(
+                path.as_ptr(),
+                &mut indices_out,
+                &mut hardened_out,
+                &mut count_out,
+                &mut error,
+            )
+        };
 
         assert!(success);
         assert_eq!(count_out, 3);
@@ -396,7 +427,9 @@ mod tests {
         assert!(hardened[2]);
 
         // Clean up
-        derivation_path_free(indices_out, hardened_out, count_out);
+        unsafe {
+            derivation_path_free(indices_out, hardened_out, count_out);
+        }
     }
 
     #[test]
@@ -419,8 +452,9 @@ mod tests {
 
         // Test different account indices
         for account_index in 0..3 {
-            let xpub_str =
-                wallet_get_account_xpub(wallet, FFINetwork::Testnet, account_index, &mut error);
+            let xpub_str = unsafe {
+                wallet_get_account_xpub(wallet, FFINetwork::Testnet, account_index, &mut error)
+            };
 
             if !xpub_str.is_null() {
                 let xpub = unsafe { CStr::from_ptr(xpub_str).to_str().unwrap() };
@@ -434,7 +468,8 @@ mod tests {
         }
 
         // Test with null wallet
-        let xpub_str = wallet_get_account_xpub(ptr::null(), FFINetwork::Testnet, 0, &mut error);
+        let xpub_str =
+            unsafe { wallet_get_account_xpub(ptr::null(), FFINetwork::Testnet, 0, &mut error) };
 
         assert!(xpub_str.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -473,12 +508,13 @@ mod tests {
         for path_str in test_paths.iter() {
             let path = CString::new(*path_str).unwrap();
 
-            let pubkey_ptr =
-                wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error);
+            let pubkey_ptr = unsafe {
+                wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
+            };
 
             if !pubkey_ptr.is_null() {
                 // Get hex representation to verify
-                let hex_str = public_key_to_hex(pubkey_ptr, &mut error);
+                let hex_str = unsafe { public_key_to_hex(pubkey_ptr, &mut error) };
                 assert!(!hex_str.is_null());
 
                 let hex = unsafe { CStr::from_ptr(hex_str).to_str().unwrap() };
@@ -492,7 +528,9 @@ mod tests {
                         let _ = CString::from_raw(hex_str);
                     }
                 }
-                public_key_free(pubkey_ptr);
+                unsafe {
+                    public_key_free(pubkey_ptr);
+                }
             }
         }
 
@@ -505,11 +543,15 @@ mod tests {
     #[test]
     fn test_derivation_path_free_edge_cases() {
         // Test freeing null pointers
-        derivation_path_free(ptr::null_mut(), ptr::null_mut(), 0);
+        unsafe {
+            derivation_path_free(ptr::null_mut(), ptr::null_mut(), 0);
+        }
 
         // Test freeing with zero count
         let dummy_ptr = 1 as *mut u32;
         let dummy_bool_ptr = 1 as *mut bool;
-        derivation_path_free(dummy_ptr, dummy_bool_ptr, 0);
+        unsafe {
+            derivation_path_free(dummy_ptr, dummy_bool_ptr, 0);
+        }
     }
 }

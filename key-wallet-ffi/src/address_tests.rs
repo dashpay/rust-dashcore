@@ -271,7 +271,7 @@ mod address_tests {
         let mut error = FFIError::success();
 
         // Test with valid testnet address - may fail due to library version differences
-        let addr_str = CString::new("yXdxAYfK7KGx7gNpVHUfRsQMNpMj5cAadG").unwrap();
+        let addr_str = CString::new("yeRZBWYfeNE4yVUHV4ZLs83Ppn9aMRH57A").unwrap();
         let is_valid =
             unsafe { address_validate(addr_str.as_ptr(), FFINetwork::Testnet, &mut error) };
 

@@ -35,6 +35,15 @@ pub extern "C" fn wallet_manager_create(error: *mut FFIError) -> *mut FFIWalletM
 }
 
 /// Add a wallet from mnemonic to the manager with options
+///
+/// # Safety
+///
+/// - `manager` must be a valid pointer to an FFIWalletManager instance
+/// - `mnemonic` must be a valid pointer to a null-terminated C string
+/// - `passphrase` must be a valid pointer to a null-terminated C string or null
+/// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
     manager: *mut FFIWalletManager,
@@ -165,6 +174,14 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
 }
 
 /// Add a wallet from mnemonic to the manager (backward compatibility)
+///
+/// # Safety
+///
+/// - `manager` must be a valid pointer to an FFIWalletManager instance
+/// - `mnemonic` must be a valid pointer to a null-terminated C string
+/// - `passphrase` must be a valid pointer to a null-terminated C string or null
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
     manager: *mut FFIWalletManager,
@@ -424,6 +441,15 @@ pub unsafe extern "C" fn wallet_manager_get_change_address(
 /// Get wallet balance
 ///
 /// NOTE: This is a placeholder implementation
+///
+/// # Safety
+///
+/// - `_manager` must be a valid pointer to an FFIWalletManager instance or null (unused)
+/// - `_wallet_id` must be a valid pointer to a 32-byte wallet ID or null (unused)
+/// - `confirmed_out` must be a valid pointer to a c_ulong
+/// - `unconfirmed_out` must be a valid pointer to a c_ulong
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
     _manager: *const FFIWalletManager,
@@ -536,7 +562,7 @@ pub unsafe extern "C" fn wallet_manager_get_monitored_addresses(
                 {
                     let public_key = derived_key.public_key;
                     let dash_pubkey = dashcore::PublicKey::new(public_key);
-                    let dash_network = dashcore::Network::from(network_rust);
+                    let dash_network = network_rust;
                     let address = key_wallet::Address::p2pkh(&dash_pubkey, dash_network);
 
                     if let Ok(c_str) = CString::new(address.to_string()) {
@@ -644,6 +670,12 @@ pub unsafe extern "C" fn wallet_manager_current_height(
 }
 
 /// Get wallet count
+///
+/// # Safety
+///
+/// - `manager` must be a valid pointer to an FFIWalletManager instance
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_wallet_count(
     manager: *const FFIWalletManager,
@@ -674,6 +706,12 @@ pub unsafe extern "C" fn wallet_manager_wallet_count(
 }
 
 /// Free wallet manager
+///
+/// # Safety
+///
+/// - `manager` must be a valid pointer to an FFIWalletManager that was created by this library
+/// - The pointer must not be used after calling this function
+/// - This function must only be called once per manager
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_free(manager: *mut FFIWalletManager) {
     if !manager.is_null() {
@@ -684,6 +722,13 @@ pub unsafe extern "C" fn wallet_manager_free(manager: *mut FFIWalletManager) {
 }
 
 /// Free wallet IDs buffer
+///
+/// # Safety
+///
+/// - `wallet_ids` must be a valid pointer to a buffer allocated by this library
+/// - `count` must match the number of wallet IDs in the buffer
+/// - The pointer must not be used after calling this function
+/// - This function must only be called once per buffer
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_free_wallet_ids(wallet_ids: *mut u8, count: usize) {
     if !wallet_ids.is_null() && count > 0 {

@@ -19,13 +19,15 @@ mod tests {
         let mut seed = [0u8; 64];
         let mut seed_len = seed.len();
 
-        let success = mnemonic::mnemonic_to_seed(
-            mnemonic.as_ptr(),
-            passphrase.as_ptr(),
-            seed.as_mut_ptr(),
-            &mut seed_len,
-            &mut error,
-        );
+        let success = unsafe {
+            mnemonic::mnemonic_to_seed(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                seed.as_mut_ptr(),
+                &mut seed_len,
+                &mut error,
+            )
+        };
         assert!(success);
         assert_eq!(seed_len, 64);
 
@@ -57,7 +59,7 @@ mod tests {
         };
 
         // Get public key
-        let xpub = derivation_xpriv_to_xpub(xprv, &mut error);
+        let xpub = unsafe { derivation_xpriv_to_xpub(xprv, &mut error) };
 
         assert!(!xpub.is_null());
 
@@ -85,7 +87,7 @@ mod tests {
         };
 
         // Convert to string
-        let xprv_str = derivation_xpriv_to_string(xprv, &mut error);
+        let xprv_str = unsafe { derivation_xpriv_to_string(xprv, &mut error) };
         assert!(!xprv_str.is_null());
 
         let str_val = unsafe { CStr::from_ptr(xprv_str).to_str().unwrap() };
@@ -114,10 +116,10 @@ mod tests {
             derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
         };
 
-        let xpub = derivation_xpriv_to_xpub(xprv, &mut error);
+        let xpub = unsafe { derivation_xpriv_to_xpub(xprv, &mut error) };
 
         // Convert to string
-        let xpub_str = derivation_xpub_to_string(xpub, &mut error);
+        let xpub_str = unsafe { derivation_xpub_to_string(xpub, &mut error) };
         assert!(!xpub_str.is_null());
 
         let str_val = unsafe { CStr::from_ptr(xpub_str).to_str().unwrap() };
@@ -149,11 +151,12 @@ mod tests {
             derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
         };
 
-        let xpub = derivation_xpriv_to_xpub(xprv, &mut error);
+        let xpub = unsafe { derivation_xpriv_to_xpub(xprv, &mut error) };
 
         // Get fingerprint
         let mut fingerprint = [0u8; 4];
-        let success = derivation_xpub_fingerprint(xpub, fingerprint.as_mut_ptr(), &mut error);
+        let success =
+            unsafe { derivation_xpub_fingerprint(xpub, fingerprint.as_mut_ptr(), &mut error) };
 
         assert!(success);
         // Fingerprint should not be all zeros
@@ -347,9 +350,9 @@ mod tests {
             derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
         };
 
-        let xpub = derivation_xpriv_to_xpub(master_key, &mut error);
+        let xpub = unsafe { derivation_xpriv_to_xpub(master_key, &mut error) };
 
-        let xpub_string = derivation_xpub_to_string(xpub, &mut error);
+        let xpub_string = unsafe { derivation_xpub_to_string(xpub, &mut error) };
 
         assert!(!xpub_string.is_null());
 
@@ -379,7 +382,7 @@ mod tests {
             derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
         };
 
-        let xpriv_string = derivation_xpriv_to_string(master_key, &mut error);
+        let xpriv_string = unsafe { derivation_xpriv_to_string(master_key, &mut error) };
 
         assert!(!xpriv_string.is_null());
 
@@ -410,10 +413,11 @@ mod tests {
             derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
         };
 
-        let xpub = derivation_xpriv_to_xpub(master_key, &mut error);
+        let xpub = unsafe { derivation_xpriv_to_xpub(master_key, &mut error) };
 
         let mut fingerprint_buf = [0u8; 4];
-        let success = derivation_xpub_fingerprint(xpub, fingerprint_buf.as_mut_ptr(), &mut error);
+        let success =
+            unsafe { derivation_xpub_fingerprint(xpub, fingerprint_buf.as_mut_ptr(), &mut error) };
 
         // Function should succeed
         assert!(success);
@@ -602,8 +606,8 @@ mod tests {
         assert_eq!(error.code, FFIErrorCode::Success);
 
         // Convert to strings and verify they have different prefixes
-        let main_str = derivation_xpriv_to_string(xprv_main, &mut error);
-        let test_str = derivation_xpriv_to_string(xprv_test, &mut error);
+        let main_str = unsafe { derivation_xpriv_to_string(xprv_main, &mut error) };
+        let test_str = unsafe { derivation_xpriv_to_string(xprv_test, &mut error) };
 
         let main_string = unsafe { CStr::from_ptr(main_str) }.to_str().unwrap();
         let test_string = unsafe { CStr::from_ptr(test_str) }.to_str().unwrap();
@@ -630,7 +634,7 @@ mod tests {
     fn test_derivation_xpriv_to_xpub_null_input() {
         let mut error = FFIError::success();
 
-        let xpub = derivation_xpriv_to_xpub(ptr::null_mut(), &mut error);
+        let xpub = unsafe { derivation_xpriv_to_xpub(ptr::null_mut(), &mut error) };
 
         assert!(xpub.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -640,7 +644,7 @@ mod tests {
     fn test_derivation_xpriv_to_string_null_input() {
         let mut error = FFIError::success();
 
-        let xprv_str = derivation_xpriv_to_string(ptr::null_mut(), &mut error);
+        let xprv_str = unsafe { derivation_xpriv_to_string(ptr::null_mut(), &mut error) };
 
         assert!(xprv_str.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -650,7 +654,7 @@ mod tests {
     fn test_derivation_xpub_to_string_null_input() {
         let mut error = FFIError::success();
 
-        let xpub_str = derivation_xpub_to_string(ptr::null_mut(), &mut error);
+        let xpub_str = unsafe { derivation_xpub_to_string(ptr::null_mut(), &mut error) };
 
         assert!(xpub_str.is_null());
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -662,8 +666,9 @@ mod tests {
         let mut fingerprint = [0u8; 4];
 
         // Test with null xpub
-        let success =
-            derivation_xpub_fingerprint(ptr::null_mut(), fingerprint.as_mut_ptr(), &mut error);
+        let success = unsafe {
+            derivation_xpub_fingerprint(ptr::null_mut(), fingerprint.as_mut_ptr(), &mut error)
+        };
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
@@ -677,9 +682,9 @@ mod tests {
             derivation_new_master_key(seed.as_ptr(), seed.len(), FFINetwork::Testnet, &mut error)
         };
 
-        let xpub = derivation_xpriv_to_xpub(xprv, &mut error);
+        let xpub = unsafe { derivation_xpriv_to_xpub(xprv, &mut error) };
 
-        let success = derivation_xpub_fingerprint(xpub, ptr::null_mut(), &mut error);
+        let success = unsafe { derivation_xpub_fingerprint(xpub, ptr::null_mut(), &mut error) };
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
@@ -967,13 +972,14 @@ mod tests {
         assert!(!master_xprv.is_null());
 
         // Convert to public key
-        let master_xpub = derivation_xpriv_to_xpub(master_xprv, &mut error);
+        let master_xpub = unsafe { derivation_xpriv_to_xpub(master_xprv, &mut error) };
         assert!(!master_xpub.is_null());
 
         // Get fingerprint
         let mut fingerprint = [0u8; 4];
-        let success =
-            derivation_xpub_fingerprint(master_xpub, fingerprint.as_mut_ptr(), &mut error);
+        let success = unsafe {
+            derivation_xpub_fingerprint(master_xpub, fingerprint.as_mut_ptr(), &mut error)
+        };
         assert!(success);
 
         // Derive child key using path
@@ -990,14 +996,14 @@ mod tests {
         assert!(!child_xprv.is_null());
 
         // Convert child to public
-        let child_xpub = derivation_xpriv_to_xpub(child_xprv, &mut error);
+        let child_xpub = unsafe { derivation_xpriv_to_xpub(child_xprv, &mut error) };
         assert!(!child_xpub.is_null());
 
         // Convert to strings
-        let master_xprv_str = derivation_xpriv_to_string(master_xprv, &mut error);
-        let master_xpub_str = derivation_xpub_to_string(master_xpub, &mut error);
-        let child_xprv_str = derivation_xpriv_to_string(child_xprv, &mut error);
-        let child_xpub_str = derivation_xpub_to_string(child_xpub, &mut error);
+        let master_xprv_str = unsafe { derivation_xpriv_to_string(master_xprv, &mut error) };
+        let master_xpub_str = unsafe { derivation_xpub_to_string(master_xpub, &mut error) };
+        let child_xprv_str = unsafe { derivation_xpriv_to_string(child_xprv, &mut error) };
+        let child_xpub_str = unsafe { derivation_xpub_to_string(child_xpub, &mut error) };
 
         // Verify all strings are different and have correct prefixes
         let master_prv_s = unsafe { CStr::from_ptr(master_xprv_str).to_str().unwrap() };

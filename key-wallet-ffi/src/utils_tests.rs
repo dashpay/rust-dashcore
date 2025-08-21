@@ -1,7 +1,7 @@
 //! Unit tests for utils FFI module
 
 #[cfg(test)]
-mod tests {
+mod util_tests {
     use crate::utils;
     use std::ffi::CString;
     use std::ptr;
@@ -18,18 +18,24 @@ mod tests {
         assert_eq!(retrieved, test_str);
 
         // Free the string
-        utils::string_free(raw_ptr);
+        unsafe {
+            utils::string_free(raw_ptr);
+        }
     }
 
     #[test]
     fn test_string_free() {
         // Test freeing null pointer (should not crash)
-        utils::string_free(ptr::null_mut());
+        unsafe {
+            utils::string_free(ptr::null_mut());
+        }
 
         // Test freeing valid string
         let c_string = CString::new("test").unwrap();
         let raw_ptr = c_string.into_raw();
-        utils::string_free(raw_ptr);
+        unsafe {
+            utils::string_free(raw_ptr);
+        }
     }
 
     #[test]

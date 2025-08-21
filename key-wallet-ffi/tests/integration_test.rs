@@ -21,7 +21,7 @@ fn test_full_wallet_workflow() {
     assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
     // 2. Validate the mnemonic
-    let is_valid = key_wallet_ffi::mnemonic::mnemonic_validate(mnemonic, error);
+    let is_valid = unsafe { key_wallet_ffi::mnemonic::mnemonic_validate(mnemonic, error) };
     assert!(is_valid);
 
     // 3. Create wallet from mnemonic
@@ -99,13 +99,15 @@ fn test_seed_to_wallet_workflow() {
     let mut seed = [0u8; 64];
     let mut seed_len: usize = 0;
 
-    let success = key_wallet_ffi::mnemonic::mnemonic_to_seed(
-        mnemonic.as_ptr(),
-        passphrase.as_ptr(),
-        seed.as_mut_ptr(),
-        &mut seed_len,
-        error,
-    );
+    let success = unsafe {
+        key_wallet_ffi::mnemonic::mnemonic_to_seed(
+            mnemonic.as_ptr(),
+            passphrase.as_ptr(),
+            seed.as_mut_ptr(),
+            &mut seed_len,
+            error,
+        )
+    };
     assert!(success);
     assert_eq!(seed_len, 64);
 

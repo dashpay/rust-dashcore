@@ -16,6 +16,15 @@ use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFINetwork, FFIWallet, FFIWalletAccountCreationOptions};
 
 /// Create a new wallet from mnemonic with options
+///
+/// # Safety
+///
+/// - `mnemonic` must be a valid pointer to a null-terminated C string
+/// - `passphrase` must be a valid pointer to a null-terminated C string or null
+/// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
+/// - The returned pointer must be freed with `wallet_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     mnemonic: *const c_char,
@@ -123,6 +132,14 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
 }
 
 /// Create a new wallet from mnemonic (backward compatibility)
+///
+/// # Safety
+///
+/// - `mnemonic` must be a valid pointer to a null-terminated C string
+/// - `passphrase` must be a valid pointer to a null-terminated C string or null
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
+/// - The returned pointer must be freed with `wallet_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_from_mnemonic(
     mnemonic: *const c_char,
@@ -223,6 +240,13 @@ pub unsafe extern "C" fn wallet_create_from_seed(
 }
 
 /// Create a new wallet from seed bytes
+///
+/// # Safety
+///
+/// - `seed_bytes` must be a valid pointer to a byte array of `seed_len` length
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
+/// - The returned pointer must be freed with `wallet_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_from_seed_bytes(
     seed_bytes: *const u8,
@@ -457,6 +481,12 @@ pub unsafe extern "C" fn wallet_get_id(
 }
 
 /// Check if wallet has mnemonic
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet instance
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_has_mnemonic(
     wallet: *const FFIWallet,
@@ -475,6 +505,12 @@ pub unsafe extern "C" fn wallet_has_mnemonic(
 }
 
 /// Check if wallet is watch-only
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet instance
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_is_watch_only(
     wallet: *const FFIWallet,
@@ -493,6 +529,13 @@ pub unsafe extern "C" fn wallet_is_watch_only(
 }
 
 /// Get extended public key for account
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet instance
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
+/// - The returned C string must be freed by the caller when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_xpub(
     wallet: *const FFIWallet,
@@ -534,6 +577,12 @@ pub unsafe extern "C" fn wallet_get_xpub(
 }
 
 /// Free a wallet
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet that was created by this library
+/// - The pointer must not be used after calling this function
+/// - This function must only be called once per wallet
 #[no_mangle]
 pub unsafe extern "C" fn wallet_free(wallet: *mut FFIWallet) {
     if !wallet.is_null() {

@@ -32,8 +32,14 @@ pub struct FFIExtendedPublicKey {
 }
 
 /// Get extended private key for account
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `string_free`
 #[no_mangle]
-pub extern "C" fn wallet_get_account_xpriv(
+pub unsafe extern "C" fn wallet_get_account_xpriv(
     wallet: *const FFIWallet,
     network: FFINetwork,
     account_index: c_uint,
@@ -78,8 +84,14 @@ pub extern "C" fn wallet_get_account_xpriv(
 }
 
 /// Get extended public key for account
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `string_free`
 #[no_mangle]
-pub extern "C" fn wallet_get_account_xpub(
+pub unsafe extern "C" fn wallet_get_account_xpub(
     wallet: *const FFIWallet,
     network: FFINetwork,
     account_index: c_uint,
@@ -120,8 +132,15 @@ pub extern "C" fn wallet_get_account_xpub(
 
 /// Derive private key at a specific path
 /// Returns an opaque FFIPrivateKey pointer that must be freed with private_key_free
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `derivation_path` must be a valid null-terminated C string
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned pointer must be freed with `private_key_free`
 #[no_mangle]
-pub extern "C" fn wallet_derive_private_key(
+pub unsafe extern "C" fn wallet_derive_private_key(
     wallet: *const FFIWallet,
     network: FFINetwork,
     derivation_path: *const c_char,
@@ -187,8 +206,15 @@ pub extern "C" fn wallet_derive_private_key(
 
 /// Derive extended private key at a specific path
 /// Returns an opaque FFIExtendedPrivateKey pointer that must be freed with extended_private_key_free
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `derivation_path` must be a valid null-terminated C string
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned pointer must be freed with `extended_private_key_free`
 #[no_mangle]
-pub extern "C" fn wallet_derive_extended_private_key(
+pub unsafe extern "C" fn wallet_derive_extended_private_key(
     wallet: *const FFIWallet,
     network: FFINetwork,
     derivation_path: *const c_char,
@@ -253,8 +279,15 @@ pub extern "C" fn wallet_derive_extended_private_key(
 }
 
 /// Derive private key at a specific path and return as WIF string
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `derivation_path` must be a valid null-terminated C string
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `string_free`
 #[no_mangle]
-pub extern "C" fn wallet_derive_private_key_as_wif(
+pub unsafe extern "C" fn wallet_derive_private_key_as_wif(
     wallet: *const FFIWallet,
     network: FFINetwork,
     derivation_path: *const c_char,
@@ -327,8 +360,13 @@ pub extern "C" fn wallet_derive_private_key_as_wif(
 }
 
 /// Free a private key
+///
+/// # Safety
+///
+/// - `key` must be a valid pointer created by private key functions or null
+/// - After calling this function, the pointer becomes invalid
 #[no_mangle]
-pub extern "C" fn private_key_free(key: *mut FFIPrivateKey) {
+pub unsafe extern "C" fn private_key_free(key: *mut FFIPrivateKey) {
     if !key.is_null() {
         unsafe {
             let _ = Box::from_raw(key);
@@ -337,8 +375,13 @@ pub extern "C" fn private_key_free(key: *mut FFIPrivateKey) {
 }
 
 /// Free an extended private key
+///
+/// # Safety
+///
+/// - `key` must be a valid pointer created by extended private key functions or null
+/// - After calling this function, the pointer becomes invalid
 #[no_mangle]
-pub extern "C" fn extended_private_key_free(key: *mut FFIExtendedPrivateKey) {
+pub unsafe extern "C" fn extended_private_key_free(key: *mut FFIExtendedPrivateKey) {
     if !key.is_null() {
         unsafe {
             let _ = Box::from_raw(key);
@@ -347,8 +390,14 @@ pub extern "C" fn extended_private_key_free(key: *mut FFIExtendedPrivateKey) {
 }
 
 /// Get private key as WIF string from FFIPrivateKey
+///
+/// # Safety
+///
+/// - `key` must be a valid pointer to an FFIPrivateKey
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `string_free`
 #[no_mangle]
-pub extern "C" fn private_key_to_wif(
+pub unsafe extern "C" fn private_key_to_wif(
     key: *const FFIPrivateKey,
     network: FFINetwork,
     error: *mut FFIError,
@@ -388,8 +437,15 @@ pub extern "C" fn private_key_to_wif(
 
 /// Derive public key at a specific path
 /// Returns an opaque FFIPublicKey pointer that must be freed with public_key_free
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `derivation_path` must be a valid null-terminated C string
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned pointer must be freed with `public_key_free`
 #[no_mangle]
-pub extern "C" fn wallet_derive_public_key(
+pub unsafe extern "C" fn wallet_derive_public_key(
     wallet: *const FFIWallet,
     network: FFINetwork,
     derivation_path: *const c_char,
@@ -455,8 +511,15 @@ pub extern "C" fn wallet_derive_public_key(
 
 /// Derive extended public key at a specific path
 /// Returns an opaque FFIExtendedPublicKey pointer that must be freed with extended_public_key_free
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `derivation_path` must be a valid null-terminated C string
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned pointer must be freed with `extended_public_key_free`
 #[no_mangle]
-pub extern "C" fn wallet_derive_extended_public_key(
+pub unsafe extern "C" fn wallet_derive_extended_public_key(
     wallet: *const FFIWallet,
     network: FFINetwork,
     derivation_path: *const c_char,
@@ -521,8 +584,15 @@ pub extern "C" fn wallet_derive_extended_public_key(
 }
 
 /// Derive public key at a specific path and return as hex string
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `derivation_path` must be a valid null-terminated C string
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `string_free`
 #[no_mangle]
-pub extern "C" fn wallet_derive_public_key_as_hex(
+pub unsafe extern "C" fn wallet_derive_public_key_as_hex(
     wallet: *const FFIWallet,
     network: FFINetwork,
     derivation_path: *const c_char,
@@ -595,8 +665,13 @@ pub extern "C" fn wallet_derive_public_key_as_hex(
 }
 
 /// Free a public key
+///
+/// # Safety
+///
+/// - `key` must be a valid pointer created by public key functions or null
+/// - After calling this function, the pointer becomes invalid
 #[no_mangle]
-pub extern "C" fn public_key_free(key: *mut FFIPublicKey) {
+pub unsafe extern "C" fn public_key_free(key: *mut FFIPublicKey) {
     if !key.is_null() {
         unsafe {
             let _ = Box::from_raw(key);
@@ -605,8 +680,13 @@ pub extern "C" fn public_key_free(key: *mut FFIPublicKey) {
 }
 
 /// Free an extended public key
+///
+/// # Safety
+///
+/// - `key` must be a valid pointer created by extended public key functions or null
+/// - After calling this function, the pointer becomes invalid
 #[no_mangle]
-pub extern "C" fn extended_public_key_free(key: *mut FFIExtendedPublicKey) {
+pub unsafe extern "C" fn extended_public_key_free(key: *mut FFIExtendedPublicKey) {
     if !key.is_null() {
         unsafe {
             let _ = Box::from_raw(key);
@@ -615,8 +695,17 @@ pub extern "C" fn extended_public_key_free(key: *mut FFIExtendedPublicKey) {
 }
 
 /// Get public key as hex string from FFIPublicKey
+///
+/// # Safety
+///
+/// - `key` must be a valid pointer to an FFIPublicKey
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `string_free`
 #[no_mangle]
-pub extern "C" fn public_key_to_hex(key: *const FFIPublicKey, error: *mut FFIError) -> *mut c_char {
+pub unsafe extern "C" fn public_key_to_hex(
+    key: *const FFIPublicKey,
+    error: *mut FFIError,
+) -> *mut c_char {
     if key.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Public key is null".to_string());
         return ptr::null_mut();
@@ -642,8 +731,17 @@ pub extern "C" fn public_key_to_hex(key: *const FFIPublicKey, error: *mut FFIErr
 }
 
 /// Convert derivation path string to indices
+///
+/// # Safety
+///
+/// - `path` must be a valid null-terminated C string or null
+/// - `indices_out` must be a valid pointer to store the indices array pointer
+/// - `hardened_out` must be a valid pointer to store the hardened flags array pointer
+/// - `count_out` must be a valid pointer to store the count
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned arrays must be freed with `derivation_path_free`
 #[no_mangle]
-pub extern "C" fn derivation_path_parse(
+pub unsafe extern "C" fn derivation_path_parse(
     path: *const c_char,
     indices_out: *mut *mut u32,
     hardened_out: *mut *mut bool,
@@ -723,8 +821,19 @@ pub extern "C" fn derivation_path_parse(
 /// Free derivation path arrays
 /// Note: This function expects the count to properly free the slices
 /// For now, we're leaking memory as we don't have the count parameter
+///
+/// # Safety
+///
+/// - `indices` must be a valid pointer created by `derivation_path_parse` or null
+/// - `hardened` must be a valid pointer created by `derivation_path_parse` or null
+/// - `count` must match the count from `derivation_path_parse`
+/// - After calling this function, the pointers become invalid
 #[no_mangle]
-pub extern "C" fn derivation_path_free(indices: *mut u32, hardened: *mut bool, count: usize) {
+pub unsafe extern "C" fn derivation_path_free(
+    indices: *mut u32,
+    hardened: *mut bool,
+    count: usize,
+) {
     if !indices.is_null() && count > 0 {
         unsafe {
             let _ = Vec::from_raw_parts(indices, count, count);

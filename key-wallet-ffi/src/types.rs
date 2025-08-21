@@ -336,6 +336,11 @@ impl FFIWalletAccountCreationOptions {
     }
 
     /// Convert FFI options to Rust WalletAccountCreationOptions
+    ///
+    /// # Safety
+    ///
+    /// - If `account_indices` is not null, it must point to a valid array of at least `account_indices_count` elements
+    /// - The indices in the array must be valid u32 values
     pub unsafe fn to_wallet_options(
         &self,
     ) -> key_wallet::wallet::initialization::WalletAccountCreationOptions {

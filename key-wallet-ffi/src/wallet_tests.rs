@@ -1,7 +1,8 @@
 //! Unit tests for wallet FFI module
 
 #[cfg(test)]
-mod tests {
+mod wallet_tests {
+    use crate::account::account_free;
     use crate::error::{FFIError, FFIErrorCode};
     use crate::types::FFINetwork;
     use crate::wallet;
@@ -41,7 +42,7 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
-        let seed = vec![0x01u8; 64];
+        let seed = [0x01u8; 64];
 
         let wallet = unsafe {
             wallet::wallet_create_from_seed(seed.as_ptr(), seed.len(), FFINetwork::Testnet, error)
@@ -61,8 +62,8 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
-        // Create a wallet first to get an xpub
-        let seed = vec![0x02u8; 64];
+        // Create a wallet first to get a xpub
+        let seed = [0x02u8; 64];
         let source_wallet = unsafe {
             wallet::wallet_create_from_seed(seed.as_ptr(), seed.len(), FFINetwork::Testnet, error)
         };
@@ -115,7 +116,7 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
-        let seed = vec![0x03u8; 64];
+        let seed = [0x03u8; 64];
 
         // Create wallet with multiple accounts
         unsafe {
@@ -232,7 +233,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Create seed bytes directly
-        let seed_bytes = vec![0x05u8; 64];
+        let seed_bytes = [0x05u8; 64];
 
         let wallet = unsafe {
             wallet::wallet_create_from_seed_bytes(
@@ -296,7 +297,7 @@ mod tests {
         }
 
         // Create watch-only wallet (no mnemonic)
-        let seed = vec![0x06u8; 64];
+        let seed = [0x06u8; 64];
         let source_wallet = unsafe {
             wallet::wallet_create_from_seed(seed.as_ptr(), seed.len(), FFINetwork::Testnet, error)
         };
@@ -344,15 +345,14 @@ mod tests {
         // Clean up the account if it was created
         if !result.account.is_null() {
             unsafe {
-                // We need to free the account if it was created
-                // Note: there should be an account_free function
+                account_free(result.account);
             }
         }
-        
+
         // Free error message if present
         if !result.error_message.is_null() {
             unsafe {
-                let _ = std::ffi::CString::from_raw(result.error_message);
+                let _ = CString::from_raw(result.error_message);
             }
         }
 
@@ -365,16 +365,15 @@ mod tests {
     #[test]
     fn test_wallet_add_account_null() {
         // Test with null wallet
-        let result = unsafe {
-            wallet::wallet_add_account(ptr::null_mut(), FFINetwork::Testnet, 0, 0)
-        };
+        let result =
+            unsafe { wallet::wallet_add_account(ptr::null_mut(), FFINetwork::Testnet, 0, 0) };
         assert!(result.account.is_null());
         assert_ne!(result.error_code, 0);
-        
+
         // Free error message if present
         if !result.error_message.is_null() {
             unsafe {
-                let _ = std::ffi::CString::from_raw(result.error_message);
+                let _ = CString::from_raw(result.error_message);
             }
         }
     }
@@ -385,7 +384,7 @@ mod tests {
         let error = &mut error as *mut FFIError;
 
         // Test creating from normal seed size
-        let normal_seed = vec![0x07u8; 64]; // Standard seed size
+        let normal_seed = [0x07u8; 64]; // Standard seed size
         let wallet = unsafe {
             wallet::wallet_create_from_seed(
                 normal_seed.as_ptr(),
@@ -400,7 +399,7 @@ mod tests {
         }
 
         // Test creating from larger seed
-        let large_seed = vec![0x08u8; 128];
+        let large_seed = [0x08u8; 128];
         let wallet = unsafe {
             wallet::wallet_create_from_seed(
                 large_seed.as_ptr(),

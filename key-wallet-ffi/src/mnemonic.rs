@@ -13,17 +13,23 @@ use key_wallet::Mnemonic;
 use crate::error::{FFIError, FFIErrorCode};
 
 /// Language enumeration for mnemonic generation
+///
+/// This enum must be kept in sync with key_wallet::mnemonic::Language.
+/// When adding new languages to the key_wallet crate, remember to update
+/// this FFI enum and both From implementations below.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub enum FFILanguage {
     English = 0,
     ChineseSimplified = 1,
     ChineseTraditional = 2,
-    French = 3,
-    Italian = 4,
-    Japanese = 5,
-    Korean = 6,
-    Spanish = 7,
+    Czech = 3,
+    French = 4,
+    Italian = 5,
+    Japanese = 6,
+    Korean = 7,
+    Portuguese = 8,
+    Spanish = 9,
 }
 
 impl From<FFILanguage> for key_wallet::mnemonic::Language {
@@ -33,11 +39,31 @@ impl From<FFILanguage> for key_wallet::mnemonic::Language {
             FFILanguage::English => Language::English,
             FFILanguage::ChineseSimplified => Language::ChineseSimplified,
             FFILanguage::ChineseTraditional => Language::ChineseTraditional,
+            FFILanguage::Czech => Language::Czech,
             FFILanguage::French => Language::French,
             FFILanguage::Italian => Language::Italian,
             FFILanguage::Japanese => Language::Japanese,
             FFILanguage::Korean => Language::Korean,
+            FFILanguage::Portuguese => Language::Portuguese,
             FFILanguage::Spanish => Language::Spanish,
+        }
+    }
+}
+
+impl From<key_wallet::mnemonic::Language> for FFILanguage {
+    fn from(l: key_wallet::mnemonic::Language) -> Self {
+        use key_wallet::mnemonic::Language;
+        match l {
+            Language::English => FFILanguage::English,
+            Language::ChineseSimplified => FFILanguage::ChineseSimplified,
+            Language::ChineseTraditional => FFILanguage::ChineseTraditional,
+            Language::Czech => FFILanguage::Czech,
+            Language::French => FFILanguage::French,
+            Language::Italian => FFILanguage::Italian,
+            Language::Japanese => FFILanguage::Japanese,
+            Language::Korean => FFILanguage::Korean,
+            Language::Portuguese => FFILanguage::Portuguese,
+            Language::Spanish => FFILanguage::Spanish,
         }
     }
 }
@@ -157,8 +183,13 @@ pub extern "C" fn mnemonic_generate_with_language(
 }
 
 /// Validate a mnemonic phrase
+///
+/// # Safety
+///
+/// - `mnemonic` must be a valid null-terminated C string or null
+/// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
-pub extern "C" fn mnemonic_validate(mnemonic: *const c_char, error: *mut FFIError) -> bool {
+pub unsafe extern "C" fn mnemonic_validate(mnemonic: *const c_char, error: *mut FFIError) -> bool {
     if mnemonic.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Mnemonic is null".to_string());
         return false;
@@ -185,10 +216,12 @@ pub extern "C" fn mnemonic_validate(mnemonic: *const c_char, error: *mut FFIErro
         Language::English,
         Language::ChineseSimplified,
         Language::ChineseTraditional,
+        Language::Czech,
         Language::French,
         Language::Italian,
         Language::Japanese,
         Language::Korean,
+        Language::Portuguese,
         Language::Spanish,
     ];
 
@@ -209,8 +242,16 @@ pub extern "C" fn mnemonic_validate(mnemonic: *const c_char, error: *mut FFIErro
 }
 
 /// Convert mnemonic to seed with optional passphrase
+///
+/// # Safety
+///
+/// - `mnemonic` must be a valid null-terminated C string
+/// - `passphrase` must be a valid null-terminated C string or null
+/// - `seed_out` must be a valid pointer to a buffer of at least 64 bytes
+/// - `seed_len` must be a valid pointer to store the seed length
+/// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
-pub extern "C" fn mnemonic_to_seed(
+pub unsafe extern "C" fn mnemonic_to_seed(
     mnemonic: *const c_char,
     passphrase: *const c_char,
     seed_out: *mut u8,
@@ -289,8 +330,16 @@ pub extern "C" fn mnemonic_to_seed(
 }
 
 /// Get word count from mnemonic
+///
+/// # Safety
+///
+/// - `mnemonic` must be a valid null-terminated C string or null
+/// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
-pub extern "C" fn mnemonic_word_count(mnemonic: *const c_char, error: *mut FFIError) -> c_uint {
+pub unsafe extern "C" fn mnemonic_word_count(
+    mnemonic: *const c_char,
+    error: *mut FFIError,
+) -> c_uint {
     if mnemonic.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Mnemonic is null".to_string());
         return 0;
@@ -316,8 +365,13 @@ pub extern "C" fn mnemonic_word_count(mnemonic: *const c_char, error: *mut FFIEr
 }
 
 /// Free a mnemonic string
+///
+/// # Safety
+///
+/// - `mnemonic` must be a valid pointer created by mnemonic generation functions or null
+/// - After calling this function, the pointer becomes invalid
 #[no_mangle]
-pub extern "C" fn mnemonic_free(mnemonic: *mut c_char) {
+pub unsafe extern "C" fn mnemonic_free(mnemonic: *mut c_char) {
     if !mnemonic.is_null() {
         unsafe {
             let _ = CString::from_raw(mnemonic);

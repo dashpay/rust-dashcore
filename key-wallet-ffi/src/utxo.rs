@@ -1,11 +1,12 @@
 //! UTXO management
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::os::raw::c_char;
 use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetwork, FFIWallet};
+use crate::managed_wallet::FFIManagedWalletInfo;
+use crate::types::FFINetwork;
 
 /// UTXO structure for FFI
 #[repr(C)]
@@ -54,129 +55,155 @@ impl FFIUTXO {
         }
     }
 
-    /// Free the FFIUTXO
-    pub unsafe fn free(self) {
+    /// Free the FFIUTXO's allocated memory
+    ///
+    /// # Safety
+    ///
+    /// - `self.address` must be a valid pointer created by CString or null
+    /// - `self.script_pubkey` must be a valid pointer to a Box allocation or null
+    /// - After calling this function, the pointers become invalid
+    pub unsafe fn free(&mut self) {
         if !self.address.is_null() {
             let _ = CString::from_raw(self.address);
+            self.address = ptr::null_mut();
         }
         if !self.script_pubkey.is_null() && self.script_len > 0 {
             let _ =
                 Box::from_raw(std::slice::from_raw_parts_mut(self.script_pubkey, self.script_len));
+            self.script_pubkey = ptr::null_mut();
+            self.script_len = 0;
         }
     }
 }
 
-/// Add UTXO to wallet
+/// Get all UTXOs from managed wallet info
+///
+/// # Safety
+///
+/// - `managed_info` must be a valid pointer to an FFIManagedWalletInfo instance
+/// - `utxos_out` must be a valid pointer to store the UTXO array pointer
+/// - `count_out` must be a valid pointer to store the UTXO count
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
+/// - The returned UTXO array must be freed with `utxo_array_free` when no longer needed
 #[no_mangle]
-pub extern "C" fn wallet_add_utxo(
-    wallet: *mut FFIWallet,
-    network: FFINetwork,
-    txid: *const u8,
-    _vout: u32,
-    _amount: u64,
-    address: *const c_char,
-    script_pubkey: *const u8,
-    _script_len: usize,
-    _height: u32,
-    error: *mut FFIError,
-) -> bool {
-    if wallet.is_null() || txid.is_null() || address.is_null() || script_pubkey.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    let _address_str = unsafe {
-        match CStr::from_ptr(address).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid UTF-8 in address".to_string(),
-                );
-                return false;
-            }
-        }
-    };
-
-    unsafe {
-        let _wallet = &mut *wallet;
-        let _network_rust: key_wallet::Network = network.into();
-
-        // Note: Actual UTXO management would require implementing the wallet's UTXO tracking
-        // For now, we'll just return success
-        FFIError::set_success(error);
-        true
-    }
-}
-
-/// Remove UTXO from wallet
-#[no_mangle]
-pub extern "C" fn wallet_remove_utxo(
-    wallet: *mut FFIWallet,
-    network: FFINetwork,
-    txid: *const u8,
-    vout: u32,
-    error: *mut FFIError,
-) -> bool {
-    if wallet.is_null() || txid.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    unsafe {
-        let _wallet = &mut *wallet;
-        let _network_rust: key_wallet::Network = network.into();
-        let _vout = vout;
-
-        // Note: Actual UTXO removal would require implementing the wallet's UTXO tracking
-        FFIError::set_success(error);
-        true
-    }
-}
-
-/// Get all UTXOs
-#[no_mangle]
-pub extern "C" fn wallet_get_utxos(
-    wallet: *const FFIWallet,
+pub unsafe extern "C" fn managed_wallet_get_utxos(
+    managed_info: *const FFIManagedWalletInfo,
     network: FFINetwork,
     utxos_out: *mut *mut FFIUTXO,
     count_out: *mut usize,
     error: *mut FFIError,
 ) -> bool {
-    if wallet.is_null() || utxos_out.is_null() || count_out.is_null() {
+    if managed_info.is_null() || utxos_out.is_null() || count_out.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return false;
     }
 
-    unsafe {
-        let _wallet = &*wallet;
-        let _network_rust: key_wallet::Network = network.into();
+    let managed_info = &*managed_info;
+    let network_rust: key_wallet::Network = network.into();
 
-        // Return empty list for now
+    // Get UTXOs from the managed wallet info
+    let utxos = managed_info.inner().get_utxos(network_rust);
+
+    if utxos.is_empty() {
         *count_out = 0;
         *utxos_out = ptr::null_mut();
+    } else {
+        // Convert UTXOs to FFI format
+        let mut ffi_utxos = Vec::with_capacity(utxos.len());
 
-        FFIError::set_success(error);
-        true
+        for (outpoint, utxo) in utxos {
+            // Convert txid to byte array
+            let mut txid_bytes = [0u8; 32];
+            txid_bytes.copy_from_slice(&outpoint.txid[..]);
+
+            // Convert address to string
+            let address_str = utxo.address.to_string();
+
+            // Get script bytes
+            let script_bytes = utxo.txout.script_pubkey.as_bytes().to_vec();
+
+            // Calculate confirmations (0 if unconfirmed)
+            let confirmations = if utxo.is_confirmed {
+                1
+            } else {
+                0
+            };
+
+            let ffi_utxo = FFIUTXO::new(
+                txid_bytes,
+                outpoint.vout,
+                utxo.value(),
+                address_str,
+                script_bytes,
+                utxo.height,
+                confirmations,
+            );
+
+            ffi_utxos.push(ffi_utxo);
+        }
+
+        *count_out = ffi_utxos.len();
+        // Convert Vec to boxed slice and leak it
+        let mut boxed_utxos = ffi_utxos.into_boxed_slice();
+        let ptr = boxed_utxos.as_mut_ptr();
+        std::mem::forget(boxed_utxos);
+        *utxos_out = ptr;
     }
+
+    FFIError::set_success(error);
+    true
+}
+
+/// Get all UTXOs (deprecated - use managed_wallet_get_utxos instead)
+///
+/// # Safety
+///
+/// This function is deprecated and returns an empty list.
+/// Use `managed_wallet_get_utxos` with a ManagedWalletInfo instead.
+#[no_mangle]
+#[deprecated(note = "Use managed_wallet_get_utxos with ManagedWalletInfo instead")]
+pub unsafe extern "C" fn wallet_get_utxos(
+    _wallet: *const crate::types::FFIWallet,
+    _network: FFINetwork,
+    utxos_out: *mut *mut FFIUTXO,
+    count_out: *mut usize,
+    error: *mut FFIError,
+) -> bool {
+    if utxos_out.is_null() || count_out.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return false;
+    }
+
+    // Return empty list for backwards compatibility
+    *count_out = 0;
+    *utxos_out = ptr::null_mut();
+
+    FFIError::set_success(error);
+    true
 }
 
 /// Free UTXO array
+///
+/// # Safety
+///
+/// - `utxos` must be a valid pointer to an array of FFIUTXO structs allocated by this library
+/// - `count` must match the number of UTXOs in the array
+/// - The pointer must not be used after calling this function
+/// - This function must only be called once per array
 #[no_mangle]
-pub extern "C" fn utxo_array_free(utxos: *mut *mut FFIUTXO, count: usize) {
-    if !utxos.is_null() {
-        unsafe {
-            let slice = std::slice::from_raw_parts_mut(utxos, count);
-            for utxo_ptr in slice {
-                if !utxo_ptr.is_null() {
-                    let utxo = Box::from_raw(*utxo_ptr);
-                    utxo.free();
-                }
-            }
-            // Free the array itself
-            let _ = Box::from_raw(std::slice::from_raw_parts_mut(utxos, count));
+pub unsafe extern "C" fn utxo_array_free(utxos: *mut FFIUTXO, count: usize) {
+    if !utxos.is_null() && count > 0 {
+        // Create a slice from the raw pointer
+        let slice = std::slice::from_raw_parts_mut(utxos, count);
+
+        // Free each UTXO's allocated memory (address and script)
+        for utxo in slice {
+            utxo.free();
         }
+
+        // Free the array itself by reconstructing the Box
+        let _ = Box::from_raw(std::slice::from_raw_parts_mut(utxos, count));
     }
 }
 

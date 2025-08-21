@@ -14,8 +14,17 @@ pub struct FFITxOutput {
 }
 
 /// Build a transaction
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `outputs` must be a valid pointer to an array of FFITxOutput with at least `outputs_count` elements
+/// - `tx_bytes_out` must be a valid pointer to store the transaction bytes pointer
+/// - `tx_len_out` must be a valid pointer to store the transaction length
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned transaction bytes must be freed with `transaction_bytes_free`
 #[no_mangle]
-pub extern "C" fn wallet_build_transaction(
+pub unsafe extern "C" fn wallet_build_transaction(
     wallet: *mut FFIWallet,
     network: FFINetwork,
     account_index: c_uint,
@@ -50,8 +59,17 @@ pub extern "C" fn wallet_build_transaction(
 }
 
 /// Sign a transaction
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes
+/// - `signed_tx_out` must be a valid pointer to store the signed transaction bytes pointer
+/// - `signed_len_out` must be a valid pointer to store the signed transaction length
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned signed transaction bytes must be freed with `transaction_bytes_free`
 #[no_mangle]
-pub extern "C" fn wallet_sign_transaction(
+pub unsafe extern "C" fn wallet_sign_transaction(
     wallet: *const FFIWallet,
     network: FFINetwork,
     tx_bytes: *const u8,
@@ -106,8 +124,19 @@ pub struct FFITransactionCheckResult {
 }
 
 /// Check if a transaction belongs to the wallet using ManagedWalletInfo
+///
+/// # Safety
+///
+/// - `wallet` must be a valid mutable pointer to an FFIWallet
+/// - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes
+/// - `inputs_spent_out` must be a valid pointer to store the spent inputs count
+/// - `addresses_used_out` must be a valid pointer to store the used addresses count
+/// - `new_balance_out` must be a valid pointer to store the new balance
+/// - `new_address_out` must be a valid pointer to store the address array pointer
+/// - `new_address_count_out` must be a valid pointer to store the address count
+/// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
-pub extern "C" fn wallet_check_transaction(
+pub unsafe extern "C" fn wallet_check_transaction(
     wallet: *mut FFIWallet,
     network: FFINetwork,
     tx_bytes: *const u8,
@@ -217,8 +246,13 @@ pub extern "C" fn wallet_check_transaction(
 }
 
 /// Free transaction bytes
+///
+/// # Safety
+///
+/// - `tx_bytes` must be a valid pointer created by transaction functions or null
+/// - After calling this function, the pointer becomes invalid
 #[no_mangle]
-pub extern "C" fn transaction_bytes_free(tx_bytes: *mut u8) {
+pub unsafe extern "C" fn transaction_bytes_free(tx_bytes: *mut u8) {
     if !tx_bytes.is_null() {
         unsafe {
             let _ = Box::from_raw(tx_bytes);
@@ -228,4 +262,4 @@ pub extern "C" fn transaction_bytes_free(tx_bytes: *mut u8) {
 
 #[cfg(test)]
 #[path = "transaction_tests.rs"]
-mod tests;
+mod transaction_tests;

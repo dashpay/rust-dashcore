@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod transaction_tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
     use crate::types::FFINetwork;
@@ -19,17 +19,19 @@ mod tests {
         let mut tx_bytes_out: *mut u8 = ptr::null_mut();
         let mut tx_len_out: usize = 0;
 
-        let success = wallet_build_transaction(
-            ptr::null_mut(),
-            FFINetwork::Testnet,
-            0,
-            &output,
-            1,
-            1000,
-            &mut tx_bytes_out,
-            &mut tx_len_out,
-            &mut error,
-        );
+        let success = unsafe {
+            wallet_build_transaction(
+                ptr::null_mut(),
+                FFINetwork::Testnet,
+                0,
+                &output,
+                1,
+                1000,
+                &mut tx_bytes_out,
+                &mut tx_len_out,
+                &mut error,
+            )
+        };
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -60,17 +62,19 @@ mod tests {
         let mut tx_bytes_out: *mut u8 = ptr::null_mut();
         let mut tx_len_out: usize = 0;
 
-        let success = wallet_build_transaction(
-            wallet,
-            FFINetwork::Testnet,
-            0,
-            ptr::null(),
-            0,
-            1000,
-            &mut tx_bytes_out,
-            &mut tx_len_out,
-            &mut error,
-        );
+        let success = unsafe {
+            wallet_build_transaction(
+                wallet,
+                FFINetwork::Testnet,
+                0,
+                ptr::null(),
+                0,
+                1000,
+                &mut tx_bytes_out,
+                &mut tx_len_out,
+                &mut error,
+            )
+        };
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -89,15 +93,17 @@ mod tests {
         let mut signed_tx_out: *mut u8 = ptr::null_mut();
         let mut signed_len_out: usize = 0;
 
-        let success = wallet_sign_transaction(
-            ptr::null(),
-            FFINetwork::Testnet,
-            tx_bytes.as_ptr(),
-            tx_bytes.len(),
-            &mut signed_tx_out,
-            &mut signed_len_out,
-            &mut error,
-        );
+        let success = unsafe {
+            wallet_sign_transaction(
+                ptr::null(),
+                FFINetwork::Testnet,
+                tx_bytes.as_ptr(),
+                tx_bytes.len(),
+                &mut signed_tx_out,
+                &mut signed_len_out,
+                &mut error,
+            )
+        };
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -123,15 +129,17 @@ mod tests {
         let mut signed_tx_out: *mut u8 = ptr::null_mut();
         let mut signed_len_out: usize = 0;
 
-        let success = wallet_sign_transaction(
-            wallet,
-            FFINetwork::Testnet,
-            ptr::null(),
-            0,
-            &mut signed_tx_out,
-            &mut signed_len_out,
-            &mut error,
-        );
+        let success = unsafe {
+            wallet_sign_transaction(
+                wallet,
+                FFINetwork::Testnet,
+                ptr::null(),
+                0,
+                &mut signed_tx_out,
+                &mut signed_len_out,
+                &mut error,
+            )
+        };
 
         assert!(!success);
         assert_eq!(error.code, FFIErrorCode::InvalidInput);
@@ -175,17 +183,19 @@ mod tests {
         let mut tx_bytes_out: *mut u8 = ptr::null_mut();
         let mut tx_len_out: usize = 0;
 
-        let success = wallet_build_transaction(
-            wallet,
-            FFINetwork::Testnet,
-            0,
-            &output,
-            1,
-            1000,
-            &mut tx_bytes_out,
-            &mut tx_len_out,
-            &mut error,
-        );
+        let success = unsafe {
+            wallet_build_transaction(
+                wallet,
+                FFINetwork::Testnet,
+                0,
+                &output,
+                1,
+                1000,
+                &mut tx_bytes_out,
+                &mut tx_len_out,
+                &mut error,
+            )
+        };
 
         // Should fail because not implemented
         assert!(!success);
@@ -219,15 +229,17 @@ mod tests {
         let mut signed_tx_out: *mut u8 = ptr::null_mut();
         let mut signed_len_out: usize = 0;
 
-        let success = wallet_sign_transaction(
-            wallet,
-            FFINetwork::Testnet,
-            tx_bytes.as_ptr(),
-            tx_bytes.len(),
-            &mut signed_tx_out,
-            &mut signed_len_out,
-            &mut error,
-        );
+        let success = unsafe {
+            wallet_sign_transaction(
+                wallet,
+                FFINetwork::Testnet,
+                tx_bytes.as_ptr(),
+                tx_bytes.len(),
+                &mut signed_tx_out,
+                &mut signed_len_out,
+                &mut error,
+            )
+        };
 
         // Should fail because not implemented
         assert!(!success);

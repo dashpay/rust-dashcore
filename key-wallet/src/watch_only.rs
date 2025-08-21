@@ -122,13 +122,13 @@ impl WatchOnlyWallet {
 
     /// Get the next receive address
     pub fn get_next_receive_address(&mut self) -> Result<Address> {
-        let key_source = KeySource::Public(self.xpub.clone());
+        let key_source = KeySource::Public(self.xpub);
         self.external_pool.get_next_unused(&key_source)
     }
 
     /// Get the next change address
     pub fn get_next_change_address(&mut self) -> Result<Address> {
-        let key_source = KeySource::Public(self.xpub.clone());
+        let key_source = KeySource::Public(self.xpub);
         self.internal_pool.get_next_unused(&key_source)
     }
 

@@ -11,22 +11,12 @@ use crate::types::{FFINetwork, FFIWallet};
 
 /// Balance structure for FFI
 #[repr(C)]
+#[derive(Default)]
 pub struct FFIBalance {
     pub confirmed: u64,
     pub unconfirmed: u64,
     pub immature: u64,
     pub total: u64,
-}
-
-impl Default for FFIBalance {
-    fn default() -> Self {
-        FFIBalance {
-            confirmed: 0,
-            unconfirmed: 0,
-            immature: 0,
-            total: 0,
-        }
-    }
 }
 
 impl From<key_wallet::WalletBalance> for FFIBalance {

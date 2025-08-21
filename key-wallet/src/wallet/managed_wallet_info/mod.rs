@@ -7,6 +7,7 @@ pub mod coin_selection;
 pub mod fee;
 pub mod transaction_builder;
 pub mod transaction_building;
+pub mod utxo;
 pub mod wallet_info_interface;
 
 use super::balance::WalletBalance;

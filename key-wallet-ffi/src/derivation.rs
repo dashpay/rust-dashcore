@@ -506,8 +506,14 @@ pub unsafe extern "C" fn derivation_derive_private_key_from_seed(
 }
 
 /// Derive public key from extended private key
+///
+/// # Safety
+///
+/// - `xpriv` must be a valid pointer to an FFIExtendedPrivKey
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned pointer must be freed with `extended_public_key_free`
 #[no_mangle]
-pub extern "C" fn derivation_xpriv_to_xpub(
+pub unsafe extern "C" fn derivation_xpriv_to_xpub(
     xpriv: *const FFIExtendedPrivKey,
     error: *mut FFIError,
 ) -> *mut FFIExtendedPubKey {
@@ -536,8 +542,14 @@ pub extern "C" fn derivation_xpriv_to_xpub(
 }
 
 /// Get extended private key as string
+///
+/// # Safety
+///
+/// - `xpriv` must be a valid pointer to an FFIExtendedPrivKey
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `string_free`
 #[no_mangle]
-pub extern "C" fn derivation_xpriv_to_string(
+pub unsafe extern "C" fn derivation_xpriv_to_string(
     xpriv: *const FFIExtendedPrivKey,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -572,8 +584,14 @@ pub extern "C" fn derivation_xpriv_to_string(
 }
 
 /// Get extended public key as string
+///
+/// # Safety
+///
+/// - `xpub` must be a valid pointer to an FFIExtendedPubKey
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `string_free`
 #[no_mangle]
-pub extern "C" fn derivation_xpub_to_string(
+pub unsafe extern "C" fn derivation_xpub_to_string(
     xpub: *const FFIExtendedPubKey,
     error: *mut FFIError,
 ) -> *mut c_char {
@@ -608,8 +626,14 @@ pub extern "C" fn derivation_xpub_to_string(
 }
 
 /// Get fingerprint from extended public key (4 bytes)
+///
+/// # Safety
+///
+/// - `xpub` must be a valid pointer to an FFIExtendedPubKey
+/// - `fingerprint_out` must be a valid pointer to a buffer of at least 4 bytes
+/// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
-pub extern "C" fn derivation_xpub_fingerprint(
+pub unsafe extern "C" fn derivation_xpub_fingerprint(
     xpub: *const FFIExtendedPubKey,
     fingerprint_out: *mut u8,
     error: *mut FFIError,

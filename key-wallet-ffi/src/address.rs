@@ -12,6 +12,12 @@ use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFINetwork, FFIWallet};
 
 /// Derive a new receive address at specific index
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `address_free`
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_receive_address(
     wallet: *const FFIWallet,
@@ -65,7 +71,7 @@ pub unsafe extern "C" fn wallet_derive_receive_address(
                     Ok(derived_key) => {
                         let public_key = derived_key.public_key;
                         let dash_pubkey = dashcore::PublicKey::new(public_key);
-                        let dash_network = dashcore::Network::from(network_rust);
+                        let dash_network = network_rust;
                         let address = key_wallet::Address::p2pkh(&dash_pubkey, dash_network);
 
                         FFIError::set_success(error);
@@ -100,6 +106,12 @@ pub unsafe extern "C" fn wallet_derive_receive_address(
 }
 
 /// Derive a new change address at specific index
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `address_free`
 #[no_mangle]
 pub unsafe extern "C" fn wallet_derive_change_address(
     wallet: *const FFIWallet,
@@ -153,7 +165,7 @@ pub unsafe extern "C" fn wallet_derive_change_address(
                     Ok(derived_key) => {
                         let public_key = derived_key.public_key;
                         let dash_pubkey = dashcore::PublicKey::new(public_key);
-                        let dash_network = dashcore::Network::from(network_rust);
+                        let dash_network = network_rust;
                         let address = key_wallet::Address::p2pkh(&dash_pubkey, dash_network);
 
                         FFIError::set_success(error);
@@ -188,6 +200,12 @@ pub unsafe extern "C" fn wallet_derive_change_address(
 }
 
 /// Get address at specific index
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `address_free`
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_address_at_index(
     wallet: *const FFIWallet,
@@ -247,7 +265,7 @@ pub unsafe extern "C" fn wallet_get_address_at_index(
                     Ok(derived_key) => {
                         let public_key = derived_key.public_key;
                         let dash_pubkey = dashcore::PublicKey::new(public_key);
-                        let dash_network = dashcore::Network::from(network_rust);
+                        let dash_network = network_rust;
                         let address = key_wallet::Address::p2pkh(&dash_pubkey, dash_network);
 
                         FFIError::set_success(error);
@@ -282,6 +300,12 @@ pub unsafe extern "C" fn wallet_get_address_at_index(
 }
 
 /// Mark address as used (placeholder - requires ManagedAccount)
+///
+/// # Safety
+///
+/// - `wallet` must be a valid mutable pointer to an FFIWallet
+/// - `address` must be a valid null-terminated C string
+/// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
 pub unsafe extern "C" fn wallet_mark_address_used(
     wallet: *mut FFIWallet,
@@ -334,6 +358,14 @@ pub unsafe extern "C" fn wallet_mark_address_used(
 }
 
 /// Get all addresses for an account (placeholder - requires ManagedAccount)
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer to an FFIWallet
+/// - `addresses_out` must be a valid pointer to store the address array pointer
+/// - `count_out` must be a valid pointer to store the count
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned addresses must be freed with `address_array_free`
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_all_addresses(
     wallet: *const FFIWallet,
@@ -379,7 +411,7 @@ pub unsafe extern "C" fn wallet_get_all_addresses(
                     {
                         let public_key = derived_key.public_key;
                         let dash_pubkey = dashcore::PublicKey::new(public_key);
-                        let dash_network = dashcore::Network::from(network_rust);
+                        let dash_network = network_rust;
                         let address = key_wallet::Address::p2pkh(&dash_pubkey, dash_network);
 
                         if let Ok(c_str) = CString::new(address.to_string()) {
@@ -412,6 +444,11 @@ pub unsafe extern "C" fn wallet_get_all_addresses(
 }
 
 /// Free address string
+///
+/// # Safety
+///
+/// - `address` must be a valid pointer created by address functions or null
+/// - After calling this function, the pointer becomes invalid
 #[no_mangle]
 pub unsafe extern "C" fn address_free(address: *mut c_char) {
     if !address.is_null() {
@@ -422,6 +459,13 @@ pub unsafe extern "C" fn address_free(address: *mut c_char) {
 }
 
 /// Free address array
+///
+/// # Safety
+///
+/// - `addresses` must be a valid pointer to an array of address strings or null
+/// - Each address in the array must be a valid C string pointer
+/// - `count` must be the correct number of addresses in the array
+/// - After calling this function, all pointers become invalid
 #[no_mangle]
 pub unsafe extern "C" fn address_array_free(addresses: *mut *mut c_char, count: usize) {
     if !addresses.is_null() {
@@ -439,6 +483,11 @@ pub unsafe extern "C" fn address_array_free(addresses: *mut *mut c_char, count: 
 }
 
 /// Validate an address
+///
+/// # Safety
+///
+/// - `address` must be a valid null-terminated C string
+/// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
 pub unsafe extern "C" fn address_validate(
     address: *const c_char,
@@ -470,7 +519,7 @@ pub unsafe extern "C" fn address_validate(
     match key_wallet::Address::from_str(address_str) {
         Ok(addr) => {
             // Check if address is valid for the given network
-            let dash_network = dashcore::Network::from(network_rust);
+            let dash_network = network_rust;
             match addr.require_network(dash_network) {
                 Ok(_) => {
                     FFIError::set_success(error);
@@ -498,6 +547,11 @@ pub unsafe extern "C" fn address_validate(
 }
 
 /// Get address type
+///
+/// # Safety
+///
+/// - `address` must be a valid null-terminated C string
+/// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
 pub unsafe extern "C" fn address_get_type(
     address: *const c_char,
@@ -528,7 +582,7 @@ pub unsafe extern "C" fn address_get_type(
 
     match key_wallet::Address::from_str(address_str) {
         Ok(addr) => {
-            let dash_network = dashcore::Network::from(network_rust);
+            let dash_network = network_rust;
             match addr.require_network(dash_network) {
                 Ok(checked_addr) => {
                     FFIError::set_success(error);
