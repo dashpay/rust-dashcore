@@ -37,66 +37,6 @@ cbindgen \
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✓ Header file generated successfully at include/key_wallet_ffi.h${NC}"
     
-    # Add additional type definitions that cbindgen might miss
-    # These are for opaque types that need forward declarations
-    TEMP_FILE=$(mktemp)
-    
-    # Read the generated header
-    cat include/key_wallet_ffi.h > "$TEMP_FILE"
-    
-    # Check if opaque types are properly declared, if not add them
-    if ! grep -q "typedef struct FFIPrivateKey FFIPrivateKey;" "$TEMP_FILE"; then
-        echo -e "${YELLOW}Adding opaque type declarations...${NC}"
-        
-        # Create a new header with opaque types
-        cat > include/key_wallet_ffi.h << 'EOF'
-/**
- * Key Wallet FFI - C Header File
- * 
- * This header provides C-compatible function declarations for the key-wallet
- * Rust library FFI bindings.
- * 
- * AUTO-GENERATED FILE - DO NOT EDIT
- * Generated using cbindgen
- */
-
-#ifndef KEY_WALLET_FFI_H
-#define KEY_WALLET_FFI_H
-
-#include <stdint.h>
-#include <stdbool.h>
-#include <stddef.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/* ============================================================================
- * Forward Declarations for Opaque Types
- * ============================================================================ */
-
-typedef struct FFIWallet FFIWallet;
-typedef struct FFIAccount FFIAccount;
-typedef struct FFIWalletManager FFIWalletManager;
-typedef struct FFIManagedWalletInfo FFIManagedWalletInfo;
-typedef struct FFIPrivateKey FFIPrivateKey;
-typedef struct FFIExtendedPrivateKey FFIExtendedPrivateKey;
-typedef struct FFIPublicKey FFIPublicKey;
-typedef struct FFIExtendedPublicKey FFIExtendedPublicKey;
-typedef struct FFIExtendedPrivKey FFIExtendedPrivKey;
-typedef struct FFIExtendedPubKey FFIExtendedPubKey;
-
-EOF
-        
-        # Append the rest of the generated content, skipping duplicate header guards
-        tail -n +12 "$TEMP_FILE" >> include/key_wallet_ffi.h
-    else
-        # Just use the generated file as-is
-        mv "$TEMP_FILE" include/key_wallet_ffi.h
-    fi
-    
-    rm -f "$TEMP_FILE"
-    
     # Show statistics
     echo -e "${GREEN}Header file statistics:${NC}"
     echo "  Functions: $(grep -c "^[^/]*(" include/key_wallet_ffi.h 2>/dev/null || echo 0)"

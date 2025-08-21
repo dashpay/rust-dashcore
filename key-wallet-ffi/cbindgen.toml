@@ -31,7 +31,16 @@ documentation_style = "c"
 include = []
 exclude = []
 prefix = ""
-item_types = ["enums", "structs", "unions", "typedefs", "opaque", "functions", "constants"]
+item_types = ["functions", "enums", "structs", "typedefs", "opaque", "constants"]
+
+# Force these to be forward-declared only:
+[export.body]
+"FFIPrivateKey" = ""
+"FFIExtendedPrivateKey" = ""
+"FFIPublicKey" = ""
+"FFIExtendedPublicKey" = ""
+"FFIManagedWalletInfo" = ""
+"FFIWalletManager" = ""
 
 [export.rename]
 # Rename types to match C conventions
@@ -64,7 +73,8 @@ prefix = ""
 postfix = ""
 
 [parse]
-# Parsing options
+# This prevents cbindgen from walking into dependencies (e.g., secp256k1) and
+# "learning" enough to confidently define your struct bodies.
 parse_deps = false
 include = []
 exclude = []

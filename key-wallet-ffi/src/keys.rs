@@ -7,25 +7,21 @@ use std::os::raw::{c_char, c_uint};
 use std::ptr;
 
 /// Opaque type for a private key (SecretKey)
-#[repr(C)]
 pub struct FFIPrivateKey {
     inner: secp256k1::SecretKey,
 }
 
 /// Opaque type for an extended private key
-#[repr(C)]
 pub struct FFIExtendedPrivateKey {
     inner: key_wallet::bip32::ExtendedPrivKey,
 }
 
 /// Opaque type for a public key
-#[repr(C)]
 pub struct FFIPublicKey {
     inner: secp256k1::PublicKey,
 }
 
 /// Opaque type for an extended public key
-#[repr(C)]
 pub struct FFIExtendedPublicKey {
     inner: key_wallet::bip32::ExtendedPubKey,
 }
@@ -388,6 +384,81 @@ pub unsafe extern "C" fn extended_private_key_free(key: *mut FFIExtendedPrivateK
     }
 }
 
+/// Get extended private key as string (xprv format)
+///
+/// Returns the extended private key in base58 format (xprv... for mainnet, tprv... for testnet)
+///
+/// # Safety
+///
+/// - `key` must be a valid pointer to an FFIExtendedPrivateKey
+/// - `network` specifies the network for the key encoding
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `string_free`
+#[no_mangle]
+pub unsafe extern "C" fn extended_private_key_to_string(
+    key: *const FFIExtendedPrivateKey,
+    network: FFINetwork,
+    error: *mut FFIError,
+) -> *mut c_char {
+    if key.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Extended private key is null".to_string());
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        let key = &*key;
+        let _ = network; // Network is already encoded in the extended key
+        
+        // Convert to string - the network is already encoded in the extended key
+        let key_string = key.inner.to_string();
+        
+        FFIError::set_success(error);
+        match CString::new(key_string) {
+            Ok(c_str) => c_str.into_raw(),
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::AllocationFailed,
+                    "Failed to allocate string".to_string(),
+                );
+                ptr::null_mut()
+            }
+        }
+    }
+}
+
+/// Get the private key from an extended private key
+///
+/// Extracts the non-extended private key from an extended private key.
+///
+/// # Safety
+///
+/// - `extended_key` must be a valid pointer to an FFIExtendedPrivateKey
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned FFIPrivateKey must be freed with `private_key_free`
+#[no_mangle]
+pub unsafe extern "C" fn extended_private_key_get_private_key(
+    extended_key: *const FFIExtendedPrivateKey,
+    error: *mut FFIError,
+) -> *mut FFIPrivateKey {
+    if extended_key.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Extended private key is null".to_string());
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        let extended = &*extended_key;
+        
+        // Extract the private key
+        let private_key = FFIPrivateKey {
+            inner: extended.inner.private_key,
+        };
+        
+        FFIError::set_success(error);
+        Box::into_raw(Box::new(private_key))
+    }
+}
+
 /// Get private key as WIF string from FFIPrivateKey
 ///
 /// # Safety
@@ -690,6 +761,81 @@ pub unsafe extern "C" fn extended_public_key_free(key: *mut FFIExtendedPublicKey
         unsafe {
             let _ = Box::from_raw(key);
         }
+    }
+}
+
+/// Get extended public key as string (xpub format)
+///
+/// Returns the extended public key in base58 format (xpub... for mainnet, tpub... for testnet)
+///
+/// # Safety
+///
+/// - `key` must be a valid pointer to an FFIExtendedPublicKey
+/// - `network` specifies the network for the key encoding
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned string must be freed with `string_free`
+#[no_mangle]
+pub unsafe extern "C" fn extended_public_key_to_string(
+    key: *const FFIExtendedPublicKey,
+    network: FFINetwork,
+    error: *mut FFIError,
+) -> *mut c_char {
+    if key.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Extended public key is null".to_string());
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        let key = &*key;
+        let _ = network; // Network is already encoded in the extended key
+        
+        // Convert to string - the network is already encoded in the extended key
+        let key_string = key.inner.to_string();
+        
+        FFIError::set_success(error);
+        match CString::new(key_string) {
+            Ok(c_str) => c_str.into_raw(),
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::AllocationFailed,
+                    "Failed to allocate string".to_string(),
+                );
+                ptr::null_mut()
+            }
+        }
+    }
+}
+
+/// Get the public key from an extended public key
+///
+/// Extracts the non-extended public key from an extended public key.
+///
+/// # Safety
+///
+/// - `extended_key` must be a valid pointer to an FFIExtendedPublicKey
+/// - `error` must be a valid pointer to an FFIError
+/// - The returned FFIPublicKey must be freed with `public_key_free`
+#[no_mangle]
+pub unsafe extern "C" fn extended_public_key_get_public_key(
+    extended_key: *const FFIExtendedPublicKey,
+    error: *mut FFIError,
+) -> *mut FFIPublicKey {
+    if extended_key.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Extended public key is null".to_string());
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        let extended = &*extended_key;
+        
+        // Extract the public key
+        let public_key = FFIPublicKey {
+            inner: extended.inner.public_key,
+        };
+        
+        FFIError::set_success(error);
+        Box::into_raw(Box::new(public_key))
     }
 }
 

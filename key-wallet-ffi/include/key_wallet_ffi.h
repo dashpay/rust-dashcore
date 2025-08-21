@@ -207,14 +207,44 @@ typedef struct FFIAccount FFIAccount;
 typedef struct FFIExtendedPrivKey FFIExtendedPrivKey;
 
 /*
+ Opaque type for an extended private key
+ */
+typedef struct FFIExtendedPrivateKey FFIExtendedPrivateKey;
+
+/*
  Extended public key structure
  */
 typedef struct FFIExtendedPubKey FFIExtendedPubKey;
 
 /*
+ Opaque type for an extended public key
+ */
+typedef struct FFIExtendedPublicKey FFIExtendedPublicKey;
+
+/*
+ FFI wrapper for ManagedWalletInfo
+ */
+typedef struct FFIManagedWalletInfo FFIManagedWalletInfo;
+
+/*
+ Opaque type for a private key (SecretKey)
+ */
+typedef struct FFIPrivateKey FFIPrivateKey;
+
+/*
+ Opaque type for a public key
+ */
+typedef struct FFIPublicKey FFIPublicKey;
+
+/*
  Opaque wallet handle
  */
 typedef struct FFIWallet FFIWallet;
+
+/*
+ FFI wrapper for WalletManager
+ */
+typedef struct FFIWalletManager FFIWalletManager;
 
 /*
  FFI Result type for Account operations
@@ -251,41 +281,6 @@ typedef struct {
     uint64_t immature;
     uint64_t total;
 } FFIBalance;
-
-/*
- Opaque type for a private key (SecretKey)
- */
-typedef struct {
-    SecretKey inner;
-} FFIPrivateKey;
-
-/*
- Opaque type for an extended private key
- */
-typedef struct {
-    ExtendedPrivKey inner;
-} FFIExtendedPrivateKey;
-
-/*
- Opaque type for a public key
- */
-typedef struct {
-    PublicKey inner;
-} FFIPublicKey;
-
-/*
- Opaque type for an extended public key
- */
-typedef struct {
-    ExtendedPubKey inner;
-} FFIExtendedPublicKey;
-
-/*
- FFI wrapper for ManagedWalletInfo
- */
-typedef struct {
-    ManagedWalletInfo inner;
-} FFIManagedWalletInfo;
 
 /*
  Transaction output for building
@@ -368,14 +363,6 @@ typedef struct {
     const FFIAccountType *special_account_types;
     uintptr_t special_account_types_count;
 } FFIWalletAccountCreationOptions;
-
-/*
- FFI wrapper for WalletManager
- */
-typedef struct {
-    Mutex<WalletManager<ManagedWalletInfo>> manager;
-    Mutex<Vec<WalletId>> wallet_ids;
-} FFIWalletManager;
 
 /*
  FFI-compatible transaction context details
@@ -885,6 +872,40 @@ char *wallet_derive_private_key_as_wif(const FFIWallet *wallet,
  void extended_private_key_free(FFIExtendedPrivateKey *key) ;
 
 /*
+ Get extended private key as string (xprv format)
+
+ Returns the extended private key in base58 format (xprv... for mainnet, tprv... for testnet)
+
+ # Safety
+
+ - `key` must be a valid pointer to an FFIExtendedPrivateKey
+ - `network` specifies the network for the key encoding
+ - `error` must be a valid pointer to an FFIError
+ - The returned string must be freed with `string_free`
+ */
+
+char *extended_private_key_to_string(const FFIExtendedPrivateKey *key,
+                                     FFINetwork network,
+                                     FFIError *error)
+;
+
+/*
+ Get the private key from an extended private key
+
+ Extracts the non-extended private key from an extended private key.
+
+ # Safety
+
+ - `extended_key` must be a valid pointer to an FFIExtendedPrivateKey
+ - `error` must be a valid pointer to an FFIError
+ - The returned FFIPrivateKey must be freed with `private_key_free`
+ */
+
+FFIPrivateKey *extended_private_key_get_private_key(const FFIExtendedPrivateKey *extended_key,
+                                                    FFIError *error)
+;
+
+/*
  Get private key as WIF string from FFIPrivateKey
 
  # Safety
@@ -967,6 +988,40 @@ char *wallet_derive_public_key_as_hex(const FFIWallet *wallet,
  - After calling this function, the pointer becomes invalid
  */
  void extended_public_key_free(FFIExtendedPublicKey *key) ;
+
+/*
+ Get extended public key as string (xpub format)
+
+ Returns the extended public key in base58 format (xpub... for mainnet, tpub... for testnet)
+
+ # Safety
+
+ - `key` must be a valid pointer to an FFIExtendedPublicKey
+ - `network` specifies the network for the key encoding
+ - `error` must be a valid pointer to an FFIError
+ - The returned string must be freed with `string_free`
+ */
+
+char *extended_public_key_to_string(const FFIExtendedPublicKey *key,
+                                    FFINetwork network,
+                                    FFIError *error)
+;
+
+/*
+ Get the public key from an extended public key
+
+ Extracts the non-extended public key from an extended public key.
+
+ # Safety
+
+ - `extended_key` must be a valid pointer to an FFIExtendedPublicKey
+ - `error` must be a valid pointer to an FFIError
+ - The returned FFIPublicKey must be freed with `public_key_free`
+ */
+
+FFIPublicKey *extended_public_key_get_public_key(const FFIExtendedPublicKey *extended_key,
+                                                 FFIError *error)
+;
 
 /*
  Get public key as hex string from FFIPublicKey
@@ -1545,6 +1600,22 @@ char *wallet_get_xpub(const FFIWallet *wallet,
  void wallet_free(FFIWallet *wallet) ;
 
 /*
+ Free a const wallet handle
+
+ This is a const-safe wrapper for wallet_free() that accepts a const pointer.
+ Use this function when you have a *const FFIWallet that needs to be freed,
+ such as wallets returned from wallet_manager_get_wallet().
+
+ # Safety
+
+ - `wallet` must be a valid pointer created by wallet creation functions or null
+ - After calling this function, the pointer becomes invalid
+ - This function must only be called once per wallet
+ - The wallet must have been allocated by this library (not stack or static memory)
+ */
+ void wallet_free_const(const FFIWallet *wallet) ;
+
+/*
  Add an account to the wallet without xpub
 
  # Safety
@@ -1674,7 +1745,7 @@ bool wallet_manager_get_wallet_ids(const FFIWalletManager *manager,
  - `wallet_id` must be a valid pointer to a 32-byte wallet ID
  - `error` must be a valid pointer to an FFIError structure or null
  - The caller must ensure all pointers remain valid for the duration of this call
- - The returned wallet must be freed with wallet_free()
+ - The returned wallet must be freed with wallet_free_const()
  */
 
 const FFIWallet *wallet_manager_get_wallet(const FFIWalletManager *manager,

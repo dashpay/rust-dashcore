@@ -592,6 +592,29 @@ pub unsafe extern "C" fn wallet_free(wallet: *mut FFIWallet) {
     }
 }
 
+/// Free a const wallet handle
+///
+/// This is a const-safe wrapper for wallet_free() that accepts a const pointer.
+/// Use this function when you have a *const FFIWallet that needs to be freed,
+/// such as wallets returned from wallet_manager_get_wallet().
+///
+/// # Safety
+///
+/// - `wallet` must be a valid pointer created by wallet creation functions or null
+/// - After calling this function, the pointer becomes invalid
+/// - This function must only be called once per wallet
+/// - The wallet must have been allocated by this library (not stack or static memory)
+#[no_mangle]
+pub unsafe extern "C" fn wallet_free_const(wallet: *const FFIWallet) {
+    if !wallet.is_null() {
+        unsafe {
+            // Cast away const and free - this is safe because we know the wallet
+            // was originally allocated as mutable memory by Box::into_raw
+            let _ = Box::from_raw(wallet as *mut FFIWallet);
+        }
+    }
+}
+
 /// Add an account to the wallet without xpub
 ///
 /// # Safety

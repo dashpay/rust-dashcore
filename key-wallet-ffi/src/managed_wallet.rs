@@ -14,7 +14,6 @@ use key_wallet::account::address_pool::KeySource;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
 /// FFI wrapper for ManagedWalletInfo
-#[repr(C)]
 pub struct FFIManagedWalletInfo {
     inner: ManagedWalletInfo,
 }

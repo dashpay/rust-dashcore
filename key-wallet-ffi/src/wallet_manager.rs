@@ -16,7 +16,6 @@ use key_wallet::Network;
 use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
 
 /// FFI wrapper for WalletManager
-#[repr(C)]
 pub struct FFIWalletManager {
     manager: Mutex<WalletManager<ManagedWalletInfo>>,
     // Track wallet IDs for FFI purposes
@@ -266,7 +265,7 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_ids(
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
 /// - `error` must be a valid pointer to an FFIError structure or null
 /// - The caller must ensure all pointers remain valid for the duration of this call
-/// - The returned wallet must be freed with wallet_free()
+/// - The returned wallet must be freed with wallet_free_const()
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_get_wallet(
     manager: *const FFIWalletManager,
