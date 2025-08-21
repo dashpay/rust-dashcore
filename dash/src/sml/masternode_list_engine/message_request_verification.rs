@@ -280,7 +280,7 @@ impl MasternodeListEngine {
         // Attempt verification using the "before" masternode list
         let initial_error = if let Some(before) = before {
             let Err(e) =
-                self.verify_chain_lock_with_masternode_list(chain_lock, &before, &request_id)
+                self.verify_chain_lock_with_masternode_list(chain_lock, before, &request_id)
             else {
                 return Ok(());
             };
@@ -303,13 +303,11 @@ impl MasternodeListEngine {
             if do_check {
                 return self.verify_chain_lock_with_masternode_list(
                     chain_lock,
-                    &after,
+                    after,
                     &request_id,
                 );
-            } else {
-                if let Some(initial_error) = initial_error {
-                    return Err(initial_error);
-                }
+            } else if let Some(initial_error) = initial_error {
+                return Err(initial_error);
             }
         }
 
