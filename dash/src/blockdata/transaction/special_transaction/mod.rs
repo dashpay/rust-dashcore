@@ -65,7 +65,6 @@ pub mod quorum_commitment;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub enum TransactionPayload {
     /// A wrapper for a Masternode Registration payload
     ProviderRegistrationPayloadType(ProviderRegistrationPayload),
@@ -120,6 +119,7 @@ impl TransactionPayload {
     }
 
     /// Gets the size of the special transaction payload
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         // 1 byte is the size of the special transaction type
         1 + match self {
@@ -269,7 +269,7 @@ impl TransactionPayload {
 }
 
 /// The transaction type. Special transactions were introduced in DIP2.
-/// Compared to Bitcoin the version field is split into two 16 bit integers.
+/// Compared to Bitcoin the version field is split into two 16-bit integers.
 /// The first part for the version and the second part for the transaction
 /// type.
 ///

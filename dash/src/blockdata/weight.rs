@@ -81,7 +81,7 @@ impl Weight {
 
     /// Converts to vB rounding up.
     pub const fn to_vbytes_ceil(self) -> u64 {
-        (self.0 + 3) / 4
+        self.0.div_ceil(4)
     }
 
     /// Checked addition.

@@ -1,6 +1,5 @@
 //! Bloom filter implementation for BIP37
 
-use std::cmp;
 use std::io;
 
 use bitvec::prelude::*;
@@ -56,13 +55,13 @@ impl BloomFilter {
         let ln2_squared = ln2 * ln2;
 
         let filter_size =
-            (-1.0 * elements as f64 * false_positive_rate.ln() / ln2_squared).ceil() as usize;
-        let filter_size = cmp::max(1, cmp::min(filter_size, MAX_BLOOM_FILTER_SIZE * 8));
+            (-(elements as f64) * false_positive_rate.ln() / ln2_squared).ceil() as usize;
+        let filter_size = filter_size.clamp(1, MAX_BLOOM_FILTER_SIZE * 8);
 
         let n_hash_funcs = (filter_size as f64 / elements as f64 * ln2).ceil() as u32;
-        let n_hash_funcs = cmp::max(1, cmp::min(n_hash_funcs, MAX_HASH_FUNCS));
+        let n_hash_funcs = n_hash_funcs.clamp(1, MAX_HASH_FUNCS);
 
-        let filter_bytes = (filter_size + 7) / 8;
+        let filter_bytes = filter_size.div_ceil(8);
         if filter_bytes > MAX_BLOOM_FILTER_SIZE {
             return Err(BloomError::FilterTooLarge(filter_bytes));
         }
@@ -141,7 +140,7 @@ impl BloomFilter {
 
     /// Get the filter size in bytes
     pub fn size(&self) -> usize {
-        (self.filter.len() + 7) / 8
+        self.filter.len().div_ceil(8)
     }
 
     /// Get the filter as raw bytes

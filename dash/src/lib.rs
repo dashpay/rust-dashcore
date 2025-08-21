@@ -40,7 +40,7 @@
 //! * `serde` - (dependency), implements `serde`-based serialization and deserialization.
 //! * `secp-lowmemory` - optimizations for low-memory devices.
 //! * `no-std` - enables additional features required for this crate to be usable
-//!              without std. Does **not** disable `std`. Depends on `core2`.
+//!   without std. Does **not** disable `std`. Depends on `core2`.
 //!
 
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]

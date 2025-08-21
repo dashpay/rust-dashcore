@@ -17,7 +17,6 @@ use crate::sighash::TapSighashType;
 /// A BIP340-341 serialized taproot signature with the corresponding hash type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct Signature {
     /// The underlying schnorr signature
     pub sig: secp256k1::schnorr::Signature,

@@ -146,13 +146,12 @@ impl Decodable for QRInfo {
 /// - `mn_skip_list_mode`: A 4-byte signed integer representing the mode of the skip list.
 /// - `active_quorum_members_count`: A compact-size unsigned integer representing the number of active quorum members.
 /// - `active_quorum_members`: A bitset (stored as a Vec<u8>) with length =
-///    (active_quorum_members_count + 7) / 8.
+///   (active_quorum_members_count + 7) / 8.
 /// - `mn_skip_list_size`: A compact-size unsigned integer representing the number of skip list entries.
 /// - `mn_skip_list`: An array of 4-byte signed integers, one per skip list entry.
 #[derive(PartialEq, Eq, Clone, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct QuorumSnapshot {
     pub skip_list_mode: MNSkipListMode,
     pub active_quorum_members: Vec<bool>, // Bitset, length = (active_quorum_members_count + 7) / 8
@@ -215,9 +214,10 @@ impl Decodable for QuorumSnapshot {
 #[repr(u32)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
+#[derive(Default)]
 pub enum MNSkipListMode {
     /// Mode 0: No skipping – the skip list is empty.
+    #[default]
     NoSkipping = 0,
     /// Mode 1: Skip the first entry; subsequent entries contain relative skips.
     ///
@@ -259,7 +259,7 @@ impl From<MNSkipListMode> for u32 {
 }
 impl MNSkipListMode {
     pub fn index(&self) -> u32 {
-        u32::from(self.clone())
+        u32::from(*self)
     }
 }
 pub fn from_index(index: u32) -> MNSkipListMode {
@@ -275,12 +275,6 @@ impl Display for MNSkipListMode {
             MNSkipListMode::SkipAll => "All Nodes Skipped (empty list, no DKG)",
         };
         write!(f, "{}", description)
-    }
-}
-
-impl Default for MNSkipListMode {
-    fn default() -> Self {
-        MNSkipListMode::NoSkipping
     }
 }
 

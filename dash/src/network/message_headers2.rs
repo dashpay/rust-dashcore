@@ -139,23 +139,23 @@ impl CompressedHeader {
     pub fn encoded_size(&self) -> usize {
         let mut size = 1; // flags byte
 
-        if let Some(_) = self.version {
+        if self.version.is_some() {
             size += 4;
         }
 
-        if let Some(_) = self.prev_blockhash {
+        if self.prev_blockhash.is_some() {
             size += 32;
         }
 
         size += 32; // merkle_root
 
-        if let Some(_) = self.time_offset {
+        if self.time_offset.is_some() {
             size += 2;
-        } else if let Some(_) = self.time_full {
+        } else if self.time_full.is_some() {
             size += 4;
         }
 
-        if let Some(_) = self.bits {
+        if self.bits.is_some() {
             size += 4;
         }
 
@@ -325,7 +325,7 @@ impl CompressionState {
             Some(header.bits)
         };
 
-        self.prev_header = Some(header.clone());
+        self.prev_header = Some(*header);
 
         CompressedHeader {
             flags,
@@ -334,7 +334,7 @@ impl CompressionState {
             merkle_root: header.merkle_root,
             time_offset,
             time_full,
-            bits: bits,
+            bits,
             nonce: header.nonce,
         }
     }
@@ -390,7 +390,7 @@ impl CompressionState {
             nonce: compressed.nonce,
         };
 
-        self.prev_header = Some(header.clone());
+        self.prev_header = Some(header);
 
         Ok(header)
     }

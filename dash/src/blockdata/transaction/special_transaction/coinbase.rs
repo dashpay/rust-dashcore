@@ -36,7 +36,6 @@ use crate::io::{Error, ErrorKind};
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct CoinbasePayload {
     pub version: u16,
     pub height: u32,

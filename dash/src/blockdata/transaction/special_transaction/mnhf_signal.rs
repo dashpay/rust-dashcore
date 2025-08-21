@@ -24,7 +24,6 @@ use crate::io;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct MnhfSignalPayload {
     /// Version of the MNHF signal payload (nVersion in C++)
     pub version: u8,

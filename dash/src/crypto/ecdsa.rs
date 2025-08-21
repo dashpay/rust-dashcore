@@ -22,7 +22,6 @@ const MAX_SIG_LEN: usize = 73;
 /// An ECDSA signature with the corresponding hash type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct Signature {
     /// The underlying ECDSA Signature
     pub sig: secp256k1::ecdsa::Signature,

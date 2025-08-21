@@ -10,6 +10,7 @@ use crate::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
 
 impl MasternodeListEngine {
+    #[allow(dead_code)]
     pub(crate) fn masternode_list_and_height_for_block_hash_8_blocks_ago(
         &self,
         block_hash: &BlockHash,
@@ -30,6 +31,7 @@ impl MasternodeListEngine {
         }
     }
 
+    #[allow(dead_code)]
     pub(in crate::sml::masternode_list_engine) fn find_non_rotated_masternodes_for_quorum(
         &self,
         quorum: &QualifiedQuorumEntry,

@@ -26,6 +26,7 @@ impl MasternodeListEngine {
     ///
     /// * `Ok(Vec<&QualifiedMasternodeListEntry>)` - A list of masternodes responsible for signing at the given quorum index.
     /// * `Err(QuorumValidationError)` - If the required block height is not present in the engine.
+    #[allow(dead_code)]
     pub(in crate::sml::masternode_list_engine) fn find_rotated_masternodes_for_quorum<'a>(
         &'a self,
         quorum: &'a QualifiedQuorumEntry,
@@ -70,6 +71,7 @@ impl MasternodeListEngine {
         Ok(rotated_members)
     }
 
+    #[allow(dead_code)]
     pub(in crate::sml::masternode_list_engine) fn find_rotated_masternodes_for_quorums<'a>(
         &'a self,
         quorums: &'a [&'a QualifiedQuorumEntry],
@@ -195,6 +197,7 @@ impl MasternodeListEngine {
     ///
     /// * `Ok(Vec<Vec<&QualifiedMasternodeListEntry>>)` - A list of quorum members, grouped by quorum index.
     /// * `Err(QuorumValidationError)` - If required snapshots or quorum reconstructions fail.
+    #[allow(dead_code)]
     fn masternode_list_entry_members_for_rotated_quorum(
         &self,
         quorum_llmq_type: LLMQType,
@@ -260,6 +263,7 @@ impl MasternodeListEngine {
     /// * `quorum_members` - A mutable reference to a list of quorum members.
     /// * `quarter` - A reference to the quarter from which members are being added.
     /// * `index` - The quorum index at which members should be added.
+    #[allow(dead_code)]
     fn add_quorum_members_from_quarter<'a>(
         quorum_members: &mut Vec<Vec<&'a QualifiedMasternodeListEntry>>,
         quarter: &[Vec<&'a QualifiedMasternodeListEntry>],
@@ -283,6 +287,7 @@ impl MasternodeListEngine {
     ///
     /// * `Ok(Vec<Vec<&QualifiedMasternodeListEntry>>)` - A list of quorum members by quorum index.
     /// * `Err(QuorumValidationError)` - If required block heights, masternode lists, or snapshots are missing.
+    #[allow(dead_code)]
     fn quorum_quarter_members_by_reconstruction_type<'a: 'b, 'b>(
         &'a self,
         quorum_llmq_type: LLMQType,
@@ -364,6 +369,7 @@ impl MasternodeListEngine {
     /// # Returns
     ///
     /// * `Vec<Vec<&QualifiedMasternodeListEntry>>` - The final list of quorum members by index.
+    #[allow(dead_code)]
     fn apply_skip_strategy_of_type<'a>(
         skip_type: LLMQQuarterUsageType,
         used_at_h_masternodes: Vec<&'a QualifiedMasternodeListEntry>,

@@ -305,10 +305,10 @@ where
     T: Borrow<TxOut>,
 {
     fn check_all(&self, tx: &Transaction) -> Result<(), Error> {
-        if let Prevouts::All(prevouts) = self {
-            if prevouts.len() != tx.input.len() {
-                return Err(Error::PrevoutsSize);
-            }
+        if let Prevouts::All(prevouts) = self
+            && prevouts.len() != tx.input.len()
+        {
+            return Err(Error::PrevoutsSize);
         }
         Ok(())
     }
@@ -892,8 +892,8 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
     /// # Warning
     ///
     /// - Does NOT attempt to support OP_CODESEPARATOR. In general this would require evaluating
-    /// `script_pubkey` to determine which separators get evaluated and which don't, which we don't
-    /// have the information to determine.
+    ///   `script_pubkey` to determine which separators get evaluated and which don't, which we don't
+    ///   have the information to determine.
     /// - Does NOT handle the sighash single bug (see "Return type" section)
     ///
     /// # Returns

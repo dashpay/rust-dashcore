@@ -16,7 +16,9 @@ impl MasternodeList {
         let mut used_masternodes = Vec::<&QualifiedMasternodeListEntry>::new();
         let mut used_indexed_masternodes =
             vec![Vec::<&QualifiedMasternodeListEntry>::new(); quorum_count];
-        for i in 0..quorum_count {
+        for (i, indexed_masternodes) in
+            used_indexed_masternodes.iter_mut().enumerate().take(quorum_count)
+        {
             // for quarters h - c, h -2c, h -3c
             for quarter in &previous_quarters {
                 if let Some(quarter_nodes) = quarter.get(i) {
@@ -29,11 +31,11 @@ impl MasternodeList {
                             {
                                 used_masternodes.push(node);
                             }
-                            if !used_indexed_masternodes[i]
+                            if !indexed_masternodes
                                 .iter()
                                 .any(|m| m.masternode_list_entry.pro_reg_tx_hash == hash)
                             {
-                                used_indexed_masternodes[i].push(node);
+                                indexed_masternodes.push(node);
                             }
                         }
                     }

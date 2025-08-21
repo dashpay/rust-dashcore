@@ -3,7 +3,7 @@ use hashes::Hash;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::masternode_list::MasternodeList;
 
-impl<'a> std::fmt::Debug for MasternodeList {
+impl std::fmt::Debug for MasternodeList {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MasternodeList")
             .field("block_hash", &self.block_hash)

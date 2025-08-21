@@ -27,7 +27,6 @@ use crate::relative;
 #[allow(clippy::derive_ord_xor_partial_ord)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub enum LockTime {
     /// A block height lock time value.
     Blocks(Height),
@@ -185,7 +184,6 @@ impl fmt::Display for LockTime {
 /// A relative lock time lock-by-blockheight value.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct Height(u16);
 
 impl Height {
@@ -239,7 +237,6 @@ impl fmt::Display for Height {
 /// For BIP 68 relative lock-by-blocktime locks, time is measure in 512 second intervals.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct Time(u16);
 
 impl Time {
@@ -282,7 +279,7 @@ impl Time {
     /// Will return an error if the input cannot be encoded in 16 bits.
     #[inline]
     pub fn from_seconds_ceil(seconds: u32) -> Result<Self, Error> {
-        if let Ok(interval) = u16::try_from((seconds + 511) / 512) {
+        if let Ok(interval) = u16::try_from(seconds.div_ceil(512)) {
             Ok(Time::from_512_second_intervals(interval))
         } else {
             Err(Error::IntegerOverflow(seconds))

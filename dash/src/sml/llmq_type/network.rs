@@ -117,7 +117,7 @@ impl NetworkLLMQExt for Network {
                 }
 
                 // Group windows by their mining start for efficient fetching
-                windows_by_height.entry(window.mining_start).or_insert_with(Vec::new).push(window);
+                windows_by_height.entry(window.mining_start).or_default().push(window);
             }
         }
 

@@ -156,7 +156,6 @@ impl<E> EncodeSigningDataResult<E> {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct Transaction {
     /// The protocol version, is currently expected to be 1 or 2 (BIP 68).
     pub version: u16,
@@ -265,8 +264,8 @@ impl Transaction {
     /// # Warning
     ///
     /// - Does NOT attempt to support OP_CODESEPARATOR. In general this would require evaluating
-    /// `script_pubkey` to determine which separators get evaluated and which don't, which we don't
-    /// have the information to determine.
+    ///   `script_pubkey` to determine which separators get evaluated and which don't, which we don't
+    ///   have the information to determine.
     /// - Does NOT handle the sighash single bug (see "Returns" section)
     ///
     /// # Returns

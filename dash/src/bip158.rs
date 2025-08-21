@@ -522,10 +522,7 @@ impl<'a, R: io::Read> BitStreamReader<'a, R> {
     /// ```
     pub fn read(&mut self, mut nbits: u8) -> Result<u64, io::Error> {
         if nbits > 64 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "can not read more than 64 bits at once",
-            ));
+            return Err(io::Error::other("can not read more than 64 bits at once"));
         }
         let mut data = 0u64;
         while nbits > 0 {
@@ -563,10 +560,7 @@ impl<'a, W: io::Write> BitStreamWriter<'a, W> {
     /// Writes nbits bits from data.
     pub fn write(&mut self, data: u64, mut nbits: u8) -> Result<usize, io::Error> {
         if nbits > 64 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "can not write more than 64 bits at once",
-            ));
+            return Err(io::Error::other("can not write more than 64 bits at once"));
         }
         let mut wrote = 0;
         while nbits > 0 {

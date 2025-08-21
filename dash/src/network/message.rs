@@ -176,6 +176,7 @@ pub struct RawNetworkMessage {
 /// A Network message payload. Proper documentation is available on at
 /// [Bitcoin Wiki: Protocol Specification](https://en.bitcoin.it/wiki/Protocol_specification)
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum NetworkMessage {
     /// `version`
     Version(message_network::VersionMessage),

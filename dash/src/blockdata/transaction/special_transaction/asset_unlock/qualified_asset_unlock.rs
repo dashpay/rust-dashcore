@@ -50,7 +50,6 @@ pub const ASSET_UNLOCK_TX_SIZE: usize = 190;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct AssetUnlockPayload {
     /// The base information about the asset unlock. This base information is the information that
     /// should be put into a queue.
@@ -84,9 +83,7 @@ impl SpecialTransactionBasePayloadEncodable for AssetUnlockPayload {
     }
 }
 
-pub fn build_asset_unlock_tx(
-    withdrawal_info_bytes: &Vec<u8>,
-) -> Result<Transaction, encode::Error> {
+pub fn build_asset_unlock_tx(withdrawal_info_bytes: &[u8]) -> Result<Transaction, encode::Error> {
     let size_request_info: usize = AssetUnlockRequestInfo::SIZE;
     let size_asset_unlock_info = withdrawal_info_bytes.len() - size_request_info;
     let bytes_asset_unlock = &withdrawal_info_bytes[0..size_asset_unlock_info].to_vec();

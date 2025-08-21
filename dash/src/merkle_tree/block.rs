@@ -197,6 +197,7 @@ impl Decodable for MerkleBlock {
 ///  - uint256[]  hashes in depth-first order (<= 32*N bytes)
 ///  - varint     number of bytes of flag bits (1-3 bytes)
 ///  - byte[]     flag bits, packed per 8 in a byte, least significant bit first (<= 2*N-1 bits)
+///
 /// The size constraints follow from this.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct PartialMerkleTree {
@@ -309,7 +310,7 @@ impl PartialMerkleTree {
             self.traverse_and_extract(height, 0, &mut bits_used, &mut hash_used, matches, indexes)?;
         // Verify that all bits were consumed (except for the padding caused by
         // serializing it as a byte sequence)
-        if (bits_used + 7) / 8 != (self.bits.len() as u32 + 7) / 8 {
+        if bits_used.div_ceil(8) != (self.bits.len() as u32).div_ceil(8) {
             return Err(NotAllBitsConsumed);
         }
         // Verify that all hashes were consumed
@@ -444,7 +445,7 @@ impl PartialMerkleTree {
 impl Encodable for PartialMerkleTree {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let ret = self.num_transactions.consensus_encode(w)? + self.hashes.consensus_encode(w)?;
-        let mut bytes: Vec<u8> = vec![0; (self.bits.len() + 7) / 8];
+        let mut bytes: Vec<u8> = vec![0; self.bits.len().div_ceil(8)];
         for p in 0..self.bits.len() {
             bytes[p / 8] |= (self.bits[p] as u8) << (p % 8) as u8;
         }

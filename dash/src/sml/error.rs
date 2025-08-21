@@ -7,7 +7,6 @@ use crate::BlockHash;
 #[derive(Debug, Error, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub enum SmlError {
     /// Error indicating that the base block is not the genesis block.
     #[error("Base block is not the genesis block: {0}")]
