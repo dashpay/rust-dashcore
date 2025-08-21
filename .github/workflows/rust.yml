@@ -54,14 +54,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
       - name: Run workspace tests
         run: cargo test --workspace --all-features
       - name: Run workspace tests (no default features)
@@ -104,14 +98,8 @@ jobs:
         with:
           toolchain: stable
           components: clippy
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-strict-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
       
       # Check key-wallet with strict warnings
       - name: Check key-wallet (deny warnings)
