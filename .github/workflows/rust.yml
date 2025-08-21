@@ -158,68 +158,47 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-# TODO: need to support compiling rust-x11-hash under s390x
-#  Cross:
-#    name: Cross testing
-#    if: ${{ !github.event.act }}
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout Crate
-#        uses: actions/checkout@v4
-#      - name: Checkout Toolchain
-#        uses: dtolnay/rust-toolchain@stable
-#        with:
-#          profile: minimal
-#          toolchain: stable
-#          override: true
-#      - name: Install target
-#        run: rustup target add s390x-unknown-linux-gnu
-#      - name: install cross
-#        run: cargo install cross
-#      - name: run cross test
-#        run: cross test --target s390x-unknown-linux-gnu
+  rpc_tests:
+    name: RPC Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - rust: stable
+            env:
+              RUSTFMTCHK: true
+          - rust: nightly
+            env:
+              RUSTFMTCHK: false
+          - rust: 1.89.0
+            env:
+              PIN_VERSIONS: true
+    steps:
+      - name: Checkout Crate
+        uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Running test script
+        env: ${{ matrix.env }}
+        run: ./contrib/test.sh
 
-    rpc_tests:
-      name: RPC Tests
-      runs-on: ubuntu-latest
-      strategy:
-        matrix:
-          include:
-            - rust: stable
-              env:
-                RUSTFMTCHK: true
-            - rust: nightly
-              env:
-                RUSTFMTCHK: false
-            - rust: 1.89.0
-              env:
-                PIN_VERSIONS: true
-      steps:
-        - name: Checkout Crate
-          uses: actions/checkout@v4
-        - name: Setup Rust toolchain
-          uses: dtolnay/rust-toolchain@stable
-          with:
-            toolchain: ${{ matrix.rust }}
-        - name: Running test script
-          env: ${{ matrix.env }}
-          run: ./contrib/test.sh
-
-    integrations_tests:
-      name: Integration Tests
-      runs-on: ubuntu-latest
-      strategy:
-        matrix:
-          rust: [stable]
-          dashversion: ["22.0.0", "22.1.3"]
-      steps:
-        - name: Checkout Crate
-          uses: actions/checkout@v4
-        - name: Setup Rust toolchain
-          uses: dtolnay/rust-toolchain@stable
-          with:
-            toolchain: ${{ matrix.rust }}
-        - name: Running test script
-          env:
-            DASHVERSION: ${{ matrix.dashversion }}
-          run: ./contrib/test-rpc.sh
+  integrations_tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable]
+        dashversion: ["22.0.0", "22.1.3"]
+    steps:
+      - name: Checkout Crate
+        uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Running test script
+        env:
+          DASHVERSION: ${{ matrix.dashversion }}
+        run: ./contrib/test-rpc.sh
