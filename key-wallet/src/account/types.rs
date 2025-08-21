@@ -558,7 +558,7 @@ impl ManagedAccountType {
                 ..
             } => AccountType::Standard {
                 index: *index,
-                standard_account_type: standard_account_type.clone(),
+                standard_account_type: *standard_account_type,
             },
             Self::CoinJoin {
                 index,

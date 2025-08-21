@@ -527,7 +527,7 @@ impl GetKey for ExtendedPrivKey {
                     let k = self.derive_priv(secp, &path)?;
                     Some(PrivateKey {
                         compressed: true,
-                        network: k.network.into(),
+                        network: k.network,
                         inner: k.private_key,
                     })
                 } else {

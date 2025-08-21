@@ -198,20 +198,12 @@ impl GapLimit {
         match self.highest_used_index {
             None => {
                 // No addresses used yet, generate up to the limit
-                if self.highest_generated_index < self.limit {
-                    self.limit - self.highest_generated_index
-                } else {
-                    0
-                }
+                self.limit.saturating_sub(self.highest_generated_index)
             }
             Some(highest_used) => {
                 // Generate enough to maintain the gap limit
                 let target = highest_used + self.limit + 1;
-                if target > self.highest_generated_index {
-                    target - self.highest_generated_index
-                } else {
-                    0
-                }
+                target.saturating_sub(self.highest_generated_index)
             }
         }
     }
@@ -287,7 +279,7 @@ impl GapLimitManager {
     pub fn needs_generation(&self) -> bool {
         self.external.should_generate_more()
             || self.internal.should_generate_more()
-            || self.coinjoin.as_ref().map_or(false, |g| g.should_generate_more())
+            || self.coinjoin.as_ref().is_some_and(|g| g.should_generate_more())
     }
 
     /// Check if discovery is complete
@@ -299,7 +291,7 @@ impl GapLimitManager {
         let coinjoin_complete = self
             .coinjoin
             .as_ref()
-            .map_or(true, |g| g.stage == GapLimitStage::Complete || g.limit_reached);
+            .is_none_or(|g| g.stage == GapLimitStage::Complete || g.limit_reached);
 
         external_complete && internal_complete && coinjoin_complete
     }

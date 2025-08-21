@@ -243,7 +243,7 @@ impl ManagedAccount {
         } = &mut self.account_type
         {
             // Use the address pool's get_next_unused method which properly tracks addresses
-            let key_source = crate::account::address_pool::KeySource::Public(account_xpub.clone());
+            let key_source = crate::account::address_pool::KeySource::Public(*account_xpub);
             external_addresses
                 .get_next_unused(&key_source)
                 .map_err(|_| "Failed to generate receive address")
@@ -265,7 +265,7 @@ impl ManagedAccount {
         } = &mut self.account_type
         {
             // Use the address pool's get_next_unused method which properly tracks addresses
-            let key_source = crate::account::address_pool::KeySource::Public(account_xpub.clone());
+            let key_source = crate::account::address_pool::KeySource::Public(*account_xpub);
             internal_addresses
                 .get_next_unused(&key_source)
                 .map_err(|_| "Failed to generate change address")

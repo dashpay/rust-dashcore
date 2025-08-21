@@ -128,14 +128,12 @@ impl Wallet {
         };
         let wallet_id = Self::compute_wallet_id(&root_pub_key);
 
-        let wallet = Self {
+        Self {
             wallet_id,
             config: config.clone(),
             wallet_type,
             accounts: BTreeMap::new(),
-        };
-
-        wallet
+        }
     }
 
     /// Create a wallet from a mnemonic phrase
@@ -216,8 +214,8 @@ impl Wallet {
     /// * `master_xpub` - The master extended public key for the wallet
     /// * `config` - Optional wallet configuration (uses default if None)
     /// * `accounts` - Pre-created account collections mapped by network. Since watch-only wallets
-    ///                cannot derive private keys, all accounts must be provided with their extended
-    ///                public keys already initialized.
+    ///   cannot derive private keys, all accounts must be provided with their extended
+    ///   public keys already initialized.
     ///
     /// # Returns
     /// A new watch-only wallet instance
@@ -255,8 +253,8 @@ impl Wallet {
     /// * `master_xpub` - The master extended public key from the external signing device
     /// * `config` - Optional wallet configuration (uses default if None)
     /// * `accounts` - Pre-created account collections mapped by network. Since external signable
-    ///                wallets cannot derive private keys, all accounts must be provided with their
-    ///                extended public keys already initialized from the external device.
+    ///   wallets cannot derive private keys, all accounts must be provided with their
+    ///   extended public keys already initialized from the external device.
     ///
     /// # Returns
     /// A new external signable wallet instance that can create transactions but requires

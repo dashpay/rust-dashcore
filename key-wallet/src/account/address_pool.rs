@@ -219,7 +219,7 @@ impl AddressPool {
 
         // Generate the address
         let dash_pubkey = dashcore::PublicKey::new(pubkey.public_key);
-        let network = dashcore::Network::from(self.network);
+        let network = self.network;
         let address = match self.address_type {
             AddressType::P2pkh => Address::p2pkh(&dash_pubkey, network),
             AddressType::P2sh => {
@@ -404,6 +404,40 @@ impl AddressPool {
     /// Check if an address belongs to this pool
     pub fn contains_address(&self, address: &Address) -> bool {
         self.address_index.contains_key(address)
+    }
+
+    /// Get addresses in the specified range
+    ///
+    /// Returns addresses from start_index (inclusive) to end_index (exclusive).
+    /// If addresses in the range haven't been generated yet, they will be generated.
+    pub fn get_address_range(
+        &mut self,
+        start_index: u32,
+        end_index: u32,
+        key_source: &KeySource,
+    ) -> Result<Vec<Address>> {
+        if end_index <= start_index {
+            return Ok(Vec::new());
+        }
+
+        // Generate addresses up to end_index if needed
+        let current_highest = self.highest_generated.unwrap_or(0);
+        if end_index > current_highest + 1 {
+            // Generate from current_highest + 1 to end_index - 1
+            for index in (current_highest + 1)..end_index {
+                self.generate_address_at_index(index, key_source)?;
+            }
+        }
+
+        // Collect addresses in the range
+        let mut addresses = Vec::new();
+        for index in start_index..end_index {
+            if let Some(info) = self.addresses.get(&index) {
+                addresses.push(info.address.clone());
+            }
+        }
+
+        Ok(addresses)
     }
 
     /// Check if we need to generate more addresses

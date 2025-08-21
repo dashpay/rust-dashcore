@@ -3,7 +3,6 @@
 //! This module contains methods for creating and managing accounts within wallets.
 
 use super::Wallet;
-use crate::account::account_collection::AccountCollection;
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::bip32::ExtendedPubKey;
 use crate::derivation::HDWallet;
@@ -51,7 +50,7 @@ impl Wallet {
         };
 
         // Now get or create the account collection for this network
-        let collection = self.accounts.entry(network).or_insert_with(AccountCollection::new);
+        let collection = self.accounts.entry(network).or_default();
 
         // Check if account already exists
         if collection.contains_account_type(&account_type) {

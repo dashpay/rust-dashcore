@@ -163,7 +163,7 @@ impl Account {
 
         let secp = Secp256k1::new();
         let path = self.derivation_path()?;
-        master_xpriv.derive_priv(&secp, &path).map_err(|e| crate::error::Error::Bip32(e))
+        master_xpriv.derive_priv(&secp, &path).map_err(crate::error::Error::Bip32)
     }
 
     /// Derive a child private key at a specific path from the account
@@ -180,7 +180,7 @@ impl Account {
         }
 
         let secp = Secp256k1::new();
-        account_xpriv.derive_priv(&secp, child_path).map_err(|e| crate::error::Error::Bip32(e))
+        account_xpriv.derive_priv(&secp, child_path).map_err(crate::error::Error::Bip32)
     }
 
     /// Derive a child public key at a specific path from the account
@@ -188,7 +188,7 @@ impl Account {
     /// The path should be relative to the account (e.g., "0/5" for external address 5)
     pub fn derive_child_xpub(&self, child_path: &DerivationPath) -> Result<ExtendedPubKey> {
         let secp = Secp256k1::new();
-        self.account_xpub.derive_pub(&secp, child_path).map_err(|e| crate::error::Error::Bip32(e))
+        self.account_xpub.derive_pub(&secp, child_path).map_err(crate::error::Error::Bip32)
     }
 
     /// Derive a receive (external) address at a specific index

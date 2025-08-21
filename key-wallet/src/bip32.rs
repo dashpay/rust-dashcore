@@ -1711,7 +1711,7 @@ impl ExtendedPrivKey {
     pub fn to_priv(&self) -> dashcore::PrivateKey {
         dashcore::PrivateKey {
             compressed: true,
-            network: self.network.into(),
+            network: self.network,
             inner: self.private_key,
         }
     }

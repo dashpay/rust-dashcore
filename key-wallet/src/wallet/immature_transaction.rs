@@ -129,11 +129,7 @@ impl ImmatureTransaction {
     /// Get remaining confirmations until mature
     pub fn remaining_confirmations(&self, current_height: u32) -> u32 {
         let confirmations = self.confirmations(current_height);
-        if confirmations >= self.maturity_confirmations {
-            0
-        } else {
-            self.maturity_confirmations - confirmations
-        }
+        self.maturity_confirmations.saturating_sub(confirmations)
     }
 }
 
@@ -162,10 +158,7 @@ impl ImmatureTransactionCollection {
         let txid = tx.txid;
 
         // Add to the maturity height index
-        self.transactions_by_maturity_height
-            .entry(maturity_height)
-            .or_insert_with(Vec::new)
-            .push(tx);
+        self.transactions_by_maturity_height.entry(maturity_height).or_default().push(tx);
 
         // Add to txid index
         self.txid_to_height.insert(txid, maturity_height);
