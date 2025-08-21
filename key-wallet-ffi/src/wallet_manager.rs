@@ -257,19 +257,124 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_ids(
 
 /// Get a wallet from the manager
 ///
-/// NOTE: This is a placeholder implementation
+/// Returns a reference to the wallet if found
+///
+/// # Safety
+///
+/// - `manager` must be a valid pointer to an FFIWalletManager instance
+/// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
+/// - The returned wallet pointer is only valid while the manager exists
 #[no_mangle]
-pub extern "C" fn wallet_manager_get_wallet(
-    _manager: *const FFIWalletManager,
-    _wallet_id: *const u8,
+pub unsafe extern "C" fn wallet_manager_get_wallet(
+    manager: *const FFIWalletManager,
+    wallet_id: *const u8,
     error: *mut FFIError,
 ) -> *const crate::types::FFIWallet {
-    FFIError::set_error(
-        error,
-        FFIErrorCode::NotFound,
-        "Placeholder - wallet not found".to_string(),
-    );
-    ptr::null()
+    if manager.is_null() || wallet_id.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return ptr::null();
+    }
+
+    // Convert wallet_id pointer to array
+    let mut wallet_id_array = [0u8; 32];
+    unsafe {
+        ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
+    }
+
+    // Get the manager
+    let manager_ref = unsafe { &*manager };
+
+    // Lock the manager and get the wallet
+    let manager_guard = match manager_ref.manager.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::WalletError,
+                "Failed to lock wallet manager".to_string(),
+            );
+            return ptr::null();
+        }
+    };
+
+    // Get the wallet
+    match manager_guard.get_wallet(&wallet_id_array) {
+        Some(wallet) => {
+            // Create an FFIWallet wrapper
+            // Note: We need to store this somewhere that will outlive this function
+            // For now, we'll return a raw pointer to the wallet
+            // In a real implementation, you might want to store these in the FFIWalletManager
+            let ffi_wallet = Box::new(crate::types::FFIWallet::new(wallet.clone()));
+            FFIError::set_success(error);
+            Box::into_raw(ffi_wallet)
+        }
+        None => {
+            FFIError::set_error(error, FFIErrorCode::NotFound, "Wallet not found".to_string());
+            ptr::null()
+        }
+    }
+}
+
+/// Get managed wallet info from the manager
+///
+/// Returns a reference to the managed wallet info if found
+///
+/// # Safety
+///
+/// - `manager` must be a valid pointer to an FFIWalletManager instance
+/// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
+/// - The returned managed wallet info pointer is only valid while the manager exists
+#[no_mangle]
+pub unsafe extern "C" fn wallet_manager_get_managed_wallet_info(
+    manager: *const FFIWalletManager,
+    wallet_id: *const u8,
+    error: *mut FFIError,
+) -> *mut crate::managed_wallet::FFIManagedWalletInfo {
+    if manager.is_null() || wallet_id.is_null() {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return ptr::null_mut();
+    }
+
+    // Convert wallet_id pointer to array
+    let mut wallet_id_array = [0u8; 32];
+    unsafe {
+        ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
+    }
+
+    // Get the manager
+    let manager_ref = unsafe { &*manager };
+
+    // Lock the manager and get the wallet info
+    let manager_guard = match manager_ref.manager.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::WalletError,
+                "Failed to lock wallet manager".to_string(),
+            );
+            return ptr::null_mut();
+        }
+    };
+
+    // Get the wallet info
+    match manager_guard.get_wallet_info(&wallet_id_array) {
+        Some(wallet_info) => {
+            // Create an FFIManagedWalletInfo wrapper
+            let ffi_wallet_info =
+                Box::new(crate::managed_wallet::FFIManagedWalletInfo::new(wallet_info.clone()));
+            FFIError::set_success(error);
+            Box::into_raw(ffi_wallet_info)
+        }
+        None => {
+            FFIError::set_error(error, FFIErrorCode::NotFound, "Wallet info not found".to_string());
+            ptr::null_mut()
+        }
+    }
 }
 
 /// Get next receive address for a wallet

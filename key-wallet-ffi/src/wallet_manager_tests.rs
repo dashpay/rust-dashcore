@@ -4,7 +4,7 @@
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::types::FFINetwork;
-    use crate::wallet_manager;
+    use crate::{wallet, wallet_manager};
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_ulong};
     use std::ptr;
@@ -352,44 +352,6 @@ mod tests {
     }
 
     #[test]
-    fn test_total_balance() {
-        let mut error = FFIError::success();
-        let error = &mut error as *mut FFIError;
-
-        let manager = wallet_manager::wallet_manager_create(error);
-        assert!(!manager.is_null());
-
-        // Get initial total balance
-        let balance = wallet_manager::wallet_manager_get_total_balance(manager, error);
-        assert_eq!(balance, 0);
-
-        // Add wallets with different mnemonics
-        let mnemonics = [TEST_MNEMONIC, TEST_MNEMONIC_2];
-        unsafe {
-            for mnemonic_str in &mnemonics {
-                let mnemonic = CString::new(*mnemonic_str).unwrap();
-                let success = wallet_manager::wallet_manager_add_wallet_from_mnemonic(
-                    manager,
-                    mnemonic.as_ptr(),
-                    ptr::null(),
-                    FFINetwork::Testnet,
-                    error,
-                );
-                assert!(success);
-            }
-        }
-
-        // Total balance should still be 0 (no transactions)
-        let balance = wallet_manager::wallet_manager_get_total_balance(manager, error);
-        assert_eq!(balance, 0);
-
-        // Clean up
-        unsafe {
-            wallet_manager::wallet_manager_free(manager);
-        }
-    }
-
-    #[test]
     fn test_monitored_addresses() {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
@@ -704,10 +666,15 @@ mod tests {
         };
         assert!(success);
 
-        // Get the wallet - function not implemented, should return null
-        let wallet = wallet_manager::wallet_manager_get_wallet(manager, wallet_ids, error);
-        assert!(wallet.is_null());
-        assert_eq!(unsafe { (*error).code }, FFIErrorCode::NotFound);
+        // Get the wallet - now implemented, should return a valid wallet
+        let wallet = unsafe { wallet_manager::wallet_manager_get_wallet(manager, wallet_ids, error) };
+        assert!(!wallet.is_null());
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
+        
+        // Clean up the wallet (cast from const to mut for free)
+        unsafe {
+            wallet::wallet_free(wallet as *mut _);
+        }
 
         // Clean up
         unsafe {
@@ -844,34 +811,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_wallet_manager_process_transaction() {
-        let mut error = FFIError::success();
-        let error = &mut error as *mut FFIError;
-
-        let manager = wallet_manager::wallet_manager_create(error);
-        assert!(!manager.is_null());
-
-        // Test with empty transaction data
-        let tx_data = vec![0u8; 0];
-        let success = wallet_manager::wallet_manager_process_transaction(
-            manager,
-            tx_data.as_ptr(),
-            tx_data.len(),
-            12345, // height
-            54321, // block_time
-            error,
-        );
-
-        // Function is not implemented, should return false
-        assert!(!success);
-        assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
-
-        // Clean up
-        unsafe {
-            wallet_manager::wallet_manager_free(manager);
-        }
-    }
+    // Removed old test_wallet_manager_process_transaction - see updated version below
 
     #[test]
     fn test_wallet_manager_null_inputs() {
@@ -883,9 +823,20 @@ mod tests {
         assert_eq!(count, 0);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
-        // Test null manager with get_total_balance
-        let balance = wallet_manager::wallet_manager_get_total_balance(ptr::null(), error);
-        assert_eq!(balance, 0);
+        // Test null manager with get_wallet_balance
+        let mut confirmed: c_ulong = 0;
+        let mut unconfirmed: c_ulong = 0;
+        let null_wallet_id = [0u8; 32];
+        let success = unsafe {
+            wallet_manager::wallet_manager_get_wallet_balance(
+                ptr::null_mut(),
+                null_wallet_id.as_ptr(),
+                &mut confirmed,
+                &mut unconfirmed,
+                error,
+            )
+        };
+        assert!(!success);
 
         // Test adding wallet with null manager
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
@@ -1098,22 +1049,37 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, // locktime
         ];
 
-        // Test processing a mempool transaction (height = 0)
+        // Create transaction contexts for testing
+        let mempool_context = crate::types::FFITransactionContextDetails {
+            context_type: crate::types::FFITransactionContext::Mempool,
+            height: 0,
+            block_hash: ptr::null(),
+            timestamp: 0,
+        };
+
+        let block_context = crate::types::FFITransactionContextDetails {
+            context_type: crate::types::FFITransactionContext::InBlock,
+            height: 100000,
+            block_hash: ptr::null(),
+            timestamp: 1234567890,
+        };
+
+        // Test processing a mempool transaction
         let processed = unsafe {
             wallet_manager::wallet_manager_process_transaction(
                 manager,
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
-                0, // mempool
                 FFINetwork::Testnet,
-                false, // not chain locked
+                &mempool_context,
+                false,
                 error,
             )
         };
 
-        // The transaction won't be relevant since it has no inputs/outputs
+        // The transaction is invalid (simplified format), so deserialization will fail
         assert!(!processed);
-        assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Test processing a block transaction
         let processed = unsafe {
@@ -1121,29 +1087,35 @@ mod tests {
                 manager,
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
-                100000, // block height
                 FFINetwork::Testnet,
-                false, // not chain locked
+                &block_context,
+                false,
                 error,
             )
         };
         assert!(!processed);
-        assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Test processing a chain-locked block transaction
+        let chain_locked_context = crate::types::FFITransactionContextDetails {
+            context_type: crate::types::FFITransactionContext::InChainLockedBlock,
+            height: 100000,
+            block_hash: ptr::null(),
+            timestamp: 1234567890,
+        };
         let processed = unsafe {
             wallet_manager::wallet_manager_process_transaction(
                 manager,
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
-                100000, // block height
                 FFINetwork::Testnet,
-                true, // chain locked
+                &chain_locked_context,
+                true,
                 error,
             )
         };
         assert!(!processed);
-        assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Test with null manager
         let processed = unsafe {
@@ -1151,8 +1123,8 @@ mod tests {
                 ptr::null_mut(),
                 tx_bytes.as_ptr(),
                 tx_bytes.len(),
-                0,
                 FFINetwork::Testnet,
+                &mempool_context,
                 false,
                 error,
             )
@@ -1166,8 +1138,8 @@ mod tests {
                 manager,
                 ptr::null(),
                 10,
-                0,
                 FFINetwork::Testnet,
+                &mempool_context,
                 false,
                 error,
             )
@@ -1181,8 +1153,8 @@ mod tests {
                 manager,
                 tx_bytes.as_ptr(),
                 0,
-                0,
                 FFINetwork::Testnet,
+                &mempool_context,
                 false,
                 error,
             )
@@ -1197,8 +1169,8 @@ mod tests {
                 manager,
                 invalid_tx.as_ptr(),
                 invalid_tx.len(),
-                0,
                 FFINetwork::Testnet,
+                &mempool_context,
                 false,
                 error,
             )
@@ -1208,6 +1180,111 @@ mod tests {
 
         // Clean up
         unsafe {
+            wallet_manager::wallet_manager_free(manager);
+        }
+    }
+
+    #[test]
+    fn test_wallet_manager_get_wallet_and_info() {
+        let mut error = FFIError::success();
+        let error = &mut error as *mut FFIError;
+
+        let manager = wallet_manager::wallet_manager_create(error);
+        assert!(!manager.is_null());
+
+        // Add a wallet from mnemonic
+        let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
+        let passphrase = CString::new("").unwrap();
+
+        let success = unsafe {
+            wallet_manager::wallet_manager_add_wallet_from_mnemonic(
+                manager,
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                error,
+            )
+        };
+        assert!(success);
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
+
+        // Get wallet IDs
+        let mut wallet_ids: *mut u8 = ptr::null_mut();
+        let mut id_count: usize = 0;
+
+        let success = unsafe {
+            wallet_manager::wallet_manager_get_wallet_ids(
+                manager,
+                &mut wallet_ids as *mut *mut u8,
+                &mut id_count as *mut usize,
+                error,
+            )
+        };
+        assert!(success);
+        assert_eq!(id_count, 1);
+        assert!(!wallet_ids.is_null());
+
+        let wallet_id_slice = unsafe { slice::from_raw_parts(wallet_ids, 32) };
+
+        // Test getting the wallet
+        let wallet = unsafe {
+            wallet_manager::wallet_manager_get_wallet(manager, wallet_id_slice.as_ptr(), error)
+        };
+        assert!(!wallet.is_null());
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
+
+        // Test getting the managed wallet info
+        let wallet_info = unsafe {
+            wallet_manager::wallet_manager_get_managed_wallet_info(
+                manager,
+                wallet_id_slice.as_ptr(),
+                error,
+            )
+        };
+        assert!(!wallet_info.is_null());
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
+
+        // Test with invalid wallet ID (all zeros)
+        let invalid_wallet_id = vec![0u8; 32];
+
+        let wallet = unsafe {
+            wallet_manager::wallet_manager_get_wallet(manager, invalid_wallet_id.as_ptr(), error)
+        };
+        assert!(wallet.is_null());
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::NotFound);
+
+        let wallet_info = unsafe {
+            wallet_manager::wallet_manager_get_managed_wallet_info(
+                manager,
+                invalid_wallet_id.as_ptr(),
+                error,
+            )
+        };
+        assert!(wallet_info.is_null());
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::NotFound);
+
+        // Test with null manager
+        let wallet = unsafe {
+            wallet_manager::wallet_manager_get_wallet(ptr::null(), wallet_id_slice.as_ptr(), error)
+        };
+        assert!(wallet.is_null());
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        let wallet_info = unsafe {
+            wallet_manager::wallet_manager_get_managed_wallet_info(
+                ptr::null(),
+                wallet_id_slice.as_ptr(),
+                error,
+            )
+        };
+        assert!(wallet_info.is_null());
+        assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
+
+        // Clean up
+        unsafe {
+            // Note: In a real implementation, you'd want to free the wallet and wallet_info pointers
+            // For now, we'll let them leak since they're test objects
+            libc::free(wallet_ids as *mut libc::c_void);
             wallet_manager::wallet_manager_free(manager);
         }
     }

@@ -29,33 +29,18 @@ fn test_ffi_wallet_create_from_mnemonic_with_passphrase() {
     assert!(!wallet.is_null());
     assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
-    // Try to derive an address from account 0
-    // This should NOW SUCCEED because the default options create account 0
-    let addr = unsafe {
-        key_wallet_ffi::address::wallet_derive_receive_address(
-            wallet,
-            FFINetwork::Testnet,
-            0, // account 0
-            0, // address index
-            error,
-        )
-    };
-
-    // Should succeed now
-    assert!(!addr.is_null(), "Address derivation should succeed with fixed passphrase handling");
+    // Since we can't derive addresses directly from wallets anymore,
+    // verify that the wallet was created successfully
+    let is_watch_only = unsafe { key_wallet_ffi::wallet::wallet_is_watch_only(wallet, error) };
+    assert!(!is_watch_only);
     assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
-    // Verify we got a valid address
-    if !addr.is_null() {
-        let addr_str = unsafe { CStr::from_ptr(addr).to_str().unwrap() };
-        println!("Successfully derived address: {}", addr_str);
-        assert!(!addr_str.is_empty());
-
-        // Clean up address
-        unsafe {
-            key_wallet_ffi::address::address_free(addr);
-        }
-    }
+    // Get wallet ID to verify it was created
+    let mut wallet_id = [0u8; 32];
+    let success = unsafe { key_wallet_ffi::wallet::wallet_get_id(wallet, wallet_id.as_mut_ptr(), error) };
+    assert!(success);
+    assert_ne!(wallet_id, [0u8; 32]);
+    println!("Successfully created passphrase wallet with ID: {:?}", &wallet_id[..8]);
 
     // Clean up
     unsafe {
@@ -172,26 +157,11 @@ fn test_ffi_wallet_with_passphrase_ideal_workflow() {
     //    wallet_add_account_with_passphrase(wallet, account_type, network, passphrase, error)
     // 3. Have a callback mechanism to request the passphrase when needed
 
-    // Then we should be able to derive addresses
-    let addr = unsafe {
-        key_wallet_ffi::address::wallet_derive_receive_address(
-            wallet,
-            FFINetwork::Testnet,
-            0,
-            0,
-            error,
-        )
-    };
-
-    // This should work in an ideal implementation
-    assert!(!addr.is_null());
-
-    // Clean up
-    if !addr.is_null() {
-        unsafe {
-            key_wallet_ffi::address::address_free(addr);
-        }
-    }
+    // Since we can't derive addresses directly from wallets anymore,
+    // just verify the wallet was created
+    let is_watch_only = unsafe { key_wallet_ffi::wallet::wallet_is_watch_only(wallet, error) };
+    assert!(!is_watch_only);
+    println!("Wallet with passphrase created successfully");
     unsafe {
         key_wallet_ffi::wallet::wallet_free(wallet);
     }

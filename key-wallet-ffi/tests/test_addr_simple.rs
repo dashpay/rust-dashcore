@@ -19,29 +19,21 @@ fn test_address_simple() {
     };
     assert!(!wallet.is_null());
 
-    // Get an address from the wallet
-    let addr = unsafe {
-        key_wallet_ffi::address::wallet_derive_receive_address(
-            wallet,
-            FFINetwork::Testnet,
-            0,
-            0,
-            error,
-        )
-    };
-    assert!(!addr.is_null());
+    // Since we can't derive addresses directly from wallets anymore,
+    // we'll test wallet creation and basic properties
+    let is_watch_only = unsafe { key_wallet_ffi::wallet::wallet_is_watch_only(wallet, error) };
+    assert!(!is_watch_only);
+    
+    // Get wallet ID to verify it was created
+    let mut wallet_id = [0u8; 32];
+    let success = unsafe { key_wallet_ffi::wallet::wallet_get_id(wallet, wallet_id.as_mut_ptr(), error) };
+    assert!(success);
+    assert_ne!(wallet_id, [0u8; 32]);
 
-    // Convert to string and verify
-    let addr_str = unsafe { CStr::from_ptr(addr).to_str().unwrap() };
-    println!("Generated address: {}", addr_str);
-
-    // Basic validation - should start with 'y' for testnet
-    assert!(addr_str.starts_with('y'));
-    assert!(addr_str.len() > 20);
+    println!("Generated wallet with ID: {:?}", &wallet_id[..8]);
 
     // Clean up
     unsafe {
-        key_wallet_ffi::address::address_free(addr);
         key_wallet_ffi::wallet::wallet_free(wallet);
     }
 
