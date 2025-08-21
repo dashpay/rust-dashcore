@@ -88,11 +88,15 @@ jobs:
           components: clippy
       - name: Run clippy (excluding strict-checked crates)
         run: |
-          # Run clippy on all workspace members except the ones with strict checks
-          # We allow warnings for these crates
-          for crate in dash dash-network dash-network-ffi hashes internals fuzz rpc-client rpc-json rpc-integration-test dash-spv dash-spv-ffi test-utils; do
+          # Auto-discover all workspace crates and exclude strict-checked ones
+          STRICT_CRATES=("key-wallet" "key-wallet-manager" "key-wallet-ffi")
+          mapfile -t ALL_CRATES < <(cargo metadata --no-deps --format-version=1 | jq -r '.packages[].name' | sort -u)
+          for crate in "${ALL_CRATES[@]}"; do
+            if printf '%s\n' "${STRICT_CRATES[@]}" | grep -qx "$crate"; then
+              continue
+            fi
             echo "Checking $crate (warnings allowed)..."
-            cargo clippy -p $crate --all-features --all-targets || true
+            cargo clippy -p "$crate" --all-features --all-targets || true
           done
   
   strict-checks:
