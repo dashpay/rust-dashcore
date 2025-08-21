@@ -370,21 +370,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         Ok(true)
     }
 
-    /// Process a single header with fork detection
-    async fn process_header_with_fork_detection(
-        &mut self,
-        header: &BlockHeader,
-        storage: &mut S,
-    ) -> SyncResult<()> {
-        // Method removed - no longer used
-        Ok(())
-    }
-
-    /// Check if any fork should trigger a reorganization
-    async fn check_for_reorg(&mut self, storage: &mut S) -> SyncResult<()> {
-        // Method removed - no longer used
-        Ok(())
-    }
 
     /// Request headers from the network
     pub async fn request_headers(

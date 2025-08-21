@@ -1175,6 +1175,7 @@ impl<
 
 
     /// Process a new block.
+    #[allow(dead_code)]
     async fn process_new_block(&mut self, block: dashcore::Block) -> Result<()> {
         let block_hash = block.block_hash();
 
@@ -1199,6 +1200,7 @@ impl<
 
 
     /// Report balance changes for watched addresses.
+    #[allow(dead_code)]
     async fn report_balance_changes(
         &self,
         balance_changes: &std::collections::HashMap<dashcore::Address, i64>,
