@@ -777,7 +777,7 @@ impl fmt::Display for Error {
             }
             #[cfg(feature = "bitcoinconsensus")]
             Error::BitcoinConsensus(ref e) => {
-                write_err!(f, "bitcoinconsensus verification failed"; bitcoinconsensus_hack::wrap_error(e))
+                write_err!(f, "bitcoinconsensus verification failed"; e)
             }
             Error::UnknownSpentOutput(ref point) => write!(f, "unknown spent output: {}", point),
             Error::Serialization => {
@@ -799,7 +799,7 @@ impl std::error::Error for Error {
             | UnknownSpentOutput(_)
             | Serialization => None,
             #[cfg(feature = "bitcoinconsensus")]
-            BitcoinConsensus(ref e) => Some(bitcoinconsensus_hack::wrap_error(e)),
+            BitcoinConsensus(ref e) => Some(e),
         }
     }
 }

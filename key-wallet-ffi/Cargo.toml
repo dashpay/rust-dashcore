@@ -33,9 +33,3 @@ cbindgen = "0.29"
 [dev-dependencies]
 tempfile = "3.0"
 hex = "0.4"
-
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-panic = "abort"

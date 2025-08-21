@@ -20,9 +20,3 @@ hex = "0.4"
 crate-type = ["cdylib", "staticlib"]
 name = "dash_network_ffi"
 
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-panic = "abort"
-

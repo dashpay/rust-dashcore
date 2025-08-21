@@ -16,6 +16,3 @@ elliptic-curve-tools = { git = "https://github.com/QuantumExplorer/elliptic-curv
 [profile.dev]
 # Default to unwinding for most crates
 
-[profile.test]
-panic = "unwind"
-
