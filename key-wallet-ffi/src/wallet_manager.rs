@@ -239,13 +239,14 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_ids(
         *count_out = 0;
         *wallet_ids_out = ptr::null_mut();
     } else {
-        // Allocate memory for wallet IDs (32 bytes each)
+        // Allocate memory for wallet IDs (32 bytes each) as a boxed slice
         let mut ids_buffer = Vec::with_capacity(count * 32);
         for wallet_id in ids_guard.iter() {
             ids_buffer.extend_from_slice(wallet_id);
         }
-        let ids_ptr = ids_buffer.as_mut_ptr();
-        std::mem::forget(ids_buffer);
+        // Convert to boxed slice for consistent memory layout
+        let boxed_slice = ids_buffer.into_boxed_slice();
+        let ids_ptr = Box::into_raw(boxed_slice) as *mut u8;
 
         *wallet_ids_out = ids_ptr;
         *count_out = count;
@@ -781,8 +782,9 @@ pub unsafe extern "C" fn wallet_manager_get_monitored_addresses(
         *addresses_out = ptr::null_mut();
     } else {
         *count_out = all_addresses.len();
-        let ptr = all_addresses.as_mut_ptr();
-        std::mem::forget(all_addresses);
+        // Convert Vec to boxed slice for consistent memory layout
+        let boxed = all_addresses.into_boxed_slice();
+        let ptr = Box::into_raw(boxed) as *mut *mut c_char;
         *addresses_out = ptr;
     }
 
@@ -936,7 +938,8 @@ pub unsafe extern "C" fn wallet_manager_free(manager: *mut FFIWalletManager) {
 pub unsafe extern "C" fn wallet_manager_free_wallet_ids(wallet_ids: *mut u8, count: usize) {
     if !wallet_ids.is_null() && count > 0 {
         unsafe {
-            let _ = Box::from_raw(std::slice::from_raw_parts_mut(wallet_ids, count * 32));
+            // Reconstruct the boxed slice with the correct DST pointer
+            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(wallet_ids, count * 32));
         }
     }
 }
@@ -959,7 +962,7 @@ pub unsafe extern "C" fn wallet_manager_free_addresses(addresses: *mut *mut c_ch
                 let _ = CString::from_raw(*addr);
             }
         }
-        // Free the array itself
-        let _ = Box::from_raw(std::slice::from_raw_parts_mut(addresses, count));
+        // Free the array itself (matches boxed slice allocation)
+        let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(addresses, count));
     }
 }

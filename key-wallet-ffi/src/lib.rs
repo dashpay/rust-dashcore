@@ -32,7 +32,6 @@ pub use types::{FFINetwork, FFIWallet};
 // Initialization and Version
 // ============================================================================
 
-use std::ffi::CString;
 use std::os::raw::c_char;
 
 /// Initialize the library
@@ -43,9 +42,10 @@ pub extern "C" fn key_wallet_ffi_initialize() -> bool {
 }
 
 /// Get library version
+/// 
+/// Returns a static string that should NOT be freed by the caller
 #[no_mangle]
 pub extern "C" fn key_wallet_ffi_version() -> *const c_char {
-    CString::new(env!("CARGO_PKG_VERSION"))
-        .expect("Version string should never fail")
-        .into_raw()
+    // Use a static CStr to avoid allocation and ensure the string is never freed
+    concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char
 }

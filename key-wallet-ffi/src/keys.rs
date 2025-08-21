@@ -3,7 +3,6 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
-
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFINetwork, FFIWallet};
 
@@ -713,7 +712,8 @@ pub unsafe extern "C" fn public_key_to_hex(
 
     unsafe {
         let key = &*key;
-        let hex = format!("{:x}", key.inner);
+        let bytes = key.inner.serialize();
+        let hex = hex::encode(bytes);
 
         FFIError::set_success(error);
         match CString::new(hex) {
@@ -796,7 +796,15 @@ pub unsafe extern "C" fn derivation_path_parse(
             key_wallet::ChildNumber::Hardened {
                 index,
             } => (*index, true),
-            _ => (0u32, false), // Not supported
+            _ => {
+                // Fail fast for unsupported ChildNumber variants
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidDerivationPath,
+                    "Unsupported ChildNumber variant encountered".to_string(),
+                );
+                return false;
+            }
         };
         indices.push(index);
         hardened.push(is_hardened);

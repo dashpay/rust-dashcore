@@ -37,10 +37,8 @@ impl FFIUTXO {
         let script_ptr = if script.is_empty() {
             ptr::null_mut()
         } else {
-            let mut script_box = script.into_boxed_slice();
-            let ptr = script_box.as_mut_ptr();
-            std::mem::forget(script_box);
-            ptr
+            let script_box = script.into_boxed_slice();
+            Box::into_raw(script_box) as *mut u8
         };
 
         FFIUTXO {
@@ -68,8 +66,11 @@ impl FFIUTXO {
             self.address = ptr::null_mut();
         }
         if !self.script_pubkey.is_null() && self.script_len > 0 {
-            let _ =
-                Box::from_raw(std::slice::from_raw_parts_mut(self.script_pubkey, self.script_len));
+            // Reconstruct the boxed slice with DST pointer
+            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                self.script_pubkey,
+                self.script_len,
+            ));
             self.script_pubkey = ptr::null_mut();
             self.script_len = 0;
         }
@@ -144,10 +145,9 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
         }
 
         *count_out = ffi_utxos.len();
-        // Convert Vec to boxed slice and leak it
-        let mut boxed_utxos = ffi_utxos.into_boxed_slice();
-        let ptr = boxed_utxos.as_mut_ptr();
-        std::mem::forget(boxed_utxos);
+        // Convert Vec to boxed slice for consistent memory layout
+        let boxed_utxos = ffi_utxos.into_boxed_slice();
+        let ptr = Box::into_raw(boxed_utxos) as *mut FFIUTXO;
         *utxos_out = ptr;
     }
 
@@ -202,8 +202,8 @@ pub unsafe extern "C" fn utxo_array_free(utxos: *mut FFIUTXO, count: usize) {
             utxo.free();
         }
 
-        // Free the array itself by reconstructing the Box
-        let _ = Box::from_raw(std::slice::from_raw_parts_mut(utxos, count));
+        // Free the array itself by reconstructing the boxed slice with DST pointer
+        let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(utxos, count));
     }
 }
 
