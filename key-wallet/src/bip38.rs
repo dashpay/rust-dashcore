@@ -30,6 +30,7 @@ const BIP38_FLAG_EC_LOT_SEQUENCE: u8 = 0x04;
 const _BIP38_FLAG_EC_INVALID: u8 = 0x10;
 
 // Scrypt parameters
+#[allow(dead_code)]
 const SCRYPT_N: u32 = 16384; // 2^14
 const SCRYPT_R: u32 = 8;
 const SCRYPT_P: u32 = 8;

@@ -16,11 +16,10 @@
 #![crate_name = "dashcore_rpc_json"]
 #![crate_type = "rlib"]
 
-pub extern crate dashcore;
-#[macro_use] // `macro_use` is needed for v1.24.0 compilation.
-extern crate serde;
-extern crate serde_json;
-extern crate serde_with;
+pub use dashcore;
+use serde;
+use serde_json;
+use serde_with;
 
 use bincode::{Decode, Encode};
 use serde_repr::*;

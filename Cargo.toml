@@ -7,8 +7,10 @@ version = "0.39.6"
 
 [patch.crates-io]
 dashcore_hashes = { path = "hashes" }
-# Force multiexp 0.4.2+ for Rust 1.89.0 compatibility
-multiexp = "0.4.2"
+# Use fixed version of multiexp
+multiexp = { path = "../serai/crypto/multiexp" }
+# Use fixed version of elliptic-curve-tools with DefaultIsZeroes trait bound
+elliptic-curve-tools = { git = "https://github.com/QuantumExplorer/elliptic-curve-tools", branch = "fix/DefaultIsZeroesToSumOfProducts" }
 
 [profile.release]
 panic = "abort"
