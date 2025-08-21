@@ -850,39 +850,6 @@ impl MultiPeerNetworkManager {
         results
     }
 
-    /// Select a peer for sending a message
-    async fn select_peer(&self) -> Option<SocketAddr> {
-        // Try to use current sync peer if available
-        let current_sync_peer = self.current_sync_peer.lock().await;
-        if let Some(peer) = *current_sync_peer {
-            // Check if still connected
-            if self.pool.is_connected(&peer).await {
-                return Some(peer);
-            }
-        }
-        drop(current_sync_peer);
-
-        // Otherwise pick the first available peer
-        let connections = self.pool.get_all_connections().await;
-        connections.first().map(|(addr, _)| *addr)
-    }
-
-    /// Send a message to a specific peer
-    async fn send_to_peer(&self, peer: SocketAddr, message: NetworkMessage) -> Result<(), Error> {
-        let connections = self.pool.get_all_connections().await;
-        let conn =
-            connections.iter().find(|(addr, _)| *addr == peer).map(|(_, conn)| conn).ok_or_else(
-                || {
-                    Error::Network(NetworkError::ConnectionFailed(format!(
-                        "Peer {} not connected",
-                        peer
-                    )))
-                },
-            )?;
-
-        let mut conn_guard = conn.write().await;
-        conn_guard.send_message(message).await.map_err(|e| Error::Network(e))
-    }
 
     /// Disconnect a specific peer
     pub async fn disconnect_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {

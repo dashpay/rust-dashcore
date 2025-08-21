@@ -157,14 +157,13 @@ pub struct TcpNetworkManager {
     handshake: HandshakeManager,
     _message_handler: MessageHandler,
     message_sender: mpsc::Sender<NetworkMessage>,
-    message_receiver: mpsc::Receiver<NetworkMessage>,
     dsq_preference: bool,
 }
 
 impl TcpNetworkManager {
     /// Create a new TCP network manager.
     pub async fn new(config: &crate::client::ClientConfig) -> NetworkResult<Self> {
-        let (message_sender, message_receiver) = mpsc::channel(1000);
+        let (message_sender, _message_receiver) = mpsc::channel(1000);
 
         Ok(Self {
             config: config.clone(),
@@ -172,7 +171,6 @@ impl TcpNetworkManager {
             handshake: HandshakeManager::new(config.network, config.mempool_strategy),
             _message_handler: MessageHandler::new(),
             message_sender,
-            message_receiver,
             dsq_preference: false,
         })
     }

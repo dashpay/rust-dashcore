@@ -21,18 +21,14 @@ use crate::types::SyncProgress;
 // Constants for filter synchronization
 const FILTER_BATCH_SIZE: u32 = 1999; // Stay under Dash Core's 2000 limit (for CFHeaders)
 const SYNC_TIMEOUT_SECONDS: u64 = 5;
-const RECEIVE_TIMEOUT_MILLIS: u64 = 100;
 const DEFAULT_FILTER_SYNC_RANGE: u32 = 100;
 const FILTER_REQUEST_BATCH_SIZE: u32 = 100; // For compact filter requests (CFilters)
 const MAX_FILTER_REQUEST_SIZE: u32 = 1000; // Maximum filters per CFilter request (Dash Core limit)
-const MAX_TIMEOUTS: u32 = 10;
 
 // Flow control constants
 const MAX_CONCURRENT_FILTER_REQUESTS: usize = 50; // Maximum concurrent filter batches (increased for better performance)
-const FILTER_REQUEST_DELAY_MS: u64 = 0; // No delay for normal requests
 const FILTER_RETRY_DELAY_MS: u64 = 100; // Delay for retry requests to avoid hammering peers
 const REQUEST_TIMEOUT_SECONDS: u64 = 30; // Timeout for individual requests
-const COMPLETION_CHECK_INTERVAL_MS: u64 = 100; // How often to check for completions
 
 /// Handle for sending CFilter messages to the processing thread.
 pub type FilterNotificationSender =
@@ -44,14 +40,12 @@ struct FilterRequest {
     start_height: u32,
     end_height: u32,
     stop_hash: BlockHash,
-    request_time: std::time::Instant,
     is_retry: bool,
 }
 
 /// Represents an active filter request that has been sent and is awaiting response.
 #[derive(Debug)]
 struct ActiveRequest {
-    request: FilterRequest,
     sent_time: std::time::Instant,
 }
 
@@ -66,8 +60,6 @@ pub struct FilterSyncManager<S: StorageManager, N: NetworkManager> {
     current_sync_height: u32,
     /// Base height for sync (typically from checkpoint)
     sync_base_height: u32,
-    /// Expected stop hash for current batch
-    expected_stop_hash: Option<BlockHash>,
     /// Last time sync progress was made (for timeout detection)
     last_sync_progress: std::time::Instant,
     /// Last time filter header tip height was checked for stability
@@ -150,7 +142,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             syncing_filter_headers: false,
             current_sync_height: 0,
             sync_base_height: 0,
-            expected_stop_hash: None,
             last_sync_progress: std::time::Instant::now(),
             last_stability_check: std::time::Instant::now(),
             last_filter_tip_height: None,
@@ -1189,7 +1180,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 start_height: current_height,
                 end_height: batch_end,
                 stop_hash,
-                request_time: std::time::Instant::now(),
                 is_retry: false,
             };
 
@@ -1264,7 +1254,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Track this request as active
         let range = (request.start_height, request.end_height);
         let active_request = ActiveRequest {
-            request: request.clone(),
             sent_time: std::time::Instant::now(),
         };
 
@@ -1497,7 +1486,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     start_height: start,
                     end_height: end,
                     stop_hash,
-                    request_time: std::time::Instant::now(),
                     is_retry: true,
                 };
 

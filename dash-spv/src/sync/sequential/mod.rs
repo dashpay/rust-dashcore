@@ -2102,6 +2102,16 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         &mut self.masternode_sync
     }
 
+    /// Get a reference to the filter sync manager.
+    pub fn filter_sync(&self) -> &FilterSyncManager<S, N> {
+        &self.filter_sync
+    }
+
+    /// Get a mutable reference to the filter sync manager.
+    pub fn filter_sync_mut(&mut self) -> &mut FilterSyncManager<S, N> {
+        &mut self.filter_sync
+    }
+
     /// Get the actual blockchain height from storage height, accounting for checkpoints
     pub(crate) async fn get_blockchain_height_from_storage(&self, storage: &S) -> SyncResult<u32> {
         let storage_height = storage
