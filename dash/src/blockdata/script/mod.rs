@@ -49,11 +49,14 @@
 //! is minimal but we may extend it in the future if needed.
 
 use alloc::rc::Rc;
+#[cfg(all(not(feature = "std"), not(test), target_has_atomic = "ptr"))]
 use alloc::sync::Arc;
 use core::borrow::{Borrow, BorrowMut};
 use core::cmp::Ordering;
 use core::fmt;
 use core::ops::{Deref, DerefMut};
+#[cfg(feature = "std")]
+use std::sync::Arc;
 
 #[cfg(feature = "serde")]
 use serde;

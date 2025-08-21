@@ -13,8 +13,11 @@ multiexp = { path = "../serai/crypto/multiexp" }
 elliptic-curve-tools = { git = "https://github.com/QuantumExplorer/elliptic-curve-tools", branch = "fix/DefaultIsZeroesToSumOfProducts" }
 
 [profile.release]
-panic = "abort"
+# Default to unwinding for most crates
 
 [profile.dev]
-panic = "abort"
+# Default to unwinding for most crates
+
+[profile.test]
+panic = "unwind"
 

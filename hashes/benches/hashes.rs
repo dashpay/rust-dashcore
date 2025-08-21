@@ -148,8 +148,8 @@ fn bench_hmac_sha256(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
             let key = [99u8; 32];
             let bytes = vec![1u8; size];
-            let mut engine = hmac::HmacEngine::<sha256::Hash>::new(&key);
             b.iter(|| {
+                let mut engine = hmac::HmacEngine::<sha256::Hash>::new(&key);
                 engine.input(&bytes);
                 black_box(&engine);
             });
@@ -166,8 +166,8 @@ fn bench_hmac_sha512(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
             let key = [99u8; 64];
             let bytes = vec![1u8; size];
-            let mut engine = hmac::HmacEngine::<sha512::Hash>::new(&key);
             b.iter(|| {
+                let mut engine = hmac::HmacEngine::<sha512::Hash>::new(&key);
                 engine.input(&bytes);
                 black_box(&engine);
             });
