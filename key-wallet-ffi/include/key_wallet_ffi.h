@@ -1057,7 +1057,6 @@ bool derivation_path_parse(const char *path,
 /*
  Free derivation path arrays
  Note: This function expects the count to properly free the slices
- For now, we're leaking memory as we don't have the count parameter
 
  # Safety
 

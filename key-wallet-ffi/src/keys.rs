@@ -990,7 +990,6 @@ pub unsafe extern "C" fn derivation_path_parse(
 
 /// Free derivation path arrays
 /// Note: This function expects the count to properly free the slices
-/// For now, we're leaking memory as we don't have the count parameter
 ///
 /// # Safety
 ///
@@ -1006,12 +1005,14 @@ pub unsafe extern "C" fn derivation_path_free(
 ) {
     if !indices.is_null() && count > 0 {
         unsafe {
-            let _ = Vec::from_raw_parts(indices, count, count);
+            // Reconstruct the boxed slice from the raw pointer and let it drop
+            let _ = Box::from_raw(std::slice::from_raw_parts_mut(indices, count));
         }
     }
     if !hardened.is_null() && count > 0 {
         unsafe {
-            let _ = Vec::from_raw_parts(hardened, count, count);
+            // Reconstruct the boxed slice from the raw pointer and let it drop
+            let _ = Box::from_raw(std::slice::from_raw_parts_mut(hardened, count));
         }
     }
 }
