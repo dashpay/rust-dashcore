@@ -1,20 +1,18 @@
 //! Filter synchronization and management for the Dash SPV client.
 
-#![allow(deprecated)]
-
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::SyncManager;
+use crate::sync::sequential::SequentialSyncManager;
 use crate::types::SpvStats;
 use crate::types::{FilterMatch, WatchItem};
 
 /// Filter synchronization manager for coordinating filter downloads and checking.
 pub struct FilterSyncCoordinator<'a, S: StorageManager, N: NetworkManager> {
-    sync_manager: &'a mut SyncManager<S, N>,
+    sync_manager: &'a mut SequentialSyncManager<S, N>,
     storage: &'a mut S,
     network: &'a mut N,
     watch_items: &'a Arc<RwLock<std::collections::HashSet<WatchItem>>>,
@@ -27,7 +25,7 @@ impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + S
 {
     /// Create a new filter sync coordinator.
     pub fn new(
-        sync_manager: &'a mut SyncManager<S, N>,
+        sync_manager: &'a mut SequentialSyncManager<S, N>,
         storage: &'a mut S,
         network: &'a mut N,
         watch_items: &'a Arc<RwLock<std::collections::HashSet<WatchItem>>>,
@@ -164,11 +162,5 @@ impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + S
     async fn get_watch_items(&self) -> Vec<WatchItem> {
         let watch_items = self.watch_items.read().await;
         watch_items.iter().cloned().collect()
-    }
-
-    /// Helper method to find height for a block hash.
-    async fn find_height_for_block_hash(&self, block_hash: dashcore::BlockHash) -> Option<u32> {
-        // Use the efficient reverse index
-        self.storage.get_header_height_by_hash(&block_hash).await.ok().flatten()
     }
 }

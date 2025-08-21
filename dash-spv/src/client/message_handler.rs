@@ -8,7 +8,6 @@ use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use crate::sync::filters::FilterNotificationSender;
 use crate::sync::sequential::SequentialSyncManager;
 use crate::types::{MempoolState, SpvEvent, SpvStats};
 
@@ -19,7 +18,6 @@ pub struct MessageHandler<'a, S: StorageManager, N: NetworkManager> {
     network: &'a mut N,
     config: &'a ClientConfig,
     stats: &'a Arc<RwLock<SpvStats>>,
-    filter_processor: &'a Option<FilterNotificationSender>,
     block_processor_tx: &'a tokio::sync::mpsc::UnboundedSender<crate::client::BlockProcessingTask>,
     mempool_filter: &'a Option<Arc<MempoolFilter>>,
     mempool_state: &'a Arc<RwLock<MempoolState>>,
@@ -36,7 +34,6 @@ impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + S
         network: &'a mut N,
         config: &'a ClientConfig,
         stats: &'a Arc<RwLock<SpvStats>>,
-        filter_processor: &'a Option<FilterNotificationSender>,
         block_processor_tx: &'a tokio::sync::mpsc::UnboundedSender<
             crate::client::BlockProcessingTask,
         >,
@@ -50,7 +47,6 @@ impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + S
             network,
             config,
             stats,
-            filter_processor,
             block_processor_tx,
             mempool_filter,
             mempool_state,

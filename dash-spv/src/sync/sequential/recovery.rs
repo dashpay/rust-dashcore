@@ -82,9 +82,12 @@ pub struct RecoveryManager {
 
 #[derive(Debug, Clone)]
 struct RecoveryEvent {
+    #[allow(dead_code)]
     timestamp: std::time::Instant,
     phase: String,
+    #[allow(dead_code)]
     error: String,
+    #[allow(dead_code)]
     strategy: RecoveryStrategy,
     success: bool,
 }

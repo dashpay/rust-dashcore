@@ -6,7 +6,6 @@
 use crate::error::{SyncError, SyncResult};
 use crate::storage::StorageManager;
 use dashcore::{
-    bls_sig_utils::BLSPublicKey,
     sml::{llmq_type::LLMQType, masternode_list_engine::MasternodeListEngine},
     BlockHash, ChainLock,
 };
@@ -81,7 +80,7 @@ struct CachedChainLockResult {
 
 /// Chain lock validation statistics
 #[derive(Debug, Default)]
-struct ChainLockStats {
+pub struct ChainLockStats {
     total_validations: usize,
     successful_validations: usize,
     failed_validations: usize,
@@ -208,49 +207,6 @@ impl ChainLockValidator {
             },
             validation_time: start.elapsed(),
         })
-    }
-
-    /// Find the appropriate quorum for chain lock validation
-    fn find_chain_lock_quorum(
-        &self,
-        height: u32,
-        engine: &MasternodeListEngine,
-    ) -> SyncResult<Option<(BlockHash, BLSPublicKey)>> {
-        // ChainLocks use the LLMQ at the tip of the chain
-        // We need to find the most recent LLMQ of the required type
-
-        // Get the masternode list at or before the height
-        let mn_list_height = engine.masternode_lists.range(..=height).rev().next().map(|(h, _)| *h);
-
-        let list_height = mn_list_height.ok_or_else(|| {
-            SyncError::Validation(format!(
-                "No masternode list found at or before height {}",
-                height
-            ))
-        })?;
-
-        let mn_list = engine.masternode_lists.get(&list_height).ok_or_else(|| {
-            SyncError::Validation(format!("Masternode list not found at height {}", list_height))
-        })?;
-
-        // Find the chain lock quorum
-        let quorums = mn_list.quorums.get(&self.config.required_llmq_type).ok_or_else(|| {
-            SyncError::Validation(format!(
-                "No quorums found for LLMQ type {:?} at masternode list height {}",
-                self.config.required_llmq_type, list_height
-            ))
-        })?;
-
-        // Get the most recent quorum
-        let (quorum_hash, entry) = quorums.iter().next().ok_or_else(|| {
-            SyncError::Validation(format!(
-                "No quorum entries found for LLMQ type {:?}",
-                self.config.required_llmq_type
-            ))
-        })?;
-
-        // Get public key from the quorum entry
-        Ok(Some((*quorum_hash, entry.quorum_entry.quorum_public_key)))
     }
 
     /// Verify chain lock signature using the engine's built-in verification

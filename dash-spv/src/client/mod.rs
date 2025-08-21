@@ -134,11 +134,6 @@ impl<
         )
     }
 
-    /// Helper to get block height with a sensible default.
-    async fn get_block_height_or_default(&self, block_hash: dashcore::BlockHash) -> u32 {
-        self.find_height_for_block_hash(block_hash).await.unwrap_or(0)
-    }
-
     /// Helper to collect all watched addresses.
     async fn get_watched_addresses_from_items(&self) -> Vec<dashcore::Address> {
         let watch_items = self.get_watch_items().await;
@@ -1139,7 +1134,6 @@ impl<
                 &mut self.network,
                 &self.config,
                 &self.stats,
-                &self.filter_processor,
                 &self.block_processor_tx,
                 &self.mempool_filter,
                 &self.mempool_state,
@@ -1174,121 +1168,8 @@ impl<
         }
     }
 
-    /// Handle inventory messages - not implemented for sync adapter.
-    async fn handle_inventory(
-        &mut self,
-        _inv: Vec<dashcore::network::message_blockdata::Inventory>,
-    ) -> Result<()> {
-        // TODO: Implement inventory handling in sync adapter if needed
-        Ok(())
-    }
-
-    /// Process new headers received from the network.
-    async fn process_new_headers(&mut self, headers: Vec<dashcore::block::Header>) -> Result<()> {
-        if headers.is_empty() {
-            return Ok(());
-        }
-
-        // Get the height before storing new headers
-        let initial_height = {
-            let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
-        };
-
-        // For sequential sync, route headers through the message handler
-        let headers_msg = dashcore::network::message::NetworkMessage::Headers(headers);
-        {
-            let mut storage = self.storage.lock().await;
-            self.sync_manager
-                .handle_message(headers_msg, &mut self.network, &mut *storage)
-                .await
-                .map_err(SpvError::Sync)?;
-        }
-
-        // Check if filters are enabled and request filter headers for new blocks
-        if self.config.enable_filters {
-            // Get the new tip height after storing headers
-            let new_height = {
-                let storage = self.storage.lock().await;
-                storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
-            };
-
-            // If we stored new headers, request filter headers for them
-            if new_height > initial_height {
-                tracing::info!(
-                    "New headers stored from height {} to {}, requesting filter headers",
-                    initial_height + 1,
-                    new_height
-                );
-
-                // Request filter headers for each new header
-                {
-                    let storage = self.storage.lock().await;
-                    for height in (initial_height + 1)..=new_height {
-                        if let Some(header) =
-                            storage.get_header(height).await.map_err(SpvError::Storage)?
-                        {
-                            let block_hash = header.block_hash();
-                            tracing::debug!(
-                                "Requesting filter header for block {} at height {}",
-                                block_hash,
-                                height
-                            );
-
-                            // Sequential sync handles filter requests internally
-                        }
-                    }
-                }
-
-                // Update status display after processing new headers
-                self.update_status_display().await;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Process a new block hash detected from inventory.
-    async fn process_new_block_hash(&mut self, _block_hash: dashcore::BlockHash) -> Result<()> {
-        // TODO: Implement block hash processing in sync adapter if needed
-        Ok(())
-    }
-
-    /// Process received filter headers.
-    async fn process_filter_headers(
-        &mut self,
-        cfheaders: dashcore::network::message_filter::CFHeaders,
-    ) -> Result<()> {
-        tracing::debug!("Processing filter headers for block {}", cfheaders.stop_hash);
-
-        tracing::info!(
-            "✅ Received filter headers for block {} (type: {}, count: {})",
-            cfheaders.stop_hash,
-            cfheaders.filter_type,
-            cfheaders.filter_hashes.len()
-        );
-
-        // For sequential sync, route through the message handler
-        let cfheaders_msg = dashcore::network::message::NetworkMessage::CFHeaders(cfheaders);
-        {
-            let mut storage = self.storage.lock().await;
-            self.sync_manager
-                .handle_message(cfheaders_msg, &mut self.network, &mut *storage)
-                .await
-                .map_err(SpvError::Sync)?;
-        }
-
-        Ok(())
-    }
-
-    /// Helper method to find height for a block hash.
-    async fn find_height_for_block_hash(&self, block_hash: dashcore::BlockHash) -> Option<u32> {
-        // Use the efficient reverse index
-        let storage = self.storage.lock().await;
-        storage.get_header_height_by_hash(&block_hash).await.ok().flatten()
-    }
-
     /// Process a new block.
+    #[allow(dead_code)]
     async fn process_new_block(&mut self, block: dashcore::Block) -> Result<()> {
         let block_hash = block.block_hash();
 
@@ -1311,131 +1192,8 @@ impl<
         Ok(())
     }
 
-    /// Process transactions in a block to check for matches with watch items.
-    async fn process_block_transactions(
-        &mut self,
-        block: &dashcore::Block,
-        watch_items: &[WatchItem],
-    ) -> Result<()> {
-        let block_hash = block.block_hash();
-        let block_height = self.get_block_height_or_default(block_hash).await;
-        let mut relevant_transactions = 0;
-        let mut new_outpoints_to_watch = Vec::new();
-        let mut balance_changes: std::collections::HashMap<dashcore::Address, i64> =
-            std::collections::HashMap::new();
-
-        for (tx_index, transaction) in block.txdata.iter().enumerate() {
-            let txid = transaction.txid();
-            let mut transaction_relevant = false;
-            let is_coinbase = tx_index == 0;
-
-            // Process inputs first (spending UTXOs)
-            if !is_coinbase {
-                for input in transaction.input.iter() {
-                    // UTXO tracking is now handled internally by the wallet
-                    // Check against explicitly watched outpoints
-                    for watch_item in watch_items {
-                        if let WatchItem::Outpoint(watched_outpoint) = watch_item {
-                            if &input.previous_output == watched_outpoint {
-                                transaction_relevant = true;
-                                tracing::info!(
-                                    "💸 Found relevant input spending watched outpoint: {:?}",
-                                    watched_outpoint
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Process outputs (creating new UTXOs)
-            for (vout, output) in transaction.output.iter().enumerate() {
-                for watch_item in watch_items {
-                    let (matches, matched_address) = match watch_item {
-                        WatchItem::Address {
-                            address,
-                            ..
-                        } => {
-                            (address.script_pubkey() == output.script_pubkey, Some(address.clone()))
-                        }
-                        WatchItem::Script(script) => (script == &output.script_pubkey, None),
-                        WatchItem::Outpoint(_) => (false, None), // Outpoints don't match outputs
-                    };
-
-                    if matches {
-                        transaction_relevant = true;
-                        let outpoint = dashcore::OutPoint {
-                            txid,
-                            vout: vout as u32,
-                        };
-                        let amount = dashcore::Amount::from_sat(output.value);
-
-                        tracing::info!(
-                            "💰 Found relevant output: {}:{} to {:?} (value: {})",
-                            txid,
-                            vout,
-                            watch_item,
-                            amount
-                        );
-
-                        // Create and store UTXO if we have an address
-                        if let Some(address) = matched_address {
-                            // WalletInterface will handle UTXO tracking internally
-                            tracing::debug!(
-                                "📝 Found UTXO {}:{} for address {}",
-                                txid,
-                                vout,
-                                address
-                            );
-
-                            // Update balance change for this address (add)
-                            *balance_changes.entry(address.clone()).or_insert(0) +=
-                                amount.to_sat() as i64;
-                        }
-
-                        // Track this outpoint so we can detect when it's spent
-                        new_outpoints_to_watch.push(outpoint);
-                        tracing::debug!(
-                            "📍 Now watching outpoint {}:{} for future spending",
-                            txid,
-                            vout
-                        );
-                    }
-                }
-            }
-
-            if transaction_relevant {
-                relevant_transactions += 1;
-                tracing::debug!(
-                    "📝 Transaction {}: {} (index {}) is relevant",
-                    txid,
-                    if is_coinbase {
-                        "coinbase"
-                    } else {
-                        "regular"
-                    },
-                    tx_index
-                );
-            }
-        }
-
-        if relevant_transactions > 0 {
-            tracing::info!(
-                "🎯 Block {} contains {} relevant transactions affecting watched items",
-                block_hash,
-                relevant_transactions
-            );
-
-            // Report balance changes
-            if !balance_changes.is_empty() {
-                self.report_balance_changes(&balance_changes, block_height).await?;
-            }
-        }
-
-        Ok(())
-    }
-
     /// Report balance changes for watched addresses.
+    #[allow(dead_code)]
     async fn report_balance_changes(
         &self,
         balance_changes: &std::collections::HashMap<dashcore::Address, i64>,
@@ -1538,16 +1296,6 @@ impl<
             })?;
 
         network.disconnect_peer(addr, reason).await
-    }
-
-    /// Process a transaction.
-    async fn process_transaction(&mut self, _tx: dashcore::Transaction) -> Result<()> {
-        // TODO: Implement transaction processing
-        // - Check if transaction affects watched addresses/scripts
-        // - Update wallet balance if relevant
-        // - Store relevant transactions
-        tracing::debug!("Transaction processing not yet implemented");
-        Ok(())
     }
 
     /// Process and validate a ChainLock.
@@ -2750,40 +2498,6 @@ impl<
     async fn update_status_display(&self) {
         let display = self.create_status_display().await;
         display.update_status_display().await;
-    }
-
-    /// Handle new headers received after the initial sync is complete.
-    /// Request filter headers for these new blocks. Filters will be requested
-    /// automatically when the CFHeaders responses arrive.
-    async fn handle_post_sync_headers(
-        &mut self,
-        headers: &[dashcore::block::Header],
-    ) -> Result<()> {
-        if !self.config.enable_filters {
-            tracing::debug!(
-                "Filters not enabled, skipping post-sync filter requests for {} headers",
-                headers.len()
-            );
-            return Ok(());
-        }
-
-        tracing::info!("Handling {} post-sync headers - requesting filter headers (filters will follow automatically)", headers.len());
-
-        for header in headers {
-            let block_hash = header.block_hash();
-
-            // Sequential sync handles filter headers internally
-            tracing::debug!(
-                "Sequential sync mode: filter headers handled internally for block {}",
-                block_hash
-            );
-        }
-
-        tracing::info!(
-            "✅ Completed post-sync filter header requests for {} new blocks",
-            headers.len()
-        );
-        Ok(())
     }
 
     /// Get mutable reference to sync manager (for testing)

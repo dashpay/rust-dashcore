@@ -178,6 +178,7 @@ pub struct ValidationEngine {
 /// Key for validation cache
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 enum ValidationCacheKey {
+    #[allow(dead_code)]
     ChainLock(BlockHash),
     Quorum(LLMQType, BlockHash),
     MasternodeList(u32),
