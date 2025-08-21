@@ -32,12 +32,10 @@ jobs:
     steps:
       - name: Checkout Crate
         uses: actions/checkout@v4
-      - name: Checkout Toolchain
-        uses: actions-rs/toolchain@v1
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
-          override: true
       - name: Running test script
         env: ${{ matrix.env }}
         run: ./contrib/test.sh
@@ -53,11 +51,9 @@ jobs:
       - name: Checkout Crate
         uses: actions/checkout@v4
       - name: Setup Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
-          override: true
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -80,11 +76,9 @@ jobs:
       - name: Checkout Crate
         uses: actions/checkout@v4
       - name: Setup Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
           toolchain: stable
-          override: true
           components: clippy
       - name: Run clippy (excluding strict-checked crates)
         run: |
@@ -106,11 +100,9 @@ jobs:
       - name: Checkout Crate
         uses: actions/checkout@v4
       - name: Setup Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
           toolchain: stable
-          override: true
           components: clippy
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -164,11 +156,9 @@ jobs:
       - name: Checkout Crate
         uses: actions/checkout@v4
       - name: Setup Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
           toolchain: stable
-          override: true
           components: rustfmt
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -180,9 +170,9 @@ jobs:
 #    runs-on: ubuntu-latest
 #    steps:
 #      - name: Checkout Crate
-#        uses: actions/checkout@v2
+#        uses: actions/checkout@v4
 #      - name: Checkout Toolchain
-#        uses: actions-rs/toolchain@v1
+#        uses: dtolnay/rust-toolchain@stable
 #        with:
 #          profile: minimal
 #          toolchain: stable
@@ -235,13 +225,11 @@ jobs:
                 PIN_VERSIONS: true
       steps:
         - name: Checkout Crate
-          uses: actions/checkout@v2
-        - name: Checkout Toolchain
-          uses: actions-rs/toolchain@v1
+          uses: actions/checkout@v4
+        - name: Setup Rust toolchain
+          uses: dtolnay/rust-toolchain@stable
           with:
-            profile: minimal
             toolchain: ${{ matrix.rust }}
-            override: true
         - name: Running test script
           env: ${{ matrix.env }}
           run: ./contrib/test.sh
@@ -264,13 +252,11 @@ jobs:
             ]
       steps:
         - name: Checkout Crate
-          uses: actions/checkout@v2
-        - name: Checkout Toolchain
-          uses: actions-rs/toolchain@v1
+          uses: actions/checkout@v4
+        - name: Setup Rust toolchain
+          uses: dtolnay/rust-toolchain@stable
           with:
-            profile: minimal
             toolchain: ${{ matrix.rust }}
-            override: true
         - name: Running test script
           env:
             BITCOINVERSION: ${{ matrix.bitcoinversion }}
