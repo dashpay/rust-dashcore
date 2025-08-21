@@ -5,7 +5,7 @@ mod address_tests {
     use crate::address::{
         address_array_free, address_free, address_get_type, address_validate,
         wallet_derive_change_address, wallet_derive_receive_address, wallet_get_address_at_index,
-        wallet_get_all_addresses, wallet_mark_address_used,
+        wallet_get_all_addresses,
     };
     use crate::error::{FFIError, FFIErrorCode};
     use crate::types::FFINetwork;
@@ -199,34 +199,6 @@ mod address_tests {
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
         // Currently returns 0 for P2PKH (placeholder implementation)
         assert_eq!(addr_type, 0);
-    }
-
-    #[test]
-    fn test_wallet_mark_address_used() {
-        let (wallet, error) = unsafe { create_test_wallet() };
-        assert!(!wallet.is_null());
-
-        // Derive an address first
-        let addr = unsafe {
-            wallet_derive_receive_address(
-                wallet,
-                FFINetwork::Testnet,
-                0, // account_index
-                0, // address_index
-                error,
-            )
-        };
-        assert!(!addr.is_null());
-
-        // Mark it as used (currently returns success as placeholder)
-        let success = unsafe { wallet_mark_address_used(wallet, FFINetwork::Testnet, addr, error) };
-        assert!(success);
-
-        // Clean up
-        unsafe {
-            address_free(addr);
-            wallet::wallet_free(wallet);
-        }
     }
 
     #[test]
@@ -580,37 +552,6 @@ mod address_tests {
     }
 
     #[test]
-    fn test_wallet_mark_address_used_with_address() {
-        let mut error = FFIError::success();
-
-        // Create a wallet first
-        let wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, &mut error) };
-        assert!(!wallet.is_null());
-
-        // Generate an address first
-        let address =
-            unsafe { wallet_derive_receive_address(wallet, FFINetwork::Testnet, 0, 0, &mut error) };
-
-        unsafe {
-            if !address.is_null() {
-                // Mark the address as used
-                let success =
-                    wallet_mark_address_used(wallet, FFINetwork::Testnet, address, &mut error);
-
-                // Should succeed (or at least not crash)
-                assert!(success || error.code != FFIErrorCode::Success);
-
-                // Clean up
-                address_free(address);
-            }
-        }
-
-        unsafe {
-            wallet::wallet_free(wallet);
-        }
-    }
-
-    #[test]
     fn test_address_validation_comprehensive() {
         let mut error = FFIError::success();
 
@@ -653,24 +594,6 @@ mod address_tests {
                 assert!(addr_type <= 2);
             }
         }
-    }
-
-    #[test]
-    fn test_wallet_mark_address_used_null_wallet() {
-        let mut error = FFIError::success();
-        let address = CString::new("yXdxAYfK7KGx7gNpVHUfRsQMNpMj5cAadG").unwrap();
-
-        let success = unsafe {
-            wallet_mark_address_used(
-                ptr::null_mut(),
-                FFINetwork::Testnet,
-                address.as_ptr(),
-                &mut error,
-            )
-        };
-
-        assert!(!success);
-        assert_eq!(error.code, FFIErrorCode::InvalidInput);
     }
 
     #[test]

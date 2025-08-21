@@ -440,63 +440,161 @@ pub unsafe extern "C" fn wallet_manager_get_change_address(
 
 /// Get wallet balance
 ///
-/// NOTE: This is a placeholder implementation
+/// Returns the confirmed and unconfirmed balance for a specific wallet
 ///
 /// # Safety
 ///
-/// - `_manager` must be a valid pointer to an FFIWalletManager instance or null (unused)
-/// - `_wallet_id` must be a valid pointer to a 32-byte wallet ID or null (unused)
+/// - `manager` must be a valid pointer to an FFIWalletManager instance
+/// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
 /// - `confirmed_out` must be a valid pointer to a c_ulong
 /// - `unconfirmed_out` must be a valid pointer to a c_ulong
 /// - `error` must be a valid pointer to an FFIError structure or null
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
-    _manager: *const FFIWalletManager,
-    _wallet_id: *const u8,
+    manager: *const FFIWalletManager,
+    wallet_id: *const u8,
     confirmed_out: *mut c_ulong,
     unconfirmed_out: *mut c_ulong,
     error: *mut FFIError,
 ) -> bool {
-    if confirmed_out.is_null() || unconfirmed_out.is_null() {
+    if manager.is_null()
+        || wallet_id.is_null()
+        || confirmed_out.is_null()
+        || unconfirmed_out.is_null()
+    {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return false;
     }
 
+    // Convert wallet_id pointer to array
+    let mut wallet_id_array = [0u8; 32];
     unsafe {
-        *confirmed_out = 0;
-        *unconfirmed_out = 0;
-        FFIError::set_success(error);
-        true
+        ptr::copy_nonoverlapping(wallet_id, wallet_id_array.as_mut_ptr(), 32);
     }
-}
 
-/// Get total balance across all wallets
-///
-/// NOTE: This is a placeholder implementation
-#[no_mangle]
-pub extern "C" fn wallet_manager_get_total_balance(
-    _manager: *const FFIWalletManager,
-    error: *mut FFIError,
-) -> c_ulong {
-    FFIError::set_success(error);
-    0
+    // Get the manager
+    let manager_ref = unsafe { &*manager };
+
+    // Lock the manager and get the wallet balance
+    let manager_guard = match manager_ref.manager.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::WalletError,
+                "Failed to lock wallet manager".to_string(),
+            );
+            return false;
+        }
+    };
+
+    // Get the wallet balance
+    match manager_guard.get_wallet_balance(&wallet_id_array) {
+        Ok(balance) => {
+            unsafe {
+                *confirmed_out = balance.confirmed as c_ulong;
+                *unconfirmed_out = balance.unconfirmed as c_ulong;
+            }
+            FFIError::set_success(error);
+            true
+        }
+        Err(e) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::WalletError,
+                format!("Failed to get wallet balance: {}", e),
+            );
+            false
+        }
+    }
 }
 
 /// Process a transaction through all wallets
 ///
-/// NOTE: This is a placeholder implementation
+/// Checks a transaction against all wallets and updates their states if relevant.
+/// Returns true if the transaction was relevant to at least one wallet.
+///
+/// # Safety
+///
+/// - `manager` must be a valid pointer to an FFIWalletManager instance
+/// - `tx_bytes` must be a valid pointer to transaction bytes
+/// - `tx_len` must be the length of the transaction bytes
+/// - `network` is the network type
+/// - `context` must be a valid pointer to FFITransactionContextDetails
+/// - `update_state_if_found` indicates whether to update wallet state when transaction is relevant
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
-pub extern "C" fn wallet_manager_process_transaction(
-    _manager: *mut FFIWalletManager,
-    _tx_bytes: *const u8,
-    _tx_len: usize,
-    _height: c_uint,
-    _block_time: c_uint,
+pub unsafe extern "C" fn wallet_manager_process_transaction(
+    manager: *mut FFIWalletManager,
+    tx_bytes: *const u8,
+    tx_len: usize,
+    network: FFINetwork,
+    context: *const crate::types::FFITransactionContextDetails,
+    update_state_if_found: bool,
     error: *mut FFIError,
 ) -> bool {
+    if manager.is_null() || tx_bytes.is_null() || tx_len == 0 || context.is_null() {
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "Null pointer or empty transaction provided".to_string(),
+        );
+        return false;
+    }
+
+    // Convert transaction bytes to slice
+    let tx_slice = unsafe { std::slice::from_raw_parts(tx_bytes, tx_len) };
+
+    // Deserialize the transaction
+    use dashcore::blockdata::transaction::Transaction;
+    use dashcore::consensus::encode::deserialize;
+
+    let tx: Transaction = match deserialize(tx_slice) {
+        Ok(tx) => tx,
+        Err(e) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                format!("Failed to deserialize transaction: {}", e),
+            );
+            return false;
+        }
+    };
+
+    // Convert FFINetwork to Network
+    let network = network.into();
+
+    // Convert FFI context to native TransactionContext
+    let context = unsafe { (*context).to_transaction_context() };
+
+    // Get the manager
+    let manager_ref = unsafe { &mut *manager };
+
+    // Lock the manager and process the transaction
+    let mut manager_guard = match manager_ref.manager.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::WalletError,
+                "Failed to lock wallet manager".to_string(),
+            );
+            return false;
+        }
+    };
+
+    // Check the transaction against all wallets
+    let relevant_wallets = manager_guard.check_transaction_in_all_wallets(
+        &tx,
+        network,
+        context,
+        update_state_if_found,
+    );
+
     FFIError::set_success(error);
-    false
+    !relevant_wallets.is_empty()
 }
 
 /// Get monitored addresses for a network

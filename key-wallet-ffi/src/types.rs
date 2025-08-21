@@ -1,6 +1,7 @@
 //! Common types for FFI interface
 
 use key_wallet::{Network, Wallet};
+use std::os::raw::c_uint;
 use std::sync::Arc;
 
 /// FFI Network type
@@ -441,6 +442,119 @@ impl FFIWalletAccountCreationOptions {
                     topup_set,
                     special_accounts,
                 )
+            }
+        }
+    }
+}
+
+/// FFI-compatible transaction context
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub enum FFITransactionContext {
+    /// Transaction is in the mempool (unconfirmed)
+    Mempool = 0,
+    /// Transaction is in a block at the given height
+    InBlock = 1,
+    /// Transaction is in a chain-locked block at the given height
+    InChainLockedBlock = 2,
+}
+
+/// FFI-compatible transaction context details
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FFITransactionContextDetails {
+    /// The context type
+    pub context_type: FFITransactionContext,
+    /// Block height (0 for mempool)
+    pub height: c_uint,
+    /// Block hash (32 bytes, null for mempool or if unknown)
+    pub block_hash: *const u8,
+    /// Timestamp (0 if unknown)
+    pub timestamp: c_uint,
+}
+
+impl FFITransactionContextDetails {
+    /// Create a mempool context
+    pub fn mempool() -> Self {
+        FFITransactionContextDetails {
+            context_type: FFITransactionContext::Mempool,
+            height: 0,
+            block_hash: std::ptr::null(),
+            timestamp: 0,
+        }
+    }
+
+    /// Create an in-block context
+    pub fn in_block(height: c_uint, block_hash: *const u8, timestamp: c_uint) -> Self {
+        FFITransactionContextDetails {
+            context_type: FFITransactionContext::InBlock,
+            height,
+            block_hash,
+            timestamp,
+        }
+    }
+
+    /// Create a chain-locked block context
+    pub fn in_chain_locked_block(height: c_uint, block_hash: *const u8, timestamp: c_uint) -> Self {
+        FFITransactionContextDetails {
+            context_type: FFITransactionContext::InChainLockedBlock,
+            height,
+            block_hash,
+            timestamp,
+        }
+    }
+
+    /// Convert to the native TransactionContext
+    pub fn to_transaction_context(&self) -> key_wallet::transaction_checking::TransactionContext {
+        use key_wallet::transaction_checking::TransactionContext;
+
+        match self.context_type {
+            FFITransactionContext::Mempool => TransactionContext::Mempool,
+            FFITransactionContext::InBlock => {
+                let block_hash = if self.block_hash.is_null() {
+                    None
+                } else {
+                    // Convert the 32-byte hash to BlockHash
+                    let mut hash_bytes = [0u8; 32];
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(self.block_hash, hash_bytes.as_mut_ptr(), 32);
+                    }
+                    use dashcore::hashes::Hash;
+                    Some(dashcore::BlockHash::from_byte_array(hash_bytes))
+                };
+
+                TransactionContext::InBlock {
+                    height: self.height,
+                    block_hash,
+                    timestamp: if self.timestamp == 0 {
+                        None
+                    } else {
+                        Some(self.timestamp)
+                    },
+                }
+            }
+            FFITransactionContext::InChainLockedBlock => {
+                let block_hash = if self.block_hash.is_null() {
+                    None
+                } else {
+                    // Convert the 32-byte hash to BlockHash
+                    let mut hash_bytes = [0u8; 32];
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(self.block_hash, hash_bytes.as_mut_ptr(), 32);
+                    }
+                    use dashcore::hashes::Hash;
+                    Some(dashcore::BlockHash::from_byte_array(hash_bytes))
+                };
+
+                TransactionContext::InChainLockedBlock {
+                    height: self.height,
+                    block_hash,
+                    timestamp: if self.timestamp == 0 {
+                        None
+                    } else {
+                        Some(self.timestamp)
+                    },
+                }
             }
         }
     }

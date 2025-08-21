@@ -299,64 +299,6 @@ pub unsafe extern "C" fn wallet_get_address_at_index(
     }
 }
 
-/// Mark address as used (placeholder - requires ManagedAccount)
-///
-/// # Safety
-///
-/// - `wallet` must be a valid mutable pointer to an FFIWallet
-/// - `address` must be a valid null-terminated C string
-/// - `error` must be a valid pointer to an FFIError
-#[no_mangle]
-pub unsafe extern "C" fn wallet_mark_address_used(
-    wallet: *mut FFIWallet,
-    network: FFINetwork,
-    address: *const c_char,
-    error: *mut FFIError,
-) -> bool {
-    if wallet.is_null() || address.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    let address_str = unsafe {
-        match CStr::from_ptr(address).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid UTF-8 in address".to_string(),
-                );
-                return false;
-            }
-        }
-    };
-
-    unsafe {
-        let _wallet = &mut *wallet;
-        let _network_rust: key_wallet::Network = network.into();
-
-        use std::str::FromStr;
-        let _addr = match key_wallet::Address::from_str(address_str) {
-            Ok(a) => a,
-            Err(e) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidAddress,
-                    format!("Invalid address: {}", e),
-                );
-                return false;
-            }
-        };
-
-        // For now, we'll just validate the address and return success
-        // Full implementation would require ManagedAccount functionality
-        // to maintain address state and usage tracking
-        FFIError::set_success(error);
-        true
-    }
-}
-
 /// Get all addresses for an account (placeholder - requires ManagedAccount)
 ///
 /// # Safety

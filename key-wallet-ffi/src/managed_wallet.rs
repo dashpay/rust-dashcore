@@ -3,8 +3,6 @@
 //! This module provides FFI bindings for ManagedWalletInfo which includes
 //! address management, UTXO tracking, and transaction building capabilities.
 //!
-//! NOTE: This is a placeholder implementation. Full implementation requires
-//! proper integration with WalletManager which handles the managed wallet state.
 
 use std::ffi::CString;
 use std::os::raw::c_char;
@@ -642,6 +640,63 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
     true
 }
 
+/// Get wallet balance from managed wallet info
+///
+/// Returns the balance breakdown including confirmed, unconfirmed, locked, and total amounts.
+///
+/// # Safety
+///
+/// - `managed_wallet` must be a valid pointer to an FFIManagedWalletInfo
+/// - `confirmed_out` must be a valid pointer to store the confirmed balance
+/// - `unconfirmed_out` must be a valid pointer to store the unconfirmed balance
+/// - `locked_out` must be a valid pointer to store the locked balance
+/// - `total_out` must be a valid pointer to store the total balance
+/// - `error` must be a valid pointer to an FFIError
+#[no_mangle]
+pub unsafe extern "C" fn managed_wallet_get_balance(
+    managed_wallet: *const FFIManagedWalletInfo,
+    confirmed_out: *mut u64,
+    unconfirmed_out: *mut u64,
+    locked_out: *mut u64,
+    total_out: *mut u64,
+    error: *mut FFIError,
+) -> bool {
+    if managed_wallet.is_null() {
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "Managed wallet is null".to_string(),
+        );
+        return false;
+    }
+
+    if confirmed_out.is_null()
+        || unconfirmed_out.is_null()
+        || locked_out.is_null()
+        || total_out.is_null()
+    {
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "Output pointer is null".to_string(),
+        );
+        return false;
+    }
+
+    let managed_wallet = unsafe { &*managed_wallet };
+    let balance = &managed_wallet.inner.balance;
+
+    unsafe {
+        *confirmed_out = balance.confirmed;
+        *unconfirmed_out = balance.unconfirmed;
+        *locked_out = balance.locked;
+        *total_out = balance.total;
+    }
+
+    FFIError::set_success(error);
+    true
+}
+
 /// Free managed wallet info
 ///
 /// # Safety
@@ -1035,6 +1090,101 @@ mod tests {
 
         // Clean up
         unsafe {
+            wallet::wallet_free(wallet_ptr);
+        }
+    }
+
+    #[test]
+    fn test_managed_wallet_get_balance() {
+        use key_wallet::wallet::balance::WalletBalance;
+
+        let mut error = FFIError::success();
+
+        // Create a wallet
+        let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
+        let passphrase = CString::new("").unwrap();
+
+        let wallet_ptr = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
+        assert!(!wallet_ptr.is_null());
+
+        // Create managed wallet info
+        let wallet_arc = unsafe { &(*wallet_ptr).wallet };
+        let mut managed_info = ManagedWalletInfo::from_wallet(&wallet_arc);
+
+        // Set some test balance values
+        managed_info.balance = WalletBalance {
+            confirmed: 1000000,
+            unconfirmed: 50000,
+            locked: 25000,
+            total: 1075000,
+        };
+
+        let ffi_managed = FFIManagedWalletInfo::new(managed_info);
+        let ffi_managed_ptr = Box::into_raw(Box::new(ffi_managed));
+
+        // Test getting balance
+        let mut confirmed: u64 = 0;
+        let mut unconfirmed: u64 = 0;
+        let mut locked: u64 = 0;
+        let mut total: u64 = 0;
+
+        let success = unsafe {
+            managed_wallet_get_balance(
+                ffi_managed_ptr,
+                &mut confirmed,
+                &mut unconfirmed,
+                &mut locked,
+                &mut total,
+                &mut error,
+            )
+        };
+
+        assert!(success);
+        assert_eq!(confirmed, 1000000);
+        assert_eq!(unconfirmed, 50000);
+        assert_eq!(locked, 25000);
+        assert_eq!(total, 1075000);
+
+        // Test with null managed wallet
+        let success = unsafe {
+            managed_wallet_get_balance(
+                ptr::null(),
+                &mut confirmed,
+                &mut unconfirmed,
+                &mut locked,
+                &mut total,
+                &mut error,
+            )
+        };
+
+        assert!(!success);
+        assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        // Test with null output pointers
+        let success = unsafe {
+            managed_wallet_get_balance(
+                ffi_managed_ptr,
+                ptr::null_mut(),
+                &mut unconfirmed,
+                &mut locked,
+                &mut total,
+                &mut error,
+            )
+        };
+
+        assert!(!success);
+        assert_eq!(error.code, FFIErrorCode::InvalidInput);
+
+        // Clean up
+        unsafe {
+            managed_wallet_free(ffi_managed_ptr);
             wallet::wallet_free(wallet_ptr);
         }
     }
