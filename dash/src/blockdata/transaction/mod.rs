@@ -1232,6 +1232,7 @@ mod tests {
             let serialized = serialize(&diff.coinbase_tx);
             let deserialized: Transaction =
                 deserialize(serialized.as_slice()).expect("expected to deserialize");
+            assert_eq!(deserialized, diff.coinbase_tx);
         }
     }
 }

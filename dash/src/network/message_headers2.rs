@@ -529,16 +529,16 @@ mod tests {
         }
     }
 
-    fn create_header_with_version(version: i32) -> Header {
-        Header {
-            version: Version::from_consensus(version),
-            prev_blockhash: BlockHash::from_byte_array([0u8; 32]),
-            merkle_root: TxMerkleNode::from_byte_array([1u8; 32]),
-            time: 1234567890,
-            bits: CompactTarget::from_consensus(0x1d00ffff),
-            nonce: 1,
-        }
-    }
+    // fn create_header_with_version(version: i32) -> Header {
+    //     Header {
+    //         version: Version::from_consensus(version),
+    //         prev_blockhash: BlockHash::from_byte_array([0u8; 32]),
+    //         merkle_root: TxMerkleNode::from_byte_array([1u8; 32]),
+    //         time: 1234567890,
+    //         bits: CompactTarget::from_consensus(0x1d00ffff),
+    //         nonce: 1,
+    //     }
+    // }
 
     fn create_test_chain(count: usize) -> Vec<Header> {
         let mut headers: Vec<Header> = Vec::with_capacity(count);

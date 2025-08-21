@@ -101,21 +101,11 @@ impl_consensus_encoding!(DeletedQuorum, llmq_type, quorum_hash);
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::io::{self, Read};
-
     use assert_matches::assert_matches;
 
     use crate::consensus::{deserialize, serialize};
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
     use crate::network::message_sml::MnListDiff;
-
-    fn read_binary_file(filename: &str) -> io::Result<Vec<u8>> {
-        let mut file = File::open(filename)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        Ok(buffer)
-    }
 
     #[test]
     fn deserialize_mn_list_diff() {
@@ -135,6 +125,7 @@ mod tests {
             let serialized = serialize(&diff);
             let deserialized: MnListDiff =
                 deserialize(serialized.as_slice()).expect("expected to deserialize");
+            assert_eq!(deserialized, diff);
         }
     }
 }

@@ -1567,7 +1567,7 @@ mod tests {
         for &value in &test_values {
             let mut buffer = Vec::new();
             // Write the value to the buffer
-            let bytes_written = write_compact_size(&mut buffer, value).expect("Failed to write");
+            write_compact_size(&mut buffer, value).expect("Failed to write");
             // Read the value back from the buffer
             let mut cursor = Cursor::new(&buffer);
             let read_value = read_compact_size(&mut cursor).expect("Failed to read");

@@ -305,18 +305,8 @@ impl Decodable for MNSkipListMode {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::io::{self, Read};
-
     use crate::consensus::deserialize;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
-
-    fn read_binary_file(filename: &str) -> io::Result<Vec<u8>> {
-        let mut file = File::open(filename)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        Ok(buffer)
-    }
 
     #[test]
     fn deserialize_qr_info() {

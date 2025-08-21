@@ -32,9 +32,3 @@ dashcore-test-utils = { path = "../test-utils" }
 
 [build-dependencies]
 cbindgen = "0.26"
-
-[profile.release]
-panic = "abort"
-
-[profile.dev]
-panic = "abort"

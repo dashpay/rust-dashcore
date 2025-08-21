@@ -184,7 +184,7 @@ mod tests {
                 hex!("00000000000000029eabbaa19ca5f694b863b3f64a682c376fa50b4119ae0029");
 
             // Parse keys
-            let pk = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
+            let _pk = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
                 &quorum_pubkey,
                 SerializationFormat::Modern,
             )

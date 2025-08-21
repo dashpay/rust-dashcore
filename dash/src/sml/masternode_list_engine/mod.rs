@@ -1295,7 +1295,7 @@ mod tests {
         // We know these are the blocks we need to know about.
         masternode_list_engine.block_container = block_container;
 
-        for (i, ((start_height, height), diff)) in mn_list_diffs.into_iter().enumerate() {
+        for ((_start_height, height), diff) in mn_list_diffs.into_iter() {
             masternode_list_engine
                 .apply_diff(diff, Some(height), false, None)
                 .expect("expected to apply diff");

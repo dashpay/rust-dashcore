@@ -8,3 +8,9 @@ version = "0.39.6"
 [patch.crates-io.dashcore_hashes]
 path = "hashes"
 
+[profile.release]
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
+

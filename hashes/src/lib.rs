@@ -81,7 +81,8 @@
 #![warn(missing_docs)]
 // Experimental features we need.
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
-#![cfg_attr(bench, feature(test))]
+// Benchmarks have been disabled - convert to criterion
+// #![cfg_attr(bench, feature(test))]
 // In general, rust is absolutely horrid at supporting users doing things like,
 // for example, compiling Rust code for real environments. Disable useless lints
 // that don't do anything but annoy us and cant actually ever be resolved.
@@ -101,8 +102,8 @@ extern crate core2;
 pub extern crate serde;
 #[cfg(all(test, feature = "serde"))]
 extern crate serde_test;
-#[cfg(bench)]
-extern crate test;
+// #[cfg(bench)]
+// extern crate test;
 
 #[doc(hidden)]
 pub mod _export {
