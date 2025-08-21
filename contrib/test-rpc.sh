@@ -3,7 +3,7 @@ set -xe
 
 # Just echo all the relevant env vars to help debug Travis.
 echo "RUSTFMTCHECK: \"$RUSTFMTCHECK\""
-echo "BITCOINVERSION: \"$BITCOINVERSION\""
+echo "DASHVERSION: \"$DASHVERSION\""
 echo "PATH: \"$PATH\""
 
 
@@ -26,10 +26,10 @@ if [ -n "$RUSTFMTCHECK" ]; then
 fi
 
 # Integration test.
-if [ -n "$BITCOINVERSION" ]; then
-    wget https://bitcoincore.org/bin/bitcoin-core-$BITCOINVERSION/bitcoin-$BITCOINVERSION-x86_64-linux-gnu.tar.gz
-    tar -xzvf bitcoin-$BITCOINVERSION-x86_64-linux-gnu.tar.gz
-    export PATH=$PATH:$(pwd)/bitcoin-$BITCOINVERSION/bin
+if [ -n "$DASHVERSION" ]; then
+    wget https://github.com/dashpay/dash/releases/download/v$DASHVERSION/dashcore-$DASHVERSION-x86_64-linux-gnu.tar.gz
+    tar -xzvf dashcore-$DASHVERSION-x86_64-linux-gnu.tar.gz
+    export PATH=$PATH:$(pwd)/dashcore-$DASHVERSION/bin
     cd integration_test
     ./run.sh
     exit 0
