@@ -13,7 +13,7 @@ use dashcore_hashes::Hash;
 
 use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
 use crate::chain::{
-    ChainTip, ChainTipManager, ChainWork, ForkDetectionResult, ForkDetector, ReorgManager,
+    ChainTip, ChainTipManager, ChainWork, ForkDetector,
 };
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
@@ -21,7 +21,6 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::headers2_state::Headers2StateManager;
 use crate::types::ChainState;
-use crate::validation::ValidationManager;
 
 /// Configuration for reorg handling
 pub struct ReorgConfig {
@@ -51,9 +50,7 @@ pub struct HeaderSyncManagerWithReorg<S: StorageManager, N: NetworkManager> {
     _phantom_s: std::marker::PhantomData<S>,
     _phantom_n: std::marker::PhantomData<N>,
     config: ClientConfig,
-    validation: ValidationManager,
     fork_detector: ForkDetector,
-    reorg_manager: ReorgManager,
     tip_manager: ChainTipManager,
     checkpoint_manager: CheckpointManager,
     reorg_config: ReorgConfig,
@@ -61,7 +58,6 @@ pub struct HeaderSyncManagerWithReorg<S: StorageManager, N: NetworkManager> {
     // WalletState removed - wallet functionality is now handled externally
     headers2_state: Headers2StateManager,
     total_headers_synced: u32,
-    last_progress_log: Option<std::time::Instant>,
     syncing_headers: bool,
     last_sync_progress: std::time::Instant,
     headers2_failed: bool,
@@ -85,13 +81,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         Ok(Self {
             config: config.clone(),
-            validation: ValidationManager::new(config.validation_mode),
             fork_detector: ForkDetector::new(reorg_config.max_forks)
                 .map_err(|e| SyncError::InvalidState(e.to_string()))?,
-            reorg_manager: ReorgManager::new(
-                reorg_config.max_reorg_depth,
-                reorg_config.respect_chain_locks,
-            ),
             tip_manager: ChainTipManager::new(reorg_config.max_forks),
             checkpoint_manager,
             reorg_config,
@@ -99,7 +90,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             // WalletState removed
             headers2_state: Headers2StateManager::new(),
             total_headers_synced: 0,
-            last_progress_log: None,
             syncing_headers: false,
             last_sync_progress: std::time::Instant::now(),
             headers2_failed: false,
@@ -385,141 +375,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         &mut self,
         header: &BlockHeader,
         storage: &mut S,
-    ) -> SyncResult<HeaderProcessResult> {
-        // First validate the header structure
-        self.validation
-            .validate_header(header, None)
-            .map_err(|e| SyncError::Validation(format!("Invalid header: {}", e)))?;
-
-        // Create a sync storage adapter
-        let sync_storage = SyncStorageAdapter::new(storage);
-
-        // Check for forks
-        let fork_result = self.fork_detector.check_header(header, &self.chain_state, &sync_storage);
-
-        match fork_result {
-            ForkDetectionResult::ExtendsMainChain => {
-                // Normal case - add to chain state and storage
-                self.chain_state.add_header(*header);
-                let height = self.chain_state.get_height();
-
-                // Validate against checkpoints if enabled
-                if self.reorg_config.enforce_checkpoints {
-                    if !self.checkpoint_manager.validate_block(height, &header.block_hash()) {
-                        // Block doesn't match checkpoint - reject it
-                        return Err(SyncError::Validation(format!(
-                            "Block at height {} does not match checkpoint",
-                            height
-                        )));
-                    }
-                }
-
-                // Store in async storage
-                storage
-                    .store_headers(&[*header])
-                    .await
-                    .map_err(|e| SyncError::Storage(format!("Failed to store header: {}", e)))?;
-
-                // Update chain tip manager
-                let chain_work = ChainWork::from_height_and_header(height, header);
-                let tip = ChainTip::new(*header, height, chain_work);
-                self.tip_manager
-                    .add_tip(tip)
-                    .map_err(|e| SyncError::Storage(format!("Failed to update tip: {}", e)))?;
-
-                Ok(HeaderProcessResult::ExtendedMainChain)
-            }
-            ForkDetectionResult::CreatesNewFork(fork) => {
-                // Check if fork violates checkpoints
-                if self.reorg_config.enforce_checkpoints {
-                    // Don't reject forks from genesis (height 0) as this is the natural starting point
-                    if fork.fork_height > 0 {
-                        if let Some(checkpoint) =
-                            self.checkpoint_manager.last_checkpoint_before_height(fork.fork_height)
-                        {
-                            if fork.fork_height <= checkpoint.height {
-                                tracing::warn!(
-                                    "Rejecting fork that would reorg past checkpoint at height {}",
-                                    checkpoint.height
-                                );
-                                return Ok(HeaderProcessResult::Orphan); // Treat as orphan
-                            }
-                        }
-                    }
-                }
-
-                tracing::warn!(
-                    "Fork created at height {} from block {}",
-                    fork.fork_height,
-                    fork.fork_point
-                );
-                Ok(HeaderProcessResult::CreatedFork)
-            }
-            ForkDetectionResult::ExtendsFork(fork) => {
-                tracing::debug!("Fork extended to height {}", fork.tip_height);
-                Ok(HeaderProcessResult::ExtendedFork)
-            }
-            ForkDetectionResult::Orphan => {
-                // TODO: Add to orphan pool for later processing
-                Ok(HeaderProcessResult::Orphan)
-            }
-        }
+    ) -> SyncResult<()> {
+        // Method removed - no longer used
+        Ok(())
     }
 
     /// Check if any fork should trigger a reorganization
     async fn check_for_reorg(&mut self, storage: &mut S) -> SyncResult<()> {
-        if let Some(strongest_fork) = self.fork_detector.get_strongest_fork() {
-            if let Some(current_tip) = self.tip_manager.get_active_tip() {
-                // First phase: Check if reorganization is needed (read-only)
-                let should_reorg = {
-                    let sync_storage = SyncStorageAdapter::new(storage);
-                    self.reorg_manager
-                        .should_reorganize_with_chain_state(
-                            current_tip,
-                            strongest_fork,
-                            &sync_storage,
-                            Some(&self.chain_state),
-                        )
-                        .map_err(|e| SyncError::Validation(format!("Reorg check failed: {}", e)))?
-                };
-
-                if should_reorg {
-                    // Clone necessary data before reorganization to avoid borrow conflicts
-                    let fork_tip_hash = strongest_fork.tip_hash;
-                    let fork_clone = strongest_fork.clone();
-
-                    tracing::info!(
-                        "⚠️ Reorganization needed: fork at height {} (work: {:?}) > main chain at height {} (work: {:?})",
-                        fork_clone.tip_height,
-                        fork_clone.chain_work,
-                        current_tip.height,
-                        current_tip.chain_work
-                    );
-
-                    // Reorganization removed - wallet functionality is now handled externally
-                    // The wallet will handle reorgs via the WalletInterface::handle_reorg method
-                    tracing::warn!(
-                        "🔄 Reorganization detected but not handled internally - wallet should handle via WalletInterface"
-                    );
-
-                    // Update tip manager with new chain tip
-                    if let Some(new_tip_header) = fork_clone.headers.last() {
-                        let new_tip = ChainTip::new(
-                            *new_tip_header,
-                            fork_clone.tip_height,
-                            fork_clone.chain_work.clone(),
-                        );
-                        let _ = self.tip_manager.add_tip(new_tip);
-                    }
-
-                    // Remove the processed fork
-                    self.fork_detector.remove_fork(&fork_tip_hash);
-
-                    // Note: Transaction notification is now handled by the wallet via WalletInterface
-                }
-            }
-        }
-
+        // Method removed - no longer used
         Ok(())
     }
 
@@ -1266,234 +1129,5 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
 
         self.chain_state = chain_state;
-    }
-}
-
-/// Result of processing a header
-enum HeaderProcessResult {
-    ExtendedMainChain,
-    CreatedFork,
-    ExtendedFork,
-    Orphan,
-    TriggeredReorg(u32), // Reorg depth
-}
-
-/// Adapter to make async StorageManager work with sync ChainStorage
-struct SyncStorageAdapter<'a> {
-    storage: &'a dyn StorageManager,
-}
-
-impl<'a> SyncStorageAdapter<'a> {
-    fn new(storage: &'a dyn StorageManager) -> Self {
-        Self {
-            storage,
-        }
-    }
-}
-
-impl<'a> crate::storage::ChainStorage for SyncStorageAdapter<'a> {
-    fn get_header(
-        &self,
-        hash: &BlockHash,
-    ) -> Result<Option<BlockHeader>, crate::error::StorageError> {
-        // Use block_in_place to run async code in sync context
-        // This is safe because we're already in a tokio runtime
-        tokio::task::block_in_place(|| {
-            // Get a handle to the current runtime
-            let handle = tokio::runtime::Handle::current();
-
-            // Block on the async operation
-            handle.block_on(async {
-                tracing::trace!("SyncStorageAdapter: Looking up header by hash: {}", hash);
-
-                // First, we need to find the height of this block by hash
-                match self.storage.get_header_height_by_hash(hash).await {
-                    Ok(Some(height)) => {
-                        tracing::trace!(
-                            "SyncStorageAdapter: Found header at height {} for hash {}",
-                            height,
-                            hash
-                        );
-                        // Now get the header at that height
-                        self.storage.get_header(height).await.map_err(|e| {
-                            crate::error::StorageError::Io(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                e.to_string(),
-                            ))
-                        })
-                    }
-                    Ok(None) => {
-                        tracing::trace!("SyncStorageAdapter: No header found for hash {}", hash);
-                        Ok(None)
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "SyncStorageAdapter: Error looking up header by hash {}: {}",
-                            hash,
-                            e
-                        );
-                        Err(crate::error::StorageError::Io(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            e.to_string(),
-                        )))
-                    }
-                }
-            })
-        })
-    }
-
-    fn get_header_by_height(
-        &self,
-        height: u32,
-    ) -> Result<Option<BlockHeader>, crate::error::StorageError> {
-        tokio::task::block_in_place(|| {
-            let handle = tokio::runtime::Handle::current();
-
-            handle.block_on(async {
-                tracing::trace!("SyncStorageAdapter: Looking up header by height: {}", height);
-
-                match self.storage.get_header(height).await {
-                    Ok(header) => {
-                        if header.is_some() {
-                            tracing::trace!(
-                                "SyncStorageAdapter: Found header at height {}",
-                                height
-                            );
-                        } else {
-                            tracing::trace!(
-                                "SyncStorageAdapter: No header found at height {}",
-                                height
-                            );
-                        }
-                        Ok(header)
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "SyncStorageAdapter: Error looking up header at height {}: {}",
-                            height,
-                            e
-                        );
-                        Err(crate::error::StorageError::Io(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            e.to_string(),
-                        )))
-                    }
-                }
-            })
-        })
-    }
-
-    fn get_header_height(
-        &self,
-        hash: &BlockHash,
-    ) -> Result<Option<u32>, crate::error::StorageError> {
-        tokio::task::block_in_place(|| {
-            let handle = tokio::runtime::Handle::current();
-
-            handle.block_on(async {
-                tracing::trace!("SyncStorageAdapter: Looking up height for hash: {}", hash);
-
-                match self.storage.get_header_height_by_hash(hash).await {
-                    Ok(height) => {
-                        if let Some(h) = height {
-                            tracing::trace!("SyncStorageAdapter: Hash {} is at height {}", hash, h);
-                        } else {
-                            tracing::trace!("SyncStorageAdapter: Hash {} not found", hash);
-                        }
-                        Ok(height)
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "SyncStorageAdapter: Error looking up height for hash {}: {}",
-                            hash,
-                            e
-                        );
-                        Err(crate::error::StorageError::Io(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            e.to_string(),
-                        )))
-                    }
-                }
-            })
-        })
-    }
-
-    fn store_header(
-        &self,
-        _header: &BlockHeader,
-        _height: u32,
-    ) -> Result<(), crate::error::StorageError> {
-        // Note: This method cannot be properly implemented because StorageManager's store_headers
-        // requires &mut self, but ChainStorage's store_header only provides &self.
-        // In production code, headers are stored directly through the async StorageManager,
-        // not through this sync adapter. This method is only used in tests with MemoryStorage
-        // which implements both traits.
-        Err(crate::error::StorageError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Cannot store headers through immutable sync adapter",
-        )))
-    }
-
-    fn get_block_transactions(
-        &self,
-        _block_hash: &BlockHash,
-    ) -> Result<Option<Vec<dashcore::Txid>>, crate::error::StorageError> {
-        // Currently not implemented in StorageManager, return None
-        Ok(None)
-    }
-
-    fn get_transaction(
-        &self,
-        _txid: &dashcore::Txid,
-    ) -> Result<Option<dashcore::Transaction>, crate::error::StorageError> {
-        // Currently not implemented in StorageManager, return None
-        Ok(None)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::storage::{ChainStorage, MemoryStorageManager, StorageManager};
-    use dashcore_hashes::Hash;
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_sync_storage_adapter_queries_storage() {
-        // Create a memory storage manager
-        let mut storage = MemoryStorageManager::new().await.expect("should create memory storage");
-
-        // Create a test header
-        let genesis = dashcore::blockdata::constants::genesis_block(dashcore::Network::Dash).header;
-        let genesis_hash = genesis.block_hash();
-
-        // Store the header using async storage
-        storage.store_headers(&[genesis]).await.expect("should store genesis header");
-
-        // Create sync adapter
-        let sync_adapter = SyncStorageAdapter::new(&storage);
-
-        // Test get_header_by_height
-        let header = sync_adapter.get_header_by_height(0).expect("should get header by height");
-        assert!(header.is_some());
-        assert_eq!(header.expect("genesis header should exist").block_hash(), genesis_hash);
-
-        // Test get_header_height
-        let height =
-            sync_adapter.get_header_height(&genesis_hash).expect("should get header height");
-        assert_eq!(height, Some(0));
-
-        // Test get_header (by hash)
-        let header = sync_adapter.get_header(&genesis_hash).expect("should get header by hash");
-        assert!(header.is_some());
-        assert_eq!(header.expect("genesis header should exist by hash").block_hash(), genesis_hash);
-
-        // Test non-existent header
-        let fake_hash = BlockHash::from_byte_array([1; 32]);
-        let header = sync_adapter.get_header(&fake_hash).expect("should query non-existent header");
-        assert!(header.is_none());
-
-        let height =
-            sync_adapter.get_header_height(&fake_hash).expect("should query non-existent height");
-        assert!(height.is_none());
     }
 }

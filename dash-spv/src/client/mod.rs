@@ -1173,12 +1173,6 @@ impl<
 
 
 
-    /// Helper method to find height for a block hash.
-    async fn find_height_for_block_hash(&self, block_hash: dashcore::BlockHash) -> Option<u32> {
-        // Use the efficient reverse index
-        let storage = self.storage.lock().await;
-        storage.get_header_height_by_hash(&block_hash).await.ok().flatten()
-    }
 
     /// Process a new block.
     async fn process_new_block(&mut self, block: dashcore::Block) -> Result<()> {
