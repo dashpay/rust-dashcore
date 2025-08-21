@@ -163,5 +163,4 @@ impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + S
         let watch_items = self.watch_items.read().await;
         watch_items.iter().cloned().collect()
     }
-
 }

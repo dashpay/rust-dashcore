@@ -301,11 +301,7 @@ impl MasternodeListEngine {
                 true
             };
             if do_check {
-                return self.verify_chain_lock_with_masternode_list(
-                    chain_lock,
-                    after,
-                    &request_id,
-                );
+                return self.verify_chain_lock_with_masternode_list(chain_lock, after, &request_id);
             } else if let Some(initial_error) = initial_error {
                 return Err(initial_error);
             }

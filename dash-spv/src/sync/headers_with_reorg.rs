@@ -12,9 +12,7 @@ use dashcore::{
 use dashcore_hashes::Hash;
 
 use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
-use crate::chain::{
-    ChainTip, ChainTipManager, ChainWork, ForkDetector,
-};
+use crate::chain::{ChainTip, ChainTipManager, ChainWork, ForkDetector};
 use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
@@ -369,7 +367,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         Ok(true)
     }
-
 
     /// Request headers from the network
     pub async fn request_headers(

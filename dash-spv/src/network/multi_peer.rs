@@ -850,7 +850,6 @@ impl MultiPeerNetworkManager {
         results
     }
 
-
     /// Disconnect a specific peer
     pub async fn disconnect_peer(&self, addr: &SocketAddr, reason: &str) -> Result<(), Error> {
         log::info!("Disconnecting peer {} - reason: {}", addr, reason);

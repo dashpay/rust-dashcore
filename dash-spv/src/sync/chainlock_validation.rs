@@ -209,7 +209,6 @@ impl ChainLockValidator {
         })
     }
 
-
     /// Verify chain lock signature using the engine's built-in verification
     fn verify_chain_lock_with_engine(
         &self,

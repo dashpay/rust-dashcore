@@ -19,13 +19,11 @@ pub mod validation_state;
 #[cfg(test)]
 mod validation_test;
 
-
 pub use filters::FilterSyncManager;
 pub use headers::HeaderSyncManager;
 pub use headers_with_reorg::{HeaderSyncManagerWithReorg, ReorgConfig};
 pub use masternodes::MasternodeSyncManager;
 pub use state::SyncState;
-
 
 /// Sync component types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

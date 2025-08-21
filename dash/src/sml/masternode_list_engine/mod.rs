@@ -764,12 +764,11 @@ impl MasternodeListEngine {
                 {
                     for (quorum_hash, quorum_entry) in rotated_quorums_at_h.iter_mut() {
                         if let Some(new_status) = validation_statuses.get(quorum_hash)
-                            && &quorum_entry.verified != new_status {
+                            && &quorum_entry.verified != new_status
+                        {
                             quorum_entry.verified = new_status.clone();
-                            let masternode_lists_having_quorum_hash_for_quorum_type = self
-                                .quorum_statuses
-                                .entry(rotation_quorum_type)
-                                .or_default();
+                            let masternode_lists_having_quorum_hash_for_quorum_type =
+                                self.quorum_statuses.entry(rotation_quorum_type).or_default();
 
                             let (heights, _, status) =
                                 masternode_lists_having_quorum_hash_for_quorum_type
@@ -1052,7 +1051,8 @@ impl MasternodeListEngine {
                     .values()
                     .find(|quorum_entry| quorum_entry.quorum_entry.quorum_index == Some(0))
                     .map(|quorum_entry| quorum_entry.quorum_entry.quorum_hash)
-                    && let Some(cycle_quorums) = self.rotated_quorums_per_cycle.get(&cycle_hash) {
+                    && let Some(cycle_quorums) = self.rotated_quorums_per_cycle.get(&cycle_hash)
+                {
                     // Only update rotating quorum statuses based on last commitment entries
                     for quorum in cycle_quorums {
                         if let Some(quorum_entry) =

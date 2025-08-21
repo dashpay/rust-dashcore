@@ -134,7 +134,6 @@ impl<
         )
     }
 
-
     /// Helper to collect all watched addresses.
     async fn get_watched_addresses_from_items(&self) -> Vec<dashcore::Address> {
         let watch_items = self.get_watch_items().await;
@@ -1169,11 +1168,6 @@ impl<
         }
     }
 
-
-
-
-
-
     /// Process a new block.
     #[allow(dead_code)]
     async fn process_new_block(&mut self, block: dashcore::Block) -> Result<()> {
@@ -1197,7 +1191,6 @@ impl<
         tracing::debug!("Block {} queued for background processing", block_hash);
         Ok(())
     }
-
 
     /// Report balance changes for watched addresses.
     #[allow(dead_code)]
@@ -1304,7 +1297,6 @@ impl<
 
         network.disconnect_peer(addr, reason).await
     }
-
 
     /// Process and validate a ChainLock.
     pub async fn process_chainlock(
@@ -2507,7 +2499,6 @@ impl<
         let display = self.create_status_display().await;
         display.update_status_display().await;
     }
-
 
     /// Get mutable reference to sync manager (for testing)
     #[cfg(test)]
