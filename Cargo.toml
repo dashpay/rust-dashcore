@@ -5,6 +5,14 @@ resolver = "2"
 [workspace.package]
 version = "0.39.6"
 
-[patch.crates-io.dashcore_hashes]
-path = "hashes"
+[patch.crates-io]
+dashcore_hashes = { path = "hashes" }
+# Use fixed version of elliptic-curve-tools with DefaultIsZeroes trait bound
+elliptic-curve-tools = { git = "https://github.com/QuantumExplorer/elliptic-curve-tools", branch = "fix/DefaultIsZeroesToSumOfProducts" }
+
+[profile.release]
+# Default to unwinding for most crates
+
+[profile.dev]
+# Default to unwinding for most crates
 

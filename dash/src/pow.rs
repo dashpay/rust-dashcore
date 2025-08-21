@@ -11,8 +11,6 @@
 use bincode::{Decode, Encode};
 use core::fmt::{self, LowerHex, UpperHex};
 use core::ops::{Add, Div, Mul, Not, Rem, Shl, Shr, Sub};
-#[cfg(all(test, mutate))]
-use mutagen::mutate;
 
 #[cfg(doc)]
 use crate::consensus::Params;
@@ -74,14 +72,13 @@ macro_rules! do_impl {
     };
 }
 
-/// A 256 bit integer representing work.
+/// A 256-bit integer representing work.
 ///
 /// Work is a measure of how difficult it is to find a hash below a given [`Target`].
 ///
 /// ref: <https://en.bitcoin.it/wiki/Work>
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct Work(U256);
 
 impl Work {
@@ -128,7 +125,7 @@ impl Sub for Work {
     }
 }
 
-/// A 256 bit integer representing target.
+/// A 256-bit integer representing target.
 ///
 /// The SHA-256 hash of a block's header must be lower than or equal to the current target for the
 /// block to be accepted by the network. The lower the target, the more difficult it is to generate
@@ -137,7 +134,6 @@ impl Sub for Work {
 /// ref: <https://en.bitcoin.it/wiki/Target>
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct Target(U256);
 
 impl Target {
@@ -147,7 +143,7 @@ impl Target {
     ///
     /// This value is used to calculate difficulty, which is defined as how difficult the current
     /// target makes it to find a block relative to how difficult it would be at the highest
-    /// possible target. Remember highest target == lowest difficulty.
+    /// possible target. Remember `highest target` == `lowest difficulty`.
     ///
     /// ref: <https://en.bitcoin.it/wiki/Target>
     // In Bitcoind this is ~(u256)0 >> 32 stored as a floating-point type so it gets truncated, hence
@@ -192,7 +188,7 @@ impl Target {
     /// The compact form is by definition lossy, this means that
     /// `t == Target::from_compact(t.to_compact_lossy())` does not always hold.
     pub fn to_compact_lossy(self) -> CompactTarget {
-        let mut size = (self.0.bits() + 7) / 8;
+        let mut size = self.0.bits().div_ceil(8);
         let mut compact = if size <= 3 {
             (self.0.low_u64() << (8 * (3 - size))) as u32
         } else {
@@ -212,7 +208,6 @@ impl Target {
     ///
     /// Proof-of-work validity for a block requires the hash of the block to be less than or equal
     /// to the target.
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn is_met_by(&self, hash: BlockHash) -> bool {
         use hashes::Hash;
         let hash = U256::from_le_bytes(hash.to_byte_array());
@@ -242,13 +237,12 @@ impl Target {
     ///
     /// Difficulty is calculated using the following algorithm `max / current` where [max] is
     /// defined for the Bitcoin network and `current` is the current [target] for this block. As
-    /// such, a low target implies a high difficulty. Since [`Target`] is represented as a 256 bit
+    /// such, a low target implies a high difficulty. Since [`Target`] is represented as a 256-bit
     /// integer but `difficulty()` returns only 128 bits this means for targets below approximately
     /// `0xffff_ffff_ffff_ffff_ffff_ffff` `difficulty()` will saturate at `u128::MAX`.
     ///
     /// [max]: Target::max
     /// [target]: crate::blockdata::block::Header::target
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn difficulty(&self) -> u128 {
         let d = Target::MAX.0 / self.0;
         d.saturating_to_u128()
@@ -259,7 +253,6 @@ impl Target {
     /// See [`difficulty`] for details.
     ///
     /// [`difficulty`]: Target::difficulty
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn difficulty_float(&self) -> f64 {
         TARGET_MAX_F64 / self.0.to_f64()
     }
@@ -275,7 +268,6 @@ do_impl!(Target);
 /// is exactly this format.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct CompactTarget(u32);
 
 impl CompactTarget {
@@ -319,7 +311,7 @@ impl Decodable for CompactTarget {
     }
 }
 
-/// Big-endian 256 bit integer type.
+/// Big-endian 256-bit integer type.
 // (high, low): u.0 contains the high bits, u.1 contains the low bits.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -334,7 +326,6 @@ impl U256 {
     const ONE: U256 = U256(0, 1);
 
     /// Creates [`U256`] from a big-endian array of `u8`s.
-    #[cfg_attr(all(test, mutate), mutate)]
     fn from_be_bytes(a: [u8; 32]) -> U256 {
         let (high, low) = split_in_half(a);
         let big = u128::from_be_bytes(high);
@@ -343,7 +334,6 @@ impl U256 {
     }
 
     /// Creates a [`U256`] from a little-endian array of `u8`s.
-    #[cfg_attr(all(test, mutate), mutate)]
     fn from_le_bytes(a: [u8; 32]) -> U256 {
         let (high, low) = split_in_half(a);
         let little = u128::from_le_bytes(high);
@@ -352,7 +342,6 @@ impl U256 {
     }
 
     /// Converts `Self` to a big-endian array of `u8`s.
-    #[cfg_attr(all(test, mutate), mutate)]
     fn to_be_bytes(self) -> [u8; 32] {
         let mut out = [0; 32];
         out[..16].copy_from_slice(&self.0.to_be_bytes());
@@ -361,7 +350,6 @@ impl U256 {
     }
 
     /// Converts `Self` to a little-endian array of `u8`s.
-    #[cfg_attr(all(test, mutate), mutate)]
     fn to_le_bytes(self) -> [u8; 32] {
         let mut out = [0; 32];
         out[..16].copy_from_slice(&self.1.to_le_bytes());
@@ -369,14 +357,14 @@ impl U256 {
         out
     }
 
-    /// Calculates 2^256 / (x + 1) where x is a 256 bit unsigned integer.
+    /// Calculates 2^256 / (x + 1) where x is a 256-bit unsigned integer.
     ///
     /// 2**256 / (x + 1) == ~x / (x + 1) + 1
     ///
     /// (Equation shamelessly stolen from bitcoind)
     fn inverse(&self) -> U256 {
         // We should never have a target/work of zero so this doesn't matter
-        // that much but we define the inverse of 0 as max.
+        // that much, but we define the inverse of 0 as max.
         if self.is_zero() {
             return U256::MAX;
         }
@@ -393,17 +381,14 @@ impl U256 {
         ret.wrapping_inc()
     }
 
-    #[cfg_attr(all(test, mutate), mutate)]
     fn is_zero(&self) -> bool {
         self.0 == 0 && self.1 == 0
     }
 
-    #[cfg_attr(all(test, mutate), mutate)]
     fn is_one(&self) -> bool {
         self.0 == 0 && self.1 == 1
     }
 
-    #[cfg_attr(all(test, mutate), mutate)]
     fn is_max(&self) -> bool {
         self.0 == u128::MAX && self.1 == u128::MAX
     }
@@ -434,7 +419,6 @@ impl U256 {
     }
 
     /// Returns the least number of bits needed to represent the number.
-    #[cfg_attr(all(test, mutate), mutate)]
     fn bits(&self) -> u32 {
         if self.0 > 0 {
             256 - self.0.leading_zeros()
@@ -478,7 +462,6 @@ impl U256 {
     /// # Panics
     ///
     /// If `rhs` is zero.
-    #[cfg_attr(all(test, mutate), mutate)]
     fn div_rem(self, rhs: Self) -> (Self, Self) {
         let mut sub_copy = self;
         let mut shift_copy = rhs;
@@ -488,7 +471,7 @@ impl U256 {
         let your_bits = rhs.bits();
 
         // Check for division by 0
-        assert!(your_bits != 0, "attempted to divide {} by zero", self);
+        assert_ne!(your_bits, 0, "attempted to divide {} by zero", self);
 
         // Early return in case we are dividing by a larger number than us
         if my_bits < your_bits {
@@ -516,9 +499,8 @@ impl U256 {
     /// Calculates `self` + `rhs`
     ///
     /// Returns a tuple of the addition along with a boolean indicating whether an arithmetic
-    /// overflow would occur. If an overflow would have occurred then the wrapped value is returned.
+    /// overflow would occur. If an overflow occurs then the wrapped value is returned.
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    #[cfg_attr(all(test, mutate), mutate)]
     fn overflowing_add(self, rhs: Self) -> (Self, bool) {
         let mut ret = U256::ZERO;
         let mut ret_overflow = false;
@@ -541,9 +523,8 @@ impl U256 {
     /// Calculates `self` - `rhs`
     ///
     /// Returns a tuple of the subtraction along with a boolean indicating whether an arithmetic
-    /// overflow would occur. If an overflow would have occurred then the wrapped value is returned.
+    /// overflow would occur. If an overflow occurs then the wrapped value is returned.
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    #[cfg_attr(all(test, mutate), mutate)]
     fn overflowing_sub(self, rhs: Self) -> (Self, bool) {
         let ret = self.wrapping_add(!rhs).wrapping_add(Self::ONE);
         let overflow = rhs > self;
@@ -554,9 +535,8 @@ impl U256 {
     ///
     /// Returns a tuple of the multiplication along with a boolean
     /// indicating whether an arithmetic overflow would occur. If an
-    /// overflow would have occurred then the wrapped value is returned.
+    /// overflow occurs then the wrapped value is returned.
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    #[cfg_attr(all(test, mutate), mutate)]
     fn overflowing_mul(self, rhs: Self) -> (Self, bool) {
         let mut ret = U256::ZERO;
         let mut ret_overflow = false;
@@ -604,7 +584,6 @@ impl U256 {
 
     /// Returns `self` incremented by 1 wrapping around at the boundary of the type.
     #[must_use = "this returns the result of the increment, without modifying the original"]
-    #[cfg_attr(all(test, mutate), mutate)]
     fn wrapping_inc(&self) -> U256 {
         let mut ret = U256::ZERO;
 
@@ -624,7 +603,6 @@ impl U256 {
     /// restricted to the range of the type, rather than the bits shifted out of the LHS being
     /// returned to the other end. We do not currently support `rotate_left`.
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    #[cfg_attr(all(test, mutate), mutate)]
     fn wrapping_shl(self, rhs: u32) -> Self {
         let shift = rhs & 0x000000ff;
 
@@ -651,7 +629,6 @@ impl U256 {
     /// restricted to the range of the type, rather than the bits shifted out of the LHS being
     /// returned to the other end. We do not currently support `rotate_right`.
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    #[cfg_attr(all(test, mutate), mutate)]
     fn wrapping_shr(self, rhs: u32) -> Self {
         let shift = rhs & 0x000000ff;
 
@@ -699,7 +676,7 @@ impl U256 {
         // Reference: https://blog.m-ou.se/floats/
         // Step 1: Get leading zeroes
         let leading_zeroes = 256 - self.bits();
-        // Step 2: Get msb to be farthest left bit
+        // Step 2: Get msb to be the farthest left bit
         let left_aligned = self.wrapping_shl(leading_zeroes);
         // Step 3: Shift msb to fit in lower 53 bits (128-53=75) to get the mantissa
         // * Shifting the border of the 2 u128s to line up with mantissa and dropped bits
@@ -852,7 +829,7 @@ impl_hex!(UpperHex, internals::hex::Case::Upper);
 impl crate::serde::Serialize for U256 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: crate::serde::Serializer,
+        S: serde::Serializer,
     {
         struct DisplayHex(U256);
 
@@ -874,7 +851,7 @@ impl crate::serde::Serialize for U256 {
 
 #[cfg(feature = "serde")]
 impl<'de> crate::serde::Deserialize<'de> for U256 {
-    fn deserialize<D: crate::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         use hashes::hex::FromHex;
 
         use crate::serde::de;
@@ -914,7 +891,7 @@ impl<'de> crate::serde::Deserialize<'de> for U256 {
 
                         Ok(U256::from_be_bytes(b))
                     } else {
-                        Err(E::invalid_value(::serde::de::Unexpected::Bytes(v), &self))
+                        Err(E::invalid_value(de::Unexpected::Bytes(v), &self))
                     }
                 }
             }
@@ -922,16 +899,16 @@ impl<'de> crate::serde::Deserialize<'de> for U256 {
         } else {
             struct BytesVisitor;
 
-            impl<'de> serde::de::Visitor<'de> for BytesVisitor {
+            impl<'de> de::Visitor<'de> for BytesVisitor {
                 type Value = U256;
 
-                fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
                     f.write_str("a sequence of bytes")
                 }
 
                 fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
                 where
-                    E: serde::de::Error,
+                    E: de::Error,
                 {
                     let b = v.try_into().map_err(|_| de::Error::invalid_length(v.len(), &self))?;
                     Ok(U256::from_be_bytes(b))
@@ -1118,7 +1095,7 @@ mod tests {
 
         check_fmt_20, 1_u32, "{:<2}", "1 ";
         check_fmt_21, 1_u32, "{:<02}", "01";
-        check_fmt_22, 1_u32, "{:>2}", " 1"; // This is default but check it anyways.
+        check_fmt_22, 1_u32, "{:>2}", " 1"; // This is default but check it anyway.
         check_fmt_23, 1_u32, "{:>02}", "01";
         check_fmt_24, 1_u32, "{:^3}", " 1 ";
         check_fmt_25, 1_u32, "{:^03}", "001";
@@ -1508,8 +1485,8 @@ mod tests {
     fn u256_serde() {
         let check = |uint, hex| {
             let json = format!("\"{}\"", hex);
-            assert_eq!(::serde_json::to_string(&uint).unwrap(), json);
-            assert_eq!(::serde_json::from_str::<U256>(&json).unwrap(), uint);
+            assert_eq!(serde_json::to_string(&uint).unwrap(), json);
+            assert_eq!(serde_json::from_str::<U256>(&json).unwrap(), uint);
 
             let config = bincode::config::standard();
 
@@ -1537,19 +1514,19 @@ mod tests {
         );
 
         assert!(
-            ::serde_json::from_str::<U256>(
+            serde_json::from_str::<U256>(
                 "\"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffg\""
             )
             .is_err()
         ); // invalid char
         assert!(
-            ::serde_json::from_str::<U256>(
+            serde_json::from_str::<U256>(
                 "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
             )
             .is_err()
         ); // invalid length
         assert!(
-            ::serde_json::from_str::<U256>(
+            serde_json::from_str::<U256>(
                 "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
             )
             .is_err()
@@ -1717,13 +1694,13 @@ mod tests {
     }
 
     #[test]
-    fn u256_wrapping_add_wraps_at_boundry() {
+    fn u256_wrapping_add_wraps_at_boundary() {
         assert_eq!(U256::MAX.wrapping_add(U256::ONE), U256::ZERO);
         assert_eq!(U256::MAX.wrapping_add(U256::from(2_u8)), U256::ONE);
     }
 
     #[test]
-    fn u256_wrapping_sub_wraps_at_boundry() {
+    fn u256_wrapping_sub_wraps_at_boundary() {
         assert_eq!(U256::ZERO.wrapping_sub(U256::ONE), U256::MAX);
         assert_eq!(U256::ONE.wrapping_sub(U256::from(2_u8)), U256::MAX);
     }

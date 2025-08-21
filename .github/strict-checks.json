@@ -2,13 +2,13 @@
   "strict_check_crates": [
     "key-wallet",
     "key-wallet-manager",
-    "key-wallet-ffi"
+    "key-wallet-ffi",
+    "dash",
+    "hashes"
   ],
   "excluded_crates": [
-    "dash",
     "dash-network",
     "dash-network-ffi",
-    "hashes",
     "internals",
     "fuzz",
     "rpc-client",

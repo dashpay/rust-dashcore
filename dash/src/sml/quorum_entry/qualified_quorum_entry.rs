@@ -11,6 +11,7 @@ use bincode::{Decode, Encode};
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[allow(clippy::large_enum_variant)]
 pub enum VerifyingChainLockSignaturesType {
     Rotating([BLSSignature; 4]),
     NonRotating(BLSSignature),

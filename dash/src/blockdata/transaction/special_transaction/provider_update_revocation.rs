@@ -52,7 +52,6 @@ use crate::io;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct ProviderUpdateRevocationPayload {
     pub version: u16,
     pub pro_tx_hash: Txid,

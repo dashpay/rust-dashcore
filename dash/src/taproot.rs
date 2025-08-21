@@ -992,7 +992,6 @@ impl<'de> serde::Deserialize<'de> for NodeInfo {
 /// Leaf node in a taproot tree. Can be either hidden or known.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub enum TapLeaf {
     /// A known script
     Script(ScriptBuf, LeafVersion),
@@ -1297,7 +1296,6 @@ impl From<TaprootMerkleBranch> for Vec<TapNodeHash> {
 /// Control block data structure used in Tapscript satisfaction.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct ControlBlock {
     /// The tapleaf version.
     pub leaf_version: LeafVersion,

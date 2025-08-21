@@ -7,7 +7,7 @@ impl MasternodeList {
     pub fn has_valid_masternode(&self, pro_reg_tx_hash: &ProTxHash) -> bool {
         self.masternodes
             .get(pro_reg_tx_hash)
-            .map_or(false, |node| node.masternode_list_entry.is_valid)
+            .is_some_and(|node| node.masternode_list_entry.is_valid)
     }
 
     pub fn has_masternode_at_location(&self, address: [u8; 16], port: u16) -> bool {

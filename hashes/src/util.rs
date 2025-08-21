@@ -326,8 +326,8 @@ macro_rules! hash_newtype {
             }
         }
 
-        impl Into<[u8; <$hash as $crate::Hash>::LEN]> for $newtype {
-            fn into(self) -> [u8; <$hash as $crate::Hash>::LEN] { self.0.into() }
+        impl From<$newtype> for [u8; <$hash as $crate::Hash>::LEN] {
+            fn from(value: $newtype) -> Self { value.0.into() }
         }
         )+
     };
@@ -461,8 +461,8 @@ macro_rules! hash_newtype_no_ord {
             }
         }
 
-        impl Into<[u8; <$hash as $crate::Hash>::LEN]> for $newtype {
-            fn into(self) -> [u8; <$hash as $crate::Hash>::LEN] { self.0.into() }
+        impl From<$newtype> for [u8; <$hash as $crate::Hash>::LEN] {
+            fn from(value: $newtype) -> Self { value.0.into() }
         }
         )+
     };

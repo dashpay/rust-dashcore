@@ -43,6 +43,14 @@ bincode = { version= "=2.0.0-rc.3", optional = true }
 [dev-dependencies]
 serde_test = "1.0"
 serde_json = "1.0"
+criterion = "0.5"
 
 [target.wasm32-unknown-unknown.dev-dependencies]
 wasm-bindgen-test = "0.3"
+
+[[bench]]
+name = "hashes"
+harness = false
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bench)', 'cfg(fuzzing)'] }

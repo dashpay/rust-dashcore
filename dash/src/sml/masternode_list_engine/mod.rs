@@ -15,12 +15,14 @@ use crate::network::message_sml::MnListDiff;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
-use crate::sml::llmq_type::{LLMQType, network::NetworkLLMQExt};
+use crate::sml::llmq_type::LLMQType;
+#[cfg(feature = "quorum_validation")]
+use crate::sml::llmq_type::network::NetworkLLMQExt;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list::from_diff::TryIntoWithBlockHashLookup;
-use crate::sml::quorum_entry::qualified_quorum_entry::{
-    QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
-};
+use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+#[cfg(feature = "quorum_validation")]
+use crate::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
 use crate::sml::quorum_validation_error::{ClientDataRetrievalError, QuorumValidationError};
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::{BlockHash, QuorumHash};
@@ -169,6 +171,7 @@ pub struct MasternodeListEngine {
     pub masternode_lists: BTreeMap<CoreBlockHeight, MasternodeList>,
     pub known_snapshots: BTreeMap<BlockHash, QuorumSnapshot>,
     pub rotated_quorums_per_cycle: BTreeMap<BlockHash, Vec<QualifiedQuorumEntry>>,
+    #[allow(clippy::type_complexity)]
     pub quorum_statuses: BTreeMap<
         LLMQType,
         BTreeMap<
@@ -537,6 +540,7 @@ impl MasternodeListEngine {
             self.request_qr_info_block_heights(&qr_info, &fetch_height)?;
         }
 
+        #[allow(unused_variables)]
         let QRInfo {
             quorum_snapshot_at_h_minus_c,
             quorum_snapshot_at_h_minus_2c,
@@ -559,20 +563,26 @@ impl MasternodeListEngine {
             self.apply_diff(diff, None, false, None)?;
         }
 
+        #[cfg(feature = "quorum_validation")]
         let can_verify_previous = quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some();
 
+        #[cfg(feature = "quorum_validation")]
         let h_height = self.block_container.get_height(&mn_list_diff_h.block_hash).ok_or(
             QuorumValidationError::RequiredBlockNotPresent(
                 mn_list_diff_h.block_hash,
                 "getting height at diff h".to_string(),
             ),
         )?;
+
+        #[cfg(feature = "quorum_validation")]
         let tip_height = self.block_container.get_height(&mn_list_diff_tip.block_hash).ok_or(
             QuorumValidationError::RequiredBlockNotPresent(
                 mn_list_diff_tip.block_hash,
                 "getting height at diff tip".to_string(),
             ),
         )?;
+
+        #[cfg(feature = "quorum_validation")]
         let rotation_quorum_type = last_commitment_per_index
             .first()
             .map(|quorum_entry| quorum_entry.llmq_type)
@@ -591,12 +601,15 @@ impl MasternodeListEngine {
         self.apply_diff(mn_list_diff_at_h_minus_3c, None, false, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_2c.block_hash, quorum_snapshot_at_h_minus_2c);
+        #[cfg(feature = "quorum_validation")]
         let mn_list_diff_at_h_minus_2c_block_hash = mn_list_diff_at_h_minus_2c.block_hash;
         let maybe_sigm2 = self.apply_diff(mn_list_diff_at_h_minus_2c, None, false, None)?;
         self.known_snapshots
             .insert(mn_list_diff_at_h_minus_c.block_hash, quorum_snapshot_at_h_minus_c);
+        #[cfg(feature = "quorum_validation")]
         let mn_list_diff_at_h_minus_c_block_hash = mn_list_diff_at_h_minus_c.block_hash;
         let maybe_sigm1 = self.apply_diff(mn_list_diff_at_h_minus_c, None, false, None)?;
+        #[cfg(feature = "quorum_validation")]
         let mn_list_diff_at_h_block_hash = mn_list_diff_h.block_hash;
         let maybe_sigm0 = self.apply_diff(mn_list_diff_h, None, false, None)?;
 
@@ -605,10 +618,13 @@ impl MasternodeListEngine {
             _ => None,
         };
 
+        #[allow(unused_variables)]
         let mn_list_diff_tip_block_hash = mn_list_diff_tip.block_hash;
+        #[allow(unused_variables)]
         let maybe_sigmtip =
             self.apply_diff(mn_list_diff_tip, None, verify_tip_non_rotated_quorums, sigs)?;
 
+        #[cfg(feature = "quorum_validation")]
         let qualified_last_commitment_per_index = last_commitment_per_index
             .into_iter()
             .map(|quorum_entry| {
@@ -830,6 +846,7 @@ impl MasternodeListEngine {
     ///
     /// # Returns
     /// Result containing an optional BLS signature for rotation cycles, or an error.
+    #[allow(unused_variables)]
     pub fn apply_diff(
         &mut self,
         masternode_list_diff: MnListDiff,
@@ -841,31 +858,29 @@ impl MasternodeListEngine {
             .network
             .known_genesis_block_hash()
             .or_else(|| self.block_container.get_hash(&0).cloned())
+            && (masternode_list_diff.base_block_hash == known_genesis_block_hash
+                || masternode_list_diff.base_block_hash.as_byte_array() == &[0; 32])
         {
-            if masternode_list_diff.base_block_hash == known_genesis_block_hash
-                || masternode_list_diff.base_block_hash.as_byte_array() == &[0; 32]
-            {
-                // we are going from the start
-                let block_hash = masternode_list_diff.block_hash;
+            // we are going from the start
+            let block_hash = masternode_list_diff.block_hash;
 
-                let masternode_list = masternode_list_diff.try_into_with_block_hash_lookup(
-                    |block_hash| diff_end_height.or(self.block_container.get_height(block_hash)),
-                    self.network,
-                )?;
+            let masternode_list = masternode_list_diff.try_into_with_block_hash_lookup(
+                |block_hash| diff_end_height.or(self.block_container.get_height(block_hash)),
+                self.network,
+            )?;
 
-                let diff_end_height = match diff_end_height {
-                    None => self
-                        .block_container
-                        .get_height(&block_hash)
-                        .ok_or(SmlError::BlockHashLookupFailed(block_hash))?,
-                    Some(diff_end_height) => {
-                        self.block_container.feed_block_height(diff_end_height, block_hash);
-                        diff_end_height
-                    }
-                };
-                self.masternode_lists.insert(diff_end_height, masternode_list);
-                return Ok(None);
-            }
+            let diff_end_height = match diff_end_height {
+                None => self
+                    .block_container
+                    .get_height(&block_hash)
+                    .ok_or(SmlError::BlockHashLookupFailed(block_hash))?,
+                Some(diff_end_height) => {
+                    self.block_container.feed_block_height(diff_end_height, block_hash);
+                    diff_end_height
+                }
+            };
+            self.masternode_lists.insert(diff_end_height, masternode_list);
+            return Ok(None);
         }
 
         let Some(base_height) =
@@ -1295,7 +1310,7 @@ mod tests {
         // We know these are the blocks we need to know about.
         masternode_list_engine.block_container = block_container;
 
-        for (i, ((start_height, height), diff)) in mn_list_diffs.into_iter().enumerate() {
+        for ((_start_height, height), diff) in mn_list_diffs.into_iter() {
             masternode_list_engine
                 .apply_diff(diff, Some(height), false, None)
                 .expect("expected to apply diff");

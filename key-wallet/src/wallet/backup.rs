@@ -4,6 +4,8 @@
 //! using bincode for efficient binary storage.
 
 use crate::wallet::Wallet;
+#[cfg(feature = "bincode")]
+use crate::Error;
 
 impl Wallet {
     /// Create a backup of this wallet
@@ -25,7 +27,7 @@ impl Wallet {
     /// // Store backup_data securely...
     /// ```
     #[cfg(feature = "bincode")]
-    pub fn backup(&self) -> Result<Vec<u8>> {
+    pub fn backup(&self) -> Result<Vec<u8>, Error> {
         bincode::encode_to_vec(self, bincode::config::standard())
             .map_err(|e| Error::Serialization(format!("Failed to backup wallet: {}", e)))
     }
@@ -46,7 +48,7 @@ impl Wallet {
     /// let restored_wallet = Wallet::restore(&backup_data).unwrap();
     /// ```
     #[cfg(feature = "bincode")]
-    pub fn restore(backup_data: &[u8]) -> Result<Self> {
+    pub fn restore(backup_data: &[u8]) -> Result<Self, Error> {
         bincode::decode_from_slice(backup_data, bincode::config::standard())
             .map(|(wallet, _)| wallet)
             .map_err(|e| Error::Serialization(format!("Failed to restore wallet: {}", e)))

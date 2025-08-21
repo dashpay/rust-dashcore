@@ -10,9 +10,6 @@
 use core::convert::TryFrom;
 use core::fmt;
 
-#[cfg(all(test, mutate))]
-use mutagen::mutate;
-
 use crate::parse::impl_parse_str_from_int_infallible;
 use crate::prelude::*;
 #[cfg(doc)]
@@ -30,7 +27,6 @@ use crate::relative;
 #[allow(clippy::derive_ord_xor_partial_ord)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub enum LockTime {
     /// A block height lock time value.
     Blocks(Height),
@@ -58,7 +54,6 @@ impl LockTime {
     /// assert!(lock.is_satisfied_by(current_height(), current_time()));
     /// ```
     #[inline]
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn is_satisfied_by(&self, h: Height, t: Time) -> bool {
         if let Ok(true) = self.is_satisfied_by_height(h) {
             true
@@ -93,7 +88,6 @@ impl LockTime {
     /// assert!(lock.is_implied_by(test_lock));
     /// ```
     #[inline]
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn is_implied_by(&self, other: LockTime) -> bool {
         use LockTime::*;
 
@@ -120,7 +114,6 @@ impl LockTime {
     /// assert!(lock.is_satisfied_by_height(Height::from(height+1)).expect("a height"));
     /// ```
     #[inline]
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn is_satisfied_by_height(&self, h: Height) -> Result<bool, Error> {
         use LockTime::*;
 
@@ -146,7 +139,6 @@ impl LockTime {
     /// assert!(lock.is_satisfied_by_time(Time::from_512_second_intervals(intervals + 10)).expect("a time"));
     /// ```
     #[inline]
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn is_satisfied_by_time(&self, t: Time) -> Result<bool, Error> {
         use LockTime::*;
 
@@ -192,7 +184,6 @@ impl fmt::Display for LockTime {
 /// A relative lock time lock-by-blockheight value.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct Height(u16);
 
 impl Height {
@@ -246,7 +237,6 @@ impl fmt::Display for Height {
 /// For BIP 68 relative lock-by-blocktime locks, time is measure in 512 second intervals.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct Time(u16);
 
 impl Time {
@@ -289,7 +279,7 @@ impl Time {
     /// Will return an error if the input cannot be encoded in 16 bits.
     #[inline]
     pub fn from_seconds_ceil(seconds: u32) -> Result<Self, Error> {
-        if let Ok(interval) = u16::try_from((seconds + 511) / 512) {
+        if let Ok(interval) = u16::try_from(seconds.div_ceil(512)) {
             Ok(Time::from_512_second_intervals(interval))
         } else {
             Err(Error::IntegerOverflow(seconds))

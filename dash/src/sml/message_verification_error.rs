@@ -13,7 +13,6 @@ use crate::sml::quorum_validation_error::QuorumValidationError;
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub enum MessageVerificationError {
     #[error("Required cycle not present to verify instant send: {0}")]
     CycleHashNotPresent(CycleHash),
@@ -31,9 +30,9 @@ pub enum MessageVerificationError {
         "Threshold signature {0} is not valid for digest {1} using public key {2} for quorum {3} of type {4}, error is: {5}"
     )]
     ThresholdSignatureNotValid(
-        BLSSignature,
-        sha256d::Hash,
-        BLSPublicKey,
+        Box<BLSSignature>,
+        Box<sha256d::Hash>,
+        Box<BLSPublicKey>,
         QuorumHash,
         LLMQType,
         String,

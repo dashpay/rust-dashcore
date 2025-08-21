@@ -459,7 +459,7 @@ pub fn dkg_rotation_params(network: Network) -> DKGParams {
 
 impl LLMQType {
     pub fn index(&self) -> u8 {
-        u8::from(self.clone())
+        u8::from(*self)
     }
     pub fn from_u16(index: u16) -> LLMQType {
         LLMQType::from(index as u8)
@@ -469,12 +469,12 @@ impl LLMQType {
     }
 
     pub fn is_rotating_quorum_type(&self) -> bool {
-        match self {
+        matches!(
+            self,
             LLMQType::Llmqtype60_75
-            | LLMQType::LlmqtypeDevnetDIP0024
-            | LLMQType::LlmqtypeTestDIP0024 => true,
-            _ => false,
-        }
+                | LLMQType::LlmqtypeDevnetDIP0024
+                | LLMQType::LlmqtypeTestDIP0024
+        )
     }
 
     /// Calculate the cycle base height for a given block height

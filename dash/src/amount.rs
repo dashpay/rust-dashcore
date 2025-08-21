@@ -242,10 +242,10 @@ fn parse_signed_to_satoshi(
             // many as the difference in precision.
             let last_n = unsigned_abs(precision_diff).into();
             if is_too_precise(s, last_n) {
-                match s.parse::<i64>() {
-                    Ok(v) if v == 0_i64 => return Ok((is_negative, 0)),
-                    _ => return Err(ParseAmountError::TooPrecise),
-                }
+                return match s.parse::<i64>() {
+                    Ok(0_i64) => Ok((is_negative, 0)),
+                    _ => Err(ParseAmountError::TooPrecise),
+                };
             }
             s = &s[0..s.len() - last_n];
             0
@@ -438,7 +438,7 @@ fn fmt_satoshi_in(
         (true, false, fmt::Alignment::Left) => (0, width - num_width),
         // If the required padding is odd it needs to be skewed to the left
         (true, false, fmt::Alignment::Center) => {
-            ((width - num_width) / 2, (width - num_width + 1) / 2)
+            ((width - num_width) / 2, (width - num_width).div_ceil(2))
         }
     };
 

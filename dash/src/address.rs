@@ -760,8 +760,8 @@ struct AddressInner {
 /// ```
 ///
 /// 2. `Debug` on `Address<NetworkUnchecked>` does not produce clean address but address wrapped by
-/// an indicator that its network has not been checked. This is to encourage programmer to properly
-/// check the network and use `Display` in user-facing context.
+///    an indicator that its network has not been checked. This is to encourage programmer to properly
+///    check the network and use `Display` in user-facing context.
 ///
 /// ```
 /// # use std::str::FromStr;
@@ -885,7 +885,6 @@ impl bincode::Encode for AddressType {
         &self,
         encoder: &mut E,
     ) -> Result<(), bincode::error::EncodeError> {
-        use bincode::Encode;
         (*self as u8).encode(encoder)
     }
 }

@@ -37,7 +37,6 @@ use crate::{VarInt, io, merkle_tree};
 /// * [CBlockHeader definition](https://github.com/bitcoin/bitcoin/blob/345457b542b6a980ccfbc868af0970a6f91d1b82/src/primitives/block.h#L20)
 #[derive(Copy, PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct Header {
     /// Block version, now repurposed for soft fork signalling.
     pub version: Version,
@@ -113,7 +112,6 @@ impl Header {
 /// * [BIP34 - Block v2, Height in Coinbase](https://github.com/bitcoin/bips/blob/master/bip-0034.mediawiki)
 #[derive(Copy, PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct Version(i32);
 
 impl Version {
@@ -199,7 +197,6 @@ impl Decodable for Version {
 /// * [CBlock definition](https://github.com/bitcoin/bitcoin/blob/345457b542b6a980ccfbc868af0970a6f91d1b82/src/primitives/block.h#L62)
 #[derive(PartialEq, Eq, Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct Block {
     /// The block header
     pub header: Header,
@@ -252,11 +249,12 @@ impl Block {
             .unwrap();
             // Witness reserved value is in coinbase input witness.
             let witness_vec: Vec<_> = coinbase.input[0].witness.iter().collect();
-            if witness_vec.len() == 1 && witness_vec[0].len() == 32 {
-                if let Some(witness_root) = self.witness_root() {
-                    return commitment
-                        == Self::compute_witness_commitment(&witness_root, witness_vec[0]);
-                }
+            if witness_vec.len() == 1
+                && witness_vec[0].len() == 32
+                && let Some(witness_root) = self.witness_root()
+            {
+                return commitment
+                    == Self::compute_witness_commitment(&witness_root, witness_vec[0]);
             }
         }
 

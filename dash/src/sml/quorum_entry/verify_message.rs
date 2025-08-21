@@ -46,9 +46,9 @@ impl QualifiedQuorumEntry {
         let bls_signature: blsful::Signature<Bls12381G2Impl> = signature.try_into()?;
         bls_signature.verify(&public_key, message_digest).map_err(|e| {
             MessageVerificationError::ThresholdSignatureNotValid(
-                signature,
-                sha256d::Hash::from_byte_array(message_digest),
-                self.quorum_entry.quorum_public_key,
+                Box::new(signature),
+                Box::new(sha256d::Hash::from_byte_array(message_digest)),
+                Box::new(self.quorum_entry.quorum_public_key),
                 self.quorum_entry.quorum_hash,
                 self.quorum_entry.llmq_type,
                 e.to_string(),

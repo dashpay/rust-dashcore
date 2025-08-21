@@ -49,7 +49,7 @@ impl Default for TxOut {
 }
 
 impl TxOut {
-    ///
+    /// Returns the size of this output in bytes.
     pub fn size(&self) -> usize {
         8 + VarInt(self.script_pubkey.len() as u64).len() + self.script_pubkey.len()
     }

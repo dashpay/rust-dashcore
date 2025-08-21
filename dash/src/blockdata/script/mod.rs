@@ -49,12 +49,14 @@
 //! is minimal but we may extend it in the future if needed.
 
 use alloc::rc::Rc;
-#[cfg(any(not(rust_v_1_60), target_has_atomic = "ptr"))]
+#[cfg(all(not(feature = "std"), not(test), target_has_atomic = "ptr"))]
 use alloc::sync::Arc;
 use core::borrow::{Borrow, BorrowMut};
 use core::cmp::Ordering;
 use core::fmt;
 use core::ops::{Deref, DerefMut};
+#[cfg(feature = "std")]
+use std::sync::Arc;
 
 #[cfg(feature = "serde")]
 use serde;
@@ -293,8 +295,6 @@ impl<'a> From<&'a Script> for Cow<'a, Script> {
     }
 }
 
-/// Note: This will fail to compile on old Rust for targets that don't support atomics
-#[cfg(any(not(rust_v_1_60), target_has_atomic = "ptr"))]
 impl<'a> From<&'a Script> for Arc<Script> {
     fn from(value: &'a Script) -> Self {
         let rw: *const [u8] = Arc::into_raw(Arc::from(&value.0));
@@ -764,48 +764,6 @@ pub enum Error {
     Serialization,
 }
 
-// If bitcoinonsensus-std is off but bitcoinconsensus is present we patch the error type to
-// implement `std::error::Error`.
-#[cfg(all(feature = "std", feature = "bitcoinconsensus", not(feature = "bitcoinconsensus-std")))]
-mod bitcoinconsensus_hack {
-    use core::fmt;
-
-    #[repr(transparent)]
-    pub(crate) struct Error(bitcoinconsensus::Error);
-
-    impl fmt::Debug for Error {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            fmt::Debug::fmt(&self.0, f)
-        }
-    }
-
-    impl fmt::Display for Error {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            fmt::Display::fmt(&self.0, f)
-        }
-    }
-
-    // bitcoinconsensus::Error has no sources at this time
-    impl std::error::Error for Error {}
-
-    pub(crate) fn wrap_error(error: &bitcoinconsensus::Error) -> &Error {
-        // Unfortunately, we cannot have the reference inside `Error` struct because of the 'static
-        // bound on `source` return type, so we have to use unsafe to overcome the limitation.
-        // SAFETY: the type is repr(transparent) and the lifetimes match
-        unsafe { &*(error as *const _ as *const Error) }
-    }
-}
-
-#[cfg(not(all(
-    feature = "std",
-    feature = "bitcoinconsensus",
-    not(feature = "bitcoinconsensus-std")
-)))]
-mod bitcoinconsensus_hack {
-    #[allow(unused_imports)] // conditionally used
-    pub use core::convert::identity as wrap_error;
-}
-
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         #[cfg(feature = "bitcoinconsensus")]
@@ -819,7 +777,7 @@ impl fmt::Display for Error {
             }
             #[cfg(feature = "bitcoinconsensus")]
             Error::BitcoinConsensus(ref e) => {
-                write_err!(f, "bitcoinconsensus verification failed"; bitcoinconsensus_hack::wrap_error(e))
+                write_err!(f, "bitcoinconsensus verification failed"; e)
             }
             Error::UnknownSpentOutput(ref point) => write!(f, "unknown spent output: {}", point),
             Error::Serialization => {
@@ -841,7 +799,7 @@ impl std::error::Error for Error {
             | UnknownSpentOutput(_)
             | Serialization => None,
             #[cfg(feature = "bitcoinconsensus")]
-            BitcoinConsensus(ref e) => Some(bitcoinconsensus_hack::wrap_error(e)),
+            BitcoinConsensus(ref e) => Some(e),
         }
     }
 }

@@ -1,4 +1,9 @@
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - master
+      - 'v**-dev'
+  pull_request:
 
 name: Continuous integration
 
@@ -10,65 +15,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  Tests:
-    name: Tests
+  spv_tests:
+    name: SPV Components Tests
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - rust: stable
-            env:
-              DO_COV: true
-              AS_DEPENDENCY: true
-              DO_NO_STD: false
-          - rust: beta
-            env:
-              AS_DEPENDENCY: true
-              DO_NO_STD: false
-          - rust: nightly
-            env:
-              # TODO: running with DO_BENCH: true causes the test to fail
-              #              DO_BENCH: true
-              AS_DEPENDENCY: true
-              DO_NO_STD: false
-              DO_DOCS: true
-          - rust: 1.89.0
-            env:
-              AS_DEPENDENCY: true
     steps:
       - name: Checkout Crate
         uses: actions/checkout@v4
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.rust }}
-      - name: Running test script
-        env: ${{ matrix.env }}
-        run: ./contrib/test.sh
-      
-  workspace-tests:
-    name: Workspace Tests
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        rust: [stable, beta, nightly, 1.89.0]
-    steps:
-      - name: Checkout Crate
-        uses: actions/checkout@v4
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.rust }}
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
-      - name: Run workspace tests
-        run: cargo test --workspace --all-features
-      - name: Run workspace tests (no default features)
-        run: cargo test --workspace --no-default-features
-      - name: Build workspace (release mode)
-        run: cargo build --workspace --release
+      - name: Test dash-spv crate
+        run: cargo test -p dash-spv --all-features
+      - name: Test dash-spv-ffi crate
+        run: cargo test -p dash-spv-ffi --all-features
+      
+  key_wallet_tests:
+    name: Key Wallet Components Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Crate
+        uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Test key-wallet crate
+        run: cargo test -p key-wallet --all-features
+      - name: Test key-wallet-manager crate
+        run: cargo test -p key-wallet-manager --all-features
+      - name: Test key-wallet-ffi crate
+        run: cargo test -p key-wallet-ffi --all-features
+      
+  core_components_tests:
+    name: Core Components Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Crate
+        uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Test dashcore crate
+        run: cargo test -p dashcore --all-features
+      - name: Test dashcore_hashes crate
+        run: cargo test -p dashcore_hashes --all-features
+      - name: Test dash-network crate
+        run: cargo test -p dash-network --all-features
+      - name: Test internals crate
+        run: cargo test -p dashcore-private --all-features
+      - name: Run script-based tests
+        run: ./contrib/test.sh
       
   clippy:
     name: Clippy (Non-strict)
@@ -79,19 +77,18 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: clippy
       - name: Run clippy (excluding strict-checked crates)
         run: |
           # Auto-discover all workspace crates and exclude strict-checked ones
-          STRICT_CRATES=("key-wallet" "key-wallet-manager" "key-wallet-ffi")
+          STRICT_CRATES=("key-wallet" "key-wallet-manager" "key-wallet-ffi" "dashcore_hashes" "dashcore")
           mapfile -t ALL_CRATES < <(cargo metadata --no-deps --format-version=1 | jq -r '.packages[].name' | sort -u)
           for crate in "${ALL_CRATES[@]}"; do
             if printf '%s\n' "${STRICT_CRATES[@]}" | grep -qx "$crate"; then
               continue
             fi
-            echo "Checking $crate (warnings allowed)..."
-            cargo clippy -p "$crate" --all-features --all-targets || true
+            echo "Checking $crate (warnings allowed, errors will fail)..."
+            cargo clippy -p "$crate" --all-features --all-targets -- -W warnings
           done
   
   strict-checks:
@@ -103,7 +100,6 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: clippy
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
@@ -143,6 +139,30 @@ jobs:
       
       - name: Clippy key-wallet-ffi (deny all warnings)
         run: cargo clippy -p key-wallet-ffi --all-features --lib --bins --tests -- -D warnings
+      
+      # Check dashcore with strict warnings
+      - name: Check dashcore (deny warnings)
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: |
+          cargo check -p dashcore --all-features --lib --bins --tests
+          cargo build -p dashcore --all-features --lib --bins
+          cargo test -p dashcore --all-features --lib --bins
+      
+      - name: Clippy dashcore (deny all warnings)
+        run: cargo clippy -p dashcore --all-features --lib --bins --tests -- -D warnings
+      
+      # Check dashcore_hashes with strict warnings
+      - name: Check dashcore_hashes (deny warnings)
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: |
+          cargo check -p dashcore_hashes --all-features --lib --bins --tests
+          cargo build -p dashcore_hashes --all-features --lib --bins
+          cargo test -p dashcore_hashes --all-features --lib --bins
+      
+      - name: Clippy dashcore_hashes (deny all warnings)
+        run: cargo clippy -p dashcore_hashes --all-features --lib --bins --tests -- -D warnings
   
   fmt:
     name: Format
@@ -153,106 +173,41 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: rustfmt
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-# TODO: need to support compiling rust-x11-hash under s390x
-#  Cross:
-#    name: Cross testing
-#    if: ${{ !github.event.act }}
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout Crate
-#        uses: actions/checkout@v4
-#      - name: Checkout Toolchain
-#        uses: dtolnay/rust-toolchain@stable
-#        with:
-#          profile: minimal
-#          toolchain: stable
-#          override: true
-#      - name: Install target
-#        run: rustup target add s390x-unknown-linux-gnu
-#      - name: install cross
-#        run: cargo install cross
-#      - name: run cross test
-#        run: cross test --target s390x-unknown-linux-gnu
+  rpc_tests:
+    name: RPC Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - rust: stable
+            env:
+              PIN_VERSIONS: true
+    steps:
+      - name: Checkout Crate
+        uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Running test script
+        env: ${{ matrix.env }}
+        run: ./contrib/test.sh
 
-# TODO: need to fix the ability to run the embedded tests
-#  Embedded:
-#    runs-on: ubuntu-latest
-#    env:
-#      RUSTFLAGS: "-C link-arg=-Tlink.x"
-#      CARGO_TARGET_THUMBV7M_NONE_EABI_RUNNER: "qemu-system-arm -cpu cortex-m3 -machine mps2-an385 -nographic -semihosting-config enable=on,target=native -kernel"
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v3
-#      - name: Set up QEMU
-#        run: sudo apt update && sudo apt install -y qemu-system-arm gcc-arm-none-eabi
-#      - name: Checkout Toolchain
-#        uses: dtolnay/rust-toolchain@nightly
-#        with:
-#          targets: thumbv7m-none-eabi
-#      - name: Install src
-#        run: rustup component add rust-src
-#      - name: Run dash/embedded
-#        run: cd dash/embedded && cargo run --target thumbv7m-none-eabi
-#      - name: Run hashes/embedded no alloc
-#        run: cd hashes/embedded && cargo run --target thumbv7m-none-eabi
-#      - name: Run hashes/embedded with alloc
-#        run: cd hashes/embedded && cargo run --target thumbv7m-none-eabi --features=alloc
-
-    rpc-tests:
-      name: RPC Tests
-      runs-on: ubuntu-latest
-      strategy:
-        matrix:
-          include:
-            - rust: stable
-              env:
-                RUSTFMTCHK: true
-            - rust: nightly
-              env:
-                RUSTFMTCHK: false
-            - rust: 1.89.0
-              env:
-                PIN_VERSIONS: true
-      steps:
-        - name: Checkout Crate
-          uses: actions/checkout@v4
-        - name: Setup Rust toolchain
-          uses: dtolnay/rust-toolchain@stable
-          with:
-            toolchain: ${{ matrix.rust }}
-        - name: Running test script
-          env: ${{ matrix.env }}
-          run: ./contrib/test.sh
-
-    integrations-tests:
-      name: Integration Tests
-      runs-on: ubuntu-latest
-      strategy:
-        matrix:
-          rust: [stable]
-          bitcoinversion:
-            [
-              "0.18.0",
-              "0.18.1",
-              "0.19.0.1",
-              "0.19.1",
-              "0.20.0",
-              "0.20.1",
-              "0.21.0",
-            ]
-      steps:
-        - name: Checkout Crate
-          uses: actions/checkout@v4
-        - name: Setup Rust toolchain
-          uses: dtolnay/rust-toolchain@stable
-          with:
-            toolchain: ${{ matrix.rust }}
-        - name: Running test script
-          env:
-            BITCOINVERSION: ${{ matrix.bitcoinversion }}
-          run: ./contrib/test-rpc.sh
+  integrations_tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable]
+        dashversion: ["22.0.0", "22.1.3"]
+    steps:
+      - name: Checkout Crate
+        uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Running test script
+        env:
+          DASHVERSION: ${{ matrix.dashversion }}
+        run: ./contrib/test-rpc.sh

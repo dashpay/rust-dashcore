@@ -1,9 +1,7 @@
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::QuorumValidationError;
-use blsful::inner_types::GroupEncoding;
-use blsful::verify_secure_basic_with_mode;
-use blsful::{Bls12381G2Impl, PublicKey, SerializationFormat, Signature, SignatureSchemes};
+use blsful::{Bls12381G2Impl, PublicKey, SerializationFormat, Signature};
 use hashes::Hash;
 
 impl QualifiedQuorumEntry {
@@ -182,16 +180,16 @@ mod tests {
             let chainlock_sig = hex!(
                 "ad47488b86dc296b4cc582afe99e7e32489e0f7840e40ebfb4ea959481caf757575f7a7e9c388c21b16d7c9979d4906d000fe14851dbc42e89802bab0932ac40b8cbad2076da9365e1587d53d1dec3f25a776c2fe0de2fca87e9c03408809181"
             );
-            let block_hash =
+            let _block_hash =
                 hex!("00000000000000029eabbaa19ca5f694b863b3f64a682c376fa50b4119ae0029");
 
             // Parse keys
-            let pk = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
+            let _pk = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
                 &quorum_pubkey,
                 SerializationFormat::Modern,
             )
             .unwrap();
-            let sig = Signature::<Bls12381G2Impl>::from_bytes_with_mode(
+            let _sig = Signature::<Bls12381G2Impl>::from_bytes_with_mode(
                 &chainlock_sig,
                 SignatureSchemes::Basic,
                 SerializationFormat::Modern, // Assume modern format

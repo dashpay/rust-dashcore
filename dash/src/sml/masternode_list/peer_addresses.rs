@@ -56,7 +56,7 @@ impl MasternodeList {
                     entry
                         .masternode_list_entry
                         .is_valid
-                        .then_some(entry.masternode_list_entry.service_address.clone())
+                        .then_some(entry.masternode_list_entry.service_address)
                 })
             })
             .collect()

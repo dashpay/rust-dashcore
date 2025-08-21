@@ -60,7 +60,6 @@ pub enum ProTxVersion {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-
 pub struct ProviderUpdateServicePayload {
     pub version: u16,
     pub mn_type: Option<u16>, // Only present for BasicBLS version (2)
