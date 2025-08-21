@@ -773,21 +773,70 @@ pub unsafe extern "C" fn dip9_derive_identity_key(
     let additional_path = match key_type {
         FFIDerivationPathType::BlockchainIdentities => {
             // Authentication: identity_index'/key_index'
-            DerivationPath::from(vec![
-                ChildNumber::from_hardened_idx(identity_index).unwrap(),
-                ChildNumber::from_hardened_idx(key_index).unwrap(),
-            ])
+            let cn1 = match ChildNumber::from_hardened_idx(identity_index) {
+                Ok(v) => v,
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidDerivationPath,
+                        format!("Invalid identity_index: {}", e),
+                    );
+                    return ptr::null_mut();
+                }
+            };
+            let cn2 = match ChildNumber::from_hardened_idx(key_index) {
+                Ok(v) => v,
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidDerivationPath,
+                        format!("Invalid key_index: {}", e),
+                    );
+                    return ptr::null_mut();
+                }
+            };
+            DerivationPath::from(vec![cn1, cn2])
         }
         FFIDerivationPathType::BlockchainIdentityCreditRegistrationFunding => {
             // Registration: index'
-            DerivationPath::from(vec![ChildNumber::from_hardened_idx(identity_index).unwrap()])
+            let cn = match ChildNumber::from_hardened_idx(identity_index) {
+                Ok(v) => v,
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidDerivationPath,
+                        format!("Invalid identity_index: {}", e),
+                    );
+                    return ptr::null_mut();
+                }
+            };
+            DerivationPath::from(vec![cn])
         }
         FFIDerivationPathType::BlockchainIdentityCreditTopupFunding => {
             // Top-up: identity_index'/topup_index'
-            DerivationPath::from(vec![
-                ChildNumber::from_hardened_idx(identity_index).unwrap(),
-                ChildNumber::from_hardened_idx(key_index).unwrap(), // key_index used as topup_index
-            ])
+            let cn1 = match ChildNumber::from_hardened_idx(identity_index) {
+                Ok(v) => v,
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidDerivationPath,
+                        format!("Invalid identity_index: {}", e),
+                    );
+                    return ptr::null_mut();
+                }
+            };
+            let cn2 = match ChildNumber::from_hardened_idx(key_index) {
+                Ok(v) => v,
+                Err(e) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidDerivationPath,
+                        format!("Invalid topup_index: {}", e),
+                    );
+                    return ptr::null_mut();
+                }
+            };
+            DerivationPath::from(vec![cn1, cn2])
         }
         _ => {
             FFIError::set_error(error, FFIErrorCode::InvalidInput, "Invalid key type".to_string());

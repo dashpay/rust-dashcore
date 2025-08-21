@@ -85,8 +85,10 @@ impl FFIAccountResult {
     /// Create an error result
     pub fn error(code: crate::error::FFIErrorCode, message: String) -> Self {
         use std::ffi::CString;
-        let c_message =
-            CString::new(message).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+        let c_message = CString::new(message).unwrap_or_else(|_| {
+            // Fallback to a safe literal that cannot fail
+            CString::new("Unknown error").expect("Hardcoded string should never fail")
+        });
         FFIAccountResult {
             account: std::ptr::null_mut(),
             error_code: code as i32,

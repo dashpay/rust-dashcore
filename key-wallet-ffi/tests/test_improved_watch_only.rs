@@ -2,9 +2,6 @@
 fn test_improved_watch_only_wallet_creation() {
     use key_wallet_ffi::error::{FFIError, FFIErrorCode};
     use key_wallet_ffi::types::FFINetwork;
-    use std::ffi::CString;
-
-    const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
     let mut error = FFIError::success();
     let error = &mut error as *mut FFIError;
@@ -36,10 +33,10 @@ fn test_improved_watch_only_wallet_creation() {
     assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
     // 4. Create wallet managers to derive addresses
-    let source_manager = unsafe { key_wallet_ffi::wallet_manager::wallet_manager_create(error) };
+    let source_manager = key_wallet_ffi::wallet_manager::wallet_manager_create(error);
     assert!(!source_manager.is_null());
     
-    let watch_manager = unsafe { key_wallet_ffi::wallet_manager::wallet_manager_create(error) };
+    let watch_manager = key_wallet_ffi::wallet_manager::wallet_manager_create(error);
     assert!(!watch_manager.is_null());
 
     // 5. Test that we can create watch-only wallets from xpub

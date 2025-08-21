@@ -9,6 +9,7 @@ use crate::account::{Account, AccountType, StandardAccountType};
 use crate::error::Result;
 use crate::{AccountCollection, Error, Network};
 use alloc::vec::Vec;
+use hex;
 
 impl Wallet {
     /// Get the collection of accounts on a network
@@ -749,7 +750,7 @@ impl Wallet {
         let public_key = self.derive_public_key(network, path)?;
 
         // Return as hex string
-        use alloc::format;
-        Ok(format!("{:x}", public_key))
+        let serialized = public_key.serialize(); // compressed
+        Ok(hex::encode(serialized))
     }
 }

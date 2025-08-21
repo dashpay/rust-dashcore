@@ -25,7 +25,7 @@ fn test_full_wallet_workflow() {
     assert!(is_valid);
 
     // 3. Create wallet manager
-    let manager = unsafe { key_wallet_ffi::wallet_manager::wallet_manager_create(error) };
+    let manager = key_wallet_ffi::wallet_manager::wallet_manager_create(error);
     assert!(!manager.is_null());
 
     // 4. Add wallet to manager
@@ -81,8 +81,8 @@ fn test_full_wallet_workflow() {
     assert!(!change_addr.is_null());
 
     // 7. Get balance
-    let mut confirmed: std::os::raw::c_ulong = 0;
-    let mut unconfirmed: std::os::raw::c_ulong = 0;
+    let mut confirmed: u64 = 0;
+    let mut unconfirmed: u64 = 0;
     let success = unsafe {
         key_wallet_ffi::wallet_manager::wallet_manager_get_wallet_balance(
             manager,

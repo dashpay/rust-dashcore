@@ -288,7 +288,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
 /// - `addresses_out` must be a valid pointer to store the address array pointer
 /// - `count_out` must be a valid pointer to store the count
 /// - `error` must be a valid pointer to an FFIError
-/// - The returned addresses must be freed individually and the array must be freed
+/// - Free the result with address_array_free(addresses_out, count_out)
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
     managed_wallet: *mut FFIManagedWalletInfo,
@@ -447,10 +447,10 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
         }
     }
 
-    // Convert to C array
-    let len = c_addresses.len();
-    let ptr = c_addresses.as_mut_ptr();
-    std::mem::forget(c_addresses);
+    // Convert Vec to Box<[*mut c_char]> and leak it properly
+    let boxed_slice = c_addresses.into_boxed_slice();
+    let len = boxed_slice.len();
+    let ptr = Box::into_raw(boxed_slice) as *mut *mut c_char;
 
     *count_out = len;
     *addresses_out = ptr;
@@ -470,7 +470,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
 /// - `addresses_out` must be a valid pointer to store the address array pointer
 /// - `count_out` must be a valid pointer to store the count
 /// - `error` must be a valid pointer to an FFIError
-/// - The returned addresses must be freed individually and the array must be freed
+/// - Free the result with address_array_free(addresses_out, count_out)
 #[no_mangle]
 pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
     managed_wallet: *mut FFIManagedWalletInfo,
@@ -629,10 +629,10 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
         }
     }
 
-    // Convert to C array
-    let len = c_addresses.len();
-    let ptr = c_addresses.as_mut_ptr();
-    std::mem::forget(c_addresses);
+    // Convert Vec to Box<[*mut c_char]> and leak it properly
+    let boxed_slice = c_addresses.into_boxed_slice();
+    let len = boxed_slice.len();
+    let ptr = Box::into_raw(boxed_slice) as *mut *mut c_char;
 
     *count_out = len;
     *addresses_out = ptr;
@@ -708,6 +708,21 @@ pub unsafe extern "C" fn managed_wallet_free(managed_wallet: *mut FFIManagedWall
     if !managed_wallet.is_null() {
         unsafe {
             let _ = Box::from_raw(managed_wallet);
+        }
+    }
+}
+
+/// Free managed wallet info returned by wallet_manager_get_managed_wallet_info
+///
+/// # Safety
+///
+/// - `wallet_info` must be a valid pointer returned by wallet_manager_get_managed_wallet_info or null
+/// - After calling this function, the pointer becomes invalid and must not be used
+#[no_mangle]
+pub unsafe extern "C" fn managed_wallet_info_free(wallet_info: *mut FFIManagedWalletInfo) {
+    if !wallet_info.is_null() {
+        unsafe {
+            let _ = Box::from_raw(wallet_info);
         }
     }
 }
@@ -1083,9 +1098,10 @@ mod tests {
                 let addr_str = CStr::from_ptr(addr_ptr).to_string_lossy();
                 assert!(!addr_str.is_empty());
                 println!("Internal address: {}", addr_str);
-                let _ = CString::from_raw(addr_ptr);
+                // Don't manually free individual strings - address_array_free handles it
             }
-            libc::free(addresses_out as *mut libc::c_void);
+            // Use the proper FFI function to free the array and all strings
+            crate::address::address_array_free(addresses_out, count_out);
         }
 
         // Clean up

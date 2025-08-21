@@ -5,7 +5,7 @@
 mod tests;
 
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_uint, c_ulong};
+use std::os::raw::{c_char, c_uint};
 use std::ptr;
 use std::sync::Mutex;
 
@@ -265,7 +265,7 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_ids(
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
 /// - `error` must be a valid pointer to an FFIError structure or null
 /// - The caller must ensure all pointers remain valid for the duration of this call
-/// - The returned wallet pointer is only valid while the manager exists
+/// - The returned wallet must be freed with wallet_free()
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_get_wallet(
     manager: *const FFIWalletManager,
@@ -327,7 +327,7 @@ pub unsafe extern "C" fn wallet_manager_get_wallet(
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
 /// - `error` must be a valid pointer to an FFIError structure or null
 /// - The caller must ensure all pointers remain valid for the duration of this call
-/// - The returned managed wallet info pointer is only valid while the manager exists
+/// - The returned managed wallet info must be freed with managed_wallet_info_free()
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_get_managed_wallet_info(
     manager: *const FFIWalletManager,
@@ -551,16 +551,16 @@ pub unsafe extern "C" fn wallet_manager_get_change_address(
 ///
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `wallet_id` must be a valid pointer to a 32-byte wallet ID
-/// - `confirmed_out` must be a valid pointer to a c_ulong
-/// - `unconfirmed_out` must be a valid pointer to a c_ulong
+/// - `confirmed_out` must be a valid pointer to a u64 (maps to C uint64_t)
+/// - `unconfirmed_out` must be a valid pointer to a u64 (maps to C uint64_t)
 /// - `error` must be a valid pointer to an FFIError structure or null
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
     manager: *const FFIWalletManager,
     wallet_id: *const u8,
-    confirmed_out: *mut c_ulong,
-    unconfirmed_out: *mut c_ulong,
+    confirmed_out: *mut u64,
+    unconfirmed_out: *mut u64,
     error: *mut FFIError,
 ) -> bool {
     if manager.is_null()
@@ -598,8 +598,8 @@ pub unsafe extern "C" fn wallet_manager_get_wallet_balance(
     match manager_guard.get_wallet_balance(&wallet_id_array) {
         Ok(balance) => {
             unsafe {
-                *confirmed_out = balance.confirmed as c_ulong;
-                *unconfirmed_out = balance.unconfirmed as c_ulong;
+                *confirmed_out = balance.confirmed;
+                *unconfirmed_out = balance.unconfirmed;
             }
             FFIError::set_success(error);
             true

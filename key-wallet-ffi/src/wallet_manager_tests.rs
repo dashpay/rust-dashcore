@@ -6,7 +6,7 @@ mod tests {
     use crate::types::FFINetwork;
     use crate::{wallet, wallet_manager};
     use std::ffi::{CStr, CString};
-    use std::os::raw::{c_char, c_ulong};
+    use std::os::raw::c_char;
     use std::ptr;
     use std::slice;
 
@@ -325,8 +325,8 @@ mod tests {
         assert!(success);
 
         // Get wallet balance
-        let mut confirmed: c_ulong = 0;
-        let mut unconfirmed: c_ulong = 0;
+        let mut confirmed: u64 = 0;
+        let mut unconfirmed: u64 = 0;
 
         let success = unsafe {
             wallet_manager::wallet_manager_get_wallet_balance(
@@ -785,8 +785,8 @@ mod tests {
         assert!(success);
 
         // Get wallet balance
-        let mut confirmed_balance: c_ulong = 0;
-        let mut unconfirmed_balance: c_ulong = 0;
+        let mut confirmed_balance: u64 = 0;
+        let mut unconfirmed_balance: u64 = 0;
         let success = unsafe {
             wallet_manager::wallet_manager_get_wallet_balance(
                 manager,
@@ -824,8 +824,8 @@ mod tests {
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Test null manager with get_wallet_balance
-        let mut confirmed: c_ulong = 0;
-        let mut unconfirmed: c_ulong = 0;
+        let mut confirmed: u64 = 0;
+        let mut unconfirmed: u64 = 0;
         let null_wallet_id = [0u8; 32];
         let success = unsafe {
             wallet_manager::wallet_manager_get_wallet_balance(
@@ -937,8 +937,8 @@ mod tests {
         assert!(!wallet_ids.is_null());
 
         // Get the wallet balance (should be 0 for a new wallet)
-        let mut confirmed: c_ulong = 0;
-        let mut unconfirmed: c_ulong = 0;
+        let mut confirmed: u64 = 0;
+        let mut unconfirmed: u64 = 0;
 
         let wallet_id_slice = unsafe { slice::from_raw_parts(wallet_ids, 32) };
         let success = unsafe {
@@ -1012,7 +1012,7 @@ mod tests {
 
         // Clean up
         unsafe {
-            libc::free(wallet_ids as *mut libc::c_void);
+            wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
             wallet_manager::wallet_manager_free(manager);
         }
     }
@@ -1282,9 +1282,13 @@ mod tests {
 
         // Clean up
         unsafe {
-            // Note: In a real implementation, you'd want to free the wallet and wallet_info pointers
-            // For now, we'll let them leak since they're test objects
-            libc::free(wallet_ids as *mut libc::c_void);
+            // Free the wallet (cast from const to mut for free)
+            wallet::wallet_free(wallet as *mut _);
+            // Free the managed wallet info
+            crate::managed_wallet::managed_wallet_info_free(wallet_info);
+            // Free the wallet IDs
+            wallet_manager::wallet_manager_free_wallet_ids(wallet_ids, id_count);
+            // Free the manager
             wallet_manager::wallet_manager_free(manager);
         }
     }

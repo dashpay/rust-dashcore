@@ -5,7 +5,7 @@
 mod tests;
 
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_uint};
+use std::os::raw::{c_char, c_uchar};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::FFINetwork;
@@ -115,6 +115,12 @@ pub unsafe extern "C" fn address_validate(
 
 /// Get address type
 ///
+/// Returns:
+/// - 0: P2PKH address
+/// - 1: P2SH address
+/// - 2: Other address type
+/// - u8::MAX (255): Error occurred
+///
 /// # Safety
 ///
 /// - `address` must be a valid null-terminated C string
@@ -124,10 +130,10 @@ pub unsafe extern "C" fn address_get_type(
     address: *const c_char,
     network: FFINetwork,
     error: *mut FFIError,
-) -> c_uint {
+) -> c_uchar {
     if address.is_null() {
         FFIError::set_error(error, FFIErrorCode::InvalidInput, "Address is null".to_string());
-        return 0;
+        return u8::MAX;
     }
 
     let address_str = unsafe {
@@ -139,7 +145,7 @@ pub unsafe extern "C" fn address_get_type(
                     FFIErrorCode::InvalidInput,
                     "Invalid UTF-8 in address".to_string(),
                 );
-                return 0;
+                return u8::MAX;
             }
         }
     };
@@ -167,7 +173,7 @@ pub unsafe extern "C" fn address_get_type(
                         FFIErrorCode::InvalidAddress,
                         "Address not valid for network".to_string(),
                     );
-                    2 // Invalid
+                    u8::MAX // Error
                 }
             }
         }
@@ -177,7 +183,7 @@ pub unsafe extern "C" fn address_get_type(
                 FFIErrorCode::InvalidAddress,
                 format!("Invalid address: {}", e),
             );
-            2 // Invalid
+            u8::MAX // Error
         }
     }
 }

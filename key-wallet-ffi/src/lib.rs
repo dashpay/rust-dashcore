@@ -45,5 +45,7 @@ pub extern "C" fn key_wallet_ffi_initialize() -> bool {
 /// Get library version
 #[no_mangle]
 pub extern "C" fn key_wallet_ffi_version() -> *const c_char {
-    CString::new(env!("CARGO_PKG_VERSION")).unwrap().into_raw()
+    CString::new(env!("CARGO_PKG_VERSION"))
+        .expect("Version string should never fail")
+        .into_raw()
 }
