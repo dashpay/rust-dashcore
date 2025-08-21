@@ -879,7 +879,7 @@ char *wallet_derive_private_key_as_wif(const FFIWallet *wallet,
  # Safety
 
  - `key` must be a valid pointer to an FFIExtendedPrivateKey
- - `network` specifies the network for the key encoding
+ - `network` is ignored; the network is encoded in the extended key
  - `error` must be a valid pointer to an FFIError
  - The returned string must be freed with `string_free`
  */
@@ -997,7 +997,7 @@ char *wallet_derive_public_key_as_hex(const FFIWallet *wallet,
  # Safety
 
  - `key` must be a valid pointer to an FFIExtendedPublicKey
- - `network` specifies the network for the key encoding
+ - `network` is ignored; the network is encoded in the extended key
  - `error` must be a valid pointer to an FFIError
  - The returned string must be freed with `string_free`
  */

@@ -56,6 +56,10 @@ mod tests {
             let wif = private_key_to_wif(priv_key, FFINetwork::Testnet, &mut error);
             assert!(!wif.is_null());
             assert_eq!(error.code, FFIErrorCode::Success);
+
+            let wif_str = CStr::from_ptr(wif).to_str().unwrap();
+            // Assert testnet WIF prefix (compressed or uncompressed)
+            assert!(wif_str.starts_with('c') || wif_str.starts_with('9'));
             crate::utils::string_free(wif);
 
             // Clean up
@@ -165,7 +169,7 @@ mod tests {
 
         // Clean up
         unsafe {
-            let _ = CString::from_raw(xpub_str);
+            crate::utils::string_free(xpub_str);
 
             wallet::wallet_free(wallet);
         }
@@ -189,8 +193,8 @@ mod tests {
             )
         };
 
-        // Try to derive private key - should now succeed (44'/5'/0'/0/0 for Dash)
-        let path = CString::new("m/44'/5'/0'/0/0").unwrap();
+        // Try to derive private key - should now succeed (44'/1'/0'/0/0 for Dash)
+        let path = CString::new("m/44'/1'/0'/0/0").unwrap();
         let privkey_ptr = unsafe {
             wallet_derive_private_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
         };
@@ -202,11 +206,16 @@ mod tests {
         // Convert to WIF to verify it's valid
         let wif_str = unsafe { private_key_to_wif(privkey_ptr, FFINetwork::Testnet, &mut error) };
         assert!(!wif_str.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
+
+        let wif = unsafe { CStr::from_ptr(wif_str).to_str().unwrap() };
+        // Assert testnet WIF prefix (compressed or uncompressed)
+        assert!(wif.starts_with('c') || wif.starts_with('9'));
 
         // Clean up
         if !wif_str.is_null() {
             unsafe {
-                let _ = CString::from_raw(wif_str);
+                crate::utils::string_free(wif_str);
             }
         }
         unsafe {
@@ -238,8 +247,8 @@ mod tests {
         assert!(!wallet.is_null(), "Failed to create wallet");
         assert_eq!(error.code, FFIErrorCode::Success, "Wallet creation error: {:?}", error.code);
 
-        // Derive public key using derivation path (44'/5'/0'/0/0 for Dash)
-        let path = CString::new("m/44'/5'/0'/0/0").unwrap();
+        // Derive public key using derivation path (44'/1'/0'/0/0 for Dash)
+        let path = CString::new("m/44'/1'/0'/0/0").unwrap();
         let pubkey_ptr = unsafe {
             wallet_derive_public_key(wallet, FFINetwork::Testnet, path.as_ptr(), &mut error)
         };
@@ -261,7 +270,7 @@ mod tests {
         // Clean up
         if !hex_str.is_null() {
             unsafe {
-                let _ = CString::from_raw(hex_str);
+                crate::utils::string_free(hex_str);
             }
         }
         unsafe {
@@ -270,6 +279,45 @@ mod tests {
 
         // Clean up
         unsafe {
+            wallet::wallet_free(wallet);
+        }
+    }
+
+    #[test]
+    fn test_wallet_derive_public_key_as_hex() {
+        unsafe {
+            let mut error = FFIError::success();
+
+            // Create a wallet
+            let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+            let passphrase = CString::new("").unwrap();
+            let wallet = wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            );
+            assert!(!wallet.is_null());
+            assert_eq!(error.code, FFIErrorCode::Success);
+
+            // Derive public key as hex directly
+            let path = CString::new("m/44'/1'/0'/0/0").unwrap();
+            let hex_str = wallet_derive_public_key_as_hex(
+                wallet,
+                FFINetwork::Testnet,
+                path.as_ptr(),
+                &mut error,
+            );
+            assert!(!hex_str.is_null());
+            assert_eq!(error.code, FFIErrorCode::Success);
+
+            let hex = CStr::from_ptr(hex_str).to_str().unwrap();
+            // Public key should start with 02 or 03 (compressed)
+            assert!(hex.starts_with("02") || hex.starts_with("03"));
+            assert_eq!(hex.len(), 66); // 33 bytes * 2 hex chars
+
+            // Clean up
+            crate::utils::string_free(hex_str);
             wallet::wallet_free(wallet);
         }
     }
@@ -384,8 +432,8 @@ mod tests {
     fn test_wallet_derive_public_key_null_inputs() {
         let mut error = FFIError::success();
 
-        // Test with null wallet (44'/5'/0'/0/0 for Dash)
-        let path = CString::new("m/44'/5'/0'/0/0").unwrap();
+        // Test with null wallet (44'/1'/0'/0/0 for Dash)
+        let path = CString::new("m/44'/1'/0'/0/0").unwrap();
         let pubkey_ptr = unsafe {
             wallet_derive_public_key(ptr::null(), FFINetwork::Testnet, path.as_ptr(), &mut error)
         };
@@ -555,7 +603,7 @@ mod tests {
 
                 // Clean up
                 unsafe {
-                    let _ = CString::from_raw(xpub_str);
+                    crate::utils::string_free(xpub_str);
                 }
             }
         }
@@ -592,10 +640,10 @@ mod tests {
 
         // Test different derivation paths (Dash coin type 5)
         let test_paths = [
-            "m/44'/5'/0'/0/0",
-            "m/44'/5'/0'/0/1",
-            "m/44'/5'/0'/1/0", // Change address
-            "m/44'/5'/1'/0/0", // Different account
+            "m/44'/1'/0'/0/0",
+            "m/44'/1'/0'/0/1",
+            "m/44'/1'/0'/1/0", // Change address
+            "m/44'/1'/1'/0/0", // Different account
         ];
 
         for path_str in test_paths.iter() {
@@ -618,7 +666,7 @@ mod tests {
                 // Clean up
                 if !hex_str.is_null() {
                     unsafe {
-                        let _ = CString::from_raw(hex_str);
+                        crate::utils::string_free(hex_str);
                     }
                 }
                 unsafe {
@@ -638,13 +686,6 @@ mod tests {
         // Test freeing null pointers
         unsafe {
             derivation_path_free(ptr::null_mut(), ptr::null_mut(), 0);
-        }
-
-        // Test freeing with zero count
-        let dummy_ptr = 1 as *mut u32;
-        let dummy_bool_ptr = 1 as *mut bool;
-        unsafe {
-            derivation_path_free(dummy_ptr, dummy_bool_ptr, 0);
         }
     }
 }
