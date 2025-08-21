@@ -84,7 +84,7 @@ jobs:
       - name: Run clippy (excluding strict-checked crates)
         run: |
           # Auto-discover all workspace crates and exclude strict-checked ones
-          STRICT_CRATES=("key-wallet" "key-wallet-manager" "key-wallet-ffi")
+          STRICT_CRATES=("key-wallet" "key-wallet-manager" "key-wallet-ffi" "dashcore_hashes" "dashcore")
           mapfile -t ALL_CRATES < <(cargo metadata --no-deps --format-version=1 | jq -r '.packages[].name' | sort -u)
           for crate in "${ALL_CRATES[@]}"; do
             if printf '%s\n' "${STRICT_CRATES[@]}" | grep -qx "$crate"; then
