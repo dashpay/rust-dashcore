@@ -35,7 +35,7 @@ fn test_improved_watch_only_wallet_creation() {
     // 4. Create wallet managers to derive addresses
     let source_manager = key_wallet_ffi::wallet_manager::wallet_manager_create(error);
     assert!(!source_manager.is_null());
-    
+
     let watch_manager = key_wallet_ffi::wallet_manager::wallet_manager_create(error);
     assert!(!watch_manager.is_null());
 

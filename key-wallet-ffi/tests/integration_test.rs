@@ -55,7 +55,7 @@ fn test_full_wallet_workflow() {
     assert!(success);
     assert_eq!(count, 1);
 
-    let wallet_id = wallet_ids;  // First wallet ID starts at offset 0
+    let wallet_id = wallet_ids; // First wallet ID starts at offset 0
 
     // 6. Derive addresses using wallet manager
     let receive_addr = unsafe {

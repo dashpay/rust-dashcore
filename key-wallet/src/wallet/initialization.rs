@@ -37,11 +37,13 @@ pub enum WalletAccountCreationOptions {
     #[default]
     Default,
 
-    /// Create all specified BIP44 and CoinJoin accounts plus all special purpose accounts
+    /// Create all specified BIP44, BIP32, and CoinJoin accounts plus all special purpose accounts
     ///
     /// # Arguments
     /// * First parameter: Set of BIP44 account indices to create
-    /// * Second parameter: Set of CoinJoin account indices to create
+    /// * Second parameter: Set of BIP32 account indices to create
+    /// * Third parameter: Set of CoinJoin account indices to create
+    /// * Fourth parameter: Set of identity top-up registration indices to create
     AllAccounts(
         WalletAccountCreationBIP44Accounts,
         WalletAccountCreationBIP32Accounts,
@@ -60,11 +62,13 @@ pub enum WalletAccountCreationOptions {
     ///
     /// # Arguments
     /// * First: Set of BIP44 account indices
-    /// * Second: Set of CoinJoin account indices  
-    /// * Third: Set of identity top-up registration indices
-    /// * Fourth: Additional special account type to create (e.g., IdentityRegistration)
+    /// * Second: Set of BIP32 account indices
+    /// * Third: Set of CoinJoin account indices  
+    /// * Fourth: Set of identity top-up registration indices
+    /// * Fifth: Additional special account type to create (e.g., IdentityRegistration)
     SpecificAccounts(
         WalletAccountCreationBIP44Accounts,
+        WalletAccountCreationBIP32Accounts,
         WalletAccountCreationCoinjoinAccounts,
         WalletAccountCreationTopUpAccounts,
         Option<Vec<AccountType>>,

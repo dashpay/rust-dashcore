@@ -667,10 +667,11 @@ mod tests {
         assert!(success);
 
         // Get the wallet - now implemented, should return a valid wallet
-        let wallet = unsafe { wallet_manager::wallet_manager_get_wallet(manager, wallet_ids, error) };
+        let wallet =
+            unsafe { wallet_manager::wallet_manager_get_wallet(manager, wallet_ids, error) };
         assert!(!wallet.is_null());
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
-        
+
         // Clean up the wallet (cast from const to mut for free)
         unsafe {
             wallet::wallet_free(wallet as *mut _);

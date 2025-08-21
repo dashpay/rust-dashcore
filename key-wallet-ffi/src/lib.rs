@@ -42,7 +42,7 @@ pub extern "C" fn key_wallet_ffi_initialize() -> bool {
 }
 
 /// Get library version
-/// 
+///
 /// Returns a static string that should NOT be freed by the caller
 #[no_mangle]
 pub extern "C" fn key_wallet_ffi_version() -> *const c_char {

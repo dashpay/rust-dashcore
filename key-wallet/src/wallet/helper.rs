@@ -262,6 +262,7 @@ impl Wallet {
 
             WalletAccountCreationOptions::SpecificAccounts(
                 bip44_indices,
+                bip32_indices,
                 coinjoin_indices,
                 topup_indices,
                 special_accounts,
@@ -272,6 +273,18 @@ impl Wallet {
                         AccountType::Standard {
                             index,
                             standard_account_type: StandardAccountType::BIP44Account,
+                        },
+                        network,
+                        None,
+                    )?;
+                }
+
+                // Create specified BIP32 accounts
+                for index in bip32_indices {
+                    self.add_account(
+                        AccountType::Standard {
+                            index,
+                            standard_account_type: StandardAccountType::BIP32Account,
                         },
                         network,
                         None,
@@ -425,6 +438,7 @@ impl Wallet {
 
             WalletAccountCreationOptions::SpecificAccounts(
                 bip44_indices,
+                bip32_indices,
                 coinjoin_indices,
                 topup_indices,
                 special_accounts,
@@ -435,6 +449,18 @@ impl Wallet {
                         AccountType::Standard {
                             index,
                             standard_account_type: StandardAccountType::BIP44Account,
+                        },
+                        network,
+                        passphrase,
+                    )?;
+                }
+
+                // Create specified BIP32 accounts
+                for index in bip32_indices {
+                    self.add_account_with_passphrase(
+                        AccountType::Standard {
+                            index,
+                            standard_account_type: StandardAccountType::BIP32Account,
                         },
                         network,
                         passphrase,

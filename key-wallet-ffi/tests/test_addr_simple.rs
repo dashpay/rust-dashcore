@@ -22,10 +22,11 @@ fn test_address_simple() {
     // we'll test wallet creation and basic properties
     let is_watch_only = unsafe { key_wallet_ffi::wallet::wallet_is_watch_only(wallet, error) };
     assert!(!is_watch_only);
-    
+
     // Get wallet ID to verify it was created
     let mut wallet_id = [0u8; 32];
-    let success = unsafe { key_wallet_ffi::wallet::wallet_get_id(wallet, wallet_id.as_mut_ptr(), error) };
+    let success =
+        unsafe { key_wallet_ffi::wallet::wallet_get_id(wallet, wallet_id.as_mut_ptr(), error) };
     assert!(success);
     assert_ne!(wallet_id, [0u8; 32]);
 

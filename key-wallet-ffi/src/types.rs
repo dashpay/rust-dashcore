@@ -52,7 +52,7 @@ impl FFIWallet {
 
     /// Get a reference to the inner wallet
     pub fn inner(&self) -> &Wallet {
-        &self.wallet
+        self.wallet.as_ref()
     }
 
     /// Get a mutable reference to the inner wallet (requires Arc::get_mut)
@@ -112,11 +112,11 @@ impl FFIAccount {
 
     /// Get a reference to the inner account
     pub fn inner(&self) -> &key_wallet::Account {
-        &self.account
+        self.account.as_ref()
     }
 }
 
-/// Standard account sub-type
+/// Standard account subtype
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub enum FFIStandardAccountType {
@@ -253,6 +253,7 @@ impl FFIAccountType {
 pub enum FFIAddressType {
     P2PKH = 0,
     P2SH = 1,
+    Unknown = 255,
 }
 
 impl From<key_wallet::AddressType> for FFIAddressType {
@@ -260,7 +261,12 @@ impl From<key_wallet::AddressType> for FFIAddressType {
         match t {
             key_wallet::AddressType::P2pkh => FFIAddressType::P2PKH,
             key_wallet::AddressType::P2sh => FFIAddressType::P2SH,
-            _ => FFIAddressType::P2PKH, // Default
+            // SegWit and Taproot address types are not supported yet in Dash
+            key_wallet::AddressType::P2wpkh => FFIAddressType::Unknown,
+            key_wallet::AddressType::P2wsh => FFIAddressType::Unknown,
+            key_wallet::AddressType::P2tr => FFIAddressType::Unknown,
+            // Handle any future address types
+            _ => FFIAddressType::Unknown,
         }
     }
 }
@@ -270,6 +276,7 @@ impl From<FFIAddressType> for key_wallet::AddressType {
         match t {
             FFIAddressType::P2PKH => key_wallet::AddressType::P2pkh,
             FFIAddressType::P2SH => key_wallet::AddressType::P2sh,
+            FFIAddressType::Unknown => key_wallet::AddressType::P2pkh, // Default to P2PKH for unknown types
         }
     }
 }
@@ -404,6 +411,12 @@ impl FFIWalletAccountCreationOptions {
                     bip44_set.extend(slice.iter().copied());
                 }
 
+                let mut bip32_set = BTreeSet::new();
+                if !self.bip32_indices.is_null() && self.bip32_count > 0 {
+                    let slice = std::slice::from_raw_parts(self.bip32_indices, self.bip32_count);
+                    bip32_set.extend(slice.iter().copied());
+                }
+
                 let mut coinjoin_set = BTreeSet::new();
                 if !self.coinjoin_indices.is_null() && self.coinjoin_count > 0 {
                     let slice =
@@ -440,6 +453,7 @@ impl FFIWalletAccountCreationOptions {
 
                 WalletAccountCreationOptions::SpecificAccounts(
                     bip44_set,
+                    bip32_set,
                     coinjoin_set,
                     topup_set,
                     special_accounts,

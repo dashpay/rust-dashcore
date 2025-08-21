@@ -1,10 +1,10 @@
 //! Key derivation and management
 
+use crate::error::{FFIError, FFIErrorCode};
+use crate::types::{FFINetwork, FFIWallet};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
-use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFINetwork, FFIWallet};
 
 /// Opaque type for a private key (SecretKey)
 #[repr(C)]
