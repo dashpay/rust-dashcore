@@ -401,17 +401,21 @@ pub unsafe extern "C" fn extended_private_key_to_string(
     error: *mut FFIError,
 ) -> *mut c_char {
     if key.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Extended private key is null".to_string());
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "Extended private key is null".to_string(),
+        );
         return ptr::null_mut();
     }
 
     unsafe {
         let key = &*key;
         let _ = network; // Network is already encoded in the extended key
-        
+
         // Convert to string - the network is already encoded in the extended key
         let key_string = key.inner.to_string();
-        
+
         FFIError::set_success(error);
         match CString::new(key_string) {
             Ok(c_str) => c_str.into_raw(),
@@ -442,18 +446,22 @@ pub unsafe extern "C" fn extended_private_key_get_private_key(
     error: *mut FFIError,
 ) -> *mut FFIPrivateKey {
     if extended_key.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Extended private key is null".to_string());
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "Extended private key is null".to_string(),
+        );
         return ptr::null_mut();
     }
 
     unsafe {
         let extended = &*extended_key;
-        
+
         // Extract the private key
         let private_key = FFIPrivateKey {
             inner: extended.inner.private_key,
         };
-        
+
         FFIError::set_success(error);
         Box::into_raw(Box::new(private_key))
     }
@@ -781,17 +789,21 @@ pub unsafe extern "C" fn extended_public_key_to_string(
     error: *mut FFIError,
 ) -> *mut c_char {
     if key.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Extended public key is null".to_string());
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "Extended public key is null".to_string(),
+        );
         return ptr::null_mut();
     }
 
     unsafe {
         let key = &*key;
         let _ = network; // Network is already encoded in the extended key
-        
+
         // Convert to string - the network is already encoded in the extended key
         let key_string = key.inner.to_string();
-        
+
         FFIError::set_success(error);
         match CString::new(key_string) {
             Ok(c_str) => c_str.into_raw(),
@@ -822,18 +834,22 @@ pub unsafe extern "C" fn extended_public_key_get_public_key(
     error: *mut FFIError,
 ) -> *mut FFIPublicKey {
     if extended_key.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Extended public key is null".to_string());
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "Extended public key is null".to_string(),
+        );
         return ptr::null_mut();
     }
 
     unsafe {
         let extended = &*extended_key;
-        
+
         // Extract the public key
         let public_key = FFIPublicKey {
             inner: extended.inner.public_key,
         };
-        
+
         FFIError::set_success(error);
         Box::into_raw(Box::new(public_key))
     }

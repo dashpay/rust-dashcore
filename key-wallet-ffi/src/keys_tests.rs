@@ -9,6 +9,99 @@ mod tests {
     use std::ffi::{CStr, CString};
     use std::ptr;
 
+    #[test]
+    fn test_extended_key_string_conversion() {
+        unsafe {
+            let mut error = FFIError::success();
+
+            // Create a wallet to get extended keys from
+            let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+            let passphrase = CString::new("").unwrap();
+            let wallet = wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            );
+            assert!(!wallet.is_null());
+            assert_eq!(error.code, FFIErrorCode::Success);
+
+            // Derive an extended private key
+            let path = CString::new("m/44'/1'/0'").unwrap();
+            let ext_priv = wallet_derive_extended_private_key(
+                wallet,
+                FFINetwork::Testnet,
+                path.as_ptr(),
+                &mut error,
+            );
+            assert!(!ext_priv.is_null());
+            assert_eq!(error.code, FFIErrorCode::Success);
+
+            // Test extended_private_key_to_string
+            let xprv_str =
+                extended_private_key_to_string(ext_priv, FFINetwork::Testnet, &mut error);
+            assert!(!xprv_str.is_null());
+            assert_eq!(error.code, FFIErrorCode::Success);
+
+            let xprv = CStr::from_ptr(xprv_str).to_str().unwrap();
+            assert!(xprv.starts_with("tprv")); // Testnet extended private key
+            crate::utils::string_free(xprv_str);
+
+            // Test extended_private_key_get_private_key
+            let priv_key = extended_private_key_get_private_key(ext_priv, &mut error);
+            assert!(!priv_key.is_null());
+            assert_eq!(error.code, FFIErrorCode::Success);
+
+            // Get WIF from the extracted private key
+            let wif = private_key_to_wif(priv_key, FFINetwork::Testnet, &mut error);
+            assert!(!wif.is_null());
+            assert_eq!(error.code, FFIErrorCode::Success);
+            crate::utils::string_free(wif);
+
+            // Clean up
+            private_key_free(priv_key);
+            extended_private_key_free(ext_priv);
+
+            // Now test extended public key
+            let ext_pub = wallet_derive_extended_public_key(
+                wallet,
+                FFINetwork::Testnet,
+                path.as_ptr(),
+                &mut error,
+            );
+            assert!(!ext_pub.is_null());
+            assert_eq!(error.code, FFIErrorCode::Success);
+
+            // Test extended_public_key_to_string
+            let xpub_str = extended_public_key_to_string(ext_pub, FFINetwork::Testnet, &mut error);
+            assert!(!xpub_str.is_null());
+            assert_eq!(error.code, FFIErrorCode::Success);
+
+            let xpub = CStr::from_ptr(xpub_str).to_str().unwrap();
+            assert!(xpub.starts_with("tpub")); // Testnet extended public key
+            crate::utils::string_free(xpub_str);
+
+            // Test extended_public_key_get_public_key
+            let pub_key = extended_public_key_get_public_key(ext_pub, &mut error);
+            assert!(!pub_key.is_null());
+            assert_eq!(error.code, FFIErrorCode::Success);
+
+            // Get hex from the extracted public key
+            let hex = public_key_to_hex(pub_key, &mut error);
+            assert!(!hex.is_null());
+            assert_eq!(error.code, FFIErrorCode::Success);
+
+            let hex_str = CStr::from_ptr(hex).to_str().unwrap();
+            assert_eq!(hex_str.len(), 66); // 33 bytes = 66 hex chars
+            crate::utils::string_free(hex);
+
+            // Clean up
+            public_key_free(pub_key);
+            extended_public_key_free(ext_pub);
+            wallet::wallet_free(wallet);
+        }
+    }
+
     // Note: wallet_get_account_xpriv is not implemented for security reasons
     // The function always returns null to prevent private key extraction
     #[test]
