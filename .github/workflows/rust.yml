@@ -1,4 +1,9 @@
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - master
+      - 'v**-dev'
+  pull_request:
 
 name: Continuous integration
 
