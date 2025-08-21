@@ -1,4 +1,3 @@
-use crate::BlockHash;
 use crate::bls_sig_utils::BLSSignature;
 use crate::network::constants::NetworkExt;
 use crate::network::message_sml::MnListDiff;
@@ -6,10 +5,12 @@ use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::{
     LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
 };
+use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
 };
+use crate::{BlockHash, QuorumHash};
 use dash_network::Network;
 use hashes::Hash;
 use std::collections::BTreeMap;
@@ -113,7 +114,8 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
 
         let quorums = diff.new_quorums.into_iter().enumerate().fold(
             BTreeMap::new(),
-            |mut map, (idx, quorum)| {
+            |mut map: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
+             (idx, quorum)| {
                 map.entry(quorum.llmq_type.into()).or_insert_with(BTreeMap::new).insert(
                     quorum.quorum_hash,
                     {
