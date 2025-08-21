@@ -6,18 +6,18 @@ FFI bindings for the key-wallet library, providing a C-compatible interface for 
 
 ## Features
 
-- **UniFFI bindings**: Automatic generation of language bindings
+- **C-compatible FFI**: Direct C-style FFI bindings without code generation
 - **Memory-safe**: Rust's ownership model ensures memory safety across FFI boundary
 - **Thread-safe**: All exposed types are thread-safe
 - **Error handling**: Proper error propagation across language boundaries
 
 ## Supported Languages
 
-Through UniFFI, this library can generate bindings for:
+This library provides C-compatible FFI that can be used by:
 - Swift (iOS/macOS)
-- Kotlin (Android)
-- Python
-- Ruby
+- Kotlin (Android) via JNI
+- Python via ctypes/cffi
+- Any language that can interface with C libraries
 
 ## Building
 
@@ -26,19 +26,6 @@ Through UniFFI, this library can generate bindings for:
 - Rust 1.70+
 - For iOS: Xcode and cargo-lipo
 - For Android: Android NDK
-
-### Generate bindings
-
-```bash
-# Generate Swift bindings
-cargo run --features uniffi/cli --bin uniffi-bindgen generate src/key_wallet.udl --language swift
-
-# Generate Kotlin bindings  
-cargo run --features uniffi/cli --bin uniffi-bindgen generate src/key_wallet.udl --language kotlin
-
-# Generate Python bindings
-cargo run --features uniffi/cli --bin uniffi-bindgen generate src/key_wallet.udl --language python
-```
 
 ### Build libraries
 

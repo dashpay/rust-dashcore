@@ -3,7 +3,12 @@
 //! This module provides a structure for managing multiple accounts
 //! across different networks in a hierarchical manner.
 
+use super::account_collection::AccountCollection;
+use super::address_pool::AddressPool;
 use super::managed_account::ManagedAccount;
+use super::types::{AccountType, ManagedAccountType};
+use crate::gap_limit::GapLimitManager;
+use crate::Network;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 #[cfg(feature = "serde")]
@@ -53,6 +58,182 @@ impl ManagedAccountCollection {
             provider_operator_keys: None,
             provider_platform_keys: None,
         }
+    }
+
+    /// Create a ManagedAccountCollection from an AccountCollection
+    /// This properly initializes ManagedAccounts for each Account in the collection
+    pub fn from_account_collection(account_collection: &AccountCollection) -> Self {
+        let mut managed_collection = Self::new();
+
+        // Convert standard BIP44 accounts
+        for (index, account) in &account_collection.standard_bip44_accounts {
+            let managed_account = Self::create_managed_account_from_account(account);
+            managed_collection.standard_bip44_accounts.insert(*index, managed_account);
+        }
+
+        // Convert standard BIP32 accounts
+        for (index, account) in &account_collection.standard_bip32_accounts {
+            let managed_account = Self::create_managed_account_from_account(account);
+            managed_collection.standard_bip32_accounts.insert(*index, managed_account);
+        }
+
+        // Convert CoinJoin accounts
+        for (index, account) in &account_collection.coinjoin_accounts {
+            let managed_account = Self::create_managed_account_from_account(account);
+            managed_collection.coinjoin_accounts.insert(*index, managed_account);
+        }
+
+        // Convert special purpose accounts
+        if let Some(account) = &account_collection.identity_registration {
+            managed_collection.identity_registration =
+                Some(Self::create_managed_account_from_account(account));
+        }
+
+        for (index, account) in &account_collection.identity_topup {
+            let managed_account = Self::create_managed_account_from_account(account);
+            managed_collection.identity_topup.insert(*index, managed_account);
+        }
+
+        if let Some(account) = &account_collection.identity_topup_not_bound {
+            managed_collection.identity_topup_not_bound =
+                Some(Self::create_managed_account_from_account(account));
+        }
+
+        if let Some(account) = &account_collection.identity_invitation {
+            managed_collection.identity_invitation =
+                Some(Self::create_managed_account_from_account(account));
+        }
+
+        if let Some(account) = &account_collection.provider_voting_keys {
+            managed_collection.provider_voting_keys =
+                Some(Self::create_managed_account_from_account(account));
+        }
+
+        if let Some(account) = &account_collection.provider_owner_keys {
+            managed_collection.provider_owner_keys =
+                Some(Self::create_managed_account_from_account(account));
+        }
+
+        if let Some(account) = &account_collection.provider_operator_keys {
+            managed_collection.provider_operator_keys =
+                Some(Self::create_managed_account_from_account(account));
+        }
+
+        if let Some(account) = &account_collection.provider_platform_keys {
+            managed_collection.provider_platform_keys =
+                Some(Self::create_managed_account_from_account(account));
+        }
+
+        managed_collection
+    }
+
+    /// Create a ManagedAccount from an Account
+    fn create_managed_account_from_account(account: &super::Account) -> ManagedAccount {
+        Self::create_managed_account_from_account_type(
+            account.account_type,
+            account.network,
+            account.is_watch_only,
+        )
+    }
+
+    /// Create a ManagedAccount from an Account type with network and watch-only status
+    fn create_managed_account_from_account_type(
+        account_type: AccountType,
+        network: Network,
+        is_watch_only: bool,
+    ) -> ManagedAccount {
+        // Get the derivation path for this account type
+        let base_path = account_type
+            .derivation_path(network)
+            .unwrap_or_else(|_| crate::bip32::DerivationPath::master());
+
+        // Create the appropriate ManagedAccountType with address pools
+        let managed_type = match account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => {
+                // For standard accounts, add the receive/change branch to the path
+                let mut external_path = base_path.clone();
+                external_path.push(crate::bip32::ChildNumber::from_normal_idx(0).unwrap()); // 0 for external
+                let external_pool = AddressPool::new(external_path, false, 20, network);
+
+                let mut internal_path = base_path;
+                internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1).unwrap()); // 1 for internal
+                let internal_pool = AddressPool::new(internal_path, true, 20, network);
+
+                let managed_standard_type = standard_account_type;
+
+                ManagedAccountType::Standard {
+                    index,
+                    standard_account_type: managed_standard_type,
+                    external_addresses: external_pool,
+                    internal_addresses: internal_pool,
+                }
+            }
+            AccountType::CoinJoin {
+                index,
+            } => {
+                let addresses = AddressPool::new(base_path, false, 20, network);
+                ManagedAccountType::CoinJoin {
+                    index,
+                    addresses,
+                }
+            }
+            AccountType::IdentityRegistration => {
+                let addresses = AddressPool::new(base_path, false, 20, network);
+                ManagedAccountType::IdentityRegistration {
+                    addresses,
+                }
+            }
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => {
+                let addresses = AddressPool::new(base_path, false, 20, network);
+                ManagedAccountType::IdentityTopUp {
+                    registration_index,
+                    addresses,
+                }
+            }
+            AccountType::IdentityTopUpNotBoundToIdentity => {
+                let addresses = AddressPool::new(base_path, false, 20, network);
+                ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                    addresses,
+                }
+            }
+            AccountType::IdentityInvitation => {
+                let addresses = AddressPool::new(base_path, false, 20, network);
+                ManagedAccountType::IdentityInvitation {
+                    addresses,
+                }
+            }
+            AccountType::ProviderVotingKeys => {
+                let addresses = AddressPool::new(base_path, false, 20, network);
+                ManagedAccountType::ProviderVotingKeys {
+                    addresses,
+                }
+            }
+            AccountType::ProviderOwnerKeys => {
+                let addresses = AddressPool::new(base_path, false, 20, network);
+                ManagedAccountType::ProviderOwnerKeys {
+                    addresses,
+                }
+            }
+            AccountType::ProviderOperatorKeys => {
+                let addresses = AddressPool::new(base_path, false, 20, network);
+                ManagedAccountType::ProviderOperatorKeys {
+                    addresses,
+                }
+            }
+            AccountType::ProviderPlatformKeys => {
+                let addresses = AddressPool::new(base_path, false, 20, network);
+                ManagedAccountType::ProviderPlatformKeys {
+                    addresses,
+                }
+            }
+        };
+
+        ManagedAccount::new(managed_type, network, GapLimitManager::default(), is_watch_only)
     }
 
     /// Insert an account into the collection

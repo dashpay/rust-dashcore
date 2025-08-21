@@ -12,9 +12,8 @@ use crate::wallet::balance::WalletBalance;
 use crate::{ExtendedPubKey, Network};
 use alloc::collections::{BTreeMap, BTreeSet};
 use dashcore::blockdata::transaction::OutPoint;
+use dashcore::Address;
 use dashcore::Txid;
-use dashcore::{Address, PublicKey};
-use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -236,66 +235,43 @@ impl ManagedAccount {
     pub fn get_next_receive_address(
         &mut self,
         account_xpub: &ExtendedPubKey,
-        network: Network,
     ) -> Result<Address, &'static str> {
-        // Get the next receive address index
-        let index = self
-            .get_next_receive_address_index()
-            .ok_or("Cannot generate receive address for this account type")?;
-
-        // Derive the address from the account's xpub
-        let secp = Secp256k1::new();
-
-        // Derive m/0/index (receive branch)
-        let receive_xpub = account_xpub
-            .derive_pub(&secp, &[crate::ChildNumber::from_normal_idx(0).unwrap()])
-            .map_err(|_| "Failed to derive receive branch")?;
-
-        let address_xpub = receive_xpub
-            .derive_pub(&secp, &[crate::ChildNumber::from_normal_idx(index).unwrap()])
-            .map_err(|_| "Failed to derive address")?;
-
-        // Convert to public key and create address
-        let pubkey = PublicKey::from_slice(&address_xpub.public_key.serialize())
-            .map_err(|_| "Failed to create public key")?;
-
-        let address = Address::p2pkh(&pubkey, network);
-
-        Ok(address)
+        // For standard accounts, use the address pool to get the next unused address
+        if let ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } = &mut self.account_type
+        {
+            // Use the address pool's get_next_unused method which properly tracks addresses
+            let key_source = crate::account::address_pool::KeySource::Public(*account_xpub);
+            external_addresses
+                .get_next_unused(&key_source)
+                .map_err(|_| "Failed to generate receive address")
+        } else {
+            Err("Cannot generate receive address for non-standard account type")
+        }
     }
 
     /// Generate the next change address using the provided extended public key
-    /// This method derives a new address from the account's xpub but does not add it to the pool
-    /// The address must be added to the pool separately with proper tracking
+    /// This method uses the address pool to properly track and generate addresses
     pub fn get_next_change_address(
         &mut self,
         account_xpub: &ExtendedPubKey,
-        network: Network,
     ) -> Result<Address, &'static str> {
-        // Get the next change address index
-        let index = self
-            .get_next_change_address_index()
-            .ok_or("Cannot generate change address for this account type")?;
-
-        // Derive the address from the account's xpub
-        let secp = Secp256k1::new();
-
-        // Derive m/1/index (change branch)
-        let change_xpub = account_xpub
-            .derive_pub(&secp, &[crate::ChildNumber::from_normal_idx(1).unwrap()])
-            .map_err(|_| "Failed to derive change branch")?;
-
-        let address_xpub = change_xpub
-            .derive_pub(&secp, &[crate::ChildNumber::from_normal_idx(index).unwrap()])
-            .map_err(|_| "Failed to derive address")?;
-
-        // Convert to public key and create address
-        let pubkey = PublicKey::from_slice(&address_xpub.public_key.serialize())
-            .map_err(|_| "Failed to create public key")?;
-
-        let address = Address::p2pkh(&pubkey, network);
-
-        Ok(address)
+        // For standard accounts, use the address pool to get the next unused address
+        if let ManagedAccountType::Standard {
+            internal_addresses,
+            ..
+        } = &mut self.account_type
+        {
+            // Use the address pool's get_next_unused method which properly tracks addresses
+            let key_source = crate::account::address_pool::KeySource::Public(*account_xpub);
+            internal_addresses
+                .get_next_unused(&key_source)
+                .map_err(|_| "Failed to generate change address")
+        } else {
+            Err("Cannot generate change address for non-standard account type")
+        }
     }
 
     /// Get the derivation path for an address if it belongs to this account

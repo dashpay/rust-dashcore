@@ -33,6 +33,8 @@ pub enum Error {
     Serialization(String),
     /// Invalid parameter
     InvalidParameter(String),
+    /// Watch-only wallet (no private keys available)
+    WatchOnly,
 }
 
 impl fmt::Display for Error {
@@ -49,6 +51,7 @@ impl fmt::Display for Error {
             Error::CoinJoinNotEnabled => write!(f, "CoinJoin not enabled for this account"),
             Error::Serialization(s) => write!(f, "Serialization error: {}", s),
             Error::InvalidParameter(s) => write!(f, "Invalid parameter: {}", s),
+            Error::WatchOnly => write!(f, "Watch-only wallet: private keys not available"),
         }
     }
 }

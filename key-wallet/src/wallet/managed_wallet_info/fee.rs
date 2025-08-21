@@ -57,7 +57,7 @@ impl FeeRate {
     /// Calculate fee for a given transaction size in bytes
     pub fn calculate_fee(&self, size_bytes: usize) -> u64 {
         // Round up to ensure we pay at least the minimum fee
-        (self.sat_per_kb * size_bytes as u64 + 999) / 1000
+        (self.sat_per_kb * size_bytes as u64).div_ceil(1000)
     }
 
     /// Calculate fee for a given virtual size (vsize)

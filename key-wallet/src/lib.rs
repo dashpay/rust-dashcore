@@ -47,7 +47,7 @@ pub mod watch_only;
 pub use dashcore;
 
 pub use account::address_pool::{AddressInfo, AddressPool, KeySource, PoolStats};
-pub use account::{Account, AccountType, ManagedAccountType};
+pub use account::{Account, AccountCollection, AccountType, ManagedAccountType};
 pub use bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 #[cfg(feature = "bip38")]
 pub use bip38::{encrypt_private_key, generate_intermediate_code, Bip38EncryptedKey, Bip38Mode};

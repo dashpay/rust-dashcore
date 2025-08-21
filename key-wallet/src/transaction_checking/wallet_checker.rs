@@ -166,7 +166,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                                 } = context
                                 {
                                     // Create immature transaction
-                                    let mut immature_tx = ImmatureTransaction::new(
+                                    let _immature_tx = ImmatureTransaction::new(
                                         tx.clone(),
                                         height,
                                         block_hash.unwrap_or_else(BlockHash::all_zeros),
@@ -175,6 +175,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                                         true, // is_coinbase
                                     );
 
+                                    // todo!()
                                     // Track in immature transactions instead of regular transactions
                                     // This would need to be implemented in the account
                                     // For now, we'll still add to regular transactions

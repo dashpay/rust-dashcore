@@ -67,20 +67,14 @@ FFIErrorCode dash_spv_ffi_client_discover_addresses(
 
 ### For key-wallet-ffi
 
-The key-wallet-ffi already has most needed functionality via UniFFI, but could benefit from:
+The key-wallet-ffi provides C-compatible FFI functions for wallet operations:
 
-```swift
-// Additional convenience methods
-extension HDWallet {
-    func deriveAddresses(
-        account: UInt32,
-        change: Bool,
-        startIndex: UInt32,
-        count: UInt32
-    ) -> [String]
-    
-    func getAccountXpub(index: UInt32) -> String
-}
+```c
+// Core wallet functions
+FFIWallet* wallet_create_from_mnemonic(const char* mnemonic, FFINetwork network);
+char* wallet_derive_address(FFIWallet* wallet, uint32_t account, bool change, uint32_t index);
+char* wallet_get_xpub(FFIWallet* wallet, uint32_t account);
+void wallet_free(FFIWallet* wallet);
 ```
 
 ## Implementation Approach
@@ -88,19 +82,17 @@ extension HDWallet {
 ### Option 1: Direct Integration (Recommended)
 
 1. Add key-wallet-ffi as a dependency to the Swift package
-2. Use UniFFI-generated Swift bindings directly
+2. Use C-compatible FFI functions directly
 3. Remove mock implementations in HDWalletService
 
 ```swift
 // Package.swift
 .target(
-    name: "KeyWalletFFI",
-    dependencies: [],
-    path: "Sources/KeyWalletFFI"
-),
-.target(
     name: "SwiftDashCoreSDK",
-    dependencies: ["DashSPVFFI", "KeyWalletFFI"]
+    dependencies: ["DashSPVFFI"],
+    linkerSettings: [
+        .linkedLibrary("key_wallet_ffi")
+    ]
 )
 ```
 
@@ -132,35 +124,32 @@ pub extern "C" fn dash_spv_ffi_create_hd_wallet(
 
 ## Example Integration Code
 
-### Using key-wallet-ffi with UniFFI
+### Using key-wallet-ffi with C FFI
 
 ```swift
-import KeyWalletFFI
+import Foundation
 
 class RealHDWalletService {
-    func createWallet(mnemonic: [String], network: DashNetwork) throws -> HDWallet {
-        // Use real key-wallet-ffi
+    func createWallet(mnemonic: [String], network: DashNetwork) throws -> OpaquePointer {
         let phrase = mnemonic.joined(separator: " ")
-        let wallet = try KeyWalletFFI.HDWallet(
-            phrase: phrase,
-            passphrase: "",
-            network: network.toKeyWalletNetwork()
-        )
+        guard let wallet = wallet_create_from_mnemonic(phrase, network.toFFINetwork()) else {
+            throw WalletError.creationFailed
+        }
         return wallet
     }
     
     func deriveAddress(
-        wallet: HDWallet,
+        wallet: OpaquePointer,
         account: UInt32,
         change: Bool,
         index: UInt32
     ) throws -> String {
-        let path = BIP44Path(
-            account: account,
-            change: change ? 1 : 0,
-            addressIndex: index
-        )
-        return try wallet.deriveAddress(path: path)
+        guard let addressPtr = wallet_derive_address(wallet, account, change, index) else {
+            throw WalletError.derivationFailed
+        }
+        let address = String(cString: addressPtr)
+        address_free(addressPtr)
+        return address
     }
 }
 ```

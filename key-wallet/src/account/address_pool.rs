@@ -196,16 +196,30 @@ impl AddressPool {
             return Ok(info.address.clone());
         }
 
-        // Build the full path
+        // Build the full path for record keeping
         let mut full_path = self.base_path.clone();
         full_path.push(ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?);
 
-        // Derive the key
-        let pubkey = key_source.derive_at_path(&full_path)?;
+        // For derivation, we only need the relative path from where the key_source is
+        // The key_source xpub is at account level (e.g., m/44'/1'/0')
+        // We need to derive the receive/change branch and then the index
+        // So the relative path should be [0, index] for external or [1, index] for internal
+        let branch_num = if self.is_internal {
+            1
+        } else {
+            0
+        };
+        let relative_path = DerivationPath::from(vec![
+            ChildNumber::from_normal_idx(branch_num).map_err(Error::Bip32)?,
+            ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?,
+        ]);
+
+        // Derive the key using the relative path
+        let pubkey = key_source.derive_at_path(&relative_path)?;
 
         // Generate the address
         let dash_pubkey = dashcore::PublicKey::new(pubkey.public_key);
-        let network = dashcore::Network::from(self.network);
+        let network = self.network;
         let address = match self.address_type {
             AddressType::P2pkh => Address::p2pkh(&dash_pubkey, network),
             AddressType::P2sh => {
@@ -390,6 +404,40 @@ impl AddressPool {
     /// Check if an address belongs to this pool
     pub fn contains_address(&self, address: &Address) -> bool {
         self.address_index.contains_key(address)
+    }
+
+    /// Get addresses in the specified range
+    ///
+    /// Returns addresses from start_index (inclusive) to end_index (exclusive).
+    /// If addresses in the range haven't been generated yet, they will be generated.
+    pub fn get_address_range(
+        &mut self,
+        start_index: u32,
+        end_index: u32,
+        key_source: &KeySource,
+    ) -> Result<Vec<Address>> {
+        if end_index <= start_index {
+            return Ok(Vec::new());
+        }
+
+        // Generate addresses up to end_index if needed
+        let current_highest = self.highest_generated.unwrap_or(0);
+        if end_index > current_highest + 1 {
+            // Generate from current_highest + 1 to end_index - 1
+            for index in (current_highest + 1)..end_index {
+                self.generate_address_at_index(index, key_source)?;
+            }
+        }
+
+        // Collect addresses in the range
+        let mut addresses = Vec::new();
+        for index in start_index..end_index {
+            if let Some(info) = self.addresses.get(&index) {
+                addresses.push(info.address.clone());
+            }
+        }
+
+        Ok(addresses)
     }
 
     /// Check if we need to generate more addresses

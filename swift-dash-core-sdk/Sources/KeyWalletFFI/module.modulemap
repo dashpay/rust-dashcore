@@ -1,4 +1,0 @@
-module KeyWalletFFI {
-    header "KeyWalletFFI.h"
-    export *
-}

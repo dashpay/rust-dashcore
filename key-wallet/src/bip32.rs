@@ -1296,12 +1296,12 @@ impl DerivationPath {
 
     /// Get an [Iterator] over the children of this [DerivationPath]
     /// starting with the given [ChildNumber].
-    pub fn children_from(&self, cn: ChildNumber) -> DerivationPathIterator {
+    pub fn children_from(&self, cn: ChildNumber) -> DerivationPathIterator<'_> {
         DerivationPathIterator::start_from(self, cn)
     }
 
     /// Get an [Iterator] over the unhardened children of this [DerivationPath].
-    pub fn normal_children(&self) -> DerivationPathIterator {
+    pub fn normal_children(&self) -> DerivationPathIterator<'_> {
         DerivationPathIterator::start_from(
             self,
             ChildNumber::Normal {
@@ -1311,7 +1311,7 @@ impl DerivationPath {
     }
 
     /// Get an [Iterator] over the hardened children of this [DerivationPath].
-    pub fn hardened_children(&self) -> DerivationPathIterator {
+    pub fn hardened_children(&self) -> DerivationPathIterator<'_> {
         DerivationPathIterator::start_from(
             self,
             ChildNumber::Hardened {
@@ -1711,7 +1711,7 @@ impl ExtendedPrivKey {
     pub fn to_priv(&self) -> dashcore::PrivateKey {
         dashcore::PrivateKey {
             compressed: true,
-            network: self.network.into(),
+            network: self.network,
             inner: self.private_key,
         }
     }

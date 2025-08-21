@@ -37,11 +37,13 @@ pub enum WalletAccountCreationOptions {
     #[default]
     Default,
 
-    /// Create all specified BIP44 and CoinJoin accounts plus all special purpose accounts
+    /// Create all specified BIP44, BIP32, and CoinJoin accounts plus all special purpose accounts
     ///
     /// # Arguments
     /// * First parameter: Set of BIP44 account indices to create
-    /// * Second parameter: Set of CoinJoin account indices to create
+    /// * Second parameter: Set of BIP32 account indices to create
+    /// * Third parameter: Set of CoinJoin account indices to create
+    /// * Fourth parameter: Set of identity top-up registration indices to create
     AllAccounts(
         WalletAccountCreationBIP44Accounts,
         WalletAccountCreationBIP32Accounts,
@@ -60,11 +62,13 @@ pub enum WalletAccountCreationOptions {
     ///
     /// # Arguments
     /// * First: Set of BIP44 account indices
-    /// * Second: Set of CoinJoin account indices  
-    /// * Third: Set of identity top-up registration indices
-    /// * Fourth: Additional special account type to create (e.g., IdentityRegistration)
+    /// * Second: Set of BIP32 account indices
+    /// * Third: Set of CoinJoin account indices  
+    /// * Fourth: Set of identity top-up registration indices
+    /// * Fifth: Additional special account type to create (e.g., IdentityRegistration)
     SpecificAccounts(
         WalletAccountCreationBIP44Accounts,
+        WalletAccountCreationBIP32Accounts,
         WalletAccountCreationCoinjoinAccounts,
         WalletAccountCreationTopUpAccounts,
         Option<Vec<AccountType>>,
@@ -128,14 +132,12 @@ impl Wallet {
         };
         let wallet_id = Self::compute_wallet_id(&root_pub_key);
 
-        let wallet = Self {
+        Self {
             wallet_id,
             config: config.clone(),
             wallet_type,
             accounts: BTreeMap::new(),
-        };
-
-        wallet
+        }
     }
 
     /// Create a wallet from a mnemonic phrase
@@ -198,7 +200,11 @@ impl Wallet {
         );
 
         // Create accounts based on options
-        wallet.create_accounts_from_options(account_creation_options, network)?;
+        wallet.create_accounts_with_passphrase_from_options(
+            account_creation_options,
+            passphrase.as_str(),
+            network,
+        )?;
 
         Ok(wallet)
     }
@@ -212,8 +218,8 @@ impl Wallet {
     /// * `master_xpub` - The master extended public key for the wallet
     /// * `config` - Optional wallet configuration (uses default if None)
     /// * `accounts` - Pre-created account collections mapped by network. Since watch-only wallets
-    ///                cannot derive private keys, all accounts must be provided with their extended
-    ///                public keys already initialized.
+    ///   cannot derive private keys, all accounts must be provided with their extended
+    ///   public keys already initialized.
     ///
     /// # Returns
     /// A new watch-only wallet instance
@@ -251,8 +257,8 @@ impl Wallet {
     /// * `master_xpub` - The master extended public key from the external signing device
     /// * `config` - Optional wallet configuration (uses default if None)
     /// * `accounts` - Pre-created account collections mapped by network. Since external signable
-    ///                wallets cannot derive private keys, all accounts must be provided with their
-    ///                extended public keys already initialized from the external device.
+    ///   wallets cannot derive private keys, all accounts must be provided with their
+    ///   extended public keys already initialized from the external device.
     ///
     /// # Returns
     /// A new external signable wallet instance that can create transactions but requires

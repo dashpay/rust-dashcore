@@ -282,21 +282,6 @@ impl CoinSelector {
         }
     }
 
-    /// Simple accumulation strategy (with default sizes for backwards compatibility)
-    fn accumulate_coins<'a, I>(
-        &self,
-        utxos: I,
-        target_amount: u64,
-        fee_rate: FeeRate,
-    ) -> Result<SelectionResult, SelectionError>
-    where
-        I: IntoIterator<Item = &'a Utxo>,
-    {
-        let base_size = 10 + (34 * 2);
-        let input_size = 148;
-        self.accumulate_coins_with_size(utxos, target_amount, fee_rate, base_size, input_size)
-    }
-
     /// Simple accumulation strategy with custom transaction size parameters
     fn accumulate_coins_with_size<'a, I>(
         &self,
@@ -352,21 +337,6 @@ impl CoinSelector {
             available: total_value,
             required: target_amount,
         })
-    }
-
-    /// Branch and bound coin selection with default sizes
-    fn branch_and_bound<'a, I>(
-        &self,
-        utxos: I,
-        target_amount: u64,
-        fee_rate: FeeRate,
-    ) -> Result<SelectionResult, SelectionError>
-    where
-        I: IntoIterator<Item = &'a Utxo>,
-    {
-        let base_size = 10 + 34; // No change output for exact match
-        let input_size = 148;
-        self.branch_and_bound_with_size(utxos, target_amount, fee_rate, base_size, input_size)
     }
 
     /// Branch and bound coin selection with custom sizes (finds exact match if possible)
@@ -435,18 +405,6 @@ impl CoinSelector {
             base_size_with_change,
             input_size,
         )
-    }
-
-    /// Optimal consolidation strategy with default sizes
-    fn optimal_consolidation<'a>(
-        &self,
-        utxos: &[&'a Utxo],
-        target_amount: u64,
-        fee_rate: FeeRate,
-    ) -> Result<SelectionResult, SelectionError> {
-        let base_size = 10 + 34; // No change for exact match
-        let input_size = 148;
-        self.optimal_consolidation_with_size(utxos, target_amount, fee_rate, base_size, input_size)
     }
 
     /// Optimal consolidation strategy with custom sizes

@@ -7,16 +7,16 @@ pub mod coin_selection;
 pub mod fee;
 pub mod transaction_builder;
 pub mod transaction_building;
+pub mod utxo;
 pub mod wallet_info_interface;
 
 use super::balance::WalletBalance;
 use super::immature_transaction::ImmatureTransactionCollection;
 use super::metadata::WalletMetadata;
-use crate::account::{ManagedAccount, ManagedAccountCollection};
-use crate::{Address, Network};
-use alloc::collections::{BTreeMap, BTreeSet};
+use crate::account::ManagedAccountCollection;
+use crate::Network;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
-use alloc::vec::Vec;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -73,15 +73,31 @@ impl ManagedWalletInfo {
 
     /// Create managed wallet info from a Wallet
     pub fn from_wallet(wallet: &super::super::Wallet) -> Self {
+        let mut managed_accounts = BTreeMap::new();
+
+        // Initialize ManagedAccountCollection for each network that has accounts
+        for (network, account_collection) in &wallet.accounts {
+            let managed_collection =
+                ManagedAccountCollection::from_account_collection(account_collection);
+            managed_accounts.insert(*network, managed_collection);
+        }
+
         Self {
             wallet_id: wallet.wallet_id,
             name: None,
             description: None,
             metadata: WalletMetadata::default(),
-            accounts: BTreeMap::new(),
+            accounts: managed_accounts,
             immature_transactions: BTreeMap::new(),
             balance: WalletBalance::default(),
         }
+    }
+
+    /// Create managed wallet info from a Wallet with a name
+    pub fn from_wallet_with_name(wallet: &super::super::Wallet, name: String) -> Self {
+        let mut info = Self::from_wallet(wallet);
+        info.name = Some(name);
+        info
     }
 
     /// Create managed wallet info with birth height

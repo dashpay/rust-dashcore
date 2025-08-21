@@ -53,6 +53,7 @@ fn main() {
         "", // No passphrase
         Some(Network::Testnet),
         Some(100_000), // Birth height
+        key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
     );
 
     match result {
