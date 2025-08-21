@@ -39,7 +39,7 @@ impl MasternodeList {
 
     pub fn quorums_short_description(&self) -> String {
         self.quorums.iter().fold(String::new(), |mut acc, (ty, map)| {
-            let s = map.iter().fold(String::new(), |mut acc, (hash, q)| {
+            let s = map.values().fold(String::new(), |mut acc, q| {
                 acc.push_str(
                     format!("\t\t\t{}: {}\n", q.quorum_entry.quorum_hash, q.verified).as_str(),
                 );

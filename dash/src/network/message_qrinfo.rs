@@ -326,7 +326,7 @@ mod tests {
 
         let RawNetworkMessage {
             magic,
-            payload: NetworkMessage::QRInfo(qr_info),
+            payload: NetworkMessage::QRInfo(_qr_info),
         } = network_qr_info
         else {
             panic!("expected qr_info message");

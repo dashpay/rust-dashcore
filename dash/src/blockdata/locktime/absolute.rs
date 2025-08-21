@@ -11,8 +11,6 @@ use core::cmp::{Ordering, PartialOrd};
 use core::{fmt, mem};
 
 use internals::write_err;
-#[cfg(all(test, mutate))]
-use mutagen::mutate;
 
 #[cfg(doc)]
 use crate::absolute;
@@ -197,7 +195,6 @@ impl LockTime {
     /// }
     /// ````
     #[inline]
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn is_satisfied_by(&self, height: Height, time: Time) -> bool {
         use LockTime::*;
 
@@ -227,7 +224,6 @@ impl LockTime {
     /// assert!(lock_time.is_implied_by(check));
     /// ```
     #[inline]
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn is_implied_by(&self, other: LockTime) -> bool {
         use LockTime::*;
 

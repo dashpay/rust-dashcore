@@ -10,9 +10,6 @@
 use core::convert::TryFrom;
 use core::fmt;
 
-#[cfg(all(test, mutate))]
-use mutagen::mutate;
-
 use crate::parse::impl_parse_str_from_int_infallible;
 use crate::prelude::*;
 #[cfg(doc)]
@@ -58,7 +55,6 @@ impl LockTime {
     /// assert!(lock.is_satisfied_by(current_height(), current_time()));
     /// ```
     #[inline]
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn is_satisfied_by(&self, h: Height, t: Time) -> bool {
         if let Ok(true) = self.is_satisfied_by_height(h) {
             true
@@ -93,7 +89,6 @@ impl LockTime {
     /// assert!(lock.is_implied_by(test_lock));
     /// ```
     #[inline]
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn is_implied_by(&self, other: LockTime) -> bool {
         use LockTime::*;
 
@@ -120,7 +115,6 @@ impl LockTime {
     /// assert!(lock.is_satisfied_by_height(Height::from(height+1)).expect("a height"));
     /// ```
     #[inline]
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn is_satisfied_by_height(&self, h: Height) -> Result<bool, Error> {
         use LockTime::*;
 
@@ -146,7 +140,6 @@ impl LockTime {
     /// assert!(lock.is_satisfied_by_time(Time::from_512_second_intervals(intervals + 10)).expect("a time"));
     /// ```
     #[inline]
-    #[cfg_attr(all(test, mutate), mutate)]
     pub fn is_satisfied_by_time(&self, t: Time) -> Result<bool, Error> {
         use LockTime::*;
 

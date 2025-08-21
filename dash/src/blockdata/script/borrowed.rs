@@ -3,8 +3,6 @@
 
 use core::convert::{TryFrom, TryInto};
 use core::fmt;
-#[cfg(rust_v_1_53)]
-use core::ops::Bound;
 use core::ops::{Index, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive};
 
 use hashes::Hash;
@@ -556,5 +554,3 @@ delegate_index!(
     RangeInclusive<usize>,
     RangeToInclusive<usize>
 );
-#[cfg(rust_v_1_53)]
-delegate_index!((Bound<usize>, Bound<usize>));

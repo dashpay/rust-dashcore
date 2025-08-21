@@ -52,6 +52,10 @@ pub enum Error {
     // TODO: Remove this as part of crate-smashing, there should not be any key related errors in this module
     Hex(hex::Error),
 
+    /// blsful related error
+    #[cfg(feature = "blsful")]
+    BLSError(String),
+
     /// edwards 25519 related error
     #[cfg(feature = "ed25519-dalek")]
     Ed25519Dalek(String),
@@ -77,6 +81,8 @@ impl fmt::Display for Error {
             Error::TooShort(_) => write!(f, "base58ck data not even long enough for a checksum"),
             Error::Secp256k1(ref e) => fmt::Display::fmt(&e, f),
             Error::Hex(ref e) => write!(f, "Hexadecimal decoding error: {}", e),
+            #[cfg(feature = "blsful")]
+            Error::BLSError(ref e) => write!(f, "BLS error: {}", e),
             #[cfg(feature = "ed25519-dalek")]
             Error::Ed25519Dalek(ref e) => write!(f, "Ed25519-Dalek error: {}", e),
             Error::NotSupported(ref e) => write!(f, "Not supported: {}", e),
@@ -85,7 +91,7 @@ impl fmt::Display for Error {
 }
 
 #[cfg(feature = "std")]
-impl ::std::error::Error for Error {}
+impl std::error::Error for Error {}
 
 /// Vector-like object that holds the first 100 elements on the stack. If more space is needed it
 /// will be allocated on the heap.
@@ -417,7 +423,7 @@ impl From<key::Error> for Error {
             key::Error::InvalidKeyPrefix(_) => Error::Secp256k1(secp256k1::Error::InvalidPublicKey),
             key::Error::Hex(e) => Error::Hex(e),
             key::Error::InvalidHexLength(size) => Error::InvalidLength(size),
-            #[cfg(feature = "bls-signatures")]
+            #[cfg(feature = "blsful")]
             key::Error::BLSError(e) => Error::BLSError(e),
             #[cfg(feature = "ed25519-dalek")]
             key::Error::Ed25519Dalek(e) => Error::Ed25519Dalek(e),

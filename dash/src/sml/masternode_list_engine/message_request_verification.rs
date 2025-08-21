@@ -355,7 +355,7 @@ mod tests {
     use crate::consensus::deserialize;
     use crate::hashes::Hash;
     use crate::hashes::hex::FromHex;
-    use crate::sml::llmq_type::{LLMQType, network::NetworkLLMQExt};
+    use crate::sml::llmq_type::LLMQType;
     use crate::sml::masternode_list_engine::MasternodeListEngine;
     use crate::{BlockHash, ChainLock, InstantLock, QuorumHash};
 

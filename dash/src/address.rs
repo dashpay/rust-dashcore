@@ -885,7 +885,6 @@ impl bincode::Encode for AddressType {
         &self,
         encoder: &mut E,
     ) -> Result<(), bincode::error::EncodeError> {
-        use bincode::Encode;
         (*self as u8).encode(encoder)
     }
 }

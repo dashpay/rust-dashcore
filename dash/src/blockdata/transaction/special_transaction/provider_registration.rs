@@ -467,7 +467,8 @@ mod tests {
         assert_eq!(transaction.hash_inputs().to_hex(), inputs_hash_hex);
 
         let mut encoded_transaction_bytes = Vec::new();
-        let trans = transaction.consensus_encode(&mut encoded_transaction_bytes).unwrap();
+        let _transaction_size =
+            transaction.consensus_encode(&mut encoded_transaction_bytes).unwrap();
         assert_eq!(encoded_transaction_bytes, expected_transaction_bytes);
 
         assert_eq!(transaction, expected_transaction);
@@ -646,7 +647,7 @@ mod tests {
         assert_eq!(transaction.hash_inputs().to_hex(), inputs_hash_hex);
 
         let mut vector = Vec::new();
-        let trans = transaction.consensus_encode(&mut vector).unwrap();
+        let _transaction_size = transaction.consensus_encode(&mut vector).unwrap();
         assert_eq!(vector, expected_transaction_bytes);
 
         assert_eq!(transaction, expected_transaction);

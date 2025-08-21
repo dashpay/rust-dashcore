@@ -26,7 +26,6 @@
 //! This module provides the structures and functions needed to support transactions.
 //!
 
-pub mod hash_type;
 pub mod outpoint;
 pub mod special_transaction;
 pub mod txin;
@@ -42,7 +41,6 @@ use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature = "bitcoinconsensus")]
 use crate::blockdata::script;
 use crate::blockdata::script::Script;
-use crate::blockdata::transaction::hash_type::EcdsaSighashType;
 pub use crate::blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
@@ -51,16 +49,10 @@ use crate::consensus::encode::VarInt;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, Txid, Wtxid};
 use crate::prelude::*;
-use crate::sighash::LegacySighash;
 pub use crate::transaction::outpoint::*;
 use crate::{ScriptBuf, Weight, io};
 
-/// Used for signature hash for invalid use of SIGHASH_SINGLE.
-const UINT256_ONE: [u8; 32] = [
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-];
-
-/// Result of [`Transaction::encode_signing_data_to`].
+/// Result of [`SighashCache::legacy_encode_signing_data_to`].
 ///
 /// This type forces the caller to handle SIGHASH_SINGLE bug case.
 ///
@@ -251,10 +243,10 @@ impl Transaction {
     /// # Warning
     ///
     /// - Does NOT attempt to support OP_CODESEPARATOR. In general this would require evaluating
-    /// `script_pubkey` to determine which separators get evaluated and which don't, which we don't
-    /// have the information to determine.
+    ///   `script_pubkey` to determine which separators get evaluated and which don't, which we don't
+    ///   have the information to determine.
     /// - Does NOT handle the sighash single bug, you should either handle that manually or use
-    /// [`Self::signature_hash()`] instead.
+    ///   [`Self::signature_hash()`] instead.
     ///
     /// # Panics
     ///
@@ -316,44 +308,6 @@ impl Transaction {
         }
     }
 
-    /// Computes a signature hash for a given input index with a given sighash flag.
-    ///
-    /// To actually produce a scriptSig, this hash needs to be run through an ECDSA signer, the
-    /// [`EcdsaSighashType`] appended to the resulting sig, and a script written around this, but
-    /// this is the general (and hard) part.
-    ///
-    /// The `sighash_type` supports an arbitrary `u32` value, instead of just [`EcdsaSighashType`],
-    /// because internally 4 bytes are being hashed, even though only the lowest byte is appended to
-    /// signature in a transaction.
-    ///
-    /// This function correctly handles the sighash single bug by returning the 'one array'. The
-    /// sighash single bug becomes exploitable when one tries to sign a transaction with
-    /// `SIGHASH_SINGLE` and there is not a corresponding output with the same index as the input.
-    ///
-    /// # Warning
-    ///
-    /// Does NOT attempt to support OP_CODESEPARATOR. In general this would require evaluating
-    /// `script_pubkey` to determine which separators get evaluated and which don't, which we don't
-    /// have the information to determine.
-    ///
-    /// # Panics
-    ///
-    /// If `input_index` is out of bounds (greater than or equal to `self.input.len()`).
-    pub fn signature_hash(
-        &self,
-        input_index: usize,
-        script_pubkey: &Script,
-        sighash_u32: u32,
-    ) -> LegacySighash {
-        if self.is_invalid_use_of_sighash_single(sighash_u32, input_index) {
-            return LegacySighash::from_slice(&UINT256_ONE).expect("const-size array");
-        }
-
-        let mut engine = LegacySighash::engine();
-        let _ = self.encode_signing_data_to(&mut engine, input_index, script_pubkey, sighash_u32);
-        LegacySighash::from_engine(engine)
-    }
-
     /// This will hash all input outpoints
     pub fn hash_inputs(&self) -> InputsHash {
         let mut enc = InputsHash::engine();
@@ -361,30 +315,6 @@ impl Transaction {
             input.previous_output.consensus_encode(&mut enc).expect("engines don't error");
         }
         InputsHash::from_engine(enc)
-    }
-
-    // fn legacy_sign_pubkey_hash_inputs_with_private_keys(&mut self, keys: HashMap<PubkeyHash, PrivateKey>) -> Result<(), sighash::Error> {
-    //     let cache = SighashCache::new(self);
-    //
-    //     for (index, input) in self.input.iter_mut().enumerate() {
-    //         let mut hash_inner = [0u8; 20];
-    //         hash_inner.copy_from_slice(&input.script_sig.as_bytes()[3..23]);
-    //         let pubkey_hash = PubkeyHash::from_inner(hash_inner);
-    //
-    //         let private_key = keys.get(pubkey_hash);
-    //         if let Some(key) = key {
-    //             let hash = cache.legacy_signature_hash(index,,EcdsaSighashType)?;
-    //             let signature = sign_hash(hash, private_key).map_err();
-    //             input.script_sig = Script::is_p2pkh()
-    //         } else {
-    //             return Err()
-    //         }
-    //     }
-    // }
-
-    fn is_invalid_use_of_sighash_single(&self, sighash: u32, input_index: usize) -> bool {
-        let ty = EcdsaSighashType::from_consensus(sighash);
-        ty == EcdsaSighashType::Single && input_index >= self.output.len()
     }
 
     /// Returns the "weight" of this transaction, as defined by BIP141.
@@ -1101,7 +1031,7 @@ mod tests {
         assert_eq!(old_ntxid, tx.ntxid());
         // changing pks does
         tx.output[0].script_pubkey = ScriptBuf::new();
-        assert!(old_ntxid != tx.ntxid());
+        assert_ne!(old_ntxid, tx.ntxid());
     }
 
     #[test]
@@ -1303,63 +1233,5 @@ mod tests {
             let deserialized: Transaction =
                 deserialize(serialized.as_slice()).expect("expected to deserialize");
         }
-    }
-}
-
-#[cfg(all(test, feature = "unstable"))]
-mod benches {
-    use EmptyWrite;
-    use consensus::{Encodable, deserialize};
-    use hashes::hex::FromHex;
-    use test::{Bencher, black_box};
-
-    use super::Transaction;
-
-    const SOME_TX: &'static str = "0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000";
-
-    #[bench]
-    pub fn bench_transaction_size(bh: &mut Bencher) {
-        let raw_tx = Vec::from_hex(SOME_TX).unwrap();
-
-        let mut tx: Transaction = deserialize(&raw_tx).unwrap();
-
-        bh.iter(|| {
-            black_box(black_box(&mut tx).size());
-        });
-    }
-
-    #[bench]
-    pub fn bench_transaction_serialize(bh: &mut Bencher) {
-        let raw_tx = Vec::from_hex(SOME_TX).unwrap();
-        let tx: Transaction = deserialize(&raw_tx).unwrap();
-
-        let mut data = Vec::with_capacity(raw_tx.len());
-
-        bh.iter(|| {
-            let result = tx.consensus_encode(&mut data);
-            black_box(&result);
-            data.clear();
-        });
-    }
-
-    #[bench]
-    pub fn bench_transaction_serialize_logic(bh: &mut Bencher) {
-        let raw_tx = Vec::from_hex(SOME_TX).unwrap();
-        let tx: Transaction = deserialize(&raw_tx).unwrap();
-
-        bh.iter(|| {
-            let size = tx.consensus_encode(&mut EmptyWrite);
-            black_box(&size);
-        });
-    }
-
-    #[bench]
-    pub fn bench_transaction_deserialize(bh: &mut Bencher) {
-        let raw_tx = Vec::from_hex(SOME_TX).unwrap();
-
-        bh.iter(|| {
-            let tx: Transaction = deserialize(&raw_tx).unwrap();
-            black_box(&tx);
-        });
     }
 }

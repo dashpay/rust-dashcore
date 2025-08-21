@@ -427,7 +427,7 @@ impl MasternodeListEngine {
                             .collect()
                     }
                     MNSkipListMode::SkipExcept => (0..quorum_count)
-                        .map(|i| {
+                        .map(|_| {
                             snapshot
                                 .skip_list
                                 .iter()

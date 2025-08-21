@@ -11,8 +11,6 @@
 use bincode::{Decode, Encode};
 use core::fmt::{self, LowerHex, UpperHex};
 use core::ops::{Add, Div, Mul, Not, Rem, Shl, Shr, Sub};
-#[cfg(all(test, mutate))]
-use mutagen::mutate;
 
 #[cfg(doc)]
 use crate::consensus::Params;
@@ -212,7 +210,7 @@ impl Target {
     ///
     /// Proof-of-work validity for a block requires the hash of the block to be less than or equal
     /// to the target.
-    #[cfg_attr(all(test, mutate), mutate)]
+
     pub fn is_met_by(&self, hash: BlockHash) -> bool {
         use hashes::Hash;
         let hash = U256::from_le_bytes(hash.to_byte_array());
@@ -248,7 +246,7 @@ impl Target {
     ///
     /// [max]: Target::max
     /// [target]: crate::blockdata::block::Header::target
-    #[cfg_attr(all(test, mutate), mutate)]
+
     pub fn difficulty(&self) -> u128 {
         let d = Target::MAX.0 / self.0;
         d.saturating_to_u128()
@@ -259,7 +257,7 @@ impl Target {
     /// See [`difficulty`] for details.
     ///
     /// [`difficulty`]: Target::difficulty
-    #[cfg_attr(all(test, mutate), mutate)]
+
     pub fn difficulty_float(&self) -> f64 {
         TARGET_MAX_F64 / self.0.to_f64()
     }
@@ -334,7 +332,6 @@ impl U256 {
     const ONE: U256 = U256(0, 1);
 
     /// Creates [`U256`] from a big-endian array of `u8`s.
-    #[cfg_attr(all(test, mutate), mutate)]
     fn from_be_bytes(a: [u8; 32]) -> U256 {
         let (high, low) = split_in_half(a);
         let big = u128::from_be_bytes(high);
@@ -343,7 +340,6 @@ impl U256 {
     }
 
     /// Creates a [`U256`] from a little-endian array of `u8`s.
-    #[cfg_attr(all(test, mutate), mutate)]
     fn from_le_bytes(a: [u8; 32]) -> U256 {
         let (high, low) = split_in_half(a);
         let little = u128::from_le_bytes(high);
@@ -352,7 +348,7 @@ impl U256 {
     }
 
     /// Converts `Self` to a big-endian array of `u8`s.
-    #[cfg_attr(all(test, mutate), mutate)]
+
     fn to_be_bytes(self) -> [u8; 32] {
         let mut out = [0; 32];
         out[..16].copy_from_slice(&self.0.to_be_bytes());
@@ -361,7 +357,7 @@ impl U256 {
     }
 
     /// Converts `Self` to a little-endian array of `u8`s.
-    #[cfg_attr(all(test, mutate), mutate)]
+
     fn to_le_bytes(self) -> [u8; 32] {
         let mut out = [0; 32];
         out[..16].copy_from_slice(&self.1.to_le_bytes());
@@ -393,17 +389,14 @@ impl U256 {
         ret.wrapping_inc()
     }
 
-    #[cfg_attr(all(test, mutate), mutate)]
     fn is_zero(&self) -> bool {
         self.0 == 0 && self.1 == 0
     }
 
-    #[cfg_attr(all(test, mutate), mutate)]
     fn is_one(&self) -> bool {
         self.0 == 0 && self.1 == 1
     }
 
-    #[cfg_attr(all(test, mutate), mutate)]
     fn is_max(&self) -> bool {
         self.0 == u128::MAX && self.1 == u128::MAX
     }
@@ -434,7 +427,7 @@ impl U256 {
     }
 
     /// Returns the least number of bits needed to represent the number.
-    #[cfg_attr(all(test, mutate), mutate)]
+
     fn bits(&self) -> u32 {
         if self.0 > 0 {
             256 - self.0.leading_zeros()
@@ -478,7 +471,7 @@ impl U256 {
     /// # Panics
     ///
     /// If `rhs` is zero.
-    #[cfg_attr(all(test, mutate), mutate)]
+
     fn div_rem(self, rhs: Self) -> (Self, Self) {
         let mut sub_copy = self;
         let mut shift_copy = rhs;
@@ -518,7 +511,7 @@ impl U256 {
     /// Returns a tuple of the addition along with a boolean indicating whether an arithmetic
     /// overflow would occur. If an overflow would have occurred then the wrapped value is returned.
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    #[cfg_attr(all(test, mutate), mutate)]
+
     fn overflowing_add(self, rhs: Self) -> (Self, bool) {
         let mut ret = U256::ZERO;
         let mut ret_overflow = false;
@@ -543,7 +536,7 @@ impl U256 {
     /// Returns a tuple of the subtraction along with a boolean indicating whether an arithmetic
     /// overflow would occur. If an overflow would have occurred then the wrapped value is returned.
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    #[cfg_attr(all(test, mutate), mutate)]
+
     fn overflowing_sub(self, rhs: Self) -> (Self, bool) {
         let ret = self.wrapping_add(!rhs).wrapping_add(Self::ONE);
         let overflow = rhs > self;
@@ -556,7 +549,7 @@ impl U256 {
     /// indicating whether an arithmetic overflow would occur. If an
     /// overflow would have occurred then the wrapped value is returned.
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    #[cfg_attr(all(test, mutate), mutate)]
+
     fn overflowing_mul(self, rhs: Self) -> (Self, bool) {
         let mut ret = U256::ZERO;
         let mut ret_overflow = false;
@@ -604,7 +597,7 @@ impl U256 {
 
     /// Returns `self` incremented by 1 wrapping around at the boundary of the type.
     #[must_use = "this returns the result of the increment, without modifying the original"]
-    #[cfg_attr(all(test, mutate), mutate)]
+
     fn wrapping_inc(&self) -> U256 {
         let mut ret = U256::ZERO;
 
@@ -624,7 +617,7 @@ impl U256 {
     /// restricted to the range of the type, rather than the bits shifted out of the LHS being
     /// returned to the other end. We do not currently support `rotate_left`.
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    #[cfg_attr(all(test, mutate), mutate)]
+
     fn wrapping_shl(self, rhs: u32) -> Self {
         let shift = rhs & 0x000000ff;
 
@@ -651,7 +644,7 @@ impl U256 {
     /// restricted to the range of the type, rather than the bits shifted out of the LHS being
     /// returned to the other end. We do not currently support `rotate_right`.
     #[must_use = "this returns the result of the operation, without modifying the original"]
-    #[cfg_attr(all(test, mutate), mutate)]
+
     fn wrapping_shr(self, rhs: u32) -> Self {
         let shift = rhs & 0x000000ff;
 
