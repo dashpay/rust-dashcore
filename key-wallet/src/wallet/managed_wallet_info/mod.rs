@@ -5,6 +5,7 @@
 
 pub mod coin_selection;
 pub mod fee;
+pub mod helpers;
 pub mod transaction_builder;
 pub mod transaction_building;
 pub mod utxo;

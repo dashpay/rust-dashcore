@@ -72,64 +72,6 @@ fn test_multi_account_transaction() {
 }
 
 #[test]
-fn test_transaction_broadcast_simulation() {
-    // Simulate transaction broadcast and confirmation
-    #[derive(Debug, Clone)]
-    struct BroadcastResult {
-        txid: Txid,
-        accepted: bool,
-        rejection_reason: Option<String>,
-        propagation_time_ms: u64,
-    }
-
-    let tx = Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([1u8; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![TxOut {
-            value: 99000,
-            script_pubkey: ScriptBuf::new(),
-        }],
-        special_transaction_payload: None,
-    };
-
-    // Simulate broadcast
-    let result = BroadcastResult {
-        txid: tx.txid(),
-        accepted: true,
-        rejection_reason: None,
-        propagation_time_ms: 250,
-    };
-
-    assert!(result.accepted);
-    assert!(result.propagation_time_ms < 1000); // Should propagate quickly
-
-    // Simulate confirmation tracking
-    let mut confirmation_count = 0;
-    let mut block_height = 100000;
-
-    // First block - transaction included
-    block_height += 1;
-    confirmation_count = 1;
-
-    // Additional confirmations
-    for _ in 0..5 {
-        block_height += 1;
-        confirmation_count += 1;
-    }
-
-    assert_eq!(confirmation_count, 6); // Standard confirmation threshold
-}
-
-#[test]
 fn test_transaction_metadata_storage() {
     // Test storing and retrieving transaction metadata
     #[derive(Debug, Clone)]

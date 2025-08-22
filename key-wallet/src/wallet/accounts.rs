@@ -3,7 +3,7 @@
 //! This module contains methods for creating and managing accounts within wallets.
 
 use super::Wallet;
-use crate::account::{Account, AccountType, StandardAccountType};
+use crate::account::{Account, AccountType};
 use crate::bip32::ExtendedPubKey;
 use crate::derivation::HDWallet;
 use crate::error::{Error, Result};
@@ -22,13 +22,13 @@ impl Wallet {
     ///   the private key is stored securely outside of the SDK).
     ///
     /// # Returns
-    /// A reference to the newly created account
+    /// Ok(()) if the account was successfully added
     pub fn add_account(
         &mut self,
         account_type: AccountType,
         network: Network,
         account_xpub: Option<ExtendedPubKey>,
-    ) -> Result<&Account> {
+    ) -> Result<()> {
         // Get a unique wallet ID for this wallet first
         let wallet_id = self.get_wallet_id();
 
@@ -63,53 +63,7 @@ impl Wallet {
         // Insert into the collection
         collection.insert(account);
 
-        // Return a reference to the newly inserted account
-        match &account_type {
-            AccountType::CoinJoin {
-                index,
-            } => Ok(collection.coinjoin_accounts.get(index).unwrap()),
-            AccountType::Standard {
-                index,
-                standard_account_type,
-            } => match standard_account_type {
-                StandardAccountType::BIP44Account => {
-                    Ok(collection.standard_bip44_accounts.get(index).unwrap())
-                }
-                StandardAccountType::BIP32Account => {
-                    Ok(collection.standard_bip32_accounts.get(index).unwrap())
-                }
-            },
-            _ => {
-                // For special account types, we need to return the correct reference
-                match &account_type {
-                    AccountType::IdentityRegistration => {
-                        Ok(collection.identity_registration.as_ref().unwrap())
-                    }
-                    AccountType::IdentityTopUp {
-                        registration_index,
-                    } => Ok(collection.identity_topup.get(registration_index).unwrap()),
-                    AccountType::IdentityTopUpNotBoundToIdentity => {
-                        Ok(collection.identity_topup_not_bound.as_ref().unwrap())
-                    }
-                    AccountType::IdentityInvitation => {
-                        Ok(collection.identity_invitation.as_ref().unwrap())
-                    }
-                    AccountType::ProviderVotingKeys => {
-                        Ok(collection.provider_voting_keys.as_ref().unwrap())
-                    }
-                    AccountType::ProviderOwnerKeys => {
-                        Ok(collection.provider_owner_keys.as_ref().unwrap())
-                    }
-                    AccountType::ProviderOperatorKeys => {
-                        Ok(collection.provider_operator_keys.as_ref().unwrap())
-                    }
-                    AccountType::ProviderPlatformKeys => {
-                        Ok(collection.provider_platform_keys.as_ref().unwrap())
-                    }
-                    _ => unreachable!("All account types should be handled"),
-                }
-            }
-        }
+        Ok(())
     }
 
     /// Add a new account to a wallet that requires a passphrase
@@ -123,7 +77,7 @@ impl Wallet {
     /// * `passphrase` - The passphrase used when creating the wallet
     ///
     /// # Returns
-    /// A reference to the newly created account
+    /// Ok(()) if the account was successfully added
     ///
     /// # Errors
     /// Returns an error if:
@@ -135,7 +89,7 @@ impl Wallet {
         account_type: AccountType,
         network: Network,
         passphrase: &str,
-    ) -> Result<&Account> {
+    ) -> Result<()> {
         // Check that this is a passphrase wallet
         match &self.wallet_type {
             crate::wallet::WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
@@ -168,51 +122,7 @@ impl Wallet {
                 // Insert into the collection
                 collection.insert(account);
 
-                // Return a reference to the newly inserted account
-                match &account_type {
-                    AccountType::CoinJoin { index } => Ok(collection.coinjoin_accounts.get(index).unwrap()),
-                    AccountType::Standard {
-                        index,
-                        standard_account_type,
-                    } => match standard_account_type {
-                        StandardAccountType::BIP44Account => {
-                            Ok(collection.standard_bip44_accounts.get(index).unwrap())
-                        }
-                        StandardAccountType::BIP32Account => {
-                            Ok(collection.standard_bip32_accounts.get(index).unwrap())
-                        }
-                    },
-                    _ => {
-                        // For special account types, we need to return the correct reference
-                        match &account_type {
-                            AccountType::IdentityRegistration => {
-                                Ok(collection.identity_registration.as_ref().unwrap())
-                            }
-                            AccountType::IdentityTopUp { registration_index } => {
-                                Ok(collection.identity_topup.get(registration_index).unwrap())
-                            }
-                            AccountType::IdentityTopUpNotBoundToIdentity => {
-                                Ok(collection.identity_topup_not_bound.as_ref().unwrap())
-                            }
-                            AccountType::IdentityInvitation => {
-                                Ok(collection.identity_invitation.as_ref().unwrap())
-                            }
-                            AccountType::ProviderVotingKeys => {
-                                Ok(collection.provider_voting_keys.as_ref().unwrap())
-                            }
-                            AccountType::ProviderOwnerKeys => {
-                                Ok(collection.provider_owner_keys.as_ref().unwrap())
-                            }
-                            AccountType::ProviderOperatorKeys => {
-                                Ok(collection.provider_operator_keys.as_ref().unwrap())
-                            }
-                            AccountType::ProviderPlatformKeys => {
-                                Ok(collection.provider_platform_keys.as_ref().unwrap())
-                            }
-                            _ => unreachable!("All account types should be handled"),
-                        }
-                    }
-                }
+                Ok(())
             }
             _ => Err(Error::InvalidParameter(
                 "add_account_with_passphrase can only be used with wallets created with a passphrase".to_string()

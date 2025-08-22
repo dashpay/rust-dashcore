@@ -7,7 +7,6 @@ use super::transaction_router::AccountTypeToCheck;
 use crate::account::{ManagedAccount, ManagedAccountCollection};
 use crate::Address;
 use alloc::vec::Vec;
-use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::Transaction;
 
 /// Result of checking a transaction against accounts
@@ -38,13 +37,10 @@ pub struct AccountMatch {
     pub sent: u64,
 }
 
-/// Checker for account-level transaction checking
-pub struct AccountTransactionChecker;
-
-impl AccountTransactionChecker {
+impl ManagedAccountCollection {
     /// Check if a transaction belongs to any accounts in the collection
     pub fn check_transaction(
-        collection: &ManagedAccountCollection,
+        &self,
         tx: &Transaction,
         account_types: &[AccountTypeToCheck],
     ) -> TransactionCheckResult {
@@ -56,7 +52,7 @@ impl AccountTransactionChecker {
         };
 
         for account_type in account_types {
-            if let Some(match_info) = Self::check_account_type(collection, tx, account_type) {
+            if let Some(match_info) = self.check_account_type(tx, *account_type) {
                 result.is_relevant = true;
                 result.total_received += match_info.received;
                 result.total_sent += match_info.sent;
@@ -69,64 +65,51 @@ impl AccountTransactionChecker {
 
     /// Check a specific account type for transaction involvement
     fn check_account_type(
-        collection: &ManagedAccountCollection,
+        &self,
         tx: &Transaction,
-        account_type: &AccountTypeToCheck,
+        account_type: AccountTypeToCheck,
     ) -> Option<AccountMatch> {
         match account_type {
-            AccountTypeToCheck::StandardBIP44 => Self::check_indexed_accounts(
-                &collection.standard_bip44_accounts,
-                tx,
-                account_type.clone(),
-            ),
-            AccountTypeToCheck::StandardBIP32 => Self::check_indexed_accounts(
-                &collection.standard_bip32_accounts,
-                tx,
-                account_type.clone(),
-            ),
-            AccountTypeToCheck::CoinJoin => Self::check_indexed_accounts(
-                &collection.coinjoin_accounts,
-                tx,
-                account_type.clone(),
-            ),
-            AccountTypeToCheck::IdentityRegistration => {
-                collection.identity_registration.as_ref().and_then(|account| {
-                    Self::check_single_account(account, tx, account_type.clone(), None)
-                })
+            AccountTypeToCheck::StandardBIP44 => {
+                Self::check_indexed_accounts(&self.standard_bip44_accounts, tx)
             }
+            AccountTypeToCheck::StandardBIP32 => {
+                Self::check_indexed_accounts(&self.standard_bip32_accounts, tx)
+            }
+            AccountTypeToCheck::CoinJoin => {
+                Self::check_indexed_accounts(&self.coinjoin_accounts, tx)
+            }
+            AccountTypeToCheck::IdentityRegistration => self
+                .identity_registration
+                .as_ref()
+                .and_then(|account| account.check_transaction_for_match(tx, None)),
             AccountTypeToCheck::IdentityTopUp => {
-                Self::check_indexed_accounts(&collection.identity_topup, tx, account_type.clone())
+                Self::check_indexed_accounts(&self.identity_topup, tx)
             }
-            AccountTypeToCheck::IdentityTopUpNotBound => {
-                collection.identity_topup_not_bound.as_ref().and_then(|account| {
-                    Self::check_single_account(account, tx, account_type.clone(), None)
-                })
-            }
-            AccountTypeToCheck::IdentityInvitation => {
-                collection.identity_invitation.as_ref().and_then(|account| {
-                    Self::check_single_account(account, tx, account_type.clone(), None)
-                })
-            }
-            AccountTypeToCheck::ProviderVotingKeys => {
-                collection.provider_voting_keys.as_ref().and_then(|account| {
-                    Self::check_single_account(account, tx, account_type.clone(), None)
-                })
-            }
-            AccountTypeToCheck::ProviderOwnerKeys => {
-                collection.provider_owner_keys.as_ref().and_then(|account| {
-                    Self::check_single_account(account, tx, account_type.clone(), None)
-                })
-            }
-            AccountTypeToCheck::ProviderOperatorKeys => {
-                collection.provider_operator_keys.as_ref().and_then(|account| {
-                    Self::check_single_account(account, tx, account_type.clone(), None)
-                })
-            }
-            AccountTypeToCheck::ProviderPlatformKeys => {
-                collection.provider_platform_keys.as_ref().and_then(|account| {
-                    Self::check_single_account(account, tx, account_type.clone(), None)
-                })
-            }
+            AccountTypeToCheck::IdentityTopUpNotBound => self
+                .identity_topup_not_bound
+                .as_ref()
+                .and_then(|account| account.check_transaction_for_match(tx, None)),
+            AccountTypeToCheck::IdentityInvitation => self
+                .identity_invitation
+                .as_ref()
+                .and_then(|account| account.check_transaction_for_match(tx, None)),
+            AccountTypeToCheck::ProviderVotingKeys => self
+                .provider_voting_keys
+                .as_ref()
+                .and_then(|account| account.check_transaction_for_match(tx, None)),
+            AccountTypeToCheck::ProviderOwnerKeys => self
+                .provider_owner_keys
+                .as_ref()
+                .and_then(|account| account.check_transaction_for_match(tx, None)),
+            AccountTypeToCheck::ProviderOperatorKeys => self
+                .provider_operator_keys
+                .as_ref()
+                .and_then(|account| account.check_transaction_for_match(tx, None)),
+            AccountTypeToCheck::ProviderPlatformKeys => self
+                .provider_platform_keys
+                .as_ref()
+                .and_then(|account| account.check_transaction_for_match(tx, None)),
         }
     }
 
@@ -134,23 +117,21 @@ impl AccountTransactionChecker {
     fn check_indexed_accounts(
         accounts: &alloc::collections::BTreeMap<u32, ManagedAccount>,
         tx: &Transaction,
-        account_type: AccountTypeToCheck,
     ) -> Option<AccountMatch> {
         for (index, account) in accounts {
-            if let Some(match_info) =
-                Self::check_single_account(account, tx, account_type.clone(), Some(*index))
-            {
+            if let Some(match_info) = account.check_transaction_for_match(tx, Some(*index)) {
                 return Some(match_info);
             }
         }
         None
     }
+}
 
+impl ManagedAccount {
     /// Check a single account for transaction involvement
-    fn check_single_account(
-        account: &ManagedAccount,
+    pub fn check_transaction_for_match(
+        &self,
         tx: &Transaction,
-        account_type: AccountTypeToCheck,
         index: Option<u32>,
     ) -> Option<AccountMatch> {
         let mut involved_addresses = Vec::new();
@@ -159,11 +140,11 @@ impl AccountTransactionChecker {
 
         // Check outputs (received)
         for output in &tx.output {
-            if let Some(address) = Self::extract_address_from_script(&output.script_pubkey) {
-                if account.contains_address(&address) {
+            if self.contains_script_pub_key(&output.script_pubkey) {
+                if let Ok(address) = Address::from_script(&output.script_pubkey, self.network) {
                     involved_addresses.push(address);
-                    received += output.value;
                 }
+                received += output.value;
             }
         }
 
@@ -173,7 +154,7 @@ impl AccountTransactionChecker {
 
         if !involved_addresses.is_empty() {
             Some(AccountMatch {
-                account_type,
+                account_type: (&self.account_type).into(),
                 account_index: index,
                 involved_addresses,
                 received,
@@ -182,13 +163,6 @@ impl AccountTransactionChecker {
         } else {
             None
         }
-    }
-
-    /// Extract address from a script (simplified)
-    fn extract_address_from_script(script: &ScriptBuf) -> Option<Address> {
-        // This is a simplified implementation
-        // Real implementation would properly parse all script types
-        Address::from_script(script, dashcore::Network::Dash).ok()
     }
 
     /// Check if an address belongs to any account in the collection

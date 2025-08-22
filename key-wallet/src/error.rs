@@ -35,6 +35,8 @@ pub enum Error {
     InvalidParameter(String),
     /// Watch-only wallet (no private keys available)
     WatchOnly,
+    /// No key source available for address derivation
+    NoKeySource,
 }
 
 impl fmt::Display for Error {
@@ -52,6 +54,7 @@ impl fmt::Display for Error {
             Error::Serialization(s) => write!(f, "Serialization error: {}", s),
             Error::InvalidParameter(s) => write!(f, "Invalid parameter: {}", s),
             Error::WatchOnly => write!(f, "Watch-only wallet: private keys not available"),
+            Error::NoKeySource => write!(f, "No key source available for address derivation"),
         }
     }
 }

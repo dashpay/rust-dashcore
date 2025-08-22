@@ -167,7 +167,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         if let Some(collection) = self.accounts.get(&network) {
             // Collect from all accounts using the account's get_all_addresses method
             for account in collection.all_accounts() {
-                addresses.extend(account.get_all_addresses());
+                addresses.extend(account.all_addresses());
             }
         }
 

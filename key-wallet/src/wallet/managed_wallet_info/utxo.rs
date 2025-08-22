@@ -166,10 +166,11 @@ mod tests {
     use crate::account::managed_account::ManagedAccount;
     use crate::account::managed_account_collection::ManagedAccountCollection;
     use crate::account::types::ManagedAccountType;
+    use crate::bip32::DerivationPath;
     use crate::gap_limit::GapLimitManager;
-    use crate::wallet::balance::WalletBalance;
-    use dashcore::blockdata::script::Script;
-    use dashcore::{Address, TxOut, Txid};
+    use dashcore::{Address, PublicKey, ScriptBuf, TxOut, Txid};
+    use dashcore_hashes::Hash;
+    use std::str::FromStr;
 
     #[test]
     fn test_get_utxos_empty() {
@@ -186,12 +187,26 @@ mod tests {
         let mut account_collection = ManagedAccountCollection::new();
 
         // Create a BIP44 account with some UTXOs
+        let base_path = DerivationPath::from_str("m/44'/5'/0'").unwrap();
+        let external_path = base_path.child(0.into());
+        let internal_path = base_path.child(1.into());
+
         let mut bip44_account = ManagedAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: crate::account::types::StandardAccountType::BIP44Account,
-                external_addresses: crate::account::address_pool::AddressPool::new(),
-                internal_addresses: crate::account::address_pool::AddressPool::new(),
+                external_addresses: crate::account::address_pool::AddressPool::new(
+                    external_path,
+                    false,
+                    20,
+                    Network::Testnet,
+                ),
+                internal_addresses: crate::account::address_pool::AddressPool::new(
+                    internal_path,
+                    true,
+                    20,
+                    Network::Testnet,
+                ),
             },
             Network::Testnet,
             GapLimitManager::default(),
@@ -205,9 +220,17 @@ mod tests {
         };
         let txout = TxOut {
             value: 100000,
-            script_pubkey: Script::new(),
+            script_pubkey: ScriptBuf::new(),
         };
-        let address = Address::from_script(&Script::new(), Network::Testnet).unwrap();
+        let address = Address::p2pkh(
+            &PublicKey::from_slice(&[
+                0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x01,
+            ])
+            .unwrap(),
+            Network::Testnet,
+        );
         let utxo = Utxo::new(outpoint, txout, address, 0, false);
 
         bip44_account.utxos.insert(outpoint, utxo);

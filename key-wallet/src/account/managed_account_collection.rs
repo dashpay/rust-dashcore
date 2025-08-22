@@ -550,14 +550,4 @@ impl ManagedAccountCollection {
         self.provider_operator_keys = None;
         self.provider_platform_keys = None;
     }
-
-    /// Check if a transaction belongs to any accounts in this collection
-    pub fn check_transaction(
-        &self,
-        tx: &dashcore::blockdata::transaction::Transaction,
-        account_types: &[crate::transaction_checking::transaction_router::AccountTypeToCheck],
-    ) -> crate::transaction_checking::account_checker::TransactionCheckResult {
-        use crate::transaction_checking::account_checker::AccountTransactionChecker;
-        AccountTransactionChecker::check_transaction(self, tx, account_types)
-    }
 }

@@ -104,8 +104,9 @@ impl ManagedWalletInfo {
         };
 
         // Generate change address using the wallet account
-        let change_address =
-            managed_account.get_next_change_address(&wallet_account.account_xpub).map_err(|e| {
+        let change_address = managed_account
+            .next_change_address(Some(&wallet_account.account_xpub))
+            .map_err(|e| {
                 TransactionError::ChangeAddressGeneration(format!(
                     "Failed to generate change address: {}",
                     e

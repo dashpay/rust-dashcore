@@ -123,40 +123,40 @@ impl WatchOnlyWallet {
     /// Get the next receive address
     pub fn get_next_receive_address(&mut self) -> Result<Address> {
         let key_source = KeySource::Public(self.xpub);
-        self.external_pool.get_next_unused(&key_source)
+        self.external_pool.next_unused(&key_source)
     }
 
     /// Get the next change address
     pub fn get_next_change_address(&mut self) -> Result<Address> {
         let key_source = KeySource::Public(self.xpub);
-        self.internal_pool.get_next_unused(&key_source)
+        self.internal_pool.next_unused(&key_source)
     }
 
     /// Get a specific receive address by index
     pub fn get_receive_address(&self, index: u32) -> Option<Address> {
-        self.external_pool.get_info_at_index(index).map(|info| info.address.clone())
+        self.external_pool.info_at_index(index).map(|info| info.address.clone())
     }
 
     /// Get a specific change address by index
     pub fn get_change_address(&self, index: u32) -> Option<Address> {
-        self.internal_pool.get_info_at_index(index).map(|info| info.address.clone())
+        self.internal_pool.info_at_index(index).map(|info| info.address.clone())
     }
 
     /// Get all generated addresses
     pub fn get_all_addresses(&self) -> Vec<Address> {
-        let mut addresses = self.external_pool.get_all_addresses();
-        addresses.extend(self.internal_pool.get_all_addresses());
+        let mut addresses = self.external_pool.all_addresses();
+        addresses.extend(self.internal_pool.all_addresses());
         addresses
     }
 
     /// Get all receive addresses
     pub fn get_all_receive_addresses(&self) -> Vec<Address> {
-        self.external_pool.get_all_addresses()
+        self.external_pool.all_addresses()
     }
 
     /// Get all change addresses
     pub fn get_all_change_addresses(&self) -> Vec<Address> {
-        self.internal_pool.get_all_addresses()
+        self.internal_pool.all_addresses()
     }
 
     /// Mark an address as used
@@ -167,8 +167,8 @@ impl WatchOnlyWallet {
     /// Get address info if it belongs to this wallet
     pub fn get_address_info(&self, address: &Address) -> Option<AddressInfo> {
         self.external_pool
-            .get_address_info(address)
-            .or_else(|| self.internal_pool.get_address_info(address))
+            .address_info(address)
+            .or_else(|| self.internal_pool.address_info(address))
             .cloned()
     }
 

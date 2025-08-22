@@ -19,7 +19,7 @@ fn create_test_utxo(txid: Txid, vout: u32, value: u64, height: Option<u32>) -> U
         script_pubkey: ScriptBuf::new(),
         address: None,
         is_coinbase: false,
-        confirmations: height.map(|h| 6), // Assume 6 confirmations if height provided
+        confirmations: height.map(|_h| 6), // Assume 6 confirmations if height provided
         block_height: height,
         account_index: Some(0),
         address_index: Some(0),

@@ -12,8 +12,8 @@ use crate::wallet::balance::WalletBalance;
 use crate::{ExtendedPubKey, Network};
 use alloc::collections::{BTreeMap, BTreeSet};
 use dashcore::blockdata::transaction::OutPoint;
-use dashcore::Address;
 use dashcore::Txid;
+use dashcore::{Address, ScriptBuf};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -87,8 +87,8 @@ impl ManagedAccount {
         } = &self.account_type
         {
             // Get the first unused address or the next index after the last used one
-            if let Some(addr) = external_addresses.get_unused_addresses().first() {
-                external_addresses.get_address_index(addr)
+            if let Some(addr) = external_addresses.unused_addresses().first() {
+                external_addresses.address_index(addr)
             } else {
                 // If no unused addresses, return the next index based on stats
                 let stats = external_addresses.stats();
@@ -110,8 +110,8 @@ impl ManagedAccount {
         } = &self.account_type
         {
             // Get the first unused address or the next index after the last used one
-            if let Some(addr) = internal_addresses.get_unused_addresses().first() {
-                internal_addresses.get_address_index(addr)
+            if let Some(addr) = internal_addresses.unused_addresses().first() {
+                internal_addresses.address_index(addr)
             } else {
                 // If no unused addresses, return the next index based on stats
                 let stats = internal_addresses.stats();
@@ -163,10 +163,9 @@ impl ManagedAccount {
             | ManagedAccountType::ProviderPlatformKeys {
                 addresses,
                 ..
-            } => addresses
-                .get_unused_addresses()
-                .first()
-                .and_then(|addr| addresses.get_address_index(addr)),
+            } => {
+                addresses.unused_addresses().first().and_then(|addr| addresses.address_index(addr))
+            }
         }
     }
 
@@ -186,16 +185,16 @@ impl ManagedAccount {
                     internal_addresses,
                     ..
                 } => {
-                    if let Some(index) = external_addresses.get_address_index(address) {
+                    if let Some(index) = external_addresses.address_index(address) {
                         self.gap_limits.external.mark_used(index);
-                    } else if let Some(index) = internal_addresses.get_address_index(address) {
+                    } else if let Some(index) = internal_addresses.address_index(address) {
                         self.gap_limits.internal.mark_used(index);
                     }
                 }
                 _ => {
                     // For single-pool account types, update the external gap limit
-                    for pool in self.account_type.get_address_pools() {
-                        if let Some(index) = pool.get_address_index(address) {
+                    for pool in self.account_type.address_pools() {
+                        if let Some(index) = pool.address_index(address) {
                             self.gap_limits.external.mark_used(index);
                             break;
                         }
@@ -220,8 +219,8 @@ impl ManagedAccount {
     }
 
     /// Get all addresses from all pools
-    pub fn get_all_addresses(&self) -> Vec<Address> {
-        self.account_type.get_all_addresses()
+    pub fn all_addresses(&self) -> Vec<Address> {
+        self.account_type.all_addresses()
     }
 
     /// Check if an address belongs to this account
@@ -229,12 +228,18 @@ impl ManagedAccount {
         self.account_type.contains_address(address)
     }
 
-    /// Generate the next receive address using the provided extended public key
+    /// Check if a script pub key belongs to this account
+    pub fn contains_script_pub_key(&self, script_pub_key: &ScriptBuf) -> bool {
+        self.account_type.contains_script_pub_key(script_pub_key)
+    }
+
+    /// Generate the next receive address using the optionally provided extended public key
+    /// If no key is provided, can only return pre-generated unused addresses
     /// This method derives a new address from the account's xpub but does not add it to the pool
     /// The address must be added to the pool separately with proper tracking
-    pub fn get_next_receive_address(
+    pub fn next_receive_address(
         &mut self,
-        account_xpub: &ExtendedPubKey,
+        account_xpub: Option<&ExtendedPubKey>,
     ) -> Result<Address, &'static str> {
         // For standard accounts, use the address pool to get the next unused address
         if let ManagedAccountType::Standard {
@@ -242,21 +247,29 @@ impl ManagedAccount {
             ..
         } = &mut self.account_type
         {
-            // Use the address pool's get_next_unused method which properly tracks addresses
-            let key_source = crate::account::address_pool::KeySource::Public(*account_xpub);
-            external_addresses
-                .get_next_unused(&key_source)
-                .map_err(|_| "Failed to generate receive address")
+            // Create appropriate key source based on whether xpub is provided
+            let key_source = match account_xpub {
+                Some(xpub) => crate::account::address_pool::KeySource::Public(*xpub),
+                None => crate::account::address_pool::KeySource::NoKeySource,
+            };
+
+            external_addresses.next_unused(&key_source).map_err(|e| match e {
+                crate::error::Error::NoKeySource => {
+                    "No unused addresses available and no key source provided"
+                }
+                _ => "Failed to generate receive address",
+            })
         } else {
             Err("Cannot generate receive address for non-standard account type")
         }
     }
 
-    /// Generate the next change address using the provided extended public key
+    /// Generate the next change address using the optionally provided extended public key
+    /// If no key is provided, can only return pre-generated unused addresses
     /// This method uses the address pool to properly track and generate addresses
-    pub fn get_next_change_address(
+    pub fn next_change_address(
         &mut self,
-        account_xpub: &ExtendedPubKey,
+        account_xpub: Option<&ExtendedPubKey>,
     ) -> Result<Address, &'static str> {
         // For standard accounts, use the address pool to get the next unused address
         if let ManagedAccountType::Standard {
@@ -264,18 +277,25 @@ impl ManagedAccount {
             ..
         } = &mut self.account_type
         {
-            // Use the address pool's get_next_unused method which properly tracks addresses
-            let key_source = crate::account::address_pool::KeySource::Public(*account_xpub);
-            internal_addresses
-                .get_next_unused(&key_source)
-                .map_err(|_| "Failed to generate change address")
+            // Create appropriate key source based on whether xpub is provided
+            let key_source = match account_xpub {
+                Some(xpub) => crate::account::address_pool::KeySource::Public(*xpub),
+                None => crate::account::address_pool::KeySource::NoKeySource,
+            };
+
+            internal_addresses.next_unused(&key_source).map_err(|e| match e {
+                crate::error::Error::NoKeySource => {
+                    "No unused addresses available and no key source provided"
+                }
+                _ => "Failed to generate change address",
+            })
         } else {
             Err("Cannot generate change address for non-standard account type")
         }
     }
 
     /// Get the derivation path for an address if it belongs to this account
-    pub fn get_address_derivation_path(&self, address: &Address) -> Option<crate::DerivationPath> {
+    pub fn address_derivation_path(&self, address: &Address) -> Option<crate::DerivationPath> {
         self.account_type.get_address_derivation_path(address)
     }
 
@@ -297,7 +317,7 @@ impl ManagedAccount {
     /// Get total address count across all pools
     pub fn total_address_count(&self) -> usize {
         self.account_type
-            .get_address_pools()
+            .address_pools()
             .iter()
             .map(|pool| pool.stats().total_generated as usize)
             .sum()
@@ -305,10 +325,6 @@ impl ManagedAccount {
 
     /// Get used address count across all pools
     pub fn used_address_count(&self) -> usize {
-        self.account_type
-            .get_address_pools()
-            .iter()
-            .map(|pool| pool.stats().used_count as usize)
-            .sum()
+        self.account_type.address_pools().iter().map(|pool| pool.stats().used_count as usize).sum()
     }
 }

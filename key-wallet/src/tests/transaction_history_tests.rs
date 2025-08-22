@@ -86,7 +86,7 @@ impl TransactionHistory {
         end_height: u32,
     ) -> Vec<&TransactionHistoryEntry> {
         let mut result = Vec::new();
-        for (height, txids) in self.by_height.range(start_height..=end_height) {
+        for (_height, txids) in self.by_height.range(start_height..=end_height) {
             for txid in txids {
                 if let Some(entry) = self.entries.get(txid) {
                     result.push(entry);

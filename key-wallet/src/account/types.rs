@@ -8,6 +8,7 @@ use crate::dip9::DerivationPathReference;
 use crate::Network;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
+use dashcore::ScriptBuf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -415,7 +416,7 @@ impl ManagedAccountType {
     }
 
     /// Get all address pools for this account type
-    pub fn get_address_pools(&self) -> Vec<&AddressPool> {
+    pub fn address_pools(&self) -> Vec<&AddressPool> {
         match self {
             Self::Standard {
                 external_addresses,
@@ -518,16 +519,18 @@ impl ManagedAccountType {
 
     /// Check if an address belongs to this account type
     pub fn contains_address(&self, address: &crate::Address) -> bool {
-        self.get_address_pools().iter().any(|pool| pool.contains_address(address))
+        self.address_pools().iter().any(|pool| pool.contains_address(address))
+    }
+
+    /// Check if a script pubkey belongs to this account type
+    pub fn contains_script_pub_key(&self, script_pubkey: &ScriptBuf) -> bool {
+        self.address_pools().iter().any(|pool| pool.contains_script_pubkey(script_pubkey))
     }
 
     /// Get the derivation path for an address if it belongs to this account type
-    pub fn get_address_derivation_path(
-        &self,
-        address: &crate::Address,
-    ) -> Option<crate::DerivationPath> {
-        for pool in self.get_address_pools() {
-            if let Some(info) = pool.get_address_info(address) {
+    pub fn get_address_derivation_path(&self, address: &crate::Address) -> Option<DerivationPath> {
+        for pool in self.address_pools() {
+            if let Some(info) = pool.address_info(address) {
                 return Some(info.path.clone());
             }
         }
@@ -545,8 +548,8 @@ impl ManagedAccountType {
     }
 
     /// Get all addresses from all pools
-    pub fn get_all_addresses(&self) -> Vec<crate::Address> {
-        self.get_address_pools().iter().flat_map(|pool| pool.get_all_addresses()).collect()
+    pub fn all_addresses(&self) -> Vec<crate::Address> {
+        self.address_pools().iter().flat_map(|pool| pool.all_addresses()).collect()
     }
 
     /// Get the account type as the original enum

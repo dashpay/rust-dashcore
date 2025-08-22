@@ -30,7 +30,7 @@ fn test_account_index_overflow() {
 #[test]
 fn test_invalid_derivation_paths() {
     // Test various invalid derivation path scenarios
-    let test_cases = vec![
+    let _test_cases = vec![
         "",                      // Empty path
         "m",                     // Just master
         "m/",                    // Trailing slash
@@ -154,14 +154,15 @@ fn test_duplicate_account_handling() {
         standard_account_type: StandardAccountType::BIP44Account,
     };
 
-    // First addition should succeed (already has default account 0)
-    let result1 = wallet.add_account(account_type.clone(), Network::Testnet, None);
+    // First addition should succeed (wallet was created with None, so no accounts exist)
+    let result1 = wallet.add_account(account_type, Network::Testnet, None);
 
     // Duplicate addition should be handled gracefully
     let result2 = wallet.add_account(account_type, Network::Testnet, None);
 
-    // Both should handle the duplicate appropriately
-    // (either succeed idempotently or return an error)
+    // First should succeed, second should fail due to duplicate
+    assert!(result1.is_ok(), "First attempt to add account 0 should succeed");
+    assert!(result2.is_err(), "Second attempt to add duplicate account 0 should error");
 }
 
 #[test]
@@ -272,7 +273,7 @@ fn test_concurrent_access_simulation() {
 #[test]
 fn test_empty_wallet_operations() {
     let config = WalletConfig::default();
-    let wallet = Wallet::new_random(
+    let mut wallet = Wallet::new_random(
         config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,

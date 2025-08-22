@@ -126,7 +126,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
 
     // Generate the next receive address
     let xpub = account.extended_public_key();
-    match managed_account.get_next_receive_address(&xpub) {
+    match managed_account.next_receive_address(&xpub) {
         Ok(address) => {
             let address_str = address.to_string();
             match CString::new(address_str) {
@@ -246,7 +246,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
 
     // Generate the next change address
     let xpub = account.extended_public_key();
-    match managed_account.get_next_change_address(&xpub) {
+    match managed_account.next_change_address(&xpub) {
         Ok(address) => {
             let address_str = address.to_string();
             match CString::new(address_str) {
@@ -400,7 +400,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
         ..
     } = &mut managed_account.account_type
     {
-        match external_addresses.get_address_range(start_index, end_index, &key_source) {
+        match external_addresses.address_range(start_index, end_index, &key_source) {
             Ok(addrs) => addrs,
             Err(e) => {
                 FFIError::set_error(
@@ -582,7 +582,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
         ..
     } = &mut managed_account.account_type
     {
-        match internal_addresses.get_address_range(start_index, end_index, &key_source) {
+        match internal_addresses.address_range(start_index, end_index, &key_source) {
             Ok(addrs) => addrs,
             Err(e) => {
                 FFIError::set_error(

@@ -10,6 +10,7 @@ use crate::account::types::{
 };
 use crate::account::{AccountType, StandardAccountType};
 use crate::gap_limit::GapLimitManager;
+use crate::wallet::ManagedWalletInfo;
 use crate::Network;
 use dashcore::hashes::Hash;
 use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
@@ -162,25 +163,57 @@ fn create_coinbase_transaction() -> Transaction {
 
 #[test]
 fn test_transaction_routing_to_bip44_account() {
+    use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
+    use crate::wallet::initialization::WalletAccountCreationOptions;
+    use crate::wallet::Wallet;
+    use crate::wallet::WalletConfig;
+    use dashcore::TxOut;
+
     let network = Network::Testnet;
-    let mut collection = ManagedAccountCollection::new();
+    let config = WalletConfig::default();
 
-    // Create BIP44 account
-    let account_type = AccountType::Standard {
-        index: 0,
-        standard_account_type: StandardAccountType::BIP44Account,
+    // Create a wallet with a BIP44 account
+    let wallet =
+        Wallet::new_random(config, network, WalletAccountCreationOptions::Default).unwrap();
+
+    let mut managed_wallet_info =
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+    // Get the account's xpub for address derivation from the wallet's first BIP44 account
+    let account_collection = wallet.accounts.get(&network).unwrap();
+    let account = account_collection.standard_bip44_accounts.get(&0).unwrap();
+    let xpub = account.account_xpub;
+
+    let managed_account = managed_wallet_info.first_bip44_managed_account_mut(network).unwrap();
+
+    // Get an address from the BIP44 account
+    let address = managed_account.next_receive_address(Some(&xpub)).unwrap();
+
+    // Create a transaction that sends to this address
+    let mut tx = create_basic_transaction();
+
+    // Add an output to our address
+    tx.output.push(TxOut {
+        value: 100000,
+        script_pubkey: address.script_pubkey(),
+    });
+
+    // Check the transaction using the wallet's managed info
+    let context = TransactionContext::InBlock {
+        height: 100000,
+        block_hash: Some(BlockHash::from_slice(&[0u8; 32]).unwrap()),
+        timestamp: Some(1234567890),
     };
-    let managed_account = create_test_managed_account(network, account_type.clone());
 
-    collection.insert(managed_account);
+    // Check the transaction using the managed wallet info
+    let result = managed_wallet_info.check_transaction(
+        &tx, network, context, true, // update state
+    );
 
-    // Test that normal transactions route to BIP44 accounts
-    let tx = create_basic_transaction();
-    let block_hash = BlockHash::from_slice(&[0u8; 32]).unwrap();
-
-    // In a real scenario, this would check addresses and route appropriately
-    // For now, we just verify the structure exists
-    assert!(collection.standard_bip44_accounts.contains_key(&0));
+    // The transaction should be recognized as relevant since it sends to our address
+    assert!(result.is_relevant, "Transaction should be relevant to the wallet");
+    assert!(result.total_received > 0, "Should have received funds");
+    assert_eq!(result.total_received, 100000, "Should have received 100000 duffs");
 }
 
 #[test]

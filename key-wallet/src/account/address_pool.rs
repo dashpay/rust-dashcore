@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::error::{Error, Result};
 use crate::Network;
-use dashcore::{Address, AddressType};
+use dashcore::{Address, AddressType, ScriptBuf};
 
 /// Key source for address derivation
 #[derive(Debug, Clone, Copy)]
@@ -27,6 +27,8 @@ pub enum KeySource {
     Private(ExtendedPrivKey),
     /// Public key for watch-only wallet
     Public(ExtendedPubKey),
+    /// No key source available (can only return pre-generated addresses)
+    NoKeySource,
 }
 
 impl KeySource {
@@ -39,12 +41,18 @@ impl KeySource {
                 Ok(ExtendedPubKey::from_priv(&secp, &child))
             }
             KeySource::Public(xpub) => xpub.derive_pub(&secp, path).map_err(Error::Bip32),
+            KeySource::NoKeySource => Err(Error::NoKeySource),
         }
     }
 
     /// Check if this is a watch-only key source
     pub fn is_watch_only(&self) -> bool {
         matches!(self, KeySource::Public(_))
+    }
+
+    /// Check if key source is available for derivation
+    pub fn can_derive(&self) -> bool {
+        !matches!(self, KeySource::NoKeySource)
     }
 }
 
@@ -55,6 +63,8 @@ impl KeySource {
 pub struct AddressInfo {
     /// The address
     pub address: Address,
+    /// The script pubkey for this address
+    pub script_pubkey: ScriptBuf,
     /// Derivation index
     pub index: u32,
     /// Full derivation path
@@ -82,8 +92,10 @@ pub struct AddressInfo {
 impl AddressInfo {
     /// Create new address info
     fn new(address: Address, index: u32, path: DerivationPath) -> Self {
+        let script_pubkey = address.script_pubkey();
         Self {
             address,
+            script_pubkey,
             index,
             path,
             used: false,
@@ -96,6 +108,39 @@ impl AddressInfo {
             label: None,
             metadata: BTreeMap::new(),
         }
+    }
+
+    /// Create new address info from a P2PKH script pubkey
+    pub fn new_from_script_pubkey_p2pkh(
+        script_pubkey: ScriptBuf,
+        index: u32,
+        path: DerivationPath,
+        network: Network,
+    ) -> Result<Self> {
+        // Try to extract the address from the P2PKH script
+        let address = Address::from_script(&script_pubkey, network)
+            .map_err(|_| Error::InvalidAddress("Failed to parse P2PKH script".to_string()))?;
+
+        // Verify it's actually a P2PKH address
+        if address.address_type() != Some(AddressType::P2pkh) {
+            return Err(Error::InvalidAddress("Script is not P2PKH".to_string()));
+        }
+
+        Ok(Self {
+            address,
+            script_pubkey,
+            index,
+            path,
+            used: false,
+            generated_at: 0, // Should use actual timestamp
+            used_at: None,
+            tx_count: 0,
+            total_received: 0,
+            total_sent: 0,
+            balance: 0,
+            label: None,
+            metadata: BTreeMap::new(),
+        })
     }
 
     /// Mark this address as used
@@ -131,6 +176,8 @@ pub struct AddressPool {
     addresses: BTreeMap<u32, AddressInfo>,
     /// Reverse lookup: address -> index
     address_index: HashMap<Address, u32>,
+    /// Reverse lookup: script pubkey -> index
+    script_pubkey_index: HashMap<ScriptBuf, u32>,
     /// Set of used address indices
     used_indices: HashSet<u32>,
     /// Highest generated index (None if no addresses generated yet)
@@ -158,6 +205,7 @@ impl AddressPool {
             network,
             addresses: BTreeMap::new(),
             address_index: HashMap::new(),
+            script_pubkey_index: HashMap::new(),
             used_indices: HashSet::new(),
             highest_generated: None,
             highest_used: None,
@@ -235,8 +283,10 @@ impl AddressPool {
 
         // Store the address info
         let info = AddressInfo::new(address.clone(), index, full_path);
+        let script_pubkey = info.script_pubkey.clone();
         self.addresses.insert(index, info);
         self.address_index.insert(address.clone(), index);
+        self.script_pubkey_index.insert(script_pubkey, index);
 
         // Update highest generated
         if self.highest_generated.map(|h| index > h).unwrap_or(true) {
@@ -247,7 +297,7 @@ impl AddressPool {
     }
 
     /// Get the next unused address
-    pub fn get_next_unused(&mut self, key_source: &KeySource) -> Result<Address> {
+    pub fn next_unused(&mut self, key_source: &KeySource) -> Result<Address> {
         // First, try to find an already generated unused address
         for i in 0..=self.highest_generated.unwrap_or(0) {
             if let Some(info) = self.addresses.get(&i) {
@@ -257,13 +307,18 @@ impl AddressPool {
             }
         }
 
+        // If NoKeySource, we can't generate new addresses
+        if matches!(key_source, KeySource::NoKeySource) {
+            return Err(Error::NoKeySource);
+        }
+
         // Generate a new address
         let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
         self.generate_address_at_index(next_index, key_source)
     }
 
     /// Get multiple unused addresses
-    pub fn get_unused_addresses_count(
+    pub fn unused_addresses_count(
         &mut self,
         count: u32,
         key_source: &KeySource,
@@ -358,32 +413,32 @@ impl AddressPool {
     }
 
     /// Get all addresses in the pool
-    pub fn get_all_addresses(&self) -> Vec<Address> {
+    pub fn all_addresses(&self) -> Vec<Address> {
         self.addresses.values().map(|info| info.address.clone()).collect()
     }
 
     /// Get only used addresses
-    pub fn get_used_addresses(&self) -> Vec<Address> {
+    pub fn used_addresses(&self) -> Vec<Address> {
         self.addresses.values().filter(|info| info.used).map(|info| info.address.clone()).collect()
     }
 
     /// Get only unused addresses
-    pub fn get_unused_addresses(&self) -> Vec<Address> {
+    pub fn unused_addresses(&self) -> Vec<Address> {
         self.addresses.values().filter(|info| !info.used).map(|info| info.address.clone()).collect()
     }
 
     /// Get address at specific index
-    pub fn get_address_at_index(&self, index: u32) -> Option<Address> {
+    pub fn address_at_index(&self, index: u32) -> Option<Address> {
         self.addresses.get(&index).map(|info| info.address.clone())
     }
 
     /// Get address info by address
-    pub fn get_address_info(&self, address: &Address) -> Option<&AddressInfo> {
+    pub fn address_info(&self, address: &Address) -> Option<&AddressInfo> {
         self.address_index.get(address).and_then(|&index| self.addresses.get(&index))
     }
 
     /// Get mutable address info by address
-    pub fn get_address_info_mut(&mut self, address: &Address) -> Option<&mut AddressInfo> {
+    pub fn address_info_mut(&mut self, address: &Address) -> Option<&mut AddressInfo> {
         if let Some(&index) = self.address_index.get(address) {
             self.addresses.get_mut(&index)
         } else {
@@ -392,13 +447,18 @@ impl AddressPool {
     }
 
     /// Get address info by index
-    pub fn get_info_at_index(&self, index: u32) -> Option<&AddressInfo> {
+    pub fn info_at_index(&self, index: u32) -> Option<&AddressInfo> {
         self.addresses.get(&index)
     }
 
     /// Get the index of an address
-    pub fn get_address_index(&self, address: &Address) -> Option<u32> {
+    pub fn address_index(&self, address: &Address) -> Option<u32> {
         self.address_index.get(address).copied()
+    }
+
+    /// Get the index of an address by its script pubkey
+    pub fn script_pubkey_index(&self, script_pubkey: &ScriptBuf) -> Option<u32> {
+        self.script_pubkey_index.get(script_pubkey).copied()
     }
 
     /// Check if an address belongs to this pool
@@ -406,11 +466,16 @@ impl AddressPool {
         self.address_index.contains_key(address)
     }
 
+    /// Check if a script pubkey belongs to this pool
+    pub fn contains_script_pubkey(&self, script_pubkey: &ScriptBuf) -> bool {
+        self.script_pubkey_index.contains_key(script_pubkey)
+    }
+
     /// Get addresses in the specified range
     ///
     /// Returns addresses from start_index (inclusive) to end_index (exclusive).
     /// If addresses in the range haven't been generated yet, they will be generated.
-    pub fn get_address_range(
+    pub fn address_range(
         &mut self,
         start_index: u32,
         end_index: u32,
@@ -483,7 +548,7 @@ impl AddressPool {
 
     /// Set a custom label for an address
     pub fn set_address_label(&mut self, address: &Address, label: String) -> bool {
-        if let Some(info) = self.get_address_info_mut(address) {
+        if let Some(info) = self.address_info_mut(address) {
             info.label = Some(label);
             true
         } else {
@@ -493,7 +558,7 @@ impl AddressPool {
 
     /// Add custom metadata to an address
     pub fn add_address_metadata(&mut self, address: &Address, key: String, value: String) -> bool {
-        if let Some(info) = self.get_address_info_mut(address) {
+        if let Some(info) = self.address_info_mut(address) {
             info.metadata.insert(key, value);
             true
         } else {
@@ -726,7 +791,7 @@ mod tests {
         assert_eq!(pool.used_indices.len(), 1);
         assert_eq!(pool.highest_used, Some(0));
 
-        let used = pool.get_used_addresses();
+        let used = pool.used_addresses();
         assert_eq!(used.len(), 1);
         assert_eq!(&used[0], first_addr);
     }
@@ -737,12 +802,12 @@ mod tests {
         let mut pool = AddressPool::new(base_path, false, 5, Network::Testnet);
         let key_source = test_key_source();
 
-        let addr1 = pool.get_next_unused(&key_source).unwrap();
-        let addr2 = pool.get_next_unused(&key_source).unwrap();
+        let addr1 = pool.next_unused(&key_source).unwrap();
+        let addr2 = pool.next_unused(&key_source).unwrap();
         assert_eq!(addr1, addr2); // Should return same unused address
 
         pool.mark_used(&addr1);
-        let addr3 = pool.get_next_unused(&key_source).unwrap();
+        let addr3 = pool.next_unused(&key_source).unwrap();
         assert_ne!(addr1, addr3); // Should return different address after marking used
     }
 

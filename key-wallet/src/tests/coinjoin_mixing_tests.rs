@@ -255,35 +255,6 @@ fn test_multiple_denomination_mixing() {
 }
 
 #[test]
-fn test_coinjoin_change_handling() {
-    // Test handling of change in CoinJoin transactions
-    let input_amount = 150_000_000u64; // 1.5 DASH
-    let denomination = DENOMINATIONS[3]; // 1 DASH
-    let fee = 1000u64;
-
-    // Calculate change
-    let change = input_amount - denomination - fee;
-
-    // Change should go to non-CoinJoin address or new round
-    assert!(change > 0);
-
-    // Check if change is enough for another denomination
-    let can_create_another = DENOMINATIONS.iter().any(|&d| change >= d);
-
-    if can_create_another {
-        // Queue change for another round
-        let mut remaining = change;
-        for &denom in DENOMINATIONS.iter().rev() {
-            if remaining >= denom {
-                // Can create this denomination
-                remaining -= denom;
-                break;
-            }
-        }
-    }
-}
-
-#[test]
 fn test_coinjoin_transaction_verification() {
     // Test verification of CoinJoin transaction structure
     let num_participants = 5;

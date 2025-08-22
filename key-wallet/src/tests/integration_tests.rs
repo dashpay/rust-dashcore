@@ -228,7 +228,7 @@ fn test_wallet_with_all_account_types() {
 #[test]
 fn test_transaction_broadcast_simulation() {
     let config = WalletConfig::default();
-    let wallet = Wallet::new_random(
+    let _wallet = Wallet::new_random(
         config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
@@ -353,7 +353,7 @@ fn test_provider_registration_workflow() {
         service_port: u16,
     }
 
-    let registration = ProviderRegistration {
+    let _registration = ProviderRegistration {
         collateral_txid: Txid::from_byte_array([1u8; 32]),
         collateral_index: 0,
         service_ip: [127, 0, 0, 1],
@@ -486,7 +486,7 @@ fn test_wallet_balance_calculation() {
 fn test_wallet_migration_between_versions() {
     // Test wallet format migration/upgrade scenarios
     let config = WalletConfig::default();
-    let wallet = Wallet::new_random(
+    let _wallet = Wallet::new_random(
         config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
@@ -610,7 +610,7 @@ fn test_concurrent_wallet_operations() {
 fn test_wallet_with_thousands_of_addresses() {
     // Stress test with large number of addresses
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(
+    let _wallet = Wallet::new_random(
         config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
@@ -623,7 +623,7 @@ fn test_wallet_with_thousands_of_addresses() {
     let num_addresses = 1000;
     let mut generation_times = Vec::new();
 
-    for i in 0..num_addresses {
+    for _i in 0..num_addresses {
         let start = std::time::Instant::now();
 
         // In real implementation would generate address at index i
@@ -651,7 +651,7 @@ fn test_wallet_recovery_with_used_addresses() {
     ).unwrap();
 
     let config = WalletConfig::default();
-    let mut wallet = Wallet::from_mnemonic(
+    let _wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
         config.clone(),
         Network::Testnet,
