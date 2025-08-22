@@ -3,6 +3,7 @@
 //! This module contains the mutable account state that changes during wallet operation,
 //! kept separate from the immutable Account structure.
 
+use super::managed_account_trait::ManagedAccountTrait;
 use super::metadata::AccountMetadata;
 use super::transaction_record::TransactionRecord;
 use super::types::ManagedAccountType;
@@ -233,6 +234,14 @@ impl ManagedAccount {
         self.account_type.contains_script_pub_key(script_pub_key)
     }
 
+    /// Get address info for a given address
+    pub fn get_address_info(
+        &self,
+        address: &Address,
+    ) -> Option<crate::account::address_pool::AddressInfo> {
+        self.account_type.get_address_info(address)
+    }
+
     /// Generate the next receive address using the optionally provided extended public key
     /// If no key is provided, can only return pre-generated unused addresses
     /// This method derives a new address from the account's xpub but does not add it to the pool
@@ -294,6 +303,82 @@ impl ManagedAccount {
         }
     }
 
+    /// Generate the next address for non-standard accounts
+    /// This method is for special accounts like Identity, Provider accounts, etc.
+    /// Standard accounts (BIP44/BIP32) should use next_receive_address or next_change_address
+    pub fn next_address(
+        &mut self,
+        account_xpub: Option<&ExtendedPubKey>,
+    ) -> Result<Address, &'static str> {
+        match &mut self.account_type {
+            ManagedAccountType::Standard {
+                ..
+            } => Err("Standard accounts must use next_receive_address or next_change_address"),
+            ManagedAccountType::CoinJoin {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityRegistration {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityInvitation {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderVotingKeys {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderOwnerKeys {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderOperatorKeys {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderPlatformKeys {
+                addresses,
+                ..
+            } => {
+                // Create appropriate key source based on whether xpub is provided
+                let key_source = match account_xpub {
+                    Some(xpub) => crate::account::address_pool::KeySource::Public(*xpub),
+                    None => crate::account::address_pool::KeySource::NoKeySource,
+                };
+
+                addresses.next_unused(&key_source).map_err(|e| match e {
+                    crate::error::Error::NoKeySource => {
+                        "No unused addresses available and no key source provided"
+                    }
+                    _ => "Failed to generate address",
+                })
+            }
+            ManagedAccountType::IdentityTopUp {
+                addresses,
+                ..
+            } => {
+                // Identity top-up has an address pool
+                let key_source = match account_xpub {
+                    Some(xpub) => crate::account::address_pool::KeySource::Public(*xpub),
+                    None => crate::account::address_pool::KeySource::NoKeySource,
+                };
+
+                addresses.next_unused(&key_source).map_err(|e| match e {
+                    crate::error::Error::NoKeySource => {
+                        "No unused addresses available and no key source provided"
+                    }
+                    _ => "Failed to generate address",
+                })
+            }
+        }
+    }
+
     /// Get the derivation path for an address if it belongs to this account
     pub fn address_derivation_path(&self, address: &Address) -> Option<crate::DerivationPath> {
         self.account_type.get_address_derivation_path(address)
@@ -326,5 +411,71 @@ impl ManagedAccount {
     /// Get used address count across all pools
     pub fn used_address_count(&self) -> usize {
         self.account_type.address_pools().iter().map(|pool| pool.stats().used_count as usize).sum()
+    }
+}
+
+impl ManagedAccountTrait for ManagedAccount {
+    fn account_type(&self) -> &ManagedAccountType {
+        &self.account_type
+    }
+
+    fn account_type_mut(&mut self) -> &mut ManagedAccountType {
+        &mut self.account_type
+    }
+
+    fn network(&self) -> Network {
+        self.network
+    }
+
+    fn gap_limits(&self) -> &GapLimitManager {
+        &self.gap_limits
+    }
+
+    fn gap_limits_mut(&mut self) -> &mut GapLimitManager {
+        &mut self.gap_limits
+    }
+
+    fn metadata(&self) -> &AccountMetadata {
+        &self.metadata
+    }
+
+    fn metadata_mut(&mut self) -> &mut AccountMetadata {
+        &mut self.metadata
+    }
+
+    fn is_watch_only(&self) -> bool {
+        self.is_watch_only
+    }
+
+    fn balance(&self) -> &WalletBalance {
+        &self.balance
+    }
+
+    fn balance_mut(&mut self) -> &mut WalletBalance {
+        &mut self.balance
+    }
+
+    fn transactions(&self) -> &BTreeMap<Txid, TransactionRecord> {
+        &self.transactions
+    }
+
+    fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord> {
+        &mut self.transactions
+    }
+
+    fn monitored_addresses(&self) -> &BTreeSet<Address> {
+        &self.monitored_addresses
+    }
+
+    fn monitored_addresses_mut(&mut self) -> &mut BTreeSet<Address> {
+        &mut self.monitored_addresses
+    }
+
+    fn utxos(&self) -> &BTreeMap<OutPoint, Utxo> {
+        &self.utxos
+    }
+
+    fn utxos_mut(&mut self) -> &mut BTreeMap<OutPoint, Utxo> {
+        &mut self.utxos
     }
 }

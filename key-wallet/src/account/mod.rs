@@ -5,10 +5,14 @@
 //! multiple account types (standard, CoinJoin, watch-only).
 
 pub mod account_collection;
+pub mod account_trait;
 pub mod address_pool;
+pub mod bls_account;
 pub mod coinjoin;
+pub mod eddsa_account;
 pub mod managed_account;
 pub mod managed_account_collection;
+pub mod managed_account_trait;
 pub mod metadata;
 pub mod scan;
 pub mod transaction_record;
@@ -28,9 +32,13 @@ use crate::error::Result;
 use crate::Network;
 
 pub use account_collection::AccountCollection;
+pub use account_trait::{AccountTrait, ECDSAAccountTrait};
+pub use bls_account::BLSAccount;
 pub use coinjoin::CoinJoinPools;
+pub use eddsa_account::EdDSAAccount;
 pub use managed_account::ManagedAccount;
 pub use managed_account_collection::ManagedAccountCollection;
+pub use managed_account_trait::ManagedAccountTrait;
 pub use metadata::AccountMetadata;
 pub use scan::ScanResult;
 pub use transaction_record::TransactionRecord;
@@ -191,17 +199,27 @@ impl Account {
         self.account_xpub.derive_pub(&secp, child_path).map_err(crate::error::Error::Bip32)
     }
 
-    /// Derive a receive (external) address at a specific index
+    /// Derive an address at a specific chain and index
     ///
-    /// This is a convenience method that derives an address at m/0/index
-    /// (external chain) from the account.
+    /// # Arguments
+    /// * `is_internal` - If true, derives from internal chain (1), otherwise external chain (0)
+    /// * `index` - The address index
     ///
     /// # Example
     /// ```ignore
-    /// let address = account.derive_receive_address(5)?;
-    /// // This derives the address at m/44'/1'/0'/0/5 for a BIP44 testnet account
+    /// let external_addr = account.derive_address_at(false, 5)?;  // Same as derive_receive_address(5)
+    /// let internal_addr = account.derive_address_at(true, 3)?;   // Same as derive_change_address(3)
     /// ```
-    pub fn derive_receive_address(&self, index: u32) -> Result<dashcore::Address> {
+    pub fn derive_address_at(&self, is_internal: bool, index: u32) -> Result<dashcore::Address> {
+        if is_internal {
+            self.derive_change_address_impl(index)
+        } else {
+            self.derive_receive_address_impl(index)
+        }
+    }
+
+    // Internal implementation methods to avoid name conflicts with trait defaults
+    fn derive_receive_address_impl(&self, index: u32) -> Result<dashcore::Address> {
         use crate::bip32::ChildNumber;
 
         // Build path: 0/index (external chain)
@@ -219,17 +237,7 @@ impl Account {
         Ok(dashcore::Address::p2pkh(&pubkey, self.network))
     }
 
-    /// Derive a change (internal) address at a specific index
-    ///
-    /// This is a convenience method that derives an address at m/1/index
-    /// (internal/change chain) from the account.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let address = account.derive_change_address(3)?;
-    /// // This derives the address at m/44'/1'/0'/1/3 for a BIP44 testnet account
-    /// ```
-    pub fn derive_change_address(&self, index: u32) -> Result<dashcore::Address> {
+    fn derive_change_address_impl(&self, index: u32) -> Result<dashcore::Address> {
         use crate::bip32::ChildNumber;
 
         // Build path: 1/index (internal/change chain)
@@ -245,67 +253,6 @@ impl Account {
                 crate::error::Error::InvalidParameter(format!("Invalid public key: {}", e))
             })?;
         Ok(dashcore::Address::p2pkh(&pubkey, self.network))
-    }
-
-    /// Derive multiple receive addresses starting from a specific index
-    ///
-    /// This is useful for pre-generating a batch of addresses.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let addresses = account.derive_receive_addresses(0, 10)?;
-    /// // This derives 10 addresses from index 0 to 9
-    /// ```
-    pub fn derive_receive_addresses(
-        &self,
-        start_index: u32,
-        count: u32,
-    ) -> Result<alloc::vec::Vec<dashcore::Address>> {
-        let mut addresses = alloc::vec::Vec::with_capacity(count as usize);
-        for i in 0..count {
-            addresses.push(self.derive_receive_address(start_index + i)?);
-        }
-        Ok(addresses)
-    }
-
-    /// Derive multiple change addresses starting from a specific index
-    ///
-    /// This is useful for pre-generating a batch of change addresses.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let addresses = account.derive_change_addresses(0, 5)?;
-    /// // This derives 5 change addresses from index 0 to 4
-    /// ```
-    pub fn derive_change_addresses(
-        &self,
-        start_index: u32,
-        count: u32,
-    ) -> Result<alloc::vec::Vec<dashcore::Address>> {
-        let mut addresses = alloc::vec::Vec::with_capacity(count as usize);
-        for i in 0..count {
-            addresses.push(self.derive_change_address(start_index + i)?);
-        }
-        Ok(addresses)
-    }
-
-    /// Derive an address at a specific chain and index
-    ///
-    /// # Arguments
-    /// * `is_internal` - If true, derives from internal chain (1), otherwise external chain (0)
-    /// * `index` - The address index
-    ///
-    /// # Example
-    /// ```ignore
-    /// let external_addr = account.derive_address_at(false, 5)?;  // Same as derive_receive_address(5)
-    /// let internal_addr = account.derive_address_at(true, 3)?;   // Same as derive_change_address(3)
-    /// ```
-    pub fn derive_address_at(&self, is_internal: bool, index: u32) -> Result<dashcore::Address> {
-        if is_internal {
-            self.derive_change_address(index)
-        } else {
-            self.derive_receive_address(index)
-        }
     }
 
     /// Get the extended public key for a specific chain
@@ -329,6 +276,42 @@ impl Account {
         let path = DerivationPath::from(vec![ChildNumber::from_normal_idx(chain)?]);
 
         self.derive_child_xpub(&path)
+    }
+}
+
+impl AccountTrait for Account {
+    fn parent_wallet_id(&self) -> Option<[u8; 32]> {
+        self.parent_wallet_id
+    }
+
+    fn account_type(&self) -> &AccountType {
+        &self.account_type
+    }
+
+    fn network(&self) -> Network {
+        self.network
+    }
+
+    fn is_watch_only(&self) -> bool {
+        self.is_watch_only
+    }
+
+    fn derive_address_at(&self, is_internal: bool, index: u32) -> Result<dashcore::Address> {
+        self.derive_address_at(is_internal, index)
+    }
+
+    fn get_public_key_bytes(&self) -> alloc::vec::Vec<u8> {
+        self.account_xpub.public_key.serialize().to_vec()
+    }
+}
+
+impl ECDSAAccountTrait for Account {
+    fn account_xpub(&self) -> ExtendedPubKey {
+        self.account_xpub
+    }
+
+    fn derive_child_xpub(&self, child_path: &DerivationPath) -> Result<ExtendedPubKey> {
+        self.derive_child_xpub(child_path)
     }
 }
 

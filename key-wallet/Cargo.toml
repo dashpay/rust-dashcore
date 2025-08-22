@@ -14,6 +14,8 @@ std = ["dashcore_hashes/std", "secp256k1/std", "bip39/std", "getrandom", "dash-n
 serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde", "dashcore/serde"]
 bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dash-network/bincode", "dashcore_hashes/bincode", "dashcore/bincode"]
 bip38 = ["scrypt", "aes", "sha2", "bs58", "rand"]
+eddsa = ["dashcore/eddsa"]
+bls = ["dashcore/bls"]
 
 [dependencies]
 internals = { path = "../internals", package = "dashcore-private" }
@@ -41,4 +43,4 @@ hex = { version = "0.4"}
 
 [dev-dependencies]
 hex = "0.4"
-key-wallet = { path = ".", features = ["bip38", "serde", "bincode"] }
+key-wallet = { path = ".", features = ["bip38", "serde", "bincode", "eddsa", "bls"] }

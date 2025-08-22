@@ -18,30 +18,177 @@ use crate::error::{Error, Result};
 use crate::Network;
 use dashcore::{Address, AddressType, ScriptBuf};
 
+/// Types of public keys used in the address pool
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub enum PublicKeyType {
+    /// ECDSA public key (standard Bitcoin/Dash addresses) - stored as Vec<u8> for serialization
+    ECDSA(Vec<u8>),
+    /// EdDSA public key (Ed25519, used in some Platform operations)
+    EdDSA(Vec<u8>),
+    /// BLS public key (used for masternode operations and Platform)
+    BLS(Vec<u8>),
+}
+
+/// Type of address pool (external, internal, or absent/single-pool)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub enum AddressPoolType {
+    /// External (receive) addresses - used for receiving funds
+    External,
+    /// Internal (change) addresses - used for transaction change
+    Internal,
+    /// Absent/single pool - for special account types that don't distinguish
+    Absent,
+}
+
+#[cfg(feature = "serde")]
+impl Serialize for PublicKeyType {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        enum PublicKeyTypeSer<'a> {
+            ECDSA(&'a Vec<u8>),
+            EdDSA(&'a Vec<u8>),
+            BLS(&'a Vec<u8>),
+        }
+
+        match self {
+            PublicKeyType::ECDSA(bytes) => PublicKeyTypeSer::ECDSA(bytes).serialize(serializer),
+            PublicKeyType::EdDSA(bytes) => PublicKeyTypeSer::EdDSA(bytes).serialize(serializer),
+            PublicKeyType::BLS(bytes) => PublicKeyTypeSer::BLS(bytes).serialize(serializer),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> Deserialize<'de> for PublicKeyType {
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        enum PublicKeyTypeDe {
+            ECDSA(Vec<u8>),
+            EdDSA(Vec<u8>),
+            BLS(Vec<u8>),
+        }
+
+        match PublicKeyTypeDe::deserialize(deserializer)? {
+            PublicKeyTypeDe::ECDSA(bytes) => Ok(PublicKeyType::ECDSA(bytes)),
+            PublicKeyTypeDe::EdDSA(bytes) => Ok(PublicKeyType::EdDSA(bytes)),
+            PublicKeyTypeDe::BLS(bytes) => Ok(PublicKeyType::BLS(bytes)),
+        }
+    }
+}
+
 /// Key source for address derivation
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum KeySource {
-    /// Private key for full wallet
+    /// ECDSA private key for full wallet
     Private(ExtendedPrivKey),
-    /// Public key for watch-only wallet
+    /// ECDSA public key for watch-only wallet
     Public(ExtendedPubKey),
+    /// BLS private key for HD derivation
+    #[cfg(feature = "bls")]
+    BLSPrivate(crate::derivation_bls_bip32::ExtendedBLSPrivKey),
+    /// BLS public key for HD derivation
+    #[cfg(feature = "bls")]
+    BLSPublic(crate::derivation_bls_bip32::ExtendedBLSPubKey),
+    /// EdDSA private key
+    #[cfg(feature = "eddsa")]
+    EdDSAPrivate(crate::derivation_slip10::ExtendedEd25519PrivKey),
+    /// EdDSA public key
+    #[cfg(feature = "eddsa")]
+    EdDSAPublic(crate::derivation_slip10::ExtendedEd25519PubKey),
     /// No key source available (can only return pre-generated addresses)
     NoKeySource,
 }
 
+/// Result of key derivation that can contain different key types
+#[derive(Debug, Clone)]
+pub enum DerivedKey {
+    /// ECDSA extended public key
+    ECDSA(ExtendedPubKey),
+    /// BLS public key (48 bytes)
+    BLS(Vec<u8>),
+    /// EdDSA public key (32 bytes)
+    EdDSA(Vec<u8>),
+}
+
 impl KeySource {
     /// Derive a child key at the given path
-    pub fn derive_at_path(&self, path: &DerivationPath) -> Result<ExtendedPubKey> {
-        let secp = Secp256k1::new();
+    /// Returns a DerivedKey which can be ECDSA, BLS, or EdDSA
+    pub fn derive_at_path(&self, path: &DerivationPath) -> Result<DerivedKey> {
         match self {
             KeySource::Private(xprv) => {
+                let secp = Secp256k1::new();
                 let child = xprv.derive_priv(&secp, path).map_err(Error::Bip32)?;
-                Ok(ExtendedPubKey::from_priv(&secp, &child))
+                Ok(DerivedKey::ECDSA(ExtendedPubKey::from_priv(&secp, &child)))
             }
-            KeySource::Public(xpub) => xpub.derive_pub(&secp, path).map_err(Error::Bip32),
+            KeySource::Public(xpub) => {
+                let secp = Secp256k1::new();
+                let derived = xpub.derive_pub(&secp, path).map_err(Error::Bip32)?;
+                Ok(DerivedKey::ECDSA(derived))
+            }
+            #[cfg(feature = "bls")]
+            KeySource::BLSPrivate(xprv) => {
+                // BLS HD derivation using the proper BIP32-like derivation
+                let mut derived = xprv.clone();
+                for child_num in path.as_ref() {
+                    derived = derived.derive_priv(*child_num).map_err(|e| {
+                        Error::InvalidParameter(format!("BLS derivation error: {:?}", e))
+                    })?;
+                }
+                Ok(DerivedKey::BLS(derived.public_key_bytes().to_vec()))
+            }
+            #[cfg(feature = "bls")]
+            KeySource::BLSPublic(xpub) => {
+                // BLS public key derivation for non-hardened paths
+                let mut derived = xpub.clone();
+                for child_num in path.as_ref() {
+                    if child_num.is_hardened() {
+                        return Err(Error::InvalidParameter(
+                            "Cannot derive hardened child from BLS public key".into(),
+                        ));
+                    }
+                    derived = derived.derive_pub(*child_num).map_err(|e| {
+                        Error::InvalidParameter(format!("BLS public derivation error: {:?}", e))
+                    })?;
+                }
+                Ok(DerivedKey::BLS(derived.to_bytes().to_vec()))
+            }
+            #[cfg(feature = "eddsa")]
+            KeySource::EdDSAPrivate(xprv) => {
+                // EdDSA uses SLIP-0010 hardened-only derivation
+                let mut derived = xprv.clone();
+                for child_num in path.as_ref() {
+                    derived = derived.derive_priv(&[*child_num])?;
+                }
+                let pubkey = derived.public_key()?;
+                Ok(DerivedKey::EdDSA(pubkey.to_bytes().to_vec()))
+            }
+            #[cfg(feature = "eddsa")]
+            KeySource::EdDSAPublic(_xpub) => {
+                // EdDSA public key derivation is not supported (hardened-only)
+                Err(Error::InvalidParameter(
+                    "EdDSA public key derivation not supported (hardened-only)".into(),
+                ))
+            }
             KeySource::NoKeySource => Err(Error::NoKeySource),
+        }
+    }
+
+    /// Legacy method for ECDSA-only derivation (for backward compatibility)
+    pub fn derive_ecdsa_at_path(&self, path: &DerivationPath) -> Result<ExtendedPubKey> {
+        match self.derive_at_path(path)? {
+            DerivedKey::ECDSA(xpub) => Ok(xpub),
+            _ => Err(Error::InvalidParameter("Key source is not ECDSA".into())),
         }
     }
 
@@ -65,6 +212,8 @@ pub struct AddressInfo {
     pub address: Address,
     /// The script pubkey for this address
     pub script_pubkey: ScriptBuf,
+    /// The public key used to derive this address
+    pub public_key: Option<PublicKeyType>,
     /// Derivation index
     pub index: u32,
     /// Full derivation path
@@ -90,12 +239,18 @@ pub struct AddressInfo {
 }
 
 impl AddressInfo {
-    /// Create new address info
-    fn new(address: Address, index: u32, path: DerivationPath) -> Self {
+    /// Create new address info with a public key
+    fn new_with_public_key(
+        address: Address,
+        index: u32,
+        path: DerivationPath,
+        public_key: PublicKeyType,
+    ) -> Self {
         let script_pubkey = address.script_pubkey();
         Self {
             address,
             script_pubkey,
+            public_key: Some(public_key),
             index,
             path,
             used: false,
@@ -129,6 +284,7 @@ impl AddressInfo {
         Ok(Self {
             address,
             script_pubkey,
+            public_key: None, // Public key not available from script alone
             index,
             path,
             used: false,
@@ -166,41 +322,41 @@ impl AddressInfo {
 pub struct AddressPool {
     /// Base derivation path for this pool
     pub base_path: DerivationPath,
-    /// Whether this is a change/internal address pool
-    pub is_internal: bool,
+    /// Type of address pool (external, internal, or absent)
+    pub pool_type: AddressPoolType,
     /// Gap limit for this pool
     pub gap_limit: u32,
     /// Network for address generation
     pub network: Network,
     /// All addresses in the pool
-    addresses: BTreeMap<u32, AddressInfo>,
+    pub addresses: BTreeMap<u32, AddressInfo>,
     /// Reverse lookup: address -> index
-    address_index: HashMap<Address, u32>,
+    pub address_index: HashMap<Address, u32>,
     /// Reverse lookup: script pubkey -> index
-    script_pubkey_index: HashMap<ScriptBuf, u32>,
+    pub script_pubkey_index: HashMap<ScriptBuf, u32>,
     /// Set of used address indices
-    used_indices: HashSet<u32>,
+    pub used_indices: HashSet<u32>,
     /// Highest generated index (None if no addresses generated yet)
-    highest_generated: Option<u32>,
+    pub highest_generated: Option<u32>,
     /// Highest used index
-    highest_used: Option<u32>,
+    pub highest_used: Option<u32>,
     /// Lookahead window for performance
-    lookahead_size: u32,
+    pub lookahead_size: u32,
     /// Address type preference
-    address_type: AddressType,
+    pub address_type: AddressType,
 }
 
 impl AddressPool {
     /// Create a new address pool
     pub fn new(
         base_path: DerivationPath,
-        is_internal: bool,
+        pool_type: AddressPoolType,
         gap_limit: u32,
         network: Network,
     ) -> Self {
         Self {
             base_path,
-            is_internal,
+            pool_type,
             gap_limit,
             network,
             addresses: BTreeMap::new(),
@@ -217,6 +373,16 @@ impl AddressPool {
     /// Set the address type for new addresses
     pub fn set_address_type(&mut self, address_type: AddressType) {
         self.address_type = address_type;
+    }
+
+    /// Check if this is an internal (change) address pool
+    pub fn is_internal(&self) -> bool {
+        self.pool_type == AddressPoolType::Internal
+    }
+
+    /// Check if this is an external (receive) address pool
+    pub fn is_external(&self) -> bool {
+        self.pool_type == AddressPoolType::External
     }
 
     /// Generate addresses up to the specified count
@@ -248,41 +414,67 @@ impl AddressPool {
         let mut full_path = self.base_path.clone();
         full_path.push(ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?);
 
-        // For derivation, we only need the relative path from where the key_source is
+        // For derivation, we need the relative path from where the key_source is
         // The key_source xpub is at account level (e.g., m/44'/1'/0')
-        // We need to derive the receive/change branch and then the index
-        // So the relative path should be [0, index] for external or [1, index] for internal
-        let branch_num = if self.is_internal {
-            1
-        } else {
-            0
-        };
-        let relative_path = DerivationPath::from(vec![
-            ChildNumber::from_normal_idx(branch_num).map_err(Error::Bip32)?,
-            ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?,
-        ]);
+        // For standard accounts: [0, index] for external or [1, index] for internal
+        // For special accounts (Absent): just [index] with no branch distinction
+        let relative_path =
+            match self.pool_type {
+                AddressPoolType::External => DerivationPath::from(vec![
+                    ChildNumber::from_normal_idx(0).map_err(Error::Bip32)?,
+                    ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?,
+                ]),
+                AddressPoolType::Internal => DerivationPath::from(vec![
+                    ChildNumber::from_normal_idx(1).map_err(Error::Bip32)?,
+                    ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?,
+                ]),
+                AddressPoolType::Absent => DerivationPath::from(vec![
+                    ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?,
+                ]),
+            };
 
         // Derive the key using the relative path
-        let pubkey = key_source.derive_at_path(&relative_path)?;
+        let derived_key = key_source.derive_at_path(&relative_path)?;
 
-        // Generate the address
-        let dash_pubkey = dashcore::PublicKey::new(pubkey.public_key);
-        let network = self.network;
-        let address = match self.address_type {
-            AddressType::P2pkh => Address::p2pkh(&dash_pubkey, network),
-            AddressType::P2sh => {
-                // For P2SH, we'd need script information
-                // For now, default to P2PKH
-                Address::p2pkh(&dash_pubkey, network)
+        // Generate the address and public key type based on the derived key type
+        let (address, public_key_type) = match derived_key {
+            DerivedKey::ECDSA(xpub) => {
+                // Standard ECDSA address generation
+                let dash_pubkey = dashcore::PublicKey::new(xpub.public_key);
+                let network = self.network;
+                let address = match self.address_type {
+                    AddressType::P2pkh => Address::p2pkh(&dash_pubkey, network),
+                    AddressType::P2sh => {
+                        // For P2SH, we'd need script information
+                        // For now, default to P2PKH
+                        Address::p2pkh(&dash_pubkey, network)
+                    }
+                    _ => {
+                        // For other address types, default to P2PKH
+                        Address::p2pkh(&dash_pubkey, network)
+                    }
+                };
+                let public_key_bytes = dash_pubkey.to_bytes();
+                (address, PublicKeyType::ECDSA(public_key_bytes.to_vec()))
             }
-            _ => {
-                // For other address types, default to P2PKH
-                Address::p2pkh(&dash_pubkey, network)
+            DerivedKey::BLS(_public_key_bytes) => {
+                // BLS addresses are special - they don't map to regular addresses
+                // We'll create a dummy address for now, but this should be handled differently
+                // in production based on the specific use case
+                return Err(Error::InvalidParameter(
+                    "BLS keys cannot generate standard addresses".into(),
+                ));
+            }
+            DerivedKey::EdDSA(_public_key_bytes) => {
+                // EdDSA addresses are used for Platform identities
+                // They also don't map to regular blockchain addresses
+                return Err(Error::InvalidParameter(
+                    "EdDSA keys cannot generate standard addresses".into(),
+                ));
             }
         };
-
-        // Store the address info
-        let info = AddressInfo::new(address.clone(), index, full_path);
+        let info =
+            AddressInfo::new_with_public_key(address.clone(), index, full_path, public_key_type);
         let script_pubkey = info.script_pubkey.clone();
         self.addresses.insert(index, info);
         self.address_index.insert(address.clone(), index);
@@ -578,7 +770,7 @@ impl AddressPool {
             highest_used: self.highest_used,
             highest_generated: self.highest_generated,
             gap_limit: self.gap_limit,
-            is_internal: self.is_internal,
+            is_internal: self.is_internal(),
         }
     }
 
@@ -667,7 +859,7 @@ impl fmt::Display for PoolStats {
 /// Builder for AddressPool
 pub struct AddressPoolBuilder {
     base_path: Option<DerivationPath>,
-    is_internal: bool,
+    pool_type: AddressPoolType,
     gap_limit: u32,
     network: Network,
     lookahead_size: u32,
@@ -679,7 +871,7 @@ impl AddressPoolBuilder {
     pub fn new() -> Self {
         Self {
             base_path: None,
-            is_internal: false,
+            pool_type: AddressPoolType::External,
             gap_limit: 20,
             network: Network::Dash,
             lookahead_size: 40,
@@ -693,9 +885,19 @@ impl AddressPoolBuilder {
         self
     }
 
-    /// Set whether this is an internal (change) pool
+    /// Set the pool type (external, internal, or absent)
+    pub fn pool_type(mut self, pool_type: AddressPoolType) -> Self {
+        self.pool_type = pool_type;
+        self
+    }
+
+    /// Set whether this is an internal (change) pool (compatibility method)
     pub fn internal(mut self, is_internal: bool) -> Self {
-        self.is_internal = is_internal;
+        self.pool_type = if is_internal {
+            AddressPoolType::Internal
+        } else {
+            AddressPoolType::External
+        };
         self
     }
 
@@ -728,7 +930,7 @@ impl AddressPoolBuilder {
         let base_path =
             self.base_path.ok_or(Error::InvalidParameter("base_path required".into()))?;
 
-        let mut pool = AddressPool::new(base_path, self.is_internal, self.gap_limit, self.network);
+        let mut pool = AddressPool::new(base_path, self.pool_type, self.gap_limit, self.network);
         pool.lookahead_size = self.lookahead_size;
         pool.address_type = self.address_type;
 
@@ -769,7 +971,7 @@ mod tests {
     #[test]
     fn test_address_pool_generation() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new(base_path, false, 20, Network::Testnet);
+        let mut pool = AddressPool::new(base_path, AddressPoolType::External, 20, Network::Testnet);
         let key_source = test_key_source();
 
         let addresses = pool.generate_addresses(10, &key_source).unwrap();
@@ -781,7 +983,7 @@ mod tests {
     #[test]
     fn test_address_usage() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new(base_path, false, 5, Network::Testnet);
+        let mut pool = AddressPool::new(base_path, AddressPoolType::External, 5, Network::Testnet);
         let key_source = test_key_source();
 
         let addresses = pool.generate_addresses(5, &key_source).unwrap();
@@ -799,7 +1001,7 @@ mod tests {
     #[test]
     fn test_next_unused() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new(base_path, false, 5, Network::Testnet);
+        let mut pool = AddressPool::new(base_path, AddressPoolType::External, 5, Network::Testnet);
         let key_source = test_key_source();
 
         let addr1 = pool.next_unused(&key_source).unwrap();
@@ -814,7 +1016,7 @@ mod tests {
     #[test]
     fn test_gap_limit_maintenance() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new(base_path, false, 5, Network::Testnet);
+        let mut pool = AddressPool::new(base_path, AddressPoolType::External, 5, Network::Testnet);
         let key_source = test_key_source();
 
         // Generate initial addresses
@@ -847,7 +1049,7 @@ mod tests {
     #[test]
     fn test_scan_for_usage() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new(base_path, false, 5, Network::Testnet);
+        let mut pool = AddressPool::new(base_path, AddressPoolType::External, 5, Network::Testnet);
         let key_source = test_key_source();
 
         let addresses = pool.generate_addresses(10, &key_source).unwrap();

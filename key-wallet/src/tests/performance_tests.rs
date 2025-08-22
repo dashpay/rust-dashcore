@@ -166,7 +166,7 @@ fn test_wallet_recovery_performance() {
 
 #[test]
 fn test_address_generation_batch_performance() {
-    use crate::account::address_pool::{AddressPool, KeySource};
+    use crate::account::address_pool::{AddressPool, AddressPoolType, KeySource};
 
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
@@ -185,7 +185,7 @@ fn test_address_generation_batch_performance() {
     let key_source = KeySource::Private(account_key);
 
     let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-    let mut pool = AddressPool::new(base_path, false, 20, Network::Testnet);
+    let mut pool = AddressPool::new(base_path, AddressPoolType::External, 20, Network::Testnet);
 
     // Batch generation test
     let batch_sizes = vec![10, 50, 100, 500];
@@ -380,7 +380,7 @@ fn test_transaction_checking_performance() {
 
 #[test]
 fn test_gap_limit_scan_performance() {
-    use crate::account::address_pool::{AddressPool, KeySource};
+    use crate::account::address_pool::{AddressPool, AddressPoolType, KeySource};
 
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
@@ -399,7 +399,7 @@ fn test_gap_limit_scan_performance() {
     let key_source = KeySource::Private(account_key);
 
     let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-    let mut pool = AddressPool::new(base_path, false, 20, Network::Testnet);
+    let mut pool = AddressPool::new(base_path, AddressPoolType::External, 20, Network::Testnet);
 
     // Generate addresses with gaps
     pool.generate_addresses(100, &key_source).unwrap();

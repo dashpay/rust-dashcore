@@ -167,18 +167,19 @@ fn test_duplicate_account_handling() {
 
 #[test]
 fn test_extreme_gap_limit() {
-    use crate::account::address_pool::AddressPool;
+    use crate::account::address_pool::{AddressPool, AddressPoolType};
     use crate::bip32::DerivationPath;
 
     // Test with extremely large gap limit
     let base_path = DerivationPath::from(vec![ChildNumber::from(0)]);
-    let pool = AddressPool::new(base_path.clone(), false, 10000, Network::Testnet);
+    let pool =
+        AddressPool::new(base_path.clone(), AddressPoolType::External, 10000, Network::Testnet);
 
     // Should handle large gap limits without issues
     assert_eq!(pool.gap_limit, 10000);
 
     // Test with zero gap limit
-    let zero_gap_pool = AddressPool::new(base_path, false, 0, Network::Testnet);
+    let zero_gap_pool = AddressPool::new(base_path, AddressPoolType::External, 0, Network::Testnet);
     assert_eq!(zero_gap_pool.gap_limit, 0);
 }
 

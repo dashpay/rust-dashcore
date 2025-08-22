@@ -197,13 +197,13 @@ mod tests {
                 standard_account_type: crate::account::types::StandardAccountType::BIP44Account,
                 external_addresses: crate::account::address_pool::AddressPool::new(
                     external_path,
-                    false,
+                    crate::account::address_pool::AddressPoolType::External,
                     20,
                     Network::Testnet,
                 ),
                 internal_addresses: crate::account::address_pool::AddressPool::new(
                     internal_path,
-                    true,
+                    crate::account::address_pool::AddressPoolType::Internal,
                     20,
                     Network::Testnet,
                 ),

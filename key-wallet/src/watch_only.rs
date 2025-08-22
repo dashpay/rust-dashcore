@@ -7,8 +7,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::{
-    Address, AddressInfo, AddressPool, ChildNumber, DerivationPath, Error, ExtendedPubKey,
-    KeySource, Network, PoolStats, Result,
+    account::address_pool::AddressPoolType, Address, AddressInfo, AddressPool, ChildNumber,
+    DerivationPath, Error, ExtendedPubKey, KeySource, Network, PoolStats, Result,
 };
 
 /// A watch-only wallet that can generate and track addresses without private keys
@@ -48,15 +48,15 @@ impl WatchOnlyWallet {
         // Create pools with proper derivation paths
         let external_pool = AddressPool::new(
             external_path,
-            false, // is_internal
-            20,    // gap_limit
+            AddressPoolType::External,
+            20, // gap_limit
             network,
         );
 
         let internal_pool = AddressPool::new(
             internal_path,
-            true, // is_internal
-            20,   // gap_limit
+            AddressPoolType::Internal,
+            20, // gap_limit
             network,
         );
 

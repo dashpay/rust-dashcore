@@ -537,6 +537,19 @@ impl ManagedAccountType {
         None
     }
 
+    /// Get address info for a given address
+    pub fn get_address_info(
+        &self,
+        address: &crate::Address,
+    ) -> Option<crate::account::address_pool::AddressInfo> {
+        for pool in self.address_pools() {
+            if let Some(info) = pool.address_info(address) {
+                return Some(info.clone());
+            }
+        }
+        None
+    }
+
     /// Mark an address as used
     pub fn mark_address_used(&mut self, address: &crate::Address) -> bool {
         for pool in self.get_address_pools_mut() {

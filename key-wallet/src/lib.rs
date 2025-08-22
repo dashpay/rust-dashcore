@@ -32,6 +32,10 @@ pub mod bip32;
 #[cfg(feature = "bip38")]
 pub mod bip38;
 pub mod derivation;
+#[cfg(feature = "bls")]
+pub mod derivation_bls_bip32;
+#[cfg(feature = "eddsa")]
+pub mod derivation_slip10;
 pub mod dip9;
 pub mod error;
 pub mod gap_limit;

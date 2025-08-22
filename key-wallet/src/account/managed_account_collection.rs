@@ -4,7 +4,7 @@
 //! across different networks in a hierarchical manner.
 
 use super::account_collection::AccountCollection;
-use super::address_pool::AddressPool;
+use super::address_pool::{AddressPool, AddressPoolType};
 use super::managed_account::ManagedAccount;
 use super::types::{AccountType, ManagedAccountType};
 use crate::gap_limit::GapLimitManager;
@@ -116,12 +116,12 @@ impl ManagedAccountCollection {
 
         if let Some(account) = &account_collection.provider_operator_keys {
             managed_collection.provider_operator_keys =
-                Some(Self::create_managed_account_from_account(account));
+                Some(Self::create_managed_account_from_bls_account(account));
         }
 
         if let Some(account) = &account_collection.provider_platform_keys {
             managed_collection.provider_platform_keys =
-                Some(Self::create_managed_account_from_account(account));
+                Some(Self::create_managed_account_from_eddsa_account(account));
         }
 
         managed_collection
@@ -129,6 +129,24 @@ impl ManagedAccountCollection {
 
     /// Create a ManagedAccount from an Account
     fn create_managed_account_from_account(account: &super::Account) -> ManagedAccount {
+        Self::create_managed_account_from_account_type(
+            account.account_type,
+            account.network,
+            account.is_watch_only,
+        )
+    }
+
+    /// Create a ManagedAccount from an Account
+    fn create_managed_account_from_bls_account(account: &super::BLSAccount) -> ManagedAccount {
+        Self::create_managed_account_from_account_type(
+            account.account_type,
+            account.network,
+            account.is_watch_only,
+        )
+    }
+
+    /// Create a ManagedAccount from an Account
+    fn create_managed_account_from_eddsa_account(account: &super::EdDSAAccount) -> ManagedAccount {
         Self::create_managed_account_from_account_type(
             account.account_type,
             account.network,
@@ -156,11 +174,13 @@ impl ManagedAccountCollection {
                 // For standard accounts, add the receive/change branch to the path
                 let mut external_path = base_path.clone();
                 external_path.push(crate::bip32::ChildNumber::from_normal_idx(0).unwrap()); // 0 for external
-                let external_pool = AddressPool::new(external_path, false, 20, network);
+                let external_pool =
+                    AddressPool::new(external_path, AddressPoolType::External, 20, network);
 
                 let mut internal_path = base_path;
                 internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1).unwrap()); // 1 for internal
-                let internal_pool = AddressPool::new(internal_path, true, 20, network);
+                let internal_pool =
+                    AddressPool::new(internal_path, AddressPoolType::Internal, 20, network);
 
                 let managed_standard_type = standard_account_type;
 
@@ -174,14 +194,14 @@ impl ManagedAccountCollection {
             AccountType::CoinJoin {
                 index,
             } => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
+                let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
                 ManagedAccountType::CoinJoin {
                     index,
                     addresses,
                 }
             }
             AccountType::IdentityRegistration => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
+                let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
                 ManagedAccountType::IdentityRegistration {
                     addresses,
                 }
@@ -189,44 +209,44 @@ impl ManagedAccountCollection {
             AccountType::IdentityTopUp {
                 registration_index,
             } => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
+                let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
                 ManagedAccountType::IdentityTopUp {
                     registration_index,
                     addresses,
                 }
             }
             AccountType::IdentityTopUpNotBoundToIdentity => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
+                let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
                 ManagedAccountType::IdentityTopUpNotBoundToIdentity {
                     addresses,
                 }
             }
             AccountType::IdentityInvitation => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
+                let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
                 ManagedAccountType::IdentityInvitation {
                     addresses,
                 }
             }
             AccountType::ProviderVotingKeys => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
+                let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
                 ManagedAccountType::ProviderVotingKeys {
                     addresses,
                 }
             }
             AccountType::ProviderOwnerKeys => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
+                let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
                 ManagedAccountType::ProviderOwnerKeys {
                     addresses,
                 }
             }
             AccountType::ProviderOperatorKeys => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
+                let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
                 ManagedAccountType::ProviderOperatorKeys {
                     addresses,
                 }
             }
             AccountType::ProviderPlatformKeys => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
+                let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
                 ManagedAccountType::ProviderPlatformKeys {
                     addresses,
                 }
@@ -293,13 +313,12 @@ impl ManagedAccountCollection {
             ManagedAccountType::ProviderOperatorKeys {
                 ..
             } => {
-                self.provider_operator_keys = Some(account);
+                // Should not insert regular ManagedAccount for BLS keys
+                // Use insert_bls_account instead
             }
             ManagedAccountType::ProviderPlatformKeys {
                 ..
-            } => {
-                self.provider_platform_keys = Some(account);
-            }
+            } => {}
         }
     }
 

@@ -9,7 +9,7 @@ use bincode_derive::{Decode, Encode};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::account::Account;
+use crate::account::{Account, BLSAccount, EdDSAAccount};
 use crate::AccountType;
 
 /// Collection of accounts organized by type
@@ -36,9 +36,9 @@ pub struct AccountCollection {
     /// Provider owner keys (optional)
     pub provider_owner_keys: Option<Account>,
     /// Provider operator keys (optional)
-    pub provider_operator_keys: Option<Account>,
+    pub provider_operator_keys: Option<BLSAccount>,
     /// Provider platform keys (optional)
-    pub provider_platform_keys: Option<Account>,
+    pub provider_platform_keys: Option<EdDSAAccount>,
 }
 
 impl AccountCollection {
@@ -59,8 +59,9 @@ impl AccountCollection {
         }
     }
 
-    /// Insert an account into the collection
-    pub fn insert(&mut self, account: Account) {
+    /// Insert an ECDSA account into the collection
+    /// Returns an error for ProviderOperatorKeys and ProviderPlatformKeys
+    pub fn insert(&mut self, account: Account) -> Result<(), &'static str> {
         use crate::account::{AccountType, StandardAccountType};
 
         match &account.account_type {
@@ -101,12 +102,31 @@ impl AccountCollection {
                 self.provider_owner_keys = Some(account);
             }
             AccountType::ProviderOperatorKeys => {
-                self.provider_operator_keys = Some(account);
+                return Err("ProviderOperatorKeys requires BLSAccount, use insert_bls_account");
             }
             AccountType::ProviderPlatformKeys => {
-                self.provider_platform_keys = Some(account);
+                return Err("ProviderPlatformKeys requires EdDSAAccount, use insert_eddsa_account");
             }
         }
+        Ok(())
+    }
+
+    /// Insert a BLS account for provider operator keys
+    pub fn insert_bls_account(&mut self, account: BLSAccount) -> Result<(), &'static str> {
+        if !matches!(account.account_type, AccountType::ProviderOperatorKeys) {
+            return Err("BLS account must have ProviderOperatorKeys type");
+        }
+        self.provider_operator_keys = Some(account);
+        Ok(())
+    }
+
+    /// Insert an EdDSA account for provider platform keys
+    pub fn insert_eddsa_account(&mut self, account: EdDSAAccount) -> Result<(), &'static str> {
+        if !matches!(account.account_type, AccountType::ProviderPlatformKeys) {
+            return Err("EdDSA account must have ProviderPlatformKeys type");
+        }
+        self.provider_platform_keys = Some(account);
+        Ok(())
     }
 
     /// Check if a specific account type already exists in the collection
@@ -142,6 +162,7 @@ impl AccountCollection {
     }
 
     /// Get an account with a specific type
+    /// Returns None for ProviderOperatorKeys and ProviderPlatformKeys (use specific methods)
     pub fn account_of_type(&self, account_type: AccountType) -> Option<&Account> {
         use crate::account::{AccountType, StandardAccountType};
 
@@ -164,12 +185,13 @@ impl AccountCollection {
             AccountType::IdentityInvitation => self.identity_invitation.as_ref(),
             AccountType::ProviderVotingKeys => self.provider_voting_keys.as_ref(),
             AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_ref(),
-            AccountType::ProviderOperatorKeys => self.provider_operator_keys.as_ref(),
-            AccountType::ProviderPlatformKeys => self.provider_platform_keys.as_ref(),
+            AccountType::ProviderOperatorKeys => None, // BLSAccount, use bls_account_of_type
+            AccountType::ProviderPlatformKeys => None, // EdDSAAccount, use eddsa_account_of_type
         }
     }
 
     /// Get an account with a specific type (mutable)
+    /// Returns None for ProviderOperatorKeys and ProviderPlatformKeys (use specific methods)
     pub fn account_of_type_mut(&mut self, account_type: AccountType) -> Option<&mut Account> {
         use crate::account::{AccountType, StandardAccountType};
 
@@ -192,12 +214,12 @@ impl AccountCollection {
             AccountType::IdentityInvitation => self.identity_invitation.as_mut(),
             AccountType::ProviderVotingKeys => self.provider_voting_keys.as_mut(),
             AccountType::ProviderOwnerKeys => self.provider_owner_keys.as_mut(),
-            AccountType::ProviderOperatorKeys => self.provider_operator_keys.as_mut(),
-            AccountType::ProviderPlatformKeys => self.provider_platform_keys.as_mut(),
+            AccountType::ProviderOperatorKeys => None, // BLSAccount, use bls_account_of_type_mut
+            AccountType::ProviderPlatformKeys => None, // EdDSAAccount, use eddsa_account_of_type_mut
         }
     }
 
-    /// Get all accounts
+    /// Get all ECDSA accounts (excludes BLS and EdDSA accounts)
     pub fn all_accounts(&self) -> Vec<&Account> {
         let mut accounts = Vec::new();
 
@@ -227,18 +249,13 @@ impl AccountCollection {
             accounts.push(account);
         }
 
-        if let Some(account) = &self.provider_operator_keys {
-            accounts.push(account);
-        }
-
-        if let Some(account) = &self.provider_platform_keys {
-            accounts.push(account);
-        }
+        // Note: provider_operator_keys (BLS) and provider_platform_keys (EdDSA) are excluded
+        // Use specific methods to access them
 
         accounts
     }
 
-    /// Get all accounts mutably
+    /// Get all ECDSA accounts mutably (excludes BLS and EdDSA accounts)
     pub fn all_accounts_mut(&mut self) -> Vec<&mut Account> {
         let mut accounts = Vec::new();
 
@@ -268,20 +285,60 @@ impl AccountCollection {
             accounts.push(account);
         }
 
-        if let Some(account) = &mut self.provider_operator_keys {
-            accounts.push(account);
-        }
-
-        if let Some(account) = &mut self.provider_platform_keys {
-            accounts.push(account);
-        }
+        // Note: provider_operator_keys (BLS) and provider_platform_keys (EdDSA) are excluded
+        // Use specific methods to access them
 
         accounts
     }
 
-    /// Get the count of accounts
+    /// Get the BLS account (provider operator keys)
+    pub fn bls_account_of_type(&self, account_type: AccountType) -> Option<&BLSAccount> {
+        match account_type {
+            AccountType::ProviderOperatorKeys => self.provider_operator_keys.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Get the BLS account mutably (provider operator keys)
+    pub fn bls_account_of_type_mut(
+        &mut self,
+        account_type: AccountType,
+    ) -> Option<&mut BLSAccount> {
+        match account_type {
+            AccountType::ProviderOperatorKeys => self.provider_operator_keys.as_mut(),
+            _ => None,
+        }
+    }
+
+    /// Get the EdDSA account (provider platform keys)
+    pub fn eddsa_account_of_type(&self, account_type: AccountType) -> Option<&EdDSAAccount> {
+        match account_type {
+            AccountType::ProviderPlatformKeys => self.provider_platform_keys.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Get the EdDSA account mutably (provider platform keys)
+    pub fn eddsa_account_of_type_mut(
+        &mut self,
+        account_type: AccountType,
+    ) -> Option<&mut EdDSAAccount> {
+        match account_type {
+            AccountType::ProviderPlatformKeys => self.provider_platform_keys.as_mut(),
+            _ => None,
+        }
+    }
+
+    /// Get the count of accounts (includes BLS and EdDSA accounts)
     pub fn count(&self) -> usize {
-        self.all_accounts().len()
+        let mut count = self.all_accounts().len();
+        if self.provider_operator_keys.is_some() {
+            count += 1;
+        }
+        if self.provider_platform_keys.is_some() {
+            count += 1;
+        }
+        count
     }
 
     /// Get all account indices
@@ -326,3 +383,7 @@ impl AccountCollection {
         self.provider_platform_keys = None;
     }
 }
+
+#[cfg(test)]
+#[path = "account_collection_test.rs"]
+mod tests;
