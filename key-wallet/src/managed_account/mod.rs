@@ -3,10 +3,10 @@
 //! This module contains the mutable account state that changes during wallet operation,
 //! kept separate from the immutable Account structure.
 
-use super::managed_account_trait::ManagedAccountTrait;
-use super::metadata::AccountMetadata;
-use super::transaction_record::TransactionRecord;
-use super::types::ManagedAccountType;
+use crate::account::{BLSAccount, EdDSAAccount, ManagedAccountTrait};
+use crate::account::AccountMetadata;
+use crate::account::TransactionRecord;
+use managed_account_type::ManagedAccountType;
 use crate::gap_limit::GapLimitManager;
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletBalance;
@@ -17,6 +17,13 @@ use dashcore::Txid;
 use dashcore::{Address, ScriptBuf};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
+pub mod managed_account_collection;
+pub mod managed_account_trait;
+pub mod metadata;
+pub mod transaction_record;
+pub mod address_pool;
+pub mod managed_account_type;
 
 /// Managed account with mutable state
 ///
@@ -67,6 +74,38 @@ impl ManagedAccount {
         }
     }
 
+    /// Create a ManagedAccount from an Account
+    pub fn from_account(account: &super::Account) -> Self {
+        Self::new(
+            ManagedAccountType::from_account_type(account.account_type, account.network),
+            account.network,
+            GapLimitManager::default(),
+            account.is_watch_only,
+        )
+    }
+
+    /// Create a ManagedAccount from a BLS Account
+    #[cfg(feature = "bls")]
+    pub fn from_bls_account(account: &BLSAccount) -> Self {
+        Self::new(
+            ManagedAccountType::from_account_type(account.account_type, account.network),
+            account.network,
+            GapLimitManager::default(),
+            account.is_watch_only,
+        )
+    }
+
+    /// Create a ManagedAccount from an EdDSA Account
+    #[cfg(feature = "eddsa")]
+    pub fn from_eddsa_account(account: &EdDSAAccount) -> Self {
+        Self::new(
+            ManagedAccountType::from_account_type(account.account_type, account.network),
+            account.network,
+            GapLimitManager::default(),
+            account.is_watch_only,
+        )
+    }
+
     /// Get the account index
     pub fn index(&self) -> Option<u32> {
         self.account_type.index()
@@ -75,6 +114,11 @@ impl ManagedAccount {
     /// Get the account index or 0 if none exists
     pub fn index_or_default(&self) -> u32 {
         self.account_type.index_or_default()
+    }
+
+    /// Get the managed account type
+    pub fn managed_type(&self) -> &ManagedAccountType {
+        &self.account_type
     }
 
     /// Get the next unused receive address index for standard accounts
@@ -238,7 +282,7 @@ impl ManagedAccount {
     pub fn get_address_info(
         &self,
         address: &Address,
-    ) -> Option<crate::account::address_pool::AddressInfo> {
+    ) -> Option<address_pool::AddressInfo> {
         self.account_type.get_address_info(address)
     }
 
@@ -258,8 +302,8 @@ impl ManagedAccount {
         {
             // Create appropriate key source based on whether xpub is provided
             let key_source = match account_xpub {
-                Some(xpub) => crate::account::address_pool::KeySource::Public(*xpub),
-                None => crate::account::address_pool::KeySource::NoKeySource,
+                Some(xpub) => address_pool::KeySource::Public(*xpub),
+                None => address_pool::KeySource::NoKeySource,
             };
 
             external_addresses.next_unused(&key_source).map_err(|e| match e {
@@ -288,8 +332,8 @@ impl ManagedAccount {
         {
             // Create appropriate key source based on whether xpub is provided
             let key_source = match account_xpub {
-                Some(xpub) => crate::account::address_pool::KeySource::Public(*xpub),
-                None => crate::account::address_pool::KeySource::NoKeySource,
+                Some(xpub) => address_pool::KeySource::Public(*xpub),
+                None => address_pool::KeySource::NoKeySource,
             };
 
             internal_addresses.next_unused(&key_source).map_err(|e| match e {
@@ -348,8 +392,8 @@ impl ManagedAccount {
             } => {
                 // Create appropriate key source based on whether xpub is provided
                 let key_source = match account_xpub {
-                    Some(xpub) => crate::account::address_pool::KeySource::Public(*xpub),
-                    None => crate::account::address_pool::KeySource::NoKeySource,
+                    Some(xpub) => address_pool::KeySource::Public(*xpub),
+                    None => address_pool::KeySource::NoKeySource,
                 };
 
                 addresses.next_unused(&key_source).map_err(|e| match e {
@@ -365,8 +409,8 @@ impl ManagedAccount {
             } => {
                 // Identity top-up has an address pool
                 let key_source = match account_xpub {
-                    Some(xpub) => crate::account::address_pool::KeySource::Public(*xpub),
-                    None => crate::account::address_pool::KeySource::NoKeySource,
+                    Some(xpub) => address_pool::KeySource::Public(*xpub),
+                    None => address_pool::KeySource::NoKeySource,
                 };
 
                 addresses.next_unused(&key_source).map_err(|e| match e {

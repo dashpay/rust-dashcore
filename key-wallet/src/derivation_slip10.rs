@@ -9,7 +9,6 @@
 //! - Different serialization format (no xpub/xprv, custom encoding)
 
 use core::fmt;
-use core::str::FromStr;
 #[cfg(feature = "std")]
 use std::error;
 
@@ -18,9 +17,6 @@ pub use dashcore::ed25519_dalek::{SigningKey, VerifyingKey};
 use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 #[cfg(feature = "serde")]
 use serde;
-
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
 use dash_network::Network;
 // Re-export ChainCode, Fingerprint and ChildNumber from bip32
 use crate::bip32::{ChainCode, ChildNumber, Fingerprint};
@@ -580,6 +576,24 @@ impl bincode::Decode for ExtendedEd25519PubKey {
             public_key,
             chain_code,
         })
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<'de> bincode::BorrowDecode<'de> for ExtendedEd25519PrivKey {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        <Self as bincode::Decode>::decode(decoder)
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<'de> bincode::BorrowDecode<'de> for ExtendedEd25519PubKey {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        <Self as bincode::Decode>::decode(decoder)
     }
 }
 

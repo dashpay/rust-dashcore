@@ -62,13 +62,11 @@ impl BLSAccount {
         parent_wallet_id: Option<Vec<u8>>,
         account_type: AccountType,
         bls_public_key: [u8; 48],
-        format: SerializationFormat,
         network: Network,
     ) -> Result<Self> {
         // Create a BlsPublicKey from bytes
-        let public_key =
-            BLSPublicKey::<Bls12381G2Impl>::from_bytes_with_mode(&bls_public_key, format)
-                .map_err(|e| Error::InvalidParameter(format!("Invalid BLS public key: {}", e)))?;
+        let public_key = BLSPublicKey::<Bls12381G2Impl>::from_bytes_with_mode(&bls_public_key, SerializationFormat::Modern)
+            .map_err(|e| Error::InvalidParameter(format!("Invalid BLS public key: {}", e)))?;
 
         // Create an extended public key with default metadata
         let extended_key = ExtendedBLSPubKey {
@@ -234,7 +232,7 @@ impl fmt::Display for BLSAccount {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::account::types::StandardAccountType;
+    use crate::account::account_type::StandardAccountType;
 
     #[test]
     fn test_bls_account_creation() {

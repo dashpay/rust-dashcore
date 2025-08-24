@@ -163,9 +163,9 @@ impl ManagedWalletInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::account::managed_account::ManagedAccount;
-    use crate::account::managed_account_collection::ManagedAccountCollection;
-    use crate::account::types::ManagedAccountType;
+    use crate::managed_account::ManagedAccount;
+    use crate::managed_account::managed_account_collection::ManagedAccountCollection;
+    use crate::managed_account::managed_account_type::ManagedAccountType;
     use crate::bip32::DerivationPath;
     use crate::gap_limit::GapLimitManager;
     use dashcore::{Address, PublicKey, ScriptBuf, TxOut, Txid};
@@ -194,16 +194,16 @@ mod tests {
         let mut bip44_account = ManagedAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
-                standard_account_type: crate::account::types::StandardAccountType::BIP44Account,
-                external_addresses: crate::account::address_pool::AddressPool::new(
+                standard_account_type: crate::account::account_type::StandardAccountType::BIP44Account,
+                external_addresses: crate::managed_account::address_pool::AddressPool::new(
                     external_path,
-                    crate::account::address_pool::AddressPoolType::External,
+                    crate::managed_account::address_pool::AddressPoolType::External,
                     20,
                     Network::Testnet,
                 ),
-                internal_addresses: crate::account::address_pool::AddressPool::new(
+                internal_addresses: crate::managed_account::address_pool::AddressPool::new(
                     internal_path,
-                    crate::account::address_pool::AddressPoolType::Internal,
+                    crate::managed_account::address_pool::AddressPoolType::Internal,
                     20,
                     Network::Testnet,
                 ),

@@ -29,11 +29,6 @@ pub trait AccountTrait {
         self.account_type().index()
     }
 
-    /// Get the account index or 0 if none exists
-    fn index_or_default(&self) -> u32 {
-        self.account_type().index_or_default()
-    }
-
     /// Get the derivation path reference for this account
     fn derivation_path_reference(&self) -> DerivationPathReference {
         self.account_type().derivation_path_reference()
@@ -83,9 +78,7 @@ pub trait AccountTrait {
     where
         Self: Sized + Clone,
     {
-        let watch_only = self.clone();
-        // Implementation will need to set is_watch_only flag
-        watch_only
+        self.clone()
     }
 }
 

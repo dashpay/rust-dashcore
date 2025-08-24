@@ -10,7 +10,7 @@ use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFINetwork, FFIWallet};
-use key_wallet::account::address_pool::KeySource;
+use key_wallet::managed_account::address_pool::{AddressPoolType, KeySource};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
 /// FFI wrapper for ManagedWalletInfo
@@ -126,7 +126,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
 
     // Generate the next receive address
     let xpub = account.extended_public_key();
-    match managed_account.next_receive_address(&xpub) {
+    match managed_account.next_receive_address(Some(&xpub)) {
         Ok(address) => {
             let address_str = address.to_string();
             match CString::new(address_str) {
@@ -246,7 +246,7 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
 
     // Generate the next change address
     let xpub = account.extended_public_key();
-    match managed_account.next_change_address(&xpub) {
+    match managed_account.next_change_address(Some(&xpub)) {
         Ok(address) => {
             let address_str = address.to_string();
             match CString::new(address_str) {
@@ -732,6 +732,7 @@ mod tests {
     use crate::managed_wallet::*;
     use crate::types::FFINetwork;
     use crate::wallet;
+    use key_wallet::managed_account::managed_account_type::ManagedAccountType;
     use std::ffi::{CStr, CString};
     use std::ptr;
 
@@ -924,12 +925,10 @@ mod tests {
 
     #[test]
     fn test_comprehensive_address_generation() {
-        use key_wallet::account::address_pool::AddressPool;
-        use key_wallet::account::{
-            ManagedAccount, ManagedAccountCollection, ManagedAccountType, StandardAccountType,
-        };
+        use key_wallet::account::{ManagedAccount, ManagedAccountCollection, StandardAccountType};
         use key_wallet::bip32::DerivationPath;
         use key_wallet::gap_limit::GapLimitManager;
+        use key_wallet::managed_account::address_pool::AddressPool;
 
         let mut error = FFIError::success();
 
@@ -963,13 +962,13 @@ mod tests {
         // Create a managed account with address pools
         let external_pool = AddressPool::new(
             DerivationPath::from(vec![key_wallet::bip32::ChildNumber::from_normal_idx(0).unwrap()]),
-            false,
+            AddressPoolType::External,
             20,
             network,
         );
         let internal_pool = AddressPool::new(
             DerivationPath::from(vec![key_wallet::bip32::ChildNumber::from_normal_idx(1).unwrap()]),
-            true,
+            AddressPoolType::Internal,
             20,
             network,
         );

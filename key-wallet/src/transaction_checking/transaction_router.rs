@@ -3,7 +3,7 @@
 //! This module determines which account types should be checked
 //! for different transaction types.
 
-use crate::ManagedAccountType;
+use crate::managed_account::managed_account_type::ManagedAccountType;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
 
@@ -176,10 +176,10 @@ impl From<ManagedAccountType> for AccountTypeToCheck {
                 standard_account_type,
                 ..
             } => match standard_account_type {
-                crate::account::types::StandardAccountType::BIP44Account => {
+                crate::account::account_type::StandardAccountType::BIP44Account => {
                     AccountTypeToCheck::StandardBIP44
                 }
-                crate::account::types::StandardAccountType::BIP32Account => {
+                crate::account::account_type::StandardAccountType::BIP32Account => {
                     AccountTypeToCheck::StandardBIP32
                 }
             },
@@ -221,10 +221,10 @@ impl From<&ManagedAccountType> for AccountTypeToCheck {
                 standard_account_type,
                 ..
             } => match standard_account_type {
-                crate::account::types::StandardAccountType::BIP44Account => {
+                crate::account::account_type::StandardAccountType::BIP44Account => {
                     AccountTypeToCheck::StandardBIP44
                 }
-                crate::account::types::StandardAccountType::BIP32Account => {
+                crate::account::account_type::StandardAccountType::BIP32Account => {
                     AccountTypeToCheck::StandardBIP32
                 }
             },

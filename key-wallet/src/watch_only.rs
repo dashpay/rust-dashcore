@@ -7,9 +7,10 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::{
-    account::address_pool::AddressPoolType, Address, AddressInfo, AddressPool, ChildNumber,
+    Address, AddressInfo, AddressPool, ChildNumber,
     DerivationPath, Error, ExtendedPubKey, KeySource, Network, PoolStats, Result,
 };
+use crate::managed_account::address_pool::AddressPoolType;
 
 /// A watch-only wallet that can generate and track addresses without private keys
 #[derive(Debug, Clone)]

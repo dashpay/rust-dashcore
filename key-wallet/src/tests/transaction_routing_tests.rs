@@ -2,18 +2,17 @@
 //!
 //! Tests how transactions are routed to the appropriate accounts based on their type.
 
-use crate::account::address_pool::{AddressPool, AddressPoolType};
-use crate::account::managed_account::ManagedAccount;
-use crate::account::managed_account_collection::ManagedAccountCollection;
-use crate::account::types::{
-    ManagedAccountType, StandardAccountType as ManagedStandardAccountType,
-};
+use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+use crate::managed_account::ManagedAccount;
+use crate::managed_account::managed_account_collection::ManagedAccountCollection;
+use crate::account::account_type::StandardAccountType as ManagedStandardAccountType;
 use crate::account::{AccountType, StandardAccountType};
 use crate::gap_limit::GapLimitManager;
 use crate::wallet::ManagedWalletInfo;
 use crate::Network;
 use dashcore::hashes::Hash;
 use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use crate::managed_account::managed_account_type::ManagedAccountType;
 
 /// Helper to create a test managed account
 fn create_test_managed_account(network: Network, account_type: AccountType) -> ManagedAccount {
@@ -343,7 +342,7 @@ fn test_transaction_routing_to_coinjoin_account() {
             } = &mut managed_account.account_type
             {
                 addresses
-                    .next_unused(&crate::account::address_pool::KeySource::Public(xpub))
+                    .next_unused(&crate::managed_account::address_pool::KeySource::Public(xpub))
                     .unwrap_or_else(|_| {
                         // If that fails, generate a dummy address for testing
                         dashcore::Address::p2pkh(

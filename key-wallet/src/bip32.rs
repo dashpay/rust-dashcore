@@ -621,6 +621,23 @@ impl ChildNumber {
         }
     }
 
+    /// Create a [`Normal`] or [`Hardened`] from an index, returns an error if the index is not within
+    /// [0, 2^31 - 1].
+    ///
+    /// [`Normal`]: #variant.Normal
+    /// [`Hardened`]: #variant.Hardened
+    pub fn from_idx(index: u32, hardened: bool) -> Result<Self, Error> {
+        if index & (1 << 31) != 0 {
+            return Err(Error::InvalidChildNumber(index));
+        }
+
+        if hardened {
+            Ok(ChildNumber::Hardened { index })
+        } else {
+            Ok(ChildNumber::Normal { index })
+        }
+    }
+
     /// Create a non-hardened `ChildNumber` from a 256-bit index.
     pub fn from_normal_idx_256(index: [u8; 32]) -> ChildNumber {
         ChildNumber::Normal256 {

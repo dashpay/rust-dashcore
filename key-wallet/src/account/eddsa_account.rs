@@ -15,7 +15,7 @@ use dashcore::Address;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::bip32::Fingerprint;
+use crate::bip32::{ChainCode, Fingerprint};
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 
@@ -61,12 +61,16 @@ impl EdDSAAccount {
         network: Network,
     ) -> Result<Self> {
         // Create an extended public key with default metadata
+        use dashcore::ed25519_dalek::VerifyingKey;
+        let verifying_key = VerifyingKey::from_bytes(&ed25519_public_key)
+            .map_err(|e| Error::InvalidParameter(format!("Invalid Ed25519 public key: {}", e)))?;
+        
         let extended_key = ExtendedEd25519PubKey {
             network,
             depth: 0,
             parent_fingerprint: Fingerprint::default(),
             child_number: ChildNumber::from_normal_idx(0).unwrap(),
-            public_key: ed25519_public_key,
+            public_key: verifying_key,
             chain_code: ChainCode::from([0u8; 32]),
         };
 
@@ -87,7 +91,7 @@ impl EdDSAAccount {
         network: Network,
     ) -> Result<Self> {
         let ed25519_private_key = ExtendedEd25519PrivKey::new_master(network, &ed25519_seed)?;
-        let ed25519_public_key = ExtendedEd25519PubKey::from_private_key(&ed25519_private_key);
+        let ed25519_public_key = ExtendedEd25519PubKey::from_priv(&ed25519_private_key)?;
 
         Ok(Self {
             parent_wallet_id,
@@ -105,7 +109,7 @@ impl EdDSAAccount {
         ed25519_private_key: ExtendedEd25519PrivKey,
         network: Network,
     ) -> Result<Self> {
-        let ed25519_public_key = ExtendedEd25519PubKey::from_private_key(&ed25519_private_key);
+        let ed25519_public_key = ExtendedEd25519PubKey::from_priv(&ed25519_private_key)?;
 
         Ok(Self {
             parent_wallet_id,
@@ -172,7 +176,7 @@ impl EdDSAAccount {
 
     /// Get the master identity public key
     pub fn get_master_identity_key(&self) -> [u8; 32] {
-        self.ed25519_public_key.public_key
+        self.ed25519_public_key.public_key.to_bytes()
     }
 }
 
@@ -210,7 +214,7 @@ impl AccountTrait for EdDSAAccount {
     }
 
     fn get_public_key_bytes(&self) -> Vec<u8> {
-        self.ed25519_public_key.public_key.to_vec()
+        self.ed25519_public_key.public_key.to_bytes().to_vec()
     }
 }
 
@@ -231,7 +235,7 @@ impl fmt::Display for EdDSAAccount {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::account::types::StandardAccountType;
+    use crate::account::account_type::StandardAccountType;
 
     #[test]
     fn test_eddsa_account_creation() {

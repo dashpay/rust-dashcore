@@ -3,16 +3,17 @@
 //! This module provides a structure for managing multiple accounts
 //! across different networks in a hierarchical manner.
 
-use super::account_collection::AccountCollection;
-use super::address_pool::{AddressPool, AddressPoolType};
-use super::managed_account::ManagedAccount;
-use super::types::{AccountType, ManagedAccountType};
+use crate::{Account, AccountCollection};
+use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+use crate::managed_account::ManagedAccount;
+use crate::account::account_type::AccountType;
 use crate::gap_limit::GapLimitManager;
 use crate::Network;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use crate::managed_account::managed_account_type::ManagedAccountType;
 
 /// Collection of managed accounts organized by type
 #[derive(Debug, Clone, Default)]
@@ -57,6 +58,92 @@ impl ManagedAccountCollection {
             provider_owner_keys: None,
             provider_operator_keys: None,
             provider_platform_keys: None,
+        }
+    }
+
+    /// Check if a managed account type exists in the collection
+    pub fn contains_managed_account_type(&self, managed_type: &ManagedAccountType) -> bool {
+        use crate::account::StandardAccountType;
+        
+        match managed_type {
+            ManagedAccountType::Standard {
+                index,
+                standard_account_type,
+                ..
+            } => match standard_account_type {
+                StandardAccountType::BIP44Account => {
+                    self.standard_bip44_accounts.contains_key(index)
+                }
+                StandardAccountType::BIP32Account => {
+                    self.standard_bip32_accounts.contains_key(index)
+                }
+            },
+            ManagedAccountType::CoinJoin { index, .. } => {
+                self.coinjoin_accounts.contains_key(index)
+            }
+            ManagedAccountType::IdentityRegistration { .. } => self.identity_registration.is_some(),
+            ManagedAccountType::IdentityTopUp {
+                registration_index,
+                ..
+            } => self.identity_topup.contains_key(registration_index),
+            ManagedAccountType::IdentityTopUpNotBoundToIdentity { .. } => {
+                self.identity_topup_not_bound.is_some()
+            }
+            ManagedAccountType::IdentityInvitation { .. } => self.identity_invitation.is_some(),
+            ManagedAccountType::ProviderVotingKeys { .. } => self.provider_voting_keys.is_some(),
+            ManagedAccountType::ProviderOwnerKeys { .. } => self.provider_owner_keys.is_some(),
+            ManagedAccountType::ProviderOperatorKeys { .. } => self.provider_operator_keys.is_some(),
+            ManagedAccountType::ProviderPlatformKeys { .. } => self.provider_platform_keys.is_some(),
+        }
+    }
+
+    /// Insert a managed account into the collection
+    pub fn insert(&mut self, account: ManagedAccount) {
+        use crate::account::StandardAccountType;
+        
+        match &account.account_type {
+            ManagedAccountType::Standard {
+                index,
+                standard_account_type,
+                ..
+            } => match standard_account_type {
+                StandardAccountType::BIP44Account => {
+                    self.standard_bip44_accounts.insert(*index, account);
+                }
+                StandardAccountType::BIP32Account => {
+                    self.standard_bip32_accounts.insert(*index, account);
+                }
+            },
+            ManagedAccountType::CoinJoin { index, .. } => {
+                self.coinjoin_accounts.insert(*index, account);
+            }
+            ManagedAccountType::IdentityRegistration { .. } => {
+                self.identity_registration = Some(account);
+            }
+            ManagedAccountType::IdentityTopUp {
+                registration_index,
+                ..
+            } => {
+                self.identity_topup.insert(*registration_index, account);
+            }
+            ManagedAccountType::IdentityTopUpNotBoundToIdentity { .. } => {
+                self.identity_topup_not_bound = Some(account);
+            }
+            ManagedAccountType::IdentityInvitation { .. } => {
+                self.identity_invitation = Some(account);
+            }
+            ManagedAccountType::ProviderVotingKeys { .. } => {
+                self.provider_voting_keys = Some(account);
+            }
+            ManagedAccountType::ProviderOwnerKeys { .. } => {
+                self.provider_owner_keys = Some(account);
+            }
+            ManagedAccountType::ProviderOperatorKeys { .. } => {
+                self.provider_operator_keys = Some(account);
+            }
+            ManagedAccountType::ProviderPlatformKeys { .. } => {
+                self.provider_platform_keys = Some(account);
+            }
         }
     }
 
@@ -114,11 +201,13 @@ impl ManagedAccountCollection {
                 Some(Self::create_managed_account_from_account(account));
         }
 
+        #[cfg(feature = "bls")]
         if let Some(account) = &account_collection.provider_operator_keys {
             managed_collection.provider_operator_keys =
                 Some(Self::create_managed_account_from_bls_account(account));
         }
 
+        #[cfg(feature = "eddsa")]
         if let Some(account) = &account_collection.provider_platform_keys {
             managed_collection.provider_platform_keys =
                 Some(Self::create_managed_account_from_eddsa_account(account));
@@ -128,7 +217,7 @@ impl ManagedAccountCollection {
     }
 
     /// Create a ManagedAccount from an Account
-    fn create_managed_account_from_account(account: &super::Account) -> ManagedAccount {
+    fn create_managed_account_from_account(account: &Account) -> ManagedAccount {
         Self::create_managed_account_from_account_type(
             account.account_type,
             account.network,
@@ -137,6 +226,7 @@ impl ManagedAccountCollection {
     }
 
     /// Create a ManagedAccount from an Account
+    #[cfg(feature = "bls")]
     fn create_managed_account_from_bls_account(account: &super::BLSAccount) -> ManagedAccount {
         Self::create_managed_account_from_account_type(
             account.account_type,
@@ -146,6 +236,7 @@ impl ManagedAccountCollection {
     }
 
     /// Create a ManagedAccount from an Account
+    #[cfg(feature = "eddsa")]
     fn create_managed_account_from_eddsa_account(account: &super::EdDSAAccount) -> ManagedAccount {
         Self::create_managed_account_from_account_type(
             account.account_type,
@@ -256,73 +347,6 @@ impl ManagedAccountCollection {
         ManagedAccount::new(managed_type, network, GapLimitManager::default(), is_watch_only)
     }
 
-    /// Insert an account into the collection
-    pub fn insert(&mut self, account: ManagedAccount) {
-        use super::types::{ManagedAccountType, StandardAccountType};
-
-        match &account.account_type {
-            ManagedAccountType::Standard {
-                index,
-                standard_account_type,
-                ..
-            } => match standard_account_type {
-                StandardAccountType::BIP44Account => {
-                    self.standard_bip44_accounts.insert(*index, account);
-                }
-                StandardAccountType::BIP32Account => {
-                    self.standard_bip32_accounts.insert(*index, account);
-                }
-            },
-            ManagedAccountType::CoinJoin {
-                index,
-                ..
-            } => {
-                self.coinjoin_accounts.insert(*index, account);
-            }
-            ManagedAccountType::IdentityRegistration {
-                ..
-            } => {
-                self.identity_registration = Some(account);
-            }
-            ManagedAccountType::IdentityTopUp {
-                registration_index,
-                ..
-            } => {
-                self.identity_topup.insert(*registration_index, account);
-            }
-            ManagedAccountType::IdentityTopUpNotBoundToIdentity {
-                ..
-            } => {
-                self.identity_topup_not_bound = Some(account);
-            }
-            ManagedAccountType::IdentityInvitation {
-                ..
-            } => {
-                self.identity_invitation = Some(account);
-            }
-            ManagedAccountType::ProviderVotingKeys {
-                ..
-            } => {
-                self.provider_voting_keys = Some(account);
-            }
-            ManagedAccountType::ProviderOwnerKeys {
-                ..
-            } => {
-                self.provider_owner_keys = Some(account);
-            }
-            ManagedAccountType::ProviderOperatorKeys {
-                ..
-            } => {
-                // Should not insert regular ManagedAccount for BLS keys
-                // Use insert_bls_account instead
-            }
-            ManagedAccountType::ProviderPlatformKeys {
-                ..
-            } => {}
-        }
-    }
-
-    /// Get an account by index
     pub fn get(&self, index: u32) -> Option<&ManagedAccount> {
         // Try standard BIP44 first
         if let Some(account) = self.standard_bip44_accounts.get(&index) {

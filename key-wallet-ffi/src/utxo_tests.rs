@@ -3,6 +3,7 @@ mod utxo_tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
     use crate::types::FFINetwork;
+    use key_wallet::managed_account::managed_account_type::ManagedAccountType;
     use std::ffi::CStr;
     use std::ptr;
 
@@ -189,10 +190,10 @@ mod utxo_tests {
         use crate::managed_wallet::FFIManagedWalletInfo;
         use dashcore::blockdata::script::ScriptBuf;
         use dashcore::{Address, OutPoint, TxOut, Txid};
-        use key_wallet::account::managed_account::ManagedAccount;
-        use key_wallet::account::managed_account_collection::ManagedAccountCollection;
-        use key_wallet::account::types::{ManagedAccountType, StandardAccountType};
+        use key_wallet::account::account_type::StandardAccountType;
         use key_wallet::gap_limit::GapLimitManager;
+        use key_wallet::managed_account::managed_account_collection::ManagedAccountCollection;
+        use key_wallet::managed_account::ManagedAccount;
         use key_wallet::utxo::Utxo;
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
@@ -211,16 +212,16 @@ mod utxo_tests {
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
-                external_addresses: key_wallet::account::address_pool::AddressPoolBuilder::default(
-                )
-                .base_path(key_wallet::DerivationPath::from(vec![]))
-                .build()
-                .unwrap(),
-                internal_addresses: key_wallet::account::address_pool::AddressPoolBuilder::default(
-                )
-                .base_path(key_wallet::DerivationPath::from(vec![]))
-                .build()
-                .unwrap(),
+                external_addresses:
+                    key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
+                        .base_path(key_wallet::DerivationPath::from(vec![]))
+                        .build()
+                        .unwrap(),
+                internal_addresses:
+                    key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
+                        .base_path(key_wallet::DerivationPath::from(vec![]))
+                        .build()
+                        .unwrap(),
             },
             Network::Testnet,
             GapLimitManager::default(),
@@ -304,10 +305,10 @@ mod utxo_tests {
         use crate::managed_wallet::FFIManagedWalletInfo;
         use dashcore::blockdata::script::ScriptBuf;
         use dashcore::{Address, OutPoint, TxOut, Txid};
-        use key_wallet::account::managed_account::ManagedAccount;
-        use key_wallet::account::managed_account_collection::ManagedAccountCollection;
-        use key_wallet::account::types::{ManagedAccountType, StandardAccountType};
+        use key_wallet::account::account_type::StandardAccountType;
         use key_wallet::gap_limit::GapLimitManager;
+        use key_wallet::managed_account::managed_account_collection::ManagedAccountCollection;
+        use key_wallet::managed_account::ManagedAccount;
         use key_wallet::utxo::Utxo;
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
@@ -325,16 +326,16 @@ mod utxo_tests {
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
-                external_addresses: key_wallet::account::address_pool::AddressPoolBuilder::default(
-                )
-                .base_path(key_wallet::DerivationPath::from(vec![]))
-                .build()
-                .unwrap(),
-                internal_addresses: key_wallet::account::address_pool::AddressPoolBuilder::default(
-                )
-                .base_path(key_wallet::DerivationPath::from(vec![]))
-                .build()
-                .unwrap(),
+                external_addresses:
+                    key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
+                        .base_path(key_wallet::DerivationPath::from(vec![]))
+                        .build()
+                        .unwrap(),
+                internal_addresses:
+                    key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
+                        .base_path(key_wallet::DerivationPath::from(vec![]))
+                        .build()
+                        .unwrap(),
             },
             Network::Testnet,
             GapLimitManager::default(),
@@ -364,16 +365,16 @@ mod utxo_tests {
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP32Account,
-                external_addresses: key_wallet::account::address_pool::AddressPoolBuilder::default(
-                )
-                .base_path(key_wallet::DerivationPath::from(vec![]))
-                .build()
-                .unwrap(),
-                internal_addresses: key_wallet::account::address_pool::AddressPoolBuilder::default(
-                )
-                .base_path(key_wallet::DerivationPath::from(vec![]))
-                .build()
-                .unwrap(),
+                external_addresses:
+                    key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
+                        .base_path(key_wallet::DerivationPath::from(vec![]))
+                        .build()
+                        .unwrap(),
+                internal_addresses:
+                    key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
+                        .base_path(key_wallet::DerivationPath::from(vec![]))
+                        .build()
+                        .unwrap(),
             },
             Network::Testnet,
             GapLimitManager::default(),
@@ -400,7 +401,7 @@ mod utxo_tests {
         let mut coinjoin_account = ManagedAccount::new(
             ManagedAccountType::CoinJoin {
                 index: 0,
-                addresses: key_wallet::account::address_pool::AddressPoolBuilder::default()
+                addresses: key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
                     .base_path(key_wallet::DerivationPath::from(vec![]))
                     .build()
                     .unwrap(),
@@ -456,10 +457,10 @@ mod utxo_tests {
         use crate::managed_wallet::FFIManagedWalletInfo;
         use dashcore::blockdata::script::ScriptBuf;
         use dashcore::{Address, OutPoint, TxOut, Txid};
-        use key_wallet::account::managed_account::ManagedAccount;
-        use key_wallet::account::managed_account_collection::ManagedAccountCollection;
-        use key_wallet::account::types::{ManagedAccountType, StandardAccountType};
+        use key_wallet::account::account_type::StandardAccountType;
         use key_wallet::gap_limit::GapLimitManager;
+        use key_wallet::managed_account::managed_account_collection::ManagedAccountCollection;
+        use key_wallet::managed_account::ManagedAccount;
         use key_wallet::utxo::Utxo;
         use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
         use key_wallet::Network;
@@ -477,16 +478,16 @@ mod utxo_tests {
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
-                external_addresses: key_wallet::account::address_pool::AddressPoolBuilder::default(
-                )
-                .base_path(key_wallet::DerivationPath::from(vec![]))
-                .build()
-                .unwrap(),
-                internal_addresses: key_wallet::account::address_pool::AddressPoolBuilder::default(
-                )
-                .base_path(key_wallet::DerivationPath::from(vec![]))
-                .build()
-                .unwrap(),
+                external_addresses:
+                    key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
+                        .base_path(key_wallet::DerivationPath::from(vec![]))
+                        .build()
+                        .unwrap(),
+                internal_addresses:
+                    key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
+                        .base_path(key_wallet::DerivationPath::from(vec![]))
+                        .build()
+                        .unwrap(),
             },
             Network::Testnet,
             GapLimitManager::default(),
@@ -516,16 +517,16 @@ mod utxo_tests {
             ManagedAccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
-                external_addresses: key_wallet::account::address_pool::AddressPoolBuilder::default(
-                )
-                .base_path(key_wallet::DerivationPath::from(vec![]))
-                .build()
-                .unwrap(),
-                internal_addresses: key_wallet::account::address_pool::AddressPoolBuilder::default(
-                )
-                .base_path(key_wallet::DerivationPath::from(vec![]))
-                .build()
-                .unwrap(),
+                external_addresses:
+                    key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
+                        .base_path(key_wallet::DerivationPath::from(vec![]))
+                        .build()
+                        .unwrap(),
+                internal_addresses:
+                    key_wallet::managed_account::address_pool::AddressPoolBuilder::default()
+                        .base_path(key_wallet::DerivationPath::from(vec![]))
+                        .build()
+                        .unwrap(),
             },
             Network::Dash,
             GapLimitManager::default(),

@@ -2,9 +2,9 @@
 //!
 //! This module defines the common interface for all managed account types.
 
-use super::metadata::AccountMetadata;
-use super::transaction_record::TransactionRecord;
-use super::types::ManagedAccountType;
+use crate::account::AccountMetadata;
+use crate::account::TransactionRecord;
+use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::gap_limit::GapLimitManager;
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletBalance;

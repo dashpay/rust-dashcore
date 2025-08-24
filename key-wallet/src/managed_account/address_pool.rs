@@ -1040,7 +1040,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert!(pool.is_internal);
+        assert!(pool.is_internal());
         assert_eq!(pool.gap_limit, 10);
         assert_eq!(pool.network, Network::Testnet);
         assert_eq!(pool.lookahead_size, 20);

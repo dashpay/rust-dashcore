@@ -148,6 +148,11 @@ impl From<key_wallet::Error> for FFIError {
             Error::KeyError(_) | Error::Bip32(_) | Error::Secp256k1(_) | Error::Base58 => {
                 (FFIErrorCode::WalletError, err.to_string())
             }
+            Error::NoKeySource => {
+                (FFIErrorCode::InvalidState, "No key source available".to_string())
+            }
+            #[allow(unreachable_patterns)]
+            _ => (FFIErrorCode::WalletError, err.to_string()),
         };
 
         FFIError::error(code, msg)

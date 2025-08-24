@@ -47,11 +47,12 @@ pub(crate) mod utils;
 pub mod utxo;
 pub mod wallet;
 pub mod watch_only;
+pub mod managed_account;
 
 pub use dashcore;
 
-pub use account::address_pool::{AddressInfo, AddressPool, KeySource, PoolStats};
-pub use account::{Account, AccountCollection, AccountType, ManagedAccountType};
+pub use managed_account::address_pool::{AddressInfo, AddressPool, KeySource, PoolStats};
+pub use account::{Account, AccountCollection, AccountType};
 pub use bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 #[cfg(feature = "bip38")]
 pub use bip38::{encrypt_private_key, generate_intermediate_code, Bip38EncryptedKey, Bip38Mode};
@@ -61,6 +62,7 @@ pub use derivation::{DerivationPathBuilder, DerivationStrategy, KeyDerivation};
 pub use dip9::{DerivationPathReference, DerivationPathType};
 pub use error::{Error, Result};
 pub use gap_limit::{GapLimit, GapLimitManager, GapLimitStage};
+pub use managed_account::managed_account_type::ManagedAccountType;
 pub use mnemonic::Mnemonic;
 pub use seed::Seed;
 pub use utxo::{Utxo, UtxoSet};

@@ -168,7 +168,7 @@ impl FFIAccountType {
         index: u32,
         registration_index: Option<u32>,
     ) -> Option<key_wallet::AccountType> {
-        use key_wallet::account::types::StandardAccountType;
+        use key_wallet::account::account_type::StandardAccountType;
         match self {
             FFIAccountType::StandardBIP44 => Some(key_wallet::AccountType::Standard {
                 index,
@@ -207,7 +207,7 @@ impl FFIAccountType {
 
     /// Convert from AccountType
     pub fn from_account_type(account_type: &key_wallet::AccountType) -> (Self, u32, Option<u32>) {
-        use key_wallet::account::types::StandardAccountType;
+        use key_wallet::account::account_type::StandardAccountType;
         match account_type {
             key_wallet::AccountType::Standard {
                 index,

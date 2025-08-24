@@ -2,7 +2,7 @@
 //!
 //! This module contains structures for managing CoinJoin address pools.
 
-use super::address_pool::AddressPool;
+use crate::managed_account::address_pool::AddressPool;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 #[cfg(feature = "serde")]

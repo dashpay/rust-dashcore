@@ -54,13 +54,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. BLS Account (for masternode/Platform operations)
     println!("=== BLS Account (Masternode/Platform) ===");
-    let bls_private_key = [42u8; 32]; // Example BLS private key
-    let bls_account = BLSAccount::from_private_key(
-        None,
-        AccountType::ProviderVotingKeys,
-        bls_private_key,
-        Network::Testnet,
-    )?;
+    let bls_seed = [42u8; 32]; // Example BLS seed
+    let bls_account =
+        BLSAccount::from_seed(None, AccountType::ProviderVotingKeys, bls_seed, Network::Testnet)?;
 
     println!("Network: {:?}", bls_account.network());
     println!("Is watch-only: {}", bls_account.is_watch_only());
@@ -97,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // But they can derive identity keys
     let identity_key = eddsa_account.derive_identity_key(0)?;
-    println!("Derived identity key at index 0: {} bytes", identity_key.len());
+    println!("Derived identity key at index 0");
     println!();
 
     // 4. Demonstrate watch-only versions

@@ -9,7 +9,11 @@ use bincode_derive::{Decode, Encode};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::account::{Account, BLSAccount, EdDSAAccount};
+use crate::account::Account;
+#[cfg(feature = "bls")]
+use crate::account::BLSAccount;
+#[cfg(feature = "eddsa")]
+use crate::account::EdDSAAccount;
 use crate::AccountType;
 
 /// Collection of accounts organized by type
@@ -36,8 +40,10 @@ pub struct AccountCollection {
     /// Provider owner keys (optional)
     pub provider_owner_keys: Option<Account>,
     /// Provider operator keys (optional)
+    #[cfg(feature = "bls")]
     pub provider_operator_keys: Option<BLSAccount>,
     /// Provider platform keys (optional)
+    #[cfg(feature = "eddsa")]
     pub provider_platform_keys: Option<EdDSAAccount>,
 }
 
@@ -54,7 +60,9 @@ impl AccountCollection {
             identity_invitation: None,
             provider_voting_keys: None,
             provider_owner_keys: None,
+            #[cfg(feature = "bls")]
             provider_operator_keys: None,
+            #[cfg(feature = "eddsa")]
             provider_platform_keys: None,
         }
     }
@@ -112,6 +120,7 @@ impl AccountCollection {
     }
 
     /// Insert a BLS account for provider operator keys
+    #[cfg(feature = "bls")]
     pub fn insert_bls_account(&mut self, account: BLSAccount) -> Result<(), &'static str> {
         if !matches!(account.account_type, AccountType::ProviderOperatorKeys) {
             return Err("BLS account must have ProviderOperatorKeys type");
@@ -121,6 +130,7 @@ impl AccountCollection {
     }
 
     /// Insert an EdDSA account for provider platform keys
+    #[cfg(feature = "eddsa")]
     pub fn insert_eddsa_account(&mut self, account: EdDSAAccount) -> Result<(), &'static str> {
         if !matches!(account.account_type, AccountType::ProviderPlatformKeys) {
             return Err("EdDSA account must have ProviderPlatformKeys type");
@@ -156,8 +166,14 @@ impl AccountCollection {
             AccountType::IdentityInvitation => self.identity_invitation.is_some(),
             AccountType::ProviderVotingKeys => self.provider_voting_keys.is_some(),
             AccountType::ProviderOwnerKeys => self.provider_owner_keys.is_some(),
+            #[cfg(feature = "bls")]
             AccountType::ProviderOperatorKeys => self.provider_operator_keys.is_some(),
+            #[cfg(not(feature = "bls"))]
+            AccountType::ProviderOperatorKeys => false,
+            #[cfg(feature = "eddsa")]
             AccountType::ProviderPlatformKeys => self.provider_platform_keys.is_some(),
+            #[cfg(not(feature = "eddsa"))]
+            AccountType::ProviderPlatformKeys => false,
         }
     }
 
@@ -292,6 +308,7 @@ impl AccountCollection {
     }
 
     /// Get the BLS account (provider operator keys)
+    #[cfg(feature = "bls")]
     pub fn bls_account_of_type(&self, account_type: AccountType) -> Option<&BLSAccount> {
         match account_type {
             AccountType::ProviderOperatorKeys => self.provider_operator_keys.as_ref(),
@@ -300,6 +317,7 @@ impl AccountCollection {
     }
 
     /// Get the BLS account mutably (provider operator keys)
+    #[cfg(feature = "bls")]
     pub fn bls_account_of_type_mut(
         &mut self,
         account_type: AccountType,
@@ -311,6 +329,7 @@ impl AccountCollection {
     }
 
     /// Get the EdDSA account (provider platform keys)
+    #[cfg(feature = "eddsa")]
     pub fn eddsa_account_of_type(&self, account_type: AccountType) -> Option<&EdDSAAccount> {
         match account_type {
             AccountType::ProviderPlatformKeys => self.provider_platform_keys.as_ref(),
@@ -319,6 +338,7 @@ impl AccountCollection {
     }
 
     /// Get the EdDSA account mutably (provider platform keys)
+    #[cfg(feature = "eddsa")]
     pub fn eddsa_account_of_type_mut(
         &mut self,
         account_type: AccountType,
@@ -332,12 +352,17 @@ impl AccountCollection {
     /// Get the count of accounts (includes BLS and EdDSA accounts)
     pub fn count(&self) -> usize {
         let mut count = self.all_accounts().len();
+        
+        #[cfg(feature = "bls")]
         if self.provider_operator_keys.is_some() {
             count += 1;
         }
+        
+        #[cfg(feature = "eddsa")]
         if self.provider_platform_keys.is_some() {
             count += 1;
         }
+        
         count
     }
 
@@ -355,7 +380,7 @@ impl AccountCollection {
 
     /// Check if the collection is empty
     pub fn is_empty(&self) -> bool {
-        self.standard_bip44_accounts.is_empty()
+        let mut is_empty = self.standard_bip44_accounts.is_empty()
             && self.standard_bip32_accounts.is_empty()
             && self.coinjoin_accounts.is_empty()
             && self.identity_registration.is_none()
@@ -363,9 +388,19 @@ impl AccountCollection {
             && self.identity_topup_not_bound.is_none()
             && self.identity_invitation.is_none()
             && self.provider_voting_keys.is_none()
-            && self.provider_owner_keys.is_none()
-            && self.provider_operator_keys.is_none()
-            && self.provider_platform_keys.is_none()
+            && self.provider_owner_keys.is_none();
+        
+        #[cfg(feature = "bls")]
+        {
+            is_empty = is_empty && self.provider_operator_keys.is_none();
+        }
+        
+        #[cfg(feature = "eddsa")]
+        {
+            is_empty = is_empty && self.provider_platform_keys.is_none();
+        }
+        
+        is_empty
     }
 
     /// Clear all accounts
@@ -379,8 +414,14 @@ impl AccountCollection {
         self.identity_invitation = None;
         self.provider_voting_keys = None;
         self.provider_owner_keys = None;
-        self.provider_operator_keys = None;
-        self.provider_platform_keys = None;
+        #[cfg(feature = "bls")]
+        {
+            self.provider_operator_keys = None;
+        }
+        #[cfg(feature = "eddsa")]
+        {
+            self.provider_platform_keys = None;
+        }
     }
 }
 

@@ -4,8 +4,8 @@
 //! specific accounts within a ManagedAccountCollection.
 
 use super::transaction_router::AccountTypeToCheck;
-use crate::account::address_pool::{AddressInfo, PublicKeyType};
-use crate::account::types::ManagedAccountType;
+use crate::managed_account::address_pool::{AddressInfo, PublicKeyType};
+use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::account::{ManagedAccount, ManagedAccountCollection};
 use crate::Address;
 use alloc::vec::Vec;
@@ -423,41 +423,6 @@ impl ManagedAccount {
         }
 
         None
-    }
-
-    /// Helper to check regular outputs (used by provider key methods)
-    fn check_regular_outputs_for_match(
-        &self,
-        tx: &Transaction,
-        index: Option<u32>,
-    ) -> Option<AccountMatch> {
-        let mut involved_addresses = Vec::new();
-        let mut received = 0u64;
-
-        for output in &tx.output {
-            if self.contains_script_pub_key(&output.script_pubkey) {
-                if let Ok(address) = Address::from_script(&output.script_pubkey, self.network) {
-                    // Try to find the address info from the account
-                    if let Some(address_info) = self.get_address_info(&address) {
-                        involved_addresses.push(address_info.clone());
-                    }
-                }
-                received += output.value;
-            }
-        }
-
-        if !involved_addresses.is_empty() {
-            Some(AccountMatch {
-                account_type: (&self.account_type).into(),
-                account_index: index,
-                involved_addresses,
-                received,
-                sent: 0,
-                received_for_credit_conversion: 0, // Regular outputs don't convert to credits
-            })
-        } else {
-            None
-        }
     }
 
     /// Check if an address belongs to any account in the collection
