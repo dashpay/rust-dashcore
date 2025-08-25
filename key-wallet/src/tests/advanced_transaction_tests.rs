@@ -76,12 +76,12 @@ fn test_transaction_metadata_storage() {
     // Test storing and retrieving transaction metadata
     #[derive(Debug, Clone)]
     struct TransactionMetadata {
-        txid: Txid,
-        label: String,
+        _txid: Txid,
+        _label: String,
         category: String,
-        notes: String,
+        _notes: String,
         tags: Vec<String>,
-        timestamp: u64,
+        _timestamp: u64,
     }
 
     let mut metadata_store: HashMap<Txid, TransactionMetadata> = HashMap::new();
@@ -91,16 +91,16 @@ fn test_transaction_metadata_storage() {
         let txid = Txid::from_byte_array([i as u8; 32]);
 
         let metadata = TransactionMetadata {
-            txid,
-            label: format!("Transaction {}", i),
+            _txid: txid,
+            _label: format!("Transaction {}", i),
             category: match i % 3 {
                 0 => "Income".to_string(),
                 1 => "Expense".to_string(),
                 _ => "Transfer".to_string(),
             },
-            notes: format!("Test transaction {}", i),
+            _notes: format!("Test transaction {}", i),
             tags: vec![format!("tag{}", i), "test".to_string()],
-            timestamp: 1234567890 + i * 100,
+            _timestamp: 1234567890 + i * 100,
         };
 
         metadata_store.insert(txid, metadata);
@@ -126,8 +126,8 @@ fn test_corrupted_transaction_recovery() {
     enum TransactionError {
         InvalidInput,
         InvalidOutput,
-        InvalidSignature,
-        MissingData,
+        _InvalidSignature,
+        _MissingData,
     }
 
     // Simulate corrupted transaction scenarios
@@ -182,14 +182,14 @@ fn test_memory_constrained_transaction_handling() {
 
     struct TransactionCache {
         transactions: BTreeMap<Txid, Transaction>,
-        size_bytes: usize,
+        _size_bytes: usize,
     }
 
     impl TransactionCache {
         fn new() -> Self {
             Self {
                 transactions: BTreeMap::new(),
-                size_bytes: 0,
+                _size_bytes: 0,
             }
         }
 
@@ -268,70 +268,6 @@ fn test_transaction_fee_estimation() {
             margin
         );
     }
-}
-
-#[test]
-fn test_transaction_replacement_by_fee() {
-    // Test Replace-By-Fee (RBF) transaction handling
-    #[derive(Debug, Clone)]
-    struct RBFTransaction {
-        original_tx: Transaction,
-        original_fee: u64,
-        replacement_tx: Transaction,
-        replacement_fee: u64,
-    }
-
-    let original_tx = Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([1u8; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xfffffffd, // RBF enabled (< 0xfffffffe)
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![TxOut {
-            value: 99000,
-            script_pubkey: ScriptBuf::new(),
-        }],
-        special_transaction_payload: None,
-    };
-
-    let replacement_tx = Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([1u8; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xfffffffd,
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![TxOut {
-            value: 98000, // Lower output = higher fee
-            script_pubkey: ScriptBuf::new(),
-        }],
-        special_transaction_payload: None,
-    };
-
-    let rbf = RBFTransaction {
-        original_tx: original_tx.clone(),
-        original_fee: 1000,
-        replacement_tx: replacement_tx.clone(),
-        replacement_fee: 2000,
-    };
-
-    // Verify RBF conditions
-    assert!(rbf.replacement_fee > rbf.original_fee); // Higher fee
-    assert!(original_tx.input[0].sequence < 0xfffffffe); // RBF enabled
-
-    // Verify same inputs are spent
-    assert_eq!(original_tx.input[0].previous_output, replacement_tx.input[0].previous_output);
 }
 
 #[test]

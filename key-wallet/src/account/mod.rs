@@ -93,7 +93,7 @@ impl Account {
             account_type,
             network,
             account_xpub,
-            is_watch_only: false,  // Not watch-only when created from private key
+            is_watch_only: false, // Not watch-only when created from private key
         })
     }
 

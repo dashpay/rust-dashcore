@@ -3,14 +3,13 @@
 //! Tests Provider (DIP-3) and Identity (Platform) special transactions.
 
 use dashcore::blockdata::transaction::special_transaction::{
-    coinbase::CoinbasePayload,
     provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
     provider_update_revocation::ProviderUpdateRevocationPayload,
     provider_update_service::ProviderUpdateServicePayload,
     TransactionPayload,
 };
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
-use dashcore::hash_types::{InputsHash, MerkleRootMasternodeList, MerkleRootQuorums, PubkeyHash};
+use dashcore::hash_types::{InputsHash, PubkeyHash};
 use dashcore::hashes::Hash;
 use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::net::SocketAddr;

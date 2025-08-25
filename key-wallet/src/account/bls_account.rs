@@ -374,10 +374,11 @@ mod tests {
     fn test_bls_account_creation() {
         // First create a valid BLS key pair to get a real public key
         let seed = [42u8; 32];
-        let bls_private = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
+        let bls_private = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed)
+            .expect("Failed to create BLS private key from seed");
         let bls_public = ExtendedBLSPubKey::from_private_key(&bls_private);
         let public_key_bytes = bls_public.to_bytes();
-        
+
         // Now create account from the valid public key bytes
         let account = BLSAccount::from_public_key_bytes(
             None,
@@ -388,7 +389,7 @@ mod tests {
             public_key_bytes,
             Network::Testnet,
         )
-        .expect("Failed to create BLS account");
+        .expect("Failed to create BLS account from public key bytes");
 
         assert_eq!(account.get_public_key_bytes().len(), 48);
         assert!(account.is_watch_only);
@@ -407,7 +408,7 @@ mod tests {
             seed,
             Network::Testnet,
         )
-        .unwrap();
+        .expect("Failed to create BLS account from seed");
 
         assert!(!account.is_watch_only);
     }
@@ -424,7 +425,7 @@ mod tests {
             seed,
             Network::Testnet,
         )
-        .unwrap();
+        .expect("Failed to create BLS account from seed");
 
         let watch_only = account.to_watch_only();
         assert!(watch_only.is_watch_only);
@@ -443,15 +444,16 @@ mod tests {
             seed,
             Network::Testnet,
         )
-        .unwrap();
+        .expect("Failed to create BLS account from seed");
 
         // BLS accounts now support P2PKH-style address derivation using hash160
         // But require private key for hardened derivation
-        let bls_priv = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
+        let bls_priv = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed)
+            .expect("Failed to create BLS master private key");
         let result = account.derive_address_at(AddressPoolType::External, 0, Some(bls_priv));
         assert!(result.is_ok());
 
-        let address = result.unwrap();
+        let address = result.expect("Failed to derive BLS address");
         // Verify it's a valid testnet address
         assert_eq!(address.network(), &Network::Testnet);
     }

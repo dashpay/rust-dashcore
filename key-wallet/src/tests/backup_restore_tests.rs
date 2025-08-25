@@ -182,13 +182,13 @@ fn test_wallet_encrypted_backup() {
     // Simulate encrypted backup
     struct EncryptedBackup {
         encrypted_mnemonic: Vec<u8>, // In real implementation, would be encrypted
-        salt: [u8; 32],
+        _salt: [u8; 32],
         network: Network,
     }
 
     let backup = EncryptedBackup {
         encrypted_mnemonic: mnemonic.to_string().into_bytes(), // Would be encrypted in real implementation
-        salt: [0u8; 32],                                       // Would be random salt
+        _salt: [0u8; 32],                                      // Would be random salt
         network: Network::Testnet,
     };
 
@@ -223,7 +223,7 @@ fn test_wallet_metadata_backup() {
     struct AccountMetadata {
         account_type: AccountType,
         label: String,
-        created_at: u64,
+        _created_at: u64,
     }
 
     let metadata = vec![
@@ -233,14 +233,14 @@ fn test_wallet_metadata_backup() {
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             label: "Secondary Account".to_string(),
-            created_at: 1234567890,
+            _created_at: 1234567890,
         },
         AccountMetadata {
             account_type: AccountType::CoinJoin {
                 index: 0,
             },
             label: "Private Account".to_string(),
-            created_at: 1234567900,
+            _created_at: 1234567900,
         },
     ];
 

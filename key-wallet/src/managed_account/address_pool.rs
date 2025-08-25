@@ -41,6 +41,8 @@ pub enum AddressPoolType {
     Internal,
     /// Absent/single pool - for special account types that don't distinguish
     Absent,
+    /// Absent/single pool - uses hardened derivation
+    AbsentHardened,
 }
 
 #[cfg(feature = "serde")]
@@ -347,8 +349,26 @@ pub struct AddressPool {
 }
 
 impl AddressPool {
-    /// Create a new address pool
+    /// Create a new address pool and generate addresses up to the gap limit
     pub fn new(
+        base_path: DerivationPath,
+        pool_type: AddressPoolType,
+        gap_limit: u32,
+        network: Network,
+        key_source: &KeySource,
+    ) -> Result<Self> {
+        let mut pool = Self::new_without_generation(base_path, pool_type, gap_limit, network);
+
+        // Generate addresses up to the gap limit if we have a key source
+        if !matches!(key_source, KeySource::NoKeySource) {
+            pool.generate_addresses(gap_limit, key_source)?;
+        }
+
+        Ok(pool)
+    }
+
+    /// Create a new address pool without generating any addresses
+    pub fn new_without_generation(
         base_path: DerivationPath,
         pool_type: AddressPoolType,
         gap_limit: u32,
@@ -404,7 +424,11 @@ impl AddressPool {
     }
 
     /// Generate a specific address at an index
-    fn generate_address_at_index(&mut self, index: u32, key_source: &KeySource) -> Result<Address> {
+    pub(crate) fn generate_address_at_index(
+        &mut self,
+        index: u32,
+        key_source: &KeySource,
+    ) -> Result<Address> {
         // Check if already generated
         if let Some(info) = self.addresses.get(&index) {
             return Ok(info.address.clone());
@@ -430,6 +454,9 @@ impl AddressPool {
                 ]),
                 AddressPoolType::Absent => DerivationPath::from(vec![
                     ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?,
+                ]),
+                AddressPoolType::AbsentHardened => DerivationPath::from(vec![
+                    ChildNumber::from_hardened_idx(index).map_err(Error::Bip32)?,
                 ]),
             };
 
@@ -457,20 +484,29 @@ impl AddressPool {
                 let public_key_bytes = dash_pubkey.to_bytes();
                 (address, PublicKeyType::ECDSA(public_key_bytes.to_vec()))
             }
-            DerivedKey::BLS(_public_key_bytes) => {
-                // BLS addresses are special - they don't map to regular addresses
-                // We'll create a dummy address for now, but this should be handled differently
-                // in production based on the specific use case
-                return Err(Error::InvalidParameter(
-                    "BLS keys cannot generate standard addresses".into(),
-                ));
+            DerivedKey::BLS(public_key_bytes) => {
+                // BLS addresses use Hash160 of the public key bytes
+                use dashcore::hashes::{hash160, Hash};
+                let pubkey_hash = hash160::Hash::hash(&public_key_bytes);
+
+                // Create P2PKH address from the hash
+                use dashcore::address::Payload;
+                let payload = Payload::PubkeyHash(pubkey_hash.into());
+                let address = Address::new(self.network, payload);
+
+                (address, PublicKeyType::BLS(public_key_bytes))
             }
-            DerivedKey::EdDSA(_public_key_bytes) => {
-                // EdDSA addresses are used for Platform identities
-                // They also don't map to regular blockchain addresses
-                return Err(Error::InvalidParameter(
-                    "EdDSA keys cannot generate standard addresses".into(),
-                ));
+            DerivedKey::EdDSA(public_key_bytes) => {
+                // EdDSA addresses use Hash160 of the public key bytes
+                use dashcore::hashes::{hash160, Hash};
+                let pubkey_hash = hash160::Hash::hash(&public_key_bytes);
+
+                // Create P2PKH address from the hash
+                use dashcore::address::Payload;
+                let payload = Payload::PubkeyHash(pubkey_hash.into());
+                let address = Address::new(self.network, payload);
+
+                (address, PublicKeyType::EdDSA(public_key_bytes))
             }
         };
         let info =
@@ -507,6 +543,32 @@ impl AddressPool {
         // Generate a new address
         let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
         self.generate_address_at_index(next_index, key_source)
+    }
+
+    /// Get the next unused address info
+    pub fn next_unused_with_info(&mut self, key_source: &KeySource) -> Result<AddressInfo> {
+        // First, try to find an already generated unused address
+        for i in 0..=self.highest_generated.unwrap_or(0) {
+            if let Some(info) = self.addresses.get(&i) {
+                if !info.used {
+                    return Ok(info.clone());
+                }
+            }
+        }
+
+        // If NoKeySource, we can't generate new addresses
+        if matches!(key_source, KeySource::NoKeySource) {
+            return Err(Error::NoKeySource);
+        }
+
+        // Generate a new address
+        let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
+        self.generate_address_at_index(next_index, key_source)?;
+
+        // Return the AddressInfo we just created
+        self.addresses.get(&next_index).cloned().ok_or_else(|| {
+            Error::InvalidParameter("Failed to retrieve generated address info".into())
+        })
     }
 
     /// Get multiple unused addresses
@@ -864,6 +926,7 @@ pub struct AddressPoolBuilder {
     network: Network,
     lookahead_size: u32,
     address_type: AddressType,
+    key_source: Option<KeySource>,
 }
 
 impl AddressPoolBuilder {
@@ -876,6 +939,7 @@ impl AddressPoolBuilder {
             network: Network::Dash,
             lookahead_size: 40,
             address_type: AddressType::P2pkh,
+            key_source: None,
         }
     }
 
@@ -925,14 +989,32 @@ impl AddressPoolBuilder {
         self
     }
 
+    /// Set the key source for generating addresses
+    pub fn key_source(mut self, key_source: KeySource) -> Self {
+        self.key_source = Some(key_source);
+        self
+    }
+
     /// Build the address pool
     pub fn build(self) -> Result<AddressPool> {
         let base_path =
             self.base_path.ok_or(Error::InvalidParameter("base_path required".into()))?;
 
-        let mut pool = AddressPool::new(base_path, self.pool_type, self.gap_limit, self.network);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            self.pool_type,
+            self.gap_limit,
+            self.network,
+        );
         pool.lookahead_size = self.lookahead_size;
         pool.address_type = self.address_type;
+
+        // Generate addresses if a key source was provided
+        if let Some(key_source) = self.key_source {
+            if !matches!(key_source, KeySource::NoKeySource) {
+                pool.generate_addresses(self.gap_limit, &key_source)?;
+            }
+        }
 
         Ok(pool)
     }
@@ -971,7 +1053,12 @@ mod tests {
     #[test]
     fn test_address_pool_generation() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new(base_path, AddressPoolType::External, 20, Network::Testnet);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            20,
+            Network::Testnet,
+        );
         let key_source = test_key_source();
 
         let addresses = pool.generate_addresses(10, &key_source).unwrap();
@@ -983,7 +1070,12 @@ mod tests {
     #[test]
     fn test_address_usage() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new(base_path, AddressPoolType::External, 5, Network::Testnet);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
         let key_source = test_key_source();
 
         let addresses = pool.generate_addresses(5, &key_source).unwrap();
@@ -1001,7 +1093,12 @@ mod tests {
     #[test]
     fn test_next_unused() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new(base_path, AddressPoolType::External, 5, Network::Testnet);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
         let key_source = test_key_source();
 
         let addr1 = pool.next_unused(&key_source).unwrap();
@@ -1016,7 +1113,12 @@ mod tests {
     #[test]
     fn test_gap_limit_maintenance() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new(base_path, AddressPoolType::External, 5, Network::Testnet);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
         let key_source = test_key_source();
 
         // Generate initial addresses
@@ -1049,7 +1151,12 @@ mod tests {
     #[test]
     fn test_scan_for_usage() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new(base_path, AddressPoolType::External, 5, Network::Testnet);
+        let mut pool = AddressPool::new_without_generation(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+        );
         let key_source = test_key_source();
 
         let addresses = pool.generate_addresses(10, &key_source).unwrap();

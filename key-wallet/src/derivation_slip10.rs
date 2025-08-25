@@ -602,7 +602,6 @@ impl<'de> bincode::BorrowDecode<'de> for ExtendedEd25519PubKey {
 #[cfg(test)]
 mod test {
     use super::*;
-    use hex::ToHex;
 
     const CASE_1_SEED: &str = "000102030405060708090a0b0c0d0e0f";
 

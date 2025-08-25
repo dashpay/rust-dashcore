@@ -47,7 +47,6 @@ pub mod transaction_checking;
 pub(crate) mod utils;
 pub mod utxo;
 pub mod wallet;
-pub mod watch_only;
 
 pub use dashcore;
 
@@ -71,7 +70,6 @@ pub use wallet::{
     config::WalletConfig,
     Wallet,
 };
-pub use watch_only::{ScanResult, WatchOnlyWallet, WatchOnlyWalletBuilder};
 
 /// Re-export commonly used types
 pub mod prelude {

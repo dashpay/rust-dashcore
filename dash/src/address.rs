@@ -439,6 +439,15 @@ pub enum Payload {
     WitnessProgram(WitnessProgram),
 }
 
+impl Payload {
+    pub fn as_pubkey_hash(&self) -> Option<&PubkeyHash> {
+        match self {
+            Payload::PubkeyHash(pubkey_hash) => Some(pubkey_hash),
+            _ => None,
+        }
+    }
+}
+
 /// Witness program as defined in BIP141.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WitnessProgram {

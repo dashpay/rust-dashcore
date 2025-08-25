@@ -79,6 +79,9 @@ pub trait AccountDerivation<EPrivKeyType, EPubKeyType, PubKeyType> {
             AddressPoolType::Absent => {
                 DerivationPath::from(vec![ChildNumber::from_idx(index, use_hardened)?])
             }
+            AddressPoolType::AbsentHardened => {
+                DerivationPath::from(vec![ChildNumber::from_idx(index, use_hardened)?])
+            }
         })
     }
 

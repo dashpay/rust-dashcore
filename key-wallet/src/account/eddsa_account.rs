@@ -373,10 +373,12 @@ mod tests {
     fn test_eddsa_account_creation() {
         // First create a valid Ed25519 key pair to get a real public key
         let seed = [42u8; 32];
-        let ed25519_private = ExtendedEd25519PrivKey::new_master(Network::Testnet, &seed).unwrap();
-        let ed25519_public = ExtendedEd25519PubKey::from_priv(&ed25519_private).unwrap();
+        let ed25519_private = ExtendedEd25519PrivKey::new_master(Network::Testnet, &seed)
+            .expect("Failed to create Ed25519 private key from seed");
+        let ed25519_public = ExtendedEd25519PubKey::from_priv(&ed25519_private)
+            .expect("Failed to derive Ed25519 public key from private key");
         let public_key_bytes = ed25519_public.public_key.to_bytes();
-        
+
         // Now create account from the valid public key bytes
         let account = EdDSAAccount::from_public_key_bytes(
             None,
@@ -387,7 +389,7 @@ mod tests {
             public_key_bytes,
             Network::Testnet,
         )
-        .unwrap();
+        .expect("Failed to create EdDSA account from public key bytes");
 
         assert_eq!(account.get_public_key_bytes(), public_key_bytes.to_vec());
         assert!(account.is_watch_only);
@@ -406,7 +408,7 @@ mod tests {
             seed,
             Network::Testnet,
         )
-        .unwrap();
+        .expect("Failed to create EdDSA account from seed");
 
         assert!(!account.is_watch_only);
     }
@@ -423,7 +425,7 @@ mod tests {
             seed,
             Network::Testnet,
         )
-        .unwrap();
+        .expect("Failed to create EdDSA account from seed");
 
         let watch_only = account.to_watch_only();
         assert!(watch_only.is_watch_only);
@@ -432,17 +434,24 @@ mod tests {
 
     #[test]
     fn test_eddsa_address_derivation_fails() {
-        let public_key = [4u8; 32];
+        // First create a valid Ed25519 key pair to get a real public key
+        let seed = [4u8; 32];
+        let ed25519_private = ExtendedEd25519PrivKey::new_master(Network::Testnet, &seed)
+            .expect("Failed to create Ed25519 private key from seed");
+        let ed25519_public = ExtendedEd25519PubKey::from_priv(&ed25519_private)
+            .expect("Failed to derive Ed25519 public key from private key");
+        let public_key_bytes = ed25519_public.public_key.to_bytes();
+
         let account = EdDSAAccount::from_public_key_bytes(
             None,
             AccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            public_key,
+            public_key_bytes,
             Network::Testnet,
         )
-        .unwrap();
+        .expect("Failed to create EdDSA account from public key bytes");
 
         // EdDSA accounts require private key for address derivation (hardened only)
         let result = account.derive_address_at(AddressPoolType::External, 0, None);
@@ -461,7 +470,7 @@ mod tests {
             seed,
             Network::Testnet,
         )
-        .unwrap();
+        .expect("Failed to create EdDSA account from seed");
 
         // EdDSA accounts can't derive without private key access
         let result = account.derive_identity_key(0);
@@ -470,18 +479,25 @@ mod tests {
 
     #[test]
     fn test_get_master_identity_key() {
-        let public_key = [6u8; 32];
+        // First create a valid Ed25519 key pair to get a real public key
+        let seed = [6u8; 32];
+        let ed25519_private = ExtendedEd25519PrivKey::new_master(Network::Testnet, &seed)
+            .expect("Failed to create Ed25519 private key from seed");
+        let ed25519_public = ExtendedEd25519PubKey::from_priv(&ed25519_private)
+            .expect("Failed to derive Ed25519 public key from private key");
+        let public_key_bytes = ed25519_public.public_key.to_bytes();
+
         let account = EdDSAAccount::from_public_key_bytes(
             None,
             AccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            public_key,
+            public_key_bytes,
             Network::Testnet,
         )
-        .unwrap();
+        .expect("Failed to create EdDSA account from public key bytes");
 
-        assert_eq!(account.get_master_identity_key(), public_key);
+        assert_eq!(account.get_master_identity_key(), public_key_bytes);
     }
 }

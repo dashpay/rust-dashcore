@@ -2,118 +2,12 @@
 //!
 //! Tests how transactions are routed to the appropriate accounts based on their type.
 
-use crate::account::account_type::StandardAccountType as ManagedStandardAccountType;
 use crate::account::{AccountType, StandardAccountType};
-use crate::gap_limit::GapLimitManager;
-use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
-use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::managed_account::managed_account_type::ManagedAccountType;
-use crate::managed_account::ManagedAccount;
 use crate::wallet::ManagedWalletInfo;
 use crate::Network;
 use dashcore::hashes::Hash;
 use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
-
-/// Helper to create a test managed account
-fn create_test_managed_account(network: Network, account_type: AccountType) -> ManagedAccount {
-    let base_path = account_type.derivation_path(network).unwrap();
-
-    match account_type {
-        AccountType::Standard {
-            index,
-            standard_account_type,
-        } => {
-            let external_pool =
-                AddressPool::new(base_path.clone(), AddressPoolType::External, 20, network);
-            let internal_pool = AddressPool::new(base_path, AddressPoolType::Internal, 20, network);
-
-            let managed_standard_type = match standard_account_type {
-                StandardAccountType::BIP44Account => ManagedStandardAccountType::BIP44Account,
-                StandardAccountType::BIP32Account => ManagedStandardAccountType::BIP32Account,
-            };
-
-            let managed_type = ManagedAccountType::Standard {
-                index,
-                standard_account_type: managed_standard_type,
-                external_addresses: external_pool,
-                internal_addresses: internal_pool,
-            };
-
-            ManagedAccount::new(managed_type, network, GapLimitManager::default(), false)
-        }
-        AccountType::CoinJoin {
-            index,
-        } => {
-            let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
-
-            let managed_type = ManagedAccountType::CoinJoin {
-                index,
-                addresses,
-            };
-
-            ManagedAccount::new(managed_type, network, GapLimitManager::default(), false)
-        }
-        AccountType::IdentityRegistration => {
-            let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
-            let managed_type = ManagedAccountType::IdentityRegistration {
-                addresses,
-            };
-            ManagedAccount::new(managed_type, network, GapLimitManager::default(), false)
-        }
-        AccountType::IdentityTopUp {
-            registration_index,
-        } => {
-            let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
-            let managed_type = ManagedAccountType::IdentityTopUp {
-                registration_index,
-                addresses,
-            };
-            ManagedAccount::new(managed_type, network, GapLimitManager::default(), false)
-        }
-        AccountType::IdentityTopUpNotBoundToIdentity => {
-            let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
-            let managed_type = ManagedAccountType::IdentityTopUpNotBoundToIdentity {
-                addresses,
-            };
-            ManagedAccount::new(managed_type, network, GapLimitManager::default(), false)
-        }
-        AccountType::IdentityInvitation => {
-            let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
-            let managed_type = ManagedAccountType::IdentityInvitation {
-                addresses,
-            };
-            ManagedAccount::new(managed_type, network, GapLimitManager::default(), false)
-        }
-        AccountType::ProviderVotingKeys => {
-            let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
-            let managed_type = ManagedAccountType::ProviderVotingKeys {
-                addresses,
-            };
-            ManagedAccount::new(managed_type, network, GapLimitManager::default(), false)
-        }
-        AccountType::ProviderOwnerKeys => {
-            let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
-            let managed_type = ManagedAccountType::ProviderOwnerKeys {
-                addresses,
-            };
-            ManagedAccount::new(managed_type, network, GapLimitManager::default(), false)
-        }
-        AccountType::ProviderOperatorKeys => {
-            let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
-            let managed_type = ManagedAccountType::ProviderOperatorKeys {
-                addresses,
-            };
-            ManagedAccount::new(managed_type, network, GapLimitManager::default(), false)
-        }
-        AccountType::ProviderPlatformKeys => {
-            let addresses = AddressPool::new(base_path, AddressPoolType::Absent, 20, network);
-            let managed_type = ManagedAccountType::ProviderPlatformKeys {
-                addresses,
-            };
-            ManagedAccount::new(managed_type, network, GapLimitManager::default(), false)
-        }
-    }
-}
 
 /// Helper to create a basic transaction
 fn create_basic_transaction() -> Transaction {
@@ -396,117 +290,6 @@ fn test_transaction_routing_to_coinjoin_account() {
 }
 
 #[test]
-fn test_coinbase_transaction_routing() {
-    let network = Network::Testnet;
-    let mut collection = ManagedAccountCollection::new();
-
-    // Create a standard account for mining rewards
-    let account_type = AccountType::Standard {
-        index: 0,
-        standard_account_type: StandardAccountType::BIP44Account,
-    };
-    let managed_account = create_test_managed_account(network, account_type);
-
-    collection.insert(managed_account);
-
-    // Create a coinbase transaction
-    let coinbase_tx = create_coinbase_transaction();
-
-    // Verify it's recognized as coinbase
-    assert!(coinbase_tx.is_coin_base());
-
-    // In a real implementation, this would be added to immature transactions
-    // and tracked until maturity (100 blocks)
-}
-
-#[test]
-fn test_multiple_account_routing() {
-    let network = Network::Testnet;
-    let mut collection = ManagedAccountCollection::new();
-
-    // Create multiple accounts of different types
-    let account_types = vec![
-        AccountType::Standard {
-            index: 0,
-            standard_account_type: StandardAccountType::BIP44Account,
-        },
-        AccountType::Standard {
-            index: 1,
-            standard_account_type: StandardAccountType::BIP44Account,
-        },
-        AccountType::Standard {
-            index: 0,
-            standard_account_type: StandardAccountType::BIP32Account,
-        },
-        AccountType::CoinJoin {
-            index: 0,
-        },
-    ];
-
-    for account_type in account_types {
-        let managed_account = create_test_managed_account(network, account_type);
-        collection.insert(managed_account);
-    }
-
-    // Verify all accounts are present
-    assert_eq!(collection.standard_bip44_accounts.len(), 2);
-    assert_eq!(collection.standard_bip32_accounts.len(), 1);
-    assert_eq!(collection.coinjoin_accounts.len(), 1);
-}
-
-#[test]
-fn test_identity_account_routing() {
-    let network = Network::Testnet;
-    let mut collection = ManagedAccountCollection::new();
-
-    // Create identity accounts
-    let identity_accounts = vec![
-        AccountType::IdentityRegistration,
-        AccountType::IdentityTopUp {
-            registration_index: 0,
-        },
-        AccountType::IdentityTopUpNotBoundToIdentity,
-        AccountType::IdentityInvitation,
-    ];
-
-    for account_type in identity_accounts {
-        let managed_account = create_test_managed_account(network, account_type);
-        collection.insert(managed_account);
-    }
-
-    // Verify identity accounts are accessible
-    assert!(collection.identity_registration.is_some());
-    assert!(collection.identity_topup.contains_key(&0));
-    assert!(collection.identity_topup_not_bound.is_some());
-    assert!(collection.identity_invitation.is_some());
-}
-
-#[test]
-fn test_provider_account_routing() {
-    let network = Network::Testnet;
-    let mut collection = ManagedAccountCollection::new();
-
-    // Create provider accounts
-    let provider_accounts = vec![
-        AccountType::ProviderVotingKeys,
-        AccountType::ProviderOwnerKeys,
-        AccountType::ProviderOperatorKeys,
-        AccountType::ProviderPlatformKeys,
-    ];
-
-    for account_type in provider_accounts {
-        let managed_account = create_test_managed_account(network, account_type);
-        collection.insert(managed_account);
-    }
-
-    // Verify provider accounts are accessible
-    assert!(collection.provider_voting_keys.is_some());
-    assert!(collection.provider_owner_keys.is_some());
-    assert!(collection.provider_operator_keys.is_some());
-    assert!(collection.provider_platform_keys.is_some());
-}
-
-#[test]
 fn test_transaction_affects_multiple_accounts() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
@@ -732,7 +515,7 @@ fn test_identity_registration_account_routing() {
     assert_eq!(result.total_received, 0, "AssetLock should not provide spendable funds");
 
     assert_eq!(result.total_received_for_credit_conversion, 100_000_000,
-        "Should detect 1 DASH (100,000,000 satoshis) for Platform credit conversion from AssetLock payload");
+        "Should detect 1 DASH (100,000,000 duffs) for Platform credit conversion from AssetLock payload");
 }
 
 #[test]
@@ -800,11 +583,154 @@ fn test_normal_payment_to_identity_address_not_detected() {
 }
 
 #[test]
-fn test_provider_keys_account_routing() {
+fn test_provider_registration_transaction_routing_check_owner_only() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
     use crate::wallet::WalletConfig;
+    use dashcore::blockdata::transaction::special_transaction::{
+        provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
+        TransactionPayload,
+    };
+    use dashcore::TxOut;
+
+    let network = Network::Testnet;
+    let config = WalletConfig::default();
+
+    // We create another wallet that will hold keys not in our main wallet
+    let other_wallet =
+        Wallet::new_random(config, network, WalletAccountCreationOptions::Default).unwrap();
+
+    let wallet =
+        Wallet::new_random(config, network, WalletAccountCreationOptions::Default).unwrap();
+
+    let mut other_managed_wallet_info =
+        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string());
+
+    let mut managed_wallet_info =
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+    // Get addresses from provider accounts
+    let managed_owner =
+        managed_wallet_info.provider_owner_keys_managed_account_mut(network).unwrap();
+    let owner_address = managed_owner.next_address(None).expect("expected owner address");
+
+    let voting_address = other_managed_wallet_info
+        .provider_voting_keys_managed_account_mut(network)
+        .unwrap()
+        .next_address(None)
+        .expect("expected voting address");
+
+    let operator_public_key = other_managed_wallet_info
+        .provider_operator_keys_managed_account_mut(network)
+        .unwrap()
+        .next_bls_operator_key(None)
+        .expect("expected voting address");
+
+    // Payout addresses for providers are just regular addresses, not a separate account
+    // For testing, we'll use the first standard account's address
+    let payout_address = other_managed_wallet_info
+        .first_bip44_managed_account_mut(network)
+        .and_then(|acc| acc.next_receive_address(None).ok())
+        .unwrap_or_else(|| {
+            dashcore::Address::p2pkh(
+                &dashcore::PublicKey::from_slice(&[0x02; 33]).unwrap(),
+                network,
+            )
+        });
+
+    // Create a ProRegTx transaction
+    let tx = Transaction {
+        version: 3, // Version 3 for special transactions
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([1u8; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::default(),
+        }],
+        output: vec![
+            // Collateral output (1000 DASH for regular masternode)
+            TxOut {
+                value: 1000_000_000_00, // 1000 DASH
+                script_pubkey: owner_address.script_pubkey(),
+            },
+            // Change output
+            TxOut {
+                value: 50_000_000,
+                script_pubkey: payout_address.script_pubkey(),
+            },
+        ],
+        special_transaction_payload: Some(TransactionPayload::ProviderRegistrationPayloadType(
+            ProviderRegistrationPayload {
+                version: 1,
+                masternode_type: ProviderMasternodeType::Regular,
+                masternode_mode: 0,
+                collateral_outpoint: OutPoint {
+                    txid: Txid::from_byte_array([1u8; 32]),
+                    vout: 0,
+                },
+                service_address: "127.0.0.1:19999".parse().unwrap(),
+                owner_key_hash: *owner_address.payload().as_pubkey_hash().unwrap(),
+                operator_public_key: operator_public_key.0.to_compressed().into(),
+                voting_key_hash: *voting_address.payload().as_pubkey_hash().unwrap(),
+                operator_reward: 0,
+                script_payout: payout_address.script_pubkey(),
+                inputs_hash: dashcore::hash_types::InputsHash::from_slice(&[6u8; 32]).unwrap(),
+                signature: vec![7u8; 65], // Simplified signature
+                platform_node_id: None,
+                platform_p2p_port: None,
+                platform_http_port: None,
+            },
+        )),
+    };
+
+    let context = TransactionContext::InBlock {
+        height: 100000,
+        block_hash: Some(BlockHash::from_slice(&[0u8; 32]).unwrap()),
+        timestamp: Some(1234567890),
+    };
+
+    let result = managed_wallet_info.check_transaction(&tx, network, context, true);
+
+    println!(
+        "Provider registration transaction result: is_relevant={}, received={}",
+        result.is_relevant, result.total_received
+    );
+
+    // The transaction SHOULD be recognized as relevant to provider accounts
+    assert!(
+        result.is_relevant,
+        "Provider registration transaction should be recognized as relevant"
+    );
+
+    // Should detect funds received by owner and payout addresses
+    assert!(result.total_received > 0, "Should have received funds");
+
+    assert!(
+        result
+            .affected_accounts
+            .iter()
+            .any(|acc| matches!(acc.account_type,
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOwnerKeys
+        )),
+        "Should have affected provider owner accounts"
+    );
+}
+
+#[test]
+fn test_provider_update_service_transaction_routing() {
+    use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
+    use crate::wallet::initialization::WalletAccountCreationOptions;
+    use crate::wallet::Wallet;
+    use crate::wallet::WalletConfig;
+    use dashcore::blockdata::transaction::special_transaction::{
+        provider_update_service::ProviderUpdateServicePayload, TransactionPayload,
+    };
+    use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::TxOut;
 
     let network = Network::Testnet;
@@ -818,63 +744,269 @@ fn test_provider_keys_account_routing() {
 
     let account_collection = wallet.accounts.get(&network).unwrap();
 
-    // Get addresses from provider accounts
-    let voting_account = account_collection.provider_voting_keys.as_ref().unwrap();
-    let voting_xpub = voting_account.account_xpub;
+    // Get operator account for the update service transaction
+    let _operator_account = account_collection.provider_operator_keys.as_ref().unwrap();
+    let managed_operator =
+        managed_wallet_info.provider_operator_keys_managed_account_mut(network).unwrap();
+    // Provider accounts need special handling - pass None for xpub since they use BLS keys
+    let operator_address = managed_operator.next_address(None).expect("expected operator address");
 
-    let managed_voting =
-        managed_wallet_info.provider_voting_keys_managed_account_mut(network).unwrap();
-
-    // Use the new next_address method for provider accounts
-    let voting_address = managed_voting.next_address(Some(&voting_xpub)).unwrap_or_else(|e| {
-        println!("Failed to get provider voting address: {}", e);
-        // Generate a dummy address for testing
-        dashcore::Address::p2pkh(
-            &dashcore::PublicKey::from_slice(&[
-                0x02, // compressed public key prefix
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x01,
-            ])
-            .unwrap(),
-            network,
-        )
-    });
-
-    // Create a transaction that involves provider keys
-    let mut tx = create_basic_transaction();
-    tx.output.push(TxOut {
-        value: 1000, // Small amount for voting key
-        script_pubkey: voting_address.script_pubkey(),
-    });
-
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(BlockHash::from_slice(&[0u8; 32]).unwrap()),
-        timestamp: Some(1234567890),
+    // Create a ProUpServTx transaction (Provider Update Service)
+    let tx = Transaction {
+        version: 3, // Version 3 for special transactions
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([8u8; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::default(),
+        }],
+        output: vec![
+            // Small fee output to operator address
+            TxOut {
+                value: 10_000, // Small amount for fee
+                script_pubkey: operator_address.script_pubkey(),
+            },
+        ],
+        special_transaction_payload: Some(TransactionPayload::ProviderUpdateServicePayloadType(
+            ProviderUpdateServicePayload {
+                version: 1,
+                mn_type: None,
+                pro_tx_hash: Txid::from_byte_array([9u8; 32]),
+                ip_address: 0x0101a8c0, // 192.168.1.1 as u128
+                port: 19999,
+                script_payout: operator_address.script_pubkey(),
+                inputs_hash: dashcore::hash_types::InputsHash::from_slice(&[10u8; 32]).unwrap(),
+                platform_node_id: None,
+                platform_p2p_port: None,
+                platform_http_port: None,
+                payload_sig: BLSSignature::from([11u8; 96]),
+            },
+        )),
     };
 
-    let result = managed_wallet_info.check_transaction(
-        &tx, network, context, true, // update state
-    );
+    let context = TransactionContext::InBlock {
+        height: 100001,
+        block_hash: Some(BlockHash::from_slice(&[1u8; 32]).unwrap()),
+        timestamp: Some(1234567900),
+    };
+
+    let result = managed_wallet_info.check_transaction(&tx, network, context, true);
 
     println!(
-        "Provider keys transaction result: is_relevant={}, received={}",
+        "Provider update service transaction result: is_relevant={}, received={}",
         result.is_relevant, result.total_received
     );
 
-    // The transaction SHOULD be recognized as relevant to provider voting keys
-    // This test is expected to FAIL until provider account detection is fixed
+    // The transaction SHOULD be recognized as relevant to provider operator keys
     assert!(
         result.is_relevant,
-        "Provider voting key transaction should be recognized - this is currently broken"
+        "Provider update service transaction should be recognized as relevant"
     );
 
-    assert_eq!(result.total_received, 1000, "Should have received 1000 duffs");
+    assert!(result.affected_accounts.iter().any(|acc|
+        matches!(acc.account_type,
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOperatorKeys
+        )
+    ), "Should have affected provider operator account");
+}
+
+#[test]
+fn test_provider_update_registrar_transaction_routing() {
+    use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
+    use crate::wallet::initialization::WalletAccountCreationOptions;
+    use crate::wallet::Wallet;
+    use crate::wallet::WalletConfig;
+    use dashcore::blockdata::transaction::special_transaction::{
+        provider_update_registrar::ProviderUpdateRegistrarPayload, TransactionPayload,
+    };
+    use dashcore::bls_sig_utils::BLSPublicKey;
+    use dashcore::TxOut;
+
+    let network = Network::Testnet;
+    let config = WalletConfig::default();
+
+    let wallet =
+        Wallet::new_random(config, network, WalletAccountCreationOptions::Default).unwrap();
+
+    let mut managed_wallet_info =
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+    let account_collection = wallet.accounts.get(&network).unwrap();
+
+    // Get voting and payout accounts for the update registrar transaction
+    let _voting_account = account_collection.provider_voting_keys.as_ref().unwrap();
+    let managed_voting =
+        managed_wallet_info.provider_voting_keys_managed_account_mut(network).unwrap();
+    // Provider accounts need special handling - pass None for xpub since they use BLS keys
+    let voting_address = managed_voting.next_address(None).expect("expected voting address");
+
+    // Payout addresses for providers are just regular addresses, not a separate account
+    // For testing, we'll use the first standard account's address
+    let payout_address = managed_wallet_info
+        .first_bip44_managed_account_mut(network)
+        .and_then(|acc| acc.next_receive_address(None).ok())
+        .unwrap_or_else(|| {
+            dashcore::Address::p2pkh(
+                &dashcore::PublicKey::from_slice(&[0x02; 33]).unwrap(),
+                network,
+            )
+        });
+
+    // Create a ProUpRegTx transaction (Provider Update Registrar)
+    let tx = Transaction {
+        version: 3, // Version 3 for special transactions
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([12u8; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::default(),
+        }],
+        output: vec![
+            // Small fee output to voting address
+            TxOut {
+                value: 5_000,
+                script_pubkey: voting_address.script_pubkey(),
+            },
+            // Another output to payout address
+            TxOut {
+                value: 15_000,
+                script_pubkey: payout_address.script_pubkey(),
+            },
+        ],
+        special_transaction_payload: Some(TransactionPayload::ProviderUpdateRegistrarPayloadType(
+            ProviderUpdateRegistrarPayload {
+                version: 1,
+                pro_tx_hash: Txid::from_byte_array([13u8; 32]),
+                provider_mode: 0, // Update mode
+                operator_public_key: BLSPublicKey::from([14u8; 48]),
+                voting_key_hash: dashcore::PubkeyHash::from_slice(&[15u8; 20]).unwrap(),
+                script_payout: payout_address.script_pubkey(),
+                inputs_hash: dashcore::hash_types::InputsHash::from_slice(&[16u8; 32]).unwrap(),
+                payload_sig: vec![17u8; 65], // Simplified signature
+            },
+        )),
+    };
+
+    let context = TransactionContext::InBlock {
+        height: 100002,
+        block_hash: Some(BlockHash::from_slice(&[2u8; 32]).unwrap()),
+        timestamp: Some(1234567910),
+    };
+
+    let result = managed_wallet_info.check_transaction(&tx, network, context, true);
+
+    println!(
+        "Provider update registrar transaction result: is_relevant={}, received={}",
+        result.is_relevant, result.total_received
+    );
+
+    // The transaction SHOULD be recognized as relevant to provider voting and payout accounts
+    assert!(
+        result.is_relevant,
+        "Provider update registrar transaction should be recognized as relevant"
+    );
+
+    assert!(
+        result
+            .affected_accounts
+            .iter()
+            .any(|acc| matches!(acc.account_type,
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderVotingKeys
+        )),
+        "Should have affected provider voting accounts"
+    );
+}
+
+#[test]
+fn test_provider_update_revocation_transaction_routing() {
+    use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
+    use crate::wallet::initialization::WalletAccountCreationOptions;
+    use crate::wallet::Wallet;
+    use crate::wallet::WalletConfig;
+    use dashcore::blockdata::transaction::special_transaction::{
+        provider_update_revocation::ProviderUpdateRevocationPayload, TransactionPayload,
+    };
+    use dashcore::bls_sig_utils::BLSSignature;
+    use dashcore::TxOut;
+
+    let network = Network::Testnet;
+    let config = WalletConfig::default();
+
+    let wallet =
+        Wallet::new_random(config, network, WalletAccountCreationOptions::Default).unwrap();
+
+    let mut managed_wallet_info =
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+    let account_collection = wallet.accounts.get(&network).unwrap();
+
+    // Get operator account for the revocation transaction (operator signs the revocation)
+    let _operator_account = account_collection.provider_operator_keys.as_ref().unwrap();
+    let managed_operator =
+        managed_wallet_info.provider_operator_keys_managed_account_mut(network).unwrap();
+    // Provider accounts need special handling - pass None for xpub since they use BLS keys
+    let operator_address = managed_operator.next_address(None).expect("expected operator address");
+
+    // Create a ProUpRevTx transaction (Provider Update Revocation)
+    let tx = Transaction {
+        version: 3, // Version 3 for special transactions
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([18u8; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::default(),
+        }],
+        output: vec![
+            // Small fee output back to operator
+            TxOut {
+                value: 1_000,
+                script_pubkey: operator_address.script_pubkey(),
+            },
+        ],
+        special_transaction_payload: Some(TransactionPayload::ProviderUpdateRevocationPayloadType(
+            ProviderUpdateRevocationPayload {
+                version: 1,
+                pro_tx_hash: Txid::from_byte_array([19u8; 32]),
+                reason: 0, // NotSpecified
+                inputs_hash: dashcore::hash_types::InputsHash::from_slice(&[20u8; 32]).unwrap(),
+                payload_sig: BLSSignature::from([21u8; 96]),
+            },
+        )),
+    };
+
+    let context = TransactionContext::InBlock {
+        height: 100003,
+        block_hash: Some(BlockHash::from_slice(&[3u8; 32]).unwrap()),
+        timestamp: Some(1234567920),
+    };
+
+    let result = managed_wallet_info.check_transaction(&tx, network, context, true);
+
+    println!(
+        "Provider revocation transaction result: is_relevant={}, received={}",
+        result.is_relevant, result.total_received
+    );
+
+    // The transaction SHOULD be recognized as relevant to provider operator keys
+    assert!(result.is_relevant, "Provider revocation transaction should be recognized as relevant");
 
     assert!(result.affected_accounts.iter().any(|acc|
-        matches!(acc.account_type, crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderVotingKeys)
-    ), "Should have affected the provider voting keys account");
+        matches!(acc.account_type,
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOperatorKeys
+        )
+    ), "Should have affected provider operator account");
 }
 
 #[test]

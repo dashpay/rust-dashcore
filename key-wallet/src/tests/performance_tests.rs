@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 /// Performance metrics structure
 struct PerformanceMetrics {
-    operation: String,
-    iterations: usize,
+    _operation: String,
+    _iterations: usize,
     total_time: Duration,
     avg_time: Duration,
     min_time: Duration,
@@ -31,8 +31,8 @@ impl PerformanceMetrics {
         let ops_per_second = iterations as f64 / total_time.as_secs_f64();
 
         Self {
-            operation: operation.to_string(),
-            iterations,
+            _operation: operation.to_string(),
+            _iterations: iterations,
             total_time,
             avg_time,
             min_time,
@@ -41,9 +41,9 @@ impl PerformanceMetrics {
         }
     }
 
-    pub fn print_summary(&self) {
-        println!("Performance: {}", self.operation);
-        println!("  Iterations: {}", self.iterations);
+    pub fn _print_summary(&self) {
+        println!("Performance: {}", self._operation);
+        println!("  Iterations: {}", self._iterations);
         println!("  Total time: {:?}", self.total_time);
         println!("  Avg time: {:?}", self.avg_time);
         println!("  Min time: {:?}", self.min_time);

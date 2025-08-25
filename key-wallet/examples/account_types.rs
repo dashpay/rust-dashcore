@@ -1,11 +1,14 @@
 //! Example demonstrating different account types (ECDSA, BLS, EdDSA)
 
-use key_wallet::account::{Account, AccountTrait, AccountType, BLSAccount, ECDSAAddressDerivation, EdDSAAccount, StandardAccountType};
 use key_wallet::account::derivation::AccountDerivation;
+use key_wallet::account::{
+    Account, AccountTrait, AccountType, BLSAccount, ECDSAAddressDerivation, EdDSAAccount,
+    StandardAccountType,
+};
 use key_wallet::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
+use key_wallet::managed_account::address_pool::AddressPoolType;
 use key_wallet::mnemonic::{Language, Mnemonic};
 use key_wallet::Network;
-use key_wallet::managed_account::address_pool::AddressPoolType;
 use secp256k1::Secp256k1;
 
 #[cfg(feature = "bls")]
@@ -62,8 +65,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         println!("=== BLS Account (Masternode/Platform) ===");
         let bls_seed = [42u8; 32]; // Example BLS seed
-        let bls_account =
-            BLSAccount::from_seed(None, AccountType::ProviderVotingKeys, bls_seed, Network::Testnet)?;
+        let bls_account = BLSAccount::from_seed(
+            None,
+            AccountType::ProviderVotingKeys,
+            bls_seed,
+            Network::Testnet,
+        )?;
 
         println!("Network: {:?}", bls_account.network());
         println!("Is watch-only: {}", bls_account.is_watch_only());
@@ -80,8 +87,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // For hardened derivation, we need the private key
         let bls_priv = ExtendedBLSPrivKey::new_master(Network::Testnet, &bls_seed)?;
-        let pubkey_with_priv = bls_account.derive_public_key_at(AddressPoolType::External, 0, Some(bls_priv))?;
-        println!("Derived BLS public key with private key: {} bytes", pubkey_with_priv.to_bytes().len());
+        let pubkey_with_priv =
+            bls_account.derive_public_key_at(AddressPoolType::External, 0, Some(bls_priv))?;
+        println!(
+            "Derived BLS public key with private key: {} bytes",
+            pubkey_with_priv.to_bytes().len()
+        );
         println!();
     }
     #[cfg(not(feature = "bls"))]
@@ -110,7 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // EdDSA accounts require private key for derivation (only hardened paths supported)
         let ed25519_priv = ExtendedEd25519PrivKey::new_master(Network::Testnet, &ed25519_seed)?;
-        
+
         // Try to derive without private key (should fail)
         match eddsa_account.derive_public_key_at(AddressPoolType::External, 0, None) {
             Err(e) => println!("Expected error without private key: {}", e),
@@ -118,11 +129,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Derive with private key (should succeed)
-        let pubkey_with_priv = eddsa_account.derive_public_key_at(AddressPoolType::External, 0, Some(ed25519_priv.clone()))?;
-        println!("Derived Ed25519 public key with private key: {} bytes", pubkey_with_priv.to_bytes().len());
+        let pubkey_with_priv = eddsa_account.derive_public_key_at(
+            AddressPoolType::External,
+            0,
+            Some(ed25519_priv.clone()),
+        )?;
+        println!(
+            "Derived Ed25519 public key with private key: {} bytes",
+            pubkey_with_priv.to_bytes().len()
+        );
 
         // Can also derive addresses using hash160 of the public key
-        let address = eddsa_account.derive_address_at(AddressPoolType::External, 0, Some(ed25519_priv))?;
+        let address =
+            eddsa_account.derive_address_at(AddressPoolType::External, 0, Some(ed25519_priv))?;
         println!("Derived P2PKH address from Ed25519 key: {}", address);
         println!();
     }
@@ -142,7 +161,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "bls")]
     {
         let bls_seed = [42u8; 32];
-        let bls_account = BLSAccount::from_seed(None, AccountType::ProviderVotingKeys, bls_seed, Network::Testnet)?;
+        let bls_account = BLSAccount::from_seed(
+            None,
+            AccountType::ProviderVotingKeys,
+            bls_seed,
+            Network::Testnet,
+        )?;
         let watch_only_bls = bls_account.to_watch_only();
         println!("BLS watch-only: {}", watch_only_bls.is_watch_only());
     }
@@ -150,7 +174,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "eddsa")]
     {
         let ed25519_seed = [99u8; 32];
-        let eddsa_account = EdDSAAccount::from_seed(None, AccountType::IdentityRegistration, ed25519_seed, Network::Testnet)?;
+        let eddsa_account = EdDSAAccount::from_seed(
+            None,
+            AccountType::IdentityRegistration,
+            ed25519_seed,
+            Network::Testnet,
+        )?;
         let watch_only_eddsa = eddsa_account.to_watch_only();
         println!("EdDSA watch-only: {}", watch_only_eddsa.is_watch_only());
     }

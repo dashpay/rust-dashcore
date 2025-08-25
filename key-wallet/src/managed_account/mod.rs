@@ -6,7 +6,9 @@
 use crate::account::AccountMetadata;
 use crate::account::TransactionRecord;
 use crate::account::{BLSAccount, EdDSAAccount, ManagedAccountTrait};
+use crate::derivation_bls_bip32::ExtendedBLSPubKey;
 use crate::gap_limit::GapLimitManager;
+use crate::managed_account::address_pool::PublicKeyType;
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletBalance;
 use crate::{ExtendedPubKey, Network};
@@ -76,34 +78,64 @@ impl ManagedAccount {
 
     /// Create a ManagedAccount from an Account
     pub fn from_account(account: &super::Account) -> Self {
-        Self::new(
-            ManagedAccountType::from_account_type(account.account_type, account.network),
+        // Use the account's public key as the key source
+        let key_source = address_pool::KeySource::Public(account.account_xpub);
+        let managed_type = ManagedAccountType::from_account_type(
+            account.account_type,
             account.network,
-            GapLimitManager::default(),
-            account.is_watch_only,
+            &key_source,
         )
+        .unwrap_or_else(|_| {
+            // Fallback: create without pre-generated addresses
+            let no_key_source = address_pool::KeySource::NoKeySource;
+            ManagedAccountType::from_account_type(
+                account.account_type,
+                account.network,
+                &no_key_source,
+            )
+            .expect("Should succeed with NoKeySource")
+        });
+
+        Self::new(managed_type, account.network, GapLimitManager::default(), account.is_watch_only)
     }
 
     /// Create a ManagedAccount from a BLS Account
     #[cfg(feature = "bls")]
     pub fn from_bls_account(account: &BLSAccount) -> Self {
-        Self::new(
-            ManagedAccountType::from_account_type(account.account_type, account.network),
+        // Use the BLS public key as the key source
+        let key_source = address_pool::KeySource::BLSPublic(account.bls_public_key.clone());
+        let managed_type = ManagedAccountType::from_account_type(
+            account.account_type,
             account.network,
-            GapLimitManager::default(),
-            account.is_watch_only,
+            &key_source,
         )
+        .unwrap_or_else(|_| {
+            // Fallback: create without pre-generated addresses
+            let no_key_source = address_pool::KeySource::NoKeySource;
+            ManagedAccountType::from_account_type(
+                account.account_type,
+                account.network,
+                &no_key_source,
+            )
+            .expect("Should succeed with NoKeySource")
+        });
+
+        Self::new(managed_type, account.network, GapLimitManager::default(), account.is_watch_only)
     }
 
     /// Create a ManagedAccount from an EdDSA Account
     #[cfg(feature = "eddsa")]
     pub fn from_eddsa_account(account: &EdDSAAccount) -> Self {
-        Self::new(
-            ManagedAccountType::from_account_type(account.account_type, account.network),
+        // EdDSA requires hardened derivation, so we can't generate addresses without private key
+        let key_source = address_pool::KeySource::NoKeySource;
+        let managed_type = ManagedAccountType::from_account_type(
+            account.account_type,
             account.network,
-            GapLimitManager::default(),
-            account.is_watch_only,
+            &key_source,
         )
+        .expect("Should succeed with NoKeySource");
+
+        Self::new(managed_type, account.network, GapLimitManager::default(), account.is_watch_only)
     }
 
     /// Get the account index
@@ -417,6 +449,166 @@ impl ManagedAccount {
                     _ => "Failed to generate address",
                 })
             }
+        }
+    }
+
+    /// Generate the next address with full info for non-standard accounts
+    /// This method is for special accounts like Identity, Provider accounts, etc.
+    /// Standard accounts (BIP44/BIP32) should use next_receive_address_with_info or next_change_address_with_info
+    pub fn next_address_with_info(
+        &mut self,
+        account_xpub: Option<&ExtendedPubKey>,
+    ) -> Result<address_pool::AddressInfo, &'static str> {
+        match &mut self.account_type {
+            ManagedAccountType::Standard {
+                ..
+            } => Err("Standard accounts must use next_receive_address_with_info or next_change_address_with_info"),
+            ManagedAccountType::CoinJoin {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityRegistration {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityInvitation {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderVotingKeys {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderOwnerKeys {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderOperatorKeys {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderPlatformKeys {
+                addresses,
+                ..
+            } => {
+                // Create appropriate key source based on whether xpub is provided
+                let key_source = match account_xpub {
+                    Some(xpub) => address_pool::KeySource::Public(*xpub),
+                    None => address_pool::KeySource::NoKeySource,
+                };
+
+                addresses.next_unused_with_info(&key_source).map_err(|e| match e {
+                    crate::error::Error::NoKeySource => {
+                        "No unused addresses available and no key source provided"
+                    }
+                    _ => "Failed to generate address with info",
+                })
+            }
+            ManagedAccountType::IdentityTopUp {
+                addresses,
+                ..
+            } => {
+                // Identity top-up has an address pool
+                let key_source = match account_xpub {
+                    Some(xpub) => address_pool::KeySource::Public(*xpub),
+                    None => address_pool::KeySource::NoKeySource,
+                };
+
+                addresses.next_unused_with_info(&key_source).map_err(|e| match e {
+                    crate::error::Error::NoKeySource => {
+                        "No unused addresses available and no key source provided"
+                    }
+                    _ => "Failed to generate address with info",
+                })
+            }
+        }
+    }
+
+    /// Generate the next BLS operator key (only for ProviderOperatorKeys accounts)
+    /// Returns the BLS public key at the next unused index
+    #[cfg(feature = "bls")]
+    pub fn next_bls_operator_key(
+        &mut self,
+        account_xpub: Option<ExtendedBLSPubKey>,
+    ) -> Result<dashcore::blsful::PublicKey<dashcore::blsful::Bls12381G2Impl>, &'static str> {
+        match &mut self.account_type {
+            ManagedAccountType::ProviderOperatorKeys {
+                addresses,
+                ..
+            } => {
+                // Create key source from the optional BLS public key
+                let key_source = match account_xpub {
+                    Some(xpub) => address_pool::KeySource::BLSPublic(xpub),
+                    None => address_pool::KeySource::NoKeySource,
+                };
+
+                // Use next_unused_with_info to get the next address (handles caching and derivation)
+                let info = addresses
+                    .next_unused_with_info(&key_source)
+                    .map_err(|_| "Failed to get next unused address")?;
+
+                // Extract the BLS public key from the address info
+                let Some(PublicKeyType::BLS(pub_key_bytes)) = info.public_key else {
+                    return Err("Expected BLS public key but got different key type");
+                };
+
+                // Mark as used
+                addresses.mark_index_used(info.index);
+
+                // Convert bytes to BLS public key
+                use dashcore::blsful::{Bls12381G2Impl, PublicKey, SerializationFormat};
+                let public_key = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
+                    &pub_key_bytes,
+                    SerializationFormat::Modern,
+                )
+                .map_err(|_| "Failed to deserialize BLS public key")?;
+
+                Ok(public_key)
+            }
+            _ => Err("This method only works for ProviderOperatorKeys accounts"),
+        }
+    }
+
+    /// Generate the next EdDSA platform key (only for ProviderPlatformKeys accounts)
+    /// Returns the Ed25519 public key at the next unused index
+    #[cfg(feature = "eddsa")]
+    pub fn next_eddsa_platform_key(
+        &mut self,
+        account_xpriv: crate::derivation_slip10::ExtendedEd25519PrivKey,
+    ) -> Result<crate::derivation_slip10::VerifyingKey, &'static str> {
+        match &mut self.account_type {
+            ManagedAccountType::ProviderPlatformKeys {
+                addresses,
+                ..
+            } => {
+                // Create key source from the EdDSA private key
+                let key_source = address_pool::KeySource::EdDSAPrivate(account_xpriv);
+
+                // Use next_unused_with_info to get the next address (handles caching and derivation)
+                let info = addresses
+                    .next_unused_with_info(&key_source)
+                    .map_err(|_| "Failed to get next unused address")?;
+
+                // Extract the EdDSA public key from the address info
+                let Some(PublicKeyType::EdDSA(pub_key_bytes)) = info.public_key else {
+                    return Err("Expected EdDSA public key but got different key type");
+                };
+
+                // Mark as used
+                addresses.mark_index_used(info.index);
+
+                let verifying_key = crate::derivation_slip10::VerifyingKey::from_bytes(
+                    &pub_key_bytes.try_into().map_err(|_| "Invalid EdDSA public key length")?,
+                )
+                .map_err(|_| "Failed to deserialize EdDSA public key")?;
+
+                Ok(verifying_key)
+            }
+            _ => Err("This method only works for ProviderPlatformKeys accounts"),
         }
     }
 

@@ -274,7 +274,7 @@ fn test_concurrent_access_simulation() {
 #[test]
 fn test_empty_wallet_operations() {
     let config = WalletConfig::default();
-    let mut wallet = Wallet::new_random(
+    let wallet = Wallet::new_random(
         config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,

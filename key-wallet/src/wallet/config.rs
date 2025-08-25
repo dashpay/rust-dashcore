@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Wallet configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
 pub struct WalletConfig {

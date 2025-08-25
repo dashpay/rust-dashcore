@@ -20,17 +20,17 @@ const DENOMINATIONS: [u64; 5] = [
 
 #[derive(Debug, Clone)]
 struct CoinJoinRound {
-    round_id: u64,
+    _round_id: u64,
     denomination: u64,
-    participants: Vec<ParticipantInfo>,
-    collateral_required: u64,
+    _participants: Vec<ParticipantInfo>,
+    _collateral_required: u64,
 }
 
 #[derive(Debug, Clone)]
 struct ParticipantInfo {
-    participant_id: u32,
-    inputs: Vec<OutPoint>,
-    output_addresses: Vec<String>,
+    _participant_id: u32,
+    _inputs: Vec<OutPoint>,
+    _output_addresses: Vec<String>,
 }
 
 #[test]
@@ -227,22 +227,22 @@ fn test_multiple_denomination_mixing() {
     // Create rounds for different denominations
     let rounds = vec![
         CoinJoinRound {
-            round_id: 1,
+            _round_id: 1,
             denomination: DENOMINATIONS[0], // 0.001 DASH
-            participants: Vec::new(),
-            collateral_required: 100,
+            _participants: Vec::new(),
+            _collateral_required: 100,
         },
         CoinJoinRound {
-            round_id: 2,
+            _round_id: 2,
             denomination: DENOMINATIONS[2], // 0.1 DASH
-            participants: Vec::new(),
-            collateral_required: 1000,
+            _participants: Vec::new(),
+            _collateral_required: 1000,
         },
         CoinJoinRound {
-            round_id: 3,
+            _round_id: 3,
             denomination: DENOMINATIONS[3], // 1 DASH
-            participants: Vec::new(),
-            collateral_required: 10000,
+            _participants: Vec::new(),
+            _collateral_required: 10000,
         },
     ];
 
@@ -332,10 +332,10 @@ fn test_coinjoin_session_management() {
     // Test managing multiple CoinJoin sessions
     #[derive(Debug)]
     struct CoinJoinSession {
-        session_id: u64,
+        _session_id: u64,
         state: SessionState,
         participants: u32,
-        timeout: std::time::Duration,
+        _timeout: std::time::Duration,
     }
 
     #[derive(Debug, PartialEq)]
@@ -343,7 +343,7 @@ fn test_coinjoin_session_management() {
         Queued,
         Signing,
         Broadcasting,
-        Completed,
+        _Completed,
         Failed,
     }
 
@@ -352,10 +352,10 @@ fn test_coinjoin_session_management() {
     // Create multiple sessions
     for i in 0..3 {
         sessions.push(CoinJoinSession {
-            session_id: i,
+            _session_id: i,
             state: SessionState::Queued,
             participants: 0,
-            timeout: std::time::Duration::from_secs(30),
+            _timeout: std::time::Duration::from_secs(30),
         });
     }
 
