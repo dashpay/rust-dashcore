@@ -11,7 +11,7 @@ use crate::gap_limit::GapLimitManager;
 use crate::managed_account::address_pool::PublicKeyType;
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletBalance;
-use crate::{ExtendedPubKey, Network};
+use crate::{AddressInfo, ExtendedPubKey, Network};
 use alloc::collections::{BTreeMap, BTreeSet};
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::Txid;
@@ -574,12 +574,12 @@ impl ManagedAccount {
     }
 
     /// Generate the next EdDSA platform key (only for ProviderPlatformKeys accounts)
-    /// Returns the Ed25519 public key at the next unused index
+    /// Returns the Ed25519 public key and address info at the next unused index
     #[cfg(feature = "eddsa")]
     pub fn next_eddsa_platform_key(
         &mut self,
         account_xpriv: crate::derivation_slip10::ExtendedEd25519PrivKey,
-    ) -> Result<crate::derivation_slip10::VerifyingKey, &'static str> {
+    ) -> Result<(crate::derivation_slip10::VerifyingKey, AddressInfo), &'static str> {
         match &mut self.account_type {
             ManagedAccountType::ProviderPlatformKeys {
                 addresses,
@@ -594,7 +594,7 @@ impl ManagedAccount {
                     .map_err(|_| "Failed to get next unused address")?;
 
                 // Extract the EdDSA public key from the address info
-                let Some(PublicKeyType::EdDSA(pub_key_bytes)) = info.public_key else {
+                let Some(PublicKeyType::EdDSA(pub_key_bytes)) = info.public_key.clone() else {
                     return Err("Expected EdDSA public key but got different key type");
                 };
 
@@ -606,7 +606,7 @@ impl ManagedAccount {
                 )
                 .map_err(|_| "Failed to deserialize EdDSA public key")?;
 
-                Ok(verifying_key)
+                Ok((verifying_key, info))
             }
             _ => Err("This method only works for ProviderPlatformKeys accounts"),
         }

@@ -13,7 +13,7 @@ default = ["std"]
 std = ["dashcore_hashes/std", "secp256k1/std", "bip39/std", "getrandom", "dash-network/std", "rand"]
 serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde", "dashcore/serde"]
 bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dash-network/bincode", "dashcore_hashes/bincode", "dashcore/bincode"]
-bip38 = ["scrypt", "aes", "sha2", "bs58", "rand"]
+bip38 = ["scrypt", "aes", "bs58", "rand"]
 eddsa = ["dashcore/eddsa"]
 bls = ["dashcore/bls"]
 
@@ -31,7 +31,7 @@ dash-network = { path = "../dash-network", default-features = false }
 # BIP38 dependencies (optional)
 scrypt = { version = "0.11", default-features = false, optional = true }
 aes = { version = "0.8", default-features = false, optional = true }
-sha2 = { version = "0.10", default-features = false, optional = true }
+sha2 = { version = "0.10", default-features = false }
 bs58 = { version = "0.5", default-features = false, features = ["check", "alloc"], optional = true }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"], optional = true }
 # Serialization
@@ -40,6 +40,7 @@ bincode_derive = { version = "=2.0.0-rc.3", optional = true }
 base64 = { version = "0.22", optional = true }
 serde_json = { version = "1.0", optional = true }
 hex = { version = "0.4"}
+hkdf = { version = "0.12", default-features = false }
 
 [dev-dependencies]
 hex = "0.4"

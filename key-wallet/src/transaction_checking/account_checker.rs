@@ -301,8 +301,8 @@ impl ManagedAccount {
         tx: &Transaction,
         index: Option<u32>,
     ) -> Option<AccountMatch> {
-        // Only check if this is a provider voting keys account
-        if let ManagedAccountType::ProviderVotingKeys {
+        // Only check if this is a provider owner keys account
+        if let ManagedAccountType::ProviderOwnerKeys {
             addresses,
         } = &self.account_type
         {
@@ -343,7 +343,7 @@ impl ManagedAccount {
         index: Option<u32>,
     ) -> Option<AccountMatch> {
         // Only check if this is a provider voting keys account
-        if let ManagedAccountType::ProviderVotingKeys {
+        if let ManagedAccountType::ProviderOperatorKeys {
             addresses,
         } = &self.account_type
         {
@@ -385,7 +385,7 @@ impl ManagedAccount {
         index: Option<u32>,
     ) -> Option<AccountMatch> {
         // Only check if this is a provider voting keys account
-        if let ManagedAccountType::ProviderVotingKeys {
+        if let ManagedAccountType::ProviderPlatformKeys {
             addresses,
         } = &self.account_type
         {

@@ -196,18 +196,20 @@ mod tests {
                 index: 0,
                 standard_account_type:
                     crate::account::account_type::StandardAccountType::BIP44Account,
-                external_addresses: crate::managed_account::address_pool::AddressPool::new(
-                    external_path,
-                    crate::managed_account::address_pool::AddressPoolType::External,
-                    20,
-                    Network::Testnet,
-                ),
-                internal_addresses: crate::managed_account::address_pool::AddressPool::new(
-                    internal_path,
-                    crate::managed_account::address_pool::AddressPoolType::Internal,
-                    20,
-                    Network::Testnet,
-                ),
+                external_addresses:
+                    crate::managed_account::address_pool::AddressPool::new_without_generation(
+                        external_path,
+                        crate::managed_account::address_pool::AddressPoolType::External,
+                        20,
+                        Network::Testnet,
+                    ),
+                internal_addresses:
+                    crate::managed_account::address_pool::AddressPool::new_without_generation(
+                        internal_path,
+                        crate::managed_account::address_pool::AddressPoolType::Internal,
+                        20,
+                        Network::Testnet,
+                    ),
             },
             Network::Testnet,
             GapLimitManager::default(),
