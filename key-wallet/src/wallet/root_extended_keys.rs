@@ -4,9 +4,11 @@ use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::derivation_bls_bip32::ExtendedBLSPrivKey;
 use crate::wallet::WalletType;
 #[cfg(feature = "bincode")]
 use bincode::{BorrowDecode, Decode, Encode};
+use dashcore::blsful::Bls12381G2Impl;
 use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 
 #[derive(Debug, Clone)]
@@ -75,6 +77,57 @@ impl RootExtendedPrivKey {
             private_key: self.root_private_key,
             chain_code: self.root_chain_code,
         }
+    }
+
+    /// Convert to BLS extended private key for a specific network
+    /// This converts the secp256k1 private key to a BLS12-381 private key
+    /// Note: This is a cross-curve conversion and should be used carefully
+    pub fn to_bls_extended_priv_key(&self, network: Network) -> Result<ExtendedBLSPrivKey, Error> {
+        // Convert secp256k1 private key bytes to BLS private key
+        // Using from_le_bytes for little-endian byte order
+        // Note: from_le_bytes returns a CtOption (constant-time option) for security
+        let bls_private_key_option = dashcore::blsful::SecretKey::<Bls12381G2Impl>::from_le_bytes(
+            &self.root_private_key.secret_bytes(),
+        );
+
+        // Convert CtOption to Result
+        let bls_private_key = if bls_private_key_option.is_some().into() {
+            bls_private_key_option.unwrap()
+        } else {
+            return Err(Error::InvalidParameter(
+                "Failed to convert to BLS key: invalid key bytes".to_string(),
+            ));
+        };
+
+        Ok(ExtendedBLSPrivKey {
+            network,
+            depth: 0,
+            parent_fingerprint: Default::default(),
+            child_number: ChildNumber::from(0),
+            private_key: bls_private_key,
+            chain_code: self.root_chain_code,
+        })
+    }
+
+    /// Convert to EdDSA/Ed25519 extended private key for a specific network
+    /// This converts the secp256k1 private key to an Ed25519 private key
+    /// Note: This is a cross-curve conversion and should be used carefully
+    pub fn to_eddsa_extended_priv_key(
+        &self,
+        network: Network,
+    ) -> Result<crate::derivation_slip10::ExtendedEd25519PrivKey, Error> {
+        use crate::derivation_slip10::ExtendedEd25519PrivKey;
+
+        // Convert secp256k1 private key bytes to Ed25519 seed
+        // Ed25519 uses 32-byte seeds to generate keys
+        let seed_bytes = self.root_private_key.secret_bytes();
+
+        // Create Ed25519 extended private key from seed using new_master
+        let eddsa_key = ExtendedEd25519PrivKey::new_master(network, &seed_bytes).map_err(|e| {
+            Error::InvalidParameter(format!("Failed to convert to EdDSA key: {:?}", e))
+        })?;
+
+        Ok(eddsa_key)
     }
 
     /// Get the corresponding public key

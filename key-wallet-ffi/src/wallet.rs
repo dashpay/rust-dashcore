@@ -682,9 +682,20 @@ pub unsafe extern "C" fn wallet_add_account(
         Some(w) => {
             // Use the proper add_account method
             match w.add_account(account_type, network_rust, None) {
-                Ok(account) => {
-                    let ffi_account = crate::types::FFIAccount::new(account);
-                    crate::types::FFIAccountResult::success(Box::into_raw(Box::new(ffi_account)))
+                Ok(()) => {
+                    // Get the account we just added
+                    if let Some(account_collection) = w.accounts.get(&network_rust) {
+                        if let Some(account) = account_collection.account_of_type(account_type) {
+                            let ffi_account = crate::types::FFIAccount::new(account);
+                            return crate::types::FFIAccountResult::success(Box::into_raw(
+                                Box::new(ffi_account),
+                            ));
+                        }
+                    }
+                    crate::types::FFIAccountResult::error(
+                        FFIErrorCode::WalletError,
+                        "Failed to retrieve account after adding".to_string(),
+                    )
                 }
                 Err(e) => crate::types::FFIAccountResult::error(
                     FFIErrorCode::WalletError,
@@ -796,9 +807,20 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
 
     match wallet.inner_mut() {
         Some(w) => match w.add_account(account_type, network_rust, Some(xpub)) {
-            Ok(account) => {
-                let ffi_account = crate::types::FFIAccount::new(account);
-                crate::types::FFIAccountResult::success(Box::into_raw(Box::new(ffi_account)))
+            Ok(()) => {
+                // Get the account we just added
+                if let Some(account_collection) = w.accounts.get(&network_rust) {
+                    if let Some(account) = account_collection.account_of_type(account_type) {
+                        let ffi_account = crate::types::FFIAccount::new(account);
+                        return crate::types::FFIAccountResult::success(Box::into_raw(Box::new(
+                            ffi_account,
+                        )));
+                    }
+                }
+                crate::types::FFIAccountResult::error(
+                    FFIErrorCode::WalletError,
+                    "Failed to retrieve account after adding".to_string(),
+                )
             }
             Err(e) => crate::types::FFIAccountResult::error(
                 FFIErrorCode::WalletError,
@@ -907,9 +929,20 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
 
     match wallet.inner_mut() {
         Some(w) => match w.add_account(account_type, network_rust, Some(xpub)) {
-            Ok(account) => {
-                let ffi_account = crate::types::FFIAccount::new(account);
-                crate::types::FFIAccountResult::success(Box::into_raw(Box::new(ffi_account)))
+            Ok(()) => {
+                // Get the account we just added
+                if let Some(account_collection) = w.accounts.get(&network_rust) {
+                    if let Some(account) = account_collection.account_of_type(account_type) {
+                        let ffi_account = crate::types::FFIAccount::new(account);
+                        return crate::types::FFIAccountResult::success(Box::into_raw(Box::new(
+                            ffi_account,
+                        )));
+                    }
+                }
+                crate::types::FFIAccountResult::error(
+                    FFIErrorCode::WalletError,
+                    "Failed to retrieve account after adding".to_string(),
+                )
             }
             Err(e) => crate::types::FFIAccountResult::error(
                 FFIErrorCode::WalletError,

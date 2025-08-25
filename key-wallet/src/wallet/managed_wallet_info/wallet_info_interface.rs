@@ -2,7 +2,8 @@
 //!
 //! This trait allows WalletManager to work with different wallet info implementations
 
-use crate::account::managed_account_collection::ManagedAccountCollection;
+use super::managed_account_operations::ManagedAccountOperations;
+use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::immature_transaction::{ImmatureTransaction, ImmatureTransactionCollection};
 use crate::wallet::managed_wallet_info::fee::FeeLevel;
@@ -16,7 +17,7 @@ use dashcore::{Address as DashAddress, Address, Transaction};
 use std::collections::BTreeSet;
 
 /// Trait that wallet info types must implement to work with WalletManager
-pub trait WalletInfoInterface: Sized + WalletTransactionChecker {
+pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccountOperations {
     /// Create a new wallet info with the given ID and name
     fn with_name(wallet_id: [u8; 32], name: String) -> Self;
 
@@ -167,7 +168,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         if let Some(collection) = self.accounts.get(&network) {
             // Collect from all accounts using the account's get_all_addresses method
             for account in collection.all_accounts() {
-                addresses.extend(account.get_all_addresses());
+                addresses.extend(account.all_addresses());
             }
         }
 

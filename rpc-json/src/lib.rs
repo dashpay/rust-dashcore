@@ -3257,6 +3257,7 @@ where
 #[cfg(test)]
 mod tests {
     use dashcore::hashes::Hash;
+    use serde::{Deserialize, Serialize};
     use serde_json::json;
 
     use crate::{

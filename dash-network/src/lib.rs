@@ -1,5 +1,7 @@
 //! Dash network types shared across Dash crates
 
+#[cfg(feature = "bincode")]
+use bincode_derive::{Decode, Encode};
 use std::fmt;
 
 /// The cryptocurrency network to act on.
@@ -7,7 +9,7 @@ use std::fmt;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 #[non_exhaustive]
-#[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum Network {
     /// Classic Dash Core Payment Chain
     Dash,

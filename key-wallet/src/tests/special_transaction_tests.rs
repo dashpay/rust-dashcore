@@ -3,14 +3,13 @@
 //! Tests Provider (DIP-3) and Identity (Platform) special transactions.
 
 use dashcore::blockdata::transaction::special_transaction::{
-    coinbase::CoinbasePayload,
     provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
     provider_update_revocation::ProviderUpdateRevocationPayload,
     provider_update_service::ProviderUpdateServicePayload,
     TransactionPayload,
 };
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
-use dashcore::hash_types::{InputsHash, MerkleRootMasternodeList, MerkleRootQuorums, PubkeyHash};
+use dashcore::hash_types::{InputsHash, PubkeyHash};
 use dashcore::hashes::Hash;
 use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::net::SocketAddr;
@@ -21,8 +20,6 @@ enum SpecialTransactionType {
     ProviderRegistration = 1,    // ProRegTx
     ProviderUpdate = 2,          // ProUpServTx
     ProviderRevoke = 4,          // ProUpRevTx (note: 4, not 3)
-    CoinbaseSpecial = 5,         // CbTx
-    QuorumCommitment = 6,        // qcTx
     ProviderUpdateRegistrar = 3, // ProUpRegTx (note: 3, not 7)
 }
 
@@ -258,39 +255,6 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
             };
             tx.special_transaction_payload =
                 Some(TransactionPayload::ProviderUpdateRevocationPayloadType(payload));
-        }
-
-        SpecialTransactionType::QuorumCommitment => {
-            // Regular output for fees
-            tx.output.push(TxOut {
-                value: 1000,
-                script_pubkey: ScriptBuf::new(),
-            });
-
-            // Note: QuorumCommitmentPayload has private fields and complex construction.
-            // For testing purposes, we'll skip the actual payload creation and just
-            // create a basic transaction structure.
-            // In a real implementation, this would require proper QuorumEntry construction
-            // and access to QuorumCommitmentPayload constructors.
-        }
-
-        SpecialTransactionType::CoinbaseSpecial => {
-            // Coinbase reward output
-            tx.output.push(TxOut {
-                value: 500_000_000, // 5 DASH block reward
-                script_pubkey: ScriptBuf::new(),
-            });
-
-            let payload = CoinbasePayload {
-                version: 2,
-                height: 100000,
-                merkle_root_masternode_list: MerkleRootMasternodeList::from_byte_array([23u8; 32]),
-                merkle_root_quorums: MerkleRootQuorums::from_byte_array([24u8; 32]),
-                best_cl_height: Some(100000),
-                best_cl_signature: Some(BLSSignature::from([25u8; 96])),
-                asset_locked_amount: Some(1000000000),
-            };
-            tx.special_transaction_payload = Some(TransactionPayload::CoinbasePayloadType(payload));
         }
 
         _ => {

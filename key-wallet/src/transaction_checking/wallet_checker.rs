@@ -185,8 +185,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             account.transactions.insert(tx.txid(), tx_record);
 
                             // Mark involved addresses as used
-                            for address in &account_match.involved_addresses {
-                                account.mark_address_used(address);
+                            for address_info in &account_match.involved_addresses {
+                                account.mark_address_used(&address_info.address);
                             }
                         }
                     }
@@ -207,6 +207,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 affected_accounts: Vec::new(),
                 total_received: 0,
                 total_sent: 0,
+                total_received_for_credit_conversion: 0,
             }
         }
     }

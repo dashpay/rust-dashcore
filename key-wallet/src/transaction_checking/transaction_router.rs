@@ -3,6 +3,7 @@
 //! This module determines which account types should be checked
 //! for different transaction types.
 
+use crate::managed_account::managed_account_type::ManagedAccountType;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
 
@@ -153,7 +154,7 @@ impl TransactionRouter {
 }
 
 /// Account types that can be checked for transactions
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountTypeToCheck {
     StandardBIP44,
     StandardBIP32,
@@ -166,4 +167,94 @@ pub enum AccountTypeToCheck {
     ProviderOwnerKeys,
     ProviderOperatorKeys,
     ProviderPlatformKeys,
+}
+
+impl From<ManagedAccountType> for AccountTypeToCheck {
+    fn from(value: ManagedAccountType) -> Self {
+        match value {
+            ManagedAccountType::Standard {
+                standard_account_type,
+                ..
+            } => match standard_account_type {
+                crate::account::account_type::StandardAccountType::BIP44Account => {
+                    AccountTypeToCheck::StandardBIP44
+                }
+                crate::account::account_type::StandardAccountType::BIP32Account => {
+                    AccountTypeToCheck::StandardBIP32
+                }
+            },
+            ManagedAccountType::CoinJoin {
+                ..
+            } => AccountTypeToCheck::CoinJoin,
+            ManagedAccountType::IdentityRegistration {
+                ..
+            } => AccountTypeToCheck::IdentityRegistration,
+            ManagedAccountType::IdentityTopUp {
+                ..
+            } => AccountTypeToCheck::IdentityTopUp,
+            ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                ..
+            } => AccountTypeToCheck::IdentityTopUpNotBound,
+            ManagedAccountType::IdentityInvitation {
+                ..
+            } => AccountTypeToCheck::IdentityInvitation,
+            ManagedAccountType::ProviderVotingKeys {
+                ..
+            } => AccountTypeToCheck::ProviderVotingKeys,
+            ManagedAccountType::ProviderOwnerKeys {
+                ..
+            } => AccountTypeToCheck::ProviderOwnerKeys,
+            ManagedAccountType::ProviderOperatorKeys {
+                ..
+            } => AccountTypeToCheck::ProviderOperatorKeys,
+            ManagedAccountType::ProviderPlatformKeys {
+                ..
+            } => AccountTypeToCheck::ProviderPlatformKeys,
+        }
+    }
+}
+
+impl From<&ManagedAccountType> for AccountTypeToCheck {
+    fn from(value: &ManagedAccountType) -> Self {
+        match value {
+            ManagedAccountType::Standard {
+                standard_account_type,
+                ..
+            } => match standard_account_type {
+                crate::account::account_type::StandardAccountType::BIP44Account => {
+                    AccountTypeToCheck::StandardBIP44
+                }
+                crate::account::account_type::StandardAccountType::BIP32Account => {
+                    AccountTypeToCheck::StandardBIP32
+                }
+            },
+            ManagedAccountType::CoinJoin {
+                ..
+            } => AccountTypeToCheck::CoinJoin,
+            ManagedAccountType::IdentityRegistration {
+                ..
+            } => AccountTypeToCheck::IdentityRegistration,
+            ManagedAccountType::IdentityTopUp {
+                ..
+            } => AccountTypeToCheck::IdentityTopUp,
+            ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                ..
+            } => AccountTypeToCheck::IdentityTopUpNotBound,
+            ManagedAccountType::IdentityInvitation {
+                ..
+            } => AccountTypeToCheck::IdentityInvitation,
+            ManagedAccountType::ProviderVotingKeys {
+                ..
+            } => AccountTypeToCheck::ProviderVotingKeys,
+            ManagedAccountType::ProviderOwnerKeys {
+                ..
+            } => AccountTypeToCheck::ProviderOwnerKeys,
+            ManagedAccountType::ProviderOperatorKeys {
+                ..
+            } => AccountTypeToCheck::ProviderOperatorKeys,
+            ManagedAccountType::ProviderPlatformKeys {
+                ..
+            } => AccountTypeToCheck::ProviderPlatformKeys,
+        }
+    }
 }

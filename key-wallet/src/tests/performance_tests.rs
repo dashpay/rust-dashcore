@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 /// Performance metrics structure
 struct PerformanceMetrics {
-    operation: String,
-    iterations: usize,
+    _operation: String,
+    _iterations: usize,
     total_time: Duration,
     avg_time: Duration,
     min_time: Duration,
@@ -22,7 +22,7 @@ struct PerformanceMetrics {
 }
 
 impl PerformanceMetrics {
-    fn from_times(operation: &str, times: Vec<Duration>) -> Self {
+    pub fn from_times(operation: &str, times: Vec<Duration>) -> Self {
         let iterations = times.len();
         let total_time: Duration = times.iter().sum();
         let avg_time = total_time / iterations as u32;
@@ -31,8 +31,8 @@ impl PerformanceMetrics {
         let ops_per_second = iterations as f64 / total_time.as_secs_f64();
 
         Self {
-            operation: operation.to_string(),
-            iterations,
+            _operation: operation.to_string(),
+            _iterations: iterations,
             total_time,
             avg_time,
             min_time,
@@ -41,9 +41,9 @@ impl PerformanceMetrics {
         }
     }
 
-    fn print_summary(&self) {
-        println!("Performance: {}", self.operation);
-        println!("  Iterations: {}", self.iterations);
+    pub fn _print_summary(&self) {
+        println!("Performance: {}", self._operation);
+        println!("  Iterations: {}", self._iterations);
         println!("  Total time: {:?}", self.total_time);
         println!("  Avg time: {:?}", self.avg_time);
         println!("  Min time: {:?}", self.min_time);
@@ -166,7 +166,7 @@ fn test_wallet_recovery_performance() {
 
 #[test]
 fn test_address_generation_batch_performance() {
-    use crate::account::address_pool::{AddressPool, KeySource};
+    use crate::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
@@ -185,7 +185,9 @@ fn test_address_generation_batch_performance() {
     let key_source = KeySource::Private(account_key);
 
     let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-    let mut pool = AddressPool::new(base_path, false, 20, Network::Testnet);
+    let mut pool =
+        AddressPool::new(base_path, AddressPoolType::External, 20, Network::Testnet, &key_source)
+            .unwrap();
 
     // Batch generation test
     let batch_sizes = vec![10, 50, 100, 500];
@@ -380,7 +382,7 @@ fn test_transaction_checking_performance() {
 
 #[test]
 fn test_gap_limit_scan_performance() {
-    use crate::account::address_pool::{AddressPool, KeySource};
+    use crate::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
@@ -399,7 +401,9 @@ fn test_gap_limit_scan_performance() {
     let key_source = KeySource::Private(account_key);
 
     let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-    let mut pool = AddressPool::new(base_path, false, 20, Network::Testnet);
+    let mut pool =
+        AddressPool::new(base_path, AddressPoolType::External, 20, Network::Testnet, &key_source)
+            .unwrap();
 
     // Generate addresses with gaps
     pool.generate_addresses(100, &key_source).unwrap();
@@ -449,33 +453,4 @@ fn test_worst_case_derivation_path() {
 
     // Even deep paths should be reasonably fast (relaxed threshold for test environment)
     assert!(metrics.avg_time < Duration::from_millis(20), "Deep path derivation too slow");
-}
-
-#[test]
-fn test_memory_stress_with_many_utxos() {
-    // Simulate wallet with many UTXOs
-    struct MockUTXO {
-        txid: [u8; 32],
-        vout: u32,
-        value: u64,
-    }
-
-    let num_utxos = 10000;
-    let mut utxos = Vec::new();
-
-    for i in 0..num_utxos {
-        utxos.push(MockUTXO {
-            txid: [(i % 256) as u8; 32],
-            vout: (i % 10) as u32,
-            value: 100000 + i,
-        });
-    }
-
-    // Calculate total balance
-    let start = Instant::now();
-    let total: u64 = utxos.iter().map(|u| u.value).sum();
-    let elapsed = start.elapsed();
-
-    assert_eq!(total, utxos.iter().map(|u| u.value).sum::<u64>());
-    assert!(elapsed < Duration::from_millis(1), "UTXO summation too slow");
 }

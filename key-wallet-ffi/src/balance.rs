@@ -85,7 +85,7 @@ pub unsafe extern "C" fn wallet_get_account_balance(
     let wallet = &*wallet;
     let network_rust: key_wallet::Network = network.into();
 
-    use key_wallet::account::types::{AccountType, StandardAccountType};
+    use key_wallet::account::account_type::{AccountType, StandardAccountType};
     let _account_type = AccountType::Standard {
         index: account_index,
         standard_account_type: StandardAccountType::BIP44Account,

@@ -3,12 +3,13 @@
 //! This module provides a structure for managing multiple accounts
 //! across different networks in a hierarchical manner.
 
-use super::account_collection::AccountCollection;
-use super::address_pool::AddressPool;
-use super::managed_account::ManagedAccount;
-use super::types::{AccountType, ManagedAccountType};
+use crate::account::account_type::AccountType;
 use crate::gap_limit::GapLimitManager;
-use crate::Network;
+use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+use crate::managed_account::managed_account_type::ManagedAccountType;
+use crate::managed_account::ManagedAccount;
+use crate::{Account, AccountCollection};
+use crate::{KeySource, Network};
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 #[cfg(feature = "serde")]
@@ -60,185 +61,58 @@ impl ManagedAccountCollection {
         }
     }
 
-    /// Create a ManagedAccountCollection from an AccountCollection
-    /// This properly initializes ManagedAccounts for each Account in the collection
-    pub fn from_account_collection(account_collection: &AccountCollection) -> Self {
-        let mut managed_collection = Self::new();
+    /// Check if a managed account type exists in the collection
+    pub fn contains_managed_account_type(&self, managed_type: &ManagedAccountType) -> bool {
+        use crate::account::StandardAccountType;
 
-        // Convert standard BIP44 accounts
-        for (index, account) in &account_collection.standard_bip44_accounts {
-            let managed_account = Self::create_managed_account_from_account(account);
-            managed_collection.standard_bip44_accounts.insert(*index, managed_account);
-        }
-
-        // Convert standard BIP32 accounts
-        for (index, account) in &account_collection.standard_bip32_accounts {
-            let managed_account = Self::create_managed_account_from_account(account);
-            managed_collection.standard_bip32_accounts.insert(*index, managed_account);
-        }
-
-        // Convert CoinJoin accounts
-        for (index, account) in &account_collection.coinjoin_accounts {
-            let managed_account = Self::create_managed_account_from_account(account);
-            managed_collection.coinjoin_accounts.insert(*index, managed_account);
-        }
-
-        // Convert special purpose accounts
-        if let Some(account) = &account_collection.identity_registration {
-            managed_collection.identity_registration =
-                Some(Self::create_managed_account_from_account(account));
-        }
-
-        for (index, account) in &account_collection.identity_topup {
-            let managed_account = Self::create_managed_account_from_account(account);
-            managed_collection.identity_topup.insert(*index, managed_account);
-        }
-
-        if let Some(account) = &account_collection.identity_topup_not_bound {
-            managed_collection.identity_topup_not_bound =
-                Some(Self::create_managed_account_from_account(account));
-        }
-
-        if let Some(account) = &account_collection.identity_invitation {
-            managed_collection.identity_invitation =
-                Some(Self::create_managed_account_from_account(account));
-        }
-
-        if let Some(account) = &account_collection.provider_voting_keys {
-            managed_collection.provider_voting_keys =
-                Some(Self::create_managed_account_from_account(account));
-        }
-
-        if let Some(account) = &account_collection.provider_owner_keys {
-            managed_collection.provider_owner_keys =
-                Some(Self::create_managed_account_from_account(account));
-        }
-
-        if let Some(account) = &account_collection.provider_operator_keys {
-            managed_collection.provider_operator_keys =
-                Some(Self::create_managed_account_from_account(account));
-        }
-
-        if let Some(account) = &account_collection.provider_platform_keys {
-            managed_collection.provider_platform_keys =
-                Some(Self::create_managed_account_from_account(account));
-        }
-
-        managed_collection
-    }
-
-    /// Create a ManagedAccount from an Account
-    fn create_managed_account_from_account(account: &super::Account) -> ManagedAccount {
-        Self::create_managed_account_from_account_type(
-            account.account_type,
-            account.network,
-            account.is_watch_only,
-        )
-    }
-
-    /// Create a ManagedAccount from an Account type with network and watch-only status
-    fn create_managed_account_from_account_type(
-        account_type: AccountType,
-        network: Network,
-        is_watch_only: bool,
-    ) -> ManagedAccount {
-        // Get the derivation path for this account type
-        let base_path = account_type
-            .derivation_path(network)
-            .unwrap_or_else(|_| crate::bip32::DerivationPath::master());
-
-        // Create the appropriate ManagedAccountType with address pools
-        let managed_type = match account_type {
-            AccountType::Standard {
+        match managed_type {
+            ManagedAccountType::Standard {
                 index,
                 standard_account_type,
-            } => {
-                // For standard accounts, add the receive/change branch to the path
-                let mut external_path = base_path.clone();
-                external_path.push(crate::bip32::ChildNumber::from_normal_idx(0).unwrap()); // 0 for external
-                let external_pool = AddressPool::new(external_path, false, 20, network);
-
-                let mut internal_path = base_path;
-                internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1).unwrap()); // 1 for internal
-                let internal_pool = AddressPool::new(internal_path, true, 20, network);
-
-                let managed_standard_type = standard_account_type;
-
-                ManagedAccountType::Standard {
-                    index,
-                    standard_account_type: managed_standard_type,
-                    external_addresses: external_pool,
-                    internal_addresses: internal_pool,
+                ..
+            } => match standard_account_type {
+                StandardAccountType::BIP44Account => {
+                    self.standard_bip44_accounts.contains_key(index)
                 }
-            }
-            AccountType::CoinJoin {
+                StandardAccountType::BIP32Account => {
+                    self.standard_bip32_accounts.contains_key(index)
+                }
+            },
+            ManagedAccountType::CoinJoin {
                 index,
-            } => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
-                ManagedAccountType::CoinJoin {
-                    index,
-                    addresses,
-                }
-            }
-            AccountType::IdentityRegistration => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
-                ManagedAccountType::IdentityRegistration {
-                    addresses,
-                }
-            }
-            AccountType::IdentityTopUp {
+                ..
+            } => self.coinjoin_accounts.contains_key(index),
+            ManagedAccountType::IdentityRegistration {
+                ..
+            } => self.identity_registration.is_some(),
+            ManagedAccountType::IdentityTopUp {
                 registration_index,
-            } => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
-                ManagedAccountType::IdentityTopUp {
-                    registration_index,
-                    addresses,
-                }
-            }
-            AccountType::IdentityTopUpNotBoundToIdentity => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
-                ManagedAccountType::IdentityTopUpNotBoundToIdentity {
-                    addresses,
-                }
-            }
-            AccountType::IdentityInvitation => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
-                ManagedAccountType::IdentityInvitation {
-                    addresses,
-                }
-            }
-            AccountType::ProviderVotingKeys => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
-                ManagedAccountType::ProviderVotingKeys {
-                    addresses,
-                }
-            }
-            AccountType::ProviderOwnerKeys => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
-                ManagedAccountType::ProviderOwnerKeys {
-                    addresses,
-                }
-            }
-            AccountType::ProviderOperatorKeys => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
-                ManagedAccountType::ProviderOperatorKeys {
-                    addresses,
-                }
-            }
-            AccountType::ProviderPlatformKeys => {
-                let addresses = AddressPool::new(base_path, false, 20, network);
-                ManagedAccountType::ProviderPlatformKeys {
-                    addresses,
-                }
-            }
-        };
-
-        ManagedAccount::new(managed_type, network, GapLimitManager::default(), is_watch_only)
+                ..
+            } => self.identity_topup.contains_key(registration_index),
+            ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                ..
+            } => self.identity_topup_not_bound.is_some(),
+            ManagedAccountType::IdentityInvitation {
+                ..
+            } => self.identity_invitation.is_some(),
+            ManagedAccountType::ProviderVotingKeys {
+                ..
+            } => self.provider_voting_keys.is_some(),
+            ManagedAccountType::ProviderOwnerKeys {
+                ..
+            } => self.provider_owner_keys.is_some(),
+            ManagedAccountType::ProviderOperatorKeys {
+                ..
+            } => self.provider_operator_keys.is_some(),
+            ManagedAccountType::ProviderPlatformKeys {
+                ..
+            } => self.provider_platform_keys.is_some(),
+        }
     }
 
-    /// Insert an account into the collection
+    /// Insert a managed account into the collection
     pub fn insert(&mut self, account: ManagedAccount) {
-        use super::types::{ManagedAccountType, StandardAccountType};
+        use crate::account::StandardAccountType;
 
         match &account.account_type {
             ManagedAccountType::Standard {
@@ -303,7 +177,262 @@ impl ManagedAccountCollection {
         }
     }
 
-    /// Get an account by index
+    /// Create a ManagedAccountCollection from an AccountCollection
+    /// This properly initializes ManagedAccounts for each Account in the collection
+    pub fn from_account_collection(account_collection: &AccountCollection) -> Self {
+        let mut managed_collection = Self::new();
+
+        // Convert standard BIP44 accounts
+        for (index, account) in &account_collection.standard_bip44_accounts {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.standard_bip44_accounts.insert(*index, managed_account);
+            }
+        }
+
+        // Convert standard BIP32 accounts
+        for (index, account) in &account_collection.standard_bip32_accounts {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.standard_bip32_accounts.insert(*index, managed_account);
+            }
+        }
+
+        // Convert CoinJoin accounts
+        for (index, account) in &account_collection.coinjoin_accounts {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.coinjoin_accounts.insert(*index, managed_account);
+            }
+        }
+
+        // Convert special purpose accounts
+        if let Some(account) = &account_collection.identity_registration {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.identity_registration = Some(managed_account);
+            }
+        }
+
+        for (index, account) in &account_collection.identity_topup {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.identity_topup.insert(*index, managed_account);
+            }
+        }
+
+        if let Some(account) = &account_collection.identity_topup_not_bound {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.identity_topup_not_bound = Some(managed_account);
+            }
+        }
+
+        if let Some(account) = &account_collection.identity_invitation {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.identity_invitation = Some(managed_account);
+            }
+        }
+
+        if let Some(account) = &account_collection.provider_voting_keys {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.provider_voting_keys = Some(managed_account);
+            }
+        }
+
+        if let Some(account) = &account_collection.provider_owner_keys {
+            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+                managed_collection.provider_owner_keys = Some(managed_account);
+            }
+        }
+
+        #[cfg(feature = "bls")]
+        if let Some(account) = &account_collection.provider_operator_keys {
+            if let Ok(managed_account) = Self::create_managed_account_from_bls_account(account) {
+                managed_collection.provider_operator_keys = Some(managed_account);
+            }
+        }
+
+        #[cfg(feature = "eddsa")]
+        if let Some(account) = &account_collection.provider_platform_keys {
+            if let Ok(managed_account) =
+                Self::create_managed_account_from_eddsa_account(account, None)
+            {
+                managed_collection.provider_platform_keys = Some(managed_account);
+            }
+        }
+
+        managed_collection
+    }
+
+    /// Create a ManagedAccount from an Account
+    fn create_managed_account_from_account(
+        account: &Account,
+    ) -> Result<ManagedAccount, crate::error::Error> {
+        // Use the account's existing public key
+        let key_source = KeySource::Public(account.account_xpub);
+        Self::create_managed_account_from_account_type(
+            account.account_type,
+            account.network,
+            account.is_watch_only,
+            &key_source,
+        )
+    }
+
+    /// Create a ManagedAccount from a BLS Account
+    #[cfg(feature = "bls")]
+    fn create_managed_account_from_bls_account(
+        account: &super::BLSAccount,
+    ) -> Result<ManagedAccount, crate::error::Error> {
+        let key_source = KeySource::BLSPublic(account.bls_public_key.clone());
+        Self::create_managed_account_from_account_type(
+            account.account_type,
+            account.network,
+            account.is_watch_only,
+            &key_source,
+        )
+    }
+
+    /// Create a ManagedAccount from an EdDSA Account
+    #[cfg(feature = "eddsa")]
+    fn create_managed_account_from_eddsa_account(
+        account: &super::EdDSAAccount,
+        xpriv: Option<crate::derivation_slip10::ExtendedEd25519PrivKey>,
+    ) -> Result<ManagedAccount, crate::error::Error> {
+        // EdDSA requires hardened derivation, so we need the private key to generate addresses
+        let key_source = match xpriv {
+            Some(priv_key) => KeySource::EdDSAPrivate(priv_key),
+            None => KeySource::NoKeySource,
+        };
+        Self::create_managed_account_from_account_type(
+            account.account_type,
+            account.network,
+            account.is_watch_only,
+            &key_source,
+        )
+    }
+
+    /// Create a ManagedAccount from an Account type with network and watch-only status
+    fn create_managed_account_from_account_type(
+        account_type: AccountType,
+        network: Network,
+        is_watch_only: bool,
+        key_source: &KeySource,
+    ) -> Result<ManagedAccount, crate::error::Error> {
+        // Get the derivation path for this account type
+        let base_path = account_type
+            .derivation_path(network)
+            .unwrap_or_else(|_| crate::bip32::DerivationPath::master());
+
+        // Create the appropriate ManagedAccountType with address pools
+        let managed_type = match account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => {
+                // For standard accounts, add the receive/change branch to the path
+                let mut external_path = base_path.clone();
+                external_path.push(crate::bip32::ChildNumber::from_normal_idx(0).unwrap()); // 0 for external
+                let external_pool = AddressPool::new(
+                    external_path,
+                    AddressPoolType::External,
+                    20,
+                    network,
+                    key_source,
+                )?;
+
+                let mut internal_path = base_path;
+                internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1).unwrap()); // 1 for internal
+                let internal_pool = AddressPool::new(
+                    internal_path,
+                    AddressPoolType::Internal,
+                    20,
+                    network,
+                    key_source,
+                )?;
+
+                let managed_standard_type = standard_account_type;
+
+                ManagedAccountType::Standard {
+                    index,
+                    standard_account_type: managed_standard_type,
+                    external_addresses: external_pool,
+                    internal_addresses: internal_pool,
+                }
+            }
+            AccountType::CoinJoin {
+                index,
+            } => {
+                let addresses =
+                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                ManagedAccountType::CoinJoin {
+                    index,
+                    addresses,
+                }
+            }
+            AccountType::IdentityRegistration => {
+                let addresses =
+                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                ManagedAccountType::IdentityRegistration {
+                    addresses,
+                }
+            }
+            AccountType::IdentityTopUp {
+                registration_index,
+            } => {
+                let addresses =
+                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                ManagedAccountType::IdentityTopUp {
+                    registration_index,
+                    addresses,
+                }
+            }
+            AccountType::IdentityTopUpNotBoundToIdentity => {
+                let addresses =
+                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                    addresses,
+                }
+            }
+            AccountType::IdentityInvitation => {
+                let addresses =
+                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                ManagedAccountType::IdentityInvitation {
+                    addresses,
+                }
+            }
+            AccountType::ProviderVotingKeys => {
+                let addresses =
+                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                ManagedAccountType::ProviderVotingKeys {
+                    addresses,
+                }
+            }
+            AccountType::ProviderOwnerKeys => {
+                let addresses =
+                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                ManagedAccountType::ProviderOwnerKeys {
+                    addresses,
+                }
+            }
+            AccountType::ProviderOperatorKeys => {
+                let addresses =
+                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
+                ManagedAccountType::ProviderOperatorKeys {
+                    addresses,
+                }
+            }
+            AccountType::ProviderPlatformKeys => {
+                let addresses = AddressPool::new(
+                    base_path,
+                    AddressPoolType::AbsentHardened,
+                    20,
+                    network,
+                    key_source,
+                )?;
+                ManagedAccountType::ProviderPlatformKeys {
+                    addresses,
+                }
+            }
+        };
+
+        Ok(ManagedAccount::new(managed_type, network, GapLimitManager::default(), is_watch_only))
+    }
+
     pub fn get(&self, index: u32) -> Option<&ManagedAccount> {
         // Try standard BIP44 first
         if let Some(account) = self.standard_bip44_accounts.get(&index) {
@@ -549,15 +678,5 @@ impl ManagedAccountCollection {
         self.provider_owner_keys = None;
         self.provider_operator_keys = None;
         self.provider_platform_keys = None;
-    }
-
-    /// Check if a transaction belongs to any accounts in this collection
-    pub fn check_transaction(
-        &self,
-        tx: &dashcore::blockdata::transaction::Transaction,
-        account_types: &[crate::transaction_checking::transaction_router::AccountTypeToCheck],
-    ) -> crate::transaction_checking::account_checker::TransactionCheckResult {
-        use crate::transaction_checking::account_checker::AccountTransactionChecker;
-        AccountTransactionChecker::check_transaction(self, tx, account_types)
     }
 }

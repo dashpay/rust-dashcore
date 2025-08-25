@@ -30,7 +30,7 @@ fn test_account_index_overflow() {
 #[test]
 fn test_invalid_derivation_paths() {
     // Test various invalid derivation path scenarios
-    let test_cases = vec![
+    let _test_cases = vec![
         "",                      // Empty path
         "m",                     // Just master
         "m/",                    // Trailing slash
@@ -154,30 +154,42 @@ fn test_duplicate_account_handling() {
         standard_account_type: StandardAccountType::BIP44Account,
     };
 
-    // First addition should succeed (already has default account 0)
-    let result1 = wallet.add_account(account_type.clone(), Network::Testnet, None);
+    // First addition should succeed (wallet was created with None, so no accounts exist)
+    let result1 = wallet.add_account(account_type, Network::Testnet, None);
 
     // Duplicate addition should be handled gracefully
     let result2 = wallet.add_account(account_type, Network::Testnet, None);
 
-    // Both should handle the duplicate appropriately
-    // (either succeed idempotently or return an error)
+    // First should succeed, second should fail due to duplicate
+    assert!(result1.is_ok(), "First attempt to add account 0 should succeed");
+    assert!(result2.is_err(), "Second attempt to add duplicate account 0 should error");
 }
 
 #[test]
 fn test_extreme_gap_limit() {
-    use crate::account::address_pool::AddressPool;
     use crate::bip32::DerivationPath;
+    use crate::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 
     // Test with extremely large gap limit
     let base_path = DerivationPath::from(vec![ChildNumber::from(0)]);
-    let pool = AddressPool::new(base_path.clone(), false, 10000, Network::Testnet);
+    let key_source = KeySource::NoKeySource;
+    let pool = AddressPool::new_without_generation(
+        base_path.clone(),
+        AddressPoolType::External,
+        10000,
+        Network::Testnet,
+    );
 
     // Should handle large gap limits without issues
     assert_eq!(pool.gap_limit, 10000);
 
     // Test with zero gap limit
-    let zero_gap_pool = AddressPool::new(base_path, false, 0, Network::Testnet);
+    let zero_gap_pool = AddressPool::new_without_generation(
+        base_path,
+        AddressPoolType::External,
+        0,
+        Network::Testnet,
+    );
     assert_eq!(zero_gap_pool.gap_limit, 0);
 }
 
