@@ -80,16 +80,22 @@ mod tests {
     #[cfg(all(feature = "bincode", feature = "bls"))]
     fn test_bls_serialization() {
         use crate::account::{account_type::StandardAccountType, AccountTrait, AccountType};
+        use crate::derivation_bls_bip32::{ExtendedBLSPrivKey, ExtendedBLSPubKey};
         use crate::Network;
 
-        let public_key = [1u8; 48];
+        // Create a valid BLS public key
+        let seed = [42u8; 32];
+        let bls_private = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
+        let bls_public = ExtendedBLSPubKey::from_private_key(&bls_private);
+        let public_key_bytes = bls_public.to_bytes();
+        
         let account = BLSAccount::from_public_key_bytes(
             None,
             AccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            public_key,
+            public_key_bytes.try_into().unwrap(),
             Network::Testnet,
         )
         .unwrap();
@@ -107,16 +113,22 @@ mod tests {
     #[cfg(all(feature = "bincode", feature = "eddsa"))]
     fn test_eddsa_serialization() {
         use crate::account::{account_type::StandardAccountType, AccountTrait, AccountType};
+        use crate::derivation_slip10::{ExtendedEd25519PrivKey, ExtendedEd25519PubKey};
         use crate::Network;
 
-        let public_key = [1u8; 32];
+        // Create a valid Ed25519 public key
+        let seed = [42u8; 32];
+        let ed25519_private = ExtendedEd25519PrivKey::new_master(Network::Testnet, &seed).unwrap();
+        let ed25519_public = ExtendedEd25519PubKey::from_priv(&ed25519_private).unwrap();
+        let public_key_bytes = ed25519_public.public_key.to_bytes();
+        
         let account = EdDSAAccount::from_public_key_bytes(
             None,
             AccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            public_key,
+            public_key_bytes,
             Network::Testnet,
         )
         .unwrap();

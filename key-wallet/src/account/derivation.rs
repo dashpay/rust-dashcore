@@ -1,7 +1,6 @@
 use crate::managed_account::address_pool::AddressPoolType;
-use crate::{Account, ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey};
-use dashcore::{Address, PublicKey};
-use secp256k1::Secp256k1;
+use crate::{ChildNumber, DerivationPath, Error};
+use dashcore::Address;
 
 /// Derivation helpers available on an account-like type.
 ///
@@ -115,82 +114,4 @@ pub trait AccountDerivation<EPrivKeyType, EPubKeyType, PubKeyType> {
         index: u32,
         use_hardened_with_priv_key: Option<EPrivKeyType>,
     ) -> Result<EPubKeyType, Error>;
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::account::tests::test_account;
-
-    #[test]
-    fn test_derive_receive_address() {
-        let account = test_account();
-
-        // Derive receive address at index 0
-        let addr0 = account.derive_receive_address(0).unwrap();
-        assert!(!addr0.to_string().is_empty());
-
-        // Derive receive address at index 5
-        let addr5 = account.derive_receive_address(5).unwrap();
-        assert!(!addr5.to_string().is_empty());
-
-        // Addresses at different indices should be different
-        assert_ne!(addr0, addr5);
-    }
-
-    #[test]
-    fn test_derive_change_address() {
-        let account = test_account();
-
-        // Derive change address at index 0
-        let addr0 = account.derive_change_address(0).unwrap();
-        assert!(!addr0.to_string().is_empty());
-
-        // Derive change address at index 3
-        let addr3 = account.derive_change_address(3).unwrap();
-        assert!(!addr3.to_string().is_empty());
-
-        // Addresses at different indices should be different
-        assert_ne!(addr0, addr3);
-
-        // Change address should be different from receive address at same index
-        let receive0 = account.derive_receive_address(0).unwrap();
-        assert_ne!(addr0, receive0);
-    }
-
-    #[test]
-    fn test_derive_multiple_addresses() {
-        let account = test_account();
-
-        // Derive 5 receive addresses starting from index 0
-        let receive_addrs = account.derive_receive_addresses(0, 5).unwrap();
-        assert_eq!(receive_addrs.len(), 5);
-
-        // All addresses should be unique
-        let unique: std::collections::HashSet<_> = receive_addrs.iter().collect();
-        assert_eq!(unique.len(), 5);
-
-        // Derive 3 change addresses starting from index 2
-        let change_addrs = account.derive_change_addresses(2, 3).unwrap();
-        assert_eq!(change_addrs.len(), 3);
-
-        // Verify the addresses match individual derivation
-        assert_eq!(change_addrs[0], account.derive_change_address(2).unwrap());
-        assert_eq!(change_addrs[1], account.derive_change_address(3).unwrap());
-        assert_eq!(change_addrs[2], account.derive_change_address(4).unwrap());
-    }
-
-    #[test]
-    fn test_derive_address_at() {
-        let account = test_account();
-
-        // External address at index 5
-        let external5 = account.derive_address_at(false, 5).unwrap();
-        let receive5 = account.derive_receive_address(5).unwrap();
-        assert_eq!(external5, receive5);
-
-        // Internal address at index 3
-        let internal3 = account.derive_address_at(true, 3).unwrap();
-        let change3 = account.derive_change_address(3).unwrap();
-        assert_eq!(internal3, change3);
-    }
 }

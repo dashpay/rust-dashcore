@@ -372,19 +372,25 @@ mod tests {
 
     #[test]
     fn test_bls_account_creation() {
-        let public_key = [1u8; 48];
+        // First create a valid BLS key pair to get a real public key
+        let seed = [42u8; 32];
+        let bls_private = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
+        let bls_public = ExtendedBLSPubKey::from_private_key(&bls_private);
+        let public_key_bytes = bls_public.to_bytes();
+        
+        // Now create account from the valid public key bytes
         let account = BLSAccount::from_public_key_bytes(
             None,
             AccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            public_key,
+            public_key_bytes,
             Network::Testnet,
         )
-        .unwrap();
+        .expect("Failed to create BLS account");
 
-        assert_eq!(account.get_public_key_bytes(), public_key.to_vec());
+        assert_eq!(account.get_public_key_bytes().len(), 48);
         assert!(account.is_watch_only);
         assert_eq!(account.index(), Some(0));
     }

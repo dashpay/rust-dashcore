@@ -371,19 +371,25 @@ mod tests {
 
     #[test]
     fn test_eddsa_account_creation() {
-        let public_key = [1u8; 32];
+        // First create a valid Ed25519 key pair to get a real public key
+        let seed = [42u8; 32];
+        let ed25519_private = ExtendedEd25519PrivKey::new_master(Network::Testnet, &seed).unwrap();
+        let ed25519_public = ExtendedEd25519PubKey::from_priv(&ed25519_private).unwrap();
+        let public_key_bytes = ed25519_public.public_key.to_bytes();
+        
+        // Now create account from the valid public key bytes
         let account = EdDSAAccount::from_public_key_bytes(
             None,
             AccountType::Standard {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            public_key,
+            public_key_bytes,
             Network::Testnet,
         )
         .unwrap();
 
-        assert_eq!(account.get_public_key_bytes(), public_key.to_vec());
+        assert_eq!(account.get_public_key_bytes(), public_key_bytes.to_vec());
         assert!(account.is_watch_only);
         assert_eq!(account.index(), Some(0));
     }
