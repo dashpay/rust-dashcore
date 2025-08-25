@@ -1,7 +1,7 @@
-use secp256k1::Secp256k1;
-use dashcore::{Address, PublicKey};
-use crate::{Account, ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey};
 use crate::managed_account::address_pool::AddressPoolType;
+use crate::{Account, ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey};
+use dashcore::{Address, PublicKey};
+use secp256k1::Secp256k1;
 
 /// Derivation helpers available on an account-like type.
 ///
@@ -33,7 +33,6 @@ pub trait AccountDerivation<EPrivKeyType, EPubKeyType, PubKeyType> {
     /// from the account xpub.
     fn derive_child_xpub(&self, child_path: &DerivationPath) -> Result<EPubKeyType, Error>;
 
-
     /// Build the (chain, index) tail of a derivation path for the given address pool.
     ///
     /// This helper returns the last two components of a BIP32-style path:
@@ -63,29 +62,26 @@ pub trait AccountDerivation<EPrivKeyType, EPubKeyType, PubKeyType> {
         use_hardened: bool,
     ) -> Result<DerivationPath, Error>
     where
-        Self: Sized
-        {
-            Ok(match address_pool_type {
-                AddressPoolType::External => {
-                    DerivationPath::from(vec![
-                        ChildNumber::from_idx(0, use_hardened)?, // External chain
-                        ChildNumber::from_idx(index, use_hardened)?,
-                    ])
-                }
-                AddressPoolType::Internal => {
-                    DerivationPath::from(vec![
-                        ChildNumber::from_idx(1, use_hardened)?, // Internal chain
-                        ChildNumber::from_idx(index, use_hardened)?,
-                    ])
-                }
-                AddressPoolType::Absent => {
-                    DerivationPath::from(vec![
-                        ChildNumber::from_idx(index, use_hardened)?,
-                    ])
-                }
-            })
-        }
-
+        Self: Sized,
+    {
+        Ok(match address_pool_type {
+            AddressPoolType::External => {
+                DerivationPath::from(vec![
+                    ChildNumber::from_idx(0, use_hardened)?, // External chain
+                    ChildNumber::from_idx(index, use_hardened)?,
+                ])
+            }
+            AddressPoolType::Internal => {
+                DerivationPath::from(vec![
+                    ChildNumber::from_idx(1, use_hardened)?, // Internal chain
+                    ChildNumber::from_idx(index, use_hardened)?,
+                ])
+            }
+            AddressPoolType::Absent => {
+                DerivationPath::from(vec![ChildNumber::from_idx(index, use_hardened)?])
+            }
+        })
+    }
 
     /// Derive an address at a specific chain (external/internal/absent) and index.
     ///
@@ -113,7 +109,12 @@ pub trait AccountDerivation<EPrivKeyType, EPubKeyType, PubKeyType> {
     ///
     /// If `use_hardened_with_priv_key` is `Some(xpriv)`, derive via xpriv (hardened allowed),
     /// otherwise derive public children from the account xpub (non-hardened).
-    fn derive_extended_public_key_at(&self, address_pool_type: AddressPoolType, index: u32, use_hardened_with_priv_key: Option<EPrivKeyType>) -> Result<EPubKeyType, Error>;
+    fn derive_extended_public_key_at(
+        &self,
+        address_pool_type: AddressPoolType,
+        index: u32,
+        use_hardened_with_priv_key: Option<EPrivKeyType>,
+    ) -> Result<EPubKeyType, Error>;
 }
 
 #[cfg(test)]

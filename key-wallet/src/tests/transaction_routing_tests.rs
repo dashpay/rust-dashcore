@@ -2,17 +2,17 @@
 //!
 //! Tests how transactions are routed to the appropriate accounts based on their type.
 
-use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
-use crate::managed_account::ManagedAccount;
-use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::account::account_type::StandardAccountType as ManagedStandardAccountType;
 use crate::account::{AccountType, StandardAccountType};
 use crate::gap_limit::GapLimitManager;
+use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+use crate::managed_account::managed_account_collection::ManagedAccountCollection;
+use crate::managed_account::managed_account_type::ManagedAccountType;
+use crate::managed_account::ManagedAccount;
 use crate::wallet::ManagedWalletInfo;
 use crate::Network;
 use dashcore::hashes::Hash;
 use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
-use crate::managed_account::managed_account_type::ManagedAccountType;
 
 /// Helper to create a test managed account
 fn create_test_managed_account(network: Network, account_type: AccountType) -> ManagedAccount {
@@ -724,7 +724,7 @@ fn test_identity_registration_account_routing() {
         "AssetLock transaction should be recognized as relevant to identity registration account"
     );
 
-    assert!(result.affected_accounts.iter().any(|acc| 
+    assert!(result.affected_accounts.iter().any(|acc|
         matches!(acc.account_type, crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityRegistration)
     ), "Should have affected the identity registration account");
 
@@ -870,9 +870,9 @@ fn test_provider_keys_account_routing() {
         "Provider voting key transaction should be recognized - this is currently broken"
     );
 
-    assert_eq!(result.total_received, 1000, "Should have received 1000 satoshis");
+    assert_eq!(result.total_received, 1000, "Should have received 1000 duffs");
 
-    assert!(result.affected_accounts.iter().any(|acc| 
+    assert!(result.affected_accounts.iter().any(|acc|
         matches!(acc.account_type, crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderVotingKeys)
     ), "Should have affected the provider voting keys account");
 }

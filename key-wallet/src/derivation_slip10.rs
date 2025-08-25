@@ -13,11 +13,11 @@ use core::fmt;
 use std::error;
 
 use alloc::{string::String, vec::Vec};
+use dash_network::Network;
 pub use dashcore::ed25519_dalek::{SigningKey, VerifyingKey};
 use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 #[cfg(feature = "serde")]
 use serde;
-use dash_network::Network;
 // Re-export ChainCode, Fingerprint and ChildNumber from bip32
 use crate::bip32::{ChainCode, ChildNumber, Fingerprint};
 

@@ -167,8 +167,8 @@ fn test_duplicate_account_handling() {
 
 #[test]
 fn test_extreme_gap_limit() {
-    use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
     use crate::bip32::DerivationPath;
+    use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
 
     // Test with extremely large gap limit
     let base_path = DerivationPath::from(vec![ChildNumber::from(0)]);

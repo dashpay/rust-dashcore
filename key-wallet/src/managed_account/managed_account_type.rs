@@ -1,8 +1,8 @@
+use crate::account::StandardAccountType;
+use crate::{AccountType, AddressPool, DerivationPath};
+use bincode_derive::{Decode, Encode};
 use dashcore::ScriptBuf;
 use serde::{Deserialize, Serialize};
-use bincode_derive::{Decode, Encode};
-use crate::{AccountType, AddressPool, DerivationPath};
-use crate::account::StandardAccountType;
 
 /// Managed account type with embedded address pools
 #[derive(Debug, Clone)]
@@ -331,9 +331,9 @@ impl ManagedAccountType {
 
     /// Create a ManagedAccountType from an AccountType with default address pools
     pub fn from_account_type(account_type: AccountType, network: crate::Network) -> Self {
-        use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
         use crate::bip32::DerivationPath;
-        
+        use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+
         match account_type {
             AccountType::Standard {
                 index,
@@ -343,15 +343,17 @@ impl ManagedAccountType {
                 let base_path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
-                
+
                 let mut external_path = base_path.clone();
                 external_path.push(crate::bip32::ChildNumber::from_normal_idx(0).unwrap());
-                let external_pool = AddressPool::new(external_path, AddressPoolType::External, 20, network);
-                
+                let external_pool =
+                    AddressPool::new(external_path, AddressPoolType::External, 20, network);
+
                 let mut internal_path = base_path;
                 internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1).unwrap());
-                let internal_pool = AddressPool::new(internal_path, AddressPoolType::Internal, 20, network);
-                
+                let internal_pool =
+                    AddressPool::new(internal_path, AddressPoolType::Internal, 20, network);
+
                 Self::Standard {
                     index,
                     standard_account_type,
@@ -359,12 +361,14 @@ impl ManagedAccountType {
                     internal_addresses: internal_pool,
                 }
             }
-            AccountType::CoinJoin { index } => {
+            AccountType::CoinJoin {
+                index,
+            } => {
                 let path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
                 let pool = AddressPool::new(path, AddressPoolType::Absent, 20, network);
-                
+
                 Self::CoinJoin {
                     index,
                     addresses: pool,
@@ -375,7 +379,7 @@ impl ManagedAccountType {
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
                 let pool = AddressPool::new(path, AddressPoolType::Absent, 20, network);
-                
+
                 Self::IdentityRegistration {
                     addresses: pool,
                 }
@@ -387,7 +391,7 @@ impl ManagedAccountType {
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
                 let pool = AddressPool::new(path, AddressPoolType::Absent, 20, network);
-                
+
                 Self::IdentityTopUp {
                     registration_index,
                     addresses: pool,
@@ -398,7 +402,7 @@ impl ManagedAccountType {
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
                 let pool = AddressPool::new(path, AddressPoolType::Absent, 20, network);
-                
+
                 Self::IdentityTopUpNotBoundToIdentity {
                     addresses: pool,
                 }
@@ -408,7 +412,7 @@ impl ManagedAccountType {
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
                 let pool = AddressPool::new(path, AddressPoolType::Absent, 20, network);
-                
+
                 Self::IdentityInvitation {
                     addresses: pool,
                 }
@@ -418,7 +422,7 @@ impl ManagedAccountType {
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
                 let pool = AddressPool::new(path, AddressPoolType::Absent, 20, network);
-                
+
                 Self::ProviderVotingKeys {
                     addresses: pool,
                 }
@@ -428,7 +432,7 @@ impl ManagedAccountType {
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
                 let pool = AddressPool::new(path, AddressPoolType::Absent, 20, network);
-                
+
                 Self::ProviderOwnerKeys {
                     addresses: pool,
                 }
@@ -438,7 +442,7 @@ impl ManagedAccountType {
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
                 let pool = AddressPool::new(path, AddressPoolType::Absent, 20, network);
-                
+
                 Self::ProviderOperatorKeys {
                     addresses: pool,
                 }
@@ -448,7 +452,7 @@ impl ManagedAccountType {
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
                 let pool = AddressPool::new(path, AddressPoolType::Absent, 20, network);
-                
+
                 Self::ProviderPlatformKeys {
                     addresses: pool,
                 }

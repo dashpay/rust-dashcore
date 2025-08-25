@@ -1,11 +1,10 @@
-use crate::Account;
 #[cfg(feature = "bls")]
 use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
 use crate::account::EdDSAAccount;
+use crate::Account;
 
 impl Account {
-
     /// Serialize account to bytes
     #[cfg(feature = "bincode")]
     pub fn to_bytes(&self) -> crate::Result<Vec<u8>> {
@@ -60,11 +59,11 @@ impl EdDSAAccount {
 
 #[cfg(test)]
 mod tests {
-    use crate::Account;
     #[cfg(feature = "bls")]
     use crate::account::BLSAccount;
     #[cfg(feature = "eddsa")]
     use crate::account::EdDSAAccount;
+    use crate::Account;
 
     #[test]
     #[cfg(feature = "bincode")]
@@ -80,9 +79,9 @@ mod tests {
     #[test]
     #[cfg(all(feature = "bincode", feature = "bls"))]
     fn test_bls_serialization() {
-        use crate::account::{AccountType, account_type::StandardAccountType, AccountTrait};
+        use crate::account::{account_type::StandardAccountType, AccountTrait, AccountType};
         use crate::Network;
-        
+
         let public_key = [1u8; 48];
         let account = BLSAccount::from_public_key_bytes(
             None,
@@ -92,11 +91,12 @@ mod tests {
             },
             public_key,
             Network::Testnet,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         let serialized = account.to_bytes().unwrap();
         let deserialized = BLSAccount::from_bytes(&serialized).unwrap();
-        
+
         assert_eq!(account.index(), deserialized.index());
         assert_eq!(account.account_type, deserialized.account_type);
         assert_eq!(account.network, deserialized.network);
@@ -106,9 +106,9 @@ mod tests {
     #[test]
     #[cfg(all(feature = "bincode", feature = "eddsa"))]
     fn test_eddsa_serialization() {
-        use crate::account::{AccountType, account_type::StandardAccountType, AccountTrait};
+        use crate::account::{account_type::StandardAccountType, AccountTrait, AccountType};
         use crate::Network;
-        
+
         let public_key = [1u8; 32];
         let account = EdDSAAccount::from_public_key_bytes(
             None,
@@ -118,11 +118,12 @@ mod tests {
             },
             public_key,
             Network::Testnet,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         let serialized = account.to_bytes().unwrap();
         let deserialized = EdDSAAccount::from_bytes(&serialized).unwrap();
-        
+
         assert_eq!(account.index(), deserialized.index());
         assert_eq!(account.account_type, deserialized.account_type);
         assert_eq!(account.network, deserialized.network);

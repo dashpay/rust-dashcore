@@ -352,17 +352,17 @@ impl AccountCollection {
     /// Get the count of accounts (includes BLS and EdDSA accounts)
     pub fn count(&self) -> usize {
         let mut count = self.all_accounts().len();
-        
+
         #[cfg(feature = "bls")]
         if self.provider_operator_keys.is_some() {
             count += 1;
         }
-        
+
         #[cfg(feature = "eddsa")]
         if self.provider_platform_keys.is_some() {
             count += 1;
         }
-        
+
         count
     }
 
@@ -389,17 +389,17 @@ impl AccountCollection {
             && self.identity_invitation.is_none()
             && self.provider_voting_keys.is_none()
             && self.provider_owner_keys.is_none();
-        
+
         #[cfg(feature = "bls")]
         {
             is_empty = is_empty && self.provider_operator_keys.is_none();
         }
-        
+
         #[cfg(feature = "eddsa")]
         {
             is_empty = is_empty && self.provider_platform_keys.is_none();
         }
-        
+
         is_empty
     }
 

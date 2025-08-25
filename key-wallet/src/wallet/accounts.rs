@@ -3,11 +3,11 @@
 //! This module contains methods for creating and managing accounts within wallets.
 
 use super::Wallet;
-use crate::account::{Account, AccountType};
 #[cfg(feature = "bls")]
 use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
 use crate::account::EdDSAAccount;
+use crate::account::{Account, AccountType};
 use crate::bip32::ExtendedPubKey;
 use crate::derivation::HDWallet;
 use crate::error::{Error, Result};
@@ -65,8 +65,7 @@ impl Wallet {
         }
 
         // Insert into the collection
-        collection.insert(account)
-            .map_err(|e| Error::InvalidParameter(e.to_string()))
+        collection.insert(account).map_err(|e| Error::InvalidParameter(e.to_string()))
     }
 
     /// Add a new account to a wallet that requires a passphrase
@@ -135,7 +134,7 @@ impl Wallet {
     /// Add a new BLS account to the wallet
     ///
     /// BLS accounts are used for Platform/masternode operations.
-    /// 
+    ///
     /// # Arguments
     /// * `account_type` - The type of account (must be ProviderOperatorKeys)
     /// * `network` - The network for the account
@@ -174,7 +173,7 @@ impl Wallet {
             let master_key = root_key.to_extended_priv_key(network);
             let hd_wallet = HDWallet::new(master_key);
             let account_xpriv = hd_wallet.derive(&derivation_path)?;
-            
+
             // Create BLS seed from derived private key
             let seed = account_xpriv.private_key.secret_bytes();
             BLSAccount::from_seed(Some(wallet_id.to_vec()), account_type, seed, network)?
@@ -192,7 +191,8 @@ impl Wallet {
         }
 
         // Insert into the collection
-        collection.insert_bls_account(bls_account)
+        collection
+            .insert_bls_account(bls_account)
             .map_err(|e| Error::InvalidParameter(e.to_string()))
     }
 
@@ -236,7 +236,7 @@ impl Wallet {
                 let master_key = root_key.to_extended_priv_key(network);
                 let hd_wallet = HDWallet::new(master_key);
                 let account_xpriv = hd_wallet.derive(&derivation_path)?;
-                
+
                 // Create BLS seed from derived private key
                 let bls_seed = account_xpriv.private_key.secret_bytes();
                 let bls_account = BLSAccount::from_seed(Some(wallet_id.to_vec()), account_type, bls_seed, network)?;
@@ -265,7 +265,7 @@ impl Wallet {
     /// Add a new EdDSA account to the wallet
     ///
     /// EdDSA accounts are used for Platform operations.
-    /// 
+    ///
     /// # Arguments
     /// * `account_type` - The type of account (must be ProviderPlatformKeys)
     /// * `network` - The network for the account
@@ -304,7 +304,7 @@ impl Wallet {
             let master_key = root_key.to_extended_priv_key(network);
             let hd_wallet = HDWallet::new(master_key);
             let account_xpriv = hd_wallet.derive(&derivation_path)?;
-            
+
             // Create Ed25519 seed from derived private key
             let seed = account_xpriv.private_key.secret_bytes();
             EdDSAAccount::from_seed(Some(wallet_id.to_vec()), account_type, seed, network)?
@@ -322,7 +322,8 @@ impl Wallet {
         }
 
         // Insert into the collection
-        collection.insert_eddsa_account(eddsa_account)
+        collection
+            .insert_eddsa_account(eddsa_account)
             .map_err(|e| Error::InvalidParameter(e.to_string()))
     }
 
@@ -366,7 +367,7 @@ impl Wallet {
                 let master_key = root_key.to_extended_priv_key(network);
                 let hd_wallet = HDWallet::new(master_key);
                 let account_xpriv = hd_wallet.derive(&derivation_path)?;
-                
+
                 // Create Ed25519 seed from derived private key
                 let ed25519_seed = account_xpriv.private_key.secret_bytes();
                 let eddsa_account = EdDSAAccount::from_seed(Some(wallet_id.to_vec()), account_type, ed25519_seed, network)?;

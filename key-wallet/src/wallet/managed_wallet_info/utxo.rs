@@ -163,11 +163,11 @@ impl ManagedWalletInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::managed_account::ManagedAccount;
-    use crate::managed_account::managed_account_collection::ManagedAccountCollection;
-    use crate::managed_account::managed_account_type::ManagedAccountType;
     use crate::bip32::DerivationPath;
     use crate::gap_limit::GapLimitManager;
+    use crate::managed_account::managed_account_collection::ManagedAccountCollection;
+    use crate::managed_account::managed_account_type::ManagedAccountType;
+    use crate::managed_account::ManagedAccount;
     use dashcore::{Address, PublicKey, ScriptBuf, TxOut, Txid};
     use dashcore_hashes::Hash;
     use std::str::FromStr;
@@ -194,7 +194,8 @@ mod tests {
         let mut bip44_account = ManagedAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
-                standard_account_type: crate::account::account_type::StandardAccountType::BIP44Account,
+                standard_account_type:
+                    crate::account::account_type::StandardAccountType::BIP44Account,
                 external_addresses: crate::managed_account::address_pool::AddressPool::new(
                     external_path,
                     crate::managed_account::address_pool::AddressPoolType::External,

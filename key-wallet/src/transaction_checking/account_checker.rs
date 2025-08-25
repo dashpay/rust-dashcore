@@ -4,9 +4,9 @@
 //! specific accounts within a ManagedAccountCollection.
 
 use super::transaction_router::AccountTypeToCheck;
+use crate::account::{ManagedAccount, ManagedAccountCollection};
 use crate::managed_account::address_pool::{AddressInfo, PublicKeyType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
-use crate::account::{ManagedAccount, ManagedAccountCollection};
 use crate::Address;
 use alloc::vec::Vec;
 use dashcore::address::Payload;

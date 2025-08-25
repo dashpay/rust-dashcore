@@ -29,23 +29,23 @@ use crate::dip9::DerivationPathReference;
 use crate::error::Result;
 use crate::{Error, Network};
 
+use crate::account::derivation::AccountDerivation;
+use crate::managed_account::address_pool::AddressPoolType;
+pub use crate::managed_account::managed_account_collection::ManagedAccountCollection;
+pub use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+pub use crate::managed_account::managed_account_type::ManagedAccountType;
+pub use crate::managed_account::metadata::AccountMetadata;
+pub use crate::managed_account::transaction_record::TransactionRecord;
+pub use crate::managed_account::ManagedAccount;
 pub use account_collection::AccountCollection;
 pub use account_trait::AccountTrait;
+pub use account_type::{AccountType, StandardAccountType};
 #[cfg(feature = "bls")]
 pub use bls_account::BLSAccount;
 pub use coinjoin::CoinJoinPools;
+use dashcore::{Address, PublicKey};
 #[cfg(feature = "eddsa")]
 pub use eddsa_account::EdDSAAccount;
-pub use crate::managed_account::ManagedAccount;
-pub use crate::managed_account::managed_account_collection::ManagedAccountCollection;
-pub use crate::managed_account::managed_account_trait::ManagedAccountTrait;
-pub use crate::managed_account::metadata::AccountMetadata;
-pub use crate::managed_account::transaction_record::TransactionRecord;
-pub use account_type::{AccountType, StandardAccountType};
-use dashcore::{Address, PublicKey};
-use crate::account::derivation::AccountDerivation;
-use crate::managed_account::address_pool::AddressPoolType;
-pub use crate::managed_account::managed_account_type::ManagedAccountType;
 
 /// Complete account structure with all derivation paths
 ///
@@ -75,7 +75,7 @@ impl Account {
         account_xpub: ExtendedPubKey,
         network: Network,
     ) -> Result<Self> {
-       Self::from_xpub(parent_wallet_id, account_type, account_xpub, network)
+        Self::from_xpub(parent_wallet_id, account_type, account_xpub, network)
     }
 
     /// Create an account from an extended private key (derives the public key)
@@ -157,9 +157,7 @@ impl AccountTrait for Account {
     }
 }
 
-
 impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey> for Account {
-
     /// Derive an extended private key from a wallet's master private key
     ///
     /// This requires the wallet to have the master private key available.
@@ -197,7 +195,10 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey> for Account {
     /// Derive a child public key at a specific path from the account
     ///
     /// The path should be relative to the account (e.g., "0/5" for external address 5)
-    fn derive_child_xpub(&self, child_path: &DerivationPath) -> std::result::Result<ExtendedPubKey, Error> {
+    fn derive_child_xpub(
+        &self,
+        child_path: &DerivationPath,
+    ) -> std::result::Result<ExtendedPubKey, Error> {
         let secp = Secp256k1::new();
         self.account_xpub.derive_pub(&secp, child_path).map_err(Error::Bip32)
     }
@@ -238,17 +239,42 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey> for Account {
     /// let recv_h = account.derive_address_at(AddressPoolType::External, 5, Some(account_xpriv.clone()))?;
     /// let chg_h  = account.derive_address_at(AddressPoolType::Internal, 3, Some(account_xpriv))?;
     /// ```
-    fn derive_address_at(&self, address_pool_type: AddressPoolType, index: u32, use_hardened_with_priv_key: Option<ExtendedPrivKey>) -> std::result::Result<Address, Error> {
-        let public_key = self.derive_extended_public_key_at(address_pool_type, index, use_hardened_with_priv_key)?;
+    fn derive_address_at(
+        &self,
+        address_pool_type: AddressPoolType,
+        index: u32,
+        use_hardened_with_priv_key: Option<ExtendedPrivKey>,
+    ) -> std::result::Result<Address, Error> {
+        let public_key = self.derive_extended_public_key_at(
+            address_pool_type,
+            index,
+            use_hardened_with_priv_key,
+        )?;
         Ok(Address::p2pkh(&public_key.to_pub(), self.network))
     }
 
-    fn derive_public_key_at(&self, address_pool_type: AddressPoolType, index: u32, use_hardened_with_priv_key: Option<ExtendedPrivKey>) -> std::result::Result<PublicKey, Error> {
-        Ok(self.derive_extended_public_key_at(address_pool_type, index, use_hardened_with_priv_key)?.to_pub())
+    fn derive_public_key_at(
+        &self,
+        address_pool_type: AddressPoolType,
+        index: u32,
+        use_hardened_with_priv_key: Option<ExtendedPrivKey>,
+    ) -> std::result::Result<PublicKey, Error> {
+        Ok(self
+            .derive_extended_public_key_at(address_pool_type, index, use_hardened_with_priv_key)?
+            .to_pub())
     }
 
-    fn derive_extended_public_key_at(&self, address_pool_type: AddressPoolType, index: u32, use_hardened_with_priv_key: Option<ExtendedPrivKey>) -> std::result::Result<ExtendedPubKey, Error> {
-        let derivation_path = Self::derivation_path_for_index(address_pool_type, index, use_hardened_with_priv_key.is_some())?;
+    fn derive_extended_public_key_at(
+        &self,
+        address_pool_type: AddressPoolType,
+        index: u32,
+        use_hardened_with_priv_key: Option<ExtendedPrivKey>,
+    ) -> std::result::Result<ExtendedPubKey, Error> {
+        let derivation_path = Self::derivation_path_for_index(
+            address_pool_type,
+            index,
+            use_hardened_with_priv_key.is_some(),
+        )?;
         if let Some(priv_key) = use_hardened_with_priv_key {
             let xpriv = if priv_key.depth == 0 {
                 self.derive_xpriv_from_master_xpriv(&priv_key)?
@@ -263,9 +289,9 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey> for Account {
     }
 }
 
-
-pub trait ECDSAAddressDerivation : AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey> {
-
+pub trait ECDSAAddressDerivation:
+    AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey>
+{
     /// Derive a receive (external) address at a specific index
     fn derive_receive_address(&self, index: u32) -> Result<Address> {
         self.derive_address_at(AddressPoolType::External, index, None)
@@ -372,7 +398,7 @@ mod tests {
 
         assert!(watch_only.is_watch_only);
     }
-    
+
     #[test]
     fn test_address_derivation_consistency() {
         // Test that addresses are derived consistently

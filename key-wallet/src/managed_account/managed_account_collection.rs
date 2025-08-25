@@ -3,17 +3,17 @@
 //! This module provides a structure for managing multiple accounts
 //! across different networks in a hierarchical manner.
 
-use crate::{Account, AccountCollection};
-use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
-use crate::managed_account::ManagedAccount;
 use crate::account::account_type::AccountType;
 use crate::gap_limit::GapLimitManager;
+use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+use crate::managed_account::managed_account_type::ManagedAccountType;
+use crate::managed_account::ManagedAccount;
 use crate::Network;
+use crate::{Account, AccountCollection};
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use crate::managed_account::managed_account_type::ManagedAccountType;
 
 /// Collection of managed accounts organized by type
 #[derive(Debug, Clone, Default)]
@@ -64,7 +64,7 @@ impl ManagedAccountCollection {
     /// Check if a managed account type exists in the collection
     pub fn contains_managed_account_type(&self, managed_type: &ManagedAccountType) -> bool {
         use crate::account::StandardAccountType;
-        
+
         match managed_type {
             ManagedAccountType::Standard {
                 index,
@@ -78,29 +78,42 @@ impl ManagedAccountCollection {
                     self.standard_bip32_accounts.contains_key(index)
                 }
             },
-            ManagedAccountType::CoinJoin { index, .. } => {
-                self.coinjoin_accounts.contains_key(index)
-            }
-            ManagedAccountType::IdentityRegistration { .. } => self.identity_registration.is_some(),
+            ManagedAccountType::CoinJoin {
+                index,
+                ..
+            } => self.coinjoin_accounts.contains_key(index),
+            ManagedAccountType::IdentityRegistration {
+                ..
+            } => self.identity_registration.is_some(),
             ManagedAccountType::IdentityTopUp {
                 registration_index,
                 ..
             } => self.identity_topup.contains_key(registration_index),
-            ManagedAccountType::IdentityTopUpNotBoundToIdentity { .. } => {
-                self.identity_topup_not_bound.is_some()
-            }
-            ManagedAccountType::IdentityInvitation { .. } => self.identity_invitation.is_some(),
-            ManagedAccountType::ProviderVotingKeys { .. } => self.provider_voting_keys.is_some(),
-            ManagedAccountType::ProviderOwnerKeys { .. } => self.provider_owner_keys.is_some(),
-            ManagedAccountType::ProviderOperatorKeys { .. } => self.provider_operator_keys.is_some(),
-            ManagedAccountType::ProviderPlatformKeys { .. } => self.provider_platform_keys.is_some(),
+            ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                ..
+            } => self.identity_topup_not_bound.is_some(),
+            ManagedAccountType::IdentityInvitation {
+                ..
+            } => self.identity_invitation.is_some(),
+            ManagedAccountType::ProviderVotingKeys {
+                ..
+            } => self.provider_voting_keys.is_some(),
+            ManagedAccountType::ProviderOwnerKeys {
+                ..
+            } => self.provider_owner_keys.is_some(),
+            ManagedAccountType::ProviderOperatorKeys {
+                ..
+            } => self.provider_operator_keys.is_some(),
+            ManagedAccountType::ProviderPlatformKeys {
+                ..
+            } => self.provider_platform_keys.is_some(),
         }
     }
 
     /// Insert a managed account into the collection
     pub fn insert(&mut self, account: ManagedAccount) {
         use crate::account::StandardAccountType;
-        
+
         match &account.account_type {
             ManagedAccountType::Standard {
                 index,
@@ -114,10 +127,15 @@ impl ManagedAccountCollection {
                     self.standard_bip32_accounts.insert(*index, account);
                 }
             },
-            ManagedAccountType::CoinJoin { index, .. } => {
+            ManagedAccountType::CoinJoin {
+                index,
+                ..
+            } => {
                 self.coinjoin_accounts.insert(*index, account);
             }
-            ManagedAccountType::IdentityRegistration { .. } => {
+            ManagedAccountType::IdentityRegistration {
+                ..
+            } => {
                 self.identity_registration = Some(account);
             }
             ManagedAccountType::IdentityTopUp {
@@ -126,22 +144,34 @@ impl ManagedAccountCollection {
             } => {
                 self.identity_topup.insert(*registration_index, account);
             }
-            ManagedAccountType::IdentityTopUpNotBoundToIdentity { .. } => {
+            ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                ..
+            } => {
                 self.identity_topup_not_bound = Some(account);
             }
-            ManagedAccountType::IdentityInvitation { .. } => {
+            ManagedAccountType::IdentityInvitation {
+                ..
+            } => {
                 self.identity_invitation = Some(account);
             }
-            ManagedAccountType::ProviderVotingKeys { .. } => {
+            ManagedAccountType::ProviderVotingKeys {
+                ..
+            } => {
                 self.provider_voting_keys = Some(account);
             }
-            ManagedAccountType::ProviderOwnerKeys { .. } => {
+            ManagedAccountType::ProviderOwnerKeys {
+                ..
+            } => {
                 self.provider_owner_keys = Some(account);
             }
-            ManagedAccountType::ProviderOperatorKeys { .. } => {
+            ManagedAccountType::ProviderOperatorKeys {
+                ..
+            } => {
                 self.provider_operator_keys = Some(account);
             }
-            ManagedAccountType::ProviderPlatformKeys { .. } => {
+            ManagedAccountType::ProviderPlatformKeys {
+                ..
+            } => {
                 self.provider_platform_keys = Some(account);
             }
         }

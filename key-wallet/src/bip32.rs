@@ -632,9 +632,13 @@ impl ChildNumber {
         }
 
         if hardened {
-            Ok(ChildNumber::Hardened { index })
+            Ok(ChildNumber::Hardened {
+                index,
+            })
         } else {
-            Ok(ChildNumber::Normal { index })
+            Ok(ChildNumber::Normal {
+                index,
+            })
         }
     }
 

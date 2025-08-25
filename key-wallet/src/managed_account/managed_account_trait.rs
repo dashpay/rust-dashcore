@@ -4,8 +4,8 @@
 
 use crate::account::AccountMetadata;
 use crate::account::TransactionRecord;
-use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::gap_limit::GapLimitManager;
+use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletBalance;
 use crate::Network;

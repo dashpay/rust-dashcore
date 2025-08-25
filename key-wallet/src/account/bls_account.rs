@@ -7,8 +7,8 @@ use super::account_trait::AccountTrait;
 use crate::account::AccountType;
 use crate::derivation_bls_bip32::{ExtendedBLSPrivKey, ExtendedBLSPubKey};
 use crate::error::{Error, Result};
-use crate::{ChildNumber, DerivationPath, Network};
 use crate::managed_account::address_pool::AddressPoolType;
+use crate::{ChildNumber, DerivationPath, Network};
 use alloc::vec::Vec;
 use core::fmt;
 use dashcore::Address;
@@ -21,9 +21,9 @@ use crate::bip32::{ChainCode, Fingerprint};
 use bincode_derive::{Decode, Encode};
 use dashcore::blsful::{Bls12381G2Impl, SerializationFormat};
 
+use crate::account::derivation::AccountDerivation;
 pub use dashcore::blsful::PublicKey as BLSPublicKey;
 pub use dashcore::blsful::SecretKey;
-use crate::account::derivation::AccountDerivation;
 
 /// BLS account structure for Platform and masternode operations
 #[derive(Debug, Clone)]
@@ -67,8 +67,11 @@ impl BLSAccount {
         network: Network,
     ) -> Result<Self> {
         // Create a BlsPublicKey from bytes
-        let public_key = BLSPublicKey::<Bls12381G2Impl>::from_bytes_with_mode(&bls_public_key, SerializationFormat::Modern)
-            .map_err(|e| Error::InvalidParameter(format!("Invalid BLS public key: {}", e)))?;
+        let public_key = BLSPublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
+            &bls_public_key,
+            SerializationFormat::Modern,
+        )
+        .map_err(|e| Error::InvalidParameter(format!("Invalid BLS public key: {}", e)))?;
 
         // Create an extended public key with default metadata
         let extended_key = ExtendedBLSPubKey {
@@ -222,7 +225,9 @@ impl fmt::Display for BLSAccount {
     }
 }
 
-impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey<Bls12381G2Impl>> for BLSAccount {
+impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey<Bls12381G2Impl>>
+    for BLSAccount
+{
     /// Derive an extended private key from the wallet's master BLS private key
     /// using the BLS account's derivation path.
     ///
@@ -237,9 +242,10 @@ impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey<Bls12
 
         // Get the derivation path for this account type
         let path = self.account_type.derivation_path(self.network)?;
-        
+
         // Derive the account private key from master
-        master_xpriv.derive_path(&path)
+        master_xpriv
+            .derive_path(&path)
             .map_err(|e| Error::InvalidParameter(format!("BLS derivation error: {}", e)))
     }
 
@@ -256,7 +262,8 @@ impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey<Bls12
         }
 
         // Derive the child private key from account private key
-        account_xpriv.derive_path(child_path)
+        account_xpriv
+            .derive_path(child_path)
             .map_err(|e| Error::InvalidParameter(format!("BLS child derivation error: {}", e)))
     }
 
@@ -268,18 +275,19 @@ impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey<Bls12
         for child in child_path.as_ref() {
             if child.is_hardened() {
                 return Err(Error::InvalidParameter(
-                    "Cannot derive hardened child from BLS public key".to_string()
+                    "Cannot derive hardened child from BLS public key".to_string(),
                 ));
             }
         }
 
         // Derive the child public key from account public key
-        self.bls_public_key.derive_path(child_path)
+        self.bls_public_key
+            .derive_path(child_path)
             .map_err(|e| Error::InvalidParameter(format!("BLS public key derivation error: {}", e)))
     }
 
     /// Derive a BLS-based address at a specific chain and index.
-    /// 
+    ///
     /// Creates a P2PKH-style address from the hash160 of the BLS public key.
     fn derive_address_at(
         &self,
@@ -288,20 +296,17 @@ impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey<Bls12
         use_hardened_with_priv_key: Option<ExtendedBLSPrivKey>,
     ) -> Result<Address> {
         // Get the BLS public key at the specified index
-        let bls_pubkey = self.derive_public_key_at(
-            address_pool_type,
-            index,
-            use_hardened_with_priv_key
-        )?;
-        
+        let bls_pubkey =
+            self.derive_public_key_at(address_pool_type, index, use_hardened_with_priv_key)?;
+
         // Get the BLS public key bytes (48 bytes for BLS12-381 G2)
         let pubkey_bytes = bls_pubkey.to_bytes();
-        
+
         // Create a P2PKH address from the hash160 of the BLS public key
         // This uses the same hash160 (SHA256 + RIPEMD160) as ECDSA addresses
-        use dashcore::hashes::{Hash, hash160};
+        use dashcore::hashes::{hash160, Hash};
         let pubkey_hash = hash160::Hash::hash(&pubkey_bytes);
-        
+
         // Create the address from the public key hash
         use dashcore::address::Payload;
         let payload = Payload::PubkeyHash(pubkey_hash.into());
@@ -321,7 +326,7 @@ impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey<Bls12
         let extended_pubkey = self.derive_extended_public_key_at(
             address_pool_type,
             index,
-            use_hardened_with_priv_key
+            use_hardened_with_priv_key,
         )?;
         Ok(extended_pubkey.public_key)
     }
@@ -340,7 +345,7 @@ impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey<Bls12
         let derivation_path = Self::derivation_path_for_index(
             address_pool_type,
             index,
-            use_hardened_with_priv_key.is_some()
+            use_hardened_with_priv_key.is_some(),
         )?;
 
         if let Some(priv_key) = use_hardened_with_priv_key {
@@ -439,10 +444,9 @@ mod tests {
         let bls_priv = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
         let result = account.derive_address_at(AddressPoolType::External, 0, Some(bls_priv));
         assert!(result.is_ok());
-        
+
         let address = result.unwrap();
         // Verify it's a valid testnet address
         assert_eq!(address.network(), &Network::Testnet);
-
     }
 }

@@ -3,10 +3,9 @@
 //! This module contains the mutable account state that changes during wallet operation,
 //! kept separate from the immutable Account structure.
 
-use crate::account::{BLSAccount, EdDSAAccount, ManagedAccountTrait};
 use crate::account::AccountMetadata;
 use crate::account::TransactionRecord;
-use managed_account_type::ManagedAccountType;
+use crate::account::{BLSAccount, EdDSAAccount, ManagedAccountTrait};
 use crate::gap_limit::GapLimitManager;
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletBalance;
@@ -15,15 +14,16 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::Txid;
 use dashcore::{Address, ScriptBuf};
+use managed_account_type::ManagedAccountType;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+pub mod address_pool;
 pub mod managed_account_collection;
 pub mod managed_account_trait;
+pub mod managed_account_type;
 pub mod metadata;
 pub mod transaction_record;
-pub mod address_pool;
-pub mod managed_account_type;
 
 /// Managed account with mutable state
 ///
@@ -279,10 +279,7 @@ impl ManagedAccount {
     }
 
     /// Get address info for a given address
-    pub fn get_address_info(
-        &self,
-        address: &Address,
-    ) -> Option<address_pool::AddressInfo> {
+    pub fn get_address_info(&self, address: &Address) -> Option<address_pool::AddressInfo> {
         self.account_type.get_address_info(address)
     }
 
