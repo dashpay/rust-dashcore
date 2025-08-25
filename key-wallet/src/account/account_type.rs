@@ -2,13 +2,11 @@
 //!
 //! This module contains the various account type enumerations.
 
-use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
 use crate::bip32::{ChildNumber, DerivationPath};
 use crate::dip9::DerivationPathReference;
 use crate::Network;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
-use dashcore::ScriptBuf;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -100,22 +98,6 @@ impl AccountType {
                 ..
             } => Some(*registration_index),
             _ => None,
-        }
-    }
-    
-    /// Get the address pool type
-    pub fn address_pool_type(&self) -> AddressPoolType {
-        match self {
-            AccountType::Standard { .. } => AddressPoolType::
-            AccountType::CoinJoin { .. } => {}
-            AccountType::IdentityRegistration => {}
-            AccountType::IdentityTopUp { .. } => {}
-            AccountType::IdentityTopUpNotBoundToIdentity => {}
-            AccountType::IdentityInvitation => {}
-            AccountType::ProviderVotingKeys => {}
-            AccountType::ProviderOwnerKeys => {}
-            AccountType::ProviderOperatorKeys => {}
-            AccountType::ProviderPlatformKeys => {}
         }
     }
 

@@ -1,128 +1,123 @@
 use secp256k1::Secp256k1;
-use crate::{Account, ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
+use dashcore::{Address, PublicKey};
+use crate::{Account, ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey};
 use crate::managed_account::address_pool::AddressPoolType;
 
-impl Account {
-
-    /// Derive an extended private key from a wallet's master private key
+/// Derivation helpers available on an account-like type.
+///
+/// Notes:
+/// - External/receive chain = `0`, internal/change chain = `1`.
+/// - Hardened indices are in `[0, 2^31 - 1]` and marked `'` conceptually.
+/// - Implementors may use private state (e.g., `is_watch_only`, `account_xpub`, `network`)
+///   inside their concrete `impl` blocks; this trait only fixes the public API.
+pub trait AccountDerivation<EPrivKeyType, EPubKeyType, PubKeyType> {
+    /// Derive an extended private key from the wallet’s master xpriv
+    /// using the implementor’s account derivation path.
     ///
-    /// This requires the wallet to have the master private key available.
-    /// Returns None for watch-only wallets.
-    pub fn derive_xpriv_from_master_xpriv(
+    /// Returns an error for watch-only accounts.
+    fn derive_xpriv_from_master_xpriv(
         &self,
-        master_xpriv: &ExtendedPrivKey,
-    ) -> crate::Result<ExtendedPrivKey> {
-        if self.is_watch_only {
-            return Err(crate::error::Error::WatchOnly);
-        }
+        master_xpriv: &EPrivKeyType,
+    ) -> Result<EPrivKeyType, Error>;
 
-        let secp = Secp256k1::new();
-        let path = self.derivation_path()?;
-        master_xpriv.derive_priv(&secp, &path).map_err(crate::error::Error::Bip32)
-    }
-
-    /// Derive a child private key at a specific path from the account
+    /// Derive a child xpriv at a path **relative to the account** (e.g., `0/5`).
     ///
-    /// This requires providing the account's extended private key.
-    /// The path should be relative to the account (e.g., "0/5" for external address 5)
-    pub fn derive_child_xpriv_from_account_xpriv(
+    /// Returns an error for watch-only accounts.
+    fn derive_child_xpriv_from_account_xpriv(
         &self,
-        account_xpriv: &ExtendedPrivKey,
+        account_xpriv: &EPrivKeyType,
         child_path: &DerivationPath,
-    ) -> crate::Result<ExtendedPrivKey> {
-        if self.is_watch_only {
-            return Err(crate::error::Error::WatchOnly);
+    ) -> Result<EPrivKeyType, Error>;
+
+    /// Derive a child xpub at a path **relative to the account** (e.g., `0/5`)
+    /// from the account xpub.
+    fn derive_child_xpub(&self, child_path: &DerivationPath) -> Result<EPubKeyType, Error>;
+
+
+    /// Build the (chain, index) tail of a derivation path for the given address pool.
+    ///
+    /// This helper returns the last two components of a BIP32-style path:
+    ///
+    /// - **External chain** → `.../0/{index}`
+    /// - **Internal (change) chain** → `.../1/{index}`
+    /// - **Absent** → `.../{index}` (single component; used when the caller supplies
+    ///   the full path prefix elsewhere)
+    ///
+    /// If `use_hardened` is `true`, both returned child indices are created as
+    /// **hardened** (i.e., `index'`); otherwise they are **normal**. Indices must be
+    /// in `[0, 2^31 - 1]`.
+    ///
+    /// # Parameters
+    /// - `address_pool_type`: `External` (0), `Internal` (1), or `Absent`
+    /// - `index`: address index within the selected chain
+    /// - `use_hardened`: whether to create hardened child numbers
+    ///
+    /// # Returns
+    /// A `DerivationPath` consisting of:
+    /// - `External` → `[0, index]` (hardened if requested)
+    /// - `Internal` → `[1, index]` (hardened if requested)
+    /// - `Absent`   → `[index]`    (hardened if requested)
+    fn derivation_path_for_index(
+        address_pool_type: AddressPoolType,
+        index: u32,
+        use_hardened: bool,
+    ) -> Result<DerivationPath, Error>
+    where
+        Self: Sized
+        {
+            Ok(match address_pool_type {
+                AddressPoolType::External => {
+                    DerivationPath::from(vec![
+                        ChildNumber::from_idx(0, use_hardened)?, // External chain
+                        ChildNumber::from_idx(index, use_hardened)?,
+                    ])
+                }
+                AddressPoolType::Internal => {
+                    DerivationPath::from(vec![
+                        ChildNumber::from_idx(1, use_hardened)?, // Internal chain
+                        ChildNumber::from_idx(index, use_hardened)?,
+                    ])
+                }
+                AddressPoolType::Absent => {
+                    DerivationPath::from(vec![
+                        ChildNumber::from_idx(index, use_hardened)?,
+                    ])
+                }
+            })
         }
 
-        let secp = Secp256k1::new();
-        account_xpriv.derive_priv(&secp, child_path).map_err(crate::error::Error::Bip32)
-    }
 
-    /// Derive a child public key at a specific path from the account
+    /// Derive an address at a specific chain (external/internal/absent) and index.
     ///
-    /// The path should be relative to the account (e.g., "0/5" for external address 5)
-    pub fn derive_child_xpub(&self, child_path: &DerivationPath) -> crate::Result<ExtendedPubKey> {
-        let secp = Secp256k1::new();
-        self.account_xpub.derive_pub(&secp, child_path).map_err(crate::error::Error::Bip32)
-    }
+    /// If `use_hardened_with_priv_key` is `Some(xpriv)`, derive via xpriv (hardened allowed),
+    /// otherwise derive public children from the account xpub (non-hardened).
+    fn derive_address_at(
+        &self,
+        address_pool_type: AddressPoolType,
+        index: u32,
+        use_hardened_with_priv_key: Option<EPrivKeyType>,
+    ) -> Result<Address, Error>;
 
-    /// Derive an address at a specific chain and index
+    /// Derive a public key at a specific chain (external/internal/absent) and index.
     ///
-    /// # Arguments
-    /// * `is_internal` - If true, derives from internal chain (1), otherwise external chain (0)
-    /// * `index` - The address index
+    /// If `use_hardened_with_priv_key` is `Some(xpriv)`, derive via xpriv (hardened allowed),
+    /// otherwise derive public children from the account xpub (non-hardened).
+    fn derive_public_key_at(
+        &self,
+        address_pool_type: AddressPoolType,
+        index: u32,
+        use_hardened_with_priv_key: Option<EPrivKeyType>,
+    ) -> Result<PubKeyType, Error>;
+
+    /// Derive an extended public key at a specific chain (external/internal/absent) and index.
     ///
-    /// # Example
-    /// ```ignore
-    /// let external_addr = account.derive_address_at(false, 5)?;  // Same as derive_receive_address(5)
-    /// let internal_addr = account.derive_address_at(true, 3)?;   // Same as derive_change_address(3)
-    /// ```
-    pub fn derive_address_at(&self, address_pool_type: AddressPoolType, index: u32, use_hardened_with_priv_key: Option<ExtendedPrivKey>) -> crate::Result<dashcore::Address> {
-        match address_pool_type {
-            AddressPoolType::External => {
-                let derivation_path = DerivationPath::from(vec![
-                    ChildNumber::from_idx(1, use_hardened)?, // Internal chain
-                    ChildNumber::from_idx(index, use_hardened)?,
-                ]);
-                let xpub = self.derive_child_xpub(&derivation_path)?;
-                Ok(dashcore::Address::p2pkh(&xpub.to_pub(), self.network))
-            }
-            (AddressPoolType::External, true) => {
-                let derivation_path = DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(1)?, // Internal chain
-                    ChildNumber::from_hardened_idx(index)?,
-                ]);
-                let xpub = self.derive_child_xpub(&derivation_path)?;
-                Ok(dashcore::Address::p2pkh(&xpub.to_pub(), self.network))
-            }
-            AddressPoolType::Internal => {
-                self.derive_change_address_impl(index, use_hardened)
-            }
-            AddressPoolType::Absent => {
-
-            }
-        }
-    }
-
-    // Internal implementation methods to avoid name conflicts with trait defaults
-    fn derive_receive_address_impl(&self, index: u32, use_hardened: bool) -> crate::Result<dashcore::Address> {
-        use crate::bip32::ChildNumber;
-
-        // Build path: 0/index (external chain)
-        let path = DerivationPath::from(vec![
-            ChildNumber::from_normal_idx(0)?, // External chain
-            ChildNumber::from_normal_idx(index)?,
-        ]);
-
-        let xpub = self.derive_child_xpub(&path)?;
-        // Convert secp256k1::PublicKey to dashcore::PublicKey
-        let pubkey =
-            dashcore::PublicKey::from_slice(&xpub.public_key.serialize()).map_err(|e| {
-                crate::error::Error::InvalidParameter(format!("Invalid public key: {}", e))
-            })?;
-        Ok(dashcore::Address::p2pkh(&pubkey, self.network))
-    }
-
-    fn derive_change_address_impl(&self, index: u32) -> crate::Result<dashcore::Address> {
-        use crate::bip32::ChildNumber;
-
-        // Build path: 1/index (internal/change chain)
-        let path =
-
-        let xpub = self.derive_child_xpub(&path)?;
-        // Convert secp256k1::PublicKey to dashcore::PublicKey
-        let pubkey =
-            dashcore::PublicKey::from_slice(&xpub.public_key.serialize()).map_err(|e| {
-                crate::error::Error::InvalidParameter(format!("Invalid public key: {}", e))
-            })?;
-        Ok(dashcore::Address::p2pkh(&pubkey, self.network))
-    }
-
+    /// If `use_hardened_with_priv_key` is `Some(xpriv)`, derive via xpriv (hardened allowed),
+    /// otherwise derive public children from the account xpub (non-hardened).
+    fn derive_extended_public_key_at(&self, address_pool_type: AddressPoolType, index: u32, use_hardened_with_priv_key: Option<EPrivKeyType>) -> Result<EPubKeyType, Error>;
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::account::AccountTrait;
     use crate::account::tests::test_account;
 
     #[test]

@@ -11,9 +11,8 @@ pub mod bls_account;
 pub mod coinjoin;
 #[cfg(feature = "eddsa")]
 pub mod eddsa_account;
-pub mod scan;
+// pub mod scan;
 pub mod account_type;
-mod helpers;
 mod derivation;
 mod serialization;
 
@@ -28,10 +27,10 @@ use serde::{Deserialize, Serialize};
 use crate::bip32::{DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::dip9::DerivationPathReference;
 use crate::error::Result;
-use crate::Network;
+use crate::{Error, Network};
 
 pub use account_collection::AccountCollection;
-pub use account_trait::{AccountTrait, ECDSAAccountTrait};
+pub use account_trait::AccountTrait;
 #[cfg(feature = "bls")]
 pub use bls_account::BLSAccount;
 pub use coinjoin::CoinJoinPools;
@@ -41,9 +40,10 @@ pub use crate::managed_account::ManagedAccount;
 pub use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 pub use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 pub use crate::managed_account::metadata::AccountMetadata;
-pub use scan::ScanResult;
 pub use crate::managed_account::transaction_record::TransactionRecord;
 pub use account_type::{AccountType, StandardAccountType};
+use dashcore::{Address, PublicKey};
+use crate::account::derivation::AccountDerivation;
 use crate::managed_account::address_pool::AddressPoolType;
 pub use crate::managed_account::managed_account_type::ManagedAccountType;
 
@@ -133,30 +133,6 @@ impl Account {
     pub fn extended_public_key(&self) -> ExtendedPubKey {
         self.account_xpub
     }
-
-
-    /// Get the extended public key for a specific chain
-    ///
-    /// # Arguments
-    /// * `is_internal` - If true, returns the internal chain xpub, otherwise external chain xpub
-    ///
-    /// # Example
-    /// ```ignore
-    /// let external_chain_xpub = account.get_chain_xpub(false)?;
-    /// let internal_chain_xpub = account.get_chain_xpub(true)?;
-    /// ```
-    pub fn get_chain_xpub(&self, is_internal: bool) -> Result<ExtendedPubKey> {
-        use crate::bip32::ChildNumber;
-
-        let chain = if is_internal {
-            1
-        } else {
-            0
-        };
-        let path = DerivationPath::from(vec![ChildNumber::from_normal_idx(chain)?]);
-
-        self.derive_child_xpub(&path)
-    }
 }
 
 impl AccountTrait for Account {
@@ -176,24 +152,150 @@ impl AccountTrait for Account {
         self.is_watch_only
     }
 
-    fn derive_address_at(&self, is_internal: bool, index: u32) -> Result<dashcore::Address> {
-        self.derive_address_at(is_internal, index)
-    }
-
-    fn get_public_key_bytes(&self) -> alloc::vec::Vec<u8> {
+    fn get_public_key_bytes(&self) -> Vec<u8> {
         self.account_xpub.public_key.serialize().to_vec()
     }
 }
 
-impl ECDSAAccountTrait for Account {
-    fn account_xpub(&self) -> ExtendedPubKey {
-        self.account_xpub
+
+impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey> for Account {
+
+    /// Derive an extended private key from a wallet's master private key
+    ///
+    /// This requires the wallet to have the master private key available.
+    /// Returns None for watch-only wallets.
+    fn derive_xpriv_from_master_xpriv(
+        &self,
+        master_xpriv: &ExtendedPrivKey,
+    ) -> std::result::Result<ExtendedPrivKey, Error> {
+        if self.is_watch_only {
+            return Err(Error::WatchOnly);
+        }
+
+        let secp = Secp256k1::new();
+        let path = self.derivation_path()?;
+        master_xpriv.derive_priv(&secp, &path).map_err(Error::Bip32)
     }
 
-    fn derive_child_xpub(&self, child_path: &DerivationPath) -> Result<ExtendedPubKey> {
-        self.derive_child_xpub(child_path)
+    /// Derive a child private key at a specific path from the account
+    ///
+    /// This requires providing the account's extended private key.
+    /// The path should be relative to the account (e.g., "0/5" for external address 5)
+    fn derive_child_xpriv_from_account_xpriv(
+        &self,
+        account_xpriv: &ExtendedPrivKey,
+        child_path: &DerivationPath,
+    ) -> std::result::Result<ExtendedPrivKey, Error> {
+        if self.is_watch_only {
+            return Err(Error::WatchOnly);
+        }
+
+        let secp = Secp256k1::new();
+        account_xpriv.derive_priv(&secp, child_path).map_err(Error::Bip32)
+    }
+
+    /// Derive a child public key at a specific path from the account
+    ///
+    /// The path should be relative to the account (e.g., "0/5" for external address 5)
+    fn derive_child_xpub(&self, child_path: &DerivationPath) -> std::result::Result<ExtendedPubKey, Error> {
+        let secp = Secp256k1::new();
+        self.account_xpub.derive_pub(&secp, child_path).map_err(Error::Bip32)
+    }
+
+    /// Derive an address at a specific **chain** (external/internal) and **index**.
+    ///
+    /// This derives the child (xpub or xpriv → xpub) at:
+    /// - External chain:   `.../0/{index}`
+    /// - Internal (change) `.../1/{index}`
+    /// - Absent:           `.../{index}`
+    ///
+    /// If `use_hardened_with_priv_key` is **Some(xpriv)**, hardened derivation is
+    /// performed for the returned path components (and we derive via private key,
+    /// then compute the corresponding extended public key). If it is **None**, we
+    /// perform **non-hardened** derivation from the account xpub.
+    ///
+    /// **BIP44 note:** the “change” level is `0` for external receive addresses and
+    /// `1` for internal/change addresses.
+    ///
+    /// # Parameters
+    /// - `address_pool_type`: which chain to use (`External` = 0, `Internal` = 1, or `Absent`)
+    /// - `index`: address index on that chain
+    /// - `use_hardened_with_priv_key`: when `Some(xpriv)`, use the provided extended
+    ///   private key to derive hardened children; when `None`, derive public children
+    ///   from the account xpub (non-hardened)
+    ///
+    /// # Returns
+    /// A `dashcore::Address` derived at the requested chain and index.
+    ///
+    /// # Examples
+    /// ```ignore
+    /// // Derive external (receive) and internal (change) addresses at specific indices,
+    /// // using public (non-hardened) derivation:
+    /// let recv = account.derive_address_at(AddressPoolType::External, 5, None)?;   // .../0/5
+    /// let change = account.derive_address_at(AddressPoolType::Internal, 3, None)?; // .../1/3
+    ///
+    /// // Derive the same positions using hardened derivation from an xpriv:
+    /// let recv_h = account.derive_address_at(AddressPoolType::External, 5, Some(account_xpriv.clone()))?;
+    /// let chg_h  = account.derive_address_at(AddressPoolType::Internal, 3, Some(account_xpriv))?;
+    /// ```
+    fn derive_address_at(&self, address_pool_type: AddressPoolType, index: u32, use_hardened_with_priv_key: Option<ExtendedPrivKey>) -> std::result::Result<Address, Error> {
+        let public_key = self.derive_extended_public_key_at(address_pool_type, index, use_hardened_with_priv_key)?;
+        Ok(Address::p2pkh(&public_key.to_pub(), self.network))
+    }
+
+    fn derive_public_key_at(&self, address_pool_type: AddressPoolType, index: u32, use_hardened_with_priv_key: Option<ExtendedPrivKey>) -> std::result::Result<PublicKey, Error> {
+        Ok(self.derive_extended_public_key_at(address_pool_type, index, use_hardened_with_priv_key)?.to_pub())
+    }
+
+    fn derive_extended_public_key_at(&self, address_pool_type: AddressPoolType, index: u32, use_hardened_with_priv_key: Option<ExtendedPrivKey>) -> std::result::Result<ExtendedPubKey, Error> {
+        let derivation_path = Self::derivation_path_for_index(address_pool_type, index, use_hardened_with_priv_key.is_some())?;
+        if let Some(priv_key) = use_hardened_with_priv_key {
+            let xpriv = if priv_key.depth == 0 {
+                self.derive_xpriv_from_master_xpriv(&priv_key)?
+            } else {
+                self.derive_child_xpriv_from_account_xpriv(&priv_key, &derivation_path)?
+            };
+            let secp = Secp256k1::new();
+            Ok(ExtendedPubKey::from_priv(&secp, &xpriv))
+        } else {
+            self.derive_child_xpub(&derivation_path)
+        }
     }
 }
+
+
+pub trait ECDSAAddressDerivation : AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey> {
+
+    /// Derive a receive (external) address at a specific index
+    fn derive_receive_address(&self, index: u32) -> Result<Address> {
+        self.derive_address_at(AddressPoolType::External, index, None)
+    }
+
+    /// Derive a change (internal) address at a specific index
+    fn derive_change_address(&self, index: u32) -> Result<Address> {
+        self.derive_address_at(AddressPoolType::Internal, index, None)
+    }
+
+    /// Derive multiple receive addresses starting from a specific index
+    fn derive_receive_addresses(&self, start_index: u32, count: u32) -> Result<Vec<Address>> {
+        let mut addresses = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            addresses.push(self.derive_receive_address(start_index + i)?);
+        }
+        Ok(addresses)
+    }
+
+    /// Derive multiple change addresses starting from a specific index
+    fn derive_change_addresses(&self, start_index: u32, count: u32) -> Result<Vec<Address>> {
+        let mut addresses = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            addresses.push(self.derive_change_address(start_index + i)?);
+        }
+        Ok(addresses)
+    }
+}
+
+impl ECDSAAddressDerivation for Account {}
 
 impl fmt::Display for Account {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -270,32 +372,7 @@ mod tests {
 
         assert!(watch_only.is_watch_only);
     }
-
-    #[test]
-    fn test_get_chain_xpub() {
-        let account = test_account();
-
-        // Get external chain xpub
-        let external_xpub = account.get_chain_xpub(false).unwrap();
-
-        // Get internal chain xpub
-        let internal_xpub = account.get_chain_xpub(true).unwrap();
-
-        // They should be different
-        assert_ne!(external_xpub, internal_xpub);
-
-        // Derive an address manually from the external chain xpub
-        let secp = Secp256k1::new();
-        let path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let addr_xpub = external_xpub.derive_pub(&secp, &path).unwrap();
-        let pubkey = dashcore::PublicKey::from_slice(&addr_xpub.public_key.serialize()).unwrap();
-        let manual_addr = dashcore::Address::p2pkh(&pubkey, Network::Testnet);
-
-        // Should match the address derived using derive_receive_address
-        let derived_addr = account.derive_receive_address(0).unwrap();
-        assert_eq!(manual_addr, derived_addr);
-    }
-
+    
     #[test]
     fn test_address_derivation_consistency() {
         // Test that addresses are derived consistently

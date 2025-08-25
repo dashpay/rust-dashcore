@@ -5,9 +5,9 @@
 
 use super::account_trait::AccountTrait;
 use crate::account::AccountType;
-use crate::derivation_slip10::{ExtendedEd25519PrivKey, ExtendedEd25519PubKey};
+use crate::derivation_slip10::{ExtendedEd25519PrivKey, ExtendedEd25519PubKey, VerifyingKey};
 use crate::error::{Error, Result};
-use crate::{ChildNumber, Network};
+use crate::{ChildNumber, DerivationPath, Network};
 use alloc::vec::Vec;
 use core::fmt;
 use dashcore::Address;
@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 use crate::bip32::{ChainCode, Fingerprint};
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
+use crate::account::derivation::AccountDerivation;
+use crate::managed_account::address_pool::AddressPoolType;
 
 /// EdDSA (Ed25519) account structure for Platform identity operations
 #[derive(Debug, Clone)]
@@ -69,7 +71,7 @@ impl EdDSAAccount {
             network,
             depth: 0,
             parent_fingerprint: Fingerprint::default(),
-            child_number: ChildNumber::from_normal_idx(0).unwrap(),
+            child_number: ChildNumber::from_normal_idx(0)?,
             public_key: verifying_key,
             chain_code: ChainCode::from([0u8; 32]),
         };
@@ -205,14 +207,6 @@ impl AccountTrait for EdDSAAccount {
         self.is_watch_only
     }
 
-    fn derive_address_at(&self, _is_internal: bool, _index: u32) -> Result<Address> {
-        // Ed25519 keys are used for Platform identity operations,
-        // not for standard blockchain addresses
-        Err(Error::InvalidParameter(
-            "EdDSA accounts are for Platform identities, not blockchain addresses".to_string(),
-        ))
-    }
-
     fn get_public_key_bytes(&self) -> Vec<u8> {
         self.ed25519_public_key.public_key.to_bytes().to_vec()
     }
@@ -232,10 +226,144 @@ impl fmt::Display for EdDSAAccount {
     }
 }
 
+impl AccountDerivation<ExtendedEd25519PrivKey, ExtendedEd25519PubKey, VerifyingKey> for EdDSAAccount {
+    /// Derive an extended private key from the wallet's master Ed25519 private key
+    /// using the EdDSA account's derivation path.
+    ///
+    /// Returns an error for watch-only accounts.
+    fn derive_xpriv_from_master_xpriv(
+        &self,
+        master_xpriv: &ExtendedEd25519PrivKey,
+    ) -> Result<ExtendedEd25519PrivKey> {
+        if self.is_watch_only {
+            return Err(Error::WatchOnly);
+        }
+
+        // Get the derivation path for this account type
+        let path = self.account_type.derivation_path(self.network)?;
+        
+        // Derive the account private key from master
+        master_xpriv.derive_priv(&path)
+            .map_err(|e| Error::InvalidParameter(format!("Ed25519 derivation error: {}", e)))
+    }
+
+    /// Derive a child Ed25519 private key at a path relative to the account.
+    ///
+    /// Returns an error for watch-only accounts.
+    fn derive_child_xpriv_from_account_xpriv(
+        &self,
+        account_xpriv: &ExtendedEd25519PrivKey,
+        child_path: &DerivationPath,
+    ) -> Result<ExtendedEd25519PrivKey> {
+        if self.is_watch_only {
+            return Err(Error::WatchOnly);
+        }
+
+        // Derive the child private key from account private key
+        account_xpriv.derive_priv(child_path)
+            .map_err(|e| Error::InvalidParameter(format!("Ed25519 child derivation error: {}", e)))
+    }
+
+    /// Derive a child Ed25519 public key at a path relative to the account.
+    ///
+    /// Ed25519 only supports hardened derivation, so this always returns an error.
+    fn derive_child_xpub(&self, _child_path: &DerivationPath) -> Result<ExtendedEd25519PubKey> {
+        // Ed25519 with SLIP-0010 only supports hardened derivation
+        // Cannot derive from public key alone
+        Err(Error::InvalidParameter(
+            "Ed25519 does not support public key derivation (only hardened paths allowed)".to_string()
+        ))
+    }
+
+    /// Derive an Ed25519-based address at a specific chain and index.
+    /// 
+    /// Creates a P2PKH-style address from the hash160 of the Ed25519 public key.
+    fn derive_address_at(
+        &self,
+        address_pool_type: AddressPoolType,
+        index: u32,
+        use_hardened_with_priv_key: Option<ExtendedEd25519PrivKey>,
+    ) -> Result<Address> {
+        // Get the Ed25519 public key at the specified index
+        let ed25519_pubkey = self.derive_public_key_at(
+            address_pool_type,
+            index,
+            use_hardened_with_priv_key
+        )?;
+        
+        // Get the Ed25519 public key bytes (32 bytes for Ed25519)
+        let pubkey_bytes = ed25519_pubkey.to_bytes();
+        
+        // Create a P2PKH address from the hash160 of the Ed25519 public key
+        // This uses the same hash160 (SHA256 + RIPEMD160) as ECDSA addresses
+        use dashcore::hashes::{Hash, hash160};
+        let pubkey_hash = hash160::Hash::hash(&pubkey_bytes);
+        
+        // Create the address from the public key hash
+        use dashcore::address::Payload;
+        let payload = Payload::PubkeyHash(pubkey_hash.into());
+        Ok(Address::new(self.network, payload))
+    }
+
+    /// Derive an Ed25519 public key at a specific chain and index.
+    ///
+    /// Requires private key for derivation since Ed25519 only supports hardened paths.
+    fn derive_public_key_at(
+        &self,
+        address_pool_type: AddressPoolType,
+        index: u32,
+        use_hardened_with_priv_key: Option<ExtendedEd25519PrivKey>,
+    ) -> Result<VerifyingKey> {
+        let extended_pubkey = self.derive_extended_public_key_at(
+            address_pool_type,
+            index,
+            use_hardened_with_priv_key
+        )?;
+        Ok(extended_pubkey.public_key)
+    }
+
+    /// Derive an extended Ed25519 public key at a specific chain and index.
+    ///
+    /// Ed25519 only supports hardened derivation, so requires private key.
+    fn derive_extended_public_key_at(
+        &self,
+        address_pool_type: AddressPoolType,
+        index: u32,
+        use_hardened_with_priv_key: Option<ExtendedEd25519PrivKey>,
+    ) -> Result<ExtendedEd25519PubKey> {
+        // Ed25519 only supports hardened derivation
+        let priv_key = use_hardened_with_priv_key.ok_or_else(|| {
+            Error::InvalidParameter(
+                "Ed25519 requires private key for derivation (only hardened paths supported)".to_string()
+            )
+        })?;
+
+        // Always use hardened derivation for Ed25519
+        let derivation_path = Self::derivation_path_for_index(
+            address_pool_type,
+            index,
+            true // always hardened for Ed25519
+        )?;
+
+        // Derive using private key
+        let derived_priv = if priv_key.depth == 0 {
+            // This is the master key, derive the account first
+            self.derive_xpriv_from_master_xpriv(&priv_key)?
+        } else {
+            // This is already the account key, derive the child
+            self.derive_child_xpriv_from_account_xpriv(&priv_key, &derivation_path)?
+        };
+        
+        ExtendedEd25519PubKey::from_priv(&derived_priv)
+            .map_err(|e| Error::InvalidParameter(format!("Failed to get Ed25519 public key: {}", e)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::account::account_type::StandardAccountType;
+    use crate::managed_account::address_pool::AddressPoolType;
 
     #[test]
     fn test_eddsa_account_creation() {
@@ -306,8 +434,8 @@ mod tests {
         )
         .unwrap();
 
-        // EdDSA accounts don't support standard address derivation
-        let result = account.derive_address_at(false, 0);
+        // EdDSA accounts require private key for address derivation (hardened only)
+        let result = account.derive_address_at(AddressPoolType::External, 0, None);
         assert!(result.is_err());
     }
 

@@ -140,7 +140,7 @@ impl AccountCollection {
     }
 
     /// Check if a specific account type already exists in the collection
-    pub fn contains_account_type(&self, account_type: &crate::account::AccountType) -> bool {
+    pub fn contains_account_type(&self, account_type: &AccountType) -> bool {
         use crate::account::{AccountType, StandardAccountType};
 
         match account_type {
