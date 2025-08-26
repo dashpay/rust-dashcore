@@ -3,6 +3,8 @@
 //! This module determines which account types should be checked
 //! for different transaction types.
 
+mod tests;
+
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;

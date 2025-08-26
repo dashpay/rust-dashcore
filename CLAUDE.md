@@ -29,7 +29,7 @@ rust-dashcore is a Rust implementation of the Dash cryptocurrency protocol libra
 - `dash-spv-ffi/` - C-compatible FFI bindings for SPV client
 
 ### Wallet & Keys
-- `key-wallet/` - HD wallet implementation
+- `key-wallet/` - Comprehensive HD wallet implementation with multi-account support, address pools, and transaction management (see key-wallet/CLAUDE.md for detailed architecture)
 - `key-wallet-ffi/` - C-compatible FFI bindings for wallet functionality
 
 ### RPC & Integration

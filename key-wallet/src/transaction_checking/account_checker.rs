@@ -12,6 +12,18 @@ use alloc::vec::Vec;
 use dashcore::address::Payload;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::transaction::TransactionPayload;
+use dashcore::ScriptBuf;
+
+/// Classification of an address within an account
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressClassification {
+    /// External (receive) address for standard accounts
+    External,
+    /// Internal (change) address for standard accounts
+    Internal,
+    /// Other address type (for non-standard accounts or unknown)
+    Other,
+}
 
 /// Result of checking a transaction against accounts
 #[derive(Debug, Clone)]
@@ -279,24 +291,20 @@ impl ManagedAccountCollection {
             AccountTypeToCheck::ProviderVotingKeys => self
                 .provider_voting_keys
                 .as_ref()
-                .and_then(|account| {
-                    account.check_provider_voting_key_in_transaction_for_match(tx, None)
-                })
+                .and_then(|account| account.check_provider_voting_key_in_transaction_for_match(tx))
                 .into_iter()
                 .collect(),
             AccountTypeToCheck::ProviderOwnerKeys => self
                 .provider_owner_keys
                 .as_ref()
-                .and_then(|account| {
-                    account.check_provider_owner_key_in_transaction_for_match(tx, None)
-                })
+                .and_then(|account| account.check_provider_owner_key_in_transaction_for_match(tx))
                 .into_iter()
                 .collect(),
             AccountTypeToCheck::ProviderOperatorKeys => self
                 .provider_operator_keys
                 .as_ref()
                 .and_then(|account| {
-                    account.check_provider_operator_key_in_transaction_for_match(tx, None)
+                    account.check_provider_operator_key_in_transaction_for_match(tx)
                 })
                 .into_iter()
                 .collect(),
@@ -304,7 +312,7 @@ impl ManagedAccountCollection {
                 .provider_platform_keys
                 .as_ref()
                 .and_then(|account| {
-                    account.check_provider_platform_key_in_transaction_for_match(tx, None)
+                    account.check_provider_platform_key_in_transaction_for_match(tx)
                 })
                 .into_iter()
                 .collect(),
@@ -327,6 +335,41 @@ impl ManagedAccountCollection {
 }
 
 impl ManagedAccount {
+    /// Classify an address within this account
+    pub fn classify_address(&self, address: &Address) -> AddressClassification {
+        match &self.account_type {
+            ManagedAccountType::Standard {
+                external_addresses,
+                internal_addresses,
+                ..
+            } => {
+                if external_addresses.contains_address(address) {
+                    AddressClassification::External
+                } else if internal_addresses.contains_address(address) {
+                    AddressClassification::Internal
+                } else {
+                    AddressClassification::Other
+                }
+            }
+            _ => {
+                // For non-standard accounts, all addresses are "Other"
+                AddressClassification::Other
+            }
+        }
+    }
+
+    /// Check if a script pubkey is a provider payout that belongs to this account
+    fn check_provider_payout(&self, script_pubkey: &ScriptBuf) -> Option<AddressInfo> {
+        // Check if this script pubkey belongs to any address in this account
+        if self.contains_script_pub_key(script_pubkey) {
+            // Try to create an address from the script pubkey and get its info
+            if let Ok(address) = Address::from_script(script_pubkey, self.network) {
+                return self.get_address_info(&address);
+            }
+        }
+        None
+    }
+
     /// Check a single account for transaction involvement
     pub fn check_transaction_for_match(
         &self,
@@ -339,6 +382,44 @@ impl ManagedAccount {
         let mut involved_other_addresses = Vec::new(); // For non-standard accounts
         let mut received = 0u64;
         let sent = 0u64;
+        let mut provider_payout_involved = false;
+
+        // Check provider payouts in special transactions
+        if let Some(payload) = &tx.special_transaction_payload {
+            let script_payout = match payload {
+                TransactionPayload::ProviderRegistrationPayloadType(reg) => {
+                    Some(&reg.script_payout)
+                }
+                TransactionPayload::ProviderUpdateRegistrarPayloadType(update) => {
+                    Some(&update.script_payout)
+                }
+                TransactionPayload::ProviderUpdateServicePayloadType(update) => {
+                    Some(&update.script_payout)
+                }
+                _ => None,
+            };
+
+            // Check if the provider payout script belongs to this account
+            if let Some(payout_script) = script_payout {
+                if let Some(payout_info) = self.check_provider_payout(payout_script) {
+                    provider_payout_involved = true;
+                    // Classify the payout address
+                    if let Ok(payout_address) = Address::from_script(payout_script, self.network) {
+                        match self.classify_address(&payout_address) {
+                            AddressClassification::External => {
+                                involved_receive_addresses.push(payout_info);
+                            }
+                            AddressClassification::Internal => {
+                                involved_change_addresses.push(payout_info);
+                            }
+                            AddressClassification::Other => {
+                                involved_other_addresses.push(payout_info);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Check outputs (received)
         for output in &tx.output {
@@ -346,28 +427,28 @@ impl ManagedAccount {
                 if let Ok(address) = Address::from_script(&output.script_pubkey, self.network) {
                     // Try to find the address info from the account
                     if let Some(address_info) = self.get_address_info(&address) {
-                        // For standard accounts, classify as receive or change
-                        match &self.account_type {
-                            ManagedAccountType::Standard {
-                                external_addresses,
-                                internal_addresses,
-                                ..
-                            } => {
-                                if external_addresses.contains_address(&address) {
+                        // Use the new classification method
+                        match self.classify_address(&address) {
+                            AddressClassification::External => {
+                                // For CoinJoin accounts, all addresses go to receive
+                                if matches!(self.account_type, ManagedAccountType::CoinJoin { .. })
+                                {
                                     involved_receive_addresses.push(address_info.clone());
-                                } else if internal_addresses.contains_address(&address) {
-                                    involved_change_addresses.push(address_info.clone());
+                                } else {
+                                    involved_receive_addresses.push(address_info.clone());
                                 }
                             }
-                            ManagedAccountType::CoinJoin {
-                                ..
-                            } => {
-                                // CoinJoin only uses receive addresses, no change addresses
-                                involved_receive_addresses.push(address_info.clone());
+                            AddressClassification::Internal => {
+                                involved_change_addresses.push(address_info.clone());
                             }
-                            _ => {
-                                // For other account types, just add to other addresses
-                                involved_other_addresses.push(address_info.clone());
+                            AddressClassification::Other => {
+                                // For CoinJoin, treat as receive addresses
+                                if matches!(self.account_type, ManagedAccountType::CoinJoin { .. })
+                                {
+                                    involved_receive_addresses.push(address_info.clone());
+                                } else {
+                                    involved_other_addresses.push(address_info.clone());
+                                }
                             }
                         }
                     }
@@ -383,7 +464,8 @@ impl ManagedAccount {
         // Create the appropriate AccountTypeMatch based on account type
         let has_addresses = !involved_receive_addresses.is_empty()
             || !involved_change_addresses.is_empty()
-            || !involved_other_addresses.is_empty();
+            || !involved_other_addresses.is_empty()
+            || provider_payout_involved;
 
         if has_addresses {
             let account_type_match = match &self.account_type {
@@ -410,7 +492,13 @@ impl ManagedAccount {
                     ..
                 } => AccountTypeMatch::CoinJoin {
                     account_index: index.unwrap_or(0),
-                    involved_addresses: involved_receive_addresses,
+                    // For CoinJoin, use both receive addresses and other addresses
+                    // since CoinJoin addresses can be classified as either
+                    involved_addresses: {
+                        let mut all_addresses = involved_receive_addresses.clone();
+                        all_addresses.extend(involved_other_addresses.clone());
+                        all_addresses
+                    },
                 },
                 ManagedAccountType::IdentityRegistration {
                     ..
@@ -541,7 +629,6 @@ impl ManagedAccount {
     pub fn check_provider_voting_key_in_transaction_for_match(
         &self,
         tx: &Transaction,
-        _index: Option<u32>,
     ) -> Option<AccountMatch> {
         // Only check if this is a provider voting keys account
         if let ManagedAccountType::ProviderVotingKeys {
@@ -587,7 +674,6 @@ impl ManagedAccount {
     pub fn check_provider_owner_key_in_transaction_for_match(
         &self,
         tx: &Transaction,
-        _index: Option<u32>,
     ) -> Option<AccountMatch> {
         // Only check if this is a provider owner keys account
         if let ManagedAccountType::ProviderOwnerKeys {
@@ -628,7 +714,6 @@ impl ManagedAccount {
     pub fn check_provider_operator_key_in_transaction_for_match(
         &self,
         tx: &Transaction,
-        _index: Option<u32>,
     ) -> Option<AccountMatch> {
         // Only check if this is a provider voting keys account
         if let ManagedAccountType::ProviderOperatorKeys {
@@ -638,6 +723,9 @@ impl ManagedAccount {
             if let Some(payload) = &tx.special_transaction_payload {
                 let operator_public_key = match payload {
                     TransactionPayload::ProviderRegistrationPayloadType(reg) => {
+                        &reg.operator_public_key
+                    }
+                    TransactionPayload::ProviderUpdateRegistrarPayloadType(reg) => {
                         &reg.operator_public_key
                     }
                     _ => return None,
@@ -670,7 +758,6 @@ impl ManagedAccount {
     pub fn check_provider_platform_key_in_transaction_for_match(
         &self,
         tx: &Transaction,
-        _index: Option<u32>,
     ) -> Option<AccountMatch> {
         // Only check if this is a provider voting keys account
         if let ManagedAccountType::ProviderPlatformKeys {
