@@ -822,7 +822,7 @@ mod display_from_str {
 
     impl Display for PartiallySignedTransaction {
         fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-            write!(f, "{}", STANDARD.encode(&self.serialize()))
+            write!(f, "{}", STANDARD.encode(self.serialize()))
         }
     }
 

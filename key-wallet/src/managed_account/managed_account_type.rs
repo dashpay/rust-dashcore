@@ -1,7 +1,9 @@
 use crate::account::StandardAccountType;
 use crate::{AccountType, AddressPool, DerivationPath};
+#[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use dashcore::ScriptBuf;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Managed account type with embedded address pools

@@ -519,7 +519,9 @@ impl Wallet {
         // Provider keys accounts
         self.add_account(AccountType::ProviderVotingKeys, network, None)?;
         self.add_account(AccountType::ProviderOwnerKeys, network, None)?;
+        #[cfg(feature = "bls")]
         self.add_bls_account(AccountType::ProviderOperatorKeys, network, None)?;
+        #[cfg(feature = "eddsa")]
         self.add_eddsa_account(AccountType::ProviderPlatformKeys, network, None)?;
 
         Ok(())
@@ -547,11 +549,13 @@ impl Wallet {
         // Provider keys accounts
         self.add_account_with_passphrase(AccountType::ProviderVotingKeys, network, passphrase)?;
         self.add_account_with_passphrase(AccountType::ProviderOwnerKeys, network, passphrase)?;
+        #[cfg(feature = "bls")]
         self.add_bls_account_with_passphrase(
             AccountType::ProviderOperatorKeys,
             network,
             passphrase,
         )?;
+        #[cfg(feature = "eddsa")]
         self.add_eddsa_account_with_passphrase(
             AccountType::ProviderPlatformKeys,
             network,

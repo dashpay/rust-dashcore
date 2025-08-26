@@ -258,8 +258,7 @@ impl Bip38EncryptedKey {
         let secp = Secp256k1::new();
         let public_key = PublicKey::from_secret_key(&secp, secret);
         let dash_pubkey = dashcore::PublicKey::new(public_key);
-        let network = dashcore::Network::from(self.network);
-        Ok(Address::p2pkh(&dash_pubkey, network))
+        Ok(Address::p2pkh(&dash_pubkey, self.network))
     }
 }
 
@@ -273,8 +272,7 @@ pub fn encrypt_private_key(
     let secp = Secp256k1::new();
     let public_key = PublicKey::from_secret_key(&secp, private_key);
     let dash_pubkey = dashcore::PublicKey::new(public_key);
-    let dash_network = dashcore::Network::from(network);
-    let address = Address::p2pkh(&dash_pubkey, dash_network);
+    let address = Address::p2pkh(&dash_pubkey, network);
     let address_hash = address_hash_from_address(&address);
 
     // Derive encryption key using scrypt
@@ -405,7 +403,7 @@ fn address_hash_from_address(address: &Address) -> [u8; 4] {
 /// Double SHA256
 fn double_sha256(data: &[u8]) -> [u8; 32] {
     let first = Sha256::digest(data);
-    let second = Sha256::digest(&first);
+    let second = Sha256::digest(first);
     let mut result = [0u8; 32];
     result.copy_from_slice(&second);
     result

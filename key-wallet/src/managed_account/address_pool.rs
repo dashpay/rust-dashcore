@@ -21,6 +21,7 @@ use dashcore::{Address, AddressType, ScriptBuf};
 /// Types of public keys used in the address pool
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[allow(clippy::upper_case_acronyms)]
 pub enum PublicKeyType {
     /// ECDSA public key (standard Bitcoin/Dash addresses) - stored as Vec<u8> for serialization
     ECDSA(Vec<u8>),
@@ -52,6 +53,7 @@ impl Serialize for PublicKeyType {
         S: serde::Serializer,
     {
         #[derive(Serialize)]
+        #[allow(clippy::upper_case_acronyms)]
         enum PublicKeyTypeSer<'a> {
             ECDSA(&'a Vec<u8>),
             EdDSA(&'a Vec<u8>),
@@ -73,6 +75,7 @@ impl<'de> Deserialize<'de> for PublicKeyType {
         D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
+        #[allow(clippy::upper_case_acronyms)]
         enum PublicKeyTypeDe {
             ECDSA(Vec<u8>),
             EdDSA(Vec<u8>),
