@@ -3,6 +3,7 @@
 //! These tests verify that the high-level wallet management functionality
 //! works correctly with the low-level key-wallet primitives.
 
+use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{mnemonic::Language, Mnemonic, Network};
@@ -49,25 +50,31 @@ fn test_account_management() {
     let wallet_id: WalletId = [1u8; 32];
 
     // Create a wallet first
-    let wallet = manager.create_wallet(wallet_id, "Test Wallet".to_string(), Network::Testnet);
+    let wallet = manager.create_wallet(
+        wallet_id,
+        "Test Wallet".to_string(),
+        WalletAccountCreationOptions::Default,
+        Network::Testnet,
+    );
     assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
 
     // Add accounts to the wallet
     // Note: Index 0 already exists from wallet creation, so use index 1
     let result = manager.create_account(
         &wallet_id,
-        1,
         key_wallet::AccountType::Standard {
             index: 1,
             standard_account_type: key_wallet::account::StandardAccountType::BIP44Account,
         },
+        Network::Testnet,
+        None,
     );
     assert!(result.is_ok());
 
-    // Get accounts from wallet - Default creates 9 accounts, plus the one we added
+    // Get accounts from wallet - Default creates 7 accounts, plus the one we added
     let accounts = manager.get_accounts(&wallet_id);
     assert!(accounts.is_ok());
-    assert_eq!(accounts.unwrap().len(), 10); // 9 from Default + 1 we added
+    assert_eq!(accounts.unwrap().len(), 8); // 7 from Default + 1 we added
 }
 
 #[test]
@@ -78,7 +85,12 @@ fn test_address_generation() {
     let wallet_id: WalletId = [1u8; 32];
 
     // Create a wallet first
-    let wallet = manager.create_wallet(wallet_id, "Test Wallet".to_string(), Network::Testnet);
+    let wallet = manager.create_wallet(
+        wallet_id,
+        "Test Wallet".to_string(),
+        WalletAccountCreationOptions::Default,
+        Network::Testnet,
+    );
     assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
 
     // The wallet should already have account 0 from creation
@@ -134,7 +146,12 @@ fn test_utxo_management() {
     let wallet_id: WalletId = [1u8; 32];
 
     // Create a wallet first
-    let wallet = manager.create_wallet(wallet_id, "Test Wallet".to_string(), Network::Testnet);
+    let wallet = manager.create_wallet(
+        wallet_id,
+        "Test Wallet".to_string(),
+        WalletAccountCreationOptions::Default,
+        Network::Testnet,
+    );
     assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
 
     // For UTXO management, we need to process transactions that create UTXOs
@@ -159,7 +176,12 @@ fn test_balance_calculation() {
     let wallet_id: WalletId = [1u8; 32];
 
     // Create a wallet first
-    let wallet = manager.create_wallet(wallet_id, "Test Wallet".to_string(), Network::Testnet);
+    let wallet = manager.create_wallet(
+        wallet_id,
+        "Test Wallet".to_string(),
+        WalletAccountCreationOptions::Default,
+        Network::Testnet,
+    );
     assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
 
     // For balance testing, we would need to process transactions

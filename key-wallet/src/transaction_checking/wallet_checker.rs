@@ -254,3 +254,282 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wallet::initialization::WalletAccountCreationOptions;
+    use crate::wallet::{ManagedWalletInfo, Wallet};
+    use dashcore::blockdata::script::ScriptBuf;
+    use dashcore::blockdata::transaction::Transaction;
+    use dashcore::OutPoint;
+    use dashcore::TxOut;
+    use dashcore::{Address, BlockHash, TxIn, Txid};
+
+    /// Create a test transaction that sends to a given address
+    fn create_transaction_to_address(address: &Address, amount: u64) -> Transaction {
+        Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: Txid::from_byte_array([1u8; 32]),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: amount,
+                script_pubkey: address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        }
+    }
+
+    /// Test wallet checker with no accounts for the network
+    #[test]
+    fn test_wallet_checker_no_accounts_for_network() {
+        let network = Network::Testnet;
+        let other_network = Network::Dash;
+
+        // Create wallet on testnet but check transaction on mainnet
+        let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+            .expect("Should create wallet");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+        // Create a dummy transaction
+        let dummy_address = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("Should create pubkey"),
+            other_network,
+        );
+        let tx = create_transaction_to_address(&dummy_address, 100_000);
+
+        let context = TransactionContext::Mempool;
+
+        // Check transaction on different network (should have no accounts)
+        let result = managed_wallet.check_transaction(&tx, other_network, context, None);
+
+        // Should return default result with no relevance
+        assert!(!result.is_relevant);
+        assert_eq!(result.total_received, 0);
+        assert_eq!(result.total_sent, 0);
+        assert!(result.affected_accounts.is_empty());
+    }
+
+    /// Test wallet checker with different account types to cover error branches
+    #[test]
+    fn test_wallet_checker_different_account_types() {
+        let network = Network::Testnet;
+
+        // Create wallet with multiple account types
+        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
+            .expect("Should create wallet");
+
+        // Add different types of accounts
+        use crate::account::AccountType;
+        use crate::account::StandardAccountType;
+
+        // Add BIP32 account
+        wallet
+            .add_account(
+                AccountType::Standard {
+                    index: 0,
+                    standard_account_type: StandardAccountType::BIP32Account,
+                },
+                network,
+                None,
+            )
+            .expect("Should add BIP32 account");
+
+        // Add CoinJoin account
+        wallet
+            .add_account(
+                AccountType::CoinJoin {
+                    index: 0,
+                },
+                network,
+                None,
+            )
+            .expect("Should add CoinJoin account");
+
+        // Add identity accounts
+        wallet
+            .add_account(AccountType::IdentityRegistration, network, None)
+            .expect("Should add identity registration account");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+        // Get addresses from different accounts to trigger different branches
+        let account_collection = wallet.accounts.get(&network).expect("Should have accounts");
+
+        // Get BIP32 account address
+        if let Some(bip32_account) = account_collection.standard_bip32_accounts.get(&0) {
+            let xpub = bip32_account.account_xpub;
+            if let Some(managed_account) = managed_wallet.first_bip32_managed_account_mut(network) {
+                let address = managed_account
+                    .next_receive_address(Some(&xpub), true)
+                    .expect("Should get BIP32 address");
+
+                let tx = create_transaction_to_address(&address, 50_000);
+
+                let context = TransactionContext::InBlock {
+                    height: 100000,
+                    block_hash: Some(
+                        BlockHash::from_slice(&[0u8; 32]).expect("Should create block hash"),
+                    ),
+                    timestamp: Some(1234567890),
+                };
+
+                // This should exercise BIP32 account branch in the update logic
+                let result = managed_wallet.check_transaction(&tx, network, context, Some(&wallet));
+
+                // Should be relevant since it's our address
+                assert!(result.is_relevant);
+                assert_eq!(result.total_received, 50_000);
+            }
+        }
+
+        // Get CoinJoin account address
+        if let Some(coinjoin_account) = account_collection.coinjoin_accounts.get(&0) {
+            let xpub = coinjoin_account.account_xpub;
+            if let Some(managed_account) =
+                managed_wallet.first_coinjoin_managed_account_mut(network)
+            {
+                let address = managed_account
+                    .next_address(Some(&xpub), true)
+                    .expect("Should get CoinJoin address");
+
+                let tx = create_transaction_to_address(&address, 75_000);
+
+                let context = TransactionContext::InChainLockedBlock {
+                    height: 100001,
+                    block_hash: Some(
+                        BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash"),
+                    ),
+                    timestamp: Some(1234567891),
+                };
+
+                // This should exercise CoinJoin account branch in the update logic
+                let result = managed_wallet.check_transaction(&tx, network, context, Some(&wallet));
+
+                // Since this is not a coinjoin looking transaction, we should not pick up on it.
+                assert!(!result.is_relevant);
+                assert_eq!(result.total_received, 0);
+            }
+        }
+    }
+
+    /// Test coinbase transaction handling for immature transaction logic
+    #[test]
+    fn test_wallet_checker_coinbase_immature_handling() {
+        let network = Network::Testnet;
+        let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+            .expect("Should create wallet");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+        // Get a wallet address
+        let account_collection = wallet.accounts.get(&network).expect("Should have accounts");
+        let account =
+            account_collection.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
+        let xpub = account.account_xpub;
+
+        let address = managed_wallet
+            .first_bip44_managed_account_mut(network)
+            .expect("Should have managed account")
+            .next_receive_address(Some(&xpub), true)
+            .expect("Should get address");
+
+        // Create a coinbase transaction
+        let coinbase_tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: Txid::all_zeros(), // Coinbase has null previous output
+                    vout: 0xffffffff,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: 5_000_000_000, // 50 DASH block reward
+                script_pubkey: address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+
+        // Test with InBlock context (should trigger immature transaction handling)
+        let context = TransactionContext::InBlock {
+            height: 100000,
+            block_hash: Some(BlockHash::from_slice(&[1u8; 32]).expect("Should create block hash")),
+            timestamp: Some(1234567890),
+        };
+
+        let result =
+            managed_wallet.check_transaction(&coinbase_tx, network, context, Some(&wallet));
+
+        // Should be relevant
+        assert!(result.is_relevant);
+        assert_eq!(result.total_received, 5_000_000_000);
+
+        // The transaction should be stored even though it's immature
+        let managed_account = managed_wallet
+            .first_bip44_managed_account(network)
+            .expect("Should have managed account");
+
+        assert!(managed_account.transactions.contains_key(&coinbase_tx.txid()));
+    }
+
+    /// Test mempool context for timestamp/height handling
+    #[test]
+    fn test_wallet_checker_mempool_context() {
+        let network = Network::Testnet;
+        let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+            .expect("Should create wallet");
+
+        let mut managed_wallet =
+            ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+
+        // Get a wallet address
+        let account_collection = wallet.accounts.get(&network).expect("Should have accounts");
+        let account =
+            account_collection.standard_bip44_accounts.get(&0).expect("Should have BIP44 account");
+        let xpub = account.account_xpub;
+
+        let address = managed_wallet
+            .first_bip44_managed_account_mut(network)
+            .expect("Should have managed account")
+            .next_receive_address(Some(&xpub), true)
+            .expect("Should get address");
+
+        let tx = create_transaction_to_address(&address, 100_000);
+
+        // Test with Mempool context
+        let context = TransactionContext::Mempool;
+
+        let result = managed_wallet.check_transaction(&tx, network, context, Some(&wallet));
+
+        // Should be relevant
+        assert!(result.is_relevant);
+        assert_eq!(result.total_received, 100_000);
+
+        // Check that transaction was stored with correct context (no height, no block hash)
+        let managed_account = managed_wallet
+            .first_bip44_managed_account(network)
+            .expect("Should have managed account");
+
+        let stored_tx =
+            managed_account.transactions.get(&tx.txid()).expect("Should have stored transaction");
+        assert_eq!(stored_tx.height, None, "Mempool transaction should have no height");
+        assert_eq!(stored_tx.block_hash, None, "Mempool transaction should have no block hash");
+        assert_eq!(stored_tx.timestamp, 0, "Mempool transaction should have timestamp 0");
+    }
+}

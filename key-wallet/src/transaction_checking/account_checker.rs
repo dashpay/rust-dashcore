@@ -351,6 +351,16 @@ impl ManagedAccount {
                     AddressClassification::Other
                 }
             }
+            ManagedAccountType::CoinJoin {
+                addresses,
+                ..
+            } => {
+                if addresses.contains_address(address) {
+                    AddressClassification::External
+                } else {
+                    AddressClassification::Other
+                }
+            }
             _ => {
                 // For non-standard accounts, all addresses are "Other"
                 AddressClassification::Other
@@ -430,25 +440,13 @@ impl ManagedAccount {
                         // Use the new classification method
                         match self.classify_address(&address) {
                             AddressClassification::External => {
-                                // For CoinJoin accounts, all addresses go to receive
-                                if matches!(self.account_type, ManagedAccountType::CoinJoin { .. })
-                                {
-                                    involved_receive_addresses.push(address_info.clone());
-                                } else {
-                                    involved_receive_addresses.push(address_info.clone());
-                                }
+                                involved_receive_addresses.push(address_info.clone());
                             }
                             AddressClassification::Internal => {
                                 involved_change_addresses.push(address_info.clone());
                             }
                             AddressClassification::Other => {
-                                // For CoinJoin, treat as receive addresses
-                                if matches!(self.account_type, ManagedAccountType::CoinJoin { .. })
-                                {
-                                    involved_receive_addresses.push(address_info.clone());
-                                } else {
-                                    involved_other_addresses.push(address_info.clone());
-                                }
+                                involved_other_addresses.push(address_info.clone());
                             }
                         }
                     }

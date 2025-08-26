@@ -735,14 +735,6 @@ fn test_provider_registration_transaction_routing_check_platform_only() {
 
 #[test]
 fn test_provider_update_service_with_operator_key() {
-    // Test provider update service transaction classification
-    let network = Network::Testnet;
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet with default options");
-
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
     let mut tx = create_test_transaction(1, vec![100_000_000]);
 
     // Create provider update service payload

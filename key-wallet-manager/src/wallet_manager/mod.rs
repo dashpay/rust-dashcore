@@ -13,13 +13,14 @@ use alloc::vec::Vec;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::Txid;
 use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
-use key_wallet::WalletBalance;
 use key_wallet::{Account, AccountType, Address, Mnemonic, Network, Wallet};
+use key_wallet::{ExtendedPubKey, WalletBalance};
 use std::collections::BTreeSet;
 
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use key_wallet::wallet::WalletType;
 use key_wallet::{Utxo, UtxoSet};
 
 /// Unique identifier for a wallet (32-byte hash)
@@ -264,8 +265,12 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         for wallet_id in wallet_ids {
             // Check the transaction for this wallet
             if let Some(wallet_info) = self.wallet_infos.get_mut(&wallet_id) {
-                let result =
-                    wallet_info.check_transaction(tx, network, context, update_state_if_found);
+                let result = wallet_info.check_transaction(
+                    tx,
+                    network,
+                    context,
+                    self.wallets.get(&wallet_id),
+                );
 
                 // If the transaction is relevant
                 if result.is_relevant {
@@ -317,28 +322,16 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     pub fn create_account(
         &mut self,
         wallet_id: &WalletId,
-        index: u32,
         account_type: AccountType,
+        network: Network,
+        account_xpub: Option<ExtendedPubKey>,
     ) -> Result<(), WalletError> {
-        let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-        let managed_info =
-            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
+        let wallet =
+            self.wallets.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
-        // Clone wallet to mutate it
-        let mut wallet_mut = wallet.clone();
-        // Get the network from the wallet's accounts or require it to be passed
-        let network = wallet.accounts.keys().next().copied().ok_or(
-            WalletError::InvalidParameter("No network available for account creation".to_string()),
-        )?;
-
-        wallet_mut
-            .add_account(account_type, network, None)
-            .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
-
-        // Update wallet
-        self.wallets.insert(*wallet_id, wallet_mut);
-
-        Ok(())
+        wallet
+            .add_account(account_type, network, account_xpub)
+            .map_err(|e| WalletError::AccountCreation(e.to_string()))
     }
 
     /// Get all accounts in a specific wallet

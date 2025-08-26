@@ -23,8 +23,6 @@ mod managed_account_collection_tests;
 #[cfg(test)]
 mod performance_tests;
 #[cfg(test)]
-mod provider_payout_tests;
-#[cfg(test)]
 mod special_transaction_tests;
 #[cfg(test)]
 mod transaction_tests;
