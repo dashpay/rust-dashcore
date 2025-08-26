@@ -185,7 +185,7 @@ impl ManagedAccountType {
     }
 
     /// Get mutable references to all address pools for this account type
-    pub fn get_address_pools_mut(&mut self) -> Vec<&mut AddressPool> {
+    pub fn address_pools_mut(&mut self) -> Vec<&mut AddressPool> {
         match self {
             Self::Standard {
                 external_addresses,
@@ -270,7 +270,7 @@ impl ManagedAccountType {
 
     /// Mark an address as used
     pub fn mark_address_used(&mut self, address: &crate::Address) -> bool {
-        for pool in self.get_address_pools_mut() {
+        for pool in self.address_pools_mut() {
             if pool.mark_used(address) {
                 return true;
             }

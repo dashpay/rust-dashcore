@@ -4,7 +4,7 @@ fn test_valid_testnet_address() {
 
     // Generate a valid testnet address
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
-    use key_wallet::{Mnemonic, Network, Wallet, WalletConfig};
+    use key_wallet::{Mnemonic, Network, Wallet};
 
     let mnemonic_str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
     let mnemonic =

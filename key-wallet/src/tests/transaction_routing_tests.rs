@@ -574,7 +574,7 @@ fn test_identity_registration_account_routing() {
     );
 
     assert!(result.affected_accounts.iter().any(|acc|
-        matches!(acc.account_type, crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityRegistration)
+        matches!(acc.account_type_match.to_account_type_to_check(), crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityRegistration)
     ), "Should have affected the identity registration account");
 
     // AssetLock funds are for credit conversion, not regular spending
@@ -659,7 +659,7 @@ fn test_normal_payment_to_identity_address_not_detected() {
     // Verify that identity registration account is not in the affected accounts
     assert!(
         !result.affected_accounts.iter().any(|acc|
-            matches!(acc.account_type, crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityRegistration)
+            matches!(acc.account_type_match.to_account_type_to_check(), crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityRegistration)
         ),
         "Identity registration account should not be affected by normal payment"
     );
@@ -804,7 +804,7 @@ fn test_provider_registration_transaction_routing_check_owner_only() {
         result
             .affected_accounts
             .iter()
-            .all(|acc| matches!(acc.account_type,
+            .all(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOwnerKeys
         )),
         "Should have affected provider owner accounts"
@@ -950,7 +950,7 @@ fn test_provider_registration_transaction_routing_check_voting_only() {
         result
             .affected_accounts
             .iter()
-            .all(|acc| matches!(acc.account_type,
+            .all(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderVotingKeys
         )),
         "Should have affected provider voting accounts"
@@ -1097,7 +1097,7 @@ fn test_provider_registration_transaction_routing_check_operator_only() {
         result
             .affected_accounts
             .iter()
-            .all(|acc| matches!(acc.account_type,
+            .all(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOperatorKeys
         )),
         "Should have affected provider operator accounts"
@@ -1266,7 +1266,7 @@ fn test_provider_registration_transaction_routing_check_platform_only() {
         result
             .affected_accounts
             .iter()
-            .all(|acc| matches!(acc.account_type,
+            .all(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderPlatformKeys
         )),
         "Should have affected provider platform accounts"
@@ -1490,7 +1490,7 @@ fn test_provider_registration_transaction_routing_check_owner_and_voting() {
         result
             .affected_accounts
             .iter()
-            .any(|acc| matches!(acc.account_type,
+            .any(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOwnerKeys
         )),
         "Should have affected provider owner accounts"
@@ -1500,7 +1500,7 @@ fn test_provider_registration_transaction_routing_check_owner_and_voting() {
         result
             .affected_accounts
             .iter()
-            .any(|acc| matches!(acc.account_type,
+            .any(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderVotingKeys
         )),
         "Should have affected provider voting accounts"
@@ -1659,7 +1659,7 @@ fn test_provider_registration_transaction_routing_check_voting_and_operator() {
         result
             .affected_accounts
             .iter()
-            .any(|acc| matches!(acc.account_type,
+            .any(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderVotingKeys
         )),
         "Should have affected provider voting accounts"
@@ -1669,7 +1669,7 @@ fn test_provider_registration_transaction_routing_check_voting_and_operator() {
         result
             .affected_accounts
             .iter()
-            .any(|acc| matches!(acc.account_type,
+            .any(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOperatorKeys
         )),
         "Should have affected provider operator accounts"
@@ -1844,7 +1844,7 @@ fn test_provider_registration_transaction_routing_check_all() {
         result
             .affected_accounts
             .iter()
-            .any(|acc| matches!(acc.account_type,
+            .any(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOwnerKeys
         )),
         "Should have affected provider owner accounts"
@@ -1854,7 +1854,7 @@ fn test_provider_registration_transaction_routing_check_all() {
         result
             .affected_accounts
             .iter()
-            .any(|acc| matches!(acc.account_type,
+            .any(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderVotingKeys
         )),
         "Should have affected provider voting accounts"
@@ -1864,7 +1864,7 @@ fn test_provider_registration_transaction_routing_check_all() {
         result
             .affected_accounts
             .iter()
-            .any(|acc| matches!(acc.account_type,
+            .any(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOperatorKeys
         )),
         "Should have affected provider operator accounts"
@@ -1874,7 +1874,7 @@ fn test_provider_registration_transaction_routing_check_all() {
         result
             .affected_accounts
             .iter()
-            .any(|acc| matches!(acc.account_type,
+            .any(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderPlatformKeys
         )),
         "Should have affected provider platform accounts"
@@ -2047,7 +2047,7 @@ fn test_provider_registration_transaction_routing_check_outputs() {
         result
             .affected_accounts
             .iter()
-            .any(|acc| matches!(acc.account_type,
+            .any(|acc| matches!(acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOwnerKeys
         )),
         "Should have affected provider owner accounts"
@@ -2056,7 +2056,7 @@ fn test_provider_registration_transaction_routing_check_outputs() {
     // Should have also affected BIP44 account (from payout address)
     assert!(
         result.affected_accounts.iter().any(|acc| matches!(
-            acc.account_type,
+            acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::StandardBIP44
         )),
         "Should have affected standard BIP44 account from payout address"
@@ -2201,10 +2201,7 @@ fn test_update_state_flag_behavior() {
 
     // First check with update_state = false
     let result1 = managed_wallet_info.check_transaction(
-        &tx,
-        network,
-        context,
-        Some(&wallet), // don't update state
+        &tx, network, context, None, // don't update state
     );
 
     assert!(result1.is_relevant);
@@ -2328,7 +2325,7 @@ fn test_coinbase_transaction_routing_to_bip44_receive_address() {
     // Should have affected the BIP44 account
     assert!(
         result.affected_accounts.iter().any(|acc| matches!(
-            acc.account_type,
+            acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::StandardBIP44
         )),
         "Coinbase should have affected the BIP44 account"
@@ -2409,7 +2406,7 @@ fn test_coinbase_transaction_routing_to_bip44_change_address() {
     // Should have affected the BIP44 account
     assert!(
         result.affected_accounts.iter().any(|acc| matches!(
-            acc.account_type,
+            acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::StandardBIP44
         )),
         "Coinbase to change address should have affected the BIP44 account"
@@ -2498,7 +2495,7 @@ fn test_coinbase_transaction_routing_to_bip32_address() {
     // Should have affected the BIP32 account
     assert!(
         result.affected_accounts.iter().any(|acc| matches!(
-            acc.account_type,
+            acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::StandardBIP32
         )),
         "Coinbase should have affected the BIP32 account"
@@ -2632,7 +2629,7 @@ fn test_coinbase_transaction_routing_multiple_outputs() {
             .affected_accounts
             .iter()
             .filter(|acc| matches!(
-                acc.account_type,
+                acc.account_type_match.to_account_type_to_check(),
                 crate::transaction_checking::transaction_router::AccountTypeToCheck::StandardBIP44
             ))
             .count(),
@@ -2642,7 +2639,7 @@ fn test_coinbase_transaction_routing_multiple_outputs() {
 
     assert!(
         result.affected_accounts.iter().any(|acc| matches!(
-            acc.account_type,
+            acc.account_type_match.to_account_type_to_check(),
             crate::transaction_checking::transaction_router::AccountTypeToCheck::StandardBIP32
         )),
         "Coinbase should have affected the BIP32 account"

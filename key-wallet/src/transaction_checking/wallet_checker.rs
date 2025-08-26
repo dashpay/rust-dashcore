@@ -73,44 +73,45 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 if let Some(collection) = self.accounts.get_mut(&network) {
                     for account_match in &result.affected_accounts {
                         // Find and update the specific account
-                        let account = match &account_match.account_type {
-                            super::transaction_router::AccountTypeToCheck::StandardBIP44 => {
-                                account_match.account_index
-                                    .and_then(|idx| collection.standard_bip44_accounts.get_mut(&idx))
-                            }
-                            super::transaction_router::AccountTypeToCheck::StandardBIP32 => {
-                                account_match.account_index
-                                    .and_then(|idx| collection.standard_bip32_accounts.get_mut(&idx))
-                            }
-                            super::transaction_router::AccountTypeToCheck::CoinJoin => {
-                                account_match.account_index
-                                    .and_then(|idx| collection.coinjoin_accounts.get_mut(&idx))
-                            }
-                            super::transaction_router::AccountTypeToCheck::IdentityRegistration => {
-                                collection.identity_registration.as_mut()
-                            }
-                            super::transaction_router::AccountTypeToCheck::IdentityTopUp => {
-                                account_match.account_index
-                                    .and_then(|idx| collection.identity_topup.get_mut(&idx))
-                            }
-                            super::transaction_router::AccountTypeToCheck::IdentityTopUpNotBound => {
-                                collection.identity_topup_not_bound.as_mut()
-                            }
-                            super::transaction_router::AccountTypeToCheck::IdentityInvitation => {
-                                collection.identity_invitation.as_mut()
-                            }
-                            super::transaction_router::AccountTypeToCheck::ProviderVotingKeys => {
-                                collection.provider_voting_keys.as_mut()
-                            }
-                            super::transaction_router::AccountTypeToCheck::ProviderOwnerKeys => {
-                                collection.provider_owner_keys.as_mut()
-                            }
-                            super::transaction_router::AccountTypeToCheck::ProviderOperatorKeys => {
-                                collection.provider_operator_keys.as_mut()
-                            }
-                            super::transaction_router::AccountTypeToCheck::ProviderPlatformKeys => {
-                                collection.provider_platform_keys.as_mut()
-                            }
+                        use super::account_checker::AccountTypeMatch;
+                        let account = match &account_match.account_type_match {
+                            AccountTypeMatch::StandardBIP44 {
+                                account_index,
+                                ..
+                            } => collection.standard_bip44_accounts.get_mut(account_index),
+                            AccountTypeMatch::StandardBIP32 {
+                                account_index,
+                                ..
+                            } => collection.standard_bip32_accounts.get_mut(account_index),
+                            AccountTypeMatch::CoinJoin {
+                                account_index,
+                                ..
+                            } => collection.coinjoin_accounts.get_mut(account_index),
+                            AccountTypeMatch::IdentityRegistration {
+                                ..
+                            } => collection.identity_registration.as_mut(),
+                            AccountTypeMatch::IdentityTopUp {
+                                account_index,
+                                ..
+                            } => collection.identity_topup.get_mut(account_index),
+                            AccountTypeMatch::IdentityTopUpNotBound {
+                                ..
+                            } => collection.identity_topup_not_bound.as_mut(),
+                            AccountTypeMatch::IdentityInvitation {
+                                ..
+                            } => collection.identity_invitation.as_mut(),
+                            AccountTypeMatch::ProviderVotingKeys {
+                                ..
+                            } => collection.provider_voting_keys.as_mut(),
+                            AccountTypeMatch::ProviderOwnerKeys {
+                                ..
+                            } => collection.provider_owner_keys.as_mut(),
+                            AccountTypeMatch::ProviderOperatorKeys {
+                                ..
+                            } => collection.provider_operator_keys.as_mut(),
+                            AccountTypeMatch::ProviderPlatformKeys {
+                                ..
+                            } => collection.provider_platform_keys.as_mut(),
                         };
 
                         if let Some(account) = account {
@@ -187,8 +188,47 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             account.transactions.insert(tx.txid(), tx_record);
 
                             // Mark involved addresses as used
-                            for address_info in &account_match.involved_addresses {
+                            for address_info in
+                                account_match.account_type_match.all_involved_addresses()
+                            {
                                 account.mark_address_used(&address_info.address);
+                            }
+
+                            // Generate new addresses up to the gap limit if wallet is provided
+                            if let Some(wallet) = update_state_with_wallet_if_found {
+                                // Get the account's xpub from the wallet for address generation
+                                let account_type_to_check =
+                                    account_match.account_type_match.to_account_type_to_check();
+                                let xpub_opt = wallet.extended_public_key_for_account_type(
+                                    &account_type_to_check,
+                                    account_match.account_type_match.account_index(),
+                                    network,
+                                );
+
+                                // Maintain gap limit for the address pools
+                                if let Some(xpub) = xpub_opt {
+                                    let key_source =
+                                        crate::managed_account::address_pool::KeySource::Public(
+                                            xpub,
+                                        );
+
+                                    // For standard accounts, maintain gap limit on both pools
+                                    if let crate::managed_account::managed_account_type::ManagedAccountType::Standard {
+                                        external_addresses,
+                                        internal_addresses,
+                                        ..
+                                    } = &mut account.account_type {
+                                        // Maintain gap limit for external addresses
+                                        let _ = external_addresses.maintain_gap_limit(&key_source);
+                                        // Maintain gap limit for internal addresses  
+                                        let _ = internal_addresses.maintain_gap_limit(&key_source);
+                                    } else {
+                                        // For other account types, get the single address pool
+                                        for pool in account.account_type.address_pools_mut() {
+                                            let _ = pool.maintain_gap_limit(&key_source);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

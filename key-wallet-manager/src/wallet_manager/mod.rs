@@ -14,7 +14,7 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::Txid;
 use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
 use key_wallet::WalletBalance;
-use key_wallet::{Account, AccountType, Address, Mnemonic, Network, Wallet, WalletConfig};
+use key_wallet::{Account, AccountType, Address, Mnemonic, Network, Wallet};
 use std::collections::BTreeSet;
 
 use key_wallet::transaction_checking::TransactionContext;

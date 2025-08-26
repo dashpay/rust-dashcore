@@ -10,7 +10,7 @@ use std::ptr;
 use std::slice;
 
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
-use key_wallet::{Mnemonic, Network, Seed, Wallet, WalletConfig};
+use key_wallet::{Mnemonic, Network, Seed, Wallet};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFINetwork, FFIWallet, FFIWalletAccountCreationOptions};
