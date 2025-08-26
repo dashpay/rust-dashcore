@@ -931,8 +931,6 @@ mod tests {
         // Test bincode serialization
         #[cfg(feature = "bincode")]
         {
-            use bincode::{Decode, Encode};
-
             // Test private key
             let encoded =
                 bincode::encode_to_vec(&master_priv, bincode::config::standard()).unwrap();

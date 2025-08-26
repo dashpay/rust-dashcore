@@ -17,7 +17,7 @@ impl Wallet {
     /// ```no_run
     /// use key_wallet::wallet::Wallet;
     ///
-    ///     /// /// let wallet = Wallet::new_random(    /// ///
+    /// let wallet = Wallet::new_random(
     ///     key_wallet::Network::Testnet,
     ///     key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
     /// ).unwrap();
