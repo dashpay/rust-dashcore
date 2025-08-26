@@ -213,19 +213,16 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
 
     /// Calculate the filter header height considering checkpoint sync.
     ///
-    /// This helper method encapsulates the logic for determining the current filter header height,
-    /// taking into account whether we're syncing from a checkpoint or from genesis.
-    async fn calculate_filter_header_height(&self, state: &ChainState) -> u32 {
-        // Unified formula for both checkpoint and genesis sync:
-        // For genesis sync: sync_base_height = 0, so height = 0 + storage_count
-        // For checkpoint sync: height = checkpoint_height + storage_count
+    /// This helper method encapsulates the logic for determining the current filter header height.
+    /// Note: get_filter_tip_height() now returns absolute blockchain height directly.
+    async fn calculate_filter_header_height(&self, _state: &ChainState) -> u32 {
         let storage = self.storage.lock().await;
-        if let Ok(Some(storage_height)) = storage.get_filter_tip_height().await {
-            // The blockchain height is sync_base_height + storage_height
-            state.sync_base_height + storage_height
+        if let Ok(Some(filter_tip)) = storage.get_filter_tip_height().await {
+            // The storage now returns absolute blockchain height directly
+            filter_tip
         } else {
             // No filter headers in storage yet
-            state.sync_base_height
+            0
         }
     }
 }

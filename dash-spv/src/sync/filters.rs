@@ -112,11 +112,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         cf_headers: &CFHeaders,
         storage: &S,
     ) -> SyncResult<(u32, u32, u32)> {
-        let header_tip_height = storage
+        let storage_tip_height = storage
             .get_tip_height()
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to get header tip height: {}", e)))?
             .unwrap_or(0);
+
+        // Convert storage height to blockchain height
+        let header_tip_height = self.storage_to_blockchain_height(storage_tip_height);
 
         let stop_height = self
             .find_height_for_block_hash(&cf_headers.stop_hash, storage, 0, header_tip_height)
@@ -172,6 +175,24 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Set the base height for sync (typically from checkpoint)
     pub fn set_sync_base_height(&mut self, height: u32) {
         self.sync_base_height = height;
+    }
+
+    /// Convert blockchain height to storage height for checkpoint-based sync
+    fn blockchain_to_storage_height(&self, blockchain_height: u32) -> u32 {
+        if self.sync_base_height > 0 {
+            blockchain_height.saturating_sub(self.sync_base_height)
+        } else {
+            blockchain_height
+        }
+    }
+
+    /// Convert storage height to blockchain height for checkpoint-based sync
+    fn storage_to_blockchain_height(&self, storage_height: u32) -> u32 {
+        if self.sync_base_height > 0 {
+            self.sync_base_height + storage_height
+        } else {
+            storage_height
+        }
     }
 
     /// Enable flow control for filter downloads.
@@ -300,11 +321,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
                     let stop_hash = if next_batch_end_height < header_tip_height {
                         // Try to get the header at the calculated height
-                        match storage.get_header(next_batch_end_height).await {
+                        // Convert blockchain height to storage height
+                        let storage_height = self.blockchain_to_storage_height(next_batch_end_height);
+                        match storage.get_header(storage_height).await {
                             Ok(Some(header)) => header.block_hash(),
                             Ok(None) => {
-                                tracing::warn!("Header not found at calculated height {}, scanning backwards to find actual available height", 
-                                              next_batch_end_height);
+                                tracing::warn!("Header not found at storage height {} (blockchain height {}), scanning backwards to find actual available height",
+                                              storage_height, next_batch_end_height);
 
                                 // Scan backwards to find the highest available header
                                 let mut scan_height = next_batch_end_height.saturating_sub(1);
@@ -312,18 +335,20 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                 let mut found_header_info = None;
 
                                 while scan_height >= min_height && found_header_info.is_none() {
-                                    match storage.get_header(scan_height).await {
+                                    let scan_storage_height = self.blockchain_to_storage_height(scan_height);
+                                    match storage.get_header(scan_storage_height).await {
                                         Ok(Some(header)) => {
-                                            tracing::info!("Found available header at height {} (originally tried {})", 
-                                                          scan_height, next_batch_end_height);
+                                            tracing::info!("Found available header at blockchain height {} / storage height {} (originally tried {})",
+                                                          scan_height, scan_storage_height, next_batch_end_height);
                                             found_header_info =
                                                 Some((header.block_hash(), scan_height));
                                             break;
                                         }
                                         Ok(None) => {
                                             tracing::debug!(
-                                                "Header not found at height {}, trying {}",
+                                                "Header not found at blockchain height {} / storage height {}, trying {}",
                                                 scan_height,
+                                                scan_storage_height,
                                                 scan_height.saturating_sub(1)
                                             );
                                             if scan_height == 0 {
@@ -379,16 +404,19 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     } else {
                         // Special handling for chain tip: if we can't find the exact tip header,
                         // try the previous header as we might be at the actual chain tip
-                        match storage.get_header(header_tip_height).await {
+                        let tip_storage_height = self.blockchain_to_storage_height(header_tip_height);
+                        match storage.get_header(tip_storage_height).await {
                             Ok(Some(header)) => header.block_hash(),
                             Ok(None) if header_tip_height > 0 => {
                                 tracing::debug!(
-                                    "Tip header not found at height {}, trying previous header",
+                                    "Tip header not found at storage height {} (blockchain height {}), trying previous header",
+                                    tip_storage_height,
                                     header_tip_height
                                 );
                                 // Try previous header when at chain tip
+                                let prev_storage_height = self.blockchain_to_storage_height(header_tip_height - 1);
                                 storage
-                                    .get_header(header_tip_height - 1)
+                                    .get_header(prev_storage_height)
                                     .await
                                     .map_err(|e| {
                                         SyncError::Storage(format!(
@@ -457,22 +485,28 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             tracing::warn!("📊 No filter header sync progress for {}+ seconds, re-sending filter header request", SYNC_TIMEOUT_SECONDS);
 
             // Get header tip height for recovery
-            let header_tip_height = storage
+            let storage_tip_height = storage
                 .get_tip_height()
                 .await
                 .map_err(|e| SyncError::Storage(format!("Failed to get header tip height: {}", e)))?
                 .unwrap_or(0);
+
+            // Convert storage height to blockchain height
+            let header_tip_height = self.storage_to_blockchain_height(storage_tip_height);
 
             // Re-calculate current batch parameters for recovery
             let recovery_batch_end_height =
                 (self.current_sync_height + FILTER_BATCH_SIZE - 1).min(header_tip_height);
             let recovery_batch_stop_hash = if recovery_batch_end_height < header_tip_height {
                 // Try to get the header at the calculated height with backward scanning
-                match storage.get_header(recovery_batch_end_height).await {
+                // Convert blockchain height to storage height
+                let storage_height = self.blockchain_to_storage_height(recovery_batch_end_height);
+                match storage.get_header(storage_height).await {
                     Ok(Some(header)) => header.block_hash(),
                     Ok(None) => {
                         tracing::warn!(
-                            "Recovery header not found at calculated height {}, scanning backwards",
+                            "Recovery header not found at storage height {} (blockchain height {}), scanning backwards",
+                            storage_height,
                             recovery_batch_end_height
                         );
 
@@ -482,10 +516,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
                         let mut found_recovery_info = None;
                         while scan_height >= min_height && found_recovery_info.is_none() {
-                            if let Ok(Some(header)) = storage.get_header(scan_height).await {
+                            let scan_storage_height = self.blockchain_to_storage_height(scan_height);
+                            if let Ok(Some(header)) = storage.get_header(scan_storage_height).await {
                                 tracing::info!(
-                                    "Found recovery header at height {} (originally tried {})",
+                                    "Found recovery header at blockchain height {} / storage height {} (originally tried {})",
                                     scan_height,
+                                    scan_storage_height,
                                     recovery_batch_end_height
                                 );
                                 found_recovery_info = Some((header.block_hash(), scan_height));
@@ -533,16 +569,18 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             } else {
                 // Special handling for chain tip: if we can't find the exact tip header,
                 // try the previous header as we might be at the actual chain tip
-                match storage.get_header(header_tip_height).await {
+                // Use storage_tip_height directly since get_header expects storage height
+                match storage.get_header(storage_tip_height).await {
                     Ok(Some(header)) => header.block_hash(),
-                    Ok(None) if header_tip_height > 0 => {
+                    Ok(None) if storage_tip_height > 0 => {
                         tracing::debug!(
-                            "Tip header not found at height {} during recovery, trying previous header",
+                            "Tip header not found at storage height {} (blockchain height {}) during recovery, trying previous header",
+                            storage_tip_height,
                             header_tip_height
                         );
                         // Try previous header when at chain tip
                         storage
-                            .get_header(header_tip_height - 1)
+                            .get_header(storage_tip_height - 1)
                             .await
                             .map_err(|e| {
                                 SyncError::Storage(format!(
@@ -618,11 +656,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             .unwrap_or(0);
 
         // Get header tip
-        let header_tip_height = storage
+        let storage_tip_height = storage
             .get_tip_height()
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to get header tip height: {}", e)))?
             .unwrap_or(0);
+
+        // Convert storage height to blockchain height for comparisons
+        let header_tip_height = self.storage_to_blockchain_height(storage_tip_height);
 
         if current_filter_height >= header_tip_height {
             tracing::info!("Filter headers already synced to header tip");
@@ -630,7 +671,16 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
 
         // Double-check that we actually have headers to sync
-        let next_height = current_filter_height + 1;
+        // When using checkpoint sync, start from at least sync_base_height + 1
+        let next_height = if self.sync_base_height > 0 && current_filter_height < self.sync_base_height {
+            // Start from checkpoint base + 1, not from 1
+            tracing::info!("Starting filter sync from checkpoint base {} (current filter height: {})",
+                         self.sync_base_height + 1, current_filter_height);
+            self.sync_base_height + 1
+        } else {
+            current_filter_height + 1
+        };
+
         if next_height > header_tip_height {
             tracing::warn!(
                 "Filter sync requested but next height {} > header tip {}, nothing to sync",
@@ -646,12 +696,15 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         self.last_sync_progress = std::time::Instant::now();
 
         // Get the stop hash (tip of headers)
-        let stop_hash = if header_tip_height > 0 {
+        let stop_hash = if storage_tip_height > 0 {
+            // Use storage_tip_height directly since get_header expects storage height
             storage
-                .get_header(header_tip_height)
+                .get_header(storage_tip_height)
                 .await
-                .map_err(|e| SyncError::Storage(format!("Failed to get stop header: {}", e)))?
-                .ok_or_else(|| SyncError::Storage("Stop header not found".to_string()))?
+                .map_err(|e| SyncError::Storage(format!("Failed to get stop header at storage height {} (blockchain height {}): {}",
+                                                        storage_tip_height, header_tip_height, e)))?
+                .ok_or_else(|| SyncError::Storage(format!("Stop header not found at storage height {} (blockchain height {})",
+                                                          storage_tip_height, header_tip_height)))?
                 .block_hash()
         } else {
             return Err(SyncError::Storage("No headers available for filter sync".to_string()));
@@ -671,47 +724,59 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Get the hash at batch_end_height for the stop_hash
         let batch_stop_hash = if batch_end_height < header_tip_height {
             // Try to get the header at the calculated height with fallback
-            match storage.get_header(batch_end_height).await {
-                Ok(Some(header)) => header.block_hash(),
+            // Convert blockchain height to storage height
+            let storage_height = self.blockchain_to_storage_height(batch_end_height);
+            tracing::debug!("Trying to get header at blockchain height {} -> storage height {}",
+                          batch_end_height, storage_height);
+            match storage.get_header(storage_height).await {
+                Ok(Some(header)) => {
+                    tracing::debug!("Found header at storage height {}", storage_height);
+                    header.block_hash()
+                },
                 Ok(None) => {
-                    tracing::warn!("Initial batch header not found at calculated height {}, falling back to tip {}", 
-                                  batch_end_height, header_tip_height);
-                    // Fallback to tip header if calculated height not found
-                    match storage.get_header(header_tip_height).await {
-                        Ok(Some(header)) => header.block_hash(),
-                        Ok(None) if header_tip_height > 0 => {
-                            tracing::debug!(
-                                "Tip header not found at height {} in initial batch, trying previous header",
-                                header_tip_height
-                            );
-                            // Try previous header when at chain tip
-                            storage
-                                .get_header(header_tip_height - 1)
-                                .await
-                                .map_err(|e| {
-                                    SyncError::Storage(format!(
-                                        "Failed to get previous header in initial batch: {}",
-                                        e
-                                    ))
-                                })?
-                                .ok_or_else(|| {
-                                    SyncError::Storage(format!(
-                                        "Neither tip ({}) nor previous header found in initial batch",
-                                        header_tip_height
-                                    ))
-                                })?
-                                .block_hash()
+                    tracing::warn!("Initial batch header not found at storage height {} (blockchain height {}), scanning for available header",
+                                  storage_height, batch_end_height);
+
+                    // Scan backwards to find the highest available header within the batch
+                    let mut scan_height = batch_end_height;
+                    let min_height = self.current_sync_height;
+                    let mut found_header = None;
+
+                    while scan_height >= min_height && found_header.is_none() {
+                        let scan_storage_height = self.blockchain_to_storage_height(scan_height);
+                        match storage.get_header(scan_storage_height).await {
+                            Ok(Some(header)) => {
+                                tracing::info!("Found available header at blockchain height {} / storage height {} (originally tried {})",
+                                              scan_height, scan_storage_height, batch_end_height);
+                                found_header = Some(header.block_hash());
+                                break;
+                            }
+                            Ok(None) => {
+                                if scan_height == min_height {
+                                    break;
+                                }
+                                scan_height = scan_height.saturating_sub(1);
+                            }
+                            Err(e) => {
+                                tracing::warn!("Error getting header at height {}: {}", scan_height, e);
+                                if scan_height == min_height {
+                                    break;
+                                }
+                                scan_height = scan_height.saturating_sub(1);
+                            }
                         }
-                        Ok(None) => {
-                            return Err(SyncError::Validation(format!(
-                                "Tip header not found at height {} (genesis) in initial batch",
-                                header_tip_height
-                            )));
-                        }
-                        Err(e) => {
-                            return Err(SyncError::Validation(format!(
-                                "Failed to get tip header in initial batch: {}",
-                                e
+                    }
+
+                    match found_header {
+                        Some(hash) => hash,
+                        None => {
+                            // If we can't find any headers in the batch range, something is wrong
+                            // Don't fall back to tip as that would create an oversized request
+                            return Err(SyncError::Storage(format!(
+                                "No headers found in batch range {} to {} (storage range {} to {})",
+                                self.current_sync_height, batch_end_height,
+                                self.blockchain_to_storage_height(self.current_sync_height),
+                                self.blockchain_to_storage_height(batch_end_height)
                             )));
                         }
                     }
@@ -930,11 +995,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             return Ok(true);
         }
 
-        // Skip verification for the first batch starting from height 1, since we don't know the genesis filter header
-        if start_height <= 1 {
+        // Skip verification for the first batch when starting from genesis or checkpoint
+        // For genesis sync: start_height == 1 (we don't have genesis filter header)
+        // For checkpoint sync: start_height == sync_base_height + 1 (we don't have checkpoint filter header)
+        if start_height <= 1 || (self.sync_base_height > 0 && start_height == self.sync_base_height + 1) {
             tracing::debug!(
-                "Skipping filter header chain verification for first batch (start_height={})",
-                start_height
+                "Skipping filter header chain verification for first batch (start_height={}, sync_base_height={})",
+                start_height, self.sync_base_height
             );
             return Ok(true);
         }
@@ -1167,12 +1234,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         while current_height <= end {
             let batch_end = (current_height + batch_size - 1).min(end);
 
-            // Get stop hash for this batch
+            // Get stop hash for this batch - convert blockchain height to storage index
+            let storage_height = self.blockchain_to_storage_height(batch_end);
             let stop_hash = storage
-                .get_header(batch_end)
+                .get_header(storage_height)
                 .await
-                .map_err(|e| SyncError::Storage(format!("Failed to get stop header: {}", e)))?
-                .ok_or_else(|| SyncError::Storage("Stop header not found".to_string()))?
+                .map_err(|e| SyncError::Storage(format!("Failed to get stop header at height {} (storage index {}): {}", batch_end, storage_height, e)))?
+                .ok_or_else(|| SyncError::Storage(format!("Stop header not found at height {} (storage index {})", batch_end, storage_height)))?
                 .block_hash();
 
             // Create filter request and add to queue
@@ -1468,8 +1536,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             return Ok(());
         }
 
-        // Calculate stop hash for retry
-        match storage.get_header(end).await {
+        // Calculate stop hash for retry - convert blockchain height to storage index
+        let storage_height = self.blockchain_to_storage_height(end);
+        match storage.get_header(storage_height).await {
             Ok(Some(header)) => {
                 let stop_hash = header.block_hash();
 
@@ -1969,6 +2038,23 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             })?;
                             tracing::debug!(
                                 "Stored genesis filter header at height 0: {:?}",
+                                cfheaders.previous_filter_header
+                            );
+                        }
+
+                        // If this is the first batch after a checkpoint, store the checkpoint filter header
+                        if self.sync_base_height > 0 && start_height == self.sync_base_height + 1 && current_filter_tip < self.sync_base_height {
+                            // Store the previous_filter_header as the filter header for the checkpoint block
+                            let checkpoint_header = vec![cfheaders.previous_filter_header];
+                            storage.store_filter_headers(&checkpoint_header).await.map_err(|e| {
+                                SyncError::Storage(format!(
+                                    "Failed to store checkpoint filter header: {}",
+                                    e
+                                ))
+                            })?;
+                            tracing::info!(
+                                "Stored checkpoint filter header at height {}: {:?}",
+                                self.sync_base_height,
                                 cfheaders.previous_filter_header
                             );
                         }
@@ -2959,8 +3045,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 continue;
             }
 
-            // Calculate stop hash for this range
-            match storage.get_header(end).await {
+            // Calculate stop hash for this range - convert blockchain height to storage index
+            let storage_height = self.blockchain_to_storage_height(end);
+            match storage.get_header(storage_height).await {
                 Ok(Some(header)) => {
                     let stop_hash = header.block_hash();
 
@@ -2990,8 +3077,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         while current_start <= end {
                             let batch_end = (current_start + max_batch_size - 1).min(end);
 
-                            // Get stop hash for this batch
-                            if let Ok(Some(batch_header)) = storage.get_header(batch_end).await {
+                            // Get stop hash for this batch - convert blockchain height to storage index
+                            let batch_storage_height = self.blockchain_to_storage_height(batch_end);
+                            if let Ok(Some(batch_header)) = storage.get_header(batch_storage_height).await {
                                 let batch_stop_hash = batch_header.block_hash();
 
                                 tracing::info!("🔄 Retrying filter batch {}-{} (part of range {}-{}, attempt {}/{})", 
