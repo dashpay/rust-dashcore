@@ -77,6 +77,7 @@ impl TransactionRouter {
                 AccountTypeToCheck::ProviderOwnerKeys,
                 AccountTypeToCheck::ProviderOperatorKeys,
                 AccountTypeToCheck::ProviderVotingKeys,
+                AccountTypeToCheck::ProviderPlatformKeys,
                 AccountTypeToCheck::StandardBIP44,
                 AccountTypeToCheck::StandardBIP32,
                 AccountTypeToCheck::CoinJoin,
@@ -90,6 +91,7 @@ impl TransactionRouter {
             ],
             TransactionType::ProviderUpdateService => vec![
                 AccountTypeToCheck::ProviderOperatorKeys,
+                AccountTypeToCheck::ProviderPlatformKeys,
                 AccountTypeToCheck::StandardBIP44,
                 AccountTypeToCheck::StandardBIP32,
                 AccountTypeToCheck::CoinJoin,

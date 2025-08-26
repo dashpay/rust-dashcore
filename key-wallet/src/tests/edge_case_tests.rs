@@ -172,7 +172,6 @@ fn test_extreme_gap_limit() {
 
     // Test with extremely large gap limit
     let base_path = DerivationPath::from(vec![ChildNumber::from(0)]);
-    let key_source = KeySource::NoKeySource;
     let pool = AddressPool::new_without_generation(
         base_path.clone(),
         AddressPoolType::External,

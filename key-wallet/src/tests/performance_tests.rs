@@ -194,7 +194,7 @@ fn test_address_generation_batch_performance() {
 
     for batch_size in batch_sizes {
         let start = Instant::now();
-        let _addresses = pool.generate_addresses(batch_size, &key_source).unwrap();
+        let _addresses = pool.generate_addresses(batch_size, &key_source, true).unwrap();
         let elapsed = start.elapsed();
 
         let ops_per_second = batch_size as f64 / elapsed.as_secs_f64();
@@ -406,7 +406,7 @@ fn test_gap_limit_scan_performance() {
             .unwrap();
 
     // Generate addresses with gaps
-    pool.generate_addresses(100, &key_source).unwrap();
+    pool.generate_addresses(100, &key_source, true).unwrap();
 
     // Mark some as used (with gaps)
     let used_indices = vec![0, 1, 5, 10, 25, 50, 75];

@@ -6,6 +6,7 @@
 use crate::account::AccountMetadata;
 use crate::account::TransactionRecord;
 use crate::account::{BLSAccount, EdDSAAccount, ManagedAccountTrait};
+#[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
 use crate::gap_limit::GapLimitManager;
 use crate::managed_account::address_pool::PublicKeyType;
@@ -322,6 +323,7 @@ impl ManagedAccount {
     pub fn next_receive_address(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
+        add_to_state: bool,
     ) -> Result<Address, &'static str> {
         // For standard accounts, use the address pool to get the next unused address
         if let ManagedAccountType::Standard {
@@ -335,7 +337,7 @@ impl ManagedAccount {
                 None => address_pool::KeySource::NoKeySource,
             };
 
-            external_addresses.next_unused(&key_source).map_err(|e| match e {
+            external_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
                 crate::error::Error::NoKeySource => {
                     "No unused addresses available and no key source provided"
                 }
@@ -352,6 +354,7 @@ impl ManagedAccount {
     pub fn next_change_address(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
+        add_to_state: bool,
     ) -> Result<Address, &'static str> {
         // For standard accounts, use the address pool to get the next unused address
         if let ManagedAccountType::Standard {
@@ -365,7 +368,7 @@ impl ManagedAccount {
                 None => address_pool::KeySource::NoKeySource,
             };
 
-            internal_addresses.next_unused(&key_source).map_err(|e| match e {
+            internal_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
                 crate::error::Error::NoKeySource => {
                     "No unused addresses available and no key source provided"
                 }
@@ -376,12 +379,99 @@ impl ManagedAccount {
         }
     }
 
+    /// Generate multiple receive addresses at once using the optionally provided extended public key
+    ///
+    /// Returns the requested number of unused receive addresses, generating new ones if needed.
+    /// This is more efficient than calling `next_receive_address` multiple times.
+    /// If no key is provided, can only return pre-generated unused addresses.
+    pub fn next_receive_addresses(
+        &mut self,
+        account_xpub: Option<&ExtendedPubKey>,
+        count: usize,
+        add_to_state: bool,
+    ) -> Result<Vec<Address>, String> {
+        // For standard accounts, use the address pool to get multiple unused addresses
+        if let ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } = &mut self.account_type
+        {
+            // Create appropriate key source based on whether xpub is provided
+            let key_source = match account_xpub {
+                Some(xpub) => address_pool::KeySource::Public(*xpub),
+                None => address_pool::KeySource::NoKeySource,
+            };
+
+            let addresses =
+                external_addresses.next_unused_multiple(count, &key_source, add_to_state);
+            if addresses.is_empty() && count > 0 {
+                Err("Failed to generate any receive addresses".to_string())
+            } else if addresses.len() < count
+                && matches!(key_source, address_pool::KeySource::NoKeySource)
+            {
+                Err(format!(
+                    "Could only generate {} out of {} requested addresses (no key source)",
+                    addresses.len(),
+                    count
+                ))
+            } else {
+                Ok(addresses)
+            }
+        } else {
+            Err("Cannot generate receive addresses for non-standard account type".to_string())
+        }
+    }
+
+    /// Generate multiple change addresses at once using the optionally provided extended public key
+    ///
+    /// Returns the requested number of unused change addresses, generating new ones if needed.
+    /// This is more efficient than calling `next_change_address` multiple times.
+    /// If no key is provided, can only return pre-generated unused addresses.
+    pub fn next_change_addresses(
+        &mut self,
+        account_xpub: Option<&ExtendedPubKey>,
+        count: usize,
+        add_to_state: bool,
+    ) -> Result<Vec<Address>, String> {
+        // For standard accounts, use the address pool to get multiple unused addresses
+        if let ManagedAccountType::Standard {
+            internal_addresses,
+            ..
+        } = &mut self.account_type
+        {
+            // Create appropriate key source based on whether xpub is provided
+            let key_source = match account_xpub {
+                Some(xpub) => address_pool::KeySource::Public(*xpub),
+                None => address_pool::KeySource::NoKeySource,
+            };
+
+            let addresses =
+                internal_addresses.next_unused_multiple(count, &key_source, add_to_state);
+            if addresses.is_empty() && count > 0 {
+                Err("Failed to generate any change addresses".to_string())
+            } else if addresses.len() < count
+                && matches!(key_source, address_pool::KeySource::NoKeySource)
+            {
+                Err(format!(
+                    "Could only generate {} out of {} requested addresses (no key source)",
+                    addresses.len(),
+                    count
+                ))
+            } else {
+                Ok(addresses)
+            }
+        } else {
+            Err("Cannot generate change addresses for non-standard account type".to_string())
+        }
+    }
+
     /// Generate the next address for non-standard accounts
     /// This method is for special accounts like Identity, Provider accounts, etc.
     /// Standard accounts (BIP44/BIP32) should use next_receive_address or next_change_address
     pub fn next_address(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
+        add_to_state: bool,
     ) -> Result<Address, &'static str> {
         match &mut self.account_type {
             ManagedAccountType::Standard {
@@ -425,7 +515,7 @@ impl ManagedAccount {
                     None => address_pool::KeySource::NoKeySource,
                 };
 
-                addresses.next_unused(&key_source).map_err(|e| match e {
+                addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
                     crate::error::Error::NoKeySource => {
                         "No unused addresses available and no key source provided"
                     }
@@ -442,7 +532,7 @@ impl ManagedAccount {
                     None => address_pool::KeySource::NoKeySource,
                 };
 
-                addresses.next_unused(&key_source).map_err(|e| match e {
+                addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
                     crate::error::Error::NoKeySource => {
                         "No unused addresses available and no key source provided"
                     }
@@ -458,6 +548,7 @@ impl ManagedAccount {
     pub fn next_address_with_info(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
+        add_to_state: bool,
     ) -> Result<address_pool::AddressInfo, &'static str> {
         match &mut self.account_type {
             ManagedAccountType::Standard {
@@ -501,7 +592,7 @@ impl ManagedAccount {
                     None => address_pool::KeySource::NoKeySource,
                 };
 
-                addresses.next_unused_with_info(&key_source).map_err(|e| match e {
+                addresses.next_unused_with_info(&key_source, add_to_state).map_err(|e| match e {
                     crate::error::Error::NoKeySource => {
                         "No unused addresses available and no key source provided"
                     }
@@ -518,7 +609,7 @@ impl ManagedAccount {
                     None => address_pool::KeySource::NoKeySource,
                 };
 
-                addresses.next_unused_with_info(&key_source).map_err(|e| match e {
+                addresses.next_unused_with_info(&key_source, add_to_state).map_err(|e| match e {
                     crate::error::Error::NoKeySource => {
                         "No unused addresses available and no key source provided"
                     }
@@ -534,6 +625,7 @@ impl ManagedAccount {
     pub fn next_bls_operator_key(
         &mut self,
         account_xpub: Option<ExtendedBLSPubKey>,
+        add_to_state: bool,
     ) -> Result<dashcore::blsful::PublicKey<dashcore::blsful::Bls12381G2Impl>, &'static str> {
         match &mut self.account_type {
             ManagedAccountType::ProviderOperatorKeys {
@@ -548,7 +640,7 @@ impl ManagedAccount {
 
                 // Use next_unused_with_info to get the next address (handles caching and derivation)
                 let info = addresses
-                    .next_unused_with_info(&key_source)
+                    .next_unused_with_info(&key_source, add_to_state)
                     .map_err(|_| "Failed to get next unused address")?;
 
                 // Extract the BLS public key from the address info
@@ -579,6 +671,7 @@ impl ManagedAccount {
     pub fn next_eddsa_platform_key(
         &mut self,
         account_xpriv: crate::derivation_slip10::ExtendedEd25519PrivKey,
+        add_to_state: bool,
     ) -> Result<(crate::derivation_slip10::VerifyingKey, AddressInfo), &'static str> {
         match &mut self.account_type {
             ManagedAccountType::ProviderPlatformKeys {
@@ -590,7 +683,7 @@ impl ManagedAccount {
 
                 // Use next_unused_with_info to get the next address (handles caching and derivation)
                 let info = addresses
-                    .next_unused_with_info(&key_source)
+                    .next_unused_with_info(&key_source, add_to_state)
                     .map_err(|_| "Failed to get next unused address")?;
 
                 // Extract the EdDSA public key from the address info

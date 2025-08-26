@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[allow(clippy::large_enum_variant)]
 pub enum ManagedAccountType {
     /// Standard BIP44 account for regular transactions
     Standard {
