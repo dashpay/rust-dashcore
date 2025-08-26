@@ -8,7 +8,7 @@ use super::transaction_router::TransactionRouter;
 use crate::wallet::immature_transaction::ImmatureTransaction;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
-use crate::Network;
+use crate::{Network, Wallet};
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::BlockHash;
 use dashcore_hashes::Hash;
@@ -36,14 +36,16 @@ pub enum TransactionContext {
 pub trait WalletTransactionChecker {
     /// Check if a transaction belongs to this wallet with optimized routing
     /// Only checks relevant account types based on transaction type
-    /// If update_state_if_found is true, updates account state when transaction is found
+    /// If update_state_if_found is Some, updates account state when transaction is found.
+    /// The wallet is needed to generate more addresses.
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
+    ///
     fn check_transaction(
         &mut self,
         tx: &Transaction,
         network: Network,
         context: TransactionContext,
-        update_state_if_found: bool,
+        update_state_with_wallet_if_found: Option<&Wallet>,
     ) -> TransactionCheckResult;
 }
 
@@ -53,7 +55,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         tx: &Transaction,
         network: Network,
         context: TransactionContext,
-        update_state_if_found: bool,
+        update_state_with_wallet_if_found: Option<&Wallet>,
     ) -> TransactionCheckResult {
         // Get the account collection for this network
         if let Some(collection) = self.accounts.get(&network) {
@@ -67,7 +69,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             let result = collection.check_transaction(tx, &relevant_types);
 
             // Update state if requested and transaction is relevant
-            if update_state_if_found && result.is_relevant {
+            if update_state_with_wallet_if_found.is_some() && result.is_relevant {
                 if let Some(collection) = self.accounts.get_mut(&network) {
                     for account_match in &result.affected_accounts {
                         // Find and update the specific account

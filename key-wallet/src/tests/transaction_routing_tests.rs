@@ -109,7 +109,10 @@ fn test_transaction_routing_to_bip44_account() {
 
     // Check the transaction using the managed wallet info
     let result = managed_wallet_info.check_transaction(
-        &tx, network, context, true, // update state
+        &tx,
+        network,
+        context,
+        Some(&wallet), // update state
     );
 
     // The transaction should be recognized as relevant since it sends to our address
@@ -180,7 +183,10 @@ fn test_transaction_routing_to_bip32_account() {
 
     // Check with update_state = false
     let result = managed_wallet_info.check_transaction(
-        &tx, network, context, false, // don't update state
+        &tx,
+        network,
+        context,
+        Some(&wallet), // don't update state
     );
 
     // The transaction should be recognized as relevant
@@ -200,7 +206,10 @@ fn test_transaction_routing_to_bip32_account() {
 
     // Now check with update_state = true
     let result = managed_wallet_info.check_transaction(
-        &tx, network, context, true, // update state
+        &tx,
+        network,
+        context,
+        Some(&wallet), // update state
     );
 
     assert!(result.is_relevant, "Transaction should still be relevant");
@@ -306,7 +315,7 @@ fn test_transaction_routing_to_coinjoin_account() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, false);
+    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
 
     // This test may fail if CoinJoin detection is not properly implemented
     println!(
@@ -415,7 +424,10 @@ fn test_transaction_affects_multiple_accounts() {
 
     // Check the transaction
     let result = managed_wallet_info.check_transaction(
-        &tx, network, context, true, // update state
+        &tx,
+        network,
+        context,
+        Some(&wallet), // update state
     );
 
     // // Debug output to understand what's happening
@@ -439,7 +451,10 @@ fn test_transaction_affects_multiple_accounts() {
 
     // Test with update_state = false to ensure state isn't modified
     let result2 = managed_wallet_info.check_transaction(
-        &tx, network, context, false, // don't update state
+        &tx,
+        network,
+        context,
+        Some(&wallet), // don't update state
     );
 
     assert_eq!(
@@ -547,7 +562,7 @@ fn test_identity_registration_account_routing() {
     };
 
     // First check without updating state
-    let result = managed_wallet_info.check_transaction(&tx, network, context, false);
+    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
 
     println!("Identity registration transaction result: is_relevant={}, received={}, credit_conversion={}", 
              result.is_relevant, result.total_received, result.total_received_for_credit_conversion);
@@ -621,7 +636,10 @@ fn test_normal_payment_to_identity_address_not_detected() {
     };
 
     let result = managed_wallet_info.check_transaction(
-        &normal_tx, network, context, true, // update state
+        &normal_tx,
+        network,
+        context,
+        Some(&wallet), // update state
     );
 
     // A normal transaction to an identity registration address should NOT be detected
@@ -766,7 +784,7 @@ fn test_provider_registration_transaction_routing_check_owner_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, true);
+    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
 
     println!(
         "Provider registration transaction result: is_relevant={}, received={}",
@@ -912,7 +930,7 @@ fn test_provider_registration_transaction_routing_check_voting_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, true);
+    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
 
     println!(
         "Provider registration transaction result (voting): is_relevant={}, received={}",
@@ -1059,7 +1077,7 @@ fn test_provider_registration_transaction_routing_check_operator_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, true);
+    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
 
     println!(
         "Provider registration transaction result (operator): is_relevant={}, received={}",
@@ -1228,7 +1246,7 @@ fn test_provider_registration_transaction_routing_check_platform_only() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, true);
+    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
 
     println!(
         "Provider registration transaction result (platform): is_relevant={}, received={}",
@@ -1451,7 +1469,7 @@ fn test_provider_registration_transaction_routing_check_owner_and_voting() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, true);
+    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
 
     println!(
         "Provider registration transaction result (owner and voting): is_relevant={}, received={}",
@@ -1620,7 +1638,7 @@ fn test_provider_registration_transaction_routing_check_voting_and_operator() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, true);
+    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
 
     println!(
         "Provider registration transaction result (voting and operator): is_relevant={}, received={}",
@@ -1805,7 +1823,7 @@ fn test_provider_registration_transaction_routing_check_all() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, true);
+    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
 
     println!(
         "Provider registration transaction result (all keys): is_relevant={}, received={}",
@@ -2002,7 +2020,7 @@ fn test_provider_registration_transaction_routing_check_outputs() {
         timestamp: Some(1234567890),
     };
 
-    let result = managed_wallet_info.check_transaction(&tx, network, context, true);
+    let result = managed_wallet_info.check_transaction(&tx, network, context, Some(&wallet));
 
     println!(
         "Provider registration transaction result (with outputs): is_relevant={}, received={}",
@@ -2114,7 +2132,7 @@ fn test_provider_registration_transaction_routing_check_outputs() {
         )),
     };
 
-    let result2 = managed_wallet_info.check_transaction(&tx2, network, context, true);
+    let result2 = managed_wallet_info.check_transaction(&tx2, network, context, Some(&wallet));
 
     println!(
         "Provider registration transaction result (collateral to other wallet): is_relevant={}, received={}",
@@ -2183,7 +2201,10 @@ fn test_update_state_flag_behavior() {
 
     // First check with update_state = false
     let result1 = managed_wallet_info.check_transaction(
-        &tx, network, context, false, // don't update state
+        &tx,
+        network,
+        context,
+        Some(&wallet), // don't update state
     );
 
     assert!(result1.is_relevant);
@@ -2206,7 +2227,10 @@ fn test_update_state_flag_behavior() {
 
     // Now check with update_state = true
     let result2 = managed_wallet_info.check_transaction(
-        &tx, network, context, true, // update state
+        &tx,
+        network,
+        context,
+        Some(&wallet), // update state
     );
 
     assert!(result2.is_relevant);
@@ -2289,7 +2313,7 @@ fn test_coinbase_transaction_routing_to_bip44_receive_address() {
         &coinbase_tx,
         network,
         context,
-        true, // update state
+        Some(&wallet), // update state
     );
 
     // The coinbase transaction should be recognized as relevant
@@ -2370,7 +2394,7 @@ fn test_coinbase_transaction_routing_to_bip44_change_address() {
         &coinbase_tx,
         network,
         context,
-        true, // update state
+        Some(&wallet), // update state
     );
 
     // The coinbase transaction should be recognized as relevant even to change address
@@ -2459,7 +2483,7 @@ fn test_coinbase_transaction_routing_to_bip32_address() {
         &coinbase_tx,
         network,
         context,
-        true, // update state
+        Some(&wallet), // update state
     );
 
     // The coinbase transaction should be recognized as relevant
@@ -2589,7 +2613,7 @@ fn test_coinbase_transaction_routing_multiple_outputs() {
         &coinbase_tx,
         network,
         context,
-        true, // update state
+        Some(&wallet), // update state
     );
 
     // The coinbase transaction should be recognized as relevant
@@ -2692,7 +2716,7 @@ fn test_coinbase_transaction_not_ours() {
         &coinbase_tx,
         network,
         context,
-        true, // update state
+        Some(&wallet), // update state
     );
 
     // The coinbase transaction should NOT be recognized as relevant
@@ -2789,7 +2813,10 @@ fn test_gap_limit_with_update_state_true() {
         // This should update the wallet's internal state and allow it to detect
         // transactions beyond the initial gap limit
         let result = managed_wallet_info.check_transaction(
-            &tx, network, context, true, // update_state=true - this is the key
+            &tx,
+            network,
+            context,
+            Some(&wallet), // update_state=true - this is the key
         );
 
         if result.is_relevant {
@@ -2902,7 +2929,7 @@ fn test_gap_limit_with_update_state_false() {
         // This should NOT update the wallet's internal state, so it won't detect
         // transactions beyond the initial gap limit
         let result = managed_wallet_info.check_transaction(
-            &tx, network, context, false, // update_state=false - this is the key
+            &tx, network, context, None, // update_state=false - this is the key
         );
 
         if result.is_relevant {
