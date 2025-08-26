@@ -357,7 +357,7 @@ pub unsafe extern "C" fn wallet_create_from_xpub(
         Ok(account) => {
             // Create an AccountCollection and add the account
             let mut account_collection = AccountCollection::new();
-            account_collection.insert(account);
+            let _ = account_collection.insert(account);
 
             // Create the accounts map
             let mut accounts = std::collections::BTreeMap::new();

@@ -10,7 +10,7 @@ use std::ptr;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFINetwork, FFIWallet};
-use key_wallet::managed_account::address_pool::{AddressPoolType, KeySource};
+use key_wallet::managed_account::address_pool::KeySource;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 
 /// FFI wrapper for ManagedWalletInfo
@@ -927,8 +927,7 @@ mod tests {
     fn test_comprehensive_address_generation() {
         use key_wallet::account::{ManagedAccount, ManagedAccountCollection, StandardAccountType};
         use key_wallet::bip32::DerivationPath;
-        use key_wallet::gap_limit::GapLimitManager;
-        use key_wallet::managed_account::address_pool::AddressPool;
+        use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType};
 
         let mut error = FFIError::success();
 
@@ -960,20 +959,25 @@ mod tests {
         let mut managed_collection = ManagedAccountCollection::new();
 
         // Create a managed account with address pools
+        // Using NoKeySource for test data
+        let key_source = KeySource::NoKeySource;
         let external_pool = AddressPool::new(
             DerivationPath::from(vec![key_wallet::bip32::ChildNumber::from_normal_idx(0).unwrap()]),
             AddressPoolType::External,
             20,
             network,
-        );
+            &key_source,
+        )
+        .expect("Failed to create external pool");
         let internal_pool = AddressPool::new(
             DerivationPath::from(vec![key_wallet::bip32::ChildNumber::from_normal_idx(1).unwrap()]),
             AddressPoolType::Internal,
             20,
             network,
-        );
+            &key_source,
+        )
+        .expect("Failed to create internal pool");
 
-        let gap_limits = GapLimitManager::default();
         let managed_account = ManagedAccount::new(
             ManagedAccountType::Standard {
                 index: 0,
@@ -982,7 +986,6 @@ mod tests {
                 internal_addresses: internal_pool,
             },
             network,
-            gap_limits,
             false,
         );
 

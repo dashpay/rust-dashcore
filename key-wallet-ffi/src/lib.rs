@@ -6,13 +6,16 @@
 // Module declarations
 pub mod account;
 pub mod address;
+pub mod address_pool;
 pub mod balance;
 pub mod derivation;
 pub mod error;
 pub mod keys;
 pub mod managed_wallet;
 pub mod mnemonic;
+pub mod provider_keys;
 pub mod transaction;
+pub mod transaction_checking;
 pub mod types;
 pub mod utils;
 pub mod utxo;
