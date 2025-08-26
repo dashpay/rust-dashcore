@@ -868,10 +868,10 @@ mod tests {
 
         // Build the long derivation path: m/(2^31+5)/0/0/(2^31+56)/70/4
         let derived = master
-            .derive_priv(ChildNumber::from((1u32 << 31) + 5)).unwrap()  // Hardened (2^31+5)
+            .derive_priv(ChildNumber::from_hardened_idx(5).unwrap()).unwrap()  // Hardened (2^31+5)
             .derive_priv(ChildNumber::from_normal_idx(0).unwrap()).unwrap()
             .derive_priv(ChildNumber::from_normal_idx(0).unwrap()).unwrap()
-            .derive_priv(ChildNumber::from((1u32 << 31) + 56)).unwrap()  // Hardened (2^31+56)
+            .derive_priv(ChildNumber::from_hardened_idx(56).unwrap()).unwrap()  // Hardened (2^31+56)
             .derive_priv(ChildNumber::from_normal_idx(70).unwrap()).unwrap()
             .derive_priv(ChildNumber::from_normal_idx(4).unwrap()).unwrap();
 
@@ -993,8 +993,8 @@ mod tests {
         let esk1 = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed1).unwrap();
 
         // Test hardened child derivation
-        let esk77_hardened = esk1.derive_priv(ChildNumber::from(77 + (1u32 << 31))).unwrap();
-        let esk77_hardened_copy = esk1.derive_priv(ChildNumber::from(77 + (1u32 << 31))).unwrap();
+        let esk77_hardened = esk1.derive_priv(ChildNumber::from_hardened_idx(77).unwrap()).unwrap();
+        let esk77_hardened_copy = esk1.derive_priv(ChildNumber::from_hardened_idx(77).unwrap()).unwrap();
 
         // Keys derived with same index should be equal
         assert_eq!(
@@ -1153,12 +1153,11 @@ mod tests {
         let master = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
 
         // Test with index 77 (matching C++ test)
-        let hardened_index = 77 + (1u32 << 31);
         let unhardened_index = 77;
 
         // Derive hardened child
-        let child_hardened = master.derive_priv(ChildNumber::from(hardened_index)).unwrap();
-        let child_hardened_copy = master.derive_priv(ChildNumber::from(hardened_index)).unwrap();
+        let child_hardened = master.derive_priv(ChildNumber::from_hardened_idx(77).unwrap()).unwrap();
+        let child_hardened_copy = master.derive_priv(ChildNumber::from_hardened_idx(77).unwrap()).unwrap();
 
         // Derive unhardened child
         let child_unhardened = master.derive_priv(ChildNumber::from_normal_idx(unhardened_index).unwrap()).unwrap();
