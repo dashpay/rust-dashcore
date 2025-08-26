@@ -82,6 +82,8 @@ fn main() {
             index: 1,
             standard_account_type: StandardAccountType::BIP44Account,
         },
+        Network::Testnet,
+        None,
     );
 
     match account_result {

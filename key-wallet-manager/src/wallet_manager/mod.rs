@@ -20,7 +20,6 @@ use std::collections::BTreeSet;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use key_wallet::wallet::WalletType;
 use key_wallet::{Utxo, UtxoSet};
 
 /// Unique identifier for a wallet (32-byte hash)
