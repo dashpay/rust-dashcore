@@ -3,6 +3,8 @@
 //! This module determines which account types should be checked
 //! for different transaction types.
 
+mod tests;
+
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
@@ -77,6 +79,7 @@ impl TransactionRouter {
                 AccountTypeToCheck::ProviderOwnerKeys,
                 AccountTypeToCheck::ProviderOperatorKeys,
                 AccountTypeToCheck::ProviderVotingKeys,
+                AccountTypeToCheck::ProviderPlatformKeys,
                 AccountTypeToCheck::StandardBIP44,
                 AccountTypeToCheck::StandardBIP32,
                 AccountTypeToCheck::CoinJoin,
@@ -90,6 +93,7 @@ impl TransactionRouter {
             ],
             TransactionType::ProviderUpdateService => vec![
                 AccountTypeToCheck::ProviderOperatorKeys,
+                AccountTypeToCheck::ProviderPlatformKeys,
                 AccountTypeToCheck::StandardBIP44,
                 AccountTypeToCheck::StandardBIP32,
                 AccountTypeToCheck::CoinJoin,

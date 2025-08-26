@@ -164,7 +164,6 @@ impl ManagedWalletInfo {
 mod tests {
     use super::*;
     use crate::bip32::DerivationPath;
-    use crate::gap_limit::GapLimitManager;
     use crate::managed_account::managed_account_collection::ManagedAccountCollection;
     use crate::managed_account::managed_account_type::ManagedAccountType;
     use crate::managed_account::ManagedAccount;
@@ -212,7 +211,6 @@ mod tests {
                     ),
             },
             Network::Testnet,
-            GapLimitManager::default(),
             false,
         );
 

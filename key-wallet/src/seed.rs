@@ -183,6 +183,7 @@ impl<'de> Deserialize<'de> for Seed {
                 A: serde::de::SeqAccess<'de>,
             {
                 let mut bytes = [0u8; 64];
+                #[allow(clippy::needless_range_loop)]
                 for i in 0..64 {
                     bytes[i] = seq
                         .next_element()?

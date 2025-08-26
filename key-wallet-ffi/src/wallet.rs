@@ -10,7 +10,7 @@ use std::ptr;
 use std::slice;
 
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
-use key_wallet::{Mnemonic, Network, Seed, Wallet, WalletConfig};
+use key_wallet::{Mnemonic, Network, Seed, Wallet};
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFINetwork, FFIWallet, FFIWalletAccountCreationOptions};
@@ -84,7 +84,6 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     };
 
     let network_rust: key_wallet::Network = network.into();
-    let config = WalletConfig::default();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -94,7 +93,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     };
 
     let wallet = if passphrase_str.is_empty() {
-        match Wallet::from_mnemonic(mnemonic, config, network_rust, creation_options) {
+        match Wallet::from_mnemonic(mnemonic, network_rust, creation_options) {
             Ok(w) => w,
             Err(e) => {
                 FFIError::set_error(
@@ -111,7 +110,6 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
         match Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             passphrase_str.to_string(),
-            config,
             network_rust,
             creation_options,
         ) {
@@ -191,7 +189,6 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     seed_array.copy_from_slice(seed_bytes);
     let seed = Seed::new(seed_array);
     let network_rust: key_wallet::Network = network.into();
-    let config = WalletConfig::default();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -200,7 +197,7 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
         (*account_options).to_wallet_options()
     };
 
-    match Wallet::from_seed(seed, config, network_rust, creation_options) {
+    match Wallet::from_seed(seed, network_rust, creation_options) {
         Ok(wallet) => {
             FFIError::set_success(error);
             Box::into_raw(Box::new(FFIWallet::new(wallet)))
@@ -261,7 +258,6 @@ pub unsafe extern "C" fn wallet_create_from_seed_bytes(
 
     let seed_slice = unsafe { slice::from_raw_parts(seed_bytes, seed_len) };
     let network_rust: key_wallet::Network = network.into();
-    let config = WalletConfig::default();
 
     // from_seed_bytes expects specific length
     if seed_len != 64 {
@@ -278,7 +274,6 @@ pub unsafe extern "C" fn wallet_create_from_seed_bytes(
 
     match Wallet::from_seed(
         Seed::new(seed_array),
-        config,
         network_rust,
         WalletAccountCreationOptions::Default,
     ) {
@@ -332,7 +327,6 @@ pub unsafe extern "C" fn wallet_create_from_xpub(
     };
 
     let network_rust: key_wallet::Network = network.into();
-    let config = WalletConfig::default();
 
     use key_wallet::ExtendedPubKey;
     use std::str::FromStr;
@@ -363,14 +357,14 @@ pub unsafe extern "C" fn wallet_create_from_xpub(
         Ok(account) => {
             // Create an AccountCollection and add the account
             let mut account_collection = AccountCollection::new();
-            account_collection.insert(account);
+            let _ = account_collection.insert(account);
 
             // Create the accounts map
             let mut accounts = std::collections::BTreeMap::new();
             accounts.insert(network_rust, account_collection);
 
             // Create the watch-only wallet
-            match Wallet::from_xpub(xpub, Some(config), accounts) {
+            match Wallet::from_xpub(xpub, accounts) {
                 Ok(wallet) => {
                     FFIError::set_success(error);
                     Box::into_raw(Box::new(FFIWallet::new(wallet)))
@@ -410,7 +404,6 @@ pub unsafe extern "C" fn wallet_create_random_with_options(
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     let network_rust: key_wallet::Network = network.into();
-    let config = WalletConfig::default();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -419,7 +412,7 @@ pub unsafe extern "C" fn wallet_create_random_with_options(
         (*account_options).to_wallet_options()
     };
 
-    match Wallet::new_random(config, network_rust, creation_options) {
+    match Wallet::new_random(network_rust, creation_options) {
         Ok(wallet) => {
             FFIError::set_success(error);
             Box::into_raw(Box::new(FFIWallet::new(wallet)))

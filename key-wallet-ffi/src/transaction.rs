@@ -226,7 +226,12 @@ pub unsafe extern "C" fn wallet_check_transaction(
         let mut managed_info = ManagedWalletInfo::from_wallet(wallet.inner());
 
         // Check the transaction
-        let check_result = managed_info.check_transaction(&tx, network_rust, context, update_state);
+        let wallet_opt = if update_state {
+            Some(wallet.inner())
+        } else {
+            None
+        };
+        let check_result = managed_info.check_transaction(&tx, network_rust, context, wallet_opt);
 
         // If we updated state, we need to update the wallet's managed info
         // Note: This would require storing ManagedWalletInfo in FFIWallet

@@ -8,6 +8,7 @@ use dashcore::{TxIn, TxOut};
 use dashcore_hashes::Hash;
 
 use dashcore::bip158::{BlockFilter, BlockFilterWriter};
+use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
 use key_wallet_manager::spv_wallet_manager::{SPVSyncStatus, SPVWalletManager};
@@ -74,7 +75,14 @@ fn test_spv_integration_basic() {
 
     // Create a test wallet
     let wallet_id: WalletId = [1u8; 32];
-    spv.base.create_wallet(wallet_id, "Test Wallet".to_string(), Network::Testnet).ok();
+    spv.base
+        .create_wallet(
+            wallet_id,
+            "Test Wallet".to_string(),
+            WalletAccountCreationOptions::Default,
+            Network::Testnet,
+        )
+        .ok();
 
     // Verify initial state
     assert_eq!(spv.sync_status(Network::Testnet), SPVSyncStatus::Idle);
@@ -91,7 +99,14 @@ async fn test_filter_checking() {
     // Add a test address to monitor - simplified for testing
     // In reality, addresses would be generated from wallet accounts
 
-    spv.base.create_wallet(wallet_id, "Test Wallet".to_string(), Network::Testnet).ok();
+    spv.base
+        .create_wallet(
+            wallet_id,
+            "Test Wallet".to_string(),
+            WalletAccountCreationOptions::Default,
+            Network::Testnet,
+        )
+        .ok();
 
     // Create a test block with a transaction
     let tx = create_test_transaction(100000);
@@ -114,7 +129,14 @@ async fn test_block_processing() {
 
     // Create a test wallet
     let wallet_id: WalletId = [1u8; 32];
-    spv.base.create_wallet(wallet_id, "Test Wallet".to_string(), Network::Testnet).ok();
+    spv.base
+        .create_wallet(
+            wallet_id,
+            "Test Wallet".to_string(),
+            WalletAccountCreationOptions::Default,
+            Network::Testnet,
+        )
+        .ok();
 
     // Create a transaction
     let tx = create_test_transaction(100000);
@@ -225,7 +247,14 @@ async fn test_multiple_wallets() {
         let mut wallet_id = [0u8; 32];
         wallet_id[0] = i as u8; // Make each ID unique
 
-        spv.base.create_wallet(wallet_id, format!("Test Wallet {}", i), Network::Testnet).ok();
+        spv.base
+            .create_wallet(
+                wallet_id,
+                format!("Test Wallet {}", i),
+                WalletAccountCreationOptions::Default,
+                Network::Testnet,
+            )
+            .ok();
     }
 
     // Verify all wallets are added
@@ -255,7 +284,14 @@ async fn test_spent_utxo_tracking() {
 
     // Create a test wallet
     let wallet_id: WalletId = [1u8; 32];
-    spv.base.create_wallet(wallet_id, "Test Wallet".to_string(), Network::Testnet).ok();
+    spv.base
+        .create_wallet(
+            wallet_id,
+            "Test Wallet".to_string(),
+            WalletAccountCreationOptions::Default,
+            Network::Testnet,
+        )
+        .ok();
 
     // Create a transaction
     let tx1 = create_test_transaction(100000);

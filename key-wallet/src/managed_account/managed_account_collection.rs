@@ -4,7 +4,6 @@
 //! across different networks in a hierarchical manner.
 
 use crate::account::account_type::AccountType;
-use crate::gap_limit::GapLimitManager;
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::ManagedAccount;
@@ -430,7 +429,7 @@ impl ManagedAccountCollection {
             }
         };
 
-        Ok(ManagedAccount::new(managed_type, network, GapLimitManager::default(), is_watch_only))
+        Ok(ManagedAccount::new(managed_type, network, is_watch_only))
     }
 
     pub fn get(&self, index: u32) -> Option<&ManagedAccount> {

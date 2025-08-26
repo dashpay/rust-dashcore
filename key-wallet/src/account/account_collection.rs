@@ -351,6 +351,7 @@ impl AccountCollection {
 
     /// Get the count of accounts (includes BLS and EdDSA accounts)
     pub fn count(&self) -> usize {
+        #[allow(unused_mut)]
         let mut count = self.all_accounts().len();
 
         #[cfg(feature = "bls")]
@@ -380,6 +381,7 @@ impl AccountCollection {
 
     /// Check if the collection is empty
     pub fn is_empty(&self) -> bool {
+        #[allow(unused_mut)]
         let mut is_empty = self.standard_bip44_accounts.is_empty()
             && self.standard_bip32_accounts.is_empty()
             && self.coinjoin_accounts.is_empty()

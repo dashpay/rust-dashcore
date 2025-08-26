@@ -1,13 +1,16 @@
 use crate::account::StandardAccountType;
 use crate::{AccountType, AddressPool, DerivationPath};
+#[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use dashcore::ScriptBuf;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Managed account type with embedded address pools
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[allow(clippy::large_enum_variant)]
 pub enum ManagedAccountType {
     /// Standard BIP44 account for regular transactions
     Standard {
@@ -184,7 +187,7 @@ impl ManagedAccountType {
     }
 
     /// Get mutable references to all address pools for this account type
-    pub fn get_address_pools_mut(&mut self) -> Vec<&mut AddressPool> {
+    pub fn address_pools_mut(&mut self) -> Vec<&mut AddressPool> {
         match self {
             Self::Standard {
                 external_addresses,
@@ -269,7 +272,7 @@ impl ManagedAccountType {
 
     /// Mark an address as used
     pub fn mark_address_used(&mut self, address: &crate::Address) -> bool {
-        for pool in self.get_address_pools_mut() {
+        for pool in self.address_pools_mut() {
             if pool.mark_used(address) {
                 return true;
             }

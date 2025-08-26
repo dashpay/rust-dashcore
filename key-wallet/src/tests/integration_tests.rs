@@ -4,7 +4,7 @@
 
 use crate::account::{AccountType, StandardAccountType};
 use crate::mnemonic::{Language, Mnemonic};
-use crate::wallet::{Wallet, WalletConfig};
+use crate::wallet::Wallet;
 use crate::Network;
 use dashcore::hashes::Hash;
 use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
@@ -12,9 +12,8 @@ use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 #[test]
 fn test_full_wallet_lifecycle() {
     // 1. Create wallet
-    let config = WalletConfig::default();
+
     let mut wallet = Wallet::new_random(
-        config.clone(),
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -66,7 +65,6 @@ fn test_full_wallet_lifecycle() {
     // 7. Recover wallet from mnemonic
     let recovered_wallet = Wallet::from_mnemonic(
         mnemonic,
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -86,10 +84,8 @@ fn test_account_discovery_workflow() {
         Language::English,
     ).unwrap();
 
-    let config = WalletConfig::default();
     let mut wallet = Wallet::from_mnemonic(
         mnemonic,
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -136,12 +132,9 @@ fn test_multi_network_wallet_management() {
         Language::English,
     ).unwrap();
 
-    let config = WalletConfig::default();
-
     // Create wallet and add accounts on different networks
     let mut wallet = Wallet::from_mnemonic(
         mnemonic,
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -197,9 +190,7 @@ fn test_multi_network_wallet_management() {
 
 #[test]
 fn test_wallet_with_all_account_types() {
-    let config = WalletConfig::default();
     let wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::AllAccounts(
             [0, 1].into(),
@@ -227,9 +218,7 @@ fn test_wallet_with_all_account_types() {
 
 #[test]
 fn test_transaction_broadcast_simulation() {
-    let config = WalletConfig::default();
     let _wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -277,10 +266,8 @@ fn test_concurrent_wallet_operations() {
     use std::sync::{Arc, Mutex};
     use std::thread;
 
-    let config = WalletConfig::default();
     let wallet = Arc::new(Mutex::new(
         Wallet::new_random(
-            config,
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
@@ -343,9 +330,8 @@ fn test_concurrent_wallet_operations() {
 #[test]
 fn test_wallet_with_thousands_of_addresses() {
     // Stress test with large number of addresses
-    let config = WalletConfig::default();
+
     let _wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -384,10 +370,8 @@ fn test_wallet_recovery_with_used_addresses() {
         Language::English,
     ).unwrap();
 
-    let config = WalletConfig::default();
     let _wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        config.clone(),
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )

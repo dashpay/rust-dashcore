@@ -8,6 +8,7 @@
 
 use hex;
 use key_wallet::account::StandardAccountType;
+use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{AccountType, Network};
@@ -25,7 +26,12 @@ fn main() {
     // Create a wallet ID (32 bytes)
     let wallet_id: WalletId = [1u8; 32];
 
-    let result = manager.create_wallet(wallet_id, "My First Wallet".to_string(), Network::Testnet);
+    let result = manager.create_wallet(
+        wallet_id,
+        "My First Wallet".to_string(),
+        WalletAccountCreationOptions::Default,
+        Network::Testnet,
+    );
 
     match result {
         Ok(_) => {
@@ -71,12 +77,13 @@ fn main() {
 
     // Add a new account to the first wallet
     let account_result = manager.create_account(
-        &wallet_id,
-        1, // Account index 1 (0 is created by default)
+        &wallet_id, // Account index 1 (0 is created by default)
         AccountType::Standard {
             index: 1,
             standard_account_type: StandardAccountType::BIP44Account,
         },
+        Network::Testnet,
+        None,
     );
 
     match account_result {
@@ -131,8 +138,12 @@ fn main() {
     let wallet_id3: WalletId = [3u8; 32];
 
     // Create a wallet through SPVWalletManager
-    let spv_result =
-        spv_manager.base.create_wallet(wallet_id3, "SPV Wallet".to_string(), Network::Testnet);
+    let spv_result = spv_manager.base.create_wallet(
+        wallet_id3,
+        "SPV Wallet".to_string(),
+        WalletAccountCreationOptions::Default,
+        Network::Testnet,
+    );
 
     match spv_result {
         Ok(_) => {

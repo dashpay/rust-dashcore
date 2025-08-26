@@ -20,6 +20,7 @@ pub enum FFIErrorCode {
     SerializationError = 9,
     NotFound = 10,
     InvalidState = 11,
+    InternalError = 12,
 }
 
 /// FFI Error structure

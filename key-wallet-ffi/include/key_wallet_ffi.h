@@ -109,6 +109,24 @@ typedef enum {
 } FFIAccountType;
 
 /*
+ Address pool type
+ */
+typedef enum {
+    /*
+     External (receive) addresses
+     */
+    EXTERNAL = 0,
+    /*
+     Internal (change) addresses
+     */
+    INTERNAL = 1,
+    /*
+     Single pool (for non-standard accounts)
+     */
+    SINGLE = 2,
+} FFIAddressPoolType;
+
+/*
  Derivation path type for DIP9
  */
 typedef enum {
@@ -147,6 +165,7 @@ typedef enum {
     SERIALIZATION_ERROR = 9,
     NOT_FOUND = 10,
     INVALID_STATE = 11,
+    INTERNAL_ERROR = 12,
 } FFIErrorCode;
 
 /*
@@ -178,6 +197,28 @@ typedef enum {
     REGTEST = 2,
     DEVNET = 3,
 } FFINetwork;
+
+/*
+ Provider key type
+ */
+typedef enum {
+    /*
+     BLS voting keys (m/9'/5'/3'/1'/[key_index])
+     */
+    VOTING_KEYS = 0,
+    /*
+     BLS owner keys (m/9'/5'/3'/2'/[key_index])
+     */
+    OWNER_KEYS = 1,
+    /*
+     BLS operator keys (m/9'/5'/3'/3'/[key_index])
+     */
+    OPERATOR_KEYS = 2,
+    /*
+     EdDSA platform P2P keys (m/9'/5'/3'/4'/[key_index])
+     */
+    PLATFORM_KEYS = 3,
+} FFIProviderKeyType;
 
 /*
  Transaction context for checking
@@ -274,6 +315,43 @@ typedef struct {
 } FFIError;
 
 /*
+ FFI wrapper for ManagedWalletInfo that includes transaction checking capabilities
+ */
+typedef struct {
+    ManagedWalletInfo *inner;
+} FFIManagedWallet;
+
+/*
+ Address pool info
+ */
+typedef struct {
+    /*
+     Pool type
+     */
+    FFIAddressPoolType pool_type;
+    /*
+     Number of generated addresses
+     */
+    unsigned int generated_count;
+    /*
+     Number of used addresses
+     */
+    unsigned int used_count;
+    /*
+     Current gap (unused addresses at the end)
+     */
+    unsigned int current_gap;
+    /*
+     Gap limit setting
+     */
+    unsigned int gap_limit;
+    /*
+     Highest used index (-1 if none used)
+     */
+    int32_t highest_used_index;
+} FFIAddressPoolInfo;
+
+/*
  Balance structure for FFI
  */
 typedef struct {
@@ -282,6 +360,36 @@ typedef struct {
     uint64_t immature;
     uint64_t total;
 } FFIBalance;
+
+/*
+ Provider key info
+ */
+typedef struct {
+    /*
+     Key index
+     */
+    unsigned int key_index;
+    /*
+     Public key bytes (48 bytes for BLS, 32 bytes for EdDSA)
+     */
+    uint8_t *public_key;
+    /*
+     Public key length
+     */
+    size_t public_key_len;
+    /*
+     Private key bytes (32 bytes, only if available)
+     */
+    uint8_t *private_key;
+    /*
+     Private key length (0 if not available)
+     */
+    size_t private_key_len;
+    /*
+     Derivation path as string
+     */
+    char *derivation_path;
+} FFIProviderKeyInfo;
 
 /*
  Transaction output for building
@@ -520,6 +628,92 @@ unsigned int wallet_get_account_count(const FFIWallet *wallet,
  - `error` must be a valid pointer to an FFIError
  */
  unsigned char address_get_type(const char *address, FFINetwork network, FFIError *error) ;
+
+/*
+ Get address pool information for an account
+
+ # Safety
+
+ - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `info_out` must be a valid pointer to store the pool info
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+bool managed_wallet_get_address_pool_info(const FFIManagedWallet *managed_wallet,
+                                          FFINetwork network,
+                                          unsigned int account_type,
+                                          unsigned int account_index,
+                                          unsigned int registration_index,
+                                          FFIAddressPoolType pool_type,
+                                          FFIAddressPoolInfo *info_out,
+                                          FFIError *error)
+;
+
+/*
+ Set the gap limit for an address pool
+
+ The gap limit determines how many unused addresses to maintain at the end
+ of the pool. This is important for wallet recovery and address discovery.
+
+ # Safety
+
+ - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+bool managed_wallet_set_gap_limit(FFIManagedWallet *managed_wallet,
+                                  FFINetwork network,
+                                  unsigned int account_type,
+                                  unsigned int account_index,
+                                  unsigned int registration_index,
+                                  FFIAddressPoolType pool_type,
+                                  unsigned int gap_limit,
+                                  FFIError *error)
+;
+
+/*
+ Generate addresses up to a specific index in a pool
+
+ This ensures that addresses up to and including the specified index exist
+ in the pool. This is useful for wallet recovery or when specific indices
+ are needed.
+
+ # Safety
+
+ - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `wallet` must be a valid pointer to an FFIWallet (for key derivation)
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+bool managed_wallet_generate_addresses_to_index(FFIManagedWallet *managed_wallet,
+                                                const FFIWallet *wallet,
+                                                FFINetwork network,
+                                                unsigned int account_type,
+                                                unsigned int account_index,
+                                                unsigned int registration_index,
+                                                FFIAddressPoolType pool_type,
+                                                unsigned int target_index,
+                                                FFIError *error)
+;
+
+/*
+ Mark an address as used in the pool
+
+ This updates the pool's tracking of which addresses have been used,
+ which is important for gap limit management and wallet recovery.
+
+ # Safety
+
+ - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `address` must be a valid C string
+ - `error` must be a valid pointer to an FFIError or null
+ */
+
+bool managed_wallet_mark_address_used(FFIManagedWallet *managed_wallet,
+                                      FFINetwork network,
+                                      const char *address,
+                                      FFIError *error)
+;
 
 /*
  Get wallet balance
@@ -1275,6 +1469,88 @@ bool mnemonic_to_seed(const char *mnemonic,
  void mnemonic_free(char *mnemonic) ;
 
 /*
+ Generate a provider key at a specific index
+
+ This generates a provider key (BLS or EdDSA) at the specified index.
+ For voting, owner, and operator keys, this generates BLS keys.
+ For platform keys, this generates EdDSA keys.
+
+ # Safety
+
+ - `wallet` must be a valid pointer to an FFIWallet
+ - `info_out` must be a valid pointer to store the key info
+ - `error` must be a valid pointer to an FFIError or null
+ - The returned public_key, private_key, and derivation_path must be freed by the caller
+ */
+
+bool wallet_generate_provider_key(const FFIWallet *wallet,
+                                  FFINetwork network,
+                                  FFIProviderKeyType key_type,
+                                  unsigned int key_index,
+                                  bool include_private,
+                                  FFIProviderKeyInfo *info_out,
+                                  FFIError *error)
+;
+
+/*
+ Free provider key info
+
+ # Safety
+
+ - `info` must be a valid pointer to an FFIProviderKeyInfo
+ - This function must only be called once per info structure
+ */
+ void provider_key_info_free(FFIProviderKeyInfo *info) ;
+
+/*
+ Get the address for a provider key
+
+ This returns the P2PKH address corresponding to the provider key at
+ the specified index. This is useful for funding provider accounts.
+
+ # Safety
+
+ - `wallet` must be a valid pointer to an FFIWallet
+ - `error` must be a valid pointer to an FFIError or null
+ - The returned string must be freed by the caller
+ */
+
+char *wallet_get_provider_key_address(const FFIWallet *wallet,
+                                      FFINetwork network,
+                                      FFIProviderKeyType key_type,
+                                      unsigned int _key_index,
+                                      FFIError *error)
+;
+
+/*
+ Sign data with a provider key
+
+ This signs arbitrary data with the provider key at the specified index.
+ For BLS keys, this produces a BLS signature.
+ For EdDSA keys, this produces an Ed25519 signature.
+
+ # Safety
+
+ - `wallet` must be a valid pointer to an FFIWallet
+ - `data` must be a valid pointer to data with at least `data_len` bytes
+ - `signature_out` must be a valid pointer to store the signature pointer
+ - `signature_len_out` must be a valid pointer to store the signature length
+ - `error` must be a valid pointer to an FFIError or null
+ - The returned signature must be freed with `libc::free`
+ */
+
+bool wallet_sign_with_provider_key(const FFIWallet *wallet,
+                                   FFINetwork network,
+                                   FFIProviderKeyType key_type,
+                                   unsigned int _key_index,
+                                   const uint8_t *data,
+                                   size_t data_len,
+                                   uint8_t **signature_out,
+                                   size_t *signature_len_out,
+                                   FFIError *error)
+;
+
+/*
  Build a transaction
 
  # Safety
@@ -1357,6 +1633,84 @@ bool wallet_check_transaction(FFIWallet *wallet,
  - After calling this function, the pointer becomes invalid
  */
  void transaction_bytes_free(uint8_t *tx_bytes) ;
+
+/*
+ Create a managed wallet from a regular wallet
+
+ This creates a ManagedWalletInfo instance from a Wallet, which includes
+ address pools and transaction checking capabilities.
+
+ # Safety
+
+ - `wallet` must be a valid pointer to an FFIWallet
+ - `error` must be a valid pointer to an FFIError or null
+ - The returned pointer must be freed with `ffi_managed_wallet_free`
+ */
+ FFIManagedWallet *wallet_create_managed_wallet(const FFIWallet *wallet, FFIError *error) ;
+
+/*
+ Check if a transaction belongs to the wallet
+
+ This function checks a transaction against all relevant account types in the wallet
+ and returns detailed information about which accounts are affected.
+
+ # Safety
+
+ - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - `wallet` must be a valid pointer to an FFIWallet (needed for address generation)
+ - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes
+ - `result_out` must be a valid pointer to store the result
+ - `error` must be a valid pointer to an FFIError
+ - The affected_accounts array in the result must be freed with `transaction_check_result_free`
+ */
+
+bool managed_wallet_check_transaction(FFIManagedWallet *managed_wallet,
+                                      const FFIWallet *wallet,
+                                      FFINetwork network,
+                                      const uint8_t *tx_bytes,
+                                      size_t tx_len,
+                                      FFITransactionContext context_type,
+                                      unsigned int block_height,
+                                      const uint8_t *block_hash,
+                                      uint64_t timestamp,
+                                      bool update_state,
+                                      FFITransactionCheckResult *result_out,
+                                      FFIError *error)
+;
+
+/*
+ Free a transaction check result
+
+ # Safety
+
+ - `result` must be a valid pointer to an FFITransactionCheckResult
+ - This function must only be called once per result
+ */
+ void transaction_check_result_free(FFITransactionCheckResult *result) ;
+
+/*
+ Free a managed wallet (FFIManagedWallet type)
+
+ # Safety
+
+ - `managed_wallet` must be a valid pointer to an FFIManagedWallet
+ - This function must only be called once per managed wallet
+ */
+ void ffi_managed_wallet_free(FFIManagedWallet *managed_wallet) ;
+
+/*
+ Get the transaction classification for routing
+
+ Returns a string describing the transaction type (e.g., "Standard", "CoinJoin",
+ "AssetLock", "AssetUnlock", "ProviderRegistration", etc.)
+
+ # Safety
+
+ - `tx_bytes` must be a valid pointer to transaction bytes with at least `tx_len` bytes
+ - `error` must be a valid pointer to an FFIError or null
+ - The returned string must be freed by the caller
+ */
+ char *transaction_classify(const uint8_t *tx_bytes, size_t tx_len, FFIError *error) ;
 
 /*
  Free a string

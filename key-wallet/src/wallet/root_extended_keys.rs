@@ -1,15 +1,16 @@
 use crate::bip32::{ChainCode, ChildNumber, ExtendedPrivKey, ExtendedPubKey};
+#[cfg(feature = "bls")]
+use crate::derivation_bls_bip32::ExtendedBLSPrivKey;
+use crate::wallet::WalletType;
 use crate::{Error, Network, Wallet};
+#[cfg(feature = "bincode")]
+use bincode::{BorrowDecode, Decode, Encode};
+#[cfg(feature = "bls")]
+use dashcore::blsful::Bls12381G2Impl;
+use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-
-use crate::derivation_bls_bip32::ExtendedBLSPrivKey;
-use crate::wallet::WalletType;
-#[cfg(feature = "bincode")]
-use bincode::{BorrowDecode, Decode, Encode};
-use dashcore::blsful::Bls12381G2Impl;
-use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -82,6 +83,7 @@ impl RootExtendedPrivKey {
     /// Convert to BLS extended private key for a specific network
     /// This converts the secp256k1 private key to a BLS12-381 private key
     /// Note: This is a cross-curve conversion and should be used carefully
+    #[cfg(feature = "bls")]
     pub fn to_bls_extended_priv_key(&self, network: Network) -> Result<ExtendedBLSPrivKey, Error> {
         // Convert secp256k1 private key bytes to BLS private key
         // Using from_le_bytes for little-endian byte order
@@ -112,6 +114,7 @@ impl RootExtendedPrivKey {
     /// Convert to EdDSA/Ed25519 extended private key for a specific network
     /// This converts the secp256k1 private key to an Ed25519 private key
     /// Note: This is a cross-curve conversion and should be used carefully
+    #[cfg(feature = "eddsa")]
     pub fn to_eddsa_extended_priv_key(
         &self,
         network: Network,

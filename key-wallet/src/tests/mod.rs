@@ -25,8 +25,6 @@ mod performance_tests;
 #[cfg(test)]
 mod special_transaction_tests;
 #[cfg(test)]
-mod transaction_routing_tests;
-#[cfg(test)]
 mod transaction_tests;
 #[cfg(test)]
 mod utxo_tests;

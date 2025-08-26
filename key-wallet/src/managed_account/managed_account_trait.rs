@@ -4,7 +4,6 @@
 
 use crate::account::AccountMetadata;
 use crate::account::TransactionRecord;
-use crate::gap_limit::GapLimitManager;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletBalance;
@@ -23,12 +22,6 @@ pub trait ManagedAccountTrait {
 
     /// Get the network
     fn network(&self) -> Network;
-
-    /// Get gap limits
-    fn gap_limits(&self) -> &GapLimitManager;
-
-    /// Get mutable gap limits
-    fn gap_limits_mut(&mut self) -> &mut GapLimitManager;
 
     /// Get metadata
     fn metadata(&self) -> &AccountMetadata;

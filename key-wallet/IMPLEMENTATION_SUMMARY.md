@@ -154,7 +154,7 @@
 ## Usage Example
 
 ```rust
-use key_wallet::{Wallet, WalletConfig, Network, Mnemonic, Language};
+use key_wallet::{Wallet, Network, Mnemonic, Language};
 use key_wallet::{TransactionBuilder, UtxoSelector, SelectionStrategy, FeeRate};
 
 // Create a new wallet

@@ -3,7 +3,7 @@
 //! Tests for complex transaction scenarios, multi-account handling, and broadcast simulation.
 
 use crate::account::{AccountType, StandardAccountType};
-use crate::wallet::{Wallet, WalletConfig};
+use crate::wallet::Wallet;
 use crate::Network;
 use dashcore::hashes::Hash;
 use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
@@ -12,9 +12,8 @@ use std::collections::{BTreeMap, HashMap};
 #[test]
 fn test_multi_account_transaction() {
     // Test transaction involving multiple accounts
-    let config = WalletConfig::default();
+
     let mut wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )

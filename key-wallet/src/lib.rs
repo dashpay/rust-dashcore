@@ -67,7 +67,6 @@ pub use seed::Seed;
 pub use utxo::{Utxo, UtxoSet};
 pub use wallet::{
     balance::{BalanceError, WalletBalance},
-    config::WalletConfig,
     Wallet,
 };
 

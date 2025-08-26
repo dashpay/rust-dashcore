@@ -519,7 +519,9 @@ impl Wallet {
         // Provider keys accounts
         self.add_account(AccountType::ProviderVotingKeys, network, None)?;
         self.add_account(AccountType::ProviderOwnerKeys, network, None)?;
+        #[cfg(feature = "bls")]
         self.add_bls_account(AccountType::ProviderOperatorKeys, network, None)?;
+        #[cfg(feature = "eddsa")]
         self.add_eddsa_account(AccountType::ProviderPlatformKeys, network, None)?;
 
         Ok(())
@@ -547,11 +549,13 @@ impl Wallet {
         // Provider keys accounts
         self.add_account_with_passphrase(AccountType::ProviderVotingKeys, network, passphrase)?;
         self.add_account_with_passphrase(AccountType::ProviderOwnerKeys, network, passphrase)?;
+        #[cfg(feature = "bls")]
         self.add_bls_account_with_passphrase(
             AccountType::ProviderOperatorKeys,
             network,
             passphrase,
         )?;
+        #[cfg(feature = "eddsa")]
         self.add_eddsa_account_with_passphrase(
             AccountType::ProviderPlatformKeys,
             network,
@@ -786,5 +790,61 @@ impl Wallet {
         // Return as hex string
         let serialized = public_key.serialize(); // compressed
         Ok(hex::encode(serialized))
+    }
+
+    /// Get the extended public key for a specific account type
+    ///
+    /// This helper method retrieves the extended public key for a given account type
+    /// from the wallet's account collection.
+    ///
+    /// # Arguments
+    /// * `account_type` - The type of account to get the xpub for
+    /// * `account_index` - The account index for indexed account types
+    /// * `network` - The network to look up accounts for
+    ///
+    /// # Returns
+    /// The extended public key for the account, or None if not found
+    pub fn extended_public_key_for_account_type(
+        &self,
+        account_type: &crate::transaction_checking::transaction_router::AccountTypeToCheck,
+        account_index: Option<u32>,
+        network: Network,
+    ) -> Option<crate::bip32::ExtendedPubKey> {
+        self.accounts.get(&network).and_then(|coll| {
+            match account_type {
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::StandardBIP44 => {
+                    account_index.and_then(|idx| coll.standard_bip44_accounts.get(&idx).map(|a| a.account_xpub))
+                }
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::StandardBIP32 => {
+                    account_index.and_then(|idx| coll.standard_bip32_accounts.get(&idx).map(|a| a.account_xpub))
+                }
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::CoinJoin => {
+                    account_index.and_then(|idx| coll.coinjoin_accounts.get(&idx).map(|a| a.account_xpub))
+                }
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityRegistration => {
+                    coll.identity_registration.as_ref().map(|a| a.account_xpub)
+                }
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityTopUp => {
+                    account_index.and_then(|idx| coll.identity_topup.get(&idx).map(|a| a.account_xpub))
+                }
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityTopUpNotBound => {
+                    coll.identity_topup_not_bound.as_ref().map(|a| a.account_xpub)
+                }
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::IdentityInvitation => {
+                    coll.identity_invitation.as_ref().map(|a| a.account_xpub)
+                }
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderVotingKeys => {
+                    coll.provider_voting_keys.as_ref().map(|a| a.account_xpub)
+                }
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOwnerKeys => {
+                    coll.provider_owner_keys.as_ref().map(|a| a.account_xpub)
+                }
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOperatorKeys |
+                crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderPlatformKeys => {
+                    // These use BLS/EdDSA keys, not regular xpubs
+                    None
+                }
+            }
+        })
     }
 }

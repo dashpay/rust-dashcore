@@ -191,7 +191,6 @@ mod utxo_tests {
         use dashcore::blockdata::script::ScriptBuf;
         use dashcore::{Address, OutPoint, TxOut, Txid};
         use key_wallet::account::account_type::StandardAccountType;
-        use key_wallet::gap_limit::GapLimitManager;
         use key_wallet::managed_account::managed_account_collection::ManagedAccountCollection;
         use key_wallet::managed_account::ManagedAccount;
         use key_wallet::utxo::Utxo;
@@ -224,7 +223,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Testnet,
-            GapLimitManager::default(),
             false,
         );
 
@@ -306,7 +304,6 @@ mod utxo_tests {
         use dashcore::blockdata::script::ScriptBuf;
         use dashcore::{Address, OutPoint, TxOut, Txid};
         use key_wallet::account::account_type::StandardAccountType;
-        use key_wallet::gap_limit::GapLimitManager;
         use key_wallet::managed_account::managed_account_collection::ManagedAccountCollection;
         use key_wallet::managed_account::ManagedAccount;
         use key_wallet::utxo::Utxo;
@@ -338,7 +335,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Testnet,
-            GapLimitManager::default(),
             false,
         );
 
@@ -377,7 +373,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Testnet,
-            GapLimitManager::default(),
             false,
         );
 
@@ -407,7 +402,6 @@ mod utxo_tests {
                     .unwrap(),
             },
             Network::Testnet,
-            GapLimitManager::default(),
             false,
         );
 
@@ -458,7 +452,6 @@ mod utxo_tests {
         use dashcore::blockdata::script::ScriptBuf;
         use dashcore::{Address, OutPoint, TxOut, Txid};
         use key_wallet::account::account_type::StandardAccountType;
-        use key_wallet::gap_limit::GapLimitManager;
         use key_wallet::managed_account::managed_account_collection::ManagedAccountCollection;
         use key_wallet::managed_account::ManagedAccount;
         use key_wallet::utxo::Utxo;
@@ -490,7 +483,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Testnet,
-            GapLimitManager::default(),
             false,
         );
 
@@ -529,7 +521,6 @@ mod utxo_tests {
                         .unwrap(),
             },
             Network::Dash,
-            GapLimitManager::default(),
             false,
         );
 

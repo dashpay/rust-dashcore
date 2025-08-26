@@ -6,7 +6,7 @@ use crate::account::{AccountType, StandardAccountType};
 use crate::mnemonic::{Language, Mnemonic};
 use crate::seed::Seed;
 use crate::wallet::root_extended_keys::RootExtendedPrivKey;
-use crate::wallet::{Wallet, WalletConfig, WalletType};
+use crate::wallet::{Wallet, WalletType};
 use crate::Network;
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
@@ -17,9 +17,7 @@ const TEST_MNEMONIC: &str =
 
 #[test]
 fn test_wallet_creation_random() {
-    let config = WalletConfig::default();
     let wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
@@ -40,11 +38,9 @@ fn test_wallet_creation_random() {
 #[test]
 fn test_wallet_creation_from_mnemonic() {
     let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
-    let config = WalletConfig::default();
 
     let wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
@@ -70,11 +66,9 @@ fn test_wallet_creation_from_mnemonic() {
 #[test]
 fn test_wallet_creation_from_seed() {
     let seed = Seed::new([0x42; 64]);
-    let config = WalletConfig::default();
 
     let wallet = Wallet::from_seed(
         seed.clone(),
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
@@ -105,10 +99,8 @@ fn test_wallet_creation_from_extended_key() {
     let root_key = RootExtendedPrivKey::new_master(&seed).unwrap();
     let master_key = root_key.to_extended_priv_key(Network::Testnet);
 
-    let config = WalletConfig::default();
     let wallet = Wallet::from_extended_key(
         master_key.clone(),
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
@@ -138,13 +130,7 @@ fn test_wallet_creation_watch_only() {
     let root_pub_key = root_priv_key.to_root_extended_pub_key();
     let master_xpub = root_pub_key.to_extended_pub_key(Network::Testnet);
 
-    let config = WalletConfig::default();
-    let wallet = Wallet::from_xpub(
-        master_xpub,
-        Some(config),
-        BTreeMap::new(), // Empty accounts for watch-only wallet
-    )
-    .unwrap();
+    let wallet = Wallet::from_xpub(master_xpub, BTreeMap::new()).unwrap();
 
     // Verify wallet properties
     assert!(wallet.is_watch_only());
@@ -170,11 +156,9 @@ fn test_wallet_creation_with_passphrase() {
     let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
     let root_pub_key = root_priv_key.to_root_extended_pub_key();
 
-    let config = WalletConfig::default();
     let wallet = Wallet::from_mnemonic_with_passphrase(
         mnemonic.clone(),
         passphrase.to_string(),
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -213,10 +197,9 @@ fn test_wallet_id_computation() {
     assert_eq!(wallet_id, wallet_id_2);
 
     // Create wallet and verify ID matches
-    let config = WalletConfig::default();
+
     let wallet = Wallet::from_mnemonic(
         mnemonic,
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
@@ -227,19 +210,16 @@ fn test_wallet_id_computation() {
 #[test]
 fn test_wallet_recovery_same_mnemonic() {
     let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
-    let config = WalletConfig::default();
 
     // Create two wallets from the same mnemonic
     let wallet1 = Wallet::from_mnemonic(
         mnemonic.clone(),
-        config.clone(),
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
     let wallet2 = Wallet::from_mnemonic(
         mnemonic,
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
@@ -265,13 +245,11 @@ fn test_wallet_recovery_same_mnemonic() {
 
 #[test]
 fn test_wallet_multiple_networks() {
-    let config = WalletConfig::default();
     let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
 
     // Create wallet with Testnet account
     let mut wallet = Wallet::from_mnemonic(
         mnemonic,
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -308,9 +286,7 @@ fn test_wallet_multiple_networks() {
 
 #[test]
 fn test_wallet_account_addition() {
-    let config = WalletConfig::default();
     let mut wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -349,9 +325,7 @@ fn test_wallet_account_addition() {
 
 #[test]
 fn test_wallet_duplicate_account_error() {
-    let config = WalletConfig::default();
     let mut wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -384,9 +358,7 @@ fn test_wallet_duplicate_account_error() {
 
 #[test]
 fn test_wallet_to_watch_only() {
-    let config = WalletConfig::default();
     let wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
@@ -403,31 +375,8 @@ fn test_wallet_to_watch_only() {
 }
 
 #[test]
-fn test_wallet_config_persistence() {
-    let mut config = WalletConfig::default();
-    config.account_default_external_gap_limit = 50;
-    config.account_default_internal_gap_limit = 25;
-    config.enable_coinjoin = true;
-    config.coinjoin_default_gap_limit = 15;
-
-    let wallet = Wallet::new_random(
-        config.clone(),
-        Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::Default,
-    )
-    .unwrap();
-
-    assert_eq!(wallet.config.account_default_external_gap_limit, 50);
-    assert_eq!(wallet.config.account_default_internal_gap_limit, 25);
-    assert!(wallet.config.enable_coinjoin);
-    assert_eq!(wallet.config.coinjoin_default_gap_limit, 15);
-}
-
-#[test]
 fn test_wallet_special_accounts() {
-    let config = WalletConfig::default();
     let mut wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
@@ -453,11 +402,9 @@ fn test_wallet_special_accounts() {
 #[test]
 fn test_wallet_deterministic_key_derivation() {
     let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
-    let config = WalletConfig::default();
 
     let wallet = Wallet::from_mnemonic(
         mnemonic,
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
@@ -466,10 +413,9 @@ fn test_wallet_deterministic_key_derivation() {
     // Add same account multiple times to different wallets
     for _ in 0..3 {
         let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
-        let config = WalletConfig::default();
+
         let mut test_wallet = Wallet::from_mnemonic(
             mnemonic,
-            config,
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
@@ -509,12 +455,10 @@ fn test_wallet_external_signable() {
     let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
     let root_pub_key = root_priv_key.to_root_extended_pub_key();
 
-    let config = WalletConfig::default();
     // Convert root public key to extended public key for the network
     let xpub = root_pub_key.to_extended_pub_key(Network::Testnet);
     let wallet = Wallet::from_external_signable(
         xpub,
-        Some(config),
         BTreeMap::new(), // Empty accounts for external signable wallet
     )
     .unwrap();
