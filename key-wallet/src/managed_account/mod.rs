@@ -4,15 +4,21 @@
 //! kept separate from the immutable Account structure.
 
 use crate::account::AccountMetadata;
+#[cfg(feature = "bls")]
+use crate::account::BLSAccount;
+#[cfg(feature = "eddsa")]
+use crate::account::EdDSAAccount;
+use crate::account::ManagedAccountTrait;
 use crate::account::TransactionRecord;
-use crate::account::{BLSAccount, EdDSAAccount, ManagedAccountTrait};
 #[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
-use crate::gap_limit::GapLimitManager;
+#[cfg(any(feature = "bls", feature = "eddsa"))]
 use crate::managed_account::address_pool::PublicKeyType;
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletBalance;
-use crate::{AddressInfo, ExtendedPubKey, Network};
+#[cfg(feature = "eddsa")]
+use crate::AddressInfo;
+use crate::{ExtendedPubKey, Network};
 use alloc::collections::{BTreeMap, BTreeSet};
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::Txid;
@@ -31,7 +37,7 @@ pub mod transaction_record;
 /// Managed account with mutable state
 ///
 /// This struct contains the mutable state of an account including address pools,
-/// gap limits, metadata, and balance information. It is managed separately from
+/// metadata, and balance information. It is managed separately from
 /// the immutable Account structure.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -40,8 +46,6 @@ pub struct ManagedAccount {
     pub account_type: ManagedAccountType,
     /// Network this account belongs to
     pub network: Network,
-    /// Gap limit manager
-    pub gap_limits: GapLimitManager,
     /// Account metadata
     pub metadata: AccountMetadata,
     /// Whether this is a watch-only account
@@ -58,16 +62,10 @@ pub struct ManagedAccount {
 
 impl ManagedAccount {
     /// Create a new managed account
-    pub fn new(
-        account_type: ManagedAccountType,
-        network: Network,
-        gap_limits: GapLimitManager,
-        is_watch_only: bool,
-    ) -> Self {
+    pub fn new(account_type: ManagedAccountType, network: Network, is_watch_only: bool) -> Self {
         Self {
             account_type,
             network,
-            gap_limits,
             metadata: AccountMetadata::default(),
             is_watch_only,
             balance: WalletBalance::default(),
@@ -97,7 +95,7 @@ impl ManagedAccount {
             .expect("Should succeed with NoKeySource")
         });
 
-        Self::new(managed_type, account.network, GapLimitManager::default(), account.is_watch_only)
+        Self::new(managed_type, account.network, account.is_watch_only)
     }
 
     /// Create a ManagedAccount from a BLS Account
@@ -121,7 +119,7 @@ impl ManagedAccount {
             .expect("Should succeed with NoKeySource")
         });
 
-        Self::new(managed_type, account.network, GapLimitManager::default(), account.is_watch_only)
+        Self::new(managed_type, account.network, account.is_watch_only)
     }
 
     /// Create a ManagedAccount from an EdDSA Account
@@ -136,7 +134,7 @@ impl ManagedAccount {
         )
         .expect("Should succeed with NoKeySource");
 
-        Self::new(managed_type, account.network, GapLimitManager::default(), account.is_watch_only)
+        Self::new(managed_type, account.network, account.is_watch_only)
     }
 
     /// Get the account index
@@ -253,35 +251,8 @@ impl ManagedAccount {
         self.metadata.last_used = Some(Self::current_timestamp());
 
         // Use the account type's mark_address_used method
-        let result = self.account_type.mark_address_used(address);
-
-        // Update gap limits if address was marked as used
-        if result {
-            match &self.account_type {
-                ManagedAccountType::Standard {
-                    external_addresses,
-                    internal_addresses,
-                    ..
-                } => {
-                    if let Some(index) = external_addresses.address_index(address) {
-                        self.gap_limits.external.mark_used(index);
-                    } else if let Some(index) = internal_addresses.address_index(address) {
-                        self.gap_limits.internal.mark_used(index);
-                    }
-                }
-                _ => {
-                    // For single-pool account types, update the external gap limit
-                    for pool in self.account_type.address_pools() {
-                        if let Some(index) = pool.address_index(address) {
-                            self.gap_limits.external.mark_used(index);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        result
+        // The address pools already track gap limits internally
+        self.account_type.mark_address_used(address)
     }
 
     /// Update the account balance
@@ -738,6 +709,73 @@ impl ManagedAccount {
     pub fn used_address_count(&self) -> usize {
         self.account_type.address_pools().iter().map(|pool| pool.stats().used_count as usize).sum()
     }
+
+    /// Get the external gap limit for standard accounts
+    pub fn external_gap_limit(&self) -> Option<u32> {
+        match &self.account_type {
+            ManagedAccountType::Standard {
+                external_addresses,
+                ..
+            } => Some(external_addresses.gap_limit),
+            _ => None,
+        }
+    }
+
+    /// Get the internal gap limit for standard accounts
+    pub fn internal_gap_limit(&self) -> Option<u32> {
+        match &self.account_type {
+            ManagedAccountType::Standard {
+                internal_addresses,
+                ..
+            } => Some(internal_addresses.gap_limit),
+            _ => None,
+        }
+    }
+
+    /// Get the gap limit for non-standard (single-pool) accounts
+    pub fn gap_limit(&self) -> Option<u32> {
+        match &self.account_type {
+            ManagedAccountType::Standard {
+                ..
+            } => None,
+            ManagedAccountType::CoinJoin {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityRegistration {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityTopUp {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::IdentityInvitation {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderVotingKeys {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderOwnerKeys {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderOperatorKeys {
+                addresses,
+                ..
+            }
+            | ManagedAccountType::ProviderPlatformKeys {
+                addresses,
+                ..
+            } => Some(addresses.gap_limit),
+        }
+    }
 }
 
 impl ManagedAccountTrait for ManagedAccount {
@@ -751,14 +789,6 @@ impl ManagedAccountTrait for ManagedAccount {
 
     fn network(&self) -> Network {
         self.network
-    }
-
-    fn gap_limits(&self) -> &GapLimitManager {
-        &self.gap_limits
-    }
-
-    fn gap_limits_mut(&mut self) -> &mut GapLimitManager {
-        &mut self.gap_limits
     }
 
     fn metadata(&self) -> &AccountMetadata {

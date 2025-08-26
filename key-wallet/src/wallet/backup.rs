@@ -17,8 +17,7 @@ impl Wallet {
     /// ```no_run
     /// use key_wallet::wallet::Wallet;
     ///
-    /// let wallet = Wallet::new_random(
-    ///     Default::default(),
+    ///     /// /// let wallet = Wallet::new_random(    /// ///
     ///     key_wallet::Network::Testnet,
     ///     key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
     /// ).unwrap();
@@ -59,7 +58,7 @@ impl Wallet {
 mod tests {
     use super::*;
     use crate::mnemonic::{Language, Mnemonic};
-    use crate::wallet::{initialization::WalletAccountCreationOptions, WalletConfig};
+    use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::Network;
 
     #[test]
@@ -72,7 +71,6 @@ mod tests {
 
         let original = Wallet::from_mnemonic(
             mnemonic,
-            WalletConfig::default(),
             Network::Testnet,
             WalletAccountCreationOptions::Default,
         )

@@ -5,7 +5,7 @@
 use crate::account::{AccountType, StandardAccountType};
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey};
 use crate::mnemonic::{Language, Mnemonic};
-use crate::wallet::{Wallet, WalletConfig};
+use crate::wallet::Wallet;
 use crate::Network;
 use secp256k1::Secp256k1;
 use std::time::{Duration, Instant};
@@ -88,9 +88,7 @@ fn test_key_derivation_performance() {
 
 #[test]
 fn test_account_creation_performance() {
-    let config = WalletConfig::default();
     let mut wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -129,7 +127,6 @@ fn test_wallet_recovery_performance() {
         Language::English,
     ).unwrap();
 
-    let config = WalletConfig::default();
     let iterations = 10;
     let mut times = Vec::new();
 
@@ -137,7 +134,6 @@ fn test_wallet_recovery_performance() {
         let start = Instant::now();
         let _wallet = Wallet::from_mnemonic(
             mnemonic.clone(),
-            config.clone(),
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
@@ -206,9 +202,7 @@ fn test_address_generation_batch_performance() {
 
 #[test]
 fn test_large_wallet_memory_usage() {
-    let config = WalletConfig::default();
     let mut wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -300,14 +294,13 @@ fn test_concurrent_derivation_performance() {
 fn test_wallet_serialization_performance() {
     // Serialization test would require bincode feature
     // For now, just test wallet creation/destruction cycle
-    let config = WalletConfig::default();
+
     let iterations = 100;
     let mut creation_times = Vec::new();
 
     for _ in 0..iterations {
         let start = Instant::now();
         let _wallet = Wallet::new_random(
-            config.clone(),
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )

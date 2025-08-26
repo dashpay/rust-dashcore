@@ -4,7 +4,7 @@
 
 use crate::account::{AccountType, StandardAccountType};
 use crate::mnemonic::{Language, Mnemonic};
-use crate::wallet::{Wallet, WalletConfig, WalletType};
+use crate::wallet::{Wallet, WalletType};
 use crate::Network;
 
 #[test]
@@ -14,10 +14,8 @@ fn test_wallet_mnemonic_export() {
         Language::English,
     ).unwrap();
 
-    let config = WalletConfig::default();
     let wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -37,9 +35,7 @@ fn test_wallet_mnemonic_export() {
 
 #[test]
 fn test_wallet_full_backup_restore() {
-    let config = WalletConfig::default();
     let mut original_wallet = Wallet::new_random(
-        config.clone(),
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -85,7 +81,6 @@ fn test_wallet_full_backup_restore() {
     // Restore wallet
     let mut restored_wallet = Wallet::from_mnemonic(
         mnemonic,
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -127,9 +122,8 @@ fn test_wallet_full_backup_restore() {
 #[test]
 fn test_wallet_partial_backup() {
     // Test backing up only essential data (mnemonic + account indices)
-    let config = WalletConfig::default();
+
     let mut wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -169,11 +163,9 @@ fn test_wallet_encrypted_backup() {
         Language::English,
     ).unwrap();
 
-    let config = WalletConfig::default();
     let wallet = Wallet::from_mnemonic_with_passphrase(
         mnemonic.clone(),
         passphrase.to_string(),
-        config.clone(),
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -199,7 +191,6 @@ fn test_wallet_encrypted_backup() {
     let restored_wallet = Wallet::from_mnemonic_with_passphrase(
         restored_mnemonic,
         passphrase.to_string(),
-        config,
         backup.network,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -211,9 +202,8 @@ fn test_wallet_encrypted_backup() {
 #[test]
 fn test_wallet_metadata_backup() {
     // Test backing up wallet metadata (labels, settings, etc.)
-    let config = WalletConfig::default();
+
     let mut wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -261,10 +251,8 @@ fn test_multi_network_backup_restore() {
         Language::English,
     ).unwrap();
 
-    let config = WalletConfig::default();
     let mut wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        config.clone(),
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -308,7 +296,6 @@ fn test_multi_network_backup_restore() {
     // Restore and verify
     let mut restored = Wallet::from_mnemonic(
         mnemonic,
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -338,9 +325,8 @@ fn test_multi_network_backup_restore() {
 #[test]
 fn test_incremental_backup() {
     // Test incremental backup of changes since last backup
-    let config = WalletConfig::default();
+
     let mut wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -410,14 +396,12 @@ fn test_backup_version_compatibility() {
 
     // Simulate migration from older version
     let mnemonic = Mnemonic::from_phrase(&backup_v1.mnemonic, Language::English).unwrap();
-    let config = WalletConfig::default();
 
     let wallet = match backup_v1.version {
         1 => {
             // Version 1 migration logic
             Wallet::from_mnemonic(
                 mnemonic,
-                config,
                 backup_v1.network,
                 crate::wallet::initialization::WalletAccountCreationOptions::None,
             )

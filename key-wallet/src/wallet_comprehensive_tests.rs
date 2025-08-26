@@ -8,7 +8,7 @@
 mod tests {
     use crate::account::{AccountType, StandardAccountType};
     use crate::mnemonic::{Language, Mnemonic};
-    use crate::wallet::{Wallet, WalletConfig};
+    use crate::wallet::Wallet;
     use crate::Network;
     use alloc::collections::BTreeMap;
 
@@ -21,9 +21,7 @@ mod tests {
 
     #[test]
     fn test_wallet_creation() {
-        let config = WalletConfig::default();
         let wallet = Wallet::new_random(
-            config,
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
@@ -38,18 +36,15 @@ mod tests {
     #[test]
     fn test_wallet_recovery_from_mnemonic() {
         let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
-        let config = WalletConfig::default();
 
         let wallet1 = Wallet::from_mnemonic(
             mnemonic.clone(),
-            config.clone(),
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
         let wallet2 = Wallet::from_mnemonic(
             mnemonic,
-            config,
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
@@ -81,9 +76,7 @@ mod tests {
 
     #[test]
     fn test_multiple_accounts() {
-        let config = WalletConfig::default();
         let mut wallet = Wallet::new_random(
-            config,
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
@@ -128,9 +121,7 @@ mod tests {
 
     #[test]
     fn test_watch_only_wallet() {
-        let config = WalletConfig::default();
         let wallet = Wallet::new_random(
-            config.clone(),
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
@@ -141,12 +132,7 @@ mod tests {
         let root_xpub_as_extended = root_xpub.to_extended_pub_key(Network::Testnet);
 
         // Create watch-only wallet from the root xpub
-        let watch_only = Wallet::from_xpub(
-            root_xpub_as_extended,
-            Some(config),
-            BTreeMap::new(), // Empty accounts for watch-only wallet
-        )
-        .unwrap();
+        let watch_only = Wallet::from_xpub(root_xpub_as_extended, BTreeMap::new()).unwrap();
 
         assert!(watch_only.is_watch_only());
         assert!(!watch_only.has_mnemonic());
@@ -164,12 +150,10 @@ mod tests {
     #[test]
     fn test_wallet_with_passphrase() {
         let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
-        let config = WalletConfig::default();
 
         // Create wallet without passphrase - use regular from_mnemonic for empty passphrase
         let wallet1 = Wallet::from_mnemonic(
             mnemonic.clone(),
-            config.clone(),
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
@@ -179,7 +163,6 @@ mod tests {
         let wallet2 = Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             "TREZOR".to_string(),
-            config,
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )

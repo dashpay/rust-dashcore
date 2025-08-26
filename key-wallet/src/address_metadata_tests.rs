@@ -6,7 +6,7 @@
 mod tests {
     use crate::{
         account::{AccountType, StandardAccountType},
-        Network, Wallet, WalletConfig,
+        Network, Wallet,
     };
 
     // TODO: Address metadata tests need to be reimplemented with ManagedAccount
@@ -25,9 +25,8 @@ mod tests {
     #[test]
     fn test_basic_wallet_creation() {
         // Basic test that wallet and accounts can be created
-        let config = WalletConfig::default();
+
         let wallet = Wallet::new_random(
-            config,
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
@@ -48,9 +47,7 @@ mod tests {
 
     #[test]
     fn test_multiple_accounts() {
-        let config = WalletConfig::default();
         let mut wallet = Wallet::new_random(
-            config,
             Network::Testnet,
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )

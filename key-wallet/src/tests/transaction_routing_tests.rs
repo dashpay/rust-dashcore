@@ -60,14 +60,13 @@ fn test_transaction_routing_to_bip44_account() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // Create a wallet with a BIP44 account
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
@@ -124,14 +123,13 @@ fn test_transaction_routing_to_bip32_account() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // Create a wallet with BIP32 accounts
-    let mut wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::None)
+    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
         .expect("Failed to create wallet without default accounts");
 
     // Add a BIP32 account
@@ -215,14 +213,13 @@ fn test_transaction_routing_to_coinjoin_account() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // Create a wallet and add a CoinJoin account
-    let mut wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::None)
+    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
         .expect("Failed to create wallet without default accounts");
 
     let account_type = AccountType::CoinJoin {
@@ -323,14 +320,13 @@ fn test_transaction_affects_multiple_accounts() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // Create a wallet with multiple accounts
-    let mut wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     // Add another BIP44 account
@@ -457,13 +453,12 @@ fn test_identity_registration_account_routing() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
-    let mut wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::None)
+    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
         .expect("Failed to create wallet without default accounts");
 
     // Add identity registration account
@@ -579,13 +574,12 @@ fn test_normal_payment_to_identity_address_not_detected() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
@@ -658,7 +652,7 @@ fn test_provider_registration_transaction_routing_check_owner_only() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::blockdata::transaction::special_transaction::{
         provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
         TransactionPayload,
@@ -666,13 +660,12 @@ fn test_provider_registration_transaction_routing_check_owner_only() {
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -805,7 +798,7 @@ fn test_provider_registration_transaction_routing_check_voting_only() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::blockdata::transaction::special_transaction::{
         provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
         TransactionPayload,
@@ -813,13 +806,12 @@ fn test_provider_registration_transaction_routing_check_voting_only() {
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -952,7 +944,7 @@ fn test_provider_registration_transaction_routing_check_operator_only() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::blockdata::transaction::special_transaction::{
         provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
         TransactionPayload,
@@ -960,13 +952,12 @@ fn test_provider_registration_transaction_routing_check_operator_only() {
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -1100,7 +1091,7 @@ fn test_provider_registration_transaction_routing_check_platform_only() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::blockdata::transaction::special_transaction::{
         provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
         TransactionPayload,
@@ -1108,13 +1099,12 @@ fn test_provider_registration_transaction_routing_check_platform_only() {
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -1269,12 +1259,10 @@ fn test_provider_registration_transaction_routing_check_platform_only() {
 fn test_next_address_method_restrictions() {
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
@@ -1344,7 +1332,7 @@ fn test_provider_registration_transaction_routing_check_owner_and_voting() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::blockdata::transaction::special_transaction::{
         provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
         TransactionPayload,
@@ -1352,13 +1340,12 @@ fn test_provider_registration_transaction_routing_check_owner_and_voting() {
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create other wallet for testing");
 
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create main test wallet");
 
     let mut other_managed_wallet_info =
@@ -1514,7 +1501,7 @@ fn test_provider_registration_transaction_routing_check_voting_and_operator() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::blockdata::transaction::special_transaction::{
         provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
         TransactionPayload,
@@ -1522,13 +1509,12 @@ fn test_provider_registration_transaction_routing_check_voting_and_operator() {
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create other wallet for testing");
 
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create main test wallet");
 
     let mut other_managed_wallet_info =
@@ -1684,7 +1670,7 @@ fn test_provider_registration_transaction_routing_check_all() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::blockdata::transaction::special_transaction::{
         provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
         TransactionPayload,
@@ -1692,10 +1678,9 @@ fn test_provider_registration_transaction_routing_check_all() {
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // Create wallet with all provider key types
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create test wallet with all provider key types");
 
     let mut managed_wallet_info =
@@ -1892,7 +1877,7 @@ fn test_provider_registration_transaction_routing_check_outputs() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::blockdata::transaction::special_transaction::{
         provider_registration::{ProviderMasternodeType, ProviderRegistrationPayload},
         TransactionPayload,
@@ -1900,13 +1885,12 @@ fn test_provider_registration_transaction_routing_check_outputs() {
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create other wallet for testing");
 
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create main test wallet");
 
     let mut other_managed_wallet_info =
@@ -2152,13 +2136,12 @@ fn test_update_state_flag_behavior() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
@@ -2252,14 +2235,13 @@ fn test_coinbase_transaction_routing_to_bip44_receive_address() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // Create a wallet with a BIP44 account
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with BIP44 account for coinbase test");
 
     let mut managed_wallet_info =
@@ -2334,14 +2316,13 @@ fn test_coinbase_transaction_routing_to_bip44_change_address() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // Create a wallet with a BIP44 account
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with BIP44 account for coinbase change test");
 
     let mut managed_wallet_info =
@@ -2416,14 +2397,13 @@ fn test_coinbase_transaction_routing_to_bip32_address() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // Create a wallet with BIP32 accounts
-    let mut wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::None)
+    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
         .expect("Failed to create wallet for BIP32 coinbase test");
 
     // Add a BIP32 account
@@ -2506,14 +2486,13 @@ fn test_coinbase_transaction_routing_multiple_outputs() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // Create a wallet with multiple account types
-    let mut wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with multiple accounts for coinbase test");
 
     // Add another BIP44 account
@@ -2653,21 +2632,20 @@ fn test_coinbase_transaction_not_ours() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // Create our wallet
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet for coinbase not-ours test");
 
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
 
     // Create another wallet to get an unrelated address
-    let other_wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create other wallet for unrelated address");
 
     let mut other_managed_wallet_info =
@@ -2740,14 +2718,13 @@ fn test_gap_limit_with_update_state_true() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // Create a wallet with a BIP44 account
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
@@ -2849,14 +2826,13 @@ fn test_gap_limit_with_update_state_false() {
     use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::Wallet;
-    use crate::wallet::WalletConfig;
+
     use dashcore::TxOut;
 
     let network = Network::Testnet;
-    let config = WalletConfig::default();
 
     // Create a wallet with a BIP44 account
-    let wallet = Wallet::new_random(config, network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
@@ -2876,12 +2852,9 @@ fn test_gap_limit_with_update_state_false() {
 
     // Generate 25 receive addresses (to exceed the default gap limit of 20)
     // Using the new batch method for efficiency
+    let external_gap_limit = managed_account.external_gap_limit().unwrap_or(20);
     let addresses = managed_account
-        .next_receive_addresses(
-            Some(&xpub),
-            (managed_account.gap_limits.external.limit + 5) as usize,
-            false,
-        )
+        .next_receive_addresses(Some(&xpub), (external_gap_limit + 5) as usize, false)
         .expect("Failed to generate 55 receive addresses");
 
     // Create a transaction context for testing
@@ -2898,7 +2871,7 @@ fn test_gap_limit_with_update_state_false() {
     let mut detected_count = 0;
     let mut detected_indices = Vec::new();
 
-    let gap_limit_external_limit = managed_account.gap_limits.external.limit as usize;
+    let gap_limit_external_limit = managed_account.external_gap_limit().unwrap_or(20) as usize;
 
     for (i, address) in addresses.iter().enumerate() {
         // Create a unique transaction for each address
@@ -2953,10 +2926,6 @@ fn test_gap_limit_with_update_state_false() {
     // With update_state=false, only transactions within the gap limit should be detected
     // The default gap limit is typically 20 addresses
     // Since we're not updating state, the wallet should stop detecting after the gap
-    println!(
-        "With update_state=false, detected {} transactions at indices: {:?}",
-        detected_count, detected_indices
-    );
 
     assert_eq!(
         detected_count, gap_limit_external_limit, // Allow some flexibility in case gap limit is slightly different

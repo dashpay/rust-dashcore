@@ -6,7 +6,6 @@ mod tests {
     use crate::account::StandardAccountType;
     use crate::mnemonic::{Language, Mnemonic};
     use crate::wallet::initialization::WalletAccountCreationOptions;
-    use crate::wallet::WalletConfig;
     use crate::{AccountType, Network, Wallet};
 
     #[test]
@@ -22,9 +21,8 @@ mod tests {
         let wallet = Wallet::from_mnemonic_with_passphrase(
             mnemonic.clone(),
             passphrase.to_string(),
-            WalletConfig::default(),
             network,
-            WalletAccountCreationOptions::None, // Must use None for wallets with passphrase
+            WalletAccountCreationOptions::None,
         )
         .expect("Should create wallet with passphrase");
 
@@ -72,7 +70,6 @@ mod tests {
         let wallet = Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             passphrase.to_string(),
-            WalletConfig::default(),
             network,
             WalletAccountCreationOptions::None,
         )
@@ -107,7 +104,6 @@ mod tests {
         let mut wallet = Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             passphrase.to_string(),
-            WalletConfig::default(),
             network,
             WalletAccountCreationOptions::None,
         )
@@ -153,13 +149,9 @@ mod tests {
         let network = Network::Testnet;
 
         // Create regular wallet WITHOUT passphrase
-        let mut wallet = Wallet::from_mnemonic(
-            mnemonic,
-            WalletConfig::default(),
-            network,
-            WalletAccountCreationOptions::Default,
-        )
-        .expect("Should create wallet");
+        let mut wallet =
+            Wallet::from_mnemonic(mnemonic, network, WalletAccountCreationOptions::Default)
+                .expect("Should create wallet");
 
         // Try to use add_account_with_passphrase - should fail
         let account_type = AccountType::Standard {

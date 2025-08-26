@@ -3,7 +3,7 @@
 //! Tests CoinJoin rounds, denomination creation, and privacy features.
 
 use crate::account::AccountType;
-use crate::wallet::{Wallet, WalletConfig};
+use crate::wallet::Wallet;
 use crate::Network;
 use dashcore::hashes::Hash;
 use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
@@ -36,9 +36,8 @@ struct ParticipantInfo {
 #[test]
 fn test_coinjoin_denomination_creation() {
     // Test creating standard CoinJoin denominations
-    let config = WalletConfig::default();
+
     let mut wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
@@ -206,9 +205,8 @@ fn test_coinjoin_round_timeout() {
 #[test]
 fn test_multiple_denomination_mixing() {
     // Test mixing multiple denominations in parallel
-    let config = WalletConfig::default();
+
     let mut wallet = Wallet::new_random(
-        config,
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )

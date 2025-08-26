@@ -131,19 +131,13 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Use appropriate wallet creation method based on whether a passphrase is provided
         let wallet = if passphrase.is_empty() {
-            Wallet::from_mnemonic(
-                mnemonic_obj,
-                WalletConfig::default(),
-                network,
-                account_creation_options,
-            )
-            .map_err(|e| WalletError::WalletCreation(e.to_string()))?
+            Wallet::from_mnemonic(mnemonic_obj, network, account_creation_options)
+                .map_err(|e| WalletError::WalletCreation(e.to_string()))?
         } else {
             // For wallets with passphrase, use the provided options
             Wallet::from_mnemonic_with_passphrase(
                 mnemonic_obj,
                 passphrase.to_string(),
-                WalletConfig::default(),
                 network,
                 account_creation_options,
             )
@@ -188,13 +182,8 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             Mnemonic::from_phrase(test_mnemonic, key_wallet::mnemonic::Language::English)
                 .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
-        let wallet = Wallet::from_mnemonic(
-            mnemonic,
-            WalletConfig::default(),
-            network,
-            account_creation_options,
-        )
-        .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
+        let wallet = Wallet::from_mnemonic(mnemonic, network, account_creation_options)
+            .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
         // Create managed wallet info
         let mut managed_info = T::with_name(wallet.wallet_id, name);
