@@ -1,9 +1,7 @@
 //! Comprehensive error handling tests for dash-spv
 //!
-//! NOTE: This test file is currently disabled due to incomplete mock trait implementations.
+//! NOTE: This test file is currently ignored due to incomplete mock trait implementations.
 //! TODO: Re-enable once StorageManager and NetworkManager trait methods are fully implemented.
-
-#![cfg(skip_mock_implementation_incomplete)]
 
 //! Comprehensive error handling tests for dash-spv
 //!
@@ -537,6 +535,7 @@ impl StorageManager for MockStorageManager {
 
 // ===== Network Error Tests =====
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_network_connection_failure() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9999);
@@ -552,6 +551,7 @@ async fn test_network_connection_failure() {
     }
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_network_timeout_recovery() {
     let mut network = MockNetworkManager::new();
@@ -582,6 +582,7 @@ async fn test_network_timeout_recovery() {
     }
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_network_peer_disconnection() {
     let mut network = MockNetworkManager::new();
@@ -605,6 +606,7 @@ async fn test_network_peer_disconnection() {
     assert!(disconnect_occurred, "Expected peer disconnection");
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_network_invalid_data_handling() {
     let mut network = MockNetworkManager::new();
@@ -620,6 +622,7 @@ async fn test_network_invalid_data_handling() {
 
 // ===== Storage Error Tests =====
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_storage_disk_full() {
     let mut storage = MockStorageManager::new();
@@ -636,6 +639,7 @@ async fn test_storage_disk_full() {
     }
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_storage_permission_denied() {
     let mut storage = MockStorageManager::new();
@@ -652,6 +656,7 @@ async fn test_storage_permission_denied() {
     }
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_storage_corruption_detection() {
     let mut storage = MockStorageManager::new();
@@ -667,6 +672,7 @@ async fn test_storage_corruption_detection() {
     }
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_storage_lock_poisoned() {
     let mut storage = MockStorageManager::new();
@@ -683,6 +689,7 @@ async fn test_storage_lock_poisoned() {
     }
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_storage_recovery_strategy() {
     let mut storage = MockStorageManager::new();
@@ -715,6 +722,7 @@ async fn test_storage_recovery_strategy() {
 
 // ===== Validation Error Tests =====
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_validation_invalid_proof_of_work() {
     let mut header = create_test_header(0);
@@ -730,6 +738,7 @@ async fn test_validation_invalid_proof_of_work() {
     }
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_validation_invalid_header_chain() {
     let header1 = create_test_header(0);
@@ -746,6 +755,7 @@ async fn test_validation_invalid_header_chain() {
     }
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_validation_recovery_strategy() {
     let mut recovery_manager = RecoveryManager::new();
@@ -840,6 +850,7 @@ fn test_error_messages_contain_context() {
 
 // ===== Recovery Mechanism Tests =====
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_exponential_backoff() {
     let mut recovery_manager = RecoveryManager::new();
@@ -873,6 +884,7 @@ async fn test_exponential_backoff() {
     assert!(delays[2] > delays[1]);
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_max_retry_limit() {
     let mut recovery_manager = RecoveryManager::new();
@@ -906,6 +918,7 @@ async fn test_max_retry_limit() {
     assert!(abort_occurred, "Expected abort after max retries");
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_recovery_statistics() {
     let mut recovery_manager = RecoveryManager::new();
@@ -937,6 +950,7 @@ async fn test_recovery_statistics() {
 
 // ===== Error Propagation Tests =====
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_error_propagation_through_layers() {
     // Create a storage error
@@ -1048,6 +1062,7 @@ fn test_parse_errors() {
 
 // ===== Real-world Scenario Tests =====
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_cascading_network_failures() {
     let mut network = MockNetworkManager::new();
@@ -1092,6 +1107,7 @@ async fn test_cascading_network_failures() {
     }
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_storage_corruption_recovery() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -1123,6 +1139,7 @@ async fn test_storage_corruption_recovery() {
     assert!(result.is_err());
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_concurrent_error_handling() {
     let storage = Arc::new(RwLock::new(MockStorageManager::new()));
@@ -1165,6 +1182,7 @@ async fn test_concurrent_error_handling() {
 
 // ===== Headers2 Specific Error Tests =====
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_headers2_decompression_failure() {
     let error = SyncError::Headers2DecompressionFailed("Invalid compressed data".to_string());

@@ -1,6 +1,6 @@
 use crate::{
     null_check, set_last_error, FFIArray, FFIClientConfig, FFIDetailedSyncProgress, FFIErrorCode,
-    FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFIString, FFISyncProgress, FFITransaction,
+    FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFISyncProgress, FFITransaction,
 };
 // Import wallet types from key-wallet-ffi
 use key_wallet_ffi::{FFIBalance, FFIUTXO as FFIUtxo};
@@ -653,7 +653,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
             } else {
                 let msg = "No headers downloaded".to_string();
                 eprintln!("❌ {}", msg);
-                Err(dash_spv::SpvError::Sync(dash_spv::SyncError::SyncFailed(msg)))
+                Err(dash_spv::SpvError::Sync(dash_spv::SyncError::Network(msg)))
             }
         } else {
             Err(dash_spv::SpvError::Config("Client not initialized".to_string()))
@@ -775,7 +775,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip_with_progress(
     // Spawn sync task in a separate thread with safe callback access
     let runtime_handle = runtime.handle().clone();
     let sync_callbacks_clone = sync_callbacks.clone();
-    let shutdown_signal_clone = client.shutdown_signal.clone();
     let sync_handle = std::thread::spawn(move || {
         // Run monitoring loop
         let monitor_result = runtime_handle.block_on(async move {
@@ -1035,7 +1034,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos(client: *mut FFIDashSpvCl
         FFIArray {
             data: std::ptr::null_mut(),
             len: 0,
-            capacity: 0
+            capacity: 0,
+            elem_size: 0,
+            elem_align: 1
         }
     );
 
@@ -1066,6 +1067,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos(client: *mut FFIDashSpvCl
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
+                elem_size: 0,
+                elem_align: 1,
             }
         }
     }
@@ -1081,7 +1084,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos_for_address(
         FFIArray {
             data: std::ptr::null_mut(),
             len: 0,
-            capacity: 0
+            capacity: 0,
+            elem_size: 0,
+            elem_align: 1
         }
     );
     null_check!(
@@ -1089,7 +1094,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos_for_address(
         FFIArray {
             data: std::ptr::null_mut(),
             len: 0,
-            capacity: 0
+            capacity: 0,
+            elem_size: 0,
+            elem_align: 1
         }
     );
 
@@ -1101,6 +1108,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos_for_address(
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
+                elem_size: 0,
+                elem_align: 1,
             };
         }
     };
@@ -1113,6 +1122,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos_for_address(
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
+                elem_size: 0,
+                elem_align: 1,
             };
         }
     };
@@ -1149,6 +1160,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos_for_address(
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
+                elem_size: 0,
+                elem_align: 1,
             }
         }
     }
@@ -1418,7 +1431,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_address_history(
         FFIArray {
             data: std::ptr::null_mut(),
             len: 0,
-            capacity: 0
+            capacity: 0,
+            elem_size: 0,
+            elem_align: 1
         }
     );
     null_check!(
@@ -1426,7 +1441,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_address_history(
         FFIArray {
             data: std::ptr::null_mut(),
             len: 0,
-            capacity: 0
+            capacity: 0,
+            elem_size: 0,
+            elem_align: 1
         }
     );
 
@@ -1438,6 +1455,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_address_history(
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
+                elem_size: 0,
+                elem_align: 1,
             };
         }
     };
@@ -1450,6 +1469,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_address_history(
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
+                elem_size: 0,
+                elem_align: 1,
             };
         }
     };
@@ -1459,6 +1480,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_address_history(
         data: std::ptr::null_mut(),
         len: 0,
         capacity: 0,
+        elem_size: 0,
+        elem_align: 1,
     }
 }
 
@@ -1555,7 +1578,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_watched_addresses(
         FFIArray {
             data: std::ptr::null_mut(),
             len: 0,
-            capacity: 0
+            capacity: 0,
+            elem_size: 0,
+            elem_align: 1
         }
     );
 
@@ -1564,6 +1589,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_watched_addresses(
         data: std::ptr::null_mut(),
         len: 0,
         capacity: 0,
+        elem_size: 0,
+        elem_align: 1,
     }
 }
 
@@ -1576,7 +1603,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_watched_scripts(
         FFIArray {
             data: std::ptr::null_mut(),
             len: 0,
-            capacity: 0
+            capacity: 0,
+            elem_size: 0,
+            elem_align: 1
         }
     );
 
@@ -1585,6 +1614,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_watched_scripts(
         data: std::ptr::null_mut(),
         len: 0,
         capacity: 0,
+        elem_size: 0,
+        elem_align: 1,
     }
 }
 
@@ -1734,8 +1765,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_balance_with_mempool(
 ) -> *mut FFIBalance {
     null_check!(client, std::ptr::null_mut());
 
-    let client = &(*client);
-    let inner = client.inner.clone();
+    let _client = &(*client);
 
     set_last_error("Wallet-wide mempool balance not available in current dash-spv version");
     std::ptr::null_mut()

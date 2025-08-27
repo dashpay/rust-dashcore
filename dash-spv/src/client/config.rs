@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use dashcore::{Address, Network, ScriptBuf};
+use dashcore::Network;
 // Serialization removed due to complex Address types
 
 use crate::types::ValidationMode;

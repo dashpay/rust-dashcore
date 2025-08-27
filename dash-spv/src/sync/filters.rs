@@ -1682,7 +1682,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// Check filters against wallet and return matches.
     pub async fn check_filters_for_matches(
         &self,
-        storage: &S,
+        _storage: &S,
         start_height: u32,
         end_height: u32,
     ) -> SyncResult<Vec<crate::types::FilterMatch>> {
@@ -1893,6 +1893,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     }
 
     /// Check if filter matches any of the provided scripts using BIP158 GCS filter.
+    #[allow(dead_code)]
     fn filter_matches_scripts(
         &self,
         filter_data: &[u8],
@@ -2366,8 +2367,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     /// for processing.
     /// TODO: Integrate with wallet for filter checking
     pub fn spawn_filter_processor(
-        network_message_sender: mpsc::Sender<NetworkMessage>,
-        processing_thread_requests: std::sync::Arc<
+        _network_message_sender: mpsc::Sender<NetworkMessage>,
+        _processing_thread_requests: std::sync::Arc<
             std::sync::Mutex<std::collections::HashSet<BlockHash>>,
         >,
         stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,

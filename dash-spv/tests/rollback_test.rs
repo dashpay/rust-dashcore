@@ -14,6 +14,7 @@ use dashcore::{
 use dashcore_hashes::Hash;
 use tempfile::TempDir;
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 #[ignore = "rollback_to_height not implemented in StorageManager trait"]
 async fn test_disk_storage_rollback() -> Result<(), Box<dyn std::error::Error>> {
@@ -73,6 +74,7 @@ async fn test_disk_storage_rollback() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 #[ignore = "rollback_to_height not implemented in StorageManager trait"]
 async fn test_disk_storage_rollback_filter_headers() -> Result<(), Box<dyn std::error::Error>> {

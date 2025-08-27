@@ -100,6 +100,8 @@ typedef struct FFIArray {
   void *data;
   uintptr_t len;
   uintptr_t capacity;
+  uintptr_t elem_size;
+  uintptr_t elem_align;
 } FFIArray;
 
 typedef void (*BlockCallback)(uint32_t height, const uint8_t (*hash)[32], void *user_data);

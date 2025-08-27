@@ -8,9 +8,7 @@
 // - get_balance (should be get_total_balance)
 // - process_verified_instantlock
 //
-// Commenting out the entire file until the tests can be properly updated.
-
-#![cfg(skip_instantsend_tests)]
+// These tests are currently ignored until they can be properly updated.
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -95,6 +93,7 @@ fn create_signed_instantlock(tx: &Transaction, _sk: &SecretKey<Bls12381G2Impl>) 
 }
 
 #[tokio::test]
+#[ignore = "instantsend tests not yet updated"]
 async fn test_instantsend_end_to_end() {
     let wallet = create_test_wallet();
     let address = create_test_address();

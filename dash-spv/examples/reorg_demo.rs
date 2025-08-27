@@ -11,7 +11,6 @@ fn main() {
     println!("This example is temporarily disabled pending updates to use the new architecture");
 }
 
-#[cfg(skip_example)]
 mod disabled_example {
     use dash_spv::chain::{ChainWork, Fork, ReorgManager};
     use dash_spv::storage::{MemoryStorageManager, StorageManager};

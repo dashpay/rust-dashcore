@@ -1,9 +1,7 @@
 //! Tests for CFHeader gap detection and auto-restart functionality.
 //!
-//! NOTE: This test file is currently disabled due to incomplete mock NetworkManager implementation.
+//! NOTE: This test file is currently ignored due to incomplete mock NetworkManager implementation.
 //! TODO: Re-enable once NetworkManager trait methods are fully implemented.
-
-#![cfg(skip_mock_implementation_incomplete)]
 
 //! Tests for CFHeader gap detection and auto-restart functionality.
 
@@ -41,6 +39,7 @@ fn create_mock_filter_header() -> FilterHeader {
 }
 
 #[tokio::test]
+#[ignore = "mock NetworkManager implementation incomplete"]
 async fn test_cfheader_gap_detection_no_gap() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
@@ -71,6 +70,7 @@ async fn test_cfheader_gap_detection_no_gap() {
 }
 
 #[tokio::test]
+#[ignore = "mock NetworkManager implementation incomplete"]
 async fn test_cfheader_gap_detection_with_gap() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
@@ -104,6 +104,7 @@ async fn test_cfheader_gap_detection_with_gap() {
 }
 
 #[tokio::test]
+#[ignore = "mock NetworkManager implementation incomplete"]
 async fn test_cfheader_gap_detection_filter_ahead() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
@@ -137,6 +138,7 @@ async fn test_cfheader_gap_detection_filter_ahead() {
 }
 
 #[tokio::test]
+#[ignore = "mock NetworkManager implementation incomplete"]
 async fn test_cfheader_restart_cooldown() {
     let mut config = ClientConfig::new(Network::Dash);
     config.cfheader_gap_restart_cooldown_secs = 1; // 1 second cooldown for testing

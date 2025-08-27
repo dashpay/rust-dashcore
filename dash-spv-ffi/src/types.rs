@@ -288,6 +288,8 @@ pub struct FFIArray {
     pub data: *mut c_void,
     pub len: usize,
     pub capacity: usize,
+    pub elem_size: usize,
+    pub elem_align: usize,
 }
 
 impl FFIArray {
@@ -309,6 +311,8 @@ impl FFIArray {
             data,
             len,
             capacity,
+            elem_size: std::mem::size_of::<T>(),
+            elem_align: std::mem::align_of::<T>(),
         }
     }
 
@@ -333,7 +337,14 @@ pub unsafe extern "C" fn dash_spv_ffi_array_destroy(arr: *mut FFIArray) {
     if !arr.is_null() {
         let arr = Box::from_raw(arr);
         if !arr.data.is_null() && arr.capacity > 0 {
-            Vec::from_raw_parts(arr.data as *mut u8, arr.len, arr.capacity);
+            // Deallocate the vector buffer using the original layout
+            use std::alloc::{dealloc, Layout};
+            let size = arr.elem_size.saturating_mul(arr.capacity);
+            if size > 0 && arr.elem_align.is_power_of_two() && arr.elem_align > 0 {
+                // Safety: elem_size/elem_align were recorded from the original Vec<T>
+                let layout = Layout::from_size_align_unchecked(size, arr.elem_align);
+                unsafe { dealloc(arr.data as *mut u8, layout) };
+            }
         }
     }
 }

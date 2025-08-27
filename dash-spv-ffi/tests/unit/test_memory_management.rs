@@ -199,6 +199,8 @@ mod tests {
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
+                elem_size: 0,
+                elem_align: 1,
             };
             dash_spv_ffi_array_destroy(Box::into_raw(Box::new(null_array)));
         }
