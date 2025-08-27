@@ -40,7 +40,7 @@ const CHAINLOCK_VALIDATION_MASTERNODE_OFFSET: u32 = 8;
 pub struct SequentialSyncManager<
     S: StorageManager,
     N: NetworkManager,
-    W: key_wallet_manager::wallet_interface::WalletInterface,
+    W: WalletInterface,
 > {
     _phantom_s: std::marker::PhantomData<S>,
     _phantom_n: std::marker::PhantomData<N>,
@@ -83,7 +83,7 @@ pub struct SequentialSyncManager<
 impl<
         S: StorageManager + Send + Sync + 'static,
         N: NetworkManager + Send + Sync + 'static,
-        W: key_wallet_manager::wallet_interface::WalletInterface,
+        W: WalletInterface,
     > SequentialSyncManager<S, N, W>
 {
     /// Create a new sequential sync manager
