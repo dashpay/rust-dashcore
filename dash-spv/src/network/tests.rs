@@ -135,7 +135,6 @@ mod multi_peer_tests {
             message_timeout: Duration::from_secs(30),
             sync_timeout: Duration::from_secs(60),
             read_timeout: Duration::from_millis(15),
-            watch_items: vec![],
             enable_filters: false,
             enable_masternodes: false,
             max_peers: 3,

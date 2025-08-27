@@ -85,13 +85,10 @@ mod tests {
         let stats = Arc::new(RwLock::new(SpvStats::default()));
         let wallet = Arc::new(RwLock::new(MockWallet::new(Network::Dash)));
         let storage = Arc::new(Mutex::new(MemoryStorageManager::new().await.unwrap()));
-        let watch_items = Arc::new(RwLock::new(HashSet::new()));
-
         let processor = BlockProcessor::new(
             task_rx,
             wallet.clone(),
             storage.clone(),
-            watch_items,
             stats,
             event_tx,
             Network::Dash,
@@ -265,13 +262,11 @@ mod tests {
             network: Network::Dash,
         }));
         let storage = Arc::new(Mutex::new(MemoryStorageManager::new().await.unwrap()));
-        let watch_items = Arc::new(RwLock::new(HashSet::new()));
 
         let processor = BlockProcessor::new(
             task_rx,
             wallet,
             storage,
-            watch_items,
             stats,
             event_tx,
             Network::Dash,

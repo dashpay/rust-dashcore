@@ -23,7 +23,6 @@ mod tests {
         assert_eq!(config.message_timeout, Duration::from_secs(60));
         assert_eq!(config.sync_timeout, Duration::from_secs(300));
         assert_eq!(config.read_timeout, Duration::from_millis(100));
-        assert!(config.watch_items.is_empty());
         assert!(config.enable_filters);
         assert!(config.enable_masternodes);
         assert_eq!(config.max_peers, 8);
@@ -112,23 +111,6 @@ mod tests {
         assert_eq!(config.peers.len(), 2);
         assert_eq!(config.peers[0], addr1);
         assert_eq!(config.peers[1], addr2);
-    }
-
-    #[test]
-    fn test_watch_items() {
-        let mut config = ClientConfig::default();
-
-        // Create a dummy P2PKH address for testing
-        use dashcore::hashes::Hash;
-        let pubkey_hash = dashcore::PubkeyHash::from_byte_array([0u8; 20]);
-        let address =
-            Address::new(Network::Testnet, dashcore::address::Payload::PubkeyHash(pubkey_hash));
-        config = config.watch_address(address);
-        assert_eq!(config.watch_items.len(), 1);
-
-        let script = dashcore::ScriptBuf::new();
-        config = config.watch_script(script);
-        assert_eq!(config.watch_items.len(), 2);
     }
 
     #[test]
