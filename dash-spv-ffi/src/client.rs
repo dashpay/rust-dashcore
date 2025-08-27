@@ -5,7 +5,6 @@ use crate::{
 };
 use dash_spv::types::SyncStage;
 use dash_spv::DashSpvClient;
-use dash_spv::Utxo;
 use dashcore::{Address, ScriptBuf, Txid};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -100,7 +99,19 @@ struct SyncCallbackData {
 
 /// FFIDashSpvClient structure
 pub struct FFIDashSpvClient {
-    pub(crate) inner: Arc<Mutex<Option<DashSpvClient>>>,
+    pub(crate) inner: Arc<
+        Mutex<
+            Option<
+                DashSpvClient<
+                    key_wallet_manager::spv_wallet_manager::SPVWalletManager<
+                        key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
+                    >,
+                    dash_spv::network::MultiPeerNetworkManager,
+                    dash_spv::storage::MemoryStorageManager,
+                >,
+            >,
+        >,
+    >,
     runtime: Arc<Runtime>,
     event_callbacks: Arc<Mutex<FFIEventCallbacks>>,
     active_threads: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
@@ -169,7 +180,25 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
     };
 
     let client_config = config.clone_inner();
-    let client_result = runtime.block_on(async { DashSpvClient::new(client_config).await });
+    let client_result = runtime.block_on(async {
+        // Construct concrete implementations for generics
+        let network = dash_spv::network::MultiPeerNetworkManager::new(&client_config).await;
+        let storage = dash_spv::storage::MemoryStorageManager::new().await;
+        let wallet = key_wallet_manager::spv_wallet_manager::SPVWalletManager::with_base(
+            key_wallet_manager::wallet_manager::WalletManager::<
+                key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
+            >::new(),
+        );
+        let wallet = std::sync::Arc::new(tokio::sync::RwLock::new(wallet));
+
+        match (network, storage) {
+            (Ok(network), Ok(storage)) => {
+                DashSpvClient::new(client_config, network, storage, wallet).await
+            }
+            (Err(e), _) => Err(e),
+            (_, Err(e)) => Err(dash_spv::SpvError::Storage(e)),
+        }
+    });
 
     match client_result {
         Ok(client) => {
@@ -276,6 +305,9 @@ impl FFIDashSpvClient {
                                 let ffi_reason: crate::types::FFIMempoolRemovalReason = reason.clone().into();
                                 let reason_code = ffi_reason as u8;
                                 callbacks.call_mempool_transaction_removed(txid, reason_code);
+                            }
+                            dash_spv::types::SpvEvent::CompactFilterMatched { .. } => {
+                                tracing::debug!("📄 Compact filter matched event received");
                             }
                         }
                             }
@@ -848,8 +880,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_add_watch_item(
     null_check!(client);
     null_check!(item);
 
-    let watch_item = match (*item).to_watch_item() {
-        Ok(item) => item,
+    let _ = match (*item).to_watch_item() {
+        Ok(_) => (),
         Err(e) => {
             set_last_error(&e);
             return FFIErrorCode::InvalidArgument as i32;
@@ -859,24 +891,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_add_watch_item(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result = client.runtime.block_on(async {
-        let mut guard = inner.lock().unwrap();
-        if let Some(ref mut spv_client) = *guard {
-            spv_client.add_watch_item(watch_item).await
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(()) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
+    set_last_error("Watch API not implemented in current dash-spv version");
+    FFIErrorCode::ConfigError as i32
 }
 
 #[no_mangle]
@@ -887,8 +903,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_remove_watch_item(
     null_check!(client);
     null_check!(item);
 
-    let watch_item = match (*item).to_watch_item() {
-        Ok(item) => item,
+    let _ = match (*item).to_watch_item() {
+        Ok(_) => (),
         Err(e) => {
             set_last_error(&e);
             return FFIErrorCode::InvalidArgument as i32;
@@ -898,26 +914,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_remove_watch_item(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result = client.runtime.block_on(async {
-        let mut guard = inner.lock().unwrap();
-        if let Some(ref mut spv_client) = *guard {
-            spv_client.remove_watch_item(&watch_item).await.map(|_| ()).map_err(|e| {
-                dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(e.to_string()))
-            })
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(()) => FFIErrorCode::Success as i32,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIErrorCode::from(e) as i32
-        }
-    }
+    set_last_error("Watch API not implemented in current dash-spv version");
+    FFIErrorCode::ConfigError as i32
 }
 
 #[no_mangle]
@@ -981,35 +979,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos(client: *mut FFIDashSpvCl
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref _spv_client) = *guard {
-            {
-                // dash-spv doesn't expose wallet.get_utxos() directly
-                // Would need to be implemented in dash-spv client
-                Ok(Vec::<Utxo>::new())
-            }
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(utxos) => {
-            let ffi_utxos: Vec<FFIUtxo> = utxos.into_iter().map(FFIUtxo::from).collect();
-            FFIArray::new(ffi_utxos)
-        }
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-                capacity: 0,
-            }
-        }
-    }
+    FFIArray::new::<FFIUtxo>(Vec::new())
 }
 
 #[no_mangle]
@@ -1061,35 +1031,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos_for_address(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref _spv_client) = *guard {
-            {
-                // dash-spv doesn't expose wallet.get_utxos_for_address() directly
-                // Would need to be implemented in dash-spv client
-                Ok(Vec::<Utxo>::new())
-            }
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(utxos) => {
-            let ffi_utxos: Vec<FFIUtxo> = utxos.into_iter().map(FFIUtxo::from).collect();
-            FFIArray::new(ffi_utxos)
-        }
-        Err(e) => {
-            set_last_error(&e.to_string());
-            FFIArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-                capacity: 0,
-            }
-        }
-    }
+    FFIArray::new::<FFIUtxo>(Vec::new())
 }
 
 #[no_mangle]
@@ -1538,39 +1480,10 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_total_balance(
     let result = client.runtime.block_on(async {
         let guard = inner.lock().unwrap();
         if let Some(ref spv_client) = *guard {
-            // Get all watched addresses
-            let watch_items = spv_client.get_watch_items().await;
-            let mut total_confirmed = 0u64;
-            let mut total_unconfirmed = 0u64;
-
-            // Sum up balances for all watched addresses
-            for item in watch_items {
-                if let dash_spv::types::WatchItem::Address {
-                    address,
-                    ..
-                } = item
-                {
-                    match spv_client.get_address_balance(&address).await {
-                        Ok(balance) => {
-                            total_confirmed += balance.confirmed.to_sat();
-                            total_unconfirmed += balance.unconfirmed.to_sat();
-                            tracing::debug!(
-                                "Address {} balance: confirmed={}, unconfirmed={}",
-                                address,
-                                balance.confirmed,
-                                balance.unconfirmed
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to get balance for address {}: {}", address, e);
-                        }
-                    }
-                }
-            }
-
+            // Watch API removed; return zero balance summary for compatibility
             Ok(dash_spv::types::AddressBalance {
-                confirmed: dashcore::Amount::from_sat(total_confirmed),
-                unconfirmed: dashcore::Amount::from_sat(total_unconfirmed),
+                confirmed: dashcore::Amount::from_sat(0),
+                unconfirmed: dashcore::Amount::from_sat(0),
                 pending: dashcore::Amount::from_sat(0),
                 pending_instant: dashcore::Amount::from_sat(0),
             })
@@ -1702,24 +1615,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_balance_with_mempool(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref spv_client) = *guard {
-            spv_client.get_wallet_balance_with_mempool().await
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
-
-    match result {
-        Ok(balance) => Box::into_raw(Box::new(FFIBalance::from(balance))),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            std::ptr::null_mut()
-        }
-    }
+    set_last_error("Wallet-wide mempool balance not available in current dash-spv version");
+    std::ptr::null_mut()
 }
 
 #[no_mangle]

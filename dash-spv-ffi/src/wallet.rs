@@ -1,7 +1,5 @@
 use crate::{set_last_error, FFIString};
-use dash_spv::{
-    AddressStats, Balance, BlockResult, FilterMatch, TransactionResult, Utxo, WatchItem,
-};
+use dash_spv::FilterMatch;
 use dashcore::{OutPoint, ScriptBuf, Txid};
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -22,24 +20,24 @@ pub struct FFIWatchItem {
 }
 
 impl FFIWatchItem {
-    pub unsafe fn to_watch_item(&self) -> Result<WatchItem, String> {
+    pub unsafe fn to_watch_item(&self) -> Result<(), String> {
         // Note: This method uses NetworkUnchecked for backward compatibility.
         // Consider using to_watch_item_with_network for proper network validation.
         let data_str = FFIString::from_ptr(self.data.ptr)?;
 
         match self.item_type {
             FFIWatchItemType::Address => {
-                let addr =
+                let _addr =
                     dashcore::Address::<dashcore::address::NetworkUnchecked>::from_str(&data_str)
                         .map_err(|e| format!("Invalid address: {}", e))?
                         .assume_checked();
-                Ok(WatchItem::address(addr))
+                Ok(())
             }
             FFIWatchItemType::Script => {
                 let script_bytes =
                     hex::decode(&data_str).map_err(|e| format!("Invalid script hex: {}", e))?;
-                let script = ScriptBuf::from(script_bytes);
-                Ok(WatchItem::Script(script))
+                let _script = ScriptBuf::from(script_bytes);
+                Ok(())
             }
             FFIWatchItemType::Outpoint => {
                 let parts: Vec<&str> = data_str.split(':').collect();
@@ -48,7 +46,8 @@ impl FFIWatchItem {
                 }
                 let txid: Txid = parts[0].parse().map_err(|e| format!("Invalid txid: {}", e))?;
                 let vout: u32 = parts[1].parse().map_err(|e| format!("Invalid vout: {}", e))?;
-                Ok(WatchItem::Outpoint(OutPoint::new(txid, vout)))
+                let _ = OutPoint::new(txid, vout);
+                Ok(())
             }
         }
     }
@@ -57,7 +56,7 @@ impl FFIWatchItem {
     pub unsafe fn to_watch_item_with_network(
         &self,
         network: dashcore::Network,
-    ) -> Result<WatchItem, String> {
+    ) -> Result<(), String> {
         let data_str = FFIString::from_ptr(self.data.ptr)?;
 
         match self.item_type {
@@ -67,22 +66,21 @@ impl FFIWatchItem {
                         .map_err(|e| format!("Invalid address: {}", e))?;
 
                 // Validate that the address belongs to the expected network
-                let checked_addr = addr.require_network(network).map_err(|_| {
+                let _checked_addr = addr.require_network(network).map_err(|_| {
                     format!("Address {} is not valid for network {:?}", data_str, network)
                 })?;
-
-                Ok(WatchItem::address(checked_addr))
+                Ok(())
             }
             FFIWatchItemType::Script => {
                 let script_bytes =
                     hex::decode(&data_str).map_err(|e| format!("Invalid script hex: {}", e))?;
-                let script = ScriptBuf::from(script_bytes);
-                Ok(WatchItem::Script(script))
+                let _script = ScriptBuf::from(script_bytes);
+                Ok(())
             }
             FFIWatchItemType::Outpoint => {
-                let outpoint = OutPoint::from_str(&data_str)
+                let _outpoint = OutPoint::from_str(&data_str)
                     .map_err(|e| format!("Invalid outpoint: {}", e))?;
-                Ok(WatchItem::Outpoint(outpoint))
+                Ok(())
             }
         }
     }
@@ -99,18 +97,7 @@ pub struct FFIBalance {
     pub total: u64,
 }
 
-impl From<Balance> for FFIBalance {
-    fn from(balance: Balance) -> Self {
-        FFIBalance {
-            confirmed: balance.confirmed.to_sat(),
-            pending: balance.pending.to_sat(),
-            instantlocked: balance.instantlocked.to_sat(),
-            mempool: balance.mempool.to_sat(),
-            mempool_instant: balance.mempool_instant.to_sat(),
-            total: balance.total().to_sat(),
-        }
-    }
-}
+// Balance struct removed from dash-spv public API; use AddressBalance conversion below
 
 impl From<dash_spv::types::AddressBalance> for FFIBalance {
     fn from(balance: dash_spv::types::AddressBalance) -> Self {
@@ -138,21 +125,7 @@ pub struct FFIUtxo {
     pub is_instantlocked: bool,
 }
 
-impl From<Utxo> for FFIUtxo {
-    fn from(utxo: Utxo) -> Self {
-        FFIUtxo {
-            txid: FFIString::new(&utxo.outpoint.txid.to_string()),
-            vout: utxo.outpoint.vout,
-            amount: utxo.value().to_sat(),
-            script_pubkey: FFIString::new(&hex::encode(utxo.script_pubkey().to_bytes())),
-            address: FFIString::new(&utxo.address.to_string()),
-            height: utxo.height,
-            is_coinbase: utxo.is_coinbase,
-            is_confirmed: utxo.is_confirmed,
-            is_instantlocked: utxo.is_instantlocked,
-        }
-    }
-}
+// Utxo struct removed from dash-spv public API
 
 #[repr(C)]
 pub struct FFITransactionResult {
@@ -166,20 +139,7 @@ pub struct FFITransactionResult {
     pub confirmation_height: u32,
 }
 
-impl From<TransactionResult> for FFITransactionResult {
-    fn from(tx: TransactionResult) -> Self {
-        FFITransactionResult {
-            txid: FFIString::new(&tx.transaction.txid().to_string()),
-            version: tx.transaction.version as i32,
-            locktime: tx.transaction.lock_time,
-            size: tx.transaction.size() as u32,
-            weight: tx.transaction.weight().to_wu() as u32,
-            fee: 0,                 // fee not available in TransactionResult
-            confirmation_time: 0,   // not available in TransactionResult
-            confirmation_height: 0, // not available in TransactionResult
-        }
-    }
-}
+// TransactionResult no longer available from dash-spv; conversion removed
 
 #[repr(C)]
 pub struct FFIBlockResult {
@@ -189,16 +149,7 @@ pub struct FFIBlockResult {
     pub tx_count: u32,
 }
 
-impl From<BlockResult> for FFIBlockResult {
-    fn from(block: BlockResult) -> Self {
-        FFIBlockResult {
-            hash: FFIString::new(&block.block_hash.to_string()),
-            height: block.height,
-            time: 0, // not available in BlockResult
-            tx_count: block.transactions.len() as u32,
-        }
-    }
-}
+// BlockResult no longer available from dash-spv; conversion removed
 
 #[repr(C)]
 pub struct FFIFilterMatch {
@@ -228,19 +179,7 @@ pub struct FFIAddressStats {
     pub coinbase_count: u32,
 }
 
-impl From<AddressStats> for FFIAddressStats {
-    fn from(stats: AddressStats) -> Self {
-        FFIAddressStats {
-            address: FFIString::new(&stats.address.to_string()),
-            utxo_count: stats.utxo_count as u32,
-            total_value: stats.total_value.to_sat(),
-            confirmed_value: stats.confirmed_value.to_sat(),
-            pending_value: stats.pending_value.to_sat(),
-            spendable_count: stats.spendable_count as u32,
-            coinbase_count: stats.coinbase_count as u32,
-        }
-    }
-}
+// AddressStats no longer available from dash-spv; conversion removed
 
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_watch_item_address(
