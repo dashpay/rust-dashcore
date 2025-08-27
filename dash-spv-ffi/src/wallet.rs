@@ -200,8 +200,8 @@ pub struct FFIAddressStats {
 impl From<WalletBalance> for FFIBalance {
     fn from(bal: WalletBalance) -> Self {
         // Map confirmed/unconfirmed/locked; mempool fields are not tracked here
-        let confirmed = bal.confirmed().unwrap_or(0);
-        let unconfirmed = bal.unconfirmed().unwrap_or(0);
+        let confirmed = bal.confirmed;
+        let unconfirmed = bal.unconfirmed;
         // "locked" is not exposed in FFIBalance directly; keep in total implicitly
         FFIBalance {
             confirmed,
@@ -209,7 +209,7 @@ impl From<WalletBalance> for FFIBalance {
             instantlocked: 0,
             mempool: 0,
             mempool_instant: 0,
-            total: confirmed.saturating_add(unconfirmed),
+            total: bal.total,
         }
     }
 }

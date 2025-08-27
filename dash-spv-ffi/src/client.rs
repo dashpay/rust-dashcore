@@ -948,7 +948,27 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_address_balance(
     let result = client.runtime.block_on(async {
         let guard = inner.lock().unwrap();
         if let Some(ref spv_client) = *guard {
-            spv_client.get_address_balance(&addr).await
+            // Aggregate from wallet UTXOs matching the address
+            let wallet = spv_client.wallet().clone();
+            let wallet = wallet.read().await;
+            let target = addr.to_string();
+            let mut confirmed: u64 = 0;
+            let mut unconfirmed: u64 = 0;
+            for u in wallet.base.get_all_utxos() {
+                if u.address.to_string() == target {
+                    if u.is_confirmed || u.is_instantlocked {
+                        confirmed = confirmed.saturating_add(u.txout.value);
+                    } else {
+                        unconfirmed = unconfirmed.saturating_add(u.txout.value);
+                    }
+                }
+            }
+            Ok(dash_spv::types::AddressBalance {
+                confirmed: dashcore::Amount::from_sat(confirmed),
+                unconfirmed: dashcore::Amount::from_sat(unconfirmed),
+                pending: dashcore::Amount::from_sat(0),
+                pending_instant: dashcore::Amount::from_sat(0),
+            })
         } else {
             Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
                 "Client not initialized".to_string(),
@@ -979,7 +999,32 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos(client: *mut FFIDashSpvCl
     let client = &(*client);
     let inner = client.inner.clone();
 
-    FFIArray::new::<FFIUtxo>(Vec::new())
+    let result = client.runtime.block_on(async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            let wallet = spv_client.wallet().clone();
+            let wallet = wallet.read().await;
+            let utxos = wallet.base.get_all_utxos();
+            let ffi_utxos: Vec<FFIUtxo> = utxos.into_iter().cloned().map(FFIUtxo::from).collect();
+            Ok(FFIArray::new(ffi_utxos))
+        } else {
+            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                "Client not initialized".to_string(),
+            )))
+        }
+    });
+
+    match result {
+        Ok(arr) => arr,
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIArray {
+                data: std::ptr::null_mut(),
+                len: 0,
+                capacity: 0,
+            }
+        }
+    }
 }
 
 #[no_mangle]
@@ -1031,7 +1076,38 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos_for_address(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    FFIArray::new::<FFIUtxo>(Vec::new())
+    let result = client.runtime.block_on(async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            let wallet = spv_client.wallet().clone();
+            let wallet = wallet.read().await;
+            let target = _addr.to_string();
+            let utxos = wallet.base.get_all_utxos();
+            let filtered: Vec<FFIUtxo> = utxos
+                .into_iter()
+                .filter(|u| u.address.to_string() == target)
+                .cloned()
+                .map(FFIUtxo::from)
+                .collect();
+            Ok(FFIArray::new(filtered))
+        } else {
+            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                "Client not initialized".to_string(),
+            )))
+        }
+    });
+
+    match result {
+        Ok(arr) => arr,
+        Err(e) => {
+            set_last_error(&e.to_string());
+            FFIArray {
+                data: std::ptr::null_mut(),
+                len: 0,
+                capacity: 0,
+            }
+        }
+    }
 }
 
 #[no_mangle]
@@ -1480,12 +1556,16 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_total_balance(
     let result = client.runtime.block_on(async {
         let guard = inner.lock().unwrap();
         if let Some(ref spv_client) = *guard {
-            // Watch API removed; return zero balance summary for compatibility
-            Ok(dash_spv::types::AddressBalance {
-                confirmed: dashcore::Amount::from_sat(0),
-                unconfirmed: dashcore::Amount::from_sat(0),
-                pending: dashcore::Amount::from_sat(0),
-                pending_instant: dashcore::Amount::from_sat(0),
+            let wallet = spv_client.wallet().clone();
+            let wallet = wallet.read().await;
+            let total = wallet.base.get_total_balance();
+            Ok(FFIBalance {
+                confirmed: total,
+                pending: 0,
+                instantlocked: 0,
+                mempool: 0,
+                mempool_instant: 0,
+                total,
             })
         } else {
             Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
@@ -1495,7 +1575,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_total_balance(
     });
 
     match result {
-        Ok(balance) => Box::into_raw(Box::new(FFIBalance::from(balance))),
+        Ok(bal) => Box::into_raw(Box::new(bal)),
         Err(e) => {
             set_last_error(&format!("Failed to get total balance: {}", e));
             std::ptr::null_mut()
