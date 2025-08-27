@@ -1,14 +1,14 @@
 //! Filter synchronization functionality.
 
 use dashcore::{
+    BlockHash, ScriptBuf,
     bip158::{BlockFilterReader, Error as Bip158Error},
     hash_types::FilterHeader,
     network::message::NetworkMessage,
     network::message_blockdata::Inventory,
     network::message_filter::{CFHeaders, GetCFHeaders, GetCFilters},
-    BlockHash, ScriptBuf,
 };
-use dashcore_hashes::{sha256d, Hash};
+use dashcore_hashes::{Hash, sha256d};
 use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::sync::mpsc;
 
@@ -247,8 +247,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Check if this is the expected batch or if there's overlap
         if batch_start_height < self.current_sync_height {
-            tracing::warn!("📋 Received overlapping filter headers: expected start={}, received start={} (likely from recovery/retry)", 
-                          self.current_sync_height, batch_start_height);
+            tracing::warn!(
+                "📋 Received overlapping filter headers: expected start={}, received start={} (likely from recovery/retry)",
+                self.current_sync_height,
+                batch_start_height
+            );
 
             // Handle overlapping headers using the helper method
             let (new_headers_stored, new_current_height) = self
@@ -262,8 +265,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
         } else if batch_start_height > self.current_sync_height {
             // Gap in the sequence - this shouldn't happen in normal operation
-            tracing::error!("❌ Gap detected in filter header sequence: expected start={}, received start={} (gap of {} headers)", 
-                           self.current_sync_height, batch_start_height, batch_start_height - self.current_sync_height);
+            tracing::error!(
+                "❌ Gap detected in filter header sequence: expected start={}, received start={} (gap of {} headers)",
+                self.current_sync_height,
+                batch_start_height,
+                batch_start_height - self.current_sync_height
+            );
             return Err(SyncError::Validation(format!(
                 "Gap in filter header sequence: expected {}, got {}",
                 self.current_sync_height, batch_start_height
@@ -290,21 +297,33 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         // Perform stability check before declaring completion
                         if let Ok(is_stable) = self.check_filter_header_stability(storage).await {
                             if is_stable {
-                                tracing::info!("🎯 Filter header sync complete at height {} (stability confirmed)", stop_height);
+                                tracing::info!(
+                                    "🎯 Filter header sync complete at height {} (stability confirmed)",
+                                    stop_height
+                                );
                                 self.syncing_filter_headers = false;
                                 return Ok(false);
                             } else {
-                                tracing::debug!("Filter header sync reached tip at height {} but stability check failed, continuing sync", stop_height);
+                                tracing::debug!(
+                                    "Filter header sync reached tip at height {} but stability check failed, continuing sync",
+                                    stop_height
+                                );
                             }
                         } else {
-                            tracing::debug!("Filter header sync reached tip at height {} but stability check errored, continuing sync", stop_height);
+                            tracing::debug!(
+                                "Filter header sync reached tip at height {} but stability check errored, continuing sync",
+                                stop_height
+                            );
                         }
                     }
 
                     // Check if our next sync height would exceed the header tip
                     if self.current_sync_height > header_tip_height {
-                        tracing::info!("Filter header sync complete - current sync height {} exceeds header tip {}", 
-                                      self.current_sync_height, header_tip_height);
+                        tracing::info!(
+                            "Filter header sync complete - current sync height {} exceeds header tip {}",
+                            self.current_sync_height,
+                            header_tip_height
+                        );
                         self.syncing_filter_headers = false;
                         return Ok(false);
                     }
@@ -327,8 +346,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         match storage.get_header(storage_height).await {
                             Ok(Some(header)) => header.block_hash(),
                             Ok(None) => {
-                                tracing::warn!("Header not found at storage height {} (blockchain height {}), scanning backwards to find actual available height",
-                                              storage_height, next_batch_end_height);
+                                tracing::warn!(
+                                    "Header not found at storage height {} (blockchain height {}), scanning backwards to find actual available height",
+                                    storage_height,
+                                    next_batch_end_height
+                                );
 
                                 // Scan backwards to find the highest available header
                                 let mut scan_height = next_batch_end_height.saturating_sub(1);
@@ -340,8 +362,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                         self.blockchain_to_storage_height(scan_height);
                                     match storage.get_header(scan_storage_height).await {
                                         Ok(Some(header)) => {
-                                            tracing::info!("Found available header at blockchain height {} / storage height {} (originally tried {})",
-                                                          scan_height, scan_storage_height, next_batch_end_height);
+                                            tracing::info!(
+                                                "Found available header at blockchain height {} / storage height {} (originally tried {})",
+                                                scan_height,
+                                                scan_storage_height,
+                                                next_batch_end_height
+                                            );
                                             found_header_info =
                                                 Some((header.block_hash(), scan_height));
                                             break;
@@ -376,8 +402,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                     Some((hash, height)) => {
                                         // Check if we found a header at a height less than our current sync height
                                         if height < self.current_sync_height {
-                                            tracing::warn!("Found header at height {} which is less than current sync height {}. This means we already have filter headers up to {}. Marking sync as complete.", 
-                                                          height, self.current_sync_height, self.current_sync_height - 1);
+                                            tracing::warn!(
+                                                "Found header at height {} which is less than current sync height {}. This means we already have filter headers up to {}. Marking sync as complete.",
+                                                height,
+                                                self.current_sync_height,
+                                                self.current_sync_height - 1
+                                            );
                                             // We already have filter headers up to current_sync_height - 1
                                             // No need to request more, mark sync as complete
                                             self.syncing_filter_headers = false;
@@ -386,9 +416,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                         hash
                                     }
                                     None => {
-                                        tracing::error!("No available headers found between {} and {} - storage appears to have gaps", 
-                                                       min_height, next_batch_end_height);
-                                        tracing::error!("This indicates a serious storage inconsistency. Stopping filter header sync.");
+                                        tracing::error!(
+                                            "No available headers found between {} and {} - storage appears to have gaps",
+                                            min_height,
+                                            next_batch_end_height
+                                        );
+                                        tracing::error!(
+                                            "This indicates a serious storage inconsistency. Stopping filter header sync."
+                                        );
 
                                         // Mark sync as complete since we can't find any valid headers to request
                                         self.syncing_filter_headers = false;
@@ -486,7 +521,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         if self.last_sync_progress.elapsed() > std::time::Duration::from_secs(SYNC_TIMEOUT_SECONDS)
         {
-            tracing::warn!("📊 No filter header sync progress for {}+ seconds, re-sending filter header request", SYNC_TIMEOUT_SECONDS);
+            tracing::warn!(
+                "📊 No filter header sync progress for {}+ seconds, re-sending filter header request",
+                SYNC_TIMEOUT_SECONDS
+            );
 
             // Get header tip height for recovery
             let storage_tip_height = storage
@@ -544,8 +582,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             Some((hash, height)) => {
                                 // Check if we found a header at a height less than our current sync height
                                 if height < self.current_sync_height {
-                                    tracing::warn!("Recovery: Found header at height {} which is less than current sync height {}. This indicates we already have filter headers up to {}. Marking sync as complete.", 
-                                                  height, self.current_sync_height, self.current_sync_height - 1);
+                                    tracing::warn!(
+                                        "Recovery: Found header at height {} which is less than current sync height {}. This indicates we already have filter headers up to {}. Marking sync as complete.",
+                                        height,
+                                        self.current_sync_height,
+                                        self.current_sync_height - 1
+                                    );
                                     // We already have filter headers up to current_sync_height - 1
                                     // No point in trying to recover, mark sync as complete
                                     self.syncing_filter_headers = false;
@@ -647,8 +689,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             .has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS)
             .await
         {
-            tracing::warn!("⚠️  No connected peers support compact filters (BIP 157/158). Skipping filter synchronization.");
-            tracing::warn!("⚠️  To enable filter sync, connect to peers that advertise NODE_COMPACT_FILTERS service bit.");
+            tracing::warn!(
+                "⚠️  No connected peers support compact filters (BIP 157/158). Skipping filter synchronization."
+            );
+            tracing::warn!(
+                "⚠️  To enable filter sync, connect to peers that advertise NODE_COMPACT_FILTERS service bit."
+            );
             return Ok(false); // No sync started
         }
 
@@ -755,8 +801,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     header.block_hash()
                 }
                 Ok(None) => {
-                    tracing::warn!("Initial batch header not found at storage height {} (blockchain height {}), scanning for available header",
-                                  storage_height, batch_end_height);
+                    tracing::warn!(
+                        "Initial batch header not found at storage height {} (blockchain height {}), scanning for available header",
+                        storage_height,
+                        batch_end_height
+                    );
 
                     // Scan backwards to find the highest available header within the batch
                     let mut scan_height = batch_end_height;
@@ -767,8 +816,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         let scan_storage_height = self.blockchain_to_storage_height(scan_height);
                         match storage.get_header(scan_storage_height).await {
                             Ok(Some(header)) => {
-                                tracing::info!("Found available header at blockchain height {} / storage height {} (originally tried {})",
-                                              scan_height, scan_storage_height, batch_end_height);
+                                tracing::info!(
+                                    "Found available header at blockchain height {} / storage height {} (originally tried {})",
+                                    scan_height,
+                                    scan_storage_height,
+                                    batch_end_height
+                                );
                                 found_header = Some(header.block_hash());
                                 break;
                             }
@@ -1029,7 +1082,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         {
             tracing::debug!(
                 "Skipping filter header chain verification for first batch (start_height={}, sync_base_height={})",
-                start_height, self.sync_base_height
+                start_height,
+                self.sync_base_height
             );
             return Ok(true);
         }
@@ -1252,8 +1306,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             return Ok(());
         }
 
-        tracing::info!("🔄 Building filter request queue from height {} to {} ({} blocks, filter headers available up to {})", 
-                      start, end, end - start + 1, filter_header_tip_height);
+        tracing::info!(
+            "🔄 Building filter request queue from height {} to {} ({} blocks, filter headers available up to {})",
+            start,
+            end,
+            end - start + 1,
+            filter_header_tip_height
+        );
 
         // Build requests in batches
         let batch_size = FILTER_REQUEST_BATCH_SIZE;
@@ -1962,7 +2021,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 Err(e) => {
                     // If we can't find the connection point, it might be from a different peer
                     // with a different view of the chain
-                    tracing::warn!("Failed to handle overlapping filter headers: {}. This may be due to data from different peers.", e);
+                    tracing::warn!(
+                        "Failed to handle overlapping filter headers: {}. This may be due to data from different peers.",
+                        e
+                    );
                     return Ok(());
                 }
             }
@@ -2021,7 +2083,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 }
                 Err(e) => {
                     // If verification failed, it might be from a peer with different data
-                    tracing::warn!("Failed to process filter headers: {}. This may be due to data from different peers.", e);
+                    tracing::warn!(
+                        "Failed to process filter headers: {}. This may be due to data from different peers.",
+                        e
+                    );
                     return Ok(());
                 }
             }
@@ -2682,8 +2747,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             && stats_lock.filters_received < stats_lock.filters_requested
         {
             // Gap detection failed, but basic stats show incomplete sync
-            tracing::debug!("Gap detection shows complete ({}), but basic progress shows {}/{} - treating as incomplete", 
-                           total_missing, stats_lock.filters_received, stats_lock.filters_requested);
+            tracing::debug!(
+                "Gap detection shows complete ({}), but basic progress shows {}/{} - treating as incomplete",
+                total_missing,
+                stats_lock.filters_received,
+                stats_lock.filters_requested
+            );
             (stats_lock.filters_requested - stats_lock.filters_received) as u32
         } else {
             total_missing
@@ -3008,8 +3077,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         retried_count += 1;
                     } else {
                         // Range is too large, split into smaller batches
-                        tracing::warn!("Filter range {}-{} ({} filters) exceeds Dash Core's 1000 filter limit, splitting into batches", 
-                                      start, end, range_size);
+                        tracing::warn!(
+                            "Filter range {}-{} ({} filters) exceeds Dash Core's 1000 filter limit, splitting into batches",
+                            start,
+                            end,
+                            range_size
+                        );
 
                         let max_batch_size = MAX_FILTER_REQUEST_SIZE;
                         let mut current_start = start;
@@ -3019,23 +3092,41 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
                             // Get stop hash for this batch - convert blockchain height to storage index
                             let batch_storage_height = self.blockchain_to_storage_height(batch_end);
-                            if let Ok(Some(batch_header)) =
-                                storage.get_header(batch_storage_height).await
-                            {
-                                let batch_stop_hash = batch_header.block_hash();
+                            match storage.get_header(batch_storage_height).await {
+                                Ok(Some(batch_header)) => {
+                                    let batch_stop_hash = batch_header.block_hash();
 
-                                tracing::info!("🔄 Retrying filter batch {}-{} (part of range {}-{}, attempt {}/{})", 
-                                              current_start, batch_end, start, end, retry_count + 1, self.max_filter_retries);
+                                    tracing::info!(
+                                        "🔄 Retrying filter batch {}-{} (part of range {}-{}, attempt {}/{})",
+                                        current_start,
+                                        batch_end,
+                                        start,
+                                        end,
+                                        retry_count + 1,
+                                        self.max_filter_retries
+                                    );
 
-                                self.request_filters(network, current_start, batch_stop_hash)
-                                    .await?;
-                                current_start = batch_end + 1;
-                            } else {
-                                tracing::error!(
-                                    "Cannot get header at height {} for batch retry",
-                                    batch_end
-                                );
-                                break;
+                                    self.request_filters(network, current_start, batch_stop_hash)
+                                        .await?;
+                                    current_start = batch_end + 1;
+                                }
+                                Ok(None) => {
+                                    tracing::warn!(
+                                        "Missing header at storage height {} (batch end height {}) for batch retry, continuing to next batch",
+                                        batch_storage_height,
+                                        batch_end
+                                    );
+                                    current_start = batch_end + 1;
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Error retrieving header at storage height {} (batch end height {}): {:?}, continuing to next batch",
+                                        batch_storage_height,
+                                        batch_end,
+                                        e
+                                    );
+                                    current_start = batch_end + 1;
+                                }
                             }
                         }
 
