@@ -642,7 +642,7 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_create_from_mnemonic(
         }
     };
 
-    let result: Result<String, String> = client.run_async(|| async {
+    let result = client.run_async(|| async {
         let mut guard = inner.lock().unwrap();
         if let Some(ref mut spv_client) = *guard {
             let wallet_manager = &mut spv_client.wallet().write().await.base;
@@ -719,7 +719,7 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_create(
         }
     };
 
-    let result: Result<String, String> = client.run_async(|| async {
+    let result = client.run_async(|| async {
         let mut guard = inner.lock().unwrap();
         if let Some(ref mut spv_client) = *guard {
             let wallet_manager = &mut spv_client.wallet().write().await.base;
@@ -802,6 +802,164 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_list(client: *mut FFIDashSpvClient)
                 len: 0,
                 capacity: 0,
             }
+        }
+    }
+}
+
+/// Import a wallet from an extended private key
+///
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `xprv` - The extended private key string (base58check encoded)
+/// * `network` - The network to use
+/// * `account_options` - Account creation options
+/// * `name` - Wallet name as null-terminated C string
+///
+/// # Returns
+/// * Pointer to FFIString containing hex-encoded WalletId (32 bytes as 64-char hex)
+/// * Returns null on error (check last_error)
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_import_from_xprv(
+    client: *mut FFIDashSpvClient,
+    xprv: *const c_char,
+    network: FFINetwork,
+    account_options: FFIWalletAccountCreationOptions,
+    name: *const c_char,
+) -> *mut FFIString {
+    null_check!(client, std::ptr::null_mut());
+    null_check!(xprv, std::ptr::null_mut());
+    null_check!(name, std::ptr::null_mut());
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let xprv_str = match CStr::from_ptr(xprv).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in xprv: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let name_str = match CStr::from_ptr(name).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in name: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let result = client.run_async(|| async {
+        let mut guard = inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            let wallet_manager = &mut spv_client.wallet().write().await.base;
+
+            // Generate a random WalletId
+            let wallet_id = WalletId::from(rand::random::<[u8; 32]>());
+
+            let network = network.into();
+            let account_creation_options: WalletAccountCreationOptions = account_options.into();
+
+            match wallet_manager.import_wallet_from_extended_priv_key(
+                wallet_id,
+                name_str.to_string(),
+                xprv_str,
+                network,
+                account_creation_options,
+            ) {
+                Ok(_) => {
+                    // Convert WalletId to hex string
+                    Ok(hex::encode(wallet_id))
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(wallet_id_hex) => Box::into_raw(Box::new(FFIString::new(&wallet_id_hex))),
+        Err(e) => {
+            set_last_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Import a watch-only wallet from an extended public key
+///
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `xpub` - The extended public key string (base58check encoded)
+/// * `network` - The network to use
+/// * `name` - Wallet name as null-terminated C string
+///
+/// # Returns
+/// * Pointer to FFIString containing hex-encoded WalletId (32 bytes as 64-char hex)
+/// * Returns null on error (check last_error)
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_import_from_xpub(
+    client: *mut FFIDashSpvClient,
+    xpub: *const c_char,
+    network: FFINetwork,
+    name: *const c_char,
+) -> *mut FFIString {
+    null_check!(client, std::ptr::null_mut());
+    null_check!(xpub, std::ptr::null_mut());
+    null_check!(name, std::ptr::null_mut());
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let xpub_str = match CStr::from_ptr(xpub).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in xpub: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let name_str = match CStr::from_ptr(name).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in name: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let result = client.run_async(|| async {
+        let mut guard = inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            let wallet_manager = &mut spv_client.wallet().write().await.base;
+
+            // Generate a random WalletId
+            let wallet_id = WalletId::from(rand::random::<[u8; 32]>());
+
+            let network = network.into();
+
+            match wallet_manager.import_wallet_from_xpub(
+                wallet_id,
+                name_str.to_string(),
+                xpub_str,
+                network,
+            ) {
+                Ok(_) => {
+                    // Convert WalletId to hex string
+                    Ok(hex::encode(wallet_id))
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(wallet_id_hex) => Box::into_raw(Box::new(FFIString::new(&wallet_id_hex))),
+        Err(e) => {
+            set_last_error(&e);
+            std::ptr::null_mut()
         }
     }
 }

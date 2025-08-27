@@ -13,9 +13,10 @@ use alloc::vec::Vec;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::Txid;
 use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
-use key_wallet::{Account, AccountType, Address, Mnemonic, Network, Wallet};
+use key_wallet::{Account, AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
 use key_wallet::{ExtendedPubKey, WalletBalance};
 use std::collections::BTreeSet;
+use std::str::FromStr;
 
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
@@ -246,6 +247,97 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// Get wallet count
     pub fn wallet_count(&self) -> usize {
         self.wallets.len()
+    }
+
+    /// Import a wallet from an extended private key and add it to the manager
+    ///
+    /// # Arguments
+    /// * `wallet_id` - Unique identifier for the wallet
+    /// * `name` - Human-readable name for the wallet
+    /// * `xprv` - The extended private key string (base58check encoded)
+    /// * `network` - Network for the wallet
+    /// * `account_creation_options` - Specifies which accounts to create during initialization
+    ///
+    /// # Returns
+    /// * `Ok(&T)` - Reference to the created wallet info
+    /// * `Err(WalletError)` - If the wallet already exists or creation fails
+    pub fn import_wallet_from_extended_priv_key(
+        &mut self,
+        wallet_id: WalletId,
+        name: String,
+        xprv: &str,
+        network: Network,
+        account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
+    ) -> Result<&T, WalletError> {
+        if self.wallets.contains_key(&wallet_id) {
+            return Err(WalletError::WalletExists(wallet_id));
+        }
+
+        // Parse the extended private key
+        let extended_priv_key = ExtendedPrivKey::from_str(xprv)
+            .map_err(|e| WalletError::InvalidParameter(format!("Invalid xprv: {}", e)))?;
+
+        // Create wallet from extended private key
+        let wallet =
+            Wallet::from_extended_key(extended_priv_key, network, account_creation_options)
+                .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
+
+        // Create managed wallet info
+        let mut managed_info = T::from_wallet_with_name(&wallet, name);
+        managed_info
+            .set_birth_height(Some(self.get_or_create_network_state(network).current_height));
+        managed_info.set_first_loaded_at(current_timestamp());
+
+        self.wallets.insert(wallet_id, wallet);
+        self.wallet_infos.insert(wallet_id, managed_info);
+        Ok(self.wallet_infos.get(&wallet_id).unwrap())
+    }
+
+    /// Import a wallet from an extended public key and add it to the manager
+    ///
+    /// This creates a watch-only wallet that can monitor addresses and transactions
+    /// but cannot sign them.
+    ///
+    /// # Arguments
+    /// * `wallet_id` - Unique identifier for the wallet
+    /// * `name` - Human-readable name for the wallet
+    /// * `xpub` - The extended public key string (base58check encoded)
+    /// * `network` - Network for the wallet
+    ///
+    /// # Returns
+    /// * `Ok(&T)` - Reference to the created wallet info
+    /// * `Err(WalletError)` - If the wallet already exists or creation fails
+    pub fn import_wallet_from_xpub(
+        &mut self,
+        wallet_id: WalletId,
+        name: String,
+        xpub: &str,
+        network: Network,
+    ) -> Result<&T, WalletError> {
+        if self.wallets.contains_key(&wallet_id) {
+            return Err(WalletError::WalletExists(wallet_id));
+        }
+
+        // Parse the extended public key
+        let extended_pub_key = ExtendedPubKey::from_str(xpub)
+            .map_err(|e| WalletError::InvalidParameter(format!("Invalid xpub: {}", e)))?;
+
+        // Create an empty account collection for the watch-only wallet
+        let accounts = alloc::collections::BTreeMap::from([(network, Default::default())]);
+
+        // Create watch-only wallet from extended public key
+        let wallet = Wallet::from_xpub(extended_pub_key, accounts)
+            .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
+
+        // Create managed wallet info
+        let mut managed_info = T::from_wallet_with_name(&wallet, name);
+        managed_info
+            .set_birth_height(Some(self.get_or_create_network_state(network).current_height));
+        managed_info.set_first_loaded_at(current_timestamp());
+
+        self.wallets.insert(wallet_id, wallet);
+        self.wallet_infos.insert(wallet_id, managed_info);
+        Ok(self.wallet_infos.get(&wallet_id).unwrap())
     }
 
     /// Check a transaction against all wallets and update their states if relevant

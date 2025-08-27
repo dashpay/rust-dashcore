@@ -691,3 +691,41 @@ struct FFIString *dash_spv_ffi_wallet_create(struct FFIDashSpvClient *client,
  * * FFIArray of FFIString objects containing hex-encoded WalletIds
  */
 struct FFIArray dash_spv_ffi_wallet_list(struct FFIDashSpvClient *client);
+
+/**
+ * Import a wallet from an extended private key
+ *
+ * # Arguments
+ * * `client` - Pointer to FFIDashSpvClient
+ * * `xprv` - The extended private key string (base58check encoded)
+ * * `network` - The network to use
+ * * `account_options` - Account creation options
+ * * `name` - Wallet name as null-terminated C string
+ *
+ * # Returns
+ * * Pointer to FFIString containing hex-encoded WalletId (32 bytes as 64-char hex)
+ * * Returns null on error (check last_error)
+ */
+struct FFIString *dash_spv_ffi_wallet_import_from_xprv(struct FFIDashSpvClient *client,
+                                                       const char *xprv,
+                                                       enum FFINetwork network,
+                                                       enum FFIWalletAccountCreationOptions account_options,
+                                                       const char *name);
+
+/**
+ * Import a watch-only wallet from an extended public key
+ *
+ * # Arguments
+ * * `client` - Pointer to FFIDashSpvClient
+ * * `xpub` - The extended public key string (base58check encoded)
+ * * `network` - The network to use
+ * * `name` - Wallet name as null-terminated C string
+ *
+ * # Returns
+ * * Pointer to FFIString containing hex-encoded WalletId (32 bytes as 64-char hex)
+ * * Returns null on error (check last_error)
+ */
+struct FFIString *dash_spv_ffi_wallet_import_from_xpub(struct FFIDashSpvClient *client,
+                                                       const char *xpub,
+                                                       enum FFINetwork network,
+                                                       const char *name);
