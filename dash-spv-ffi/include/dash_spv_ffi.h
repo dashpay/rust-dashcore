@@ -236,6 +236,21 @@ typedef void (*MempoolConfirmedCallback)(const uint8_t (*txid)[32],
 
 typedef void (*MempoolRemovedCallback)(const uint8_t (*txid)[32], uint8_t reason, void *user_data);
 
+typedef void (*CompactFilterMatchedCallback)(const uint8_t (*block_hash)[32],
+                                             const char *matched_scripts,
+                                             const char *wallet_id,
+                                             void *user_data);
+
+typedef void (*WalletTransactionCallback)(const char *wallet_id,
+                                          uint32_t account_index,
+                                          const uint8_t (*txid)[32],
+                                          bool confirmed,
+                                          int64_t amount,
+                                          const char *addresses,
+                                          uint32_t block_height,
+                                          bool is_ours,
+                                          void *user_data);
+
 typedef struct FFIEventCallbacks {
   BlockCallback on_block;
   TransactionCallback on_transaction;
@@ -243,6 +258,8 @@ typedef struct FFIEventCallbacks {
   MempoolTransactionCallback on_mempool_transaction_added;
   MempoolConfirmedCallback on_mempool_transaction_confirmed;
   MempoolRemovedCallback on_mempool_transaction_removed;
+  CompactFilterMatchedCallback on_compact_filter_matched;
+  WalletTransactionCallback on_wallet_transaction;
   void *user_data;
 } FFIEventCallbacks;
 

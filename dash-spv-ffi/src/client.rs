@@ -6,6 +6,7 @@ use crate::{
 use dash_spv::types::SyncStage;
 use dash_spv::DashSpvClient;
 use dashcore::{Address, ScriptBuf, Txid};
+
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -268,11 +269,32 @@ impl FFIDashSpvClient {
                                 callbacks.call_balance_update(confirmed, unconfirmed);
                             }
                             dash_spv::types::SpvEvent::TransactionDetected { ref txid, confirmed, ref addresses, amount, block_height, .. } => {
-                                tracing::info!("💸 Transaction detected: txid={}, confirmed={}, amount={}, addresses={:?}, height={:?}", 
+                                tracing::info!("💸 Transaction detected: txid={}, confirmed={}, amount={}, addresses={:?}, height={:?}",
                                              txid, confirmed, amount, addresses, block_height);
                                 // Parse the txid string to a Txid type
                                 if let Ok(txid_parsed) = txid.parse::<dashcore::Txid>() {
+                                    // Call the general transaction callback
                                     callbacks.call_transaction(&txid_parsed, confirmed, amount as i64, addresses, block_height);
+
+                                    // Also try to provide wallet-specific context
+                                    // Note: For now, we provide basic wallet context.
+                                    // In a more advanced implementation, we could enhance this
+                                    // to look up the actual wallet/account that owns this transaction.
+                                    let wallet_id_hex = "unknown"; // Placeholder - would need wallet lookup
+                                    let account_index = 0; // Default account index
+                                    let block_height = block_height.unwrap_or(0);
+                                    let is_ours = amount != 0; // Simple heuristic
+
+                                    callbacks.call_wallet_transaction(
+                                        wallet_id_hex,
+                                        account_index,
+                                        &txid_parsed,
+                                        confirmed,
+                                        amount as i64,
+                                        addresses,
+                                        block_height,
+                                        is_ours,
+                                    );
                                 } else {
                                     tracing::error!("Failed to parse transaction ID: {}", txid);
                                 }
@@ -315,8 +337,22 @@ impl FFIDashSpvClient {
                                 let reason_code = ffi_reason as u8;
                                 callbacks.call_mempool_transaction_removed(txid, reason_code);
                             }
-                            dash_spv::types::SpvEvent::CompactFilterMatched { .. } => {
-                                tracing::debug!("📄 Compact filter matched event received");
+                            dash_spv::types::SpvEvent::CompactFilterMatched { hash } => {
+                                tracing::info!("📄 Compact filter matched: block={}", hash);
+
+                                // Try to provide richer information by looking up which wallet matched
+                                // Since we don't have direct access to filter details, we'll provide basic info
+                                if let Ok(block_hash_parsed) = hash.parse::<dashcore::BlockHash>() {
+                                    // For now, we'll call with empty matched scripts and unknown wallet
+                                    // In a more advanced implementation, we could enhance the SpvEvent to include this info
+                                    callbacks.call_compact_filter_matched(
+                                        &block_hash_parsed,
+                                        &[], // matched_scripts - empty for now
+                                        "unknown", // wallet_id - unknown for now
+                                    );
+                                } else {
+                                    tracing::error!("Failed to parse compact filter block hash: {}", hash);
+                                }
                             }
                         }
                             }
