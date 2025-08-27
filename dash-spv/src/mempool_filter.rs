@@ -252,41 +252,82 @@ mod tests {
         }
     }
 
-    // Helper to create a test wallet and get addresses from it
+    // Helper to create deterministically generated test addresses
     fn create_test_addresses(network: Network, count: usize) -> Vec<Address> {
+        use dashcore::hashes::{sha256, Hash};
+        use dashcore::{secp256k1, PrivateKey, PublicKey};
+
         let mut addresses = Vec::new();
+        let secp = secp256k1::Secp256k1::new();
 
-        // Use hardcoded addresses that are valid for the given network
-        let address_strings = match network {
-            Network::Dash => vec![
-                "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2",
-                "Xan9iCVe1q5jYRDZ4VSMCtBjq2VyQA3Dge",
-                "XnC5y7Va2x8wF8v1J9J9J9J9J9J9J9J9J9",
-            ],
-            Network::Testnet => vec![
-                "yM7jWpY8jMgZ9a1b1b1b1b1b1b1b1b1b1b",
-                "yN8kXpZ9kNgA2c2c2c2c2c2c2c2c2c2c2c",
-                "yO9lYqA9lOhB3d3d3d3d3d3d3d3d3d3d3d",
-            ],
-            _ => vec![
-                "XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2",
-                "Xan9iCVe1q5jYRDZ4VSMCtBjq2VyQA3Dge",
-                "XnC5y7Va2x8wF8v1J9J9J9J9J9J9J9J9J9",
-            ],
-        };
+        // Fixed seed for deterministic generation
+        let seed = b"dash-spv-test-seed";
 
-        for (i, addr_str) in address_strings.iter().enumerate() {
-            if i >= count {
-                break;
-            }
-            if let Ok(addr) = Address::from_str(addr_str) {
-                if let Ok(network_addr) = addr.require_network(network) {
-                    addresses.push(network_addr);
+        let mut index: u64 = 0;
+        while addresses.len() < count {
+            // Create deterministic secret: SHA256(fixed_seed + index)
+            let mut data = seed.to_vec();
+            data.extend_from_slice(&index.to_le_bytes());
+
+            let secret_bytes = sha256::Hash::hash(&data).to_byte_array();
+
+            // Try to create secp256k1 SecretKey from the hash
+            match secp256k1::SecretKey::from_byte_array(&secret_bytes) {
+                Ok(secret_key) => {
+                    // Create PrivateKey from SecretKey
+                    let private_key = PrivateKey::new(secret_key, network);
+
+                    // Create PublicKey from PrivateKey
+                    let public_key = PublicKey::from_private_key(&secp, &private_key);
+
+                    // Create P2PKH address from PublicKey
+                    let address = Address::p2pkh(&public_key, network);
+
+                    addresses.push(address);
+                }
+                Err(_) => {
+                    // Skip this index if key derivation fails
+                    tracing::trace!("Skipping index {}: invalid secret key", index);
                 }
             }
+
+            index += 1;
         }
 
         addresses
+    }
+
+    // Test function to verify deterministic address generation
+    #[cfg(test)]
+    fn test_deterministic_addresses() {
+        use dashcore::{AddressType, Network};
+
+        // Generate addresses twice with the same parameters
+        let addresses1 = create_test_addresses(Network::Dash, 3);
+        let addresses2 = create_test_addresses(Network::Dash, 3);
+
+        // Verify they are identical
+        assert_eq!(addresses1.len(), 3);
+        assert_eq!(addresses2.len(), 3);
+        assert_eq!(addresses1, addresses2);
+
+        // Verify they are valid P2PKH addresses
+        for addr in &addresses1 {
+            assert_eq!(addr.address_type(), Some(AddressType::P2pkh));
+            assert_eq!(*addr.network(), Network::Dash);
+        }
+
+        // Test with different networks
+        let testnet_addresses = create_test_addresses(Network::Testnet, 2);
+        assert_eq!(testnet_addresses.len(), 2);
+        for addr in &testnet_addresses {
+            assert_eq!(addr.address_type(), Some(AddressType::P2pkh));
+            assert_eq!(*addr.network(), Network::Testnet);
+        }
+
+        println!("Deterministic address generation test passed!");
+        println!("Dash addresses: {:?}", addresses1);
+        println!("Testnet addresses: {:?}", testnet_addresses);
     }
 
     // Helper to create a test transaction
@@ -319,18 +360,12 @@ mod tests {
     }
 
     // Stub implementations for ignored tests
-    fn test_address(_network: Network) -> Address {
-        Address::from_str("XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2")
-            .unwrap()
-            .require_network(Network::Dash)
-            .unwrap()
+    fn test_address(network: Network) -> Address {
+        create_test_addresses(network, 1)[0].clone()
     }
 
-    fn test_address2(_network: Network) -> Address {
-        Address::from_str("Xan9iCVe1q5jYRDZ4VSMCtBjq2VyQA3Dge")
-            .unwrap()
-            .require_network(Network::Dash)
-            .unwrap()
+    fn test_address2(network: Network) -> Address {
+        create_test_addresses(network, 2)[1].clone()
     }
 
     #[tokio::test]
@@ -639,6 +674,11 @@ mod tests {
         // In a real test with time mocking, we'd verify that old transactions are pruned
         // For now, just verify the method runs without panic
         assert!(pruned.is_empty() || !pruned.is_empty()); // Tautology, but shows the test ran
+    }
+
+    #[test]
+    fn test_deterministic_address_generation() {
+        test_deterministic_addresses();
     }
 
     #[tokio::test]
