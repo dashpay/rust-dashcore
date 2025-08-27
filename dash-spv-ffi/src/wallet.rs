@@ -1,3 +1,6 @@
+use crate::client::FFIDashSpvClient;
+use crate::types::FFINetwork;
+use crate::{null_check, FFIArray};
 use crate::{set_last_error, FFIString};
 use dash_spv::FilterMatch;
 use dashcore::{OutPoint, ScriptBuf, Txid};
@@ -346,7 +349,6 @@ pub unsafe extern "C" fn dash_spv_ffi_address_stats_destroy(stats: *mut FFIAddre
 }
 
 use crate::types::dash_spv_ffi_string_destroy;
-use crate::FFINetwork;
 
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_validate_address(
@@ -375,5 +377,181 @@ pub unsafe extern "C" fn dash_spv_ffi_validate_address(
             }
         }
         Err(_) => 0,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_get_monitored_addresses(
+    client: *mut FFIDashSpvClient,
+    network: FFINetwork,
+) -> FFIArray {
+    null_check!(
+        client,
+        FFIArray {
+            data: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0
+        }
+    );
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result: Result<FFIArray, String> = client.runtime.block_on(async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            let wallet = spv_client.wallet().clone();
+            let wallet = wallet.read().await;
+            let net: dashcore::Network = network.into();
+            let addrs = wallet.base.monitored_addresses(net);
+            let ffi: Vec<FFIString> =
+                addrs.into_iter().map(|a| FFIString::new(&a.to_string())).collect();
+            Ok(FFIArray::new(ffi))
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(arr) => arr,
+        Err(e) => {
+            set_last_error(&e);
+            FFIArray {
+                data: std::ptr::null_mut(),
+                len: 0,
+                capacity: 0,
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_get_balance(
+    client: *mut FFIDashSpvClient,
+    wallet_id_ptr: *const c_char,
+) -> *mut crate::FFIBalance {
+    null_check!(client, std::ptr::null_mut());
+    null_check!(wallet_id_ptr, std::ptr::null_mut());
+
+    // Parse wallet id as 64-char hex string
+    let wallet_id_hex = match CStr::from_ptr(wallet_id_ptr).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in wallet id: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let mut id: [u8; 32] = [0u8; 32];
+    let bytes = hex::decode(wallet_id_hex).unwrap_or_default();
+    if bytes.len() != 32 {
+        set_last_error("Wallet ID must be 32 bytes hex");
+        return std::ptr::null_mut();
+    }
+    id.copy_from_slice(&bytes);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result: Result<crate::FFIBalance, String> = client.runtime.block_on(async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            let wallet = spv_client.wallet().clone();
+            let wallet = wallet.read().await;
+            match wallet.base.get_wallet_balance(&id) {
+                Ok(b) => Ok(crate::FFIBalance::from(b)),
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(bal) => Box::into_raw(Box::new(bal)),
+        Err(e) => {
+            set_last_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_get_utxos(
+    client: *mut FFIDashSpvClient,
+    wallet_id_ptr: *const c_char,
+) -> FFIArray {
+    null_check!(
+        client,
+        FFIArray {
+            data: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0
+        }
+    );
+    null_check!(
+        wallet_id_ptr,
+        FFIArray {
+            data: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0
+        }
+    );
+
+    let wallet_id_hex = match CStr::from_ptr(wallet_id_ptr).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in wallet id: {}", e));
+            return FFIArray {
+                data: std::ptr::null_mut(),
+                len: 0,
+                capacity: 0,
+            };
+        }
+    };
+
+    let mut id: [u8; 32] = [0u8; 32];
+    let bytes = hex::decode(wallet_id_hex).unwrap_or_default();
+    if bytes.len() != 32 {
+        set_last_error("Wallet ID must be 32 bytes hex");
+        return FFIArray {
+            data: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+        };
+    }
+    id.copy_from_slice(&bytes);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result: Result<FFIArray, String> = client.runtime.block_on(async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            let wallet = spv_client.wallet().clone();
+            let wallet = wallet.read().await;
+            match wallet.base.wallet_utxos(&id) {
+                Ok(set) => {
+                    let ffi: Vec<crate::FFIUtxo> =
+                        set.into_iter().cloned().map(crate::FFIUtxo::from).collect();
+                    Ok(FFIArray::new(ffi))
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(arr) => arr,
+        Err(e) => {
+            set_last_error(&e);
+            FFIArray {
+                data: std::ptr::null_mut(),
+                len: 0,
+                capacity: 0,
+            }
+        }
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     null_check, set_last_error, FFIArray, FFIBalance, FFIClientConfig, FFIDetailedSyncProgress,
-    FFIErrorCode, FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFISyncProgress,
+    FFIErrorCode, FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFIString, FFISyncProgress,
     FFITransaction, FFIUtxo, FFIWatchItem,
 };
 use dash_spv::types::SyncStage;
