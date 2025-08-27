@@ -37,11 +37,7 @@ use transitions::TransitionManager;
 const CHAINLOCK_VALIDATION_MASTERNODE_OFFSET: u32 = 8;
 
 /// Manages sequential synchronization of all data types
-pub struct SequentialSyncManager<
-    S: StorageManager,
-    N: NetworkManager,
-    W: WalletInterface,
-> {
+pub struct SequentialSyncManager<S: StorageManager, N: NetworkManager, W: WalletInterface> {
     _phantom_s: std::marker::PhantomData<S>,
     _phantom_n: std::marker::PhantomData<N>,
     /// Current synchronization phase

@@ -1,14 +1,14 @@
 //! Filter synchronization functionality.
 
 use dashcore::{
-    BlockHash, ScriptBuf,
     bip158::{BlockFilterReader, Error as Bip158Error},
     hash_types::FilterHeader,
     network::message::NetworkMessage,
     network::message_blockdata::Inventory,
     network::message_filter::{CFHeaders, GetCFHeaders, GetCFilters},
+    BlockHash, ScriptBuf,
 };
-use dashcore_hashes::{Hash, sha256d};
+use dashcore_hashes::{sha256d, Hash};
 use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::sync::mpsc;
 

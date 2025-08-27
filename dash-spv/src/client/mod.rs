@@ -2383,7 +2383,7 @@ impl<
 
     /// Get mutable reference to sync manager (for testing)
     #[cfg(test)]
-    pub fn sync_manager_mut(&mut self) -> &mut SequentialSyncManager<S, N> {
+    pub fn sync_manager_mut(&mut self) -> &mut SequentialSyncManager<S, N, W> {
         &mut self.sync_manager
     }
 
