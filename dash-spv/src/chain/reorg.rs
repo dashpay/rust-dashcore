@@ -543,14 +543,6 @@ mod tests {
     use dashcore::Network;
     use dashcore_hashes::Hash;
 
-    fn create_test_header(prev: &BlockHeader, nonce: u32) -> BlockHeader {
-        let mut header = prev.clone();
-        header.prev_blockhash = prev.block_hash();
-        header.nonce = nonce;
-        header.time = prev.time + 600;
-        header
-    }
-
     #[test]
     fn test_reorg_validation() {
         let reorg_mgr = ReorgManager::new(100, false);
