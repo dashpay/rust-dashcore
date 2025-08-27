@@ -113,6 +113,27 @@ pub type MempoolConfirmedCallback = Option<
 >;
 pub type MempoolRemovedCallback =
     Option<extern "C" fn(txid: *const [u8; 32], reason: u8, user_data: *mut c_void)>;
+pub type CompactFilterMatchedCallback = Option<
+    extern "C" fn(
+        block_hash: *const [u8; 32],
+        matched_scripts: *const c_char,
+        wallet_id: *const c_char,
+        user_data: *mut c_void,
+    ),
+>;
+pub type WalletTransactionCallback = Option<
+    extern "C" fn(
+        wallet_id: *const c_char,
+        account_index: u32,
+        txid: *const [u8; 32],
+        confirmed: bool,
+        amount: i64,
+        addresses: *const c_char,
+        block_height: u32,
+        is_ours: bool,
+        user_data: *mut c_void,
+    ),
+>;
 
 #[repr(C)]
 pub struct FFIEventCallbacks {
@@ -122,6 +143,8 @@ pub struct FFIEventCallbacks {
     pub on_mempool_transaction_added: MempoolTransactionCallback,
     pub on_mempool_transaction_confirmed: MempoolConfirmedCallback,
     pub on_mempool_transaction_removed: MempoolRemovedCallback,
+    pub on_compact_filter_matched: CompactFilterMatchedCallback,
+    pub on_wallet_transaction: WalletTransactionCallback,
     pub user_data: *mut c_void,
 }
 
@@ -148,6 +171,8 @@ impl Default for FFIEventCallbacks {
             on_mempool_transaction_added: None,
             on_mempool_transaction_confirmed: None,
             on_mempool_transaction_removed: None,
+            on_compact_filter_matched: None,
+            on_wallet_transaction: None,
             user_data: std::ptr::null_mut(),
         }
     }
@@ -280,6 +305,80 @@ impl FFIEventCallbacks {
             tracing::info!("✅ Mempool transaction removed callback completed");
         } else {
             tracing::debug!("Mempool transaction removed callback not set");
+        }
+    }
+
+    pub fn call_compact_filter_matched(
+        &self,
+        block_hash: &dashcore::BlockHash,
+        matched_scripts: &[String],
+        wallet_id: &str,
+    ) {
+        if let Some(callback) = self.on_compact_filter_matched {
+            tracing::info!(
+                "🎯 Calling compact filter matched callback: block={}, scripts={:?}, wallet={}",
+                block_hash,
+                matched_scripts,
+                wallet_id
+            );
+            let hash_bytes = block_hash.as_byte_array();
+            let scripts_str = matched_scripts.join(",");
+            let c_scripts = CString::new(scripts_str).unwrap_or_else(|_| CString::new("").unwrap());
+            let c_wallet_id = CString::new(wallet_id).unwrap_or_else(|_| CString::new("").unwrap());
+
+            callback(
+                hash_bytes.as_ptr() as *const [u8; 32],
+                c_scripts.as_ptr(),
+                c_wallet_id.as_ptr(),
+                self.user_data,
+            );
+            tracing::info!("✅ Compact filter matched callback completed");
+        } else {
+            tracing::debug!("Compact filter matched callback not set");
+        }
+    }
+
+    pub fn call_wallet_transaction(
+        &self,
+        wallet_id: &str,
+        account_index: u32,
+        txid: &dashcore::Txid,
+        confirmed: bool,
+        amount: i64,
+        addresses: &[String],
+        block_height: u32,
+        is_ours: bool,
+    ) {
+        if let Some(callback) = self.on_wallet_transaction {
+            tracing::info!(
+                "🎯 Calling wallet transaction callback: wallet={}, account={}, txid={}, confirmed={}, amount={}, is_ours={}",
+                wallet_id,
+                account_index,
+                txid,
+                confirmed,
+                amount,
+                is_ours
+            );
+            let txid_bytes = txid.as_byte_array();
+            let addresses_str = addresses.join(",");
+            let c_addresses =
+                CString::new(addresses_str).unwrap_or_else(|_| CString::new("").unwrap());
+            let c_wallet_id = CString::new(wallet_id).unwrap_or_else(|_| CString::new("").unwrap());
+
+            callback(
+                c_wallet_id.as_ptr(),
+                account_index,
+                txid_bytes.as_ptr() as *const [u8; 32],
+                confirmed,
+                amount,
+                c_addresses.as_ptr(),
+                block_height,
+                is_ours,
+                self.user_data,
+            );
+            tracing::info!("✅ Wallet transaction callback completed");
+        } else {
+            tracing::debug!("Wallet transaction callback not set");
         }
     }
 }

@@ -212,8 +212,17 @@ mod tests {
 
     #[test]
     #[serial]
+    #[ignore]
     fn test_sync_diagnostic() {
         unsafe {
+            // Allow running this test only when explicitly enabled
+            if std::env::var("RUST_DASH_FFI_RUN_NETWORK_TESTS").unwrap_or_default() != "1" {
+                println!(
+                    "Skipping test_sync_diagnostic (set RUST_DASH_FFI_RUN_NETWORK_TESTS=1 to run)"
+                );
+                return;
+            }
+
             // Create testnet config for the diagnostic test
             let config = dash_spv_ffi_config_testnet();
             let temp_dir = TempDir::new().unwrap();

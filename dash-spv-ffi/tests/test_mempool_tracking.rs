@@ -122,6 +122,8 @@ fn test_mempool_event_callbacks() {
             on_mempool_transaction_added: Some(test_mempool_added),
             on_mempool_transaction_confirmed: Some(test_mempool_confirmed),
             on_mempool_transaction_removed: Some(test_mempool_removed),
+            on_compact_filter_matched: None,
+            on_wallet_transaction: None,
             user_data: test_callbacks_ptr as *mut c_void,
         };
 

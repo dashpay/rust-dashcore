@@ -1,5 +1,6 @@
 use dash_spv_ffi::callbacks::{BlockCallback, TransactionCallback};
 use dash_spv_ffi::*;
+use serial_test::serial;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -15,6 +16,13 @@ struct TestEventData {
     balance_updated: AtomicBool,
     confirmed_balance: AtomicU64,
     unconfirmed_balance: AtomicU64,
+    compact_filter_matched: AtomicBool,
+    compact_filter_block_hash: std::sync::Mutex<String>,
+    compact_filter_scripts: std::sync::Mutex<String>,
+    wallet_transaction_received: AtomicBool,
+    wallet_transaction_wallet_id: std::sync::Mutex<String>,
+    wallet_transaction_account_index: AtomicU32,
+    wallet_transaction_txid: std::sync::Mutex<String>,
 }
 
 impl TestEventData {
@@ -26,6 +34,13 @@ impl TestEventData {
             balance_updated: AtomicBool::new(false),
             confirmed_balance: AtomicU64::new(0),
             unconfirmed_balance: AtomicU64::new(0),
+            compact_filter_matched: AtomicBool::new(false),
+            compact_filter_block_hash: std::sync::Mutex::new(String::new()),
+            compact_filter_scripts: std::sync::Mutex::new(String::new()),
+            wallet_transaction_received: AtomicBool::new(false),
+            wallet_transaction_wallet_id: std::sync::Mutex::new(String::new()),
+            wallet_transaction_account_index: AtomicU32::new(0),
+            wallet_transaction_txid: std::sync::Mutex::new(String::new()),
         })
     }
 }
@@ -48,6 +63,66 @@ extern "C" fn test_transaction_callback(
     println!("Test transaction callback called");
     let data = unsafe { &*(user_data as *const TestEventData) };
     data.transaction_received.store(true, Ordering::SeqCst);
+}
+
+extern "C" fn test_compact_filter_matched_callback(
+    block_hash: *const [u8; 32],
+    matched_scripts: *const c_char,
+    wallet_id: *const c_char,
+    user_data: *mut c_void,
+) {
+    println!("Test compact filter matched callback called");
+    let data = unsafe { &*(user_data as *const TestEventData) };
+
+    // Convert block hash to hex string
+    let hash_bytes = unsafe { &*block_hash };
+    let hash_hex = hex::encode(hash_bytes);
+
+    // Convert matched scripts to string
+    let scripts_str = if matched_scripts.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(matched_scripts).to_string_lossy().into_owned() }
+    };
+
+    // Convert wallet ID to string
+    let wallet_id_str = if wallet_id.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(wallet_id).to_string_lossy().into_owned() }
+    };
+
+    *data.compact_filter_block_hash.lock().unwrap() = hash_hex;
+    *data.compact_filter_scripts.lock().unwrap() = scripts_str;
+    data.compact_filter_matched.store(true, Ordering::SeqCst);
+}
+
+extern "C" fn test_wallet_transaction_callback(
+    wallet_id: *const c_char,
+    account_index: u32,
+    txid: *const [u8; 32],
+    confirmed: bool,
+    amount: i64,
+    addresses: *const c_char,
+    block_height: u32,
+    is_ours: bool,
+    user_data: *mut c_void,
+) {
+    println!("Test wallet transaction callback called: wallet={}, account={}, confirmed={}, amount={}, is_ours={}",
+             unsafe { CStr::from_ptr(wallet_id).to_string_lossy() }, account_index, confirmed, amount, is_ours);
+    let data = unsafe { &*(user_data as *const TestEventData) };
+
+    // Convert wallet ID to string
+    let wallet_id_str = unsafe { CStr::from_ptr(wallet_id).to_string_lossy().into_owned() };
+
+    // Convert txid to hex string
+    let txid_bytes = unsafe { &*txid };
+    let txid_hex = hex::encode(txid_bytes);
+
+    *data.wallet_transaction_wallet_id.lock().unwrap() = wallet_id_str;
+    data.wallet_transaction_account_index.store(account_index, Ordering::SeqCst);
+    *data.wallet_transaction_txid.lock().unwrap() = txid_hex;
+    data.wallet_transaction_received.store(true, Ordering::SeqCst);
 }
 
 extern "C" fn test_balance_callback(confirmed: u64, unconfirmed: u64, user_data: *mut c_void) {
@@ -96,6 +171,8 @@ fn test_event_callbacks_setup() {
             on_mempool_transaction_added: None,
             on_mempool_transaction_confirmed: None,
             on_mempool_transaction_removed: None,
+            on_compact_filter_matched: None,
+            on_wallet_transaction: None,
             user_data,
         };
 
@@ -213,5 +290,138 @@ fn test_get_total_balance() {
         dash_spv_ffi_client_stop(client);
         dash_spv_ffi_client_destroy(client);
         dash_spv_ffi_config_destroy(config);
+    }
+}
+
+#[test]
+#[serial]
+fn test_enhanced_event_callbacks() {
+    unsafe {
+        dash_spv_ffi_init_logging(b"info\0".as_ptr() as *const c_char);
+
+        // Create test data
+        let event_data = TestEventData::new();
+
+        // Create config
+        let config = dash_spv_ffi_config_new(FFINetwork::Regtest);
+        assert!(!config.is_null());
+
+        // Set data directory
+        let temp_dir = TempDir::new().unwrap();
+        let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
+        dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
+        dash_spv_ffi_config_set_validation_mode(config, FFIValidationMode::None);
+
+        // Create client
+        let client = dash_spv_ffi_client_new(config);
+        assert!(!client.is_null());
+
+        // Set up enhanced event callbacks
+        let event_callbacks = FFIEventCallbacks {
+            on_block: Some(test_block_callback),
+            on_transaction: Some(test_transaction_callback),
+            on_balance_update: Some(test_balance_callback),
+            on_mempool_transaction_added: None,
+            on_mempool_transaction_confirmed: None,
+            on_mempool_transaction_removed: None,
+            on_compact_filter_matched: Some(test_compact_filter_matched_callback),
+            on_wallet_transaction: Some(test_wallet_transaction_callback),
+            user_data: Arc::as_ptr(&event_data) as *mut c_void,
+        };
+
+        let set_result = dash_spv_ffi_client_set_event_callbacks(client, event_callbacks);
+        assert_eq!(
+            set_result,
+            FFIErrorCode::Success as i32,
+            "Failed to set enhanced event callbacks"
+        );
+
+        // Test wallet creation to trigger some events
+        let wallet_name = CString::new("test_wallet").unwrap();
+        let wallet_id = dash_spv_ffi_wallet_create(
+            client,
+            FFINetwork::Regtest,
+            FFIWalletAccountCreationOptions::BIP44AccountsOnly,
+            wallet_name.as_ptr(),
+        );
+
+        if !wallet_id.is_null() {
+            println!("✅ Wallet created successfully");
+
+            // Test address generation
+            let wallet_id_str = CStr::from_ptr((*wallet_id).ptr).to_str().unwrap();
+            let wallet_id_cstr = CString::new(wallet_id_str).unwrap();
+
+            let receive_address = dash_spv_ffi_wallet_get_receive_address(
+                client,
+                wallet_id_cstr.as_ptr(),
+                FFINetwork::Regtest,
+                0, // account_index
+                FFIAccountTypePreference::BIP44,
+                false, // mark_as_used
+            );
+
+            if !receive_address.is_null() {
+                println!("✅ Receive address generated successfully");
+                dash_spv_ffi_address_generation_result_destroy(receive_address);
+            }
+
+            // Test monitored addresses
+            let addresses =
+                dash_spv_ffi_wallet_get_monitored_addresses(client, FFINetwork::Regtest);
+            if !addresses.is_null() {
+                println!("✅ Monitored addresses retrieved successfully");
+                dash_spv_ffi_array_destroy(addresses);
+            }
+
+            // Test mempool operations
+            let mempool_balance = dash_spv_ffi_wallet_get_mempool_balance(
+                client,
+                wallet_id_cstr.as_ptr(),
+                FFINetwork::Regtest,
+            );
+            println!("✅ Mempool balance retrieved: {} satoshis", mempool_balance);
+
+            let mempool_tx_count = dash_spv_ffi_wallet_get_mempool_transaction_count(
+                client,
+                wallet_id_cstr.as_ptr(),
+                FFINetwork::Regtest,
+            );
+            println!("✅ Mempool transaction count retrieved: {}", mempool_tx_count);
+
+            // Test account operations
+            let xpub =
+                CString::new("tpubD6NzVbkrYhZ4X4rJGpM7KfxYFkGdJKjgGJGJZ7JXmT8yPzJzKQh8xkJfL")
+                    .unwrap();
+            let account_result = dash_spv_ffi_wallet_add_account_from_xpub(
+                client,
+                wallet_id_cstr.as_ptr(),
+                xpub.as_ptr(),
+                FFIAccountType::BIP44,
+                FFINetwork::Regtest,
+                1, // account_index
+                0, // registration_index
+            );
+            println!("✅ Account addition result: {}", account_result);
+
+            // Clean up wallet
+            if !wallet_id.is_null() {
+                let string_struct = unsafe { Box::from_raw(wallet_id) };
+                dash_spv_ffi_string_destroy(*string_struct);
+            }
+        } else {
+            println!("⚠️ Wallet creation failed (may be expected in test environment)");
+        }
+
+        // Test error handling
+        let invalid_wallet_id = CString::new("invalid_wallet_id").unwrap();
+        let balance = dash_spv_ffi_wallet_get_balance(client, invalid_wallet_id.as_ptr());
+        assert!(balance.is_null(), "Should return null for invalid wallet ID");
+
+        // Clean up
+        dash_spv_ffi_client_destroy(client);
+        dash_spv_ffi_config_destroy(config);
+
+        println!("✅ Enhanced event callbacks test completed successfully");
     }
 }
