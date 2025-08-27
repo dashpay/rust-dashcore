@@ -708,8 +708,8 @@ void dash_spv_ffi_address_stats_destroy(struct FFIAddressStats *stats);
 
 int32_t dash_spv_ffi_validate_address(const char *address, enum FFINetwork network);
 
-struct FFIArray dash_spv_ffi_wallet_get_monitored_addresses(struct FFIDashSpvClient *client,
-                                                            enum FFINetwork network);
+struct FFIArray *dash_spv_ffi_wallet_get_monitored_addresses(struct FFIDashSpvClient *client,
+                                                             enum FFINetwork network);
 
 struct FFIBalance *dash_spv_ffi_wallet_get_balance(struct FFIDashSpvClient *client,
                                                    const char *wallet_id_ptr);

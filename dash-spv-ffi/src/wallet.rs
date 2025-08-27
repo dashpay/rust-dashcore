@@ -389,43 +389,34 @@ pub unsafe extern "C" fn dash_spv_ffi_validate_address(
 pub unsafe extern "C" fn dash_spv_ffi_wallet_get_monitored_addresses(
     client: *mut FFIDashSpvClient,
     network: FFINetwork,
-) -> FFIArray {
-    null_check!(
-        client,
-        FFIArray {
-            data: std::ptr::null_mut(),
-            len: 0,
-            capacity: 0
-        }
-    );
+) -> *mut crate::FFIArray {
+    null_check!(client, std::ptr::null_mut());
 
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result: Result<FFIArray, String> = client.run_async(|| async {
+    let result = client.run_async(|| async {
         let guard = inner.lock().unwrap();
         if let Some(ref spv_client) = *guard {
-            let wallet = spv_client.wallet().clone();
-            let wallet = wallet.read().await;
-            let net: dashcore::Network = network.into();
-            let addrs = wallet.base.monitored_addresses(net);
-            let ffi: Vec<FFIString> =
-                addrs.into_iter().map(|a| FFIString::new(&a.to_string())).collect();
-            Ok(FFIArray::new(ffi))
+            let wallet_manager = &spv_client.wallet().read().await.base;
+            let addresses = wallet_manager.monitored_addresses(network.into());
+
+            let ffi_strings: Vec<*mut FFIString> = addresses
+                .into_iter()
+                .map(|addr| Box::into_raw(Box::new(FFIString::new(&addr.to_string()))))
+                .collect();
+
+            Ok(crate::FFIArray::new(ffi_strings))
         } else {
             Err("Client not initialized".to_string())
         }
     });
 
     match result {
-        Ok(arr) => arr,
+        Ok(array) => Box::into_raw(Box::new(array)),
         Err(e) => {
             set_last_error(&e);
-            FFIArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-                capacity: 0,
-            }
+            std::ptr::null_mut()
         }
     }
 }
