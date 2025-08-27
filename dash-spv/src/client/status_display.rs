@@ -86,7 +86,7 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
         let header_height = self.calculate_header_height(&state).await;
 
         // Calculate filter header height considering checkpoint sync
-        let filter_header_height = self.calculate_filter_header_height(&state).await;
+        let filter_header_height = self.calculate_filter_header_height().await;
 
         Ok(SyncProgress {
             header_height,
@@ -126,10 +126,7 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
             };
 
             // Get filter header height - convert from storage height to blockchain height
-            let filter_height = {
-                let state = self.state.read().await;
-                self.calculate_filter_header_height(&state).await
-            };
+            let filter_height = self.calculate_filter_header_height().await;
 
             // Get latest chainlock height from state
             let chainlock_height = {
@@ -178,10 +175,7 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
             };
 
             // Get filter header height - convert from storage height to blockchain height
-            let filter_height = {
-                let state = self.state.read().await;
-                self.calculate_filter_header_height(&state).await
-            };
+            let filter_height = self.calculate_filter_header_height().await;
 
             let chainlock_height = {
                 let state = self.state.read().await;
@@ -215,7 +209,7 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
     ///
     /// This helper method encapsulates the logic for determining the current filter header height.
     /// Note: get_filter_tip_height() now returns absolute blockchain height directly.
-    async fn calculate_filter_header_height(&self, _state: &ChainState) -> u32 {
+    async fn calculate_filter_header_height(&self) -> u32 {
         let storage = self.storage.lock().await;
         if let Ok(Some(filter_tip)) = storage.get_filter_tip_height().await {
             // The storage now returns absolute blockchain height directly

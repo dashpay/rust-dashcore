@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-
+use key_wallet_manager::wallet_interface::WalletInterface;
 use crate::client::ClientConfig;
 use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
@@ -12,8 +12,8 @@ use crate::sync::sequential::SequentialSyncManager;
 use crate::types::{MempoolState, SpvEvent, SpvStats};
 
 /// Network message handler for processing incoming Dash protocol messages.
-pub struct MessageHandler<'a, S: StorageManager, N: NetworkManager> {
-    sync_manager: &'a mut SequentialSyncManager<S, N>,
+pub struct MessageHandler<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> {
+    sync_manager: &'a mut SequentialSyncManager<S, N, W>,
     storage: &'a mut S,
     network: &'a mut N,
     config: &'a ClientConfig,
@@ -24,12 +24,12 @@ pub struct MessageHandler<'a, S: StorageManager, N: NetworkManager> {
     event_tx: &'a tokio::sync::mpsc::UnboundedSender<SpvEvent>,
 }
 
-impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    MessageHandler<'a, S, N>
+impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static, W: WalletInterface>
+    MessageHandler<'a, S, N, W>
 {
     /// Create a new message handler.
     pub fn new(
-        sync_manager: &'a mut SequentialSyncManager<S, N>,
+        sync_manager: &'a mut SequentialSyncManager<S, N, W>,
         storage: &'a mut S,
         network: &'a mut N,
         config: &'a ClientConfig,

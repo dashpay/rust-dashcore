@@ -11,7 +11,7 @@ use tokio::signal;
 use dash_spv::terminal::TerminalGuard;
 use dash_spv::{ClientConfig, DashSpvClient, Network};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::wallet_manager::WalletManager;
+use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
 
 #[tokio::main]
 async fn main() {
@@ -223,10 +223,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Using data directory: {}", data_dir.display());
 
     // Create the SPV wallet manager
-    let spv_wallet =
+    let mut spv_wallet =
         key_wallet_manager::spv_wallet_manager::SPVWalletManager::with_base(WalletManager::<
             ManagedWalletInfo,
         >::new());
+    spv_wallet.base.create_wallet_from_mnemonic(
+        WalletId::default(),
+        "Default".to_string(),
+        "enemy check owner stumble unaware debris suffer peanut good fabric bleak outside",
+        "",
+        Some(network),
+        None,
+        key_wallet::wallet::initialization::WalletAccountCreationOptions::default(),
+    )?;
     let wallet = Arc::new(tokio::sync::RwLock::new(spv_wallet));
 
     // Create network manager
@@ -305,7 +314,7 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
         key_wallet_manager::spv_wallet_manager::SPVWalletManager,
         dash_spv::network::multi_peer::MultiPeerNetworkManager,
         S,
-    >::new(config.clone(), network_manager, storage_manager, wallet)
+    >::new(config.clone(), network_manager, storage_manager, wallet.clone())
     .await
     {
         Ok(client) => client,
@@ -364,18 +373,9 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
                     });
                     match checked_addr {
                         Ok(valid_addr) => {
-                            if let Err(e) = client
-                                .add_watch_item(dash_spv::WatchItem::address(valid_addr))
-                                .await
-                            {
-                                tracing::error!(
-                                    "Failed to add watch address '{}': {}",
-                                    addr_str,
-                                    e
-                                );
-                            } else {
-                                tracing::info!("Added watch address: {}", addr_str);
-                            }
+                            // TODO: Add address to wallet for monitoring
+                            // For now, just log that we would watch this address
+                            tracing::info!("Would watch address: {} (wallet integration pending)", valid_addr);
                         }
                         Err(e) => {
                             tracing::error!("Invalid address for network: {}", e);
@@ -413,32 +413,21 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
         for addr_str in example_addresses {
             match addr_str.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>() {
                 Ok(addr) => {
-                    if let Ok(valid_addr) = addr.require_network(network) {
-                        // For the example mainnet address (Crowdnode), set earliest height to 1,000,000
-                        let watch_item = if network == dashcore::Network::Dash
+                    if let Ok(_valid_addr) = addr.require_network(network) {
+                        // TODO: In the future, we could add these example addresses to the wallet
+                        // For now, just log that we would monitor them
+                        let height_info = if network == dashcore::Network::Dash
                             && addr_str == "Xesjop7V9xLndFMgZoCrckJ5ZPgJdJFbA3"
                         {
-                            dash_spv::WatchItem::address_from_height(valid_addr, 200_000)
+                            " (from height 200,000)"
                         } else {
-                            dash_spv::WatchItem::address(valid_addr)
+                            ""
                         };
-
-                        if let Err(e) = client.add_watch_item(watch_item).await {
-                            tracing::error!("Failed to add example address '{}': {}", addr_str, e);
-                        } else {
-                            let height_info = if network == dashcore::Network::Dash
-                                && addr_str == "Xesjop7V9xLndFMgZoCrckJ5ZPgJdJFbA3"
-                            {
-                                " (from height 1,000,000)"
-                            } else {
-                                ""
-                            };
-                            tracing::info!(
-                                "Added example watch address: {}{}",
-                                addr_str,
-                                height_info
-                            );
-                        }
+                        tracing::info!(
+                            "Would monitor example address: {}{}",
+                            addr_str,
+                            height_info
+                        );
                     }
                 }
                 Err(e) => {
@@ -448,31 +437,21 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
         }
     }
 
-    // Display current watch list
-    let watch_items = client.get_watch_items().await;
-    if !watch_items.is_empty() {
-        tracing::info!("Watching {} items:", watch_items.len());
-        for (i, item) in watch_items.iter().enumerate() {
-            match item {
-                dash_spv::WatchItem::Address {
-                    address,
-                    earliest_height,
-                } => {
-                    let height_info = earliest_height
-                        .map(|h| format!(" (from height {})", h))
-                        .unwrap_or_default();
-                    tracing::info!("  {}: Address {}{}", i + 1, address, height_info);
-                }
-                dash_spv::WatchItem::Script(script) => {
-                    tracing::info!("  {}: Script {}", i + 1, script.to_hex_string())
-                }
-                dash_spv::WatchItem::Outpoint(outpoint) => {
-                    tracing::info!("  {}: Outpoint {}:{}", i + 1, outpoint.txid, outpoint.vout)
-                }
+    // Display current wallet addresses
+    {
+        let wallet_lock = wallet.read().await;
+        let monitored = wallet_lock.base.monitored_addresses(config.network);
+        if !monitored.is_empty() {
+            tracing::info!("Wallet monitoring {} addresses:", monitored.len());
+            for (i, addr) in monitored.iter().take(10).enumerate() {
+                tracing::info!("  {}: {}", i + 1, addr);
             }
+            if monitored.len() > 10 {
+                tracing::info!("  ... and {} more addresses", monitored.len() - 10);
+            }
+        } else {
+            tracing::info!("No addresses being monitored by wallet. The wallet will generate addresses as needed.");
         }
-    } else {
-        tracing::info!("No watch items configured. Use --watch-address or --add-example-addresses to watch for transactions.");
     }
 
     // Wait for at least one peer to connect before attempting sync
@@ -500,9 +479,12 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
         }
     }
 
-    // Check filters for matches if we have watch items before starting monitoring
-    let watch_items = client.get_watch_items().await;
-    let should_check_filters = !watch_items.is_empty() && !matches.get_flag("no-filters");
+    // Check filters for matches if wallet has addresses before starting monitoring
+    let should_check_filters = {
+        let wallet_lock = wallet.read().await;
+        let monitored = wallet_lock.base.monitored_addresses(config.network);
+        !monitored.is_empty() && !matches.get_flag("no-filters")
+    };
 
     // Start synchronization first, then monitoring immediately
     // The key is to minimize the gap between sync requests and monitoring startup

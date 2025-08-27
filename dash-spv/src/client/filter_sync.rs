@@ -2,33 +2,31 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-
+use key_wallet_manager::wallet_interface::WalletInterface;
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::sequential::SequentialSyncManager;
 use crate::types::SpvStats;
-use crate::types::{FilterMatch, WatchItem};
+use crate::types::FilterMatch;
 
 /// Filter synchronization manager for coordinating filter downloads and checking.
-pub struct FilterSyncCoordinator<'a, S: StorageManager, N: NetworkManager> {
-    sync_manager: &'a mut SequentialSyncManager<S, N>,
+pub struct FilterSyncCoordinator<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> {
+    sync_manager: &'a mut SequentialSyncManager<S, N, W>,
     storage: &'a mut S,
     network: &'a mut N,
-    watch_items: &'a Arc<RwLock<std::collections::HashSet<WatchItem>>>,
     stats: &'a Arc<RwLock<SpvStats>>,
     running: &'a Arc<RwLock<bool>>,
 }
 
-impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    FilterSyncCoordinator<'a, S, N>
+impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static, W: WalletInterface>
+    FilterSyncCoordinator<'a, S, N, W>
 {
     /// Create a new filter sync coordinator.
     pub fn new(
-        sync_manager: &'a mut SequentialSyncManager<S, N>,
+        sync_manager: &'a mut SequentialSyncManager<S, N, W>,
         storage: &'a mut S,
         network: &'a mut N,
-        watch_items: &'a Arc<RwLock<std::collections::HashSet<WatchItem>>>,
         stats: &'a Arc<RwLock<SpvStats>>,
         running: &'a Arc<RwLock<bool>>,
     ) -> Self {
@@ -36,7 +34,6 @@ impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + S
             sync_manager,
             storage,
             network,
-            watch_items,
             stats,
             running,
         }
@@ -68,20 +65,9 @@ impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + S
         let tip_height =
             self.storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
 
-        // Get current watch items to determine earliest height needed
-        let watch_items = self.get_watch_items().await;
-
-        if watch_items.is_empty() {
-            tracing::info!("No watch items configured, skipping filter sync");
-            return Ok(Vec::new());
-        }
-
-        // Find the earliest height among all watch items
-        let earliest_height = watch_items
-            .iter()
-            .filter_map(|item| item.earliest_height())
-            .min()
-            .unwrap_or(tip_height.saturating_sub(99)); // Default to last 100 blocks if no earliest_height set
+        // TODO: Get earliest height from wallet's birth height or earliest address usage
+        // For now, default to last 100 blocks
+        let earliest_height = tip_height.saturating_sub(99);
 
         let num_blocks = num_blocks.unwrap_or(100);
         let default_start = tip_height.saturating_sub(num_blocks - 1);
@@ -158,9 +144,4 @@ impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + S
         Ok(())
     }
 
-    /// Get all watch items.
-    async fn get_watch_items(&self) -> Vec<WatchItem> {
-        let watch_items = self.watch_items.read().await;
-        watch_items.iter().cloned().collect()
-    }
 }

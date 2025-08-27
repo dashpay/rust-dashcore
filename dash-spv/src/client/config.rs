@@ -7,7 +7,7 @@ use std::time::Duration;
 use dashcore::{Address, Network, ScriptBuf};
 // Serialization removed due to complex Address types
 
-use crate::types::{ValidationMode, WatchItem};
+use crate::types::ValidationMode;
 
 /// Strategy for handling mempool (unconfirmed) transactions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,8 +53,6 @@ pub struct ClientConfig {
     /// Read timeout for TCP socket operations.
     pub read_timeout: Duration,
 
-    /// Items to watch on the blockchain.
-    pub watch_items: Vec<WatchItem>,
 
     /// Whether to enable filter syncing.
     pub enable_filters: bool,
@@ -189,7 +187,6 @@ impl Default for ClientConfig {
             message_timeout: Duration::from_secs(60),
             sync_timeout: Duration::from_secs(300),
             read_timeout: Duration::from_millis(100),
-            watch_items: vec![],
             enable_filters: true,
             enable_masternodes: true,
             max_peers: 8,
@@ -279,17 +276,6 @@ impl ClientConfig {
         self
     }
 
-    /// Add a watch address.
-    pub fn watch_address(mut self, address: Address) -> Self {
-        self.watch_items.push(WatchItem::address(address));
-        self
-    }
-
-    /// Add a watch script.
-    pub fn watch_script(mut self, script: ScriptBuf) -> Self {
-        self.watch_items.push(WatchItem::Script(script));
-        self
-    }
 
     /// Disable filters.
     pub fn without_filters(mut self) -> Self {
