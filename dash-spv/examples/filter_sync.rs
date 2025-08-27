@@ -22,8 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Create configuration with filter support
-    let config = ClientConfig::mainnet()
-        .without_masternodes(); // Skip masternode sync for this example
+    let config = ClientConfig::mainnet().without_masternodes(); // Skip masternode sync for this example
 
     // Create network manager
     let network_manager = MultiPeerNetworkManager::new(&config).await?;
