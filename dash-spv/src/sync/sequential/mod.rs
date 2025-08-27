@@ -21,11 +21,11 @@ use crate::client::ClientConfig;
 use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::StorageManager;
-use key_wallet_manager::wallet_interface::WalletInterface;
 use crate::sync::{
     FilterSyncManager, HeaderSyncManagerWithReorg, MasternodeSyncManager, ReorgConfig,
 };
 use crate::types::{ChainState, SyncProgress};
+use key_wallet_manager::wallet_interface::WalletInterface;
 
 use phases::{PhaseTransition, SyncPhase};
 use request_control::RequestController;
@@ -37,7 +37,11 @@ use transitions::TransitionManager;
 const CHAINLOCK_VALIDATION_MASTERNODE_OFFSET: u32 = 8;
 
 /// Manages sequential synchronization of all data types
-pub struct SequentialSyncManager<S: StorageManager, N: NetworkManager, W: key_wallet_manager::wallet_interface::WalletInterface> {
+pub struct SequentialSyncManager<
+    S: StorageManager,
+    N: NetworkManager,
+    W: key_wallet_manager::wallet_interface::WalletInterface,
+> {
     _phantom_s: std::marker::PhantomData<S>,
     _phantom_n: std::marker::PhantomData<N>,
     /// Current synchronization phase
@@ -76,8 +80,11 @@ pub struct SequentialSyncManager<S: StorageManager, N: NetworkManager, W: key_wa
     wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
 }
 
-impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static, W: key_wallet_manager::wallet_interface::WalletInterface>
-    SequentialSyncManager<S, N, W>
+impl<
+        S: StorageManager + Send + Sync + 'static,
+        N: NetworkManager + Send + Sync + 'static,
+        W: key_wallet_manager::wallet_interface::WalletInterface,
+    > SequentialSyncManager<S, N, W>
 {
     /// Create a new sequential sync manager
     pub fn new(
@@ -1300,8 +1307,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         let mut wallet = self.wallet.write().await;
 
         // Check filter against wallet if available
-        let matches = self.filter_sync
-            .check_filter_for_matches(&cfilter.filter, &cfilter.block_hash, wallet.deref_mut(), self.config.network)
+        let matches = self
+            .filter_sync
+            .check_filter_for_matches(
+                &cfilter.filter,
+                &cfilter.block_hash,
+                wallet.deref_mut(),
+                self.config.network,
+            )
             .await?;
 
         drop(wallet);
@@ -1430,10 +1443,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         let block_hash = block.block_hash();
 
         // Process the block through the wallet if available
-         let mut wallet = self.wallet.write().await;
+        let mut wallet = self.wallet.write().await;
 
         // Get the block height from storage
-        let block_height = storage.get_header_height_by_hash(&block_hash).await
+        let block_height = storage
+            .get_header_height_by_hash(&block_hash)
+            .await
             .map_err(|e| SyncError::Storage(format!("Failed to get block height: {}", e)))?
             .unwrap_or(0);
 
@@ -1442,8 +1457,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         drop(wallet);
 
         if !relevant_txids.is_empty() {
-            tracing::info!("💰 Found {} relevant transactions in block {} at height {}",
-                relevant_txids.len(), block_hash, block_height);
+            tracing::info!(
+                "💰 Found {} relevant transactions in block {} at height {}",
+                relevant_txids.len(),
+                block_hash,
+                block_height
+            );
             for txid in &relevant_txids {
                 tracing::debug!("  - Transaction: {}", txid);
             }

@@ -284,7 +284,8 @@ impl DiskStorageManager {
                 tracing::info!("Index file not found, rebuilding from segments...");
 
                 // Load chain state to get sync_base_height for proper height calculation
-                let sync_base_height = if let Ok(Some(chain_state)) = self.load_chain_state().await {
+                let sync_base_height = if let Ok(Some(chain_state)) = self.load_chain_state().await
+                {
                     chain_state.sync_base_height
                 } else {
                     0 // Assume genesis sync if no chain state
@@ -1200,8 +1201,11 @@ impl StorageManager for DiskStorageManager {
                     next_blockchain_height - sync_base_height
                 } else {
                     // This shouldn't happen in normal operation
-                    tracing::warn!("Attempting to store filter header at height {} below sync_base_height {}",
-                                 next_blockchain_height, sync_base_height);
+                    tracing::warn!(
+                        "Attempting to store filter header at height {} below sync_base_height {}",
+                        next_blockchain_height,
+                        sync_base_height
+                    );
                     next_blockchain_height
                 }
             } else {
@@ -1296,7 +1300,10 @@ impl StorageManager for DiskStorageManager {
         Ok(filter_headers)
     }
 
-    async fn get_filter_header(&self, blockchain_height: u32) -> StorageResult<Option<FilterHeader>> {
+    async fn get_filter_header(
+        &self,
+        blockchain_height: u32,
+    ) -> StorageResult<Option<FilterHeader>> {
         let sync_base_height = *self.sync_base_height.read().await;
 
         // Convert blockchain height to storage index
@@ -1306,8 +1313,11 @@ impl StorageManager for DiskStorageManager {
                 blockchain_height - sync_base_height
             } else {
                 // This shouldn't happen in normal operation, but handle it gracefully
-                tracing::warn!("Attempting to get filter header at height {} below sync_base_height {}",
-                             blockchain_height, sync_base_height);
+                tracing::warn!(
+                    "Attempting to get filter header at height {} below sync_base_height {}",
+                    blockchain_height,
+                    sync_base_height
+                );
                 return Ok(None);
             }
         } else {
@@ -1904,8 +1914,8 @@ mod tests {
     #[tokio::test]
     async fn test_checkpoint_storage_indexing() -> StorageResult<()> {
         use crate::types::ChainState;
-        use tempfile::tempdir;
         use dashcore::TxMerkleNode;
+        use tempfile::tempdir;
 
         let temp_dir = tempdir().expect("Failed to create temp dir");
         let mut storage = DiskStorageManager::new(temp_dir.path().to_path_buf()).await?;
@@ -1940,11 +1950,19 @@ mod tests {
         // Test the reverse index (hash -> blockchain height)
         let hash_0 = headers[0].block_hash();
         let height_0 = storage.get_header_height_by_hash(&hash_0).await?;
-        assert_eq!(height_0, Some(checkpoint_height), "Hash should map to blockchain height 1,100,000");
+        assert_eq!(
+            height_0,
+            Some(checkpoint_height),
+            "Hash should map to blockchain height 1,100,000"
+        );
 
         let hash_99 = headers[99].block_hash();
         let height_99 = storage.get_header_height_by_hash(&hash_99).await?;
-        assert_eq!(height_99, Some(checkpoint_height + 99), "Hash should map to blockchain height 1,100,099");
+        assert_eq!(
+            height_99,
+            Some(checkpoint_height + 99),
+            "Hash should map to blockchain height 1,100,099"
+        );
 
         // Store chain state to persist sync_base_height
         let mut chain_state = ChainState::new();
@@ -1961,12 +1979,18 @@ mod tests {
 
         // Verify the index was rebuilt correctly
         let height_after_rebuild = storage2.get_header_height_by_hash(&hash_0).await?;
-        assert_eq!(height_after_rebuild, Some(checkpoint_height),
-                   "After index rebuild, hash should still map to blockchain height 1,100,000");
+        assert_eq!(
+            height_after_rebuild,
+            Some(checkpoint_height),
+            "After index rebuild, hash should still map to blockchain height 1,100,000"
+        );
 
         // Verify headers can still be retrieved by storage index
         let header_after_reload = storage2.get_header(0).await?;
-        assert!(header_after_reload.is_some(), "Header at storage index 0 should exist after reload");
+        assert!(
+            header_after_reload.is_some(),
+            "Header at storage index 0 should exist after reload"
+        );
         assert_eq!(header_after_reload.unwrap(), headers[0]);
 
         Ok(())

@@ -1,8 +1,5 @@
 //! Network message handling for the Dash SPV client.
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use key_wallet_manager::wallet_interface::WalletInterface;
 use crate::client::ClientConfig;
 use crate::error::{Result, SpvError};
 use crate::mempool_filter::MempoolFilter;
@@ -10,6 +7,9 @@ use crate::network::NetworkManager;
 use crate::storage::StorageManager;
 use crate::sync::sequential::SequentialSyncManager;
 use crate::types::{MempoolState, SpvEvent, SpvStats};
+use key_wallet_manager::wallet_interface::WalletInterface;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Network message handler for processing incoming Dash protocol messages.
 pub struct MessageHandler<'a, S: StorageManager, N: NetworkManager, W: WalletInterface> {
@@ -24,8 +24,12 @@ pub struct MessageHandler<'a, S: StorageManager, N: NetworkManager, W: WalletInt
     event_tx: &'a tokio::sync::mpsc::UnboundedSender<SpvEvent>,
 }
 
-impl<'a, S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static, W: WalletInterface>
-    MessageHandler<'a, S, N, W>
+impl<
+        'a,
+        S: StorageManager + Send + Sync + 'static,
+        N: NetworkManager + Send + Sync + 'static,
+        W: WalletInterface,
+    > MessageHandler<'a, S, N, W>
 {
     /// Create a new message handler.
     pub fn new(

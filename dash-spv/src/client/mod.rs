@@ -135,7 +135,6 @@ impl<
         )
     }
 
-
     /// Helper to process balance changes with error handling.
     async fn process_address_balance<T, F>(
         &self,
@@ -210,7 +209,8 @@ impl<
         let received_filter_heights = stats.read().await.received_filter_heights.clone();
         tracing::info!("Creating sequential sync manager");
         let mut sync_manager =
-            SequentialSyncManager::new(&config, received_filter_heights, wallet.clone()).map_err(SpvError::Sync)?;
+            SequentialSyncManager::new(&config, received_filter_heights, wallet.clone())
+                .map_err(SpvError::Sync)?;
 
         // Create validation manager
         let validation = ValidationManager::new(config.validation_mode);
@@ -2325,7 +2325,6 @@ impl<
         Ok(())
     }
 
-
     /// Load wallet data from storage.
     async fn load_wallet_data(&self) -> Result<()> {
         tracing::info!("Loading wallet data from storage...");
@@ -2401,9 +2400,6 @@ impl<
 
 #[cfg(test)]
 mod config_test;
-
-#[cfg(test)]
-mod watch_manager_test;
 
 #[cfg(test)]
 mod block_processor_test;

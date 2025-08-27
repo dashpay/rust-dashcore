@@ -53,7 +53,6 @@ pub struct ClientConfig {
     /// Read timeout for TCP socket operations.
     pub read_timeout: Duration,
 
-
     /// Whether to enable filter syncing.
     pub enable_filters: bool,
 
@@ -275,7 +274,6 @@ impl ClientConfig {
         self.validation_mode = mode;
         self
     }
-
 
     /// Disable filters.
     pub fn without_filters(mut self) -> Self {

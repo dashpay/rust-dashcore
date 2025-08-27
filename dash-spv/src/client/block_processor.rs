@@ -349,7 +349,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                 stats.blocks_with_relevant_transactions += 1;
             }
 
-            tracing::info!("🚨 BLOCK MATCH DETECTED! Block {} at height {} contains {} transactions affecting watched addresses/scripts", 
+            tracing::info!("🚨 BLOCK MATCH DETECTED! Block {} at height {} contains {} transactions affecting watched addresses/scripts",
                           block_hash, block_height, relevant_transactions);
 
             // Report balance changes
@@ -433,7 +433,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                     // Create and store UTXO if we have an address
                     if let Some(address) = matched_address {
                         let balance_impact = amount.to_sat() as i64;
-                        tracing::info!("💰 TX {} output {}:{} to {:?} (value: {}) - Address {} balance impact: +{}", 
+                        tracing::info!("💰 TX {} output {}:{} to {:?} (value: {}) - Address {} balance impact: +{}",
                                       txid, txid, vout, watch_item, amount, address, balance_impact);
 
                         // WalletInterface doesn't have add_utxo method - this will be handled by process_block
@@ -444,7 +444,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                         *balance_changes.entry(address.clone()).or_insert(0) += balance_impact;
                         *tx_balance_changes.entry(address.clone()).or_insert(0) += balance_impact;
                     } else {
-                        tracing::info!("💰 TX {} output {}:{} to {:?} (value: {}) - No address to track balance", 
+                        tracing::info!("💰 TX {} output {}:{} to {:?} (value: {}) - No address to track balance",
                                       txid, txid, vout, watch_item, amount);
                     }
 

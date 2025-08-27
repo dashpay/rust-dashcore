@@ -310,19 +310,20 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
     matches: &clap::ArgMatches,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create and start the client
-    let mut client = match DashSpvClient::<
-        key_wallet_manager::spv_wallet_manager::SPVWalletManager,
-        dash_spv::network::multi_peer::MultiPeerNetworkManager,
-        S,
-    >::new(config.clone(), network_manager, storage_manager, wallet.clone())
-    .await
-    {
-        Ok(client) => client,
-        Err(e) => {
-            eprintln!("Failed to create SPV client: {}", e);
-            process::exit(1);
-        }
-    };
+    let mut client =
+        match DashSpvClient::<
+            key_wallet_manager::spv_wallet_manager::SPVWalletManager,
+            dash_spv::network::multi_peer::MultiPeerNetworkManager,
+            S,
+        >::new(config.clone(), network_manager, storage_manager, wallet.clone())
+        .await
+        {
+            Ok(client) => client,
+            Err(e) => {
+                eprintln!("Failed to create SPV client: {}", e);
+                process::exit(1);
+            }
+        };
 
     // Enable terminal UI in the client if requested
     let _terminal_guard = if enable_terminal_ui {
@@ -375,7 +376,10 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
                         Ok(valid_addr) => {
                             // TODO: Add address to wallet for monitoring
                             // For now, just log that we would watch this address
-                            tracing::info!("Would watch address: {} (wallet integration pending)", valid_addr);
+                            tracing::info!(
+                                "Would watch address: {} (wallet integration pending)",
+                                valid_addr
+                            );
                         }
                         Err(e) => {
                             tracing::error!("Invalid address for network: {}", e);
