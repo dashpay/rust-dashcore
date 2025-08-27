@@ -6,7 +6,7 @@ use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
 use crate::error::{Result, SpvError};
 use crate::storage::StorageManager;
-use crate::types::{AddressBalance, SpvEvent, SpvStats, WatchItem};
+use crate::types::{AddressBalance, SpvEvent, SpvStats};
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 /// Task for the block processing worker.
@@ -32,7 +32,6 @@ pub struct BlockProcessor<W: WalletInterface, S: StorageManager> {
     receiver: mpsc::UnboundedReceiver<BlockProcessingTask>,
     wallet: Arc<RwLock<W>>,
     storage: Arc<Mutex<S>>,
-    watch_items: Arc<RwLock<HashSet<WatchItem>>>,
     stats: Arc<RwLock<SpvStats>>,
     event_tx: mpsc::UnboundedSender<SpvEvent>,
     processed_blocks: HashSet<dashcore::BlockHash>,
@@ -48,7 +47,6 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
         receiver: mpsc::UnboundedReceiver<BlockProcessingTask>,
         wallet: Arc<RwLock<W>>,
         storage: Arc<Mutex<S>>,
-        watch_items: Arc<RwLock<HashSet<WatchItem>>>,
         stats: Arc<RwLock<SpvStats>>,
         event_tx: mpsc::UnboundedSender<SpvEvent>,
         network: dashcore::Network,
@@ -57,7 +55,6 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
             receiver,
             wallet,
             storage,
-            watch_items,
             stats,
             event_tx,
             processed_blocks: HashSet::new(),
@@ -236,19 +233,13 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
         }
         drop(wallet); // Release lock
 
-        // Extract transactions that might affect watched items
-        let watch_items: Vec<_> = self.watch_items.read().await.iter().cloned().collect();
-        if !watch_items.is_empty() {
-            self.process_block_transactions(&block, &watch_items).await?;
-        } else {
-            // No watch items, but still emit BlockProcessed event
-            let _ = self.event_tx.send(SpvEvent::BlockProcessed {
-                height,
-                hash: block_hash.to_string(),
-                transactions_count: block.txdata.len(),
-                relevant_transactions: 0,
-            });
-        }
+        // Emit BlockProcessed event with actual relevant transaction count
+        let _ = self.event_tx.send(SpvEvent::BlockProcessed {
+            height,
+            hash: block_hash.to_string(),
+            transactions_count: block.txdata.len(),
+            relevant_transactions: txids.len(),
+        });
 
         // Update chain state if needed
         self.update_chain_state_with_block(&block).await?;
@@ -272,11 +263,11 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
         Ok(())
     }
 
+    /* TODO: Re-implement with wallet integration
     /// Process transactions in a block to check for matches with watch items.
     async fn process_block_transactions(
         &mut self,
         block: &dashcore::Block,
-        watch_items: &[WatchItem],
     ) -> Result<()> {
         let block_hash = block.block_hash();
         let mut relevant_transactions = 0;
@@ -357,7 +348,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                 stats.blocks_with_relevant_transactions += 1;
             }
 
-            tracing::info!("🚨 BLOCK MATCH DETECTED! Block {} at height {} contains {} transactions affecting watched addresses/scripts", 
+            tracing::info!("🚨 BLOCK MATCH DETECTED! Block {} at height {} contains {} transactions affecting watched addresses/scripts",
                           block_hash, block_height, relevant_transactions);
 
             // Report balance changes
@@ -441,7 +432,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                     // Create and store UTXO if we have an address
                     if let Some(address) = matched_address {
                         let balance_impact = amount.to_sat() as i64;
-                        tracing::info!("💰 TX {} output {}:{} to {:?} (value: {}) - Address {} balance impact: +{}", 
+                        tracing::info!("💰 TX {} output {}:{} to {:?} (value: {}) - Address {} balance impact: +{}",
                                       txid, txid, vout, watch_item, amount, address, balance_impact);
 
                         // WalletInterface doesn't have add_utxo method - this will be handled by process_block
@@ -452,7 +443,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
                         *balance_changes.entry(address.clone()).or_insert(0) += balance_impact;
                         *tx_balance_changes.entry(address.clone()).or_insert(0) += balance_impact;
                     } else {
-                        tracing::info!("💰 TX {} output {}:{} to {:?} (value: {}) - No address to track balance", 
+                        tracing::info!("💰 TX {} output {}:{} to {:?} (value: {}) - No address to track balance",
                                       txid, txid, vout, watch_item, amount);
                     }
 
@@ -580,6 +571,7 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
 
         Ok(())
     }
+    */
 
     /// Get the balance for a specific address.
     async fn get_address_balance(&self, _address: &dashcore::Address) -> Result<AddressBalance> {

@@ -74,9 +74,7 @@ pub mod validation;
 // Re-export main types for convenience
 pub use client::{ClientConfig, DashSpvClient};
 pub use error::{NetworkError, SpvError, StorageError, SyncError, ValidationError};
-pub use types::{
-    ChainState, FilterMatch, PeerInfo, SpvStats, SyncProgress, ValidationMode, WatchItem,
-};
+pub use types::{ChainState, FilterMatch, PeerInfo, SpvStats, SyncProgress, ValidationMode};
 
 // Re-export commonly used dashcore types
 pub use dashcore::{Address, BlockHash, Network, OutPoint, QuorumHash, ScriptBuf};

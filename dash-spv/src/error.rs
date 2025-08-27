@@ -32,9 +32,6 @@ pub enum SpvError {
 
     #[error("Wallet error: {0}")]
     Wallet(#[from] WalletError),
-
-    #[error("Watch item error: {0}")]
-    WatchItem(String),
 }
 
 /// Parse-related errors.

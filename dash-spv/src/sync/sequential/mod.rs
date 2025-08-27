@@ -9,6 +9,7 @@ pub mod recovery;
 pub mod request_control;
 pub mod transitions;
 
+use std::ops::DerefMut;
 use std::time::{Duration, Instant};
 
 use dashcore::block::Header as BlockHeader;
@@ -24,6 +25,7 @@ use crate::sync::{
     FilterSyncManager, HeaderSyncManagerWithReorg, MasternodeSyncManager, ReorgConfig,
 };
 use crate::types::{ChainState, SyncProgress};
+use key_wallet_manager::wallet_interface::WalletInterface;
 
 use phases::{PhaseTransition, SyncPhase};
 use request_control::RequestController;
@@ -35,7 +37,11 @@ use transitions::TransitionManager;
 const CHAINLOCK_VALIDATION_MASTERNODE_OFFSET: u32 = 8;
 
 /// Manages sequential synchronization of all data types
-pub struct SequentialSyncManager<S: StorageManager, N: NetworkManager> {
+pub struct SequentialSyncManager<
+    S: StorageManager,
+    N: NetworkManager,
+    W: WalletInterface,
+> {
     _phantom_s: std::marker::PhantomData<S>,
     _phantom_n: std::marker::PhantomData<N>,
     /// Current synchronization phase
@@ -69,15 +75,22 @@ pub struct SequentialSyncManager<S: StorageManager, N: NetworkManager> {
 
     /// Current retry count for the active phase
     current_phase_retries: u32,
+
+    /// Optional wallet reference for filter checking
+    wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
 }
 
-impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync + 'static>
-    SequentialSyncManager<S, N>
+impl<
+        S: StorageManager + Send + Sync + 'static,
+        N: NetworkManager + Send + Sync + 'static,
+        W: WalletInterface,
+    > SequentialSyncManager<S, N, W>
 {
     /// Create a new sequential sync manager
     pub fn new(
         config: &ClientConfig,
         received_filter_heights: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u32>>>,
+        wallet: std::sync::Arc<tokio::sync::RwLock<W>>,
     ) -> SyncResult<Self> {
         // Create reorg config with sensible defaults
         let reorg_config = ReorgConfig::default();
@@ -97,6 +110,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             phase_timeout: Duration::from_secs(60), // 1 minute default timeout per phase
             max_phase_retries: 3,
             current_phase_retries: 0,
+            wallet,
             _phantom_s: std::marker::PhantomData,
             _phantom_n: std::marker::PhantomData,
         })
@@ -318,11 +332,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     .unwrap_or(0);
 
                 if filter_header_tip > 0 {
-                    // Download filters for recent blocks by default
-                    // Most wallets only need recent filters for transaction discovery
-                    // Full chain scanning can be done on demand
-                    const DEFAULT_FILTER_RANGE: u32 = 10000; // Download last 10k blocks
-                    let start_height = filter_header_tip.saturating_sub(DEFAULT_FILTER_RANGE - 1);
+                    // Download all filters for complete blockchain history
+                    // This ensures the wallet can find transactions from any point in history
+                    let start_height = self.header_sync.get_sync_base_height().max(1);
                     let count = filter_header_tip - start_height + 1;
 
                     tracing::info!(
@@ -1292,70 +1304,29 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     ) -> SyncResult<()> {
         tracing::debug!("📨 Received CFilter for block {}", cfilter.block_hash);
 
-        // First, check if this filter matches any watch items
-        // This is the key part that was missing!
-        if self.config.enable_filters {
-            // Get watch items from config (in a real implementation, this would come from the client)
-            // For now, we'll check if we have any watched addresses in storage
-            if let Ok(Some(watch_items_data)) = storage.load_metadata("watch_items").await {
-                if let Ok(watch_items) =
-                    serde_json::from_slice::<Vec<crate::types::WatchItem>>(&watch_items_data)
-                {
-                    if !watch_items.is_empty() {
-                        // Check if the filter matches any watch items
-                        match self
-                            .filter_sync
-                            .check_filter_for_matches(
-                                &cfilter.filter,
-                                &cfilter.block_hash,
-                                &watch_items,
-                                storage,
-                            )
-                            .await
-                        {
-                            Ok(true) => {
-                                tracing::info!(
-                                    "🎯 Filter match found for block {} at height {:?}!",
-                                    cfilter.block_hash,
-                                    storage
-                                        .get_header_height_by_hash(&cfilter.block_hash)
-                                        .await
-                                        .ok()
-                                        .flatten()
-                                );
+        let mut wallet = self.wallet.write().await;
 
-                                // Request the full block for processing
-                                let getdata = NetworkMessage::GetData(vec![Inventory::Block(
-                                    cfilter.block_hash,
-                                )]);
+        // Check filter against wallet if available
+        let matches = self
+            .filter_sync
+            .check_filter_for_matches(
+                &cfilter.filter,
+                &cfilter.block_hash,
+                wallet.deref_mut(),
+                self.config.network,
+            )
+            .await?;
 
-                                if let Err(e) = network.send_message(getdata).await {
-                                    tracing::error!(
-                                        "Failed to request block {}: {}",
-                                        cfilter.block_hash,
-                                        e
-                                    );
-                                }
+        drop(wallet);
 
-                                // Track the match in phase state
-                                if let SyncPhase::DownloadingFilters {
-                                    ..
-                                } = &mut self.current_phase
-                                {
-                                    // Update some tracking for matched filters
-                                    tracing::info!("📊 Filter match recorded, block requested");
-                                }
-                            }
-                            Ok(false) => {
-                                // No match, continue normally
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to check filter for matches: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
+        if matches {
+            tracing::info!("🎯 Filter match found! Requesting block {}", cfilter.block_hash);
+            // Request the full block
+            let inv = Inventory::Block(cfilter.block_hash);
+            network
+                .send_message(NetworkMessage::GetData(vec![inv]))
+                .await
+                .map_err(|e| SyncError::Network(format!("Failed to request block: {}", e)))?;
         }
 
         // Handle filter message tracking
@@ -1471,6 +1442,32 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
     ) -> SyncResult<()> {
         let block_hash = block.block_hash();
 
+        // Process the block through the wallet if available
+        let mut wallet = self.wallet.write().await;
+
+        // Get the block height from storage
+        let block_height = storage
+            .get_header_height_by_hash(&block_hash)
+            .await
+            .map_err(|e| SyncError::Storage(format!("Failed to get block height: {}", e)))?
+            .unwrap_or(0);
+
+        let relevant_txids = wallet.process_block(&block, block_height, self.config.network).await;
+
+        drop(wallet);
+
+        if !relevant_txids.is_empty() {
+            tracing::info!(
+                "💰 Found {} relevant transactions in block {} at height {}",
+                relevant_txids.len(),
+                block_hash,
+                block_height
+            );
+            for txid in &relevant_txids {
+                tracing::debug!("  - Transaction: {}", txid);
+            }
+        }
+
         // Handle block download and check if we need to transition
         let should_transition = if let SyncPhase::DownloadingBlocks {
             downloading,
@@ -1487,9 +1484,6 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
             // Update progress time
             *last_progress = Instant::now();
-
-            // Process the block (would be handled by block processor)
-            // ...
 
             // Check if all blocks are downloaded
             downloading.is_empty() && self.no_more_pending_blocks()
@@ -1920,62 +1914,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             .await
             .map_err(|e| SyncError::Storage(format!("Failed to store filter: {}", e)))?;
 
-        // Load watch items from storage (consistent with sync-time behavior)
-        let mut watch_items = Vec::new();
-
-        // First try to load from storage metadata
-        if let Ok(Some(watch_items_data)) = storage.load_metadata("watch_items").await {
-            if let Ok(stored_items) =
-                serde_json::from_slice::<Vec<crate::types::WatchItem>>(&watch_items_data)
-            {
-                watch_items = stored_items;
-                tracing::debug!(
-                    "Loaded {} watch items from storage for post-sync filter check",
-                    watch_items.len()
-                );
-            }
-        }
-
-        // If no items in storage, fall back to config
-        if watch_items.is_empty() && !self.config.watch_items.is_empty() {
-            watch_items = self.config.watch_items.clone();
-            tracing::debug!(
-                "Using {} watch items from config for post-sync filter check",
-                watch_items.len()
-            );
-        }
-
-        // Check if the filter matches any of our watch items
-        if !watch_items.is_empty() {
-            let matches = self
-                .filter_sync
-                .check_filter_for_matches(
-                    &cfilter.filter,
-                    &cfilter.block_hash,
-                    &watch_items,
-                    storage,
-                )
-                .await?;
-
-            if matches {
-                tracing::info!("🎯 Filter matches! Requesting block {}", cfilter.block_hash);
-
-                // Request the full block
-                let get_data = NetworkMessage::GetData(vec![Inventory::Block(cfilter.block_hash)]);
-
-                network
-                    .send_message(get_data)
-                    .await
-                    .map_err(|e| SyncError::Network(format!("Failed to request block: {}", e)))?;
-            } else {
-                tracing::debug!(
-                    "Filter for block {} does not match any watch items",
-                    cfilter.block_hash
-                );
-            }
-        } else {
-            tracing::warn!("No watch items available for post-sync filter check");
-        }
+        // TODO: Check filter against wallet instead of watch items
+        // This will be integrated with wallet's check_compact_filter method
+        tracing::debug!("Filter checking disabled until wallet integration is complete");
 
         Ok(())
     }

@@ -1,14 +1,14 @@
 //! Filter synchronization functionality.
 
 use dashcore::{
+    BlockHash, ScriptBuf,
     bip158::{BlockFilterReader, Error as Bip158Error},
     hash_types::FilterHeader,
     network::message::NetworkMessage,
     network::message_blockdata::Inventory,
     network::message_filter::{CFHeaders, GetCFHeaders, GetCFilters},
-    BlockHash, ScriptBuf,
 };
-use dashcore_hashes::{sha256d, Hash};
+use dashcore_hashes::{Hash, sha256d};
 use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::sync::mpsc;
 
@@ -247,8 +247,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Check if this is the expected batch or if there's overlap
         if batch_start_height < self.current_sync_height {
-            tracing::warn!("📋 Received overlapping filter headers: expected start={}, received start={} (likely from recovery/retry)", 
-                          self.current_sync_height, batch_start_height);
+            tracing::warn!(
+                "📋 Received overlapping filter headers: expected start={}, received start={} (likely from recovery/retry)",
+                self.current_sync_height,
+                batch_start_height
+            );
 
             // Handle overlapping headers using the helper method
             let (new_headers_stored, new_current_height) = self
@@ -262,8 +265,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
         } else if batch_start_height > self.current_sync_height {
             // Gap in the sequence - this shouldn't happen in normal operation
-            tracing::error!("❌ Gap detected in filter header sequence: expected start={}, received start={} (gap of {} headers)", 
-                           self.current_sync_height, batch_start_height, batch_start_height - self.current_sync_height);
+            tracing::error!(
+                "❌ Gap detected in filter header sequence: expected start={}, received start={} (gap of {} headers)",
+                self.current_sync_height,
+                batch_start_height,
+                batch_start_height - self.current_sync_height
+            );
             return Err(SyncError::Validation(format!(
                 "Gap in filter header sequence: expected {}, got {}",
                 self.current_sync_height, batch_start_height
@@ -290,21 +297,33 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         // Perform stability check before declaring completion
                         if let Ok(is_stable) = self.check_filter_header_stability(storage).await {
                             if is_stable {
-                                tracing::info!("🎯 Filter header sync complete at height {} (stability confirmed)", stop_height);
+                                tracing::info!(
+                                    "🎯 Filter header sync complete at height {} (stability confirmed)",
+                                    stop_height
+                                );
                                 self.syncing_filter_headers = false;
                                 return Ok(false);
                             } else {
-                                tracing::debug!("Filter header sync reached tip at height {} but stability check failed, continuing sync", stop_height);
+                                tracing::debug!(
+                                    "Filter header sync reached tip at height {} but stability check failed, continuing sync",
+                                    stop_height
+                                );
                             }
                         } else {
-                            tracing::debug!("Filter header sync reached tip at height {} but stability check errored, continuing sync", stop_height);
+                            tracing::debug!(
+                                "Filter header sync reached tip at height {} but stability check errored, continuing sync",
+                                stop_height
+                            );
                         }
                     }
 
                     // Check if our next sync height would exceed the header tip
                     if self.current_sync_height > header_tip_height {
-                        tracing::info!("Filter header sync complete - current sync height {} exceeds header tip {}", 
-                                      self.current_sync_height, header_tip_height);
+                        tracing::info!(
+                            "Filter header sync complete - current sync height {} exceeds header tip {}",
+                            self.current_sync_height,
+                            header_tip_height
+                        );
                         self.syncing_filter_headers = false;
                         return Ok(false);
                     }
@@ -322,12 +341,16 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     let stop_hash = if next_batch_end_height < header_tip_height {
                         // Try to get the header at the calculated height
                         // Convert blockchain height to storage height
-                        let storage_height = self.blockchain_to_storage_height(next_batch_end_height);
+                        let storage_height =
+                            self.blockchain_to_storage_height(next_batch_end_height);
                         match storage.get_header(storage_height).await {
                             Ok(Some(header)) => header.block_hash(),
                             Ok(None) => {
-                                tracing::warn!("Header not found at storage height {} (blockchain height {}), scanning backwards to find actual available height",
-                                              storage_height, next_batch_end_height);
+                                tracing::warn!(
+                                    "Header not found at storage height {} (blockchain height {}), scanning backwards to find actual available height",
+                                    storage_height,
+                                    next_batch_end_height
+                                );
 
                                 // Scan backwards to find the highest available header
                                 let mut scan_height = next_batch_end_height.saturating_sub(1);
@@ -335,11 +358,16 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                 let mut found_header_info = None;
 
                                 while scan_height >= min_height && found_header_info.is_none() {
-                                    let scan_storage_height = self.blockchain_to_storage_height(scan_height);
+                                    let scan_storage_height =
+                                        self.blockchain_to_storage_height(scan_height);
                                     match storage.get_header(scan_storage_height).await {
                                         Ok(Some(header)) => {
-                                            tracing::info!("Found available header at blockchain height {} / storage height {} (originally tried {})",
-                                                          scan_height, scan_storage_height, next_batch_end_height);
+                                            tracing::info!(
+                                                "Found available header at blockchain height {} / storage height {} (originally tried {})",
+                                                scan_height,
+                                                scan_storage_height,
+                                                next_batch_end_height
+                                            );
                                             found_header_info =
                                                 Some((header.block_hash(), scan_height));
                                             break;
@@ -374,8 +402,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                     Some((hash, height)) => {
                                         // Check if we found a header at a height less than our current sync height
                                         if height < self.current_sync_height {
-                                            tracing::warn!("Found header at height {} which is less than current sync height {}. This means we already have filter headers up to {}. Marking sync as complete.", 
-                                                          height, self.current_sync_height, self.current_sync_height - 1);
+                                            tracing::warn!(
+                                                "Found header at height {} which is less than current sync height {}. This means we already have filter headers up to {}. Marking sync as complete.",
+                                                height,
+                                                self.current_sync_height,
+                                                self.current_sync_height - 1
+                                            );
                                             // We already have filter headers up to current_sync_height - 1
                                             // No need to request more, mark sync as complete
                                             self.syncing_filter_headers = false;
@@ -384,9 +416,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                         hash
                                     }
                                     None => {
-                                        tracing::error!("No available headers found between {} and {} - storage appears to have gaps", 
-                                                       min_height, next_batch_end_height);
-                                        tracing::error!("This indicates a serious storage inconsistency. Stopping filter header sync.");
+                                        tracing::error!(
+                                            "No available headers found between {} and {} - storage appears to have gaps",
+                                            min_height,
+                                            next_batch_end_height
+                                        );
+                                        tracing::error!(
+                                            "This indicates a serious storage inconsistency. Stopping filter header sync."
+                                        );
 
                                         // Mark sync as complete since we can't find any valid headers to request
                                         self.syncing_filter_headers = false;
@@ -404,7 +441,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                     } else {
                         // Special handling for chain tip: if we can't find the exact tip header,
                         // try the previous header as we might be at the actual chain tip
-                        let tip_storage_height = self.blockchain_to_storage_height(header_tip_height);
+                        let tip_storage_height =
+                            self.blockchain_to_storage_height(header_tip_height);
                         match storage.get_header(tip_storage_height).await {
                             Ok(Some(header)) => header.block_hash(),
                             Ok(None) if header_tip_height > 0 => {
@@ -414,7 +452,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                     header_tip_height
                                 );
                                 // Try previous header when at chain tip
-                                let prev_storage_height = self.blockchain_to_storage_height(header_tip_height - 1);
+                                let prev_storage_height =
+                                    self.blockchain_to_storage_height(header_tip_height - 1);
                                 storage
                                     .get_header(prev_storage_height)
                                     .await
@@ -482,7 +521,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         if self.last_sync_progress.elapsed() > std::time::Duration::from_secs(SYNC_TIMEOUT_SECONDS)
         {
-            tracing::warn!("📊 No filter header sync progress for {}+ seconds, re-sending filter header request", SYNC_TIMEOUT_SECONDS);
+            tracing::warn!(
+                "📊 No filter header sync progress for {}+ seconds, re-sending filter header request",
+                SYNC_TIMEOUT_SECONDS
+            );
 
             // Get header tip height for recovery
             let storage_tip_height = storage
@@ -516,8 +558,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
                         let mut found_recovery_info = None;
                         while scan_height >= min_height && found_recovery_info.is_none() {
-                            let scan_storage_height = self.blockchain_to_storage_height(scan_height);
-                            if let Ok(Some(header)) = storage.get_header(scan_storage_height).await {
+                            let scan_storage_height =
+                                self.blockchain_to_storage_height(scan_height);
+                            if let Ok(Some(header)) = storage.get_header(scan_storage_height).await
+                            {
                                 tracing::info!(
                                     "Found recovery header at blockchain height {} / storage height {} (originally tried {})",
                                     scan_height,
@@ -538,8 +582,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             Some((hash, height)) => {
                                 // Check if we found a header at a height less than our current sync height
                                 if height < self.current_sync_height {
-                                    tracing::warn!("Recovery: Found header at height {} which is less than current sync height {}. This indicates we already have filter headers up to {}. Marking sync as complete.", 
-                                                  height, self.current_sync_height, self.current_sync_height - 1);
+                                    tracing::warn!(
+                                        "Recovery: Found header at height {} which is less than current sync height {}. This indicates we already have filter headers up to {}. Marking sync as complete.",
+                                        height,
+                                        self.current_sync_height,
+                                        self.current_sync_height - 1
+                                    );
                                     // We already have filter headers up to current_sync_height - 1
                                     // No point in trying to recover, mark sync as complete
                                     self.syncing_filter_headers = false;
@@ -641,8 +689,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             .has_peer_with_service(dashcore::network::constants::ServiceFlags::COMPACT_FILTERS)
             .await
         {
-            tracing::warn!("⚠️  No connected peers support compact filters (BIP 157/158). Skipping filter synchronization.");
-            tracing::warn!("⚠️  To enable filter sync, connect to peers that advertise NODE_COMPACT_FILTERS service bit.");
+            tracing::warn!(
+                "⚠️  No connected peers support compact filters (BIP 157/158). Skipping filter synchronization."
+            );
+            tracing::warn!(
+                "⚠️  To enable filter sync, connect to peers that advertise NODE_COMPACT_FILTERS service bit."
+            );
             return Ok(false); // No sync started
         }
 
@@ -672,14 +724,18 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         // Double-check that we actually have headers to sync
         // When using checkpoint sync, start from at least sync_base_height + 1
-        let next_height = if self.sync_base_height > 0 && current_filter_height < self.sync_base_height {
-            // Start from checkpoint base + 1, not from 1
-            tracing::info!("Starting filter sync from checkpoint base {} (current filter height: {})",
-                         self.sync_base_height + 1, current_filter_height);
-            self.sync_base_height + 1
-        } else {
-            current_filter_height + 1
-        };
+        let next_height =
+            if self.sync_base_height > 0 && current_filter_height < self.sync_base_height {
+                // Start from checkpoint base + 1, not from 1
+                tracing::info!(
+                    "Starting filter sync from checkpoint base {} (current filter height: {})",
+                    self.sync_base_height + 1,
+                    current_filter_height
+                );
+                self.sync_base_height + 1
+            } else {
+                current_filter_height + 1
+            };
 
         if next_height > header_tip_height {
             tracing::warn!(
@@ -701,10 +757,18 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             storage
                 .get_header(storage_tip_height)
                 .await
-                .map_err(|e| SyncError::Storage(format!("Failed to get stop header at storage height {} (blockchain height {}): {}",
-                                                        storage_tip_height, header_tip_height, e)))?
-                .ok_or_else(|| SyncError::Storage(format!("Stop header not found at storage height {} (blockchain height {})",
-                                                          storage_tip_height, header_tip_height)))?
+                .map_err(|e| {
+                    SyncError::Storage(format!(
+                        "Failed to get stop header at storage height {} (blockchain height {}): {}",
+                        storage_tip_height, header_tip_height, e
+                    ))
+                })?
+                .ok_or_else(|| {
+                    SyncError::Storage(format!(
+                        "Stop header not found at storage height {} (blockchain height {})",
+                        storage_tip_height, header_tip_height
+                    ))
+                })?
                 .block_hash()
         } else {
             return Err(SyncError::Storage("No headers available for filter sync".to_string()));
@@ -726,16 +790,22 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             // Try to get the header at the calculated height with fallback
             // Convert blockchain height to storage height
             let storage_height = self.blockchain_to_storage_height(batch_end_height);
-            tracing::debug!("Trying to get header at blockchain height {} -> storage height {}",
-                          batch_end_height, storage_height);
+            tracing::debug!(
+                "Trying to get header at blockchain height {} -> storage height {}",
+                batch_end_height,
+                storage_height
+            );
             match storage.get_header(storage_height).await {
                 Ok(Some(header)) => {
                     tracing::debug!("Found header at storage height {}", storage_height);
                     header.block_hash()
-                },
+                }
                 Ok(None) => {
-                    tracing::warn!("Initial batch header not found at storage height {} (blockchain height {}), scanning for available header",
-                                  storage_height, batch_end_height);
+                    tracing::warn!(
+                        "Initial batch header not found at storage height {} (blockchain height {}), scanning for available header",
+                        storage_height,
+                        batch_end_height
+                    );
 
                     // Scan backwards to find the highest available header within the batch
                     let mut scan_height = batch_end_height;
@@ -746,8 +816,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         let scan_storage_height = self.blockchain_to_storage_height(scan_height);
                         match storage.get_header(scan_storage_height).await {
                             Ok(Some(header)) => {
-                                tracing::info!("Found available header at blockchain height {} / storage height {} (originally tried {})",
-                                              scan_height, scan_storage_height, batch_end_height);
+                                tracing::info!(
+                                    "Found available header at blockchain height {} / storage height {} (originally tried {})",
+                                    scan_height,
+                                    scan_storage_height,
+                                    batch_end_height
+                                );
                                 found_header = Some(header.block_hash());
                                 break;
                             }
@@ -758,7 +832,11 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                                 scan_height = scan_height.saturating_sub(1);
                             }
                             Err(e) => {
-                                tracing::warn!("Error getting header at height {}: {}", scan_height, e);
+                                tracing::warn!(
+                                    "Error getting header at height {}: {}",
+                                    scan_height,
+                                    e
+                                );
                                 if scan_height == min_height {
                                     break;
                                 }
@@ -774,7 +852,8 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                             // Don't fall back to tip as that would create an oversized request
                             return Err(SyncError::Storage(format!(
                                 "No headers found in batch range {} to {} (storage range {} to {})",
-                                self.current_sync_height, batch_end_height,
+                                self.current_sync_height,
+                                batch_end_height,
                                 self.blockchain_to_storage_height(self.current_sync_height),
                                 self.blockchain_to_storage_height(batch_end_height)
                             )));
@@ -998,10 +1077,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         // Skip verification for the first batch when starting from genesis or checkpoint
         // For genesis sync: start_height == 1 (we don't have genesis filter header)
         // For checkpoint sync: start_height == sync_base_height + 1 (we don't have checkpoint filter header)
-        if start_height <= 1 || (self.sync_base_height > 0 && start_height == self.sync_base_height + 1) {
+        if start_height <= 1
+            || (self.sync_base_height > 0 && start_height == self.sync_base_height + 1)
+        {
             tracing::debug!(
                 "Skipping filter header chain verification for first batch (start_height={}, sync_base_height={})",
-                start_height, self.sync_base_height
+                start_height,
+                self.sync_base_height
             );
             return Ok(true);
         }
@@ -1224,8 +1306,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             return Ok(());
         }
 
-        tracing::info!("🔄 Building filter request queue from height {} to {} ({} blocks, filter headers available up to {})", 
-                      start, end, end - start + 1, filter_header_tip_height);
+        tracing::info!(
+            "🔄 Building filter request queue from height {} to {} ({} blocks, filter headers available up to {})",
+            start,
+            end,
+            end - start + 1,
+            filter_header_tip_height
+        );
 
         // Build requests in batches
         let batch_size = FILTER_REQUEST_BATCH_SIZE;
@@ -1239,8 +1326,18 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             let stop_hash = storage
                 .get_header(storage_height)
                 .await
-                .map_err(|e| SyncError::Storage(format!("Failed to get stop header at height {} (storage index {}): {}", batch_end, storage_height, e)))?
-                .ok_or_else(|| SyncError::Storage(format!("Stop header not found at height {} (storage index {})", batch_end, storage_height)))?
+                .map_err(|e| {
+                    SyncError::Storage(format!(
+                        "Failed to get stop header at height {} (storage index {}): {}",
+                        batch_end, storage_height, e
+                    ))
+                })?
+                .ok_or_else(|| {
+                    SyncError::Storage(format!(
+                        "Stop header not found at height {} (storage index {})",
+                        batch_end, storage_height
+                    ))
+                })?
                 .block_hash();
 
             // Create filter request and add to queue
@@ -1582,11 +1679,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         }
     }
 
-    /// Check filters against watch list and return matches.
+    /// Check filters against wallet and return matches.
     pub async fn check_filters_for_matches(
         &self,
         storage: &S,
-        watch_items: &[crate::types::WatchItem],
         start_height: u32,
         end_height: u32,
     ) -> SyncResult<Vec<crate::types::FilterMatch>> {
@@ -1596,46 +1692,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             end_height
         );
 
-        if watch_items.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Convert watch items to scripts for filter matching
-        let watch_scripts = self.extract_scripts_from_watch_items(watch_items)?;
-
-        let mut matches = Vec::new();
-
-        for height in start_height..=end_height {
-            if let Some(filter_data) = storage
-                .load_filter(height)
-                .await
-                .map_err(|e| SyncError::Storage(format!("Failed to load filter: {}", e)))?
-            {
-                // Get the block hash for this height
-                let block_hash = storage
-                    .get_header(height)
-                    .await
-                    .map_err(|e| SyncError::Storage(format!("Failed to get header: {}", e)))?
-                    .ok_or_else(|| SyncError::Storage("Header not found".to_string()))?
-                    .block_hash();
-
-                // Check if any watch scripts match using the raw filter data
-                if self.filter_matches_scripts(&filter_data, &block_hash, &watch_scripts)? {
-                    // block_hash already obtained above
-
-                    matches.push(crate::types::FilterMatch {
-                        block_hash,
-                        height,
-                        block_requested: false,
-                    });
-
-                    tracing::info!("Filter match found at height {} ({})", height, block_hash);
-                }
-            }
-        }
-
-        tracing::info!("Found {} filter matches", matches.len());
-        Ok(matches)
+        // TODO: This will be integrated with wallet's check_compact_filter
+        // For now, return empty matches
+        Ok(Vec::new())
     }
 
     /// Request compact filters from the network.
@@ -1769,21 +1828,14 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         Ok(())
     }
 
-    /// Download and check a compact filter for matches against watch items.
+    /// Download and check a compact filter for matches.
     pub async fn download_and_check_filter(
         &mut self,
         block_hash: BlockHash,
-        watch_items: &[crate::types::WatchItem],
         network: &mut N,
         storage: &mut S,
     ) -> SyncResult<bool> {
-        if watch_items.is_empty() {
-            tracing::debug!(
-                "No watch items configured, skipping filter check for block {}",
-                block_hash
-            );
-            return Ok(false);
-        }
+        // TODO: Will check with wallet once integrated
 
         // Get the block height for this hash by scanning headers
         let header_tip_height = storage
@@ -1803,10 +1855,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             })?;
 
         tracing::info!(
-            "📥 Requesting compact filter for block {} at height {} (checking {} watch items)",
+            "📥 Requesting compact filter for block {} at height {}",
             block_hash,
-            height,
-            watch_items.len()
+            height
         );
 
         // Request the compact filter using getcfilters
@@ -1818,75 +1869,27 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
         Ok(false) // Return false for now, will be updated when we process the response
     }
 
-    /// Check a filter for matches against watch items (helper method for processing CFilter messages).
-    pub async fn check_filter_for_matches(
+    /// Check a filter for matches using the wallet.
+    pub async fn check_filter_for_matches<
+        W: key_wallet_manager::wallet_interface::WalletInterface,
+    >(
         &self,
         filter_data: &[u8],
         block_hash: &BlockHash,
-        watch_items: &[crate::types::WatchItem],
-        _storage: &S,
+        wallet: &mut W,
+        network: dashcore::Network,
     ) -> SyncResult<bool> {
-        if watch_items.is_empty() {
-            return Ok(false);
+        // Create the BlockFilter from the raw data
+        let filter = dashcore::bip158::BlockFilter::new(filter_data);
+
+        // Use wallet's check_compact_filter method
+        let matches = wallet.check_compact_filter(&filter, block_hash, network).await;
+        if matches {
+            tracing::info!("🎯 Filter match found for block {}", block_hash);
+            Ok(true)
+        } else {
+            Ok(false)
         }
-
-        // Convert watch items to scripts for filter checking
-        let mut scripts = Vec::with_capacity(watch_items.len());
-        for item in watch_items {
-            match item {
-                crate::types::WatchItem::Address {
-                    address,
-                    ..
-                } => {
-                    scripts.push(address.script_pubkey());
-                }
-                crate::types::WatchItem::Script(script) => {
-                    scripts.push(script.clone());
-                }
-                crate::types::WatchItem::Outpoint(_) => {
-                    // For outpoints, we'd need the transaction data to get the script
-                    // Skip for now - this would require more complex logic
-                }
-            }
-        }
-
-        if scripts.is_empty() {
-            tracing::debug!("No scripts to check for block {}", block_hash);
-            return Ok(false);
-        }
-
-        // Use the existing filter matching logic (synchronous method)
-        self.filter_matches_scripts(filter_data, block_hash, &scripts)
-    }
-
-    /// Extract scripts from watch items for filter matching.
-    fn extract_scripts_from_watch_items(
-        &self,
-        watch_items: &[crate::types::WatchItem],
-    ) -> SyncResult<Vec<ScriptBuf>> {
-        let mut scripts = Vec::with_capacity(watch_items.len());
-
-        for item in watch_items {
-            match item {
-                crate::types::WatchItem::Address {
-                    address,
-                    ..
-                } => {
-                    scripts.push(address.script_pubkey());
-                }
-                crate::types::WatchItem::Script(script) => {
-                    scripts.push(script.clone());
-                }
-                crate::types::WatchItem::Outpoint(outpoint) => {
-                    // For outpoints, we need to watch for spending transactions
-                    // This requires the outpoint bytes in the filter
-                    // For now, we'll skip outpoint matching as it's more complex
-                    tracing::warn!("Outpoint watching not yet implemented: {:?}", outpoint);
-                }
-            }
-        }
-
-        Ok(scripts)
     }
 
     /// Check if filter matches any of the provided scripts using BIP158 GCS filter.
@@ -2018,7 +2021,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 Err(e) => {
                     // If we can't find the connection point, it might be from a different peer
                     // with a different view of the chain
-                    tracing::warn!("Failed to handle overlapping filter headers: {}. This may be due to data from different peers.", e);
+                    tracing::warn!(
+                        "Failed to handle overlapping filter headers: {}. This may be due to data from different peers.",
+                        e
+                    );
                     return Ok(());
                 }
             }
@@ -2043,15 +2049,20 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         }
 
                         // If this is the first batch after a checkpoint, store the checkpoint filter header
-                        if self.sync_base_height > 0 && start_height == self.sync_base_height + 1 && current_filter_tip < self.sync_base_height {
+                        if self.sync_base_height > 0
+                            && start_height == self.sync_base_height + 1
+                            && current_filter_tip < self.sync_base_height
+                        {
                             // Store the previous_filter_header as the filter header for the checkpoint block
                             let checkpoint_header = vec![cfheaders.previous_filter_header];
-                            storage.store_filter_headers(&checkpoint_header).await.map_err(|e| {
-                                SyncError::Storage(format!(
-                                    "Failed to store checkpoint filter header: {}",
-                                    e
-                                ))
-                            })?;
+                            storage.store_filter_headers(&checkpoint_header).await.map_err(
+                                |e| {
+                                    SyncError::Storage(format!(
+                                        "Failed to store checkpoint filter header: {}",
+                                        e
+                                    ))
+                                },
+                            )?;
                             tracing::info!(
                                 "Stored checkpoint filter header at height {}: {:?}",
                                 self.sync_base_height,
@@ -2072,7 +2083,10 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                 }
                 Err(e) => {
                     // If verification failed, it might be from a peer with different data
-                    tracing::warn!("Failed to process filter headers: {}. This may be due to data from different peers.", e);
+                    tracing::warn!(
+                        "Failed to process filter headers: {}. This may be due to data from different peers.",
+                        e
+                    );
                     return Ok(());
                 }
             }
@@ -2349,44 +2363,32 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
     /// Create a filter processing task that runs in a separate thread.
     /// Returns a sender channel that the networking thread can use to send CFilter messages
-    /// for processing, and a watch item update sender for dynamic updates.
+    /// for processing.
+    /// TODO: Integrate with wallet for filter checking
     pub fn spawn_filter_processor(
-        initial_watch_items: Vec<crate::types::WatchItem>,
         network_message_sender: mpsc::Sender<NetworkMessage>,
         processing_thread_requests: std::sync::Arc<
             std::sync::Mutex<std::collections::HashSet<BlockHash>>,
         >,
         stats: std::sync::Arc<tokio::sync::RwLock<crate::types::SpvStats>>,
-    ) -> (FilterNotificationSender, crate::client::WatchItemUpdateSender) {
-        let (filter_tx, mut filter_rx) = mpsc::unbounded_channel();
-        let (watch_update_tx, mut watch_update_rx) =
-            mpsc::unbounded_channel::<Vec<crate::types::WatchItem>>();
+    ) -> FilterNotificationSender {
+        let (filter_tx, mut filter_rx) =
+            mpsc::unbounded_channel::<dashcore::network::message_filter::CFilter>();
 
         tokio::spawn(async move {
-            tracing::info!(
-                "🔄 Filter processing thread started with {} initial watch items",
-                initial_watch_items.len()
-            );
-
-            // Current watch items (can be updated dynamically)
-            let mut current_watch_items = initial_watch_items;
+            tracing::info!("🔄 Filter processing thread started (wallet integration pending)");
 
             loop {
                 tokio::select! {
                     // Handle CFilter messages
                     Some(cfilter) = filter_rx.recv() => {
-                        if let Err(e) = Self::process_filter_notification(cfilter, &current_watch_items, &network_message_sender, &processing_thread_requests, &stats).await {
-                            tracing::error!("Failed to process filter notification: {}", e);
-                        }
+                        // TODO: Process filter with wallet
+                        tracing::debug!("Received CFilter for block {} (wallet integration pending)", cfilter.block_hash);
+                        // Update stats
+                        Self::update_filter_received(&stats).await;
                     }
 
-                    // Handle watch item updates
-                    Some(new_watch_items) = watch_update_rx.recv() => {
-                        tracing::info!("🔄 Filter processor received watch item update: {} items", new_watch_items.len());
-                        current_watch_items = new_watch_items;
-                    }
-
-                    // Exit when both channels are closed
+                    // Exit when channel is closed
                     else => {
                         tracing::info!("🔄 Filter processing thread stopped");
                         break;
@@ -2395,13 +2397,13 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             }
         });
 
-        (filter_tx, watch_update_tx)
+        filter_tx
     }
 
+    /* TODO: Re-implement with wallet integration
     /// Process a single filter notification by checking for matches and requesting blocks.
     async fn process_filter_notification(
         cfilter: dashcore::network::message_filter::CFilter,
-        watch_items: &[crate::types::WatchItem],
         network_message_sender: &mpsc::Sender<NetworkMessage>,
         processing_thread_requests: &std::sync::Arc<
             std::sync::Mutex<std::collections::HashSet<BlockHash>>,
@@ -2490,7 +2492,9 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
         Ok(())
     }
+    */
 
+    /* TODO: Re-implement with wallet integration
     /// Static method to check if a filter matches any scripts (used by the processing thread).
     fn check_filter_matches(
         filter_data: &[u8],
@@ -2531,6 +2535,7 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             Err(_) => Err(SyncError::Validation("BIP158 filter error".to_string())),
         }
     }
+    */
 
     /// Check if filter header sync is stable (tip height hasn't changed for 3+ seconds).
     /// This prevents premature completion detection when filter headers are still arriving.
@@ -2742,8 +2747,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
             && stats_lock.filters_received < stats_lock.filters_requested
         {
             // Gap detection failed, but basic stats show incomplete sync
-            tracing::debug!("Gap detection shows complete ({}), but basic progress shows {}/{} - treating as incomplete", 
-                           total_missing, stats_lock.filters_received, stats_lock.filters_requested);
+            tracing::debug!(
+                "Gap detection shows complete ({}), but basic progress shows {}/{} - treating as incomplete",
+                total_missing,
+                stats_lock.filters_received,
+                stats_lock.filters_requested
+            );
             (stats_lock.filters_requested - stats_lock.filters_received) as u32
         } else {
             total_missing
@@ -3068,8 +3077,12 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
                         retried_count += 1;
                     } else {
                         // Range is too large, split into smaller batches
-                        tracing::warn!("Filter range {}-{} ({} filters) exceeds Dash Core's 1000 filter limit, splitting into batches", 
-                                      start, end, range_size);
+                        tracing::warn!(
+                            "Filter range {}-{} ({} filters) exceeds Dash Core's 1000 filter limit, splitting into batches",
+                            start,
+                            end,
+                            range_size
+                        );
 
                         let max_batch_size = MAX_FILTER_REQUEST_SIZE;
                         let mut current_start = start;
@@ -3079,21 +3092,41 @@ impl<S: StorageManager + Send + Sync + 'static, N: NetworkManager + Send + Sync 
 
                             // Get stop hash for this batch - convert blockchain height to storage index
                             let batch_storage_height = self.blockchain_to_storage_height(batch_end);
-                            if let Ok(Some(batch_header)) = storage.get_header(batch_storage_height).await {
-                                let batch_stop_hash = batch_header.block_hash();
+                            match storage.get_header(batch_storage_height).await {
+                                Ok(Some(batch_header)) => {
+                                    let batch_stop_hash = batch_header.block_hash();
 
-                                tracing::info!("🔄 Retrying filter batch {}-{} (part of range {}-{}, attempt {}/{})", 
-                                              current_start, batch_end, start, end, retry_count + 1, self.max_filter_retries);
+                                    tracing::info!(
+                                        "🔄 Retrying filter batch {}-{} (part of range {}-{}, attempt {}/{})",
+                                        current_start,
+                                        batch_end,
+                                        start,
+                                        end,
+                                        retry_count + 1,
+                                        self.max_filter_retries
+                                    );
 
-                                self.request_filters(network, current_start, batch_stop_hash)
-                                    .await?;
-                                current_start = batch_end + 1;
-                            } else {
-                                tracing::error!(
-                                    "Cannot get header at height {} for batch retry",
-                                    batch_end
-                                );
-                                break;
+                                    self.request_filters(network, current_start, batch_stop_hash)
+                                        .await?;
+                                    current_start = batch_end + 1;
+                                }
+                                Ok(None) => {
+                                    tracing::warn!(
+                                        "Missing header at storage height {} (batch end height {}) for batch retry, continuing to next batch",
+                                        batch_storage_height,
+                                        batch_end
+                                    );
+                                    current_start = batch_end + 1;
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Error retrieving header at storage height {} (batch end height {}): {:?}, continuing to next batch",
+                                        batch_storage_height,
+                                        batch_end,
+                                        e
+                                    );
+                                    current_start = batch_end + 1;
+                                }
                             }
                         }
 

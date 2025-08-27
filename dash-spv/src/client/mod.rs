@@ -5,7 +5,6 @@ pub mod config;
 pub mod filter_sync;
 pub mod message_handler;
 pub mod status_display;
-pub mod watch_manager;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -23,7 +22,7 @@ use crate::sync::filters::FilterNotificationSender;
 use crate::sync::sequential::SequentialSyncManager;
 use crate::types::{
     AddressBalance, ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats,
-    SyncProgress, WatchItem,
+    SyncProgress,
 };
 use crate::validation::ValidationManager;
 use dashcore::network::constants::NetworkExt;
@@ -37,7 +36,6 @@ pub use config::ClientConfig;
 pub use filter_sync::FilterSyncCoordinator;
 pub use message_handler::MessageHandler;
 pub use status_display::StatusDisplay;
-pub use watch_manager::{WatchItemUpdateSender, WatchManager};
 
 /// Main Dash SPV client.
 pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManager> {
@@ -74,14 +72,12 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     /// - Implementing a message-passing architecture for sync commands
     ///
     /// The current design prioritizes simplicity and correctness over concurrent access.
-    sync_manager: SequentialSyncManager<S, N>,
+    sync_manager: SequentialSyncManager<S, N, W>,
     validation: ValidationManager,
     chainlock_manager: Arc<ChainLockManager>,
     running: Arc<RwLock<bool>>,
-    watch_items: Arc<RwLock<HashSet<WatchItem>>>,
     terminal_ui: Option<Arc<TerminalUI>>,
     filter_processor: Option<FilterNotificationSender>,
-    watch_item_updater: Option<WatchItemUpdateSender>,
     block_processor_tx: mpsc::UnboundedSender<BlockProcessingTask>,
     progress_sender: Option<mpsc::UnboundedSender<DetailedSyncProgress>>,
     progress_receiver: Option<mpsc::UnboundedReceiver<DetailedSyncProgress>>,
@@ -103,6 +99,11 @@ impl<
         &mut self,
     ) -> Option<mpsc::UnboundedReceiver<DetailedSyncProgress>> {
         self.progress_receiver.take()
+    }
+
+    /// Get a reference to the wallet.
+    pub fn wallet(&self) -> &Arc<RwLock<W>> {
+        &self.wallet
     }
 
     /// Emit a progress update.
@@ -132,25 +133,6 @@ impl<
             &self.terminal_ui,
             &self.config,
         )
-    }
-
-    /// Helper to collect all watched addresses.
-    async fn get_watched_addresses_from_items(&self) -> Vec<dashcore::Address> {
-        let watch_items = self.get_watch_items().await;
-        watch_items
-            .iter()
-            .filter_map(|item| {
-                if let WatchItem::Address {
-                    address,
-                    ..
-                } = item
-                {
-                    Some(address.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
     }
 
     /// Helper to process balance changes with error handling.
@@ -223,14 +205,12 @@ impl<
         // Wrap storage in Arc<Mutex>
         let storage = Arc::new(Mutex::new(storage));
 
-        // Create shared data structures
-        let watch_items = Arc::new(RwLock::new(HashSet::new()));
-
         // Create sync manager
         let received_filter_heights = stats.read().await.received_filter_heights.clone();
         tracing::info!("Creating sequential sync manager");
-        let sync_manager =
-            SequentialSyncManager::new(&config, received_filter_heights).map_err(SpvError::Sync)?;
+        let mut sync_manager =
+            SequentialSyncManager::new(&config, received_filter_heights, wallet.clone())
+                .map_err(SpvError::Sync)?;
 
         // Create validation manager
         let validation = ValidationManager::new(config.validation_mode);
@@ -261,10 +241,8 @@ impl<
             validation,
             chainlock_manager,
             running: Arc::new(RwLock::new(false)),
-            watch_items,
             terminal_ui: None,
             filter_processor: None,
-            watch_item_updater: None,
             block_processor_tx,
             progress_sender: Some(progress_sender),
             progress_receiver: Some(progress_receiver),
@@ -285,21 +263,18 @@ impl<
             }
         }
 
-        // Load watch items from storage
-        self.load_watch_items().await?;
-
         // Load wallet data from storage
         self.load_wallet_data().await?;
 
         // Initialize mempool filter if mempool tracking is enabled
         if self.config.enable_mempool_tracking {
-            let watch_items = self.watch_items.read().await.iter().cloned().collect();
+            // TODO: Get monitored addresses from wallet
             self.mempool_filter = Some(Arc::new(MempoolFilter::new(
                 self.config.mempool_strategy,
                 Duration::from_secs(self.config.recent_send_window_secs),
                 self.config.max_mempool_transactions,
                 self.mempool_state.clone(),
-                watch_items,
+                HashSet::new(), // Will be populated from wallet's monitored addresses
                 self.config.network,
             )));
 
@@ -328,7 +303,6 @@ impl<
             block_processor_rx,
             self.wallet.clone(),
             self.storage.clone(),
-            self.watch_items.clone(),
             self.stats.clone(),
             self.event_tx.clone(),
             self.config.network,
@@ -474,13 +448,13 @@ impl<
 
         // Initialize mempool filter if not already done
         if self.mempool_filter.is_none() {
-            let watch_items = self.watch_items.read().await.iter().cloned().collect();
+            // TODO: Get monitored addresses from wallet
             self.mempool_filter = Some(Arc::new(MempoolFilter::new(
                 self.config.mempool_strategy,
                 Duration::from_secs(self.config.recent_send_window_secs),
                 self.config.max_mempool_transactions,
                 self.mempool_state.clone(),
-                watch_items,
+                HashSet::new(), // Will be populated from wallet's monitored addresses
                 self.config.network,
             )));
         }
@@ -579,18 +553,19 @@ impl<
         mempool_state.transactions.len()
     }
 
-    /// Update mempool filter with current watch items.
+    /// Update mempool filter with wallet's monitored addresses.
     async fn update_mempool_filter(&mut self) {
-        let watch_items = self.watch_items.read().await.iter().cloned().collect();
+        // TODO: Get monitored addresses from wallet
+        // For now, create empty filter until wallet integration is complete
         self.mempool_filter = Some(Arc::new(MempoolFilter::new(
             self.config.mempool_strategy,
             Duration::from_secs(self.config.recent_send_window_secs),
             self.config.max_mempool_transactions,
             self.mempool_state.clone(),
-            watch_items,
+            HashSet::new(), // Will be populated from wallet's monitored addresses
             self.config.network,
         )));
-        tracing::info!("Updated mempool filter with current watch items");
+        tracing::info!("Updated mempool filter (wallet integration pending)");
     }
 
     /// Record a transaction send for mempool filtering.
@@ -1213,30 +1188,8 @@ impl<
             }
         }
 
-        // Calculate and report current balances for all watched addresses
-        let addresses = self.get_watched_addresses_from_items().await;
-        for address in addresses {
-            if self
-                .process_address_balance(&address, |balance| {
-                    tracing::info!(
-                        "  💼 Address {} balance: {} (confirmed: {}, unconfirmed: {})",
-                        address,
-                        balance.total(),
-                        balance.confirmed,
-                        balance.unconfirmed
-                    );
-                })
-                .await
-                .is_some()
-            {
-                // Balance reported successfully
-            } else {
-                tracing::warn!(
-                    "Continuing balance reporting despite failure for address {}",
-                    address
-                );
-            }
-        }
+        // TODO: Get monitored addresses from wallet and report balances
+        // Will be implemented when wallet integration is complete
 
         Ok(())
     }
@@ -1262,16 +1215,9 @@ impl<
     pub async fn get_all_balances(
         &self,
     ) -> Result<std::collections::HashMap<dashcore::Address, AddressBalance>> {
-        let mut balances = std::collections::HashMap::new();
-
-        let addresses = self.get_watched_addresses_from_items().await;
-        for address in addresses {
-            if let Some(balance) = self.process_address_balance(&address, |balance| balance).await {
-                balances.insert(address, balance);
-            }
-        }
-
-        Ok(balances)
+        // TODO: Get balances from wallet instead of tracking separately
+        // Will be implemented when wallet integration is complete
+        Ok(std::collections::HashMap::new())
     }
 
     /// Get the number of connected peers.
@@ -1430,66 +1376,7 @@ impl<
         display.sync_progress().await
     }
 
-    /// Add a watch item.
-    pub async fn add_watch_item(&mut self, item: WatchItem) -> Result<()> {
-        {
-            let mut storage = self.storage.lock().await;
-            WatchManager::add_watch_item(
-                &self.watch_items,
-                &self.watch_item_updater,
-                item,
-                &mut *storage,
-            )
-            .await?;
-        }
-
-        // Update mempool filter with new watch items if mempool tracking is enabled
-        if self.config.enable_mempool_tracking {
-            self.update_mempool_filter().await;
-        }
-
-        Ok(())
-    }
-
-    /// Remove a watch item.
-    pub async fn remove_watch_item(&mut self, item: &WatchItem) -> Result<bool> {
-        let removed = {
-            let mut storage = self.storage.lock().await;
-            WatchManager::remove_watch_item(
-                &self.watch_items,
-                &self.watch_item_updater,
-                item,
-                &mut *storage,
-            )
-            .await?
-        };
-
-        // Update mempool filter with new watch items if mempool tracking is enabled
-        if removed && self.config.enable_mempool_tracking {
-            self.update_mempool_filter().await;
-        }
-
-        Ok(removed)
-    }
-
-    /// Get all watch items.
-    pub async fn get_watch_items(&self) -> Vec<WatchItem> {
-        let watch_items = self.watch_items.read().await;
-        watch_items.iter().cloned().collect()
-    }
-
-    /// Synchronize all current watch items with the wallet.
-    /// NOTE: The wallet is notified of relevant transactions through the WalletInterface
-    /// methods (process_block, process_mempool_transaction) rather than explicit address tracking.
-    pub async fn sync_watch_items_with_wallet(&self) -> Result<usize> {
-        // Watch items are used by the SPV client to determine which blocks to download
-        // The wallet is notified through the WalletInterface when relevant data arrives
-        let addresses = self.get_watched_addresses_from_items().await;
-        tracing::info!("SPV client is watching {} addresses", addresses.len());
-        Ok(addresses.len())
-    }
-
-    // Wallet-specific methods removed - use external wallet interface directly
+    // Watch item methods removed - wallet now handles all address tracking internally
 
     /// Get the number of connected peers.
     pub async fn get_peer_count(&self) -> usize {
@@ -2438,12 +2325,6 @@ impl<
         Ok(())
     }
 
-    /// Load watch items from storage.
-    async fn load_watch_items(&mut self) -> Result<()> {
-        let storage = self.storage.lock().await;
-        WatchManager::load_watch_items(&self.watch_items, &*storage).await
-    }
-
     /// Load wallet data from storage.
     async fn load_wallet_data(&self) -> Result<()> {
         tracing::info!("Loading wallet data from storage...");
@@ -2519,9 +2400,6 @@ impl<
 
 #[cfg(test)]
 mod config_test;
-
-#[cfg(test)]
-mod watch_manager_test;
 
 #[cfg(test)]
 mod block_processor_test;
