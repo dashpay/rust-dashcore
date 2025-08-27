@@ -4,8 +4,10 @@ use crate::{null_check, FFIArray};
 use crate::{set_last_error, FFIString};
 use dash_spv::FilterMatch;
 use dashcore::{OutPoint, ScriptBuf, Txid};
+use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::Utxo as KWUtxo;
 use key_wallet::WalletBalance;
+use key_wallet_manager::wallet_manager::WalletId;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::str::FromStr;
@@ -397,7 +399,7 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_get_monitored_addresses(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result: Result<FFIArray, String> = client.runtime.block_on(async {
+    let result: Result<FFIArray, String> = client.run_async(|| async {
         let guard = inner.lock().unwrap();
         if let Some(ref spv_client) = *guard {
             let wallet = spv_client.wallet().clone();
@@ -453,7 +455,7 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_get_balance(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result: Result<crate::FFIBalance, String> = client.runtime.block_on(async {
+    let result: Result<crate::FFIBalance, String> = client.run_async(|| async {
         let guard = inner.lock().unwrap();
         if let Some(ref spv_client) = *guard {
             let wallet = spv_client.wallet().clone();
@@ -525,7 +527,7 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_get_utxos(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result: Result<FFIArray, String> = client.runtime.block_on(async {
+    let result: Result<FFIArray, String> = client.run_async(|| async {
         let guard = inner.lock().unwrap();
         if let Some(ref spv_client) = *guard {
             let wallet = spv_client.wallet().clone();
@@ -538,6 +540,254 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_get_utxos(
                 }
                 Err(e) => Err(e.to_string()),
             }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(arr) => arr,
+        Err(e) => {
+            set_last_error(&e);
+            FFIArray {
+                data: std::ptr::null_mut(),
+                len: 0,
+                capacity: 0,
+            }
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FFIWalletAccountCreationOptions {
+    /// Default account creation: Creates account 0 for BIP44, account 0 for CoinJoin,
+    /// and all special purpose accounts (Identity Registration, Identity Invitation,
+    /// Provider keys, etc.)
+    Default = 0,
+    /// Create only BIP44 accounts (no CoinJoin or special accounts)
+    BIP44AccountsOnly = 1,
+    /// Create no accounts at all - useful for tests that want to manually control account creation
+    None = 2,
+}
+
+impl From<FFIWalletAccountCreationOptions> for WalletAccountCreationOptions {
+    fn from(options: FFIWalletAccountCreationOptions) -> Self {
+        match options {
+            FFIWalletAccountCreationOptions::Default => WalletAccountCreationOptions::Default,
+            FFIWalletAccountCreationOptions::BIP44AccountsOnly => {
+                WalletAccountCreationOptions::BIP44AccountsOnly(Default::default())
+            }
+            FFIWalletAccountCreationOptions::None => WalletAccountCreationOptions::None,
+        }
+    }
+}
+
+/// Create a new wallet from mnemonic phrase
+///
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `mnemonic` - The mnemonic phrase as null-terminated C string
+/// * `passphrase` - Optional BIP39 passphrase (can be null/empty)
+/// * `network` - The network to use
+/// * `account_options` - Account creation options
+/// * `name` - Wallet name as null-terminated C string
+/// * `birth_height` - Optional birth height (can be 0 for none)
+///
+/// # Returns
+/// * Pointer to FFIString containing hex-encoded WalletId (32 bytes as 64-char hex)
+/// * Returns null on error (check last_error)
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_create_from_mnemonic(
+    client: *mut FFIDashSpvClient,
+    mnemonic: *const c_char,
+    passphrase: *const c_char,
+    network: FFINetwork,
+    account_options: FFIWalletAccountCreationOptions,
+    name: *const c_char,
+    birth_height: u32,
+) -> *mut FFIString {
+    null_check!(client, std::ptr::null_mut());
+    null_check!(mnemonic, std::ptr::null_mut());
+    null_check!(name, std::ptr::null_mut());
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let mnemonic_str = match CStr::from_ptr(mnemonic).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in mnemonic: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let passphrase_str = if passphrase.is_null() {
+        ""
+    } else {
+        match CStr::from_ptr(passphrase).to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                set_last_error(&format!("Invalid UTF-8 in passphrase: {}", e));
+                return std::ptr::null_mut();
+            }
+        }
+    };
+
+    let name_str = match CStr::from_ptr(name).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in name: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let result: Result<String, String> = client.run_async(|| async {
+        let mut guard = inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            let wallet_manager = &mut spv_client.wallet().write().await.base;
+
+            // Generate a random WalletId
+            let wallet_id = WalletId::from(rand::random::<[u8; 32]>());
+
+            let network = network.into();
+            let account_creation_options: WalletAccountCreationOptions = account_options.into();
+            let birth_height_opt = if birth_height == 0 {
+                None
+            } else {
+                Some(birth_height)
+            };
+
+            match wallet_manager.create_wallet_from_mnemonic(
+                wallet_id,
+                name_str.to_string(),
+                mnemonic_str,
+                passphrase_str,
+                Some(network),
+                birth_height_opt,
+                account_creation_options,
+            ) {
+                Ok(_) => {
+                    // Convert WalletId to hex string
+                    Ok(hex::encode(wallet_id))
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(wallet_id_hex) => Box::into_raw(Box::new(FFIString::new(&wallet_id_hex))),
+        Err(e) => {
+            set_last_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Create a new empty wallet (test wallet with fixed mnemonic)
+///
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `network` - The network to use
+/// * `account_options` - Account creation options
+/// * `name` - Wallet name as null-terminated C string
+///
+/// # Returns
+/// * Pointer to FFIString containing hex-encoded WalletId (32 bytes as 64-char hex)
+/// * Returns null on error (check last_error)
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_create(
+    client: *mut FFIDashSpvClient,
+    network: FFINetwork,
+    account_options: FFIWalletAccountCreationOptions,
+    name: *const c_char,
+) -> *mut FFIString {
+    null_check!(client, std::ptr::null_mut());
+    null_check!(name, std::ptr::null_mut());
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let name_str = match CStr::from_ptr(name).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in name: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let result: Result<String, String> = client.run_async(|| async {
+        let mut guard = inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            let wallet_manager = &mut spv_client.wallet().write().await.base;
+
+            // Generate a random WalletId
+            let wallet_id = WalletId::from(rand::random::<[u8; 32]>());
+
+            let network = network.into();
+            let account_creation_options: WalletAccountCreationOptions = account_options.into();
+
+            match wallet_manager.create_wallet(
+                wallet_id,
+                name_str.to_string(),
+                account_creation_options,
+                network,
+            ) {
+                Ok(_) => {
+                    // Convert WalletId to hex string
+                    Ok(hex::encode(wallet_id))
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(wallet_id_hex) => Box::into_raw(Box::new(FFIString::new(&wallet_id_hex))),
+        Err(e) => {
+            set_last_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Get a list of all wallet IDs
+///
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+///
+/// # Returns
+/// * FFIArray of FFIString objects containing hex-encoded WalletIds
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_list(client: *mut FFIDashSpvClient) -> FFIArray {
+    null_check!(
+        client,
+        FFIArray {
+            data: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0
+        }
+    );
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let result: Result<FFIArray, String> = client.run_async(|| async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            let wallet_manager = &spv_client.wallet().read().await.base;
+            let wallet_ids: Vec<FFIString> = wallet_manager
+                .list_wallets()
+                .iter()
+                .map(|id| FFIString::new(&hex::encode(id)))
+                .collect();
+
+            Ok(FFIArray::new(wallet_ids))
         } else {
             Err("Client not initialized".to_string())
         }

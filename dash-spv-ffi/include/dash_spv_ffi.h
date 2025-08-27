@@ -32,6 +32,23 @@ typedef enum FFIValidationMode {
   Full = 2,
 } FFIValidationMode;
 
+typedef enum FFIWalletAccountCreationOptions {
+  /**
+   * Default account creation: Creates account 0 for BIP44, account 0 for CoinJoin,
+   * and all special purpose accounts (Identity Registration, Identity Invitation,
+   * Provider keys, etc.)
+   */
+  Default = 0,
+  /**
+   * Create only BIP44 accounts (no CoinJoin or special accounts)
+   */
+  BIP44AccountsOnly = 1,
+  /**
+   * Create no accounts at all - useful for tests that want to manually control account creation
+   */
+  None = 2,
+} FFIWalletAccountCreationOptions;
+
 typedef enum FFIWatchItemType {
   Address = 0,
   Script = 1,
@@ -621,3 +638,56 @@ struct FFIBalance *dash_spv_ffi_wallet_get_balance(struct FFIDashSpvClient *clie
 
 struct FFIArray dash_spv_ffi_wallet_get_utxos(struct FFIDashSpvClient *client,
                                               const char *wallet_id_ptr);
+
+/**
+ * Create a new wallet from mnemonic phrase
+ *
+ * # Arguments
+ * * `client` - Pointer to FFIDashSpvClient
+ * * `mnemonic` - The mnemonic phrase as null-terminated C string
+ * * `passphrase` - Optional BIP39 passphrase (can be null/empty)
+ * * `network` - The network to use
+ * * `account_options` - Account creation options
+ * * `name` - Wallet name as null-terminated C string
+ * * `birth_height` - Optional birth height (can be 0 for none)
+ *
+ * # Returns
+ * * Pointer to FFIString containing hex-encoded WalletId (32 bytes as 64-char hex)
+ * * Returns null on error (check last_error)
+ */
+struct FFIString *dash_spv_ffi_wallet_create_from_mnemonic(struct FFIDashSpvClient *client,
+                                                           const char *mnemonic,
+                                                           const char *passphrase,
+                                                           enum FFINetwork network,
+                                                           enum FFIWalletAccountCreationOptions account_options,
+                                                           const char *name,
+                                                           uint32_t birth_height);
+
+/**
+ * Create a new empty wallet (test wallet with fixed mnemonic)
+ *
+ * # Arguments
+ * * `client` - Pointer to FFIDashSpvClient
+ * * `network` - The network to use
+ * * `account_options` - Account creation options
+ * * `name` - Wallet name as null-terminated C string
+ *
+ * # Returns
+ * * Pointer to FFIString containing hex-encoded WalletId (32 bytes as 64-char hex)
+ * * Returns null on error (check last_error)
+ */
+struct FFIString *dash_spv_ffi_wallet_create(struct FFIDashSpvClient *client,
+                                             enum FFINetwork network,
+                                             enum FFIWalletAccountCreationOptions account_options,
+                                             const char *name);
+
+/**
+ * Get a list of all wallet IDs
+ *
+ * # Arguments
+ * * `client` - Pointer to FFIDashSpvClient
+ *
+ * # Returns
+ * * FFIArray of FFIString objects containing hex-encoded WalletIds
+ */
+struct FFIArray dash_spv_ffi_wallet_list(struct FFIDashSpvClient *client);

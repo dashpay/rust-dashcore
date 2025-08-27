@@ -25,6 +25,7 @@ env_logger = "0.10"
 tracing = "0.1"
 key-wallet-manager = { path = "../key-wallet-manager" }
 key-wallet = { path = "../key-wallet" }
+rand = "0.8"
 
 [dev-dependencies]
 tempfile = "3.8"

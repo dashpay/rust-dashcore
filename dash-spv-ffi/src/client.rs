@@ -220,6 +220,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
 }
 
 impl FFIDashSpvClient {
+    /// Helper method to run async code using the client's runtime
+    pub fn run_async<F, Fut, T>(&self, f: F) -> T
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        self.runtime.block_on(f())
+    }
+
     /// Start the event listener task to handle events from the SPV client.
     fn start_event_listener(&self) {
         let inner = self.inner.clone();
