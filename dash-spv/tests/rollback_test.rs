@@ -3,7 +3,7 @@
 //! NOTE: This test file is currently disabled due to incomplete mock StorageManager implementation.
 //! TODO: Re-enable once StorageManager trait methods are fully implemented.
 
-#![cfg(skip_mock_implementation_incomplete)]
+#![cfg(feature = "skip_mock_implementation_incomplete")]
 
 use dash_spv::storage::{DiskStorageManager, StorageManager};
 use dashcore::{

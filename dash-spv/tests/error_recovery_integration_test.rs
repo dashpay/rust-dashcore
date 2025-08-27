@@ -3,7 +3,7 @@
 //! NOTE: This test file is currently disabled due to incomplete mock trait implementations.
 //! TODO: Re-enable once StorageManager and NetworkManager trait methods are fully implemented.
 
-#![cfg(skip_mock_implementation_incomplete)]
+#![cfg(feature = "skip_mock_implementation_incomplete")]
 
 //! Integration tests for error recovery mechanisms
 //!

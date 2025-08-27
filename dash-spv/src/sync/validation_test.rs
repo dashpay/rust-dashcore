@@ -250,7 +250,7 @@ mod perf_tests {
 
         // Simulate many cache operations
         for i in 0..10000 {
-            let hash = BlockHash::from([i as u8; 32]);
+            let _hash = BlockHash::from([i as u8; 32]);
             // Cache operations would happen during validation
         }
 

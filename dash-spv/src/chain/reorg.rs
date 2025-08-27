@@ -547,7 +547,7 @@ mod tests {
         let mut header = prev.clone();
         header.prev_blockhash = prev.block_hash();
         header.nonce = nonce;
-        header.time = prev.time + 600; // 10 minutes later
+        header.time = prev.time + 600;
         header
     }
 

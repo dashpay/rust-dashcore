@@ -57,7 +57,7 @@ async fn test_chainlock_validation_flow() {
     >::new())));
 
     // Create the SPV client
-    let mut client =
+    let client =
         DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
 
     // Test that update_chainlock_validation works

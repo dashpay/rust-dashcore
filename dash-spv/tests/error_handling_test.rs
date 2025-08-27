@@ -1,4 +1,4 @@
-#![cfg(skip_mock_implementation_incomplete)]
+#![cfg(feature = "skip_mock_implementation_incomplete")]
 
 //! Comprehensive error handling tests for dash-spv
 //!

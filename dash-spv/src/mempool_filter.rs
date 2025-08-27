@@ -201,7 +201,6 @@ mod tests {
     use super::*;
     use dashcore::{Network, OutPoint, ScriptBuf, TxIn, TxOut, Witness};
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
-    use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
     use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
@@ -218,14 +217,6 @@ mod tests {
     impl WatchItem {
         fn address(addr: Address) -> Self {
             WatchItem::Address(addr)
-        }
-
-        fn Script(script: ScriptBuf) -> Self {
-            WatchItem::Script(script)
-        }
-
-        fn Outpoint(outpoint: OutPoint) -> Self {
-            WatchItem::Outpoint(outpoint)
         }
 
         fn address_from_height(addr: Address, _height: u32) -> Self {
@@ -509,15 +500,6 @@ mod tests {
         // Create a wallet and get an address from it
         let addresses = create_test_addresses(network, 1);
         let addr = &addresses[0];
-
-        // Create a specific outpoint to watch
-        let watched_outpoint = OutPoint {
-            txid: Txid::from_str(
-                "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
-            )
-            .unwrap(),
-            vout: 0,
-        };
 
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
         let watched_addresses = vec![addr.clone()].into_iter().collect();

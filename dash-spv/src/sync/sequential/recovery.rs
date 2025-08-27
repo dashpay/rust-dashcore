@@ -524,7 +524,7 @@ mod tests {
         );
 
         // Determine recovery strategy
-        let strategy = recovery_manager.determine_strategy(&phase, &error);
+        let _strategy = recovery_manager.determine_strategy(&phase, &error);
 
         // Create mock network and storage (would need proper mocks in real tests)
         // For this test, we're mainly interested in the error being preserved
