@@ -6,10 +6,11 @@ use dash_spv::FilterMatch;
 use dashcore::{OutPoint, ScriptBuf, Txid};
 use key_wallet::account::StandardAccountType;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::AccountType;
 use key_wallet::Utxo as KWUtxo;
 use key_wallet::WalletBalance;
-use key_wallet_manager::wallet_manager::WalletId;
+use key_wallet_manager::wallet_manager::{AccountTypeUsed, WalletId};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::str::FromStr;
@@ -1042,6 +1043,45 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_import_from_xpub(
     }
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FFIAccountTypePreference {
+    /// Use BIP44 account only
+    BIP44 = 0,
+    /// Use BIP32 account only
+    BIP32 = 1,
+    /// Prefer BIP44, fallback to BIP32
+    PreferBIP44 = 2,
+    /// Prefer BIP32, fallback to BIP44
+    PreferBIP32 = 3,
+}
+
+impl From<FFIAccountTypePreference> for AccountTypePreference {
+    fn from(pref: FFIAccountTypePreference) -> Self {
+        match pref {
+            FFIAccountTypePreference::BIP44 => AccountTypePreference::BIP44,
+            FFIAccountTypePreference::BIP32 => AccountTypePreference::BIP32,
+            FFIAccountTypePreference::PreferBIP44 => AccountTypePreference::PreferBIP44,
+            FFIAccountTypePreference::PreferBIP32 => AccountTypePreference::PreferBIP32,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FFIAccountTypeUsed {
+    /// BIP44 account was used
+    BIP44 = 0,
+    /// BIP32 account was used
+    BIP32 = 1,
+}
+
+#[repr(C)]
+pub struct FFIAddressGenerationResult {
+    pub address: *mut FFIString,
+    pub account_type_used: FFIAccountTypeUsed,
+}
+
 /// Add a new account to an existing wallet from an extended public key
 ///
 /// This creates a watch-only account that can monitor addresses and transactions
@@ -1160,6 +1200,225 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_add_account_from_xpub(
         Err(e) => {
             set_last_error(&e);
             crate::FFIErrorCode::InvalidArgument as i32
+        }
+    }
+}
+
+/// Get a receive address from a specific wallet and account
+///
+/// This generates a new unused receive address (external chain) for the specified
+/// wallet and account. The address will be marked as used if mark_as_used is true.
+///
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `wallet_id_hex` - Hex-encoded wallet ID (64 characters)
+/// * `network` - The network for the address
+/// * `account_index` - Account index (0 for first account)
+/// * `account_type_pref` - Account type preference (BIP44, BIP32, or preference)
+/// * `mark_as_used` - Whether to mark the address as used after generation
+///
+/// # Returns
+/// * Pointer to FFIAddressGenerationResult containing the address and account type used
+/// * Returns null if address generation fails (check last_error)
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_get_receive_address(
+    client: *mut FFIDashSpvClient,
+    wallet_id_hex: *const c_char,
+    network: FFINetwork,
+    account_index: u32,
+    account_type_pref: FFIAccountTypePreference,
+    mark_as_used: bool,
+) -> *mut FFIAddressGenerationResult {
+    null_check!(client, std::ptr::null_mut());
+    null_check!(wallet_id_hex, std::ptr::null_mut());
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let wallet_id_hex_str = match CStr::from_ptr(wallet_id_hex).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in wallet ID: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    // Parse wallet ID
+    let mut wallet_id: [u8; 32] = [0u8; 32];
+    let bytes = match hex::decode(wallet_id_hex_str) {
+        Ok(b) => b,
+        Err(e) => {
+            set_last_error(&format!("Invalid hex wallet ID: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+    if bytes.len() != 32 {
+        set_last_error("Wallet ID must be 32 bytes hex");
+        return std::ptr::null_mut();
+    }
+    wallet_id.copy_from_slice(&bytes);
+
+    let result: Result<FFIAddressGenerationResult, String> = client.run_async(|| async {
+        let mut guard = inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            let wallet_manager = &mut spv_client.wallet().write().await.base;
+
+            match wallet_manager.get_receive_address(
+                &wallet_id,
+                network.into(),
+                account_index,
+                account_type_pref.into(),
+                mark_as_used,
+            ) {
+                Ok(addr_result) => {
+                    if let (Some(address), Some(account_type_used)) =
+                        (addr_result.address, addr_result.account_type_used)
+                    {
+                        let ffi_account_type = match account_type_used {
+                            AccountTypeUsed::BIP44 => FFIAccountTypeUsed::BIP44,
+                            AccountTypeUsed::BIP32 => FFIAccountTypeUsed::BIP32,
+                        };
+
+                        Ok(FFIAddressGenerationResult {
+                            address: Box::into_raw(Box::new(FFIString::new(&address.to_string()))),
+                            account_type_used: ffi_account_type,
+                        })
+                    } else {
+                        Err("No address could be generated".to_string())
+                    }
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(result) => Box::into_raw(Box::new(result)),
+        Err(e) => {
+            set_last_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Get a change address from a specific wallet and account
+///
+/// This generates a new unused change address (internal chain) for the specified
+/// wallet and account. The address will be marked as used if mark_as_used is true.
+///
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `wallet_id_hex` - Hex-encoded wallet ID (64 characters)
+/// * `network` - The network for the address
+/// * `account_index` - Account index (0 for first account)
+/// * `account_type_pref` - Account type preference (BIP44, BIP32, or preference)
+/// * `mark_as_used` - Whether to mark the address as used after generation
+///
+/// # Returns
+/// * Pointer to FFIAddressGenerationResult containing the address and account type used
+/// * Returns null if address generation fails (check last_error)
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_get_change_address(
+    client: *mut FFIDashSpvClient,
+    wallet_id_hex: *const c_char,
+    network: FFINetwork,
+    account_index: u32,
+    account_type_pref: FFIAccountTypePreference,
+    mark_as_used: bool,
+) -> *mut FFIAddressGenerationResult {
+    null_check!(client, std::ptr::null_mut());
+    null_check!(wallet_id_hex, std::ptr::null_mut());
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let wallet_id_hex_str = match CStr::from_ptr(wallet_id_hex).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in wallet ID: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    // Parse wallet ID
+    let mut wallet_id: [u8; 32] = [0u8; 32];
+    let bytes = match hex::decode(wallet_id_hex_str) {
+        Ok(b) => b,
+        Err(e) => {
+            set_last_error(&format!("Invalid hex wallet ID: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+    if bytes.len() != 32 {
+        set_last_error("Wallet ID must be 32 bytes hex");
+        return std::ptr::null_mut();
+    }
+    wallet_id.copy_from_slice(&bytes);
+
+    let result: Result<FFIAddressGenerationResult, String> = client.run_async(|| async {
+        let mut guard = inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            let wallet_manager = &mut spv_client.wallet().write().await.base;
+
+            match wallet_manager.get_change_address(
+                &wallet_id,
+                network.into(),
+                account_index,
+                account_type_pref.into(),
+                mark_as_used,
+            ) {
+                Ok(addr_result) => {
+                    if let (Some(address), Some(account_type_used)) =
+                        (addr_result.address, addr_result.account_type_used)
+                    {
+                        let ffi_account_type = match account_type_used {
+                            AccountTypeUsed::BIP44 => FFIAccountTypeUsed::BIP44,
+                            AccountTypeUsed::BIP32 => FFIAccountTypeUsed::BIP32,
+                        };
+
+                        Ok(FFIAddressGenerationResult {
+                            address: Box::into_raw(Box::new(FFIString::new(&address.to_string()))),
+                            account_type_used: ffi_account_type,
+                        })
+                    } else {
+                        Err("No address could be generated".to_string())
+                    }
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(result) => Box::into_raw(Box::new(result)),
+        Err(e) => {
+            set_last_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Free an FFIAddressGenerationResult and its associated resources
+///
+/// # Safety
+/// * `result` must be a valid pointer to an FFIAddressGenerationResult
+/// * The pointer must not be used after this function is called
+/// * This function should only be called once per FFIAddressGenerationResult
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_address_generation_result_destroy(
+    result: *mut FFIAddressGenerationResult,
+) {
+    if !result.is_null() {
+        let result = Box::from_raw(result);
+        if !result.address.is_null() {
+            let addr_ptr = result.address;
+            // Read the FFIString from the raw pointer and destroy it
+            let addr_string = unsafe { *Box::from_raw(addr_ptr) };
+            dash_spv_ffi_string_destroy(addr_string);
         }
     }
 }

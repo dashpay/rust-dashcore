@@ -46,6 +46,36 @@ typedef enum FFIAccountType {
   ProviderPlatformKeys = 9,
 } FFIAccountType;
 
+typedef enum FFIAccountTypePreference {
+  /**
+   * Use BIP44 account only
+   */
+  BIP44 = 0,
+  /**
+   * Use BIP32 account only
+   */
+  BIP32 = 1,
+  /**
+   * Prefer BIP44, fallback to BIP32
+   */
+  PreferBIP44 = 2,
+  /**
+   * Prefer BIP32, fallback to BIP44
+   */
+  PreferBIP32 = 3,
+} FFIAccountTypePreference;
+
+typedef enum FFIAccountTypeUsed {
+  /**
+   * BIP44 account was used
+   */
+  BIP44 = 0,
+  /**
+   * BIP32 account was used
+   */
+  BIP32 = 1,
+} FFIAccountTypeUsed;
+
 typedef enum FFIMempoolStrategy {
   FetchAll = 0,
   BloomFilter = 1,
@@ -317,6 +347,11 @@ typedef struct FFIAddressStats {
   uint32_t spendable_count;
   uint32_t coinbase_count;
 } FFIAddressStats;
+
+typedef struct FFIAddressGenerationResult {
+  struct FFIString *address;
+  enum FFIAccountTypeUsed account_type_used;
+} FFIAddressGenerationResult;
 
 struct FFIDashSpvClient *dash_spv_ffi_client_new(const struct FFIClientConfig *config);
 
@@ -799,3 +834,63 @@ int32_t dash_spv_ffi_wallet_add_account_from_xpub(struct FFIDashSpvClient *clien
                                                   enum FFINetwork network,
                                                   uint32_t account_index,
                                                   uint32_t registration_index);
+
+/**
+ * Get a receive address from a specific wallet and account
+ *
+ * This generates a new unused receive address (external chain) for the specified
+ * wallet and account. The address will be marked as used if mark_as_used is true.
+ *
+ * # Arguments
+ * * `client` - Pointer to FFIDashSpvClient
+ * * `wallet_id_hex` - Hex-encoded wallet ID (64 characters)
+ * * `network` - The network for the address
+ * * `account_index` - Account index (0 for first account)
+ * * `account_type_pref` - Account type preference (BIP44, BIP32, or preference)
+ * * `mark_as_used` - Whether to mark the address as used after generation
+ *
+ * # Returns
+ * * Pointer to FFIAddressGenerationResult containing the address and account type used
+ * * Returns null if address generation fails (check last_error)
+ */
+struct FFIAddressGenerationResult *dash_spv_ffi_wallet_get_receive_address(struct FFIDashSpvClient *client,
+                                                                           const char *wallet_id_hex,
+                                                                           enum FFINetwork network,
+                                                                           uint32_t account_index,
+                                                                           enum FFIAccountTypePreference account_type_pref,
+                                                                           bool mark_as_used);
+
+/**
+ * Get a change address from a specific wallet and account
+ *
+ * This generates a new unused change address (internal chain) for the specified
+ * wallet and account. The address will be marked as used if mark_as_used is true.
+ *
+ * # Arguments
+ * * `client` - Pointer to FFIDashSpvClient
+ * * `wallet_id_hex` - Hex-encoded wallet ID (64 characters)
+ * * `network` - The network for the address
+ * * `account_index` - Account index (0 for first account)
+ * * `account_type_pref` - Account type preference (BIP44, BIP32, or preference)
+ * * `mark_as_used` - Whether to mark the address as used after generation
+ *
+ * # Returns
+ * * Pointer to FFIAddressGenerationResult containing the address and account type used
+ * * Returns null if address generation fails (check last_error)
+ */
+struct FFIAddressGenerationResult *dash_spv_ffi_wallet_get_change_address(struct FFIDashSpvClient *client,
+                                                                          const char *wallet_id_hex,
+                                                                          enum FFINetwork network,
+                                                                          uint32_t account_index,
+                                                                          enum FFIAccountTypePreference account_type_pref,
+                                                                          bool mark_as_used);
+
+/**
+ * Free an FFIAddressGenerationResult and its associated resources
+ *
+ * # Safety
+ * * `result` must be a valid pointer to an FFIAddressGenerationResult
+ * * The pointer must not be used after this function is called
+ * * This function should only be called once per FFIAddressGenerationResult
+ */
+void dash_spv_ffi_address_generation_result_destroy(struct FFIAddressGenerationResult *result);
