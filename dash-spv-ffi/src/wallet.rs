@@ -1,6 +1,8 @@
 use crate::{set_last_error, FFIString};
 use dash_spv::FilterMatch;
 use dashcore::{OutPoint, ScriptBuf, Txid};
+use key_wallet::Utxo as KWUtxo;
+use key_wallet::WalletBalance;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::str::FromStr;
@@ -125,7 +127,21 @@ pub struct FFIUtxo {
     pub is_instantlocked: bool,
 }
 
-// Utxo struct removed from dash-spv public API
+impl From<KWUtxo> for FFIUtxo {
+    fn from(utxo: KWUtxo) -> Self {
+        FFIUtxo {
+            txid: FFIString::new(&utxo.outpoint.txid.to_string()),
+            vout: utxo.outpoint.vout,
+            amount: utxo.txout.value,
+            script_pubkey: FFIString::new(&hex::encode(utxo.txout.script_pubkey.to_bytes())),
+            address: FFIString::new(&utxo.address.to_string()),
+            height: utxo.height,
+            is_coinbase: utxo.is_coinbase,
+            is_confirmed: utxo.is_confirmed,
+            is_instantlocked: utxo.is_instantlocked,
+        }
+    }
+}
 
 #[repr(C)]
 pub struct FFITransactionResult {
@@ -180,6 +196,23 @@ pub struct FFIAddressStats {
 }
 
 // AddressStats no longer available from dash-spv; conversion removed
+
+impl From<WalletBalance> for FFIBalance {
+    fn from(bal: WalletBalance) -> Self {
+        // Map confirmed/unconfirmed/locked; mempool fields are not tracked here
+        let confirmed = bal.confirmed().unwrap_or(0);
+        let unconfirmed = bal.unconfirmed().unwrap_or(0);
+        // "locked" is not exposed in FFIBalance directly; keep in total implicitly
+        FFIBalance {
+            confirmed,
+            pending: unconfirmed,
+            instantlocked: 0,
+            mempool: 0,
+            mempool_instant: 0,
+            total: confirmed.saturating_add(unconfirmed),
+        }
+    }
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_watch_item_address(
