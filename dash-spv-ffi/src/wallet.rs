@@ -4,7 +4,9 @@ use crate::{null_check, FFIArray};
 use crate::{set_last_error, FFIString};
 use dash_spv::FilterMatch;
 use dashcore::{OutPoint, ScriptBuf, Txid};
+use key_wallet::account::StandardAccountType;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+use key_wallet::AccountType;
 use key_wallet::Utxo as KWUtxo;
 use key_wallet::WalletBalance;
 use key_wallet_manager::wallet_manager::WalletId;
@@ -583,6 +585,82 @@ impl From<FFIWalletAccountCreationOptions> for WalletAccountCreationOptions {
     }
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FFIAccountType {
+    /// Standard BIP44 account for regular transactions
+    BIP44 = 0,
+    /// Standard BIP32 account for regular transactions
+    BIP32 = 1,
+    /// CoinJoin account for private transactions
+    CoinJoin = 2,
+    /// Identity registration funding
+    IdentityRegistration = 3,
+    /// Identity top-up funding
+    IdentityTopUp = 4,
+    /// Identity invitation funding
+    IdentityInvitation = 5,
+    /// Provider voting keys (DIP-3)
+    ProviderVotingKeys = 6,
+    /// Provider owner keys (DIP-3)
+    ProviderOwnerKeys = 7,
+    /// Provider operator keys (DIP-3)
+    ProviderOperatorKeys = 8,
+    /// Provider platform P2P keys (DIP-3, ED25519)
+    ProviderPlatformKeys = 9,
+}
+
+impl FFIAccountType {
+    /// Convert FFI account type to internal AccountType
+    ///
+    /// # Arguments
+    /// * `account_index` - Required for BIP44, BIP32, and CoinJoin account types
+    /// * `registration_index` - Required for IdentityTopUp account type
+    pub fn to_account_type(
+        self,
+        account_index: Option<u32>,
+        registration_index: Option<u32>,
+    ) -> Result<AccountType, String> {
+        use key_wallet::AccountType::*;
+
+        match self {
+            FFIAccountType::BIP44 => {
+                let index = account_index.ok_or("Account index required for BIP44 accounts")?;
+                Ok(Standard {
+                    index,
+                    standard_account_type: StandardAccountType::BIP44Account,
+                })
+            }
+            FFIAccountType::BIP32 => {
+                let index = account_index.ok_or("Account index required for BIP32 accounts")?;
+                Ok(Standard {
+                    index,
+                    standard_account_type: StandardAccountType::BIP32Account,
+                })
+            }
+            FFIAccountType::CoinJoin => {
+                let index = account_index.ok_or("Account index required for CoinJoin accounts")?;
+                Ok(CoinJoin {
+                    index,
+                })
+            }
+            FFIAccountType::IdentityRegistration => Ok(IdentityRegistration),
+            FFIAccountType::IdentityTopUp => {
+                let registration_index = registration_index
+                    .ok_or("Registration index required for IdentityTopUp accounts")?;
+                Ok(IdentityTopUp {
+                    registration_index,
+                })
+            }
+            FFIAccountType::IdentityInvitation => Ok(IdentityInvitation),
+            FFIAccountType::ProviderVotingKeys => Ok(ProviderVotingKeys),
+            FFIAccountType::ProviderOwnerKeys => Ok(ProviderOwnerKeys),
+            FFIAccountType::ProviderOperatorKeys => Ok(ProviderOperatorKeys),
+            FFIAccountType::ProviderPlatformKeys => Ok(ProviderPlatformKeys),
+        }
+    }
+}
+
 /// Create a new wallet from mnemonic phrase
 ///
 /// # Arguments
@@ -960,6 +1038,128 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_import_from_xpub(
         Err(e) => {
             set_last_error(&e);
             std::ptr::null_mut()
+        }
+    }
+}
+
+/// Add a new account to an existing wallet from an extended public key
+///
+/// This creates a watch-only account that can monitor addresses and transactions
+/// but cannot sign them.
+///
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `wallet_id_hex` - Hex-encoded wallet ID (64 characters)
+/// * `xpub` - The extended public key string (base58check encoded)
+/// * `account_type` - The type of account to create
+/// * `network` - The network for the account
+/// * `account_index` - Account index (required for BIP44, BIP32, CoinJoin)
+/// * `registration_index` - Registration index (required for IdentityTopUp)
+///
+/// # Returns
+/// * FFIErrorCode::Success on success
+/// * FFIErrorCode::InvalidArgument on error (check last_error)
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_add_account_from_xpub(
+    client: *mut FFIDashSpvClient,
+    wallet_id_hex: *const c_char,
+    xpub: *const c_char,
+    account_type: FFIAccountType,
+    network: FFINetwork,
+    account_index: u32,
+    registration_index: u32,
+) -> i32 {
+    null_check!(client, crate::FFIErrorCode::InvalidArgument as i32);
+    null_check!(wallet_id_hex, crate::FFIErrorCode::InvalidArgument as i32);
+    null_check!(xpub, crate::FFIErrorCode::InvalidArgument as i32);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let wallet_id_hex_str = match CStr::from_ptr(wallet_id_hex).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in wallet ID: {}", e));
+            return crate::FFIErrorCode::InvalidArgument as i32;
+        }
+    };
+
+    let xpub_str = match CStr::from_ptr(xpub).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in xpub: {}", e));
+            return crate::FFIErrorCode::InvalidArgument as i32;
+        }
+    };
+
+    // Parse wallet ID
+    let mut wallet_id: [u8; 32] = [0u8; 32];
+    let bytes = match hex::decode(wallet_id_hex_str) {
+        Ok(b) => b,
+        Err(e) => {
+            set_last_error(&format!("Invalid hex wallet ID: {}", e));
+            return crate::FFIErrorCode::InvalidArgument as i32;
+        }
+    };
+    if bytes.len() != 32 {
+        set_last_error("Wallet ID must be 32 bytes hex");
+        return crate::FFIErrorCode::InvalidArgument as i32;
+    }
+    wallet_id.copy_from_slice(&bytes);
+
+    // Convert account type with parameters
+    let account_index_opt = if matches!(
+        account_type,
+        FFIAccountType::BIP44 | FFIAccountType::BIP32 | FFIAccountType::CoinJoin
+    ) {
+        Some(account_index)
+    } else {
+        None
+    };
+
+    let registration_index_opt = if matches!(account_type, FFIAccountType::IdentityTopUp) {
+        Some(registration_index)
+    } else {
+        None
+    };
+
+    let account_type_internal =
+        match account_type.to_account_type(account_index_opt, registration_index_opt) {
+            Ok(at) => at,
+            Err(e) => {
+                set_last_error(&e);
+                return crate::FFIErrorCode::InvalidArgument as i32;
+            }
+        };
+
+    let result: Result<(), String> = client.run_async(|| async {
+        let mut guard = inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            let wallet_manager = &mut spv_client.wallet().write().await.base;
+
+            // Parse the extended public key
+            let extended_pub_key = key_wallet::ExtendedPubKey::from_str(xpub_str)
+                .map_err(|e| format!("Invalid xpub: {}", e))?;
+
+            match wallet_manager.create_account(
+                &wallet_id,
+                account_type_internal,
+                network.into(),
+                Some(extended_pub_key),
+            ) {
+                Ok(()) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(()) => crate::FFIErrorCode::Success as i32,
+        Err(e) => {
+            set_last_error(&e);
+            crate::FFIErrorCode::InvalidArgument as i32
         }
     }
 }

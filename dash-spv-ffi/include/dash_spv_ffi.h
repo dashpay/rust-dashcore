@@ -3,6 +3,49 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+typedef enum FFIAccountType {
+  /**
+   * Standard BIP44 account for regular transactions
+   */
+  BIP44 = 0,
+  /**
+   * Standard BIP32 account for regular transactions
+   */
+  BIP32 = 1,
+  /**
+   * CoinJoin account for private transactions
+   */
+  CoinJoin = 2,
+  /**
+   * Identity registration funding
+   */
+  IdentityRegistration = 3,
+  /**
+   * Identity top-up funding
+   */
+  IdentityTopUp = 4,
+  /**
+   * Identity invitation funding
+   */
+  IdentityInvitation = 5,
+  /**
+   * Provider voting keys (DIP-3)
+   */
+  ProviderVotingKeys = 6,
+  /**
+   * Provider owner keys (DIP-3)
+   */
+  ProviderOwnerKeys = 7,
+  /**
+   * Provider operator keys (DIP-3)
+   */
+  ProviderOperatorKeys = 8,
+  /**
+   * Provider platform P2P keys (DIP-3, ED25519)
+   */
+  ProviderPlatformKeys = 9,
+} FFIAccountType;
+
 typedef enum FFIMempoolStrategy {
   FetchAll = 0,
   BloomFilter = 1,
@@ -729,3 +772,30 @@ struct FFIString *dash_spv_ffi_wallet_import_from_xpub(struct FFIDashSpvClient *
                                                        const char *xpub,
                                                        enum FFINetwork network,
                                                        const char *name);
+
+/**
+ * Add a new account to an existing wallet from an extended public key
+ *
+ * This creates a watch-only account that can monitor addresses and transactions
+ * but cannot sign them.
+ *
+ * # Arguments
+ * * `client` - Pointer to FFIDashSpvClient
+ * * `wallet_id_hex` - Hex-encoded wallet ID (64 characters)
+ * * `xpub` - The extended public key string (base58check encoded)
+ * * `account_type` - The type of account to create
+ * * `network` - The network for the account
+ * * `account_index` - Account index (required for BIP44, BIP32, CoinJoin)
+ * * `registration_index` - Registration index (required for IdentityTopUp)
+ *
+ * # Returns
+ * * FFIErrorCode::Success on success
+ * * FFIErrorCode::InvalidArgument on error (check last_error)
+ */
+int32_t dash_spv_ffi_wallet_add_account_from_xpub(struct FFIDashSpvClient *client,
+                                                  const char *wallet_id_hex,
+                                                  const char *xpub,
+                                                  enum FFIAccountType account_type,
+                                                  enum FFINetwork network,
+                                                  uint32_t account_index,
+                                                  uint32_t registration_index);
