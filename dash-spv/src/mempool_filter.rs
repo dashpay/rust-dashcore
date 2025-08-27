@@ -21,7 +21,7 @@ pub struct MempoolFilter {
     /// Mempool state.
     mempool_state: Arc<RwLock<MempoolState>>,
     /// Watched addresses (TODO: Will be replaced with wallet integration).
-    watched_addresses: Vec<Address>,
+    watched_addresses: HashSet<Address>,
     /// Network to use for address parsing.
     network: Network,
 }
@@ -33,7 +33,7 @@ impl MempoolFilter {
         recent_send_window: Duration,
         max_transactions: usize,
         mempool_state: Arc<RwLock<MempoolState>>,
-        watched_addresses: Vec<Address>,
+        watched_addresses: HashSet<Address>,
         network: Network,
     ) -> Self {
         Self {
@@ -41,7 +41,7 @@ impl MempoolFilter {
             recent_send_window,
             max_transactions,
             mempool_state,
-            watched_addresses,
+            watched_addresses: watched_addresses.into_iter().collect(),
             network,
         }
     }
@@ -68,7 +68,7 @@ impl MempoolFilter {
     }
 
     /// Check if a transaction is relevant to our watched items.
-    pub fn is_transaction_relevant(&self, tx: &Transaction, network: Network) -> bool {
+    pub fn is_transaction_relevant(&self, tx: &Transaction) -> bool {
         let txid = tx.txid();
 
         // Check if any input or output affects our watched addresses
@@ -76,7 +76,7 @@ impl MempoolFilter {
 
         // Extract addresses from outputs
         for (idx, output) in tx.output.iter().enumerate() {
-            if let Ok(address) = Address::from_script(&output.script_pubkey, network) {
+            if let Ok(address) = Address::from_script(&output.script_pubkey, self.network) {
                 addresses.insert(address.clone());
                 tracing::trace!("Transaction {} output {} has address: {}", txid, idx, address);
             }
@@ -89,18 +89,13 @@ impl MempoolFilter {
             self.watched_addresses.len()
         );
 
-        // Check against watched addresses
-        for watch_addr in &self.watched_addresses {
-            tracing::trace!(
-                "Checking if transaction {} contains watched address: {}",
-                txid,
-                watch_addr
-            );
-            if addresses.contains(watch_addr) {
+        // Check against watched addresses using O(1) HashSet lookups
+        for address in &addresses {
+            if self.watched_addresses.contains(address) {
                 tracing::debug!(
                     "Transaction {} is relevant: contains watched address {}",
                     txid,
-                    watch_addr
+                    address
                 );
                 return true;
             }
@@ -119,7 +114,7 @@ impl MempoolFilter {
         let txid = tx.txid();
 
         // Check if transaction is relevant to our watched addresses
-        let is_relevant = self.is_transaction_relevant(&tx, self.network);
+        let is_relevant = self.is_transaction_relevant(&tx);
 
         tracing::debug!("Processing mempool transaction {}: strategy={:?}, is_relevant={}, watched_addresses_count={}",
                        txid, self.strategy, is_relevant, self.watched_addresses.len());
@@ -196,7 +191,7 @@ impl MempoolFilter {
 
     /// Check if an address is watched.
     fn is_address_watched(&self, address: &Address) -> bool {
-        self.watched_addresses.iter().any(|watch_addr| watch_addr == address)
+        self.watched_addresses.contains(address)
     }
 }
 
@@ -340,7 +335,7 @@ mod tests {
             Duration::from_secs(300),
             1000,
             mempool_state.clone(),
-            vec![],
+            HashSet::new(),
             Network::Dash,
         );
 
@@ -367,7 +362,7 @@ mod tests {
             Duration::from_secs(300),
             2, // Small limit for testing
             mempool_state.clone(),
-            vec![],
+            HashSet::new(),
             Network::Dash,
         );
 
@@ -391,7 +386,7 @@ mod tests {
             dashcore::Amount::from_sat(0),
             false,
             false,
-            vec![],
+            HashSet::new(),
             0,
         ));
         state.add_transaction(UnconfirmedTransaction::new(
@@ -405,7 +400,7 @@ mod tests {
             dashcore::Amount::from_sat(0),
             false,
             false,
-            vec![],
+            HashSet::new(),
             0,
         ));
         drop(state);
@@ -437,11 +432,11 @@ mod tests {
 
         // Transaction sending to watched address should be relevant
         let tx1 = create_test_transaction(vec![(addr1.clone(), 50000)], vec![]);
-        assert!(filter.is_transaction_relevant(&tx1, network));
+        assert!(filter.is_transaction_relevant(&tx1));
 
         // Transaction sending to unwatched address should not be relevant
         let tx2 = create_test_transaction(vec![(addr2, 50000)], vec![]);
-        assert!(!filter.is_transaction_relevant(&tx2, network));
+        assert!(!filter.is_transaction_relevant(&tx2));
     }
 
     #[tokio::test]
@@ -464,12 +459,12 @@ mod tests {
 
         // Transaction with watched script should be relevant
         let tx = create_test_transaction(vec![(addr, 50000)], vec![]);
-        assert!(filter.is_transaction_relevant(&tx, network));
+        assert!(filter.is_transaction_relevant(&tx));
 
         // Transaction without watched script should not be relevant
         let addr2 = test_address2(network);
         let tx2 = create_test_transaction(vec![(addr2, 50000)], vec![]);
-        assert!(!filter.is_transaction_relevant(&tx2, network));
+        assert!(!filter.is_transaction_relevant(&tx2));
     }
 
     #[tokio::test]
@@ -500,7 +495,7 @@ mod tests {
 
         // Transaction spending watched outpoint should be relevant
         let tx = create_test_transaction(vec![(addr.clone(), 50000)], vec![watched_outpoint]);
-        assert!(filter.is_transaction_relevant(&tx, network));
+        assert!(filter.is_transaction_relevant(&tx));
 
         // Transaction not spending watched outpoint should not be relevant
         let other_outpoint = OutPoint {
@@ -511,7 +506,7 @@ mod tests {
             vout: 1,
         };
         let tx2 = create_test_transaction(vec![(addr, 50000)], vec![other_outpoint]);
-        assert!(!filter.is_transaction_relevant(&tx2, network));
+        assert!(!filter.is_transaction_relevant(&tx2));
     }
 
     #[tokio::test]
@@ -635,7 +630,7 @@ mod tests {
             Duration::from_secs(300),
             3, // Very small limit
             mempool_state.clone(),
-            vec![],
+            HashSet::new(),
             Network::Dash,
         );
 
@@ -657,7 +652,7 @@ mod tests {
                 dashcore::Amount::from_sat(0),
                 false,
                 false,
-                vec![],
+                HashSet::new(),
                 0,
             ));
         }
@@ -681,7 +676,7 @@ mod tests {
             Duration::from_secs(300),
             1000,
             mempool_state.clone(),
-            vec![],
+            HashSet::new(),
             Network::Dash,
         );
 
@@ -700,7 +695,7 @@ mod tests {
             dashcore::Amount::from_sat(0),
             false,
             false,
-            vec![],
+            HashSet::new(),
             0,
         );
         let old_txid = old_tx.txid();
@@ -724,7 +719,7 @@ mod tests {
             dashcore::Amount::from_sat(0),
             false,
             false,
-            vec![],
+            HashSet::new(),
             0,
         );
         let recent_txid = recent_tx.txid();
@@ -748,7 +743,7 @@ mod tests {
             Duration::from_secs(300),
             1000,
             mempool_state,
-            vec![],
+            HashSet::new(),
             Network::Dash,
         );
 
@@ -781,7 +776,7 @@ mod tests {
 
         // Transaction to watched address should still be relevant
         let tx = create_test_transaction(vec![(addr, 50000)], vec![]);
-        assert!(filter.is_transaction_relevant(&tx, wallet.network()));
+        assert!(filter.is_transaction_relevant(&tx));
     }
 
     #[tokio::test]
@@ -821,11 +816,11 @@ mod tests {
 
         // Match by address
         let tx1 = create_test_transaction(vec![(addr1.clone(), 1000)], vec![]);
-        assert!(filter.is_transaction_relevant(&tx1, wallet.network()));
+        assert!(filter.is_transaction_relevant(&tx1));
 
         // Match by outpoint
         let tx2 = create_test_transaction(vec![(addr2.clone(), 2000)], vec![outpoint]);
-        assert!(filter.is_transaction_relevant(&tx2, wallet.network()));
+        assert!(filter.is_transaction_relevant(&tx2));
 
         // No match
         let other_outpoint = OutPoint {
@@ -836,6 +831,6 @@ mod tests {
             vout: 0,
         };
         let tx3 = create_test_transaction(vec![(addr2, 3000)], vec![other_outpoint]);
-        assert!(!filter.is_transaction_relevant(&tx3, wallet.network()));
+        assert!(!filter.is_transaction_relevant(&tx3));
     }
 }

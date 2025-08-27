@@ -274,7 +274,7 @@ impl<
                 Duration::from_secs(self.config.recent_send_window_secs),
                 self.config.max_mempool_transactions,
                 self.mempool_state.clone(),
-                vec![], // Will be populated from wallet's monitored addresses
+                HashSet::new(), // Will be populated from wallet's monitored addresses
                 self.config.network,
             )));
 
@@ -454,7 +454,7 @@ impl<
                 Duration::from_secs(self.config.recent_send_window_secs),
                 self.config.max_mempool_transactions,
                 self.mempool_state.clone(),
-                vec![], // Will be populated from wallet's monitored addresses
+                HashSet::new(), // Will be populated from wallet's monitored addresses
                 self.config.network,
             )));
         }
@@ -562,7 +562,7 @@ impl<
             Duration::from_secs(self.config.recent_send_window_secs),
             self.config.max_mempool_transactions,
             self.mempool_state.clone(),
-            vec![], // Will be populated from wallet's monitored addresses
+            HashSet::new(), // Will be populated from wallet's monitored addresses
             self.config.network,
         )));
         tracing::info!("Updated mempool filter (wallet integration pending)");
