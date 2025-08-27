@@ -206,8 +206,8 @@ mod tests {
     #[derive(Clone)]
     enum WatchItem {
         Address(Address),
-        Script(()),
-        Outpoint(()),
+        Script(ScriptBuf),
+        Outpoint(OutPoint),
     }
 
     impl WatchItem {
@@ -217,6 +217,14 @@ mod tests {
 
         fn address_from_height(addr: Address, _height: u32) -> Self {
             WatchItem::Address(addr)
+        }
+
+        fn script(script: ScriptBuf) -> Self {
+            WatchItem::Script(script)
+        }
+
+        fn outpoint(outpoint: OutPoint) -> Self {
+            WatchItem::Outpoint(outpoint)
         }
     }
 
@@ -741,8 +749,19 @@ mod tests {
         let addr2 = test_address2(network);
 
         let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
-        let watch_items =
-            vec![WatchItem::address(addr1.clone()), WatchItem::Script(()), WatchItem::Outpoint(())];
+        let dummy_script = ScriptBuf::new();
+        let dummy_outpoint = OutPoint {
+            txid: Txid::from_str(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .unwrap(),
+            vout: 0,
+        };
+        let watch_items = vec![
+            WatchItem::address(addr1.clone()),
+            WatchItem::script(dummy_script),
+            WatchItem::outpoint(dummy_outpoint),
+        ];
         let watched_addresses: HashSet<Address> = watch_items
             .into_iter()
             .filter_map(|item| match item {
