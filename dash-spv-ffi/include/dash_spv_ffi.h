@@ -384,6 +384,14 @@ FFIBalance *dash_spv_ffi_client_get_mempool_balance(struct FFIDashSpvClient *cli
 
 FFIClientConfig *dash_spv_ffi_config_new(enum FFINetwork network);
 
+/**
+ * Create config from a raw integer network value safely.
+ *
+ * This entrypoint exists to allow testing/handling of invalid raw values coming from C code
+ * without invoking undefined behavior by passing an invalid enum discriminant across FFI.
+ */
+FFIClientConfig *dash_spv_ffi_config_new_raw(int32_t network_value);
+
 FFIClientConfig *dash_spv_ffi_config_mainnet(void);
 
 FFIClientConfig *dash_spv_ffi_config_testnet(void);
