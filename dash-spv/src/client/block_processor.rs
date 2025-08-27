@@ -233,13 +233,12 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
         }
         drop(wallet); // Release lock
 
-        // TODO: Process block with wallet to extract relevant transactions
-        // For now, just emit BlockProcessed event
+        // Emit BlockProcessed event with actual relevant transaction count
         let _ = self.event_tx.send(SpvEvent::BlockProcessed {
             height,
             hash: block_hash.to_string(),
             transactions_count: block.txdata.len(),
-            relevant_transactions: 0,
+            relevant_transactions: txids.len(),
         });
 
         // Update chain state if needed
