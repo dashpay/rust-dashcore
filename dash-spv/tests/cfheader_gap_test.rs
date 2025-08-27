@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use dash_spv::{
     client::ClientConfig,
     error::{NetworkError, NetworkResult},
-    network::NetworkManager,
+    network::{MultiPeerNetworkManager, NetworkManager},
     storage::{MemoryStorageManager, StorageManager},
     sync::filters::FilterSyncManager,
 };
@@ -43,7 +43,8 @@ fn create_mock_filter_header() -> FilterHeader {
 async fn test_cfheader_gap_detection_no_gap() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync = FilterSyncManager::new(&config, received_heights);
+    let filter_sync: FilterSyncManager<MemoryStorageManager, MultiPeerNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     let mut storage = MemoryStorageManager::new().await.unwrap();
 
@@ -74,7 +75,8 @@ async fn test_cfheader_gap_detection_no_gap() {
 async fn test_cfheader_gap_detection_with_gap() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync = FilterSyncManager::new(&config, received_heights);
+    let filter_sync: FilterSyncManager<MemoryStorageManager, MultiPeerNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     let mut storage = MemoryStorageManager::new().await.unwrap();
 
@@ -108,7 +110,8 @@ async fn test_cfheader_gap_detection_with_gap() {
 async fn test_cfheader_gap_detection_filter_ahead() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync = FilterSyncManager::new(&config, received_heights);
+    let filter_sync: FilterSyncManager<MemoryStorageManager, MultiPeerNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     let mut storage = MemoryStorageManager::new().await.unwrap();
 

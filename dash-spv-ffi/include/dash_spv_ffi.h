@@ -317,10 +317,10 @@ bool dash_spv_ffi_client_is_filter_sync_available(struct FFIDashSpvClient *clien
 FFIBalance *dash_spv_ffi_client_get_address_balance(struct FFIDashSpvClient *client,
                                                     const char *address);
 
-struct FFIArray dash_spv_ffi_client_get_utxos(struct FFIDashSpvClient *client);
+struct FFIArray *dash_spv_ffi_client_get_utxos(struct FFIDashSpvClient *client);
 
-struct FFIArray dash_spv_ffi_client_get_utxos_for_address(struct FFIDashSpvClient *client,
-                                                          const char *address);
+struct FFIArray *dash_spv_ffi_client_get_utxos_for_address(struct FFIDashSpvClient *client,
+                                                           const char *address);
 
 int32_t dash_spv_ffi_client_set_event_callbacks(struct FFIDashSpvClient *client,
                                                 struct FFIEventCallbacks callbacks);
@@ -339,8 +339,8 @@ int32_t dash_spv_ffi_client_watch_script(struct FFIDashSpvClient *client, const 
 
 int32_t dash_spv_ffi_client_unwatch_script(struct FFIDashSpvClient *client, const char *script_hex);
 
-struct FFIArray dash_spv_ffi_client_get_address_history(struct FFIDashSpvClient *client,
-                                                        const char *address);
+struct FFIArray *dash_spv_ffi_client_get_address_history(struct FFIDashSpvClient *client,
+                                                         const char *address);
 
 struct FFITransaction *dash_spv_ffi_client_get_transaction(struct FFIDashSpvClient *client,
                                                            const char *txid);
@@ -348,9 +348,9 @@ struct FFITransaction *dash_spv_ffi_client_get_transaction(struct FFIDashSpvClie
 int32_t dash_spv_ffi_client_broadcast_transaction(struct FFIDashSpvClient *client,
                                                   const char *tx_hex);
 
-struct FFIArray dash_spv_ffi_client_get_watched_addresses(struct FFIDashSpvClient *client);
+struct FFIArray *dash_spv_ffi_client_get_watched_addresses(struct FFIDashSpvClient *client);
 
-struct FFIArray dash_spv_ffi_client_get_watched_scripts(struct FFIDashSpvClient *client);
+struct FFIArray *dash_spv_ffi_client_get_watched_scripts(struct FFIDashSpvClient *client);
 
 FFIBalance *dash_spv_ffi_client_get_total_balance(struct FFIDashSpvClient *client);
 
@@ -365,8 +365,8 @@ int32_t dash_spv_ffi_client_is_transaction_confirmed(struct FFIDashSpvClient *cl
 
 void dash_spv_ffi_transaction_destroy(struct FFITransaction *tx);
 
-struct FFIArray dash_spv_ffi_client_get_address_utxos(struct FFIDashSpvClient *client,
-                                                      const char *address);
+struct FFIArray *dash_spv_ffi_client_get_address_utxos(struct FFIDashSpvClient *client,
+                                                       const char *address);
 
 int32_t dash_spv_ffi_client_enable_mempool_tracking(struct FFIDashSpvClient *client,
                                                     enum FFIMempoolStrategy strategy);
@@ -491,6 +491,16 @@ struct FFIResult ffi_dash_spv_get_platform_activation_height(struct FFIDashSpvCl
 void dash_spv_ffi_string_destroy(struct FFIString s);
 
 void dash_spv_ffi_array_destroy(struct FFIArray *arr);
+
+/**
+ * Destroy an array of FFIString pointers (Vec<*mut FFIString>) and their contents.
+ *
+ * This function:
+ * - Iterates the array elements as pointers to FFIString and destroys each via dash_spv_ffi_string_destroy
+ * - Frees the underlying vector buffer stored in FFIArray
+ * - Does not free the FFIArray struct itself (safe for both stack- and heap-allocated structs)
+ */
+void dash_spv_ffi_string_array_destroy(struct FFIArray *arr);
 
 /**
  * Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction

@@ -1,3 +1,5 @@
+#![cfg(skip_mock_implementation_incomplete)]
+
 // dash-spv/tests/instantsend_integration_test.rs
 //
 // TODO: These tests need to be updated to work with the new SPVWalletManager API

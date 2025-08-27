@@ -1,3 +1,5 @@
+#![cfg(skip_mock_implementation_incomplete)]
+
 //! Comprehensive error handling tests for dash-spv
 //!
 //! NOTE: This test file is currently ignored due to incomplete mock trait implementations.

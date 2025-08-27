@@ -613,23 +613,23 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
     let result = client.runtime.block_on(async {
         let mut guard = client.inner.lock().unwrap();
         if let Some(ref mut spv_client) = *guard {
-            println!("Starting test sync...");
+            tracing::info!("Starting test sync...");
 
             // Get initial height
             let start_height = match spv_client.sync_progress().await {
                 Ok(progress) => progress.header_height,
                 Err(e) => {
-                    eprintln!("Failed to get initial height: {}", e);
+                    tracing::error!("Failed to get initial height: {}", e);
                     return Err(e);
                 }
             };
-            println!("Initial height: {}", start_height);
+            tracing::info!("Initial height: {}", start_height);
 
             // Start sync
             match spv_client.sync_to_tip().await {
-                Ok(_) => println!("Sync started successfully"),
+                Ok(_) => tracing::info!("Sync started successfully"),
                 Err(e) => {
-                    eprintln!("Failed to start sync: {}", e);
+                    tracing::error!("Failed to start sync: {}", e);
                     return Err(e);
                 }
             }
@@ -641,18 +641,18 @@ pub unsafe extern "C" fn dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvCl
             let end_height = match spv_client.sync_progress().await {
                 Ok(progress) => progress.header_height,
                 Err(e) => {
-                    eprintln!("Failed to get final height: {}", e);
+                    tracing::error!("Failed to get final height: {}", e);
                     return Err(e);
                 }
             };
-            println!("Final height: {}", end_height);
+            tracing::info!("Final height: {}", end_height);
 
             if end_height > start_height {
-                println!("✅ Sync working! Downloaded {} headers", end_height - start_height);
+                tracing::info!("✅ Sync working! Downloaded {} headers", end_height - start_height);
                 Ok(())
             } else {
                 let msg = "No headers downloaded".to_string();
-                eprintln!("❌ {}", msg);
+                tracing::error!("❌ {}", msg);
                 Err(dash_spv::SpvError::Sync(dash_spv::SyncError::Network(msg)))
             }
         } else {
@@ -1028,16 +1028,18 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_address_balance(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos(client: *mut FFIDashSpvClient) -> FFIArray {
+pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos(
+    client: *mut FFIDashSpvClient,
+) -> *mut FFIArray {
     null_check!(
         client,
-        FFIArray {
+        Box::into_raw(Box::new(FFIArray {
             data: std::ptr::null_mut(),
             len: 0,
             capacity: 0,
             elem_size: 0,
             elem_align: 1
-        }
+        }))
     );
 
     let client = &(*client);
@@ -1060,16 +1062,16 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos(client: *mut FFIDashSpvCl
     });
 
     match result {
-        Ok(arr) => arr,
+        Ok(arr) => Box::into_raw(Box::new(arr)),
         Err(e) => {
             set_last_error(&e.to_string());
-            FFIArray {
+            Box::into_raw(Box::new(FFIArray {
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
                 elem_size: 0,
                 elem_align: 1,
-            }
+            }))
         }
     }
 }
@@ -1078,39 +1080,39 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos(client: *mut FFIDashSpvCl
 pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos_for_address(
     client: *mut FFIDashSpvClient,
     address: *const c_char,
-) -> FFIArray {
+) -> *mut FFIArray {
     null_check!(
         client,
-        FFIArray {
+        Box::into_raw(Box::new(FFIArray {
             data: std::ptr::null_mut(),
             len: 0,
             capacity: 0,
             elem_size: 0,
             elem_align: 1
-        }
+        }))
     );
     null_check!(
         address,
-        FFIArray {
+        Box::into_raw(Box::new(FFIArray {
             data: std::ptr::null_mut(),
             len: 0,
             capacity: 0,
             elem_size: 0,
             elem_align: 1
-        }
+        }))
     );
 
     let addr_str = match CStr::from_ptr(address).to_str() {
         Ok(s) => s,
         Err(e) => {
             set_last_error(&format!("Invalid UTF-8 in address: {}", e));
-            return FFIArray {
+            return Box::into_raw(Box::new(FFIArray {
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
                 elem_size: 0,
                 elem_align: 1,
-            };
+            }));
         }
     };
 
@@ -1118,13 +1120,13 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos_for_address(
         Ok(a) => a.assume_checked(),
         Err(e) => {
             set_last_error(&format!("Invalid address: {}", e));
-            return FFIArray {
+            return Box::into_raw(Box::new(FFIArray {
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
                 elem_size: 0,
                 elem_align: 1,
-            };
+            }));
         }
     };
 
@@ -1153,16 +1155,16 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos_for_address(
     });
 
     match result {
-        Ok(arr) => arr,
+        Ok(arr) => Box::into_raw(Box::new(arr)),
         Err(e) => {
             set_last_error(&e.to_string());
-            FFIArray {
+            Box::into_raw(Box::new(FFIArray {
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
                 elem_size: 0,
                 elem_align: 1,
-            }
+            }))
         }
     }
 }
@@ -1267,13 +1269,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_watch_address(
         }
     };
 
-    let _addr = match dashcore::Address::<dashcore::address::NetworkUnchecked>::from_str(addr_str) {
-        Ok(a) => a.assume_checked(),
+    match dashcore::Address::<dashcore::address::NetworkUnchecked>::from_str(addr_str) {
+        Ok(a) => {
+            let _ = a.assume_checked();
+        }
         Err(e) => {
             set_last_error(&format!("Invalid address: {}", e));
             return FFIErrorCode::InvalidArgument as i32;
         }
-    };
+    }
 
     let client = &(*client);
     let inner = client.inner.clone();
@@ -1315,13 +1319,15 @@ pub unsafe extern "C" fn dash_spv_ffi_client_unwatch_address(
         }
     };
 
-    let _addr = match dashcore::Address::<dashcore::address::NetworkUnchecked>::from_str(addr_str) {
-        Ok(a) => a.assume_checked(),
+    match dashcore::Address::<dashcore::address::NetworkUnchecked>::from_str(addr_str) {
+        Ok(a) => {
+            let _ = a.assume_checked();
+        }
         Err(e) => {
             set_last_error(&format!("Invalid address: {}", e));
             return FFIErrorCode::InvalidArgument as i32;
         }
-    };
+    }
 
     let client = &(*client);
     let inner = client.inner.clone();
@@ -1355,10 +1361,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_watch_script(
     null_check!(client);
     null_check!(script_hex);
 
-    let _script = match validate_script_hex(script_hex) {
-        Ok(script) => script,
-        Err(error_code) => return error_code,
-    };
+    if let Err(error_code) = validate_script_hex(script_hex) {
+        return error_code;
+    }
 
     let client = &(*client);
     let inner = client.inner.clone();
@@ -1392,10 +1397,9 @@ pub unsafe extern "C" fn dash_spv_ffi_client_unwatch_script(
     null_check!(client);
     null_check!(script_hex);
 
-    let _script = match validate_script_hex(script_hex) {
-        Ok(script) => script,
-        Err(error_code) => return error_code,
-    };
+    if let Err(error_code) = validate_script_hex(script_hex) {
+        return error_code;
+    }
 
     let client = &(*client);
     let inner = client.inner.clone();
@@ -1425,39 +1429,22 @@ pub unsafe extern "C" fn dash_spv_ffi_client_unwatch_script(
 pub unsafe extern "C" fn dash_spv_ffi_client_get_address_history(
     client: *mut FFIDashSpvClient,
     address: *const c_char,
-) -> FFIArray {
-    null_check!(
-        client,
-        FFIArray {
-            data: std::ptr::null_mut(),
-            len: 0,
-            capacity: 0,
-            elem_size: 0,
-            elem_align: 1
-        }
-    );
-    null_check!(
-        address,
-        FFIArray {
-            data: std::ptr::null_mut(),
-            len: 0,
-            capacity: 0,
-            elem_size: 0,
-            elem_align: 1
-        }
-    );
+) -> *mut FFIArray {
+    if client.is_null() || address.is_null() {
+        return std::ptr::null_mut();
+    }
 
     let addr_str = match CStr::from_ptr(address).to_str() {
         Ok(s) => s,
         Err(e) => {
             set_last_error(&format!("Invalid UTF-8 in address: {}", e));
-            return FFIArray {
+            return Box::into_raw(Box::new(FFIArray {
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
                 elem_size: 0,
                 elem_align: 1,
-            };
+            }));
         }
     };
 
@@ -1465,24 +1452,24 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_address_history(
         Ok(a) => a.assume_checked(),
         Err(e) => {
             set_last_error(&format!("Invalid address: {}", e));
-            return FFIArray {
+            return Box::into_raw(Box::new(FFIArray {
                 data: std::ptr::null_mut(),
                 len: 0,
                 capacity: 0,
                 elem_size: 0,
                 elem_align: 1,
-            };
+            }));
         }
     };
 
     // Not implemented in dash-spv yet
-    FFIArray {
+    Box::into_raw(Box::new(FFIArray {
         data: std::ptr::null_mut(),
         len: 0,
         capacity: 0,
         elem_size: 0,
         elem_align: 1,
-    }
+    }))
 }
 
 #[no_mangle]
@@ -1572,51 +1559,37 @@ pub unsafe extern "C" fn dash_spv_ffi_client_broadcast_transaction(
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_get_watched_addresses(
     client: *mut FFIDashSpvClient,
-) -> FFIArray {
-    null_check!(
-        client,
-        FFIArray {
-            data: std::ptr::null_mut(),
-            len: 0,
-            capacity: 0,
-            elem_size: 0,
-            elem_align: 1
-        }
-    );
+) -> *mut FFIArray {
+    if client.is_null() {
+        return std::ptr::null_mut();
+    }
 
     // Not implemented in dash-spv yet
-    FFIArray {
+    Box::into_raw(Box::new(FFIArray {
         data: std::ptr::null_mut(),
         len: 0,
         capacity: 0,
         elem_size: 0,
         elem_align: 1,
-    }
+    }))
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_get_watched_scripts(
     client: *mut FFIDashSpvClient,
-) -> FFIArray {
-    null_check!(
-        client,
-        FFIArray {
-            data: std::ptr::null_mut(),
-            len: 0,
-            capacity: 0,
-            elem_size: 0,
-            elem_align: 1
-        }
-    );
+) -> *mut FFIArray {
+    if client.is_null() {
+        return std::ptr::null_mut();
+    }
 
     // Not implemented in dash-spv yet
-    FFIArray {
+    Box::into_raw(Box::new(FFIArray {
         data: std::ptr::null_mut(),
         len: 0,
         capacity: 0,
         elem_size: 0,
         elem_align: 1,
-    }
+    }))
 }
 
 #[no_mangle]
@@ -1723,7 +1696,10 @@ pub unsafe extern "C" fn dash_spv_ffi_transaction_destroy(tx: *mut FFITransactio
 pub unsafe extern "C" fn dash_spv_ffi_client_get_address_utxos(
     client: *mut FFIDashSpvClient,
     address: *const c_char,
-) -> FFIArray {
+) -> *mut FFIArray {
+    if client.is_null() || address.is_null() {
+        return std::ptr::null_mut();
+    }
     crate::client::dash_spv_ffi_client_get_utxos_for_address(client, address)
 }
 
