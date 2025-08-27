@@ -85,8 +85,11 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
         // Calculate the actual header height considering checkpoint sync
         let header_height = self.calculate_header_height(&state).await;
 
-        // Calculate filter header height considering checkpoint sync
-        let filter_header_height = self.calculate_filter_header_height().await;
+        // Get filter header height from storage
+        let storage = self.storage.lock().await;
+        let filter_header_height = storage.get_filter_tip_height().await
+            .ok().flatten().unwrap_or(0);
+        drop(storage);
 
         Ok(SyncProgress {
             header_height,
@@ -125,8 +128,11 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
                 self.calculate_header_height_with_logging(&state, true).await
             };
 
-            // Get filter header height - convert from storage height to blockchain height
-            let filter_height = self.calculate_filter_header_height().await;
+            // Get filter header height from storage
+            let storage = self.storage.lock().await;
+            let filter_height = storage.get_filter_tip_height().await
+                .ok().flatten().unwrap_or(0);
+            drop(storage);
 
             // Get latest chainlock height from state
             let chainlock_height = {
@@ -174,8 +180,11 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
                 self.calculate_header_height_with_logging(&state, true).await
             };
 
-            // Get filter header height - convert from storage height to blockchain height
-            let filter_height = self.calculate_filter_header_height().await;
+            // Get filter header height from storage
+            let storage = self.storage.lock().await;
+            let filter_height = storage.get_filter_tip_height().await
+                .ok().flatten().unwrap_or(0);
+            drop(storage);
 
             let chainlock_height = {
                 let state = self.state.read().await;
@@ -205,18 +214,4 @@ impl<'a, S: StorageManager + Send + Sync + 'static> StatusDisplay<'a, S> {
         }
     }
 
-    /// Calculate the filter header height considering checkpoint sync.
-    ///
-    /// This helper method encapsulates the logic for determining the current filter header height.
-    /// Note: get_filter_tip_height() now returns absolute blockchain height directly.
-    async fn calculate_filter_header_height(&self) -> u32 {
-        let storage = self.storage.lock().await;
-        if let Ok(Some(filter_tip)) = storage.get_filter_tip_height().await {
-            // The storage now returns absolute blockchain height directly
-            filter_tip
-        } else {
-            // No filter headers in storage yet
-            0
-        }
-    }
 }
