@@ -1765,8 +1765,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_balance_with_mempool(
 ) -> *mut FFIBalance {
     null_check!(client, std::ptr::null_mut());
 
-    let _client = &(*client);
-
     set_last_error("Wallet-wide mempool balance not available in current dash-spv version");
     std::ptr::null_mut()
 }
