@@ -39,6 +39,8 @@ typedef struct FFIClientConfig FFIClientConfig;
  */
 typedef struct FFIDashSpvClient FFIDashSpvClient;
 
+typedef ClientConfig FFIClientConfig;
+
 typedef struct FFIString {
   char *ptr;
   uintptr_t length;
@@ -211,7 +213,7 @@ typedef struct FFIUnconfirmedTransaction {
   uintptr_t addresses_len;
 } FFIUnconfirmedTransaction;
 
-struct FFIDashSpvClient *dash_spv_ffi_client_new(const struct FFIClientConfig *config);
+struct FFIDashSpvClient *dash_spv_ffi_client_new(const FFIClientConfig *config);
 
 int32_t dash_spv_ffi_client_start(struct FFIDashSpvClient *client);
 
@@ -380,57 +382,54 @@ int32_t dash_spv_ffi_client_record_send(struct FFIDashSpvClient *client, const c
 FFIBalance *dash_spv_ffi_client_get_mempool_balance(struct FFIDashSpvClient *client,
                                                     const char *address);
 
-struct FFIClientConfig *dash_spv_ffi_config_new(enum FFINetwork network);
+FFIClientConfig *dash_spv_ffi_config_new(enum FFINetwork network);
 
-struct FFIClientConfig *dash_spv_ffi_config_mainnet(void);
+FFIClientConfig *dash_spv_ffi_config_mainnet(void);
 
-struct FFIClientConfig *dash_spv_ffi_config_testnet(void);
+FFIClientConfig *dash_spv_ffi_config_testnet(void);
 
-int32_t dash_spv_ffi_config_set_data_dir(struct FFIClientConfig *config, const char *path);
+int32_t dash_spv_ffi_config_set_data_dir(FFIClientConfig *config, const char *path);
 
-int32_t dash_spv_ffi_config_set_validation_mode(struct FFIClientConfig *config,
+int32_t dash_spv_ffi_config_set_validation_mode(FFIClientConfig *config,
                                                 enum FFIValidationMode mode);
 
-int32_t dash_spv_ffi_config_set_max_peers(struct FFIClientConfig *config, uint32_t max_peers);
+int32_t dash_spv_ffi_config_set_max_peers(FFIClientConfig *config, uint32_t max_peers);
 
-int32_t dash_spv_ffi_config_add_peer(struct FFIClientConfig *config, const char *addr);
+int32_t dash_spv_ffi_config_add_peer(FFIClientConfig *config, const char *addr);
 
-int32_t dash_spv_ffi_config_set_user_agent(struct FFIClientConfig *config, const char *user_agent);
+int32_t dash_spv_ffi_config_set_user_agent(FFIClientConfig *config, const char *user_agent);
 
-int32_t dash_spv_ffi_config_set_relay_transactions(struct FFIClientConfig *config, bool _relay);
+int32_t dash_spv_ffi_config_set_relay_transactions(FFIClientConfig *config, bool _relay);
 
-int32_t dash_spv_ffi_config_set_filter_load(struct FFIClientConfig *config, bool load_filters);
+int32_t dash_spv_ffi_config_set_filter_load(FFIClientConfig *config, bool load_filters);
 
-enum FFINetwork dash_spv_ffi_config_get_network(const struct FFIClientConfig *config);
+enum FFINetwork dash_spv_ffi_config_get_network(const FFIClientConfig *config);
 
-struct FFIString dash_spv_ffi_config_get_data_dir(const struct FFIClientConfig *config);
+struct FFIString dash_spv_ffi_config_get_data_dir(const FFIClientConfig *config);
 
-void dash_spv_ffi_config_destroy(struct FFIClientConfig *config);
+void dash_spv_ffi_config_destroy(FFIClientConfig *config);
 
-int32_t dash_spv_ffi_config_set_mempool_tracking(struct FFIClientConfig *config, bool enable);
+int32_t dash_spv_ffi_config_set_mempool_tracking(FFIClientConfig *config, bool enable);
 
-int32_t dash_spv_ffi_config_set_mempool_strategy(struct FFIClientConfig *config,
+int32_t dash_spv_ffi_config_set_mempool_strategy(FFIClientConfig *config,
                                                  enum FFIMempoolStrategy strategy);
 
-int32_t dash_spv_ffi_config_set_max_mempool_transactions(struct FFIClientConfig *config,
+int32_t dash_spv_ffi_config_set_max_mempool_transactions(FFIClientConfig *config,
                                                          uint32_t max_transactions);
 
-int32_t dash_spv_ffi_config_set_mempool_timeout(struct FFIClientConfig *config,
-                                                uint64_t timeout_secs);
+int32_t dash_spv_ffi_config_set_mempool_timeout(FFIClientConfig *config, uint64_t timeout_secs);
 
-int32_t dash_spv_ffi_config_set_fetch_mempool_transactions(struct FFIClientConfig *config,
-                                                           bool fetch);
+int32_t dash_spv_ffi_config_set_fetch_mempool_transactions(FFIClientConfig *config, bool fetch);
 
-int32_t dash_spv_ffi_config_set_persist_mempool(struct FFIClientConfig *config, bool persist);
+int32_t dash_spv_ffi_config_set_persist_mempool(FFIClientConfig *config, bool persist);
 
-bool dash_spv_ffi_config_get_mempool_tracking(const struct FFIClientConfig *config);
+bool dash_spv_ffi_config_get_mempool_tracking(const FFIClientConfig *config);
 
-enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const struct FFIClientConfig *config);
+enum FFIMempoolStrategy dash_spv_ffi_config_get_mempool_strategy(const FFIClientConfig *config);
 
-int32_t dash_spv_ffi_config_set_start_from_height(struct FFIClientConfig *config, uint32_t height);
+int32_t dash_spv_ffi_config_set_start_from_height(FFIClientConfig *config, uint32_t height);
 
-int32_t dash_spv_ffi_config_set_wallet_creation_time(struct FFIClientConfig *config,
-                                                     uint32_t timestamp);
+int32_t dash_spv_ffi_config_set_wallet_creation_time(FFIClientConfig *config, uint32_t timestamp);
 
 const char *dash_spv_ffi_get_last_error(void);
 

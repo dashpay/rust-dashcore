@@ -20,6 +20,7 @@ impl From<FFIValidationMode> for ValidationMode {
     }
 }
 
+#[repr(transparent)]
 pub struct FFIClientConfig {
     inner: ClientConfig,
 }

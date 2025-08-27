@@ -181,9 +181,9 @@ mod tests {
             // This simulates what could happen from C code
             let config = {
                 extern "C" {
-                    fn dash_spv_ffi_config_new(network: i32) -> *mut FFIClientConfig;
+                    fn dash_spv_ffi_config_new(network: i32) -> *mut std::ffi::c_void;
                 }
-                dash_spv_ffi_config_new(999)
+                dash_spv_ffi_config_new(999) as *mut FFIClientConfig
             };
             // Should still create a config (defaults to Dash)
             assert!(!config.is_null());

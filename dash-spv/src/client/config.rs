@@ -22,6 +22,7 @@ pub enum MempoolStrategy {
 
 /// Configuration for the Dash SPV client.
 #[derive(Debug, Clone)]
+#[repr(C)]
 pub struct ClientConfig {
     /// Network to connect to.
     pub network: Network,
