@@ -3,13 +3,14 @@ use crate::types::FFINetwork;
 use crate::{null_check, FFIArray};
 use crate::{set_last_error, FFIString};
 use dash_spv::FilterMatch;
-use dashcore::{OutPoint, ScriptBuf, Txid};
+use dashcore::{consensus, OutPoint, ScriptBuf, Txid};
 use key_wallet::account::StandardAccountType;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::AccountType;
 use key_wallet::Utxo as KWUtxo;
 use key_wallet::WalletBalance;
+use key_wallet_manager::wallet_interface::WalletInterface;
 use key_wallet_manager::wallet_manager::{AccountTypeUsed, WalletId};
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -1181,6 +1182,267 @@ pub unsafe extern "C" fn dash_spv_ffi_wallet_add_account_from_xpub(
                 Ok(()) => Ok(()),
                 Err(e) => Err(e.to_string()),
             }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(()) => crate::FFIErrorCode::Success as i32,
+        Err(e) => {
+            set_last_error(&e);
+            crate::FFIErrorCode::InvalidArgument as i32
+        }
+    }
+}
+
+/// Get wallet-wide mempool balance
+///
+/// This returns the total unconfirmed balance (mempool transactions) across all
+/// accounts in the specified wallet. This represents the balance from transactions
+/// that have been broadcast but not yet confirmed in a block.
+///
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `wallet_id_hex` - Hex-encoded wallet ID (64 characters), or null for all wallets
+/// * `network` - The network for which to get mempool balance
+///
+/// # Returns
+/// * Total mempool balance in satoshis
+/// * Returns 0 if wallet not found or client not initialized (check last_error)
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_get_mempool_balance(
+    client: *mut FFIDashSpvClient,
+    wallet_id_hex: *const c_char,
+    network: FFINetwork,
+) -> u64 {
+    null_check!(client, 0);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    // Parse wallet ID if provided
+    let wallet_id_opt = if wallet_id_hex.is_null() {
+        None
+    } else {
+        let wallet_id_hex_str = match CStr::from_ptr(wallet_id_hex).to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                set_last_error(&format!("Invalid UTF-8 in wallet ID: {}", e));
+                return 0;
+            }
+        };
+
+        let mut wallet_id: [u8; 32] = [0u8; 32];
+        let bytes = match hex::decode(wallet_id_hex_str) {
+            Ok(b) => b,
+            Err(e) => {
+                set_last_error(&format!("Invalid hex wallet ID: {}", e));
+                return 0;
+            }
+        };
+        if bytes.len() != 32 {
+            set_last_error("Wallet ID must be 32 bytes hex");
+            return 0;
+        }
+        wallet_id.copy_from_slice(&bytes);
+        Some(wallet_id)
+    };
+
+    let result = client.run_async(|| async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            let wallet_manager = &spv_client.wallet().read().await.base;
+
+            if let Some(wallet_id) = wallet_id_opt {
+                // Get mempool balance for specific wallet
+                match wallet_manager.get_wallet_balance(&wallet_id) {
+                    Ok(balance) => Ok(balance.unconfirmed),
+                    Err(e) => Err(e.to_string()),
+                }
+            } else {
+                // Get total mempool balance across all wallets
+                let mut total_mempool_balance = 0u64;
+                for wallet_id in wallet_manager.list_wallets() {
+                    if let Ok(balance) = wallet_manager.get_wallet_balance(wallet_id) {
+                        total_mempool_balance =
+                            total_mempool_balance.saturating_add(balance.unconfirmed);
+                    }
+                }
+                Ok(total_mempool_balance)
+            }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(balance) => balance,
+        Err(e) => {
+            set_last_error(&e);
+            0
+        }
+    }
+}
+
+/// Get wallet-wide mempool transaction count
+///
+/// This returns the total number of unconfirmed transactions (in mempool) across all
+/// accounts in the specified wallet.
+///
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `wallet_id_hex` - Hex-encoded wallet ID (64 characters), or null for all wallets
+/// * `network` - The network for which to get mempool transaction count
+///
+/// # Returns
+/// * Total mempool transaction count
+/// * Returns 0 if wallet not found or client not initialized (check last_error)
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_get_mempool_transaction_count(
+    client: *mut FFIDashSpvClient,
+    wallet_id_hex: *const c_char,
+    network: FFINetwork,
+) -> u32 {
+    null_check!(client, 0);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    // Parse wallet ID if provided
+    let wallet_id_opt = if wallet_id_hex.is_null() {
+        None
+    } else {
+        let wallet_id_hex_str = match CStr::from_ptr(wallet_id_hex).to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                set_last_error(&format!("Invalid UTF-8 in wallet ID: {}", e));
+                return 0;
+            }
+        };
+
+        let mut wallet_id: [u8; 32] = [0u8; 32];
+        let bytes = match hex::decode(wallet_id_hex_str) {
+            Ok(b) => b,
+            Err(e) => {
+                set_last_error(&format!("Invalid hex wallet ID: {}", e));
+                return 0;
+            }
+        };
+        if bytes.len() != 32 {
+            set_last_error("Wallet ID must be 32 bytes hex");
+            return 0;
+        }
+        wallet_id.copy_from_slice(&bytes);
+        Some(wallet_id)
+    };
+
+    let result = client.run_async(|| async {
+        let guard = inner.lock().unwrap();
+        if let Some(ref spv_client) = *guard {
+            let wallet_manager = &spv_client.wallet().read().await.base;
+
+            if let Some(wallet_id) = wallet_id_opt {
+                // Get mempool transaction count for specific wallet
+                match wallet_manager.wallet_transaction_history(&wallet_id) {
+                    Ok(txs) => {
+                        let mempool_count =
+                            txs.iter().filter(|tx_record| tx_record.height.is_none()).count();
+                        Ok(mempool_count as u32)
+                    }
+                    Err(e) => Err(e.to_string()),
+                }
+            } else {
+                // Get total mempool transaction count across all wallets
+                let mut total_mempool_count = 0u32;
+                for wallet_id in wallet_manager.list_wallets() {
+                    if let Ok(txs) = wallet_manager.wallet_transaction_history(wallet_id) {
+                        let wallet_mempool_count =
+                            txs.iter().filter(|tx_record| tx_record.height.is_none()).count()
+                                as u32;
+                        total_mempool_count =
+                            total_mempool_count.saturating_add(wallet_mempool_count);
+                    }
+                }
+                Ok(total_mempool_count)
+            }
+        } else {
+            Err("Client not initialized".to_string())
+        }
+    });
+
+    match result {
+        Ok(count) => count,
+        Err(e) => {
+            set_last_error(&e);
+            0
+        }
+    }
+}
+
+/// Record a sent transaction in the wallet
+///
+/// This records a transaction that was sent/broadcast by the client, updating the
+/// wallet state to reflect the outgoing transaction. The transaction will be tracked
+/// in mempool until it's confirmed in a block.
+///
+/// # Arguments
+/// * `client` - Pointer to FFIDashSpvClient
+/// * `tx_hex` - Hex-encoded transaction data
+/// * `network` - The network for the transaction
+///
+/// # Returns
+/// * FFIErrorCode::Success on success
+/// * FFIErrorCode::InvalidArgument on error (check last_error)
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_wallet_record_sent_transaction(
+    client: *mut FFIDashSpvClient,
+    tx_hex: *const c_char,
+    network: FFINetwork,
+) -> i32 {
+    null_check!(client, crate::FFIErrorCode::InvalidArgument as i32);
+    null_check!(tx_hex, crate::FFIErrorCode::InvalidArgument as i32);
+
+    let client = &(*client);
+    let inner = client.inner.clone();
+
+    let tx_hex_str = match CStr::from_ptr(tx_hex).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8 in transaction hex: {}", e));
+            return crate::FFIErrorCode::InvalidArgument as i32;
+        }
+    };
+
+    // Parse transaction from hex
+    let tx_bytes = match hex::decode(tx_hex_str) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            set_last_error(&format!("Invalid hex transaction: {}", e));
+            return crate::FFIErrorCode::InvalidArgument as i32;
+        }
+    };
+
+    let transaction: dashcore::Transaction = match consensus::deserialize(&tx_bytes) {
+        Ok(tx) => tx,
+        Err(e) => {
+            set_last_error(&format!("Invalid transaction format: {}", e));
+            return crate::FFIErrorCode::InvalidArgument as i32;
+        }
+    };
+
+    let result = client.run_async(|| async {
+        let mut guard = inner.lock().unwrap();
+        if let Some(ref mut spv_client) = *guard {
+            // Record the sent transaction by processing it as a mempool transaction
+            // This will update the wallet state to reflect the outgoing transaction
+            spv_client
+                .wallet()
+                .write()
+                .await
+                .process_mempool_transaction(&transaction, network.into())
+                .await;
+            Ok(())
         } else {
             Err("Client not initialized".to_string())
         }

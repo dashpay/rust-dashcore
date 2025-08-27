@@ -836,6 +836,65 @@ int32_t dash_spv_ffi_wallet_add_account_from_xpub(struct FFIDashSpvClient *clien
                                                   uint32_t registration_index);
 
 /**
+ * Get wallet-wide mempool balance
+ *
+ * This returns the total unconfirmed balance (mempool transactions) across all
+ * accounts in the specified wallet. This represents the balance from transactions
+ * that have been broadcast but not yet confirmed in a block.
+ *
+ * # Arguments
+ * * `client` - Pointer to FFIDashSpvClient
+ * * `wallet_id_hex` - Hex-encoded wallet ID (64 characters), or null for all wallets
+ * * `network` - The network for which to get mempool balance
+ *
+ * # Returns
+ * * Total mempool balance in satoshis
+ * * Returns 0 if wallet not found or client not initialized (check last_error)
+ */
+uint64_t dash_spv_ffi_wallet_get_mempool_balance(struct FFIDashSpvClient *client,
+                                                 const char *wallet_id_hex,
+                                                 enum FFINetwork network);
+
+/**
+ * Get wallet-wide mempool transaction count
+ *
+ * This returns the total number of unconfirmed transactions (in mempool) across all
+ * accounts in the specified wallet.
+ *
+ * # Arguments
+ * * `client` - Pointer to FFIDashSpvClient
+ * * `wallet_id_hex` - Hex-encoded wallet ID (64 characters), or null for all wallets
+ * * `network` - The network for which to get mempool transaction count
+ *
+ * # Returns
+ * * Total mempool transaction count
+ * * Returns 0 if wallet not found or client not initialized (check last_error)
+ */
+uint32_t dash_spv_ffi_wallet_get_mempool_transaction_count(struct FFIDashSpvClient *client,
+                                                           const char *wallet_id_hex,
+                                                           enum FFINetwork network);
+
+/**
+ * Record a sent transaction in the wallet
+ *
+ * This records a transaction that was sent/broadcast by the client, updating the
+ * wallet state to reflect the outgoing transaction. The transaction will be tracked
+ * in mempool until it's confirmed in a block.
+ *
+ * # Arguments
+ * * `client` - Pointer to FFIDashSpvClient
+ * * `tx_hex` - Hex-encoded transaction data
+ * * `network` - The network for the transaction
+ *
+ * # Returns
+ * * FFIErrorCode::Success on success
+ * * FFIErrorCode::InvalidArgument on error (check last_error)
+ */
+int32_t dash_spv_ffi_wallet_record_sent_transaction(struct FFIDashSpvClient *client,
+                                                    const char *tx_hex,
+                                                    enum FFINetwork network);
+
+/**
  * Get a receive address from a specific wallet and account
  *
  * This generates a new unused receive address (external chain) for the specified
