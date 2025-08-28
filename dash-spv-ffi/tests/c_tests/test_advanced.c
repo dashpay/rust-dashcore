@@ -264,32 +264,6 @@ void test_error_conditions() {
     TEST_SUCCESS("test_error_conditions");
 }
 
-// Test watch items
-void test_watch_items() {
-    TEST_START("test_watch_items");
-    
-    // Test creating watch items
-    FFIWatchItem* addr_item = dash_spv_ffi_watch_item_address("XjSgy6PaVCB3V4KhCiCDkaVbx9ewxe9R1E");
-    TEST_ASSERT(addr_item != NULL);
-    TEST_ASSERT(addr_item->item_type == FFIWatchItemType_Address);
-    dash_spv_ffi_watch_item_destroy(addr_item);
-    
-    FFIWatchItem* script_item = dash_spv_ffi_watch_item_script("76a91488ac");
-    TEST_ASSERT(script_item != NULL);
-    TEST_ASSERT(script_item->item_type == FFIWatchItemType_Script);
-    dash_spv_ffi_watch_item_destroy(script_item);
-    
-    FFIWatchItem* outpoint_item = dash_spv_ffi_watch_item_outpoint(
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", 
-        0
-    );
-    TEST_ASSERT(outpoint_item != NULL);
-    TEST_ASSERT(outpoint_item->item_type == FFIWatchItemType_Outpoint);
-    dash_spv_ffi_watch_item_destroy(outpoint_item);
-    
-    TEST_SUCCESS("test_watch_items");
-}
-
 // Test callbacks with real operations
 typedef struct {
     int progress_count;
@@ -360,7 +334,6 @@ int main() {
     test_concurrent_access();
     test_memory_management();
     test_error_conditions();
-    test_watch_items();
     test_callbacks_with_operations();
     
     printf("\n=====================================\n");

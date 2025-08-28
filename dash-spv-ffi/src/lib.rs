@@ -5,7 +5,6 @@ pub mod error;
 pub mod platform_integration;
 pub mod types;
 pub mod utils;
-pub mod wallet;
 
 pub use callbacks::*;
 pub use client::*;
@@ -14,7 +13,6 @@ pub use error::*;
 pub use platform_integration::*;
 pub use types::*;
 pub use utils::*;
-pub use wallet::*;
 
 // Re-export commonly used types
 pub use types::FFINetwork;
@@ -38,10 +36,6 @@ mod test_client_lifecycle;
 #[cfg(test)]
 #[path = "../tests/unit/test_async_operations.rs"]
 mod test_async_operations;
-
-#[cfg(test)]
-#[path = "../tests/unit/test_wallet_operations.rs"]
-mod test_wallet_operations;
 
 #[cfg(test)]
 #[path = "../tests/unit/test_memory_management.rs"]

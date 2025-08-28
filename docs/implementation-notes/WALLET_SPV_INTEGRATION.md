@@ -67,13 +67,6 @@ Updated `DashSDK.connect()`:
 
 ## FFI Functions Used
 
-- `dash_spv_ffi_watch_item_address()` - Create watch item for address
-- `dash_spv_ffi_watch_item_script()` - Create watch item for script
-- `dash_spv_ffi_watch_item_outpoint()` - Create watch item for outpoint
-- `dash_spv_ffi_client_add_watch_item()` - Add watch item to client
-- `dash_spv_ffi_client_remove_watch_item()` - Remove watch item from client
-- `dash_spv_ffi_watch_item_destroy()` - Clean up watch item memory
-
 ## Testing
 
 To test the integration:

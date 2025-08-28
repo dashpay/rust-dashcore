@@ -104,32 +104,6 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_watch_items() {
-        unsafe {
-            let (config, _temp_dir) = create_test_config();
-            let client = dash_spv_ffi_client_new(config);
-
-            let addr = CString::new("XjSgy6PaVCB3V4KhCiCDkaVbx9ewxe9R1E").unwrap();
-            let item = dash_spv_ffi_watch_item_address(addr.as_ptr());
-
-            let result = dash_spv_ffi_client_add_watch_item(client, item);
-            // Client is not started, so we expect either Success (queued), NetworkError, or InvalidArgument
-            assert!(
-                result == FFIErrorCode::Success as i32
-                    || result == FFIErrorCode::NetworkError as i32
-                    || result == FFIErrorCode::InvalidArgument as i32,
-                "Expected Success, NetworkError, or InvalidArgument, got error code: {}",
-                result
-            );
-
-            dash_spv_ffi_watch_item_destroy(item);
-            dash_spv_ffi_client_destroy(client);
-            dash_spv_ffi_config_destroy(config);
-        }
-    }
-
-    #[test]
-    #[serial]
     fn test_sync_progress() {
         unsafe {
             let (config, _temp_dir) = create_test_config();
@@ -180,9 +154,10 @@ mod tests {
                 let balance_ref = &*balance;
                 assert_eq!(
                     balance_ref.total,
-                    balance_ref.confirmed + balance_ref.pending + balance_ref.instantlocked
+                    balance_ref.confirmed + balance_ref.unconfirmed + balance_ref.immature
                 );
-                dash_spv_ffi_balance_destroy(balance);
+                // FFIBalance from key-wallet-ffi doesn't need explicit destruction
+                // since it's a simple struct without heap allocations
             }
 
             dash_spv_ffi_client_destroy(client);

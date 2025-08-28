@@ -170,10 +170,11 @@ fn test_mempool_balance_query() {
             let address = CString::new("yXdxAYfAkQnrFZNxdVfqwJMRpDcCuC6YLi").unwrap();
             let balance = dash_spv_ffi_client_get_mempool_balance(client, address.as_ptr());
             if !balance.is_null() {
-                let balance_data = (*balance);
-                assert_eq!(balance_data.confirmed, 0); // No confirmed balance in mempool
-                                                       // mempool and mempool_instant fields contain the actual mempool balance
-                dash_spv_ffi_balance_destroy(balance);
+                let balance_ref = &(*balance);
+                assert_eq!(balance_ref.confirmed, 0); // No confirmed balance in mempool
+                                                      // mempool and mempool_instant fields contain the actual mempool balance
+                                                      // FFIBalance from key-wallet-ffi doesn't need explicit destruction
+                                                      // dash_spv_ffi_balance_destroy(balance);
             }
 
             // Stop client

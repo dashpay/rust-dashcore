@@ -97,18 +97,9 @@ dash_spv_ffi_config_destroy(config);
 
 ### Wallet Operations
 
-- `dash_spv_ffi_client_add_watch_item(client, item)` - Add address/script to watch
-- `dash_spv_ffi_client_remove_watch_item(client, item)` - Remove watch item
 - `dash_spv_ffi_client_get_address_balance(client, address)` - Get address balance
 - `dash_spv_ffi_client_get_utxos(client)` - Get all UTXOs
 - `dash_spv_ffi_client_get_utxos_for_address(client, address)` - Get UTXOs for address
-
-### Watch Items
-
-- `dash_spv_ffi_watch_item_address(address)` - Create address watch item
-- `dash_spv_ffi_watch_item_script(script_hex)` - Create script watch item
-- `dash_spv_ffi_watch_item_outpoint(txid, vout)` - Create outpoint watch item
-- `dash_spv_ffi_watch_item_destroy(item)` - Free watch item memory
 
 ### Error Handling
 

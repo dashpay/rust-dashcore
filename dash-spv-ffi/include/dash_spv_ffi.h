@@ -3,79 +3,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-typedef enum FFIAccountType {
-  /**
-   * Standard BIP44 account for regular transactions
-   */
-  BIP44 = 0,
-  /**
-   * Standard BIP32 account for regular transactions
-   */
-  BIP32 = 1,
-  /**
-   * CoinJoin account for private transactions
-   */
-  CoinJoin = 2,
-  /**
-   * Identity registration funding
-   */
-  IdentityRegistration = 3,
-  /**
-   * Identity top-up funding
-   */
-  IdentityTopUp = 4,
-  /**
-   * Identity invitation funding
-   */
-  IdentityInvitation = 5,
-  /**
-   * Provider voting keys (DIP-3)
-   */
-  ProviderVotingKeys = 6,
-  /**
-   * Provider owner keys (DIP-3)
-   */
-  ProviderOwnerKeys = 7,
-  /**
-   * Provider operator keys (DIP-3)
-   */
-  ProviderOperatorKeys = 8,
-  /**
-   * Provider platform P2P keys (DIP-3, ED25519)
-   */
-  ProviderPlatformKeys = 9,
-} FFIAccountType;
-
-typedef enum FFIAccountTypePreference {
-  /**
-   * Use BIP44 account only
-   */
-  BIP44 = 0,
-  /**
-   * Use BIP32 account only
-   */
-  BIP32 = 1,
-  /**
-   * Prefer BIP44, fallback to BIP32
-   */
-  PreferBIP44 = 2,
-  /**
-   * Prefer BIP32, fallback to BIP44
-   */
-  PreferBIP32 = 3,
-} FFIAccountTypePreference;
-
-typedef enum FFIAccountTypeUsed {
-  /**
-   * BIP44 account was used
-   */
-  BIP44 = 0,
-  /**
-   * BIP32 account was used
-   */
-  BIP32 = 1,
-} FFIAccountTypeUsed;
-
 typedef enum FFIMempoolStrategy {
   FetchAll = 0,
   BloomFilter = 1,
@@ -104,29 +31,6 @@ typedef enum FFIValidationMode {
   Basic = 1,
   Full = 2,
 } FFIValidationMode;
-
-typedef enum FFIWalletAccountCreationOptions {
-  /**
-   * Default account creation: Creates account 0 for BIP44, account 0 for CoinJoin,
-   * and all special purpose accounts (Identity Registration, Identity Invitation,
-   * Provider keys, etc.)
-   */
-  Default = 0,
-  /**
-   * Create only BIP44 accounts (no CoinJoin or special accounts)
-   */
-  BIP44AccountsOnly = 1,
-  /**
-   * Create no accounts at all - useful for tests that want to manually control account creation
-   */
-  None = 2,
-} FFIWalletAccountCreationOptions;
-
-typedef enum FFIWatchItemType {
-  Address = 0,
-  Script = 1,
-  Outpoint = 2,
-} FFIWatchItemType;
 
 typedef struct FFIClientConfig FFIClientConfig;
 
@@ -180,20 +84,6 @@ typedef struct FFISpvStats {
   uint64_t bytes_sent;
   uint64_t uptime;
 } FFISpvStats;
-
-typedef struct FFIWatchItem {
-  enum FFIWatchItemType item_type;
-  struct FFIString data;
-} FFIWatchItem;
-
-typedef struct FFIBalance {
-  uint64_t confirmed;
-  uint64_t pending;
-  uint64_t instantlocked;
-  uint64_t mempool;
-  uint64_t mempool_instant;
-  uint64_t total;
-} FFIBalance;
 
 /**
  * FFI-safe array that transfers ownership of memory to the C caller.
@@ -319,57 +209,6 @@ typedef struct FFIUnconfirmedTransaction {
   uintptr_t addresses_len;
 } FFIUnconfirmedTransaction;
 
-typedef struct FFIUtxo {
-  struct FFIString txid;
-  uint32_t vout;
-  uint64_t amount;
-  struct FFIString script_pubkey;
-  struct FFIString address;
-  uint32_t height;
-  bool is_coinbase;
-  bool is_confirmed;
-  bool is_instantlocked;
-} FFIUtxo;
-
-typedef struct FFITransactionResult {
-  struct FFIString txid;
-  int32_t version;
-  uint32_t locktime;
-  uint32_t size;
-  uint32_t weight;
-  uint64_t fee;
-  uint64_t confirmation_time;
-  uint32_t confirmation_height;
-} FFITransactionResult;
-
-typedef struct FFIBlockResult {
-  struct FFIString hash;
-  uint32_t height;
-  uint32_t time;
-  uint32_t tx_count;
-} FFIBlockResult;
-
-typedef struct FFIFilterMatch {
-  struct FFIString block_hash;
-  uint32_t height;
-  bool block_requested;
-} FFIFilterMatch;
-
-typedef struct FFIAddressStats {
-  struct FFIString address;
-  uint32_t utxo_count;
-  uint64_t total_value;
-  uint64_t confirmed_value;
-  uint64_t pending_value;
-  uint32_t spendable_count;
-  uint32_t coinbase_count;
-} FFIAddressStats;
-
-typedef struct FFIAddressGenerationResult {
-  struct FFIString *address;
-  enum FFIAccountTypeUsed account_type_used;
-} FFIAddressGenerationResult;
-
 struct FFIDashSpvClient *dash_spv_ffi_client_new(const struct FFIClientConfig *config);
 
 int32_t dash_spv_ffi_client_start(struct FFIDashSpvClient *client);
@@ -473,14 +312,8 @@ struct FFISpvStats *dash_spv_ffi_client_get_stats(struct FFIDashSpvClient *clien
 
 bool dash_spv_ffi_client_is_filter_sync_available(struct FFIDashSpvClient *client);
 
-int32_t dash_spv_ffi_client_add_watch_item(struct FFIDashSpvClient *client,
-                                           const struct FFIWatchItem *item);
-
-int32_t dash_spv_ffi_client_remove_watch_item(struct FFIDashSpvClient *client,
-                                              const struct FFIWatchItem *item);
-
-struct FFIBalance *dash_spv_ffi_client_get_address_balance(struct FFIDashSpvClient *client,
-                                                           const char *address);
+FFIBalance *dash_spv_ffi_client_get_address_balance(struct FFIDashSpvClient *client,
+                                                    const char *address);
 
 struct FFIArray dash_spv_ffi_client_get_utxos(struct FFIDashSpvClient *client);
 
@@ -517,7 +350,7 @@ struct FFIArray dash_spv_ffi_client_get_watched_addresses(struct FFIDashSpvClien
 
 struct FFIArray dash_spv_ffi_client_get_watched_scripts(struct FFIDashSpvClient *client);
 
-struct FFIBalance *dash_spv_ffi_client_get_total_balance(struct FFIDashSpvClient *client);
+FFIBalance *dash_spv_ffi_client_get_total_balance(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_rescan_blockchain(struct FFIDashSpvClient *client,
                                               uint32_t _from_height);
@@ -536,14 +369,14 @@ struct FFIArray dash_spv_ffi_client_get_address_utxos(struct FFIDashSpvClient *c
 int32_t dash_spv_ffi_client_enable_mempool_tracking(struct FFIDashSpvClient *client,
                                                     enum FFIMempoolStrategy strategy);
 
-struct FFIBalance *dash_spv_ffi_client_get_balance_with_mempool(struct FFIDashSpvClient *client);
+FFIBalance *dash_spv_ffi_client_get_balance_with_mempool(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_get_mempool_transaction_count(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_record_send(struct FFIDashSpvClient *client, const char *txid);
 
-struct FFIBalance *dash_spv_ffi_client_get_mempool_balance(struct FFIDashSpvClient *client,
-                                                           const char *address);
+FFIBalance *dash_spv_ffi_client_get_mempool_balance(struct FFIDashSpvClient *client,
+                                                    const char *address);
 
 struct FFIClientConfig *dash_spv_ffi_config_new(enum FFINetwork network);
 
@@ -702,271 +535,3 @@ const char *dash_spv_ffi_version(void);
 const char *dash_spv_ffi_get_network_name(enum FFINetwork network);
 
 void dash_spv_ffi_enable_test_mode(void);
-
-struct FFIWatchItem *dash_spv_ffi_watch_item_address(const char *address);
-
-struct FFIWatchItem *dash_spv_ffi_watch_item_script(const char *script_hex);
-
-struct FFIWatchItem *dash_spv_ffi_watch_item_outpoint(const char *txid, uint32_t vout);
-
-void dash_spv_ffi_watch_item_destroy(struct FFIWatchItem *item);
-
-void dash_spv_ffi_balance_destroy(struct FFIBalance *balance);
-
-void dash_spv_ffi_utxo_destroy(struct FFIUtxo *utxo);
-
-void dash_spv_ffi_transaction_result_destroy(struct FFITransactionResult *tx);
-
-void dash_spv_ffi_block_result_destroy(struct FFIBlockResult *block);
-
-void dash_spv_ffi_filter_match_destroy(struct FFIFilterMatch *filter_match);
-
-void dash_spv_ffi_address_stats_destroy(struct FFIAddressStats *stats);
-
-int32_t dash_spv_ffi_validate_address(const char *address, enum FFINetwork network);
-
-struct FFIArray *dash_spv_ffi_wallet_get_monitored_addresses(struct FFIDashSpvClient *client,
-                                                             enum FFINetwork network);
-
-struct FFIBalance *dash_spv_ffi_wallet_get_balance(struct FFIDashSpvClient *client,
-                                                   const char *wallet_id_ptr);
-
-struct FFIArray dash_spv_ffi_wallet_get_utxos(struct FFIDashSpvClient *client,
-                                              const char *wallet_id_ptr);
-
-/**
- * Create a new wallet from mnemonic phrase
- *
- * # Arguments
- * * `client` - Pointer to FFIDashSpvClient
- * * `mnemonic` - The mnemonic phrase as null-terminated C string
- * * `passphrase` - Optional BIP39 passphrase (can be null/empty)
- * * `network` - The network to use
- * * `account_options` - Account creation options
- * * `name` - Wallet name as null-terminated C string
- * * `birth_height` - Optional birth height (can be 0 for none)
- *
- * # Returns
- * * Pointer to FFIString containing hex-encoded WalletId (32 bytes as 64-char hex)
- * * Returns null on error (check last_error)
- */
-struct FFIString *dash_spv_ffi_wallet_create_from_mnemonic(struct FFIDashSpvClient *client,
-                                                           const char *mnemonic,
-                                                           const char *passphrase,
-                                                           enum FFINetwork network,
-                                                           enum FFIWalletAccountCreationOptions account_options,
-                                                           const char *name,
-                                                           uint32_t birth_height);
-
-/**
- * Create a new empty wallet (test wallet with fixed mnemonic)
- *
- * # Arguments
- * * `client` - Pointer to FFIDashSpvClient
- * * `network` - The network to use
- * * `account_options` - Account creation options
- * * `name` - Wallet name as null-terminated C string
- *
- * # Returns
- * * Pointer to FFIString containing hex-encoded WalletId (32 bytes as 64-char hex)
- * * Returns null on error (check last_error)
- */
-struct FFIString *dash_spv_ffi_wallet_create(struct FFIDashSpvClient *client,
-                                             enum FFINetwork network,
-                                             enum FFIWalletAccountCreationOptions account_options,
-                                             const char *name);
-
-/**
- * Get a list of all wallet IDs
- *
- * # Arguments
- * * `client` - Pointer to FFIDashSpvClient
- *
- * # Returns
- * * FFIArray of FFIString objects containing hex-encoded WalletIds
- */
-struct FFIArray dash_spv_ffi_wallet_list(struct FFIDashSpvClient *client);
-
-/**
- * Import a wallet from an extended private key
- *
- * # Arguments
- * * `client` - Pointer to FFIDashSpvClient
- * * `xprv` - The extended private key string (base58check encoded)
- * * `network` - The network to use
- * * `account_options` - Account creation options
- * * `name` - Wallet name as null-terminated C string
- *
- * # Returns
- * * Pointer to FFIString containing hex-encoded WalletId (32 bytes as 64-char hex)
- * * Returns null on error (check last_error)
- */
-struct FFIString *dash_spv_ffi_wallet_import_from_xprv(struct FFIDashSpvClient *client,
-                                                       const char *xprv,
-                                                       enum FFINetwork network,
-                                                       enum FFIWalletAccountCreationOptions account_options,
-                                                       const char *name);
-
-/**
- * Import a watch-only wallet from an extended public key
- *
- * # Arguments
- * * `client` - Pointer to FFIDashSpvClient
- * * `xpub` - The extended public key string (base58check encoded)
- * * `network` - The network to use
- * * `name` - Wallet name as null-terminated C string
- *
- * # Returns
- * * Pointer to FFIString containing hex-encoded WalletId (32 bytes as 64-char hex)
- * * Returns null on error (check last_error)
- */
-struct FFIString *dash_spv_ffi_wallet_import_from_xpub(struct FFIDashSpvClient *client,
-                                                       const char *xpub,
-                                                       enum FFINetwork network,
-                                                       const char *name);
-
-/**
- * Add a new account to an existing wallet from an extended public key
- *
- * This creates a watch-only account that can monitor addresses and transactions
- * but cannot sign them.
- *
- * # Arguments
- * * `client` - Pointer to FFIDashSpvClient
- * * `wallet_id_hex` - Hex-encoded wallet ID (64 characters)
- * * `xpub` - The extended public key string (base58check encoded)
- * * `account_type` - The type of account to create
- * * `network` - The network for the account
- * * `account_index` - Account index (required for BIP44, BIP32, CoinJoin)
- * * `registration_index` - Registration index (required for IdentityTopUp)
- *
- * # Returns
- * * FFIErrorCode::Success on success
- * * FFIErrorCode::InvalidArgument on error (check last_error)
- */
-int32_t dash_spv_ffi_wallet_add_account_from_xpub(struct FFIDashSpvClient *client,
-                                                  const char *wallet_id_hex,
-                                                  const char *xpub,
-                                                  enum FFIAccountType account_type,
-                                                  enum FFINetwork network,
-                                                  uint32_t account_index,
-                                                  uint32_t registration_index);
-
-/**
- * Get wallet-wide mempool balance
- *
- * This returns the total unconfirmed balance (mempool transactions) across all
- * accounts in the specified wallet. This represents the balance from transactions
- * that have been broadcast but not yet confirmed in a block.
- *
- * # Arguments
- * * `client` - Pointer to FFIDashSpvClient
- * * `wallet_id_hex` - Hex-encoded wallet ID (64 characters), or null for all wallets
- * * `network` - The network for which to get mempool balance
- *
- * # Returns
- * * Total mempool balance in satoshis
- * * Returns 0 if wallet not found or client not initialized (check last_error)
- */
-uint64_t dash_spv_ffi_wallet_get_mempool_balance(struct FFIDashSpvClient *client,
-                                                 const char *wallet_id_hex,
-                                                 enum FFINetwork network);
-
-/**
- * Get wallet-wide mempool transaction count
- *
- * This returns the total number of unconfirmed transactions (in mempool) across all
- * accounts in the specified wallet.
- *
- * # Arguments
- * * `client` - Pointer to FFIDashSpvClient
- * * `wallet_id_hex` - Hex-encoded wallet ID (64 characters), or null for all wallets
- * * `network` - The network for which to get mempool transaction count
- *
- * # Returns
- * * Total mempool transaction count
- * * Returns 0 if wallet not found or client not initialized (check last_error)
- */
-uint32_t dash_spv_ffi_wallet_get_mempool_transaction_count(struct FFIDashSpvClient *client,
-                                                           const char *wallet_id_hex,
-                                                           enum FFINetwork network);
-
-/**
- * Record a sent transaction in the wallet
- *
- * This records a transaction that was sent/broadcast by the client, updating the
- * wallet state to reflect the outgoing transaction. The transaction will be tracked
- * in mempool until it's confirmed in a block.
- *
- * # Arguments
- * * `client` - Pointer to FFIDashSpvClient
- * * `tx_hex` - Hex-encoded transaction data
- * * `network` - The network for the transaction
- *
- * # Returns
- * * FFIErrorCode::Success on success
- * * FFIErrorCode::InvalidArgument on error (check last_error)
- */
-int32_t dash_spv_ffi_wallet_record_sent_transaction(struct FFIDashSpvClient *client,
-                                                    const char *tx_hex,
-                                                    enum FFINetwork network);
-
-/**
- * Get a receive address from a specific wallet and account
- *
- * This generates a new unused receive address (external chain) for the specified
- * wallet and account. The address will be marked as used if mark_as_used is true.
- *
- * # Arguments
- * * `client` - Pointer to FFIDashSpvClient
- * * `wallet_id_hex` - Hex-encoded wallet ID (64 characters)
- * * `network` - The network for the address
- * * `account_index` - Account index (0 for first account)
- * * `account_type_pref` - Account type preference (BIP44, BIP32, or preference)
- * * `mark_as_used` - Whether to mark the address as used after generation
- *
- * # Returns
- * * Pointer to FFIAddressGenerationResult containing the address and account type used
- * * Returns null if address generation fails (check last_error)
- */
-struct FFIAddressGenerationResult *dash_spv_ffi_wallet_get_receive_address(struct FFIDashSpvClient *client,
-                                                                           const char *wallet_id_hex,
-                                                                           enum FFINetwork network,
-                                                                           uint32_t account_index,
-                                                                           enum FFIAccountTypePreference account_type_pref,
-                                                                           bool mark_as_used);
-
-/**
- * Get a change address from a specific wallet and account
- *
- * This generates a new unused change address (internal chain) for the specified
- * wallet and account. The address will be marked as used if mark_as_used is true.
- *
- * # Arguments
- * * `client` - Pointer to FFIDashSpvClient
- * * `wallet_id_hex` - Hex-encoded wallet ID (64 characters)
- * * `network` - The network for the address
- * * `account_index` - Account index (0 for first account)
- * * `account_type_pref` - Account type preference (BIP44, BIP32, or preference)
- * * `mark_as_used` - Whether to mark the address as used after generation
- *
- * # Returns
- * * Pointer to FFIAddressGenerationResult containing the address and account type used
- * * Returns null if address generation fails (check last_error)
- */
-struct FFIAddressGenerationResult *dash_spv_ffi_wallet_get_change_address(struct FFIDashSpvClient *client,
-                                                                          const char *wallet_id_hex,
-                                                                          enum FFINetwork network,
-                                                                          uint32_t account_index,
-                                                                          enum FFIAccountTypePreference account_type_pref,
-                                                                          bool mark_as_used);
-
-/**
- * Free an FFIAddressGenerationResult and its associated resources
- *
- * # Safety
- * * `result` must be a valid pointer to an FFIAddressGenerationResult
- * * The pointer must not be used after this function is called
- * * This function should only be called once per FFIAddressGenerationResult
- */
-void dash_spv_ffi_address_generation_result_destroy(struct FFIAddressGenerationResult *result);

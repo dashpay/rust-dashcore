@@ -23,8 +23,11 @@ log = "0.4"
 hex = "0.4"
 env_logger = "0.10"
 tracing = "0.1"
-key-wallet-manager = { path = "../key-wallet-manager" }
+# Use key-wallet-ffi for all wallet-related FFI types
+key-wallet-ffi = { path = "../key-wallet-ffi" }
+# Still need these for SPV client internals (not for FFI types)
 key-wallet = { path = "../key-wallet" }
+key-wallet-manager = { path = "../key-wallet-manager" }
 rand = "0.8"
 
 [dev-dependencies]
