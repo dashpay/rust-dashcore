@@ -147,7 +147,8 @@ impl NetworkManager for MockNetworkManager {
 async fn test_filter_sync_at_tip_edge_case() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     let mut storage = MemoryStorageManager::new().await.unwrap();
     let mut network = MockNetworkManager::new();
@@ -189,7 +190,8 @@ async fn test_filter_sync_at_tip_edge_case() {
 async fn test_filter_sync_gap_detection_edge_case() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync = FilterSyncManager::new(&config, received_heights);
+    let filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     let mut storage = MemoryStorageManager::new().await.unwrap();
 
@@ -250,7 +252,8 @@ async fn test_filter_sync_gap_detection_edge_case() {
 async fn test_no_invalid_getcfheaders_at_tip() {
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     let mut storage = MemoryStorageManager::new().await.unwrap();
     let mut network = MockNetworkManager::new();

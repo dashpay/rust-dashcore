@@ -14,6 +14,7 @@
 //! - Recovery mechanisms (automatic retries, graceful degradation)
 //! - Error propagation through layers
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -32,12 +33,12 @@ use dashcore_hashes::Hash;
 use tokio::sync::{mpsc, RwLock};
 
 use dash_spv::error::*;
-use dash_spv::network::TcpConnection;
+use dash_spv::network::{NetworkManager, TcpConnection};
 use dash_spv::storage::{DiskStorageManager, MemoryStorageManager, StorageManager};
 use dash_spv::sync::sequential::phases::SyncPhase;
 use dash_spv::sync::sequential::recovery::{RecoveryManager, RecoveryStrategy};
-use dash_spv::types::{ChainState, MempoolState, UnconfirmedTransaction};
-use dash_spv::wallet::Utxo;
+use dash_spv::types::{ChainState, MempoolState, PeerInfo, UnconfirmedTransaction};
+use key_wallet_manager::Utxo;
 
 /// Mock network manager for testing error scenarios
 struct MockNetworkManager {
@@ -142,8 +143,52 @@ impl dash_spv::network::NetworkManager for MockNetworkManager {
         vec![]
     }
 
-    async fn send_ping(&mut self) -> NetworkResult<()> {
-        self.send_message(dashcore::network::message::NetworkMessage::Ping(1234)).await
+    async fn send_ping(&mut self) -> NetworkResult<u64> {
+        let nonce = 1234u64;
+        self.send_message(dashcore::network::message::NetworkMessage::Ping(nonce)).await?;
+        Ok(nonce)
+    }
+
+    async fn handle_ping(&mut self, _nonce: u64) -> NetworkResult<()> {
+        Ok(())
+    }
+
+    fn handle_pong(&mut self, _nonce: u64) -> NetworkResult<()> {
+        Ok(())
+    }
+
+    fn should_ping(&self) -> bool {
+        false
+    }
+
+    fn cleanup_old_pings(&mut self) {}
+
+    fn get_message_sender(&self) -> mpsc::Sender<dashcore::network::message::NetworkMessage> {
+        // Create a dummy channel for testing
+        let (_tx, _rx) = mpsc::channel(1);
+        _tx
+    }
+
+    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>> {
+        Ok(Some(1000000))
+    }
+
+    async fn has_peer_with_service(
+        &self,
+        _service_flags: dashcore::network::constants::ServiceFlags,
+    ) -> bool {
+        true
+    }
+
+    async fn get_peers_with_service(
+        &self,
+        _service_flags: dashcore::network::constants::ServiceFlags,
+    ) -> Vec<PeerInfo> {
+        vec![]
+    }
+
+    async fn update_peer_dsq_preference(&mut self, _wants_dsq: bool) -> NetworkResult<()> {
+        Ok(())
     }
 }
 
@@ -346,14 +391,11 @@ impl StorageManager for MockStorageManager {
 
     async fn stats(&self) -> StorageResult<dash_spv::storage::StorageStats> {
         Ok(dash_spv::storage::StorageStats {
-            headers_count: 0,
-            filter_headers_count: 0,
-            filters_count: 0,
-            headers_size_bytes: 0,
-            filter_headers_size_bytes: 0,
-            filters_size_bytes: 0,
-            total_size_bytes: 0,
-            last_compaction: None,
+            header_count: 0,
+            filter_header_count: 0,
+            filter_count: 0,
+            total_size: 0,
+            component_sizes: std::collections::HashMap::new(),
         })
     }
 
@@ -531,6 +573,10 @@ impl StorageManager for MockStorageManager {
         if self.fail_on_write {
             return Err(StorageError::WriteFailed("Mock write failure".to_string()));
         }
+        Ok(())
+    }
+
+    async fn shutdown(&mut self) -> StorageResult<()> {
         Ok(())
     }
 }
