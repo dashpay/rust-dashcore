@@ -115,7 +115,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         &mut self,
         mnemonic: &str,
         passphrase: &str,
-        network: Network,
+        networks: &[Network],
         birth_height: Option<u32>,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
@@ -124,14 +124,14 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Use appropriate wallet creation method based on whether a passphrase is provided
         let wallet = if passphrase.is_empty() {
-            Wallet::from_mnemonic(mnemonic_obj, &[network], account_creation_options)
+            Wallet::from_mnemonic(mnemonic_obj, networks, account_creation_options)
                 .map_err(|e| WalletError::WalletCreation(e.to_string()))?
         } else {
             // For wallets with passphrase, use the provided options
             Wallet::from_mnemonic_with_passphrase(
                 mnemonic_obj,
                 passphrase.to_string(),
-                &[network],
+                networks,
                 account_creation_options,
             )
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?

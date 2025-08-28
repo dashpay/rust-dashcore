@@ -29,9 +29,9 @@ fn test_wallet_manager_from_mnemonic() {
     let wallet_result = manager.create_wallet_from_mnemonic(
         &mnemonic.to_string(),
         "",
-        Network::Testnet,
+        &[Network::Testnet],
         None, // birth_height
-        key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
+        WalletAccountCreationOptions::Default,
     );
     assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
     assert_eq!(manager.wallet_count(), 1);

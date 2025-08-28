@@ -93,17 +93,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
         }
     };
 
-    let network_rust: Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return false;
-        }
-    };
+    let networks_rust = network.parse_networks();
 
     unsafe {
         let manager_ref = &*manager;
@@ -130,7 +120,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
         match manager_guard.create_wallet_from_mnemonic(
             mnemonic_str,
             passphrase_str,
-            network_rust,
+            networks_rust.as_slice(),
             None, // birth_height
             creation_options,
         ) {

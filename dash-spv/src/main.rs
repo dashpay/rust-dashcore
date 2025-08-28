@@ -230,7 +230,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     spv_wallet.base.create_wallet_from_mnemonic(
         "enemy check owner stumble unaware debris suffer peanut good fabric bleak outside",
         "",
-        Some(network),
+        &[network],
         None,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::default(),
     )?;

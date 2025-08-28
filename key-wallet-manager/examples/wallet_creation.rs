@@ -49,7 +49,7 @@ fn main() {
     let result = manager.create_wallet_from_mnemonic(
         test_mnemonic,
         "", // No passphrase
-        Network::Testnet,
+        &[Network::Testnet],
         Some(100_000), // Birth height
         key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
     );
