@@ -307,9 +307,9 @@ mod tests {
                 seed.as_ptr(),
                 seed.len(),
                 FFINetwork::Testnet,
-                0,                                           // identity index
-                0,                                           // key index
-                FFIDerivationPathType::BlockchainIdentities, // key_type
+                0,                                               // identity index
+                0,                                               // key index
+                FFIDerivationPathType::PathBlockchainIdentities, // key_type
                 &mut error,
             )
         };
@@ -770,7 +770,7 @@ mod tests {
                 FFINetwork::Testnet,
                 0,
                 0,
-                FFIDerivationPathType::BlockchainIdentities,
+                FFIDerivationPathType::PathBlockchainIdentities,
                 &mut error,
             )
         };
@@ -794,7 +794,7 @@ mod tests {
                 FFINetwork::Testnet,
                 0,
                 0,
-                FFIDerivationPathType::BlockchainIdentities,
+                FFIDerivationPathType::PathBlockchainIdentities,
                 &mut error,
             )
         };

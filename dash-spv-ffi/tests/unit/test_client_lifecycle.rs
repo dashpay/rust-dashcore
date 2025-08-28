@@ -201,7 +201,8 @@ mod tests {
                             let balance =
                                 dash_spv_ffi_client_get_address_balance(client, addr.as_ptr());
                             if !balance.is_null() {
-                                dash_spv_ffi_balance_destroy(balance);
+                                // FFIBalance from key-wallet-ffi doesn't need explicit destruction
+                                // dash_spv_ffi_balance_destroy(balance);
                             }
                         }
                         _ => {}

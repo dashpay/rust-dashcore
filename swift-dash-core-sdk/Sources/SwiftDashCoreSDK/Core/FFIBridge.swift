@@ -148,35 +148,5 @@ internal enum FFIBridge {
             return try body(ptr, data.count)
         }
     }
-    
-    // MARK: - Type Conversions
-    
-    static func convertWatchItemType(_ type: WatchItemType) -> FFIWatchItemType {
-        switch type {
-        case .address:
-            return FFIWatchItemType(rawValue: 0)
-        case .script:
-            return FFIWatchItemType(rawValue: 1)
-        case .outpoint:
-            return FFIWatchItemType(rawValue: 2)
-        }
-    }
-    
-    static func createFFIWatchItem(type: WatchItemType, data: String) -> FFIWatchItem {
-        let cString = (data as NSString).utf8String!
-        let length = strlen(cString)
-        let ffiString = FFIString(ptr: UnsafeMutablePointer(mutating: cString), length: UInt(length))
-        return FFIWatchItem(
-            item_type: convertWatchItemType(type),
-            data: ffiString
-        )
-    }
-}
 
-// MARK: - Watch Item Type
-
-public enum WatchItemType {
-    case address
-    case script
-    case outpoint
 }

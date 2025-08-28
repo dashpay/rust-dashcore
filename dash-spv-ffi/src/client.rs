@@ -1,8 +1,52 @@
 use crate::{
-    null_check, set_last_error, FFIArray, FFIBalance, FFIClientConfig, FFIDetailedSyncProgress,
-    FFIErrorCode, FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFIString, FFISyncProgress,
-    FFITransaction, FFIUtxo, FFIWatchItem,
+    null_check, set_last_error, FFIArray, FFIClientConfig, FFIDetailedSyncProgress, FFIErrorCode,
+    FFIEventCallbacks, FFIMempoolStrategy, FFISpvStats, FFIString, FFISyncProgress, FFITransaction,
 };
+// Import wallet types from key-wallet-ffi
+use key_wallet_ffi::{FFIBalance, FFIUTXO as FFIUtxo};
+
+// Helper function to convert AddressBalance to FFIBalance
+fn address_balance_to_ffi(balance: dash_spv::types::AddressBalance) -> FFIBalance {
+    FFIBalance {
+        confirmed: balance.confirmed.to_sat(),
+        unconfirmed: balance.unconfirmed.to_sat(),
+        immature: 0,
+        total: balance.total().to_sat(),
+    }
+}
+
+// Helper function to convert key_wallet::Utxo to FFIUtxo
+fn wallet_utxo_to_ffi(utxo: key_wallet::Utxo) -> FFIUtxo {
+    use std::ffi::CString;
+
+    // Convert txid to byte array
+    let mut txid_bytes = [0u8; 32];
+    txid_bytes.copy_from_slice(&utxo.outpoint.txid[..]);
+
+    // Create FFI UTXO
+    let address_str = utxo.address.to_string();
+    let script_bytes = utxo.txout.script_pubkey.to_bytes();
+
+    FFIUtxo {
+        txid: txid_bytes,
+        vout: utxo.outpoint.vout,
+        amount: utxo.txout.value,
+        address: CString::new(address_str).unwrap_or_default().into_raw(),
+        script_pubkey: if script_bytes.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            let script_box = script_bytes.into_boxed_slice();
+            Box::into_raw(script_box) as *mut u8
+        },
+        script_len: utxo.txout.script_pubkey.len(),
+        height: utxo.height,
+        confirmations: if utxo.is_confirmed {
+            1
+        } else {
+            0
+        },
+    }
+}
 use dash_spv::types::SyncStage;
 use dash_spv::DashSpvClient;
 use dashcore::{Address, ScriptBuf, Txid};
@@ -918,52 +962,6 @@ pub unsafe extern "C" fn dash_spv_ffi_client_is_filter_sync_available(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_add_watch_item(
-    client: *mut FFIDashSpvClient,
-    item: *const FFIWatchItem,
-) -> i32 {
-    null_check!(client);
-    null_check!(item);
-
-    let _ = match (*item).to_watch_item() {
-        Ok(_) => (),
-        Err(e) => {
-            set_last_error(&e);
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    set_last_error("Watch API not implemented in current dash-spv version");
-    FFIErrorCode::ConfigError as i32
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_remove_watch_item(
-    client: *mut FFIDashSpvClient,
-    item: *const FFIWatchItem,
-) -> i32 {
-    null_check!(client);
-    null_check!(item);
-
-    let _ = match (*item).to_watch_item() {
-        Ok(_) => (),
-        Err(e) => {
-            set_last_error(&e);
-            return FFIErrorCode::InvalidArgument as i32;
-        }
-    };
-
-    let client = &(*client);
-    let inner = client.inner.clone();
-
-    set_last_error("Watch API not implemented in current dash-spv version");
-    FFIErrorCode::ConfigError as i32
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_client_get_address_balance(
     client: *mut FFIDashSpvClient,
     address: *const c_char,
@@ -1022,7 +1020,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_address_balance(
     });
 
     match result {
-        Ok(balance) => Box::into_raw(Box::new(FFIBalance::from(balance))),
+        Ok(balance) => Box::into_raw(Box::new(address_balance_to_ffi(balance))),
         Err(e) => {
             set_last_error(&e.to_string());
             std::ptr::null_mut()
@@ -1050,7 +1048,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos(client: *mut FFIDashSpvCl
             let wallet = spv_client.wallet().clone();
             let wallet = wallet.read().await;
             let utxos = wallet.base.get_all_utxos();
-            let ffi_utxos: Vec<FFIUtxo> = utxos.into_iter().cloned().map(FFIUtxo::from).collect();
+            let ffi_utxos: Vec<FFIUtxo> =
+                utxos.into_iter().cloned().map(wallet_utxo_to_ffi).collect();
             Ok(FFIArray::new(ffi_utxos))
         } else {
             Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
@@ -1132,7 +1131,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_utxos_for_address(
                 .into_iter()
                 .filter(|u| u.address.to_string() == target)
                 .cloned()
-                .map(FFIUtxo::from)
+                .map(wallet_utxo_to_ffi)
                 .collect();
             Ok(FFIArray::new(filtered))
         } else {
@@ -1606,10 +1605,8 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_total_balance(
             let total = wallet.base.get_total_balance();
             Ok(FFIBalance {
                 confirmed: total,
-                pending: 0,
-                instantlocked: 0,
-                mempool: 0,
-                mempool_instant: 0,
+                unconfirmed: 0,
+                immature: 0,
                 total,
             })
         } else {
@@ -1848,27 +1845,26 @@ pub unsafe extern "C" fn dash_spv_ffi_client_get_mempool_balance(
     let client = &(*client);
     let inner = client.inner.clone();
 
-    let result = client.runtime.block_on(async {
-        let guard = inner.lock().unwrap();
-        if let Some(ref spv_client) = *guard {
-            spv_client.get_mempool_balance(&addr).await
-        } else {
-            Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
-                "Client not initialized".to_string(),
-            )))
-        }
-    });
+    let result: Result<dash_spv::types::MempoolBalance, dash_spv::SpvError> =
+        client.runtime.block_on(async {
+            let guard = inner.lock().unwrap();
+            if let Some(ref spv_client) = *guard {
+                spv_client.get_mempool_balance(&addr).await
+            } else {
+                Err(dash_spv::SpvError::Storage(dash_spv::StorageError::NotFound(
+                    "Client not initialized".to_string(),
+                )))
+            }
+        });
 
     match result {
         Ok(mempool_balance) => {
             // Convert MempoolBalance to FFIBalance
             let balance = FFIBalance {
                 confirmed: 0, // No confirmed balance in mempool
-                pending: mempool_balance.pending.to_sat(),
-                instantlocked: 0, // No confirmed instantlocked in mempool
-                mempool: mempool_balance.pending.to_sat()
+                unconfirmed: mempool_balance.pending.to_sat()
                     + mempool_balance.pending_instant.to_sat(),
-                mempool_instant: mempool_balance.pending_instant.to_sat(),
+                immature: 0,
                 total: mempool_balance.pending.to_sat() + mempool_balance.pending_instant.to_sat(),
             };
             Box::into_raw(Box::new(balance))

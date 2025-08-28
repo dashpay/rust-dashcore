@@ -32,12 +32,6 @@ typedef enum FFIValidationMode {
   Full = 2,
 } FFIValidationMode;
 
-typedef enum FFIWatchItemType {
-  Address = 0,
-  Script = 1,
-  Outpoint = 2,
-} FFIWatchItemType;
-
 typedef struct FFIClientConfig FFIClientConfig;
 
 /**
@@ -91,20 +85,6 @@ typedef struct FFISpvStats {
   uint64_t uptime;
 } FFISpvStats;
 
-typedef struct FFIWatchItem {
-  enum FFIWatchItemType item_type;
-  struct FFIString data;
-} FFIWatchItem;
-
-typedef struct FFIBalance {
-  uint64_t confirmed;
-  uint64_t pending;
-  uint64_t instantlocked;
-  uint64_t mempool;
-  uint64_t mempool_instant;
-  uint64_t total;
-} FFIBalance;
-
 /**
  * FFI-safe array that transfers ownership of memory to the C caller.
  *
@@ -146,6 +126,21 @@ typedef void (*MempoolConfirmedCallback)(const uint8_t (*txid)[32],
 
 typedef void (*MempoolRemovedCallback)(const uint8_t (*txid)[32], uint8_t reason, void *user_data);
 
+typedef void (*CompactFilterMatchedCallback)(const uint8_t (*block_hash)[32],
+                                             const char *matched_scripts,
+                                             const char *wallet_id,
+                                             void *user_data);
+
+typedef void (*WalletTransactionCallback)(const char *wallet_id,
+                                          uint32_t account_index,
+                                          const uint8_t (*txid)[32],
+                                          bool confirmed,
+                                          int64_t amount,
+                                          const char *addresses,
+                                          uint32_t block_height,
+                                          bool is_ours,
+                                          void *user_data);
+
 typedef struct FFIEventCallbacks {
   BlockCallback on_block;
   TransactionCallback on_transaction;
@@ -153,6 +148,8 @@ typedef struct FFIEventCallbacks {
   MempoolTransactionCallback on_mempool_transaction_added;
   MempoolConfirmedCallback on_mempool_transaction_confirmed;
   MempoolRemovedCallback on_mempool_transaction_removed;
+  CompactFilterMatchedCallback on_compact_filter_matched;
+  WalletTransactionCallback on_wallet_transaction;
   void *user_data;
 } FFIEventCallbacks;
 
@@ -211,52 +208,6 @@ typedef struct FFIUnconfirmedTransaction {
   struct FFIString *addresses;
   uintptr_t addresses_len;
 } FFIUnconfirmedTransaction;
-
-typedef struct FFIUtxo {
-  struct FFIString txid;
-  uint32_t vout;
-  uint64_t amount;
-  struct FFIString script_pubkey;
-  struct FFIString address;
-  uint32_t height;
-  bool is_coinbase;
-  bool is_confirmed;
-  bool is_instantlocked;
-} FFIUtxo;
-
-typedef struct FFITransactionResult {
-  struct FFIString txid;
-  int32_t version;
-  uint32_t locktime;
-  uint32_t size;
-  uint32_t weight;
-  uint64_t fee;
-  uint64_t confirmation_time;
-  uint32_t confirmation_height;
-} FFITransactionResult;
-
-typedef struct FFIBlockResult {
-  struct FFIString hash;
-  uint32_t height;
-  uint32_t time;
-  uint32_t tx_count;
-} FFIBlockResult;
-
-typedef struct FFIFilterMatch {
-  struct FFIString block_hash;
-  uint32_t height;
-  bool block_requested;
-} FFIFilterMatch;
-
-typedef struct FFIAddressStats {
-  struct FFIString address;
-  uint32_t utxo_count;
-  uint64_t total_value;
-  uint64_t confirmed_value;
-  uint64_t pending_value;
-  uint32_t spendable_count;
-  uint32_t coinbase_count;
-} FFIAddressStats;
 
 struct FFIDashSpvClient *dash_spv_ffi_client_new(const struct FFIClientConfig *config);
 
@@ -361,14 +312,8 @@ struct FFISpvStats *dash_spv_ffi_client_get_stats(struct FFIDashSpvClient *clien
 
 bool dash_spv_ffi_client_is_filter_sync_available(struct FFIDashSpvClient *client);
 
-int32_t dash_spv_ffi_client_add_watch_item(struct FFIDashSpvClient *client,
-                                           const struct FFIWatchItem *item);
-
-int32_t dash_spv_ffi_client_remove_watch_item(struct FFIDashSpvClient *client,
-                                              const struct FFIWatchItem *item);
-
-struct FFIBalance *dash_spv_ffi_client_get_address_balance(struct FFIDashSpvClient *client,
-                                                           const char *address);
+FFIBalance *dash_spv_ffi_client_get_address_balance(struct FFIDashSpvClient *client,
+                                                    const char *address);
 
 struct FFIArray dash_spv_ffi_client_get_utxos(struct FFIDashSpvClient *client);
 
@@ -405,7 +350,7 @@ struct FFIArray dash_spv_ffi_client_get_watched_addresses(struct FFIDashSpvClien
 
 struct FFIArray dash_spv_ffi_client_get_watched_scripts(struct FFIDashSpvClient *client);
 
-struct FFIBalance *dash_spv_ffi_client_get_total_balance(struct FFIDashSpvClient *client);
+FFIBalance *dash_spv_ffi_client_get_total_balance(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_rescan_blockchain(struct FFIDashSpvClient *client,
                                               uint32_t _from_height);
@@ -424,14 +369,14 @@ struct FFIArray dash_spv_ffi_client_get_address_utxos(struct FFIDashSpvClient *c
 int32_t dash_spv_ffi_client_enable_mempool_tracking(struct FFIDashSpvClient *client,
                                                     enum FFIMempoolStrategy strategy);
 
-struct FFIBalance *dash_spv_ffi_client_get_balance_with_mempool(struct FFIDashSpvClient *client);
+FFIBalance *dash_spv_ffi_client_get_balance_with_mempool(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_get_mempool_transaction_count(struct FFIDashSpvClient *client);
 
 int32_t dash_spv_ffi_client_record_send(struct FFIDashSpvClient *client, const char *txid);
 
-struct FFIBalance *dash_spv_ffi_client_get_mempool_balance(struct FFIDashSpvClient *client,
-                                                           const char *address);
+FFIBalance *dash_spv_ffi_client_get_mempool_balance(struct FFIDashSpvClient *client,
+                                                    const char *address);
 
 struct FFIClientConfig *dash_spv_ffi_config_new(enum FFINetwork network);
 
@@ -590,25 +535,3 @@ const char *dash_spv_ffi_version(void);
 const char *dash_spv_ffi_get_network_name(enum FFINetwork network);
 
 void dash_spv_ffi_enable_test_mode(void);
-
-struct FFIWatchItem *dash_spv_ffi_watch_item_address(const char *address);
-
-struct FFIWatchItem *dash_spv_ffi_watch_item_script(const char *script_hex);
-
-struct FFIWatchItem *dash_spv_ffi_watch_item_outpoint(const char *txid, uint32_t vout);
-
-void dash_spv_ffi_watch_item_destroy(struct FFIWatchItem *item);
-
-void dash_spv_ffi_balance_destroy(struct FFIBalance *balance);
-
-void dash_spv_ffi_utxo_destroy(struct FFIUtxo *utxo);
-
-void dash_spv_ffi_transaction_result_destroy(struct FFITransactionResult *tx);
-
-void dash_spv_ffi_block_result_destroy(struct FFIBlockResult *block);
-
-void dash_spv_ffi_filter_match_destroy(struct FFIFilterMatch *filter_match);
-
-void dash_spv_ffi_address_stats_destroy(struct FFIAddressStats *stats);
-
-int32_t dash_spv_ffi_validate_address(const char *address, enum FFINetwork network);

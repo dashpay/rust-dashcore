@@ -276,11 +276,12 @@ fn test_get_total_balance() {
         if !balance_ptr.is_null() {
             let balance = &*balance_ptr;
             println!(
-                "Total balance - Confirmed: {}, Pending: {}, Total: {}",
-                balance.confirmed, balance.pending, balance.total
+                "Total balance - Confirmed: {}, Unconfirmed: {}, Total: {}",
+                balance.confirmed, balance.unconfirmed, balance.total
             );
 
-            dash_spv_ffi_balance_destroy(balance_ptr);
+            // FFIBalance from key-wallet-ffi doesn't need explicit destruction
+            // dash_spv_ffi_balance_destroy(balance_ptr);
             println!("✅ Get total balance works!");
         } else {
             println!("⚠️ Failed to get total balance (may need sync first)");
@@ -336,87 +337,10 @@ fn test_enhanced_event_callbacks() {
             "Failed to set enhanced event callbacks"
         );
 
-        // Test wallet creation to trigger some events
-        let wallet_name = CString::new("test_wallet").unwrap();
-        let wallet_id = dash_spv_ffi_wallet_create(
-            client,
-            FFINetwork::Regtest,
-            FFIWalletAccountCreationOptions::BIP44AccountsOnly,
-            wallet_name.as_ptr(),
-        );
-
-        if !wallet_id.is_null() {
-            println!("✅ Wallet created successfully");
-
-            // Test address generation
-            let wallet_id_str = CStr::from_ptr((*wallet_id).ptr).to_str().unwrap();
-            let wallet_id_cstr = CString::new(wallet_id_str).unwrap();
-
-            let receive_address = dash_spv_ffi_wallet_get_receive_address(
-                client,
-                wallet_id_cstr.as_ptr(),
-                FFINetwork::Regtest,
-                0, // account_index
-                FFIAccountTypePreference::BIP44,
-                false, // mark_as_used
-            );
-
-            if !receive_address.is_null() {
-                println!("✅ Receive address generated successfully");
-                dash_spv_ffi_address_generation_result_destroy(receive_address);
-            }
-
-            // Test monitored addresses
-            let addresses =
-                dash_spv_ffi_wallet_get_monitored_addresses(client, FFINetwork::Regtest);
-            if !addresses.is_null() {
-                println!("✅ Monitored addresses retrieved successfully");
-                dash_spv_ffi_array_destroy(addresses);
-            }
-
-            // Test mempool operations
-            let mempool_balance = dash_spv_ffi_wallet_get_mempool_balance(
-                client,
-                wallet_id_cstr.as_ptr(),
-                FFINetwork::Regtest,
-            );
-            println!("✅ Mempool balance retrieved: {} satoshis", mempool_balance);
-
-            let mempool_tx_count = dash_spv_ffi_wallet_get_mempool_transaction_count(
-                client,
-                wallet_id_cstr.as_ptr(),
-                FFINetwork::Regtest,
-            );
-            println!("✅ Mempool transaction count retrieved: {}", mempool_tx_count);
-
-            // Test account operations
-            let xpub =
-                CString::new("tpubD6NzVbkrYhZ4X4rJGpM7KfxYFkGdJKjgGJGJZ7JXmT8yPzJzKQh8xkJfL")
-                    .unwrap();
-            let account_result = dash_spv_ffi_wallet_add_account_from_xpub(
-                client,
-                wallet_id_cstr.as_ptr(),
-                xpub.as_ptr(),
-                FFIAccountType::BIP44,
-                FFINetwork::Regtest,
-                1, // account_index
-                0, // registration_index
-            );
-            println!("✅ Account addition result: {}", account_result);
-
-            // Clean up wallet
-            if !wallet_id.is_null() {
-                let string_struct = unsafe { Box::from_raw(wallet_id) };
-                dash_spv_ffi_string_destroy(*string_struct);
-            }
-        } else {
-            println!("⚠️ Wallet creation failed (may be expected in test environment)");
-        }
-
-        // Test error handling
-        let invalid_wallet_id = CString::new("invalid_wallet_id").unwrap();
-        let balance = dash_spv_ffi_wallet_get_balance(client, invalid_wallet_id.as_ptr());
-        assert!(balance.is_null(), "Should return null for invalid wallet ID");
+        // Note: Wallet-specific tests have been moved to key-wallet-ffi
+        // The wallet functionality is no longer part of dash-spv-ffi
+        // dash-spv-ffi now focuses purely on SPV network operations
+        println!("⚠️ Wallet tests have been moved to key-wallet-ffi");
 
         // Clean up
         dash_spv_ffi_client_destroy(client);

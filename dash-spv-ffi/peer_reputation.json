@@ -1,17 +1,6 @@
 [
   [
-    "34.220.134.30:19999",
-    {
-      "score": 0,
-      "ban_count": 0,
-      "positive_actions": 0,
-      "negative_actions": 0,
-      "connection_attempts": 1,
-      "successful_connections": 0
-    }
-  ],
-  [
-    "34.217.58.158:19999",
+    "34.214.48.68:19999",
     {
       "score": 0,
       "ban_count": 0,
@@ -33,7 +22,7 @@
     }
   ],
   [
-    "34.214.48.68:19999",
+    "34.220.134.30:19999",
     {
       "score": 0,
       "ban_count": 0,
@@ -50,12 +39,34 @@
       "ban_count": 0,
       "positive_actions": 0,
       "negative_actions": 0,
-      "connection_attempts": 1,
+      "connection_attempts": 2,
       "successful_connections": 0
     }
   ],
   [
     "34.210.84.163:19999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 1,
+      "successful_connections": 0
+    }
+  ],
+  [
+    "34.217.58.158:19999",
+    {
+      "score": 0,
+      "ban_count": 0,
+      "positive_actions": 0,
+      "negative_actions": 0,
+      "connection_attempts": 2,
+      "successful_connections": 0
+    }
+  ],
+  [
+    "34.210.26.195:19999",
     {
       "score": 0,
       "ban_count": 0,

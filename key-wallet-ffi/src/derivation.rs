@@ -12,23 +12,23 @@ use crate::types::FFINetwork;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub enum FFIDerivationPathType {
-    Unknown = 0,
-    BIP32 = 1,
-    BIP44 = 2,
-    BlockchainIdentities = 3,
-    ProviderFunds = 4,
-    ProviderVotingKeys = 5,
-    ProviderOperatorKeys = 6,
-    ProviderOwnerKeys = 7,
-    ContactBasedFunds = 8,
-    ContactBasedFundsRoot = 9,
-    ContactBasedFundsExternal = 10,
-    BlockchainIdentityCreditRegistrationFunding = 11,
-    BlockchainIdentityCreditTopupFunding = 12,
-    BlockchainIdentityCreditInvitationFunding = 13,
-    ProviderPlatformNodeKeys = 14,
-    CoinJoin = 15,
-    Root = 255,
+    PathUnknown = 0,
+    PathBIP32 = 1,
+    PathBIP44 = 2,
+    PathBlockchainIdentities = 3,
+    PathProviderFunds = 4,
+    PathProviderVotingKeys = 5,
+    PathProviderOperatorKeys = 6,
+    PathProviderOwnerKeys = 7,
+    PathContactBasedFunds = 8,
+    PathContactBasedFundsRoot = 9,
+    PathContactBasedFundsExternal = 10,
+    PathBlockchainIdentityCreditRegistrationFunding = 11,
+    PathBlockchainIdentityCreditTopupFunding = 12,
+    PathBlockchainIdentityCreditInvitationFunding = 13,
+    PathProviderPlatformNodeKeys = 14,
+    PathCoinJoin = 15,
+    PathRoot = 255,
 }
 
 /// Extended private key structure
@@ -730,34 +730,34 @@ pub unsafe extern "C" fn dip9_derive_identity_key(
     };
 
     let base_path = match (network_rust, key_type) {
-        (key_wallet::Network::Dash, FFIDerivationPathType::BlockchainIdentities) => {
+        (key_wallet::Network::Dash, FFIDerivationPathType::PathBlockchainIdentities) => {
             IDENTITY_AUTHENTICATION_PATH_MAINNET
         }
         (
             key_wallet::Network::Testnet
             | key_wallet::Network::Devnet
             | key_wallet::Network::Regtest,
-            FFIDerivationPathType::BlockchainIdentities,
+            FFIDerivationPathType::PathBlockchainIdentities,
         ) => IDENTITY_AUTHENTICATION_PATH_TESTNET,
         (
             key_wallet::Network::Dash,
-            FFIDerivationPathType::BlockchainIdentityCreditRegistrationFunding,
+            FFIDerivationPathType::PathBlockchainIdentityCreditRegistrationFunding,
         ) => IDENTITY_REGISTRATION_PATH_MAINNET,
         (
             key_wallet::Network::Testnet
             | key_wallet::Network::Devnet
             | key_wallet::Network::Regtest,
-            FFIDerivationPathType::BlockchainIdentityCreditRegistrationFunding,
+            FFIDerivationPathType::PathBlockchainIdentityCreditRegistrationFunding,
         ) => IDENTITY_REGISTRATION_PATH_TESTNET,
         (
             key_wallet::Network::Dash,
-            FFIDerivationPathType::BlockchainIdentityCreditTopupFunding,
+            FFIDerivationPathType::PathBlockchainIdentityCreditTopupFunding,
         ) => IDENTITY_TOPUP_PATH_MAINNET,
         (
             key_wallet::Network::Testnet
             | key_wallet::Network::Devnet
             | key_wallet::Network::Regtest,
-            FFIDerivationPathType::BlockchainIdentityCreditTopupFunding,
+            FFIDerivationPathType::PathBlockchainIdentityCreditTopupFunding,
         ) => IDENTITY_TOPUP_PATH_TESTNET,
         _ => {
             FFIError::set_error(
@@ -771,7 +771,7 @@ pub unsafe extern "C" fn dip9_derive_identity_key(
 
     // Build additional path based on key type
     let additional_path = match key_type {
-        FFIDerivationPathType::BlockchainIdentities => {
+        FFIDerivationPathType::PathBlockchainIdentities => {
             // Authentication: identity_index'/key_index'
             let cn1 = match ChildNumber::from_hardened_idx(identity_index) {
                 Ok(v) => v,
@@ -797,7 +797,7 @@ pub unsafe extern "C" fn dip9_derive_identity_key(
             };
             DerivationPath::from(vec![cn1, cn2])
         }
-        FFIDerivationPathType::BlockchainIdentityCreditRegistrationFunding => {
+        FFIDerivationPathType::PathBlockchainIdentityCreditRegistrationFunding => {
             // Registration: index'
             let cn = match ChildNumber::from_hardened_idx(identity_index) {
                 Ok(v) => v,
@@ -812,7 +812,7 @@ pub unsafe extern "C" fn dip9_derive_identity_key(
             };
             DerivationPath::from(vec![cn])
         }
-        FFIDerivationPathType::BlockchainIdentityCreditTopupFunding => {
+        FFIDerivationPathType::PathBlockchainIdentityCreditTopupFunding => {
             // Top-up: identity_index'/topup_index'
             let cn1 = match ChildNumber::from_hardened_idx(identity_index) {
                 Ok(v) => v,
