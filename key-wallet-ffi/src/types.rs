@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 /// FFI Network type (bit flags for multiple networks)
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FFINetwork {
     NoNetworks = 0,
     Dash = 1,
@@ -102,7 +102,6 @@ pub struct FFIBalance {
     pub total: u64,
 }
 
-
 impl From<key_wallet::WalletBalance> for FFIBalance {
     fn from(balance: key_wallet::WalletBalance) -> Self {
         FFIBalance {
@@ -174,24 +173,12 @@ impl FFIAccountResult {
     }
 }
 
-/// Opaque account handle
-pub struct FFIAccount {
-    pub(crate) account: Arc<key_wallet::Account>,
-}
-
-impl FFIAccount {
-    /// Create a new FFI account handle
-    pub fn new(account: &key_wallet::Account) -> Self {
-        FFIAccount {
-            account: Arc::new(account.clone()),
-        }
-    }
-
-    /// Get a reference to the inner account
-    pub fn inner(&self) -> &key_wallet::Account {
-        self.account.as_ref()
-    }
-}
+/// Forward declaration for FFIAccount (defined in account.rs)
+pub use crate::account::FFIAccount;
+#[cfg(feature = "bls")]
+pub use crate::account::FFIBLSAccount;
+#[cfg(feature = "eddsa")]
+pub use crate::account::FFIEdDSAAccount;
 
 /// Standard account subtype
 #[repr(C)]
@@ -211,7 +198,7 @@ pub enum FFIStandardAccountType {
 /// - Identity accounts: Registration, top-up, and invitation funding
 /// - Provider accounts: Various masternode provider key types (voting, owner, operator, platform)
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FFIAccountType {
     /// Standard BIP44 account (m/44'/coin_type'/account'/x/x)
     StandardBIP44 = 0,
@@ -361,7 +348,7 @@ pub enum FFIAccountCreationOptionType {
     /// Create specific accounts with full control
     SpecificAccounts = 3,
     /// Create no accounts at all
-    None = 4,
+    NoAccounts = 4,
 }
 
 /// FFI structure for wallet account creation options
@@ -426,7 +413,7 @@ impl FFIWalletAccountCreationOptions {
 
         match self.option_type {
             FFIAccountCreationOptionType::Default => WalletAccountCreationOptions::Default,
-            FFIAccountCreationOptionType::None => WalletAccountCreationOptions::None,
+            FFIAccountCreationOptionType::NoAccounts => WalletAccountCreationOptions::None,
             FFIAccountCreationOptionType::BIP44AccountsOnly => {
                 let mut bip44_set = BTreeSet::new();
                 if !self.bip44_indices.is_null() && self.bip44_count > 0 {

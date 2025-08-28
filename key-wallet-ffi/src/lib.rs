@@ -5,11 +5,14 @@
 
 // Module declarations
 pub mod account;
+pub mod account_collection;
 pub mod address;
 pub mod address_pool;
 pub mod derivation;
 pub mod error;
 pub mod keys;
+pub mod managed_account;
+pub mod managed_account_collection;
 pub mod managed_wallet;
 pub mod mnemonic;
 pub mod provider_keys;

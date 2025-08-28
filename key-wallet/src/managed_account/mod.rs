@@ -54,10 +54,10 @@ pub struct ManagedAccount {
     pub balance: WalletBalance,
     /// Transaction history for this account
     pub transactions: BTreeMap<Txid, TransactionRecord>,
-    /// Monitored addresses for transaction detection
-    pub monitored_addresses: BTreeSet<Address>,
     /// UTXO set for this account
     pub utxos: BTreeMap<OutPoint, Utxo>,
+    /// Monitored addresses for this account
+    pub monitored_addresses: BTreeSet<Address>,
 }
 
 impl ManagedAccount {
@@ -70,8 +70,8 @@ impl ManagedAccount {
             is_watch_only,
             balance: WalletBalance::default(),
             transactions: BTreeMap::new(),
-            monitored_addresses: BTreeSet::new(),
             utxos: BTreeMap::new(),
+            monitored_addresses: BTreeSet::new(),
         }
     }
 
@@ -819,19 +819,19 @@ impl ManagedAccountTrait for ManagedAccount {
         &mut self.transactions
     }
 
-    fn monitored_addresses(&self) -> &BTreeSet<Address> {
-        &self.monitored_addresses
-    }
-
-    fn monitored_addresses_mut(&mut self) -> &mut BTreeSet<Address> {
-        &mut self.monitored_addresses
-    }
-
     fn utxos(&self) -> &BTreeMap<OutPoint, Utxo> {
         &self.utxos
     }
 
     fn utxos_mut(&mut self) -> &mut BTreeMap<OutPoint, Utxo> {
         &mut self.utxos
+    }
+
+    fn monitored_addresses(&self) -> &BTreeSet<Address> {
+        &self.monitored_addresses
+    }
+
+    fn monitored_addresses_mut(&mut self) -> &mut BTreeSet<Address> {
+        &mut self.monitored_addresses
     }
 }

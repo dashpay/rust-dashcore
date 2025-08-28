@@ -162,4 +162,102 @@ mod tests {
         assert_eq!(FFIAccountType::ProviderOperatorKeys as u32, 9);
         assert_eq!(FFIAccountType::ProviderPlatformKeys as u32, 10);
     }
+
+    #[test]
+    fn test_account_getters() {
+        let mut error = FFIError::success();
+
+        // Create a wallet
+        let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+        let passphrase = CString::new("").unwrap();
+
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(
+                mnemonic.as_ptr(),
+                passphrase.as_ptr(),
+                FFINetwork::Testnet,
+                &mut error,
+            )
+        };
+
+        assert!(!wallet.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
+
+        // Get an account
+        let result = unsafe {
+            wallet_get_account(wallet, FFINetwork::Testnet, 0, FFIAccountType::StandardBIP44)
+        };
+
+        if !result.account.is_null() {
+            // Test all the getter functions
+            unsafe {
+                // Test get xpub
+                let xpub_str = account_get_extended_public_key_as_string(result.account);
+                assert!(!xpub_str.is_null());
+                let xpub = CString::from_raw(xpub_str);
+                let xpub_string = xpub.to_string_lossy();
+                assert!(xpub_string.starts_with("tpub")); // Testnet xpub should start with tpub
+
+                // Test get network
+                let network = account_get_network(result.account);
+                assert_eq!(network as u32, FFINetwork::Testnet as u32);
+
+                // Test get parent wallet id (may be null)
+                let _wallet_id = account_get_parent_wallet_id(result.account);
+                // Just check it doesn't crash - may be null
+
+                // Test get account type
+                let mut index = 999u32;
+                let account_type = account_get_account_type(result.account, &mut index);
+                assert_eq!(account_type as u32, FFIAccountType::StandardBIP44 as u32);
+                assert_eq!(index, 0); // Account index should be 0
+
+                // Test is watch only - should be false for a wallet created from mnemonic
+                let is_watch_only = account_get_is_watch_only(result.account);
+                assert!(!is_watch_only);
+
+                // Clean up
+                account_free(result.account);
+            }
+        }
+
+        // Clean up error message if present
+        if !result.error_message.is_null() {
+            unsafe {
+                let _ = CString::from_raw(result.error_message);
+            }
+        }
+
+        // Clean up
+        unsafe {
+            wallet::wallet_free(wallet);
+        }
+    }
+
+    #[test]
+    fn test_account_getters_null_safety() {
+        unsafe {
+            // Test all getter functions with null pointers
+            let xpub = account_get_extended_public_key_as_string(ptr::null());
+            assert!(xpub.is_null());
+
+            let network = account_get_network(ptr::null());
+            assert_eq!(network as u32, FFINetwork::NoNetworks as u32);
+
+            let wallet_id = account_get_parent_wallet_id(ptr::null());
+            assert!(wallet_id.is_null());
+
+            let mut index = 0u32;
+            let account_type = account_get_account_type(ptr::null(), &mut index);
+            assert_eq!(account_type as u32, FFIAccountType::StandardBIP44 as u32);
+            assert_eq!(index, 0);
+
+            // Test with null out_index
+            let account_type = account_get_account_type(ptr::null(), ptr::null_mut());
+            assert_eq!(account_type as u32, FFIAccountType::StandardBIP44 as u32);
+
+            let is_watch_only = account_get_is_watch_only(ptr::null());
+            assert!(!is_watch_only);
+        }
+    }
 }
