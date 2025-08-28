@@ -90,7 +90,9 @@ pub struct WalletScanResult {
 
 impl Wallet {
     /// Compute wallet ID from root public key
-    pub fn compute_wallet_id_from_root_extended_pub_key(root_pub_key: &RootExtendedPubKey) -> [u8; 32] {
+    pub fn compute_wallet_id_from_root_extended_pub_key(
+        root_pub_key: &RootExtendedPubKey,
+    ) -> [u8; 32] {
         let mut data = Vec::new();
         data.extend_from_slice(&root_pub_key.root_public_key.serialize());
         data.extend_from_slice(&root_pub_key.root_chain_code[..]);
@@ -134,40 +136,49 @@ impl Zeroize for Wallet {
     fn zeroize(&mut self) {
         // Zeroize the wallet ID
         self.wallet_id.zeroize();
-        
+
         // Zeroize the wallet type - handle each variant's sensitive data
         match &mut self.wallet_type {
-            WalletType::Mnemonic { mnemonic, root_extended_private_key } => {
+            WalletType::Mnemonic {
+                mnemonic,
+                root_extended_private_key,
+            } => {
                 // Zeroize the mnemonic (now possible since it implements Zeroize)
                 mnemonic.zeroize();
                 // We can't zeroize SecretKey directly, but we can zeroize the chain code
                 root_extended_private_key.zeroize();
                 // Note: root_extended_private_key.root_private_key (SecretKey) doesn't implement Zeroize
-            },
-            WalletType::MnemonicWithPassphrase { mnemonic, root_extended_public_key } => {
+            }
+            WalletType::MnemonicWithPassphrase {
+                mnemonic,
+                root_extended_public_key,
+            } => {
                 // Zeroize the mnemonic
                 mnemonic.zeroize();
                 // Zeroize the public key structure (best effort)
                 root_extended_public_key.zeroize();
-            },
-            WalletType::Seed { seed, root_extended_private_key } => {
+            }
+            WalletType::Seed {
+                seed,
+                root_extended_private_key,
+            } => {
                 // We can't zeroize Seed directly as it doesn't implement Zeroize yet
                 // But we can zeroize the RootExtendedPrivKey
                 root_extended_private_key.zeroize();
                 seed.zeroize();
-            },
+            }
             WalletType::ExtendedPrivKey(root_extended_private_key) => {
                 // Zeroize the chain code
                 root_extended_private_key.zeroize();
                 // Note: root_private_key (SecretKey) doesn't implement Zeroize
-            },
-            WalletType::ExternalSignable(root_extended_public_key) | 
-            WalletType::WatchOnly(root_extended_public_key) => {
+            }
+            WalletType::ExternalSignable(root_extended_public_key)
+            | WalletType::WatchOnly(root_extended_public_key) => {
                 // Public keys are not sensitive, but zeroize for consistency
                 root_extended_public_key.zeroize();
             }
         }
-        
+
         // Clear the accounts map, only public keys here so no need to go hardcore on zeroization
         self.accounts.clear();
     }
@@ -429,7 +440,8 @@ mod tests {
         let root_xpub_as_extended = root_xpub.to_extended_pub_key(Network::Testnet);
 
         // Create watch-only wallet from root xpub
-        let mut watch_only = Wallet::from_xpub(root_xpub_as_extended, BTreeMap::new(), false).unwrap();
+        let mut watch_only =
+            Wallet::from_xpub(root_xpub_as_extended, BTreeMap::new(), false).unwrap();
 
         assert!(watch_only.is_watch_only());
         assert!(!watch_only.has_mnemonic());

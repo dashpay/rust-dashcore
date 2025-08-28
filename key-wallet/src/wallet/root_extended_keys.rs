@@ -1,9 +1,9 @@
-use alloc::borrow::Cow;
 use crate::bip32::{ChainCode, ChildNumber, ExtendedPrivKey, ExtendedPubKey};
 #[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPrivKey;
 use crate::wallet::WalletType;
 use crate::{Error, Network, Wallet};
+use alloc::borrow::Cow;
 #[cfg(feature = "bincode")]
 use bincode::{BorrowDecode, Decode, Encode};
 #[cfg(feature = "bls")]
@@ -247,12 +247,12 @@ impl zeroize::Zeroize for RootExtendedPubKey {
         // Replace the public key with a dummy value (generator point G)
         // This is a best-effort zeroization since PublicKey doesn't implement Zeroize
         self.root_public_key = secp256k1::PublicKey::from_slice(&[
-            0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb,
-            0xac, 0x55, 0xa0, 0x62, 0x95, 0xce, 0x87, 0x0b,
-            0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28,
-            0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98,
-        ]).expect("hardcoded generator point should be valid");
-        
+            0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce,
+            0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81,
+            0x5b, 0x16, 0xf8, 0x17, 0x98,
+        ])
+        .expect("hardcoded generator point should be valid");
+
         // Zeroize the chain code
         self.root_chain_code.zeroize();
     }
@@ -387,9 +387,15 @@ impl Wallet {
                 root_extended_private_key,
                 ..
             } => Cow::Owned(root_extended_private_key.to_root_extended_pub_key()),
-            WalletType::ExtendedPrivKey(root_extended_priv_key) => Cow::Owned(root_extended_priv_key.to_root_extended_pub_key()),
-            WalletType::ExternalSignable(root_extended_public_key) => Cow::Borrowed(root_extended_public_key),
-            WalletType::WatchOnly(root_extended_public_key) => Cow::Borrowed(root_extended_public_key),
+            WalletType::ExtendedPrivKey(root_extended_priv_key) => {
+                Cow::Owned(root_extended_priv_key.to_root_extended_pub_key())
+            }
+            WalletType::ExternalSignable(root_extended_public_key) => {
+                Cow::Borrowed(root_extended_public_key)
+            }
+            WalletType::WatchOnly(root_extended_public_key) => {
+                Cow::Borrowed(root_extended_public_key)
+            }
         }
     }
 

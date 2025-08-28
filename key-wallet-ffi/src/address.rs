@@ -83,7 +83,11 @@ pub unsafe extern "C" fn address_validate(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -159,7 +163,11 @@ pub unsafe extern "C" fn address_get_type(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };

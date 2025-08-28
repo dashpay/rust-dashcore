@@ -41,7 +41,7 @@ mod tests {
         assert!(result.is_ok());
         let (bytes2, wallet_id2) = result.unwrap();
         assert!(!bytes2.is_empty());
-        
+
         // Same wallet ID because it's derived from the same root public key
         assert_eq!(wallet_id, wallet_id2);
         println!("Watch-only wallet ID: {}", hex::encode(wallet_id2));
@@ -89,7 +89,7 @@ mod tests {
         assert!(result.is_ok());
         let (bytes, wallet_id) = result.unwrap();
         assert!(!bytes.is_empty());
-        
+
         // Wallet ID with passphrase should be different
         let mut manager2 = WalletManager::<ManagedWalletInfo>::new();
         let result2 = manager2.create_wallet_from_mnemonic_return_serialized_bytes(
@@ -103,7 +103,7 @@ mod tests {
         );
         assert!(result2.is_ok());
         let (_bytes2, wallet_id2) = result2.unwrap();
-        
+
         // Different wallet IDs because different passphrases
         assert_ne!(wallet_id, wallet_id2);
     }

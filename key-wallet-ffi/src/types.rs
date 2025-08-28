@@ -16,20 +16,19 @@ pub enum FFINetwork {
     AllNetworks = 15, // Dash | Testnet | Regtest | Devnet
 }
 
-
 impl FFINetwork {
     /// Parse bit flags into a vector of networks
     pub fn parse_networks(&self) -> Vec<Network> {
         let flags = *self as c_uint;
-        
+
         // Handle special cases
         if flags == FFINetwork::NoNetworks as c_uint || flags == 0 {
             // If no networks specified, default to testnet
             return vec![Network::Testnet];
         }
-        
+
         let mut networks = Vec::new();
-        
+
         if flags & (FFINetwork::Dash as c_uint) != 0 {
             networks.push(Network::Dash);
         }
@@ -42,7 +41,7 @@ impl FFINetwork {
         if flags & (FFINetwork::Devnet as c_uint) != 0 {
             networks.push(Network::Devnet);
         }
-        
+
         networks
     }
 }
@@ -52,7 +51,7 @@ impl FFINetwork {
     /// Returns None if multiple networks are set or if NoNetworks is set
     pub fn try_into_single_network(&self) -> Option<Network> {
         let flags = *self as c_uint;
-        
+
         // Check if it's a single network
         match flags {
             x if x == FFINetwork::Dash as c_uint => Some(Network::Dash),
@@ -215,10 +214,7 @@ pub enum FFIAccountType {
 impl FFIAccountType {
     /// Convert to AccountType with optional indices
     /// Returns None if required parameters are missing (e.g., registration_index for IdentityTopUp)
-    pub fn to_account_type(
-        self,
-        index: u32
-    ) -> key_wallet::AccountType {
+    pub fn to_account_type(self, index: u32) -> key_wallet::AccountType {
         use key_wallet::account::account_type::StandardAccountType;
         match self {
             FFIAccountType::StandardBIP44 => key_wallet::AccountType::Standard {
@@ -232,9 +228,7 @@ impl FFIAccountType {
             FFIAccountType::CoinJoin => key_wallet::AccountType::CoinJoin {
                 index,
             },
-            FFIAccountType::IdentityRegistration => {
-                key_wallet::AccountType::IdentityRegistration
-            }
+            FFIAccountType::IdentityRegistration => key_wallet::AccountType::IdentityRegistration,
             FFIAccountType::IdentityTopUp => {
                 // IdentityTopUp requires a registration_index
                 key_wallet::AccountType::IdentityTopUp {
@@ -247,12 +241,8 @@ impl FFIAccountType {
             FFIAccountType::IdentityInvitation => key_wallet::AccountType::IdentityInvitation,
             FFIAccountType::ProviderVotingKeys => key_wallet::AccountType::ProviderVotingKeys,
             FFIAccountType::ProviderOwnerKeys => key_wallet::AccountType::ProviderOwnerKeys,
-            FFIAccountType::ProviderOperatorKeys => {
-                key_wallet::AccountType::ProviderOperatorKeys
-            }
-            FFIAccountType::ProviderPlatformKeys => {
-                key_wallet::AccountType::ProviderPlatformKeys
-            }
+            FFIAccountType::ProviderOperatorKeys => key_wallet::AccountType::ProviderOperatorKeys,
+            FFIAccountType::ProviderPlatformKeys => key_wallet::AccountType::ProviderPlatformKeys,
         }
     }
 

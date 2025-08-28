@@ -74,7 +74,11 @@ pub unsafe extern "C" fn wallet_generate_provider_key(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -271,7 +275,11 @@ pub unsafe extern "C" fn wallet_get_provider_key_address(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -387,7 +395,11 @@ pub unsafe extern "C" fn wallet_sign_with_provider_key(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };

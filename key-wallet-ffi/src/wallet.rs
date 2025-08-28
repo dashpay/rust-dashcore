@@ -189,7 +189,7 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     let mut seed_array = [0u8; 64];
     seed_array.copy_from_slice(seed_bytes);
     let seed = Seed::new(seed_array);
-    
+
     // Convert networks bit flags to vector
     let networks_rust = networks.parse_networks();
 
@@ -238,8 +238,6 @@ pub unsafe extern "C" fn wallet_create_from_seed(
         error,
     )
 }
-
-
 
 /// Create a new random wallet with options
 ///
@@ -395,7 +393,7 @@ pub unsafe extern "C" fn wallet_get_xpub(
 
     unsafe {
         let wallet = &*wallet;
-        
+
         use std::convert::TryInto;
         // Try to convert to a single network
         let network_rust: Network = match network.try_into() {
@@ -506,23 +504,7 @@ pub unsafe extern "C" fn wallet_add_account(
         }
     };
 
-    // Check if the account type requires additional parameters
-    if account_type == crate::types::FFIAccountType::IdentityTopUp {
-        return crate::types::FFIAccountResult::error(
-            FFIErrorCode::InvalidInput,
-            "IdentityTopUp accounts require a registration_index. Use a specialized function instead".to_string(),
-        );
-    }
-
-    let account_type_rust = match account_type.to_account_type(account_index, None) {
-        Some(at) => at,
-        None => {
-            return crate::types::FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                format!("Missing required parameters for account type {}", account_type),
-            );
-        }
-    };
+    let account_type_rust = account_type.to_account_type(account_index);
 
     match wallet.inner_mut() {
         Some(w) => {
@@ -531,7 +513,8 @@ pub unsafe extern "C" fn wallet_add_account(
                 Ok(()) => {
                     // Get the account we just added
                     if let Some(account_collection) = w.accounts.get(&network_rust) {
-                        if let Some(account) = account_collection.account_of_type(account_type_rust) {
+                        if let Some(account) = account_collection.account_of_type(account_type_rust)
+                        {
                             let ffi_account = crate::types::FFIAccount::new(account);
                             return crate::types::FFIAccountResult::success(Box::into_raw(
                                 Box::new(ffi_account),
@@ -601,23 +584,7 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
 
     use key_wallet::ExtendedPubKey;
 
-    // Check if the account type requires additional parameters
-    if account_type == crate::types::FFIAccountType::IdentityTopUp {
-        return crate::types::FFIAccountResult::error(
-            FFIErrorCode::InvalidInput,
-            "IdentityTopUp accounts require a registration_index. Use a specialized function instead".to_string(),
-        );
-    }
-
-    let account_type_rust = match account_type.to_account_type(account_index, None) {
-        Some(at) => at,
-        None => {
-            return crate::types::FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                format!("Missing required parameters for account type {:?}", account_type),
-            );
-        }
-    };
+    let account_type_rust = account_type.to_account_type(account_index);
 
     // Parse the xpub from bytes (assuming it's a string representation)
     let xpub_slice = slice::from_raw_parts(xpub_bytes, xpub_len);
@@ -714,23 +681,7 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
 
     use key_wallet::ExtendedPubKey;
 
-    // Check if the account type requires additional parameters
-    if account_type == crate::types::FFIAccountType::IdentityTopUp {
-        return crate::types::FFIAccountResult::error(
-            FFIErrorCode::InvalidInput,
-            "IdentityTopUp accounts require a registration_index. Use a specialized function instead".to_string(),
-        );
-    }
-
-    let account_type_rust = match account_type.to_account_type(account_index, None) {
-        Some(at) => at,
-        None => {
-            return crate::types::FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                format!("Missing required parameters for account type {:?}", account_type),
-            );
-        }
-    };
+    let account_type_rust = account_type.to_account_type(account_index);
 
     // Parse the xpub from C string
     let xpub_str = match CStr::from_ptr(xpub_string).to_str() {

@@ -104,7 +104,11 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };

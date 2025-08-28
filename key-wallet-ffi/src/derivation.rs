@@ -64,7 +64,11 @@ pub unsafe extern "C" fn derivation_new_master_key(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -108,7 +112,11 @@ pub extern "C" fn derivation_bip44_account_path(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -171,7 +179,11 @@ pub extern "C" fn derivation_bip44_payment_path(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -233,7 +245,11 @@ pub extern "C" fn derivation_coinjoin_path(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -294,7 +310,11 @@ pub extern "C" fn derivation_identity_registration_path(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -356,7 +376,11 @@ pub extern "C" fn derivation_identity_topup_path(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -419,7 +443,11 @@ pub extern "C" fn derivation_identity_authentication_path(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -489,7 +517,11 @@ pub unsafe extern "C" fn derivation_derive_private_key_from_seed(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -771,7 +803,11 @@ pub unsafe extern "C" fn dip9_derive_identity_key(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };

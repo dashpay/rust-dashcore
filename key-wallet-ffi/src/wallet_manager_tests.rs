@@ -1303,46 +1303,49 @@ mod tests {
         // Test basic wallet creation and serialization
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
-        
+
         let mut wallet_bytes_out: *mut u8 = ptr::null_mut();
         let mut wallet_bytes_len_out: usize = 0;
         let mut wallet_id_out = [0u8; 32];
-        
+
         let success = unsafe {
             crate::wallet_manager::create_wallet_from_mnemonic_return_serialized_bytes(
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
                 FFINetwork::Testnet,
-                0, // birth_height
+                0,           // birth_height
                 ptr::null(), // default account options
-                false, // don't downgrade to pubkey wallet
-                false, // allow_external_signing
+                false,       // don't downgrade to pubkey wallet
+                false,       // allow_external_signing
                 &mut wallet_bytes_out as *mut *mut u8,
                 &mut wallet_bytes_len_out as *mut usize,
                 wallet_id_out.as_mut_ptr(),
                 error,
             )
         };
-        
+
         assert!(success);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
         assert!(!wallet_bytes_out.is_null());
         assert!(wallet_bytes_len_out > 0);
         assert_ne!(wallet_id_out, [0u8; 32]);
-        
+
         // Store the wallet ID for comparison
         let original_wallet_id = wallet_id_out;
-        
+
         // Clean up the serialized bytes
         unsafe {
-            crate::wallet_manager::wallet_manager_free_wallet_bytes(wallet_bytes_out, wallet_bytes_len_out);
+            crate::wallet_manager::wallet_manager_free_wallet_bytes(
+                wallet_bytes_out,
+                wallet_bytes_len_out,
+            );
         }
-        
+
         // Test with downgrade to watch-only wallet
         let mut wallet_bytes_out: *mut u8 = ptr::null_mut();
         let mut wallet_bytes_len_out: usize = 0;
         let mut wallet_id_out = [0u8; 32];
-        
+
         let success = unsafe {
             crate::wallet_manager::create_wallet_from_mnemonic_return_serialized_bytes(
                 mnemonic.as_ptr(),
@@ -1350,7 +1353,7 @@ mod tests {
                 FFINetwork::Testnet,
                 0,
                 ptr::null(),
-                true, // downgrade to pubkey wallet
+                true,  // downgrade to pubkey wallet
                 false, // watch-only, not externally signable
                 &mut wallet_bytes_out as *mut *mut u8,
                 &mut wallet_bytes_len_out as *mut usize,
@@ -1358,21 +1361,22 @@ mod tests {
                 error,
             )
         };
-        
+
         assert!(success);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
         assert!(!wallet_bytes_out.is_null());
         assert!(wallet_bytes_len_out > 0);
         // The wallet ID should be the same since it's derived from the same mnemonic
         assert_eq!(wallet_id_out, original_wallet_id);
-        
+
         // Import the watch-only wallet to verify it works
         let manager = wallet_manager::wallet_manager_create(error);
         assert!(!manager.is_null());
-        
-        let wallet_bytes_slice = unsafe { slice::from_raw_parts(wallet_bytes_out, wallet_bytes_len_out) };
+
+        let wallet_bytes_slice =
+            unsafe { slice::from_raw_parts(wallet_bytes_out, wallet_bytes_len_out) };
         let mut import_wallet_id_out = [0u8; 32];
-        
+
         let import_success = unsafe {
             crate::wallet_manager::wallet_manager_import_wallet_from_bytes(
                 manager,
@@ -1382,21 +1386,24 @@ mod tests {
                 error,
             )
         };
-        
+
         assert!(import_success);
         assert_eq!(import_wallet_id_out, original_wallet_id);
-        
+
         // Clean up
         unsafe {
-            crate::wallet_manager::wallet_manager_free_wallet_bytes(wallet_bytes_out, wallet_bytes_len_out);
+            crate::wallet_manager::wallet_manager_free_wallet_bytes(
+                wallet_bytes_out,
+                wallet_bytes_len_out,
+            );
             wallet_manager::wallet_manager_free(manager);
         }
-        
+
         // Test with externally signable wallet
         let mut wallet_bytes_out: *mut u8 = ptr::null_mut();
         let mut wallet_bytes_len_out: usize = 0;
         let mut wallet_id_out = [0u8; 32];
-        
+
         let success = unsafe {
             crate::wallet_manager::create_wallet_from_mnemonic_return_serialized_bytes(
                 mnemonic.as_ptr(),
@@ -1412,24 +1419,27 @@ mod tests {
                 error,
             )
         };
-        
+
         assert!(success);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
         assert!(!wallet_bytes_out.is_null());
         assert!(wallet_bytes_len_out > 0);
         assert_eq!(wallet_id_out, original_wallet_id);
-        
+
         // Clean up
         unsafe {
-            crate::wallet_manager::wallet_manager_free_wallet_bytes(wallet_bytes_out, wallet_bytes_len_out);
+            crate::wallet_manager::wallet_manager_free_wallet_bytes(
+                wallet_bytes_out,
+                wallet_bytes_len_out,
+            );
         }
-        
+
         // Test with invalid mnemonic
         let invalid_mnemonic = CString::new("invalid mnemonic phrase").unwrap();
         let mut wallet_bytes_out: *mut u8 = ptr::null_mut();
         let mut wallet_bytes_len_out: usize = 0;
         let mut wallet_id_out = [0u8; 32];
-        
+
         let success = unsafe {
             crate::wallet_manager::create_wallet_from_mnemonic_return_serialized_bytes(
                 invalid_mnemonic.as_ptr(),
@@ -1445,7 +1455,7 @@ mod tests {
                 error,
             )
         };
-        
+
         assert!(!success);
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
         assert!(wallet_bytes_out.is_null());

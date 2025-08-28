@@ -12,16 +12,16 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::Txid;
-use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
-use key_wallet::{Account, AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
-use key_wallet::{ExtendedPubKey, WalletBalance};
-use std::collections::BTreeSet;
-use std::str::FromStr;
-use zeroize::Zeroize;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
+use key_wallet::{Account, AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
+use key_wallet::{ExtendedPubKey, WalletBalance};
 use key_wallet::{Utxo, UtxoSet};
+use std::collections::BTreeSet;
+use std::str::FromStr;
+use zeroize::Zeroize;
 
 /// Unique identifier for a wallet (32-byte hash)
 pub type WalletId = [u8; 32];
@@ -138,7 +138,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Compute wallet ID from the wallet's root public key
         let wallet_id = wallet.compute_wallet_id();
-        
+
         // Check if wallet already exists
         if self.wallets.contains_key(&wallet_id) {
             return Err(WalletError::WalletExists(wallet_id));
@@ -219,19 +219,20 @@ impl<T: WalletInfoInterface> WalletManager<T> {
             // Extract the public key and accounts from the full wallet
             let root_xpub = wallet.root_extended_pub_key();
             let master_xpub = root_xpub.to_extended_pub_key(network);
-            
+
             // Copy the accounts structure (but without private keys)
             let accounts = wallet.accounts.clone();
-            
-            
+
             // Create a new wallet with only public keys
             let pubkey_wallet = Wallet::from_xpub(master_xpub, accounts, allow_external_signing)
-                .map_err(|e| WalletError::WalletCreation(format!("Failed to create pubkey wallet: {}", e)))?;
-            
+                .map_err(|e| {
+                    WalletError::WalletCreation(format!("Failed to create pubkey wallet: {}", e))
+                })?;
+
             // Zeroize the wallet containing private keys before dropping
             wallet.zeroize();
             drop(wallet);
-            
+
             pubkey_wallet
         } else {
             wallet
@@ -247,7 +248,9 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Serialize the wallet to bytes
         let serialized_bytes = bincode::encode_to_vec(&final_wallet, bincode::config::standard())
-            .map_err(|e| WalletError::InvalidParameter(format!("Failed to serialize wallet: {}", e)))?;
+            .map_err(|e| {
+            WalletError::InvalidParameter(format!("Failed to serialize wallet: {}", e))
+        })?;
 
         // Add the wallet to the manager
         let mut managed_info = T::from_wallet(&final_wallet);
@@ -268,15 +271,17 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         network: Network,
     ) -> Result<WalletId, WalletError> {
         // Generate a random mnemonic (24 words for maximum security)
-        let mnemonic = Mnemonic::generate(24, key_wallet::mnemonic::Language::English)
-            .map_err(|e| WalletError::WalletCreation(format!("Failed to generate mnemonic: {}", e)))?;
+        let mnemonic =
+            Mnemonic::generate(24, key_wallet::mnemonic::Language::English).map_err(|e| {
+                WalletError::WalletCreation(format!("Failed to generate mnemonic: {}", e))
+            })?;
 
         let wallet = Wallet::from_mnemonic(mnemonic, &[network], account_creation_options)
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
         // Compute wallet ID from the wallet's root public key
         let wallet_id = wallet.compute_wallet_id();
-        
+
         // Check if wallet already exists
         if self.wallets.contains_key(&wallet_id) {
             return Err(WalletError::WalletExists(wallet_id));
@@ -372,7 +377,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Compute wallet ID from the wallet's root public key
         let wallet_id = wallet.compute_wallet_id();
-        
+
         // Check if wallet already exists
         if self.wallets.contains_key(&wallet_id) {
             return Err(WalletError::WalletExists(wallet_id));
@@ -422,7 +427,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Compute wallet ID from the wallet's root public key
         let wallet_id = wallet.compute_wallet_id();
-        
+
         // Check if wallet already exists
         if self.wallets.contains_key(&wallet_id) {
             return Err(WalletError::WalletExists(wallet_id));
@@ -458,11 +463,14 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     ) -> Result<WalletId, WalletError> {
         // Deserialize the wallet from bincode
         let wallet: Wallet = bincode::decode_from_slice(wallet_bytes, bincode::config::standard())
-            .map_err(|e| WalletError::InvalidParameter(format!("Failed to deserialize wallet: {}", e)))?.0;
+            .map_err(|e| {
+                WalletError::InvalidParameter(format!("Failed to deserialize wallet: {}", e))
+            })?
+            .0;
 
         // Compute wallet ID from the wallet's root public key
         let wallet_id = wallet.compute_wallet_id();
-        
+
         // Check if wallet already exists
         if self.wallets.contains_key(&wallet_id) {
             return Err(WalletError::WalletExists(wallet_id));
@@ -470,7 +478,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create managed wallet info from the imported wallet
         let mut managed_info = T::from_wallet(&wallet);
-        
+
         // Use the current network's height as the birth height since we don't know when it was originally created
         if let Some(network) = wallet.accounts.keys().next() {
             let network_state = self.get_or_create_network_state(*network);

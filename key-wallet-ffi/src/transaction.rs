@@ -42,7 +42,6 @@ pub unsafe extern "C" fn wallet_build_transaction(
 
     unsafe {
         let _wallet = &mut *wallet;
-        let _network_rust: key_wallet::Network = network.into();
         let _outputs_slice = slice::from_raw_parts(outputs, outputs_count);
         let _account_index = account_index;
         let _fee_per_kb = fee_per_kb;
@@ -86,7 +85,6 @@ pub unsafe extern "C" fn wallet_sign_transaction(
 
     unsafe {
         let _wallet = &*wallet;
-        let _network_rust: key_wallet::Network = network.into();
         let _tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
 
         // Note: Transaction signing would require implementing wallet signing logic
@@ -157,12 +155,16 @@ pub unsafe extern "C" fn wallet_check_transaction(
     unsafe {
         let wallet = &mut *wallet;
         let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
-            return ptr::null_mut();
-        }
-    };
+            Ok(n) => n,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    "Must specify exactly one network".to_string(),
+                );
+                return ptr::null_mut();
+            }
+        };
         let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
 
         // Parse the transaction

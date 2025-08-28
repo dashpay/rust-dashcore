@@ -96,7 +96,11 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
     let network_rust: Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -222,12 +226,12 @@ pub unsafe extern "C" fn create_wallet_from_mnemonic_return_serialized_bytes(
     error: *mut FFIError,
 ) -> bool {
     // Validate input parameters
-    if mnemonic.is_null() || wallet_bytes_out.is_null() || wallet_bytes_len_out.is_null() || wallet_id_out.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Null pointer provided".to_string(),
-        );
+    if mnemonic.is_null()
+        || wallet_bytes_out.is_null()
+        || wallet_bytes_len_out.is_null()
+        || wallet_id_out.is_null()
+    {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
         return false;
     }
 
@@ -269,7 +273,11 @@ pub unsafe extern "C" fn create_wallet_from_mnemonic_return_serialized_bytes(
     let network_rust: Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -332,14 +340,23 @@ pub unsafe extern "C" fn create_wallet_from_mnemonic_return_serialized_bytes(
     let final_wallet = if downgrade_to_pubkey_wallet {
         // Extract the root public key from the created wallet
         let root_pub_key = match &wallet.wallet_type {
-            key_wallet::wallet::WalletType::Mnemonic { root_extended_private_key, .. } |
-            key_wallet::wallet::WalletType::Seed { root_extended_private_key, .. } |
-            key_wallet::wallet::WalletType::ExtendedPrivKey(root_extended_private_key) => {
+            key_wallet::wallet::WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            }
+            | key_wallet::wallet::WalletType::Seed {
+                root_extended_private_key,
+                ..
+            }
+            | key_wallet::wallet::WalletType::ExtendedPrivKey(root_extended_private_key) => {
                 root_extended_private_key.to_root_extended_pub_key()
             }
-            key_wallet::wallet::WalletType::MnemonicWithPassphrase { root_extended_public_key, .. } |
-            key_wallet::wallet::WalletType::ExternalSignable(root_extended_public_key) |
-            key_wallet::wallet::WalletType::WatchOnly(root_extended_public_key) => {
+            key_wallet::wallet::WalletType::MnemonicWithPassphrase {
+                root_extended_public_key,
+                ..
+            }
+            | key_wallet::wallet::WalletType::ExternalSignable(root_extended_public_key)
+            | key_wallet::wallet::WalletType::WatchOnly(root_extended_public_key) => {
                 root_extended_public_key.clone()
             }
         };
@@ -437,7 +454,11 @@ pub unsafe extern "C" fn wallet_manager_import_wallet_from_bytes(
     error: *mut FFIError,
 ) -> bool {
     // Validate input parameters
-    if manager.is_null() || wallet_bytes.is_null() || wallet_bytes_len == 0 || wallet_id_out.is_null() {
+    if manager.is_null()
+        || wallet_bytes.is_null()
+        || wallet_bytes_len == 0
+        || wallet_id_out.is_null()
+    {
         FFIError::set_error(
             error,
             FFIErrorCode::InvalidInput,
@@ -739,7 +760,11 @@ pub unsafe extern "C" fn wallet_manager_get_receive_address(
     let network_rust: Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -828,7 +853,11 @@ pub unsafe extern "C" fn wallet_manager_get_change_address(
     let network_rust: Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -1005,7 +1034,11 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     let network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -1079,7 +1112,11 @@ pub unsafe extern "C" fn wallet_manager_get_monitored_addresses(
     let network_rust: Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -1171,7 +1208,11 @@ pub unsafe extern "C" fn wallet_manager_update_height(
     let network_rust: Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -1215,7 +1256,11 @@ pub unsafe extern "C" fn wallet_manager_current_height(
     let network_rust: Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };

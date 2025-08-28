@@ -2,7 +2,6 @@
 //!
 //! This module contains exhaustive tests for all functionality.
 
-
 mod account_tests;
 
 mod address_pool_tests;

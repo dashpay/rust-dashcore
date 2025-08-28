@@ -354,16 +354,6 @@ typedef struct {
 } FFIAddressPoolInfo;
 
 /*
- Balance structure for FFI
- */
-typedef struct {
-    uint64_t confirmed;
-    uint64_t unconfirmed;
-    uint64_t immature;
-    uint64_t total;
-} FFIBalance;
-
-/*
  Provider key info
  */
 typedef struct {
@@ -526,7 +516,7 @@ extern "C" {
 FFIAccountResult wallet_get_account(const FFIWallet *wallet,
                                     FFINetwork network,
                                     unsigned int account_index,
-                                    unsigned int account_type)
+                                    FFIAccountType account_type)
 ;
 
 /*
@@ -645,7 +635,6 @@ bool managed_wallet_get_address_pool_info(const FFIManagedWallet *managed_wallet
                                           FFINetwork network,
                                           FFIAccountType account_type,
                                           unsigned int account_index,
-                                          unsigned int registration_index,
                                           FFIAddressPoolType pool_type,
                                           FFIAddressPoolInfo *info_out,
                                           FFIError *error)
@@ -665,9 +654,8 @@ bool managed_wallet_get_address_pool_info(const FFIManagedWallet *managed_wallet
 
 bool managed_wallet_set_gap_limit(FFIManagedWallet *managed_wallet,
                                   FFINetwork network,
-                                  unsigned int account_type,
+                                  FFIAccountType account_type,
                                   unsigned int account_index,
-                                  unsigned int registration_index,
                                   FFIAddressPoolType pool_type,
                                   unsigned int gap_limit,
                                   FFIError *error)
@@ -714,41 +702,6 @@ bool managed_wallet_mark_address_used(FFIManagedWallet *managed_wallet,
                                       FFINetwork network,
                                       const char *address,
                                       FFIError *error)
-;
-
-/*
- Get wallet balance
-
- # Safety
-
- - `wallet` must be a valid pointer to an FFIWallet instance
- - `balance_out` must be a valid pointer to an FFIBalance structure
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure all pointers remain valid for the duration of this call
- */
-
-bool wallet_get_balance(const FFIWallet *wallet,
-                        FFINetwork network,
-                        FFIBalance *balance_out,
-                        FFIError *error)
-;
-
-/*
- Get account balance
-
- # Safety
-
- - `wallet` must be a valid pointer to an FFIWallet instance
- - `balance_out` must be a valid pointer to an FFIBalance structure
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure all pointers remain valid for the duration of this call
- */
-
-bool wallet_get_account_balance(const FFIWallet *wallet,
-                                FFINetwork network,
-                                unsigned int account_index,
-                                FFIBalance *balance_out,
-                                FFIError *error)
 ;
 
 /*

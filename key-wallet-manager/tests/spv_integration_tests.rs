@@ -76,11 +76,9 @@ async fn test_filter_checking() {
     // Add a test address to monitor - simplified for testing
     // In reality, addresses would be generated from wallet accounts
 
-    let _wallet_id = spv.base
-        .create_wallet_with_random_mnemonic(
-            WalletAccountCreationOptions::Default,
-            Network::Testnet,
-        )
+    let _wallet_id = spv
+        .base
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default, Network::Testnet)
         .expect("Failed to create wallet");
 
     // Create a test block with a transaction
@@ -103,11 +101,9 @@ async fn test_block_processing() {
     let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Create a test wallet
-    let _wallet_id = spv.base
-        .create_wallet_with_random_mnemonic(
-            WalletAccountCreationOptions::Default,
-            Network::Testnet,
-        )
+    let _wallet_id = spv
+        .base
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default, Network::Testnet)
         .expect("Failed to create wallet");
 
     // Create a transaction
@@ -238,11 +234,9 @@ async fn test_spent_utxo_tracking() {
     let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Create a test wallet
-    let _wallet_id = spv.base
-        .create_wallet_with_random_mnemonic(
-            WalletAccountCreationOptions::Default,
-            Network::Testnet,
-        )
+    let _wallet_id = spv
+        .base
+        .create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default, Network::Testnet)
         .expect("Failed to create wallet");
 
     // Create a transaction

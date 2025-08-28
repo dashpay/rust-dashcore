@@ -222,7 +222,7 @@ impl Wallet {
     /// ]);
     /// // Create a pure watch-only wallet
     /// let watch_wallet = Wallet::from_xpub(master_xpub, accounts.clone(), false)?;
-    /// 
+    ///
     /// // Create an externally signable wallet (e.g., for hardware wallet)
     /// let hw_wallet = Wallet::from_xpub(master_xpub, accounts, true)?;
     /// ```

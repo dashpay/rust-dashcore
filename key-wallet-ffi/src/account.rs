@@ -17,7 +17,7 @@ pub unsafe extern "C" fn wallet_get_account(
     wallet: *const FFIWallet,
     network: FFINetwork,
     account_index: c_uint,
-    account_type: c_uint,
+    account_type: FFIAccountType,
 ) -> FFIAccountResult {
     if wallet.is_null() {
         return FFIAccountResult::error(FFIErrorCode::InvalidInput, "Wallet is null".to_string());
@@ -27,51 +27,21 @@ pub unsafe extern "C" fn wallet_get_account(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
 
-    let account_type_enum = match account_type {
-        0 => FFIAccountType::StandardBIP44,
-        1 => FFIAccountType::StandardBIP32,
-        2 => FFIAccountType::CoinJoin,
-        3 => FFIAccountType::IdentityRegistration,
-        4 => {
-            // IdentityTopUp requires a registration_index
-            return FFIAccountResult::error(
-                    FFIErrorCode::InvalidInput,
-                    "IdentityTopUp accounts require a registration_index. Use wallet_get_top_up_account_with_registration_index instead".to_string(),
-                );
-        }
-        5 => FFIAccountType::IdentityTopUpNotBoundToIdentity,
-        6 => FFIAccountType::IdentityInvitation,
-        7 => FFIAccountType::ProviderVotingKeys,
-        8 => FFIAccountType::ProviderOwnerKeys,
-        9 => FFIAccountType::ProviderOperatorKeys,
-        10 => FFIAccountType::ProviderPlatformKeys,
-        _ => {
-            return FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                format!("Invalid account type: {}", account_type),
-            );
-        }
-    };
-
-    let account_type = match account_type_enum.to_account_type(account_index, None) {
-        Some(at) => at,
-        None => {
-            return FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                format!("Missing required parameters for account type {}", account_type),
-            );
-        }
-    };
+    let account_type_rust = account_type.to_account_type(account_index);
 
     match wallet
         .inner()
         .accounts_on_network(network_rust)
-        .and_then(|account_collection| account_collection.account_of_type(account_type))
+        .and_then(|account_collection| account_collection.account_of_type(account_type_rust))
     {
         Some(account) => {
             let ffi_account = FFIAccount::new(account);
@@ -103,7 +73,11 @@ pub unsafe extern "C" fn wallet_get_top_up_account_with_registration_index(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };
@@ -187,7 +161,11 @@ pub unsafe extern "C" fn wallet_get_account_count(
     let network: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
             return ptr::null_mut();
         }
     };

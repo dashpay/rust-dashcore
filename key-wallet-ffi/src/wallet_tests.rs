@@ -4,7 +4,7 @@
 mod wallet_tests {
     use crate::account::account_free;
     use crate::error::{FFIError, FFIErrorCode};
-    use crate::types::FFINetwork;
+    use crate::types::{FFIAccountType, FFINetwork};
     use crate::wallet;
     use std::ffi::CString;
     use std::ptr;
@@ -337,7 +337,14 @@ mod wallet_tests {
         assert!(!wallet.is_null());
 
         // Test adding account - check if it succeeds or fails gracefully
-        let result = unsafe { wallet::wallet_add_account(wallet, FFINetwork::Testnet, 0, 1) };
+        let result = unsafe {
+            wallet::wallet_add_account(
+                wallet,
+                FFINetwork::Testnet,
+                FFIAccountType::StandardBIP44,
+                1,
+            )
+        };
         // Some implementations may not support adding accounts, so just verify it doesn't crash
         // and the error code is set appropriately
         assert!(!result.account.is_null() || result.error_code != 0);
@@ -365,8 +372,14 @@ mod wallet_tests {
     #[test]
     fn test_wallet_add_account_null() {
         // Test with null wallet
-        let result =
-            unsafe { wallet::wallet_add_account(ptr::null_mut(), FFINetwork::Testnet, 0, 0) };
+        let result = unsafe {
+            wallet::wallet_add_account(
+                ptr::null_mut(),
+                FFINetwork::Testnet,
+                FFIAccountType::StandardBIP44,
+                0,
+            )
+        };
         assert!(result.account.is_null());
         assert_ne!(result.error_code, 0);
 
