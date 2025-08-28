@@ -83,7 +83,13 @@ pub unsafe extern "C" fn wallet_get_account_balance(
     }
 
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     use key_wallet::account::account_type::{AccountType, StandardAccountType};
     let _account_type = AccountType::Standard {

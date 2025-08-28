@@ -4,23 +4,75 @@ use key_wallet::{Network, Wallet};
 use std::os::raw::c_uint;
 use std::sync::Arc;
 
-/// FFI Network type
+/// FFI Network type (bit flags for multiple networks)
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub enum FFINetwork {
-    Dash = 0,
-    Testnet = 1,
-    Regtest = 2,
-    Devnet = 3,
+    NoNetworks = 0,
+    Dash = 1,
+    Testnet = 2,
+    Regtest = 4,
+    Devnet = 8,
+    AllNetworks = 15, // Dash | Testnet | Regtest | Devnet
 }
 
-impl From<FFINetwork> for Network {
-    fn from(n: FFINetwork) -> Self {
-        match n {
-            FFINetwork::Dash => Network::Dash,
-            FFINetwork::Testnet => Network::Testnet,
-            FFINetwork::Regtest => Network::Regtest,
-            FFINetwork::Devnet => Network::Devnet,
+
+impl FFINetwork {
+    /// Parse bit flags into a vector of networks
+    pub fn parse_networks(&self) -> Vec<Network> {
+        let flags = *self as c_uint;
+        
+        // Handle special cases
+        if flags == FFINetwork::NoNetworks as c_uint || flags == 0 {
+            // If no networks specified, default to testnet
+            return vec![Network::Testnet];
+        }
+        
+        let mut networks = Vec::new();
+        
+        if flags & (FFINetwork::Dash as c_uint) != 0 {
+            networks.push(Network::Dash);
+        }
+        if flags & (FFINetwork::Testnet as c_uint) != 0 {
+            networks.push(Network::Testnet);
+        }
+        if flags & (FFINetwork::Regtest as c_uint) != 0 {
+            networks.push(Network::Regtest);
+        }
+        if flags & (FFINetwork::Devnet as c_uint) != 0 {
+            networks.push(Network::Devnet);
+        }
+        
+        networks
+    }
+}
+
+impl FFINetwork {
+    /// Try to convert to a single Network
+    /// Returns None if multiple networks are set or if NoNetworks is set
+    pub fn try_into_single_network(&self) -> Option<Network> {
+        let flags = *self as c_uint;
+        
+        // Check if it's a single network
+        match flags {
+            x if x == FFINetwork::Dash as c_uint => Some(Network::Dash),
+            x if x == FFINetwork::Testnet as c_uint => Some(Network::Testnet),
+            x if x == FFINetwork::Regtest as c_uint => Some(Network::Regtest),
+            x if x == FFINetwork::Devnet as c_uint => Some(Network::Devnet),
+            _ => None, // Multiple networks or NoNetworks
+        }
+    }
+}
+
+use std::convert::TryFrom;
+
+impl TryFrom<FFINetwork> for Network {
+    type Error = &'static str;
+
+    fn try_from(value: FFINetwork) -> Result<Self, Self::Error> {
+        match value.try_into_single_network() {
+            Some(network) => Ok(network),
+            None => Err("FFINetwork must represent exactly one network"),
         }
     }
 }
@@ -165,42 +217,41 @@ impl FFIAccountType {
     /// Returns None if required parameters are missing (e.g., registration_index for IdentityTopUp)
     pub fn to_account_type(
         self,
-        index: u32,
-        registration_index: Option<u32>,
-    ) -> Option<key_wallet::AccountType> {
+        index: u32
+    ) -> key_wallet::AccountType {
         use key_wallet::account::account_type::StandardAccountType;
         match self {
-            FFIAccountType::StandardBIP44 => Some(key_wallet::AccountType::Standard {
+            FFIAccountType::StandardBIP44 => key_wallet::AccountType::Standard {
                 index,
                 standard_account_type: StandardAccountType::BIP44Account,
-            }),
-            FFIAccountType::StandardBIP32 => Some(key_wallet::AccountType::Standard {
+            },
+            FFIAccountType::StandardBIP32 => key_wallet::AccountType::Standard {
                 index,
                 standard_account_type: StandardAccountType::BIP32Account,
-            }),
-            FFIAccountType::CoinJoin => Some(key_wallet::AccountType::CoinJoin {
+            },
+            FFIAccountType::CoinJoin => key_wallet::AccountType::CoinJoin {
                 index,
-            }),
+            },
             FFIAccountType::IdentityRegistration => {
-                Some(key_wallet::AccountType::IdentityRegistration)
+                key_wallet::AccountType::IdentityRegistration
             }
             FFIAccountType::IdentityTopUp => {
                 // IdentityTopUp requires a registration_index
-                registration_index.map(|reg_idx| key_wallet::AccountType::IdentityTopUp {
-                    registration_index: reg_idx,
-                })
+                key_wallet::AccountType::IdentityTopUp {
+                    registration_index: index,
+                }
             }
             FFIAccountType::IdentityTopUpNotBoundToIdentity => {
-                Some(key_wallet::AccountType::IdentityTopUpNotBoundToIdentity)
+                key_wallet::AccountType::IdentityTopUpNotBoundToIdentity
             }
-            FFIAccountType::IdentityInvitation => Some(key_wallet::AccountType::IdentityInvitation),
-            FFIAccountType::ProviderVotingKeys => Some(key_wallet::AccountType::ProviderVotingKeys),
-            FFIAccountType::ProviderOwnerKeys => Some(key_wallet::AccountType::ProviderOwnerKeys),
+            FFIAccountType::IdentityInvitation => key_wallet::AccountType::IdentityInvitation,
+            FFIAccountType::ProviderVotingKeys => key_wallet::AccountType::ProviderVotingKeys,
+            FFIAccountType::ProviderOwnerKeys => key_wallet::AccountType::ProviderOwnerKeys,
             FFIAccountType::ProviderOperatorKeys => {
-                Some(key_wallet::AccountType::ProviderOperatorKeys)
+                key_wallet::AccountType::ProviderOperatorKeys
             }
             FFIAccountType::ProviderPlatformKeys => {
-                Some(key_wallet::AccountType::ProviderPlatformKeys)
+                key_wallet::AccountType::ProviderPlatformKeys
             }
         }
     }
@@ -440,11 +491,7 @@ impl FFIWalletAccountCreationOptions {
                     );
                     let mut accounts = Vec::new();
                     for &ffi_type in slice {
-                        // Use a dummy index for special accounts that don't need one
-                        // Skip accounts that require parameters we don't have
-                        if let Some(account_type) = ffi_type.to_account_type(0, None) {
-                            accounts.push(account_type);
-                        }
+                        accounts.push(ffi_type.to_account_type(0));
                     }
                     Some(accounts)
                 } else {

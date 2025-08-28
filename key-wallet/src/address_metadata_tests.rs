@@ -27,7 +27,7 @@ mod tests {
         // Basic test that wallet and accounts can be created
 
         let wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -48,7 +48,7 @@ mod tests {
     #[test]
     fn test_multiple_accounts() {
         let mut wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();

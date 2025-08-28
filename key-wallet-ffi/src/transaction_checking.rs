@@ -142,7 +142,13 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
     }
 
     let managed_wallet = &mut *(*managed_wallet).inner;
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
     let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
 
     // Parse the transaction

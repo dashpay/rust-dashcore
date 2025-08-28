@@ -101,7 +101,13 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
     }
 
     let managed_info = &*managed_info;
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     // Get UTXOs from the managed wallet info
     let utxos = managed_info.inner().get_utxos(network_rust);

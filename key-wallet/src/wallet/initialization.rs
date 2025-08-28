@@ -81,10 +81,10 @@ impl Wallet {
     /// Create a new wallet with a randomly generated mnemonic
     ///
     /// # Arguments
-    /// * `network` - Network for the wallet
+    /// * `networks` - List of networks to create accounts for
     /// * `account_creation_options` - Specifies which accounts to create during initialization
     pub fn new_random(
-        network: Network,
+        networks: &[Network],
         account_creation_options: WalletAccountCreationOptions,
     ) -> Result<Self> {
         let mnemonic = Mnemonic::generate(12, Language::English)?;
@@ -96,8 +96,10 @@ impl Wallet {
             root_extended_private_key,
         });
 
-        // Create accounts based on options
-        wallet.create_accounts_from_options(account_creation_options, network)?;
+        // Create accounts for each network
+        for network in networks {
+            wallet.create_accounts_from_options(account_creation_options.clone(), *network)?;
+        }
 
         Ok(wallet)
     }
@@ -124,7 +126,7 @@ impl Wallet {
             | WalletType::ExternalSignable(root_extended_public_key)
             | WalletType::WatchOnly(root_extended_public_key) => root_extended_public_key.clone(),
         };
-        let wallet_id = Self::compute_wallet_id(&root_pub_key);
+        let wallet_id = Self::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
 
         Self {
             wallet_id,
@@ -137,11 +139,11 @@ impl Wallet {
     ///
     /// # Arguments
     /// * `mnemonic` - The mnemonic phrase
-    /// * `network` - Network for the wallet
+    /// * `networks` - List of networks to create accounts for
     /// * `account_creation_options` - Specifies which accounts to create during initialization
     pub fn from_mnemonic(
         mnemonic: Mnemonic,
-        network: Network,
+        networks: &[Network],
         account_creation_options: WalletAccountCreationOptions,
     ) -> Result<Self> {
         let seed = mnemonic.to_seed("");
@@ -152,8 +154,10 @@ impl Wallet {
             root_extended_private_key,
         });
 
-        // Create accounts based on options
-        wallet.create_accounts_from_options(account_creation_options, network)?;
+        // Create accounts for each network
+        for network in networks {
+            wallet.create_accounts_from_options(account_creation_options.clone(), *network)?;
+        }
 
         Ok(wallet)
     }
@@ -164,12 +168,12 @@ impl Wallet {
     /// # Arguments
     /// * `mnemonic` - The mnemonic phrase
     /// * `passphrase` - The BIP39 passphrase
-    /// * `network` - Network for the wallet
+    /// * `networks` - List of networks to create accounts for
     /// * `account_creation_options` - Specifies which accounts to create during initialization
     pub fn from_mnemonic_with_passphrase(
         mnemonic: Mnemonic,
         passphrase: String,
-        network: Network,
+        networks: &[Network],
         account_creation_options: WalletAccountCreationOptions,
     ) -> Result<Self> {
         let seed = mnemonic.to_seed(&passphrase);
@@ -182,43 +186,58 @@ impl Wallet {
             root_extended_public_key,
         });
 
-        // Create accounts based on options
-        wallet.create_accounts_with_passphrase_from_options(
-            account_creation_options,
-            passphrase.as_str(),
-            network,
-        )?;
+        // Create accounts for each network
+        for network in networks {
+            wallet.create_accounts_with_passphrase_from_options(
+                account_creation_options.clone(),
+                passphrase.as_str(),
+                *network,
+            )?;
+        }
 
         Ok(wallet)
     }
 
-    /// Create a watch-only wallet from extended public key
+    /// Create a watch-only or externally signable wallet from extended public key
     ///
     /// Watch-only wallets can generate addresses and monitor transactions but cannot sign.
-    /// This is useful for cold storage setups where the private keys are kept offline.
+    /// Externally signable wallets can also create unsigned transactions that can be signed by
+    /// external devices (hardware wallets, remote signing services, etc.).
     ///
     /// # Arguments
     /// * `master_xpub` - The master extended public key for the wallet
     /// * `accounts` - Pre-created account collections mapped by network. Since watch-only wallets
     ///   cannot derive private keys, all accounts must be provided with their extended
     ///   public keys already initialized.
+    /// * `can_sign_externally` - If true, creates an externally signable wallet that supports
+    ///   transaction creation for external signing. If false, creates a pure watch-only wallet.
     ///
     /// # Returns
-    /// A new watch-only wallet instance
+    /// A new watch-only or externally signable wallet instance
     ///
     /// # Example
     /// ```ignore
     /// let accounts = BTreeMap::from([
     ///     (Network::Mainnet, account_collection),
     /// ]);
-    /// let wallet = Wallet::from_xpub(master_xpub, None, accounts)?;
+    /// // Create a pure watch-only wallet
+    /// let watch_wallet = Wallet::from_xpub(master_xpub, accounts.clone(), false)?;
+    /// 
+    /// // Create an externally signable wallet (e.g., for hardware wallet)
+    /// let hw_wallet = Wallet::from_xpub(master_xpub, accounts, true)?;
     /// ```
     pub fn from_xpub(
         master_xpub: ExtendedPubKey,
         accounts: BTreeMap<Network, AccountCollection>,
+        can_sign_externally: bool,
     ) -> Result<Self> {
         let root_extended_public_key = RootExtendedPubKey::from_extended_pub_key(&master_xpub);
-        let mut wallet = Self::from_wallet_type(WalletType::WatchOnly(root_extended_public_key));
+        let wallet_type = if can_sign_externally {
+            WalletType::ExternalSignable(root_extended_public_key)
+        } else {
+            WalletType::WatchOnly(root_extended_public_key)
+        };
+        let mut wallet = Self::from_wallet_type(wallet_type);
 
         wallet.accounts = accounts;
 
@@ -272,11 +291,11 @@ impl Wallet {
     ///
     /// # Arguments
     /// * `seed` - The seed bytes
-    /// * `network` - Network for the wallet
+    /// * `networks` - List of networks to create accounts for
     /// * `account_creation_options` - Specifies which accounts to create during initialization
     pub fn from_seed(
         seed: Seed,
-        network: Network,
+        networks: &[Network],
         account_creation_options: WalletAccountCreationOptions,
     ) -> Result<Self> {
         let root_extended_private_key = RootExtendedPrivKey::new_master(seed.as_slice())?;
@@ -286,8 +305,10 @@ impl Wallet {
             root_extended_private_key,
         });
 
-        // Create accounts based on options
-        wallet.create_accounts_from_options(account_creation_options, network)?;
+        // Create accounts for each network
+        for network in networks {
+            wallet.create_accounts_from_options(account_creation_options.clone(), *network)?;
+        }
 
         Ok(wallet)
     }
@@ -296,33 +317,35 @@ impl Wallet {
     ///
     /// # Arguments
     /// * `seed_bytes` - The seed bytes array
-    /// * `network` - Network for the wallet
+    /// * `networks` - List of networks to create accounts for
     /// * `account_creation_options` - Specifies which accounts to create during initialization
     pub fn from_seed_bytes(
         seed_bytes: [u8; 64],
-        network: Network,
+        networks: &[Network],
         account_creation_options: WalletAccountCreationOptions,
     ) -> Result<Self> {
-        Self::from_seed(Seed::new(seed_bytes), network, account_creation_options)
+        Self::from_seed(Seed::new(seed_bytes), networks, account_creation_options)
     }
 
     /// Create a wallet from an extended private key
     ///
     /// # Arguments
     /// * `master_key` - The extended private key
-    /// * `network` - Network for the wallet
+    /// * `networks` - List of networks to create accounts for
     /// * `account_creation_options` - Specifies which accounts to create during initialization
     pub fn from_extended_key(
         master_key: ExtendedPrivKey,
-        network: Network,
+        networks: &[Network],
         account_creation_options: WalletAccountCreationOptions,
     ) -> Result<Self> {
         let root_extended_private_key = RootExtendedPrivKey::from_extended_priv_key(&master_key);
         let mut wallet =
             Self::from_wallet_type(WalletType::ExtendedPrivKey(root_extended_private_key));
 
-        // Create accounts based on options
-        wallet.create_accounts_from_options(account_creation_options, network)?;
+        // Create accounts for each network
+        for network in networks {
+            wallet.create_accounts_from_options(account_creation_options.clone(), *network)?;
+        }
 
         Ok(wallet)
     }

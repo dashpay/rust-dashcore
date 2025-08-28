@@ -71,7 +71,13 @@ pub unsafe extern "C" fn wallet_generate_provider_key(
     }
 
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     // Determine the account type based on key type
     let account_type = match key_type {
@@ -262,7 +268,13 @@ pub unsafe extern "C" fn wallet_get_provider_key_address(
     }
 
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     // Determine the account type based on key type
     let account_type = match key_type {
@@ -372,7 +384,13 @@ pub unsafe extern "C" fn wallet_sign_with_provider_key(
     }
 
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
     let _data_slice = slice::from_raw_parts(data, data_len);
 
     // Determine the account type based on key type

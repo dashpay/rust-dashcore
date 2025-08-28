@@ -121,7 +121,7 @@ pub struct FFIAddressPoolInfo {
 pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
     managed_wallet: *const FFIManagedWallet,
     network: FFINetwork,
-    account_type: c_uint,
+    account_type: FFIAccountType,
     account_index: c_uint,
     registration_index: c_uint,
     pool_type: FFIAddressPoolType,
@@ -134,28 +134,11 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
     }
 
     let managed_wallet = &*(*managed_wallet).inner;
-    let network_rust: key_wallet::Network = network.into();
-
-    // Convert FFI account type to AccountType
-    let account_type_enum = match account_type {
-        0 => FFIAccountType::StandardBIP44,
-        1 => FFIAccountType::StandardBIP32,
-        2 => FFIAccountType::CoinJoin,
-        3 => FFIAccountType::IdentityRegistration,
-        4 => FFIAccountType::IdentityTopUp,
-        5 => FFIAccountType::IdentityTopUpNotBoundToIdentity,
-        6 => FFIAccountType::IdentityInvitation,
-        7 => FFIAccountType::ProviderVotingKeys,
-        8 => FFIAccountType::ProviderOwnerKeys,
-        9 => FFIAccountType::ProviderOperatorKeys,
-        10 => FFIAccountType::ProviderPlatformKeys,
-        _ => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                format!("Invalid account type: {}", account_type),
-            );
-            return false;
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
         }
     };
 
@@ -165,18 +148,7 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
         None
     };
 
-    let account_type_rust =
-        match account_type_enum.to_account_type(account_index, registration_index_opt) {
-            Some(at) => at,
-            None => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid account type parameters".to_string(),
-                );
-                return false;
-            }
-        };
+    let account_type_rust = account_type.to_account_type(account_index);
 
     // Get the account collection
     let collection = match managed_wallet.accounts.get(&network_rust) {
@@ -295,7 +267,13 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
     }
 
     let managed_wallet = &mut *(*managed_wallet).inner;
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     // Convert FFI account type to AccountType
     let account_type_enum = match account_type {
@@ -433,9 +411,8 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
     managed_wallet: *mut FFIManagedWallet,
     wallet: *const FFIWallet,
     network: FFINetwork,
-    account_type: c_uint,
+    account_type: FFIAccountType,
     account_index: c_uint,
-    registration_index: c_uint,
     pool_type: FFIAddressPoolType,
     target_index: c_uint,
     error: *mut FFIError,
@@ -447,79 +424,17 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
 
     let managed_wallet = &mut *(*managed_wallet).inner;
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = network.into();
-
-    // Convert FFI account type to AccountType
-    let account_type_enum = match account_type {
-        0 => FFIAccountType::StandardBIP44,
-        1 => FFIAccountType::StandardBIP32,
-        2 => FFIAccountType::CoinJoin,
-        3 => FFIAccountType::IdentityRegistration,
-        4 => FFIAccountType::IdentityTopUp,
-        5 => FFIAccountType::IdentityTopUpNotBoundToIdentity,
-        6 => FFIAccountType::IdentityInvitation,
-        7 => FFIAccountType::ProviderVotingKeys,
-        8 => FFIAccountType::ProviderOwnerKeys,
-        9 => FFIAccountType::ProviderOperatorKeys,
-        10 => FFIAccountType::ProviderPlatformKeys,
-        _ => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                format!("Invalid account type: {}", account_type),
-            );
-            return false;
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
         }
     };
 
-    let registration_index_opt = if account_type == 4 {
-        Some(registration_index)
-    } else {
-        None
-    };
-
-    let account_type_rust =
-        match account_type_enum.to_account_type(account_index, registration_index_opt) {
-            Some(at) => at,
-            None => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid account type parameters".to_string(),
-                );
-                return false;
-            }
-        };
-
-    // Get the wallet account for the xpub
-    // Convert AccountType to AccountTypeToCheck
-    use key_wallet::transaction_checking::transaction_router::AccountTypeToCheck;
-    let account_type_to_check = match &account_type_rust {
-        AccountType::Standard {
-            standard_account_type,
-            ..
-        } => match standard_account_type {
-            key_wallet::account::StandardAccountType::BIP44Account => {
-                AccountTypeToCheck::StandardBIP44
-            }
-            key_wallet::account::StandardAccountType::BIP32Account => {
-                AccountTypeToCheck::StandardBIP32
-            }
-        },
-        AccountType::CoinJoin {
-            ..
-        } => AccountTypeToCheck::CoinJoin,
-        AccountType::IdentityRegistration => AccountTypeToCheck::IdentityRegistration,
-        AccountType::IdentityTopUp {
-            ..
-        } => AccountTypeToCheck::IdentityTopUp,
-        AccountType::IdentityTopUpNotBoundToIdentity => AccountTypeToCheck::IdentityTopUpNotBound,
-        AccountType::IdentityInvitation => AccountTypeToCheck::IdentityInvitation,
-        AccountType::ProviderVotingKeys => AccountTypeToCheck::ProviderVotingKeys,
-        AccountType::ProviderOwnerKeys => AccountTypeToCheck::ProviderOwnerKeys,
-        AccountType::ProviderOperatorKeys => AccountTypeToCheck::ProviderOperatorKeys,
-        AccountType::ProviderPlatformKeys => AccountTypeToCheck::ProviderPlatformKeys,
-    };
+    let account_type_rust = account_type.to_account_type(account_index);
+    
+    let account_type_to_check = account_type_rust.into();
 
     let xpub_opt = wallet.inner().extended_public_key_for_account_type(
         &account_type_to_check,
@@ -676,7 +591,13 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
     }
 
     let managed_wallet = &mut *(*managed_wallet).inner;
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     // Parse the address string
     let address_str = match std::ffi::CStr::from_ptr(address).to_str() {

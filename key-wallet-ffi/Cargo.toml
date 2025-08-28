@@ -15,6 +15,7 @@ crate-type = ["cdylib", "staticlib", "lib"]
 [features]
 default = []
 bip38 = ["key-wallet/bip38"]
+bincode = ["key-wallet-manager/bincode", "key-wallet/bincode"]
 
 [dependencies]
 key-wallet = { path = "../key-wallet", default-features = false, features = ["std"] }

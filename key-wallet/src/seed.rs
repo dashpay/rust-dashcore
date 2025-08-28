@@ -10,12 +10,12 @@ use core::fmt;
 use core::str::FromStr;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
+use zeroize::Zeroize;
 use crate::error::{Error, Result};
 use dashcore_hashes::hex::FromHex;
 
 /// A BIP32 seed (512 bits / 64 bytes)
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Zeroize)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct Seed([u8; 64]);
 

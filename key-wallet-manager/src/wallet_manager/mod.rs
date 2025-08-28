@@ -17,7 +17,7 @@ use key_wallet::{Account, AccountType, Address, ExtendedPrivKey, Mnemonic, Netwo
 use key_wallet::{ExtendedPubKey, WalletBalance};
 use std::collections::BTreeSet;
 use std::str::FromStr;
-
+use zeroize::Zeroize;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -109,45 +109,44 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     }
 
     /// Create a new wallet from mnemonic and add it to the manager
-    #[allow(clippy::too_many_arguments)]
+    /// Returns the computed wallet ID
     pub fn create_wallet_from_mnemonic(
         &mut self,
-        wallet_id: WalletId,
-        name: String,
         mnemonic: &str,
         passphrase: &str,
-        network: Option<Network>,
+        network: Network,
         birth_height: Option<u32>,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
-    ) -> Result<&T, WalletError> {
-        if self.wallets.contains_key(&wallet_id) {
-            return Err(WalletError::WalletExists(wallet_id));
-        }
-
-        let network = network
-            .ok_or(WalletError::InvalidParameter("Network must be specified".to_string()))?;
-
+    ) -> Result<WalletId, WalletError> {
         let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
         // Use appropriate wallet creation method based on whether a passphrase is provided
         let wallet = if passphrase.is_empty() {
-            Wallet::from_mnemonic(mnemonic_obj, network, account_creation_options)
+            Wallet::from_mnemonic(mnemonic_obj, &[network], account_creation_options)
                 .map_err(|e| WalletError::WalletCreation(e.to_string()))?
         } else {
             // For wallets with passphrase, use the provided options
             Wallet::from_mnemonic_with_passphrase(
                 mnemonic_obj,
                 passphrase.to_string(),
-                network,
+                &[network],
                 account_creation_options,
             )
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?
         };
 
+        // Compute wallet ID from the wallet's root public key
+        let wallet_id = wallet.compute_wallet_id();
+        
+        // Check if wallet already exists
+        if self.wallets.contains_key(&wallet_id) {
+            return Err(WalletError::WalletExists(wallet_id));
+        }
+
         // Create managed wallet info from the wallet to properly initialize accounts
         // This ensures the ManagedAccountCollection is synchronized with the Wallet's accounts
-        let mut managed_info = T::from_wallet_with_name(&wallet, name);
+        let mut managed_info = T::from_wallet(&wallet);
         managed_info.set_birth_height(birth_height);
         managed_info.set_first_loaded_at(current_timestamp());
 
@@ -161,40 +160,137 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet_mut);
         self.wallet_infos.insert(wallet_id, managed_info);
-        Ok(self.wallet_infos.get(&wallet_id).unwrap())
+        Ok(wallet_id)
     }
 
-    /// Create a new empty wallet and add it to the manager
-    pub fn create_wallet(
+    /// Create a wallet from mnemonic and return it as serialized bytes
+    ///
+    /// This function creates a wallet from a mnemonic phrase and returns it as bincode-serialized bytes.
+    /// It supports downgrading to a public-key-only wallet for security purposes.
+    ///
+    /// # Arguments
+    /// * `mnemonic` - The mnemonic phrase
+    /// * `passphrase` - Optional BIP39 passphrase (empty string for no passphrase)
+    /// * `network` - The network for the wallet
+    /// * `birth_height` - Optional birth height for wallet scanning
+    /// * `account_creation_options` - Which accounts to create initially
+    /// * `downgrade_to_pubkey_wallet` - If true, creates a wallet without private keys
+    /// * `allow_external_signing` - If true and downgraded, creates an externally signable wallet (e.g., for hardware wallets)
+    ///
+    /// # Returns
+    /// A tuple containing:
+    /// * The serialized wallet bytes
+    /// * The wallet ID
+    ///
+    /// # Security Note
+    /// When `downgrade_to_pubkey_wallet` is true, the returned wallet contains NO private key material,
+    /// making it safe to use on potentially compromised systems or for creating watch-only wallets.
+    #[cfg(feature = "bincode")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_wallet_from_mnemonic_return_serialized_bytes(
         &mut self,
-        wallet_id: WalletId,
-        name: String,
-        account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
+        mnemonic: &str,
+        passphrase: &str,
         network: Network,
-    ) -> Result<&T, WalletError> {
+        birth_height: Option<u32>,
+        account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
+        downgrade_to_pubkey_wallet: bool,
+        allow_external_signing: bool,
+    ) -> Result<(Vec<u8>, WalletId), WalletError> {
+        let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
+            .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
+
+        // Create the initial wallet from mnemonic
+        let mut wallet = if passphrase.is_empty() {
+            Wallet::from_mnemonic(mnemonic_obj, &[network], account_creation_options)
+                .map_err(|e| WalletError::WalletCreation(e.to_string()))?
+        } else {
+            Wallet::from_mnemonic_with_passphrase(
+                mnemonic_obj,
+                passphrase.to_string(),
+                &[network],
+                account_creation_options,
+            )
+            .map_err(|e| WalletError::WalletCreation(e.to_string()))?
+        };
+
+        // Downgrade to pubkey-only wallet if requested
+        let final_wallet = if downgrade_to_pubkey_wallet {
+            // Extract the public key and accounts from the full wallet
+            let root_xpub = wallet.root_extended_pub_key();
+            let master_xpub = root_xpub.to_extended_pub_key(network);
+            
+            // Copy the accounts structure (but without private keys)
+            let accounts = wallet.accounts.clone();
+            
+            
+            // Create a new wallet with only public keys
+            let pubkey_wallet = Wallet::from_xpub(master_xpub, accounts, allow_external_signing)
+                .map_err(|e| WalletError::WalletCreation(format!("Failed to create pubkey wallet: {}", e)))?;
+            
+            // Zeroize the wallet containing private keys before dropping
+            wallet.zeroize();
+            drop(wallet);
+            
+            pubkey_wallet
+        } else {
+            wallet
+        };
+
+        // Compute wallet ID
+        let wallet_id = final_wallet.compute_wallet_id();
+
+        // Check if wallet already exists
         if self.wallets.contains_key(&wallet_id) {
             return Err(WalletError::WalletExists(wallet_id));
         }
 
-        // For now, create a wallet with a fixed test mnemonic
-        // In production, you'd generate a random mnemonic or use new_random with proper features
-        let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        let mnemonic =
-            Mnemonic::from_phrase(test_mnemonic, key_wallet::mnemonic::Language::English)
-                .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
+        // Serialize the wallet to bytes
+        let serialized_bytes = bincode::encode_to_vec(&final_wallet, bincode::config::standard())
+            .map_err(|e| WalletError::InvalidParameter(format!("Failed to serialize wallet: {}", e)))?;
 
-        let wallet = Wallet::from_mnemonic(mnemonic, network, account_creation_options)
+        // Add the wallet to the manager
+        let mut managed_info = T::from_wallet(&final_wallet);
+        managed_info.set_birth_height(birth_height);
+        managed_info.set_first_loaded_at(current_timestamp());
+
+        self.wallets.insert(wallet_id, final_wallet);
+        self.wallet_infos.insert(wallet_id, managed_info);
+
+        Ok((serialized_bytes, wallet_id))
+    }
+
+    /// Create a new wallet with a random mnemonic and add it to the manager
+    /// Returns the generated wallet ID
+    pub fn create_wallet_with_random_mnemonic(
+        &mut self,
+        account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
+        network: Network,
+    ) -> Result<WalletId, WalletError> {
+        // Generate a random mnemonic (24 words for maximum security)
+        let mnemonic = Mnemonic::generate(24, key_wallet::mnemonic::Language::English)
+            .map_err(|e| WalletError::WalletCreation(format!("Failed to generate mnemonic: {}", e)))?;
+
+        let wallet = Wallet::from_mnemonic(mnemonic, &[network], account_creation_options)
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
+        // Compute wallet ID from the wallet's root public key
+        let wallet_id = wallet.compute_wallet_id();
+        
+        // Check if wallet already exists
+        if self.wallets.contains_key(&wallet_id) {
+            return Err(WalletError::WalletExists(wallet_id));
+        }
+
         // Create managed wallet info
-        let mut managed_info = T::with_name(wallet.wallet_id, name);
+        let mut managed_info = T::from_wallet(&wallet);
         let network_state = self.get_or_create_network_state(network);
         managed_info.set_birth_height(Some(network_state.current_height));
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
-        Ok(self.wallet_infos.get(&wallet_id).unwrap())
+        Ok(wallet_id)
     }
 
     /// Get a wallet by ID
@@ -252,45 +348,45 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// Import a wallet from an extended private key and add it to the manager
     ///
     /// # Arguments
-    /// * `wallet_id` - Unique identifier for the wallet
-    /// * `name` - Human-readable name for the wallet
     /// * `xprv` - The extended private key string (base58check encoded)
     /// * `network` - Network for the wallet
     /// * `account_creation_options` - Specifies which accounts to create during initialization
     ///
     /// # Returns
-    /// * `Ok(&T)` - Reference to the created wallet info
+    /// * `Ok(WalletId)` - The computed wallet ID
     /// * `Err(WalletError)` - If the wallet already exists or creation fails
     pub fn import_wallet_from_extended_priv_key(
         &mut self,
-        wallet_id: WalletId,
-        name: String,
         xprv: &str,
         network: Network,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
-    ) -> Result<&T, WalletError> {
-        if self.wallets.contains_key(&wallet_id) {
-            return Err(WalletError::WalletExists(wallet_id));
-        }
-
+    ) -> Result<WalletId, WalletError> {
         // Parse the extended private key
         let extended_priv_key = ExtendedPrivKey::from_str(xprv)
             .map_err(|e| WalletError::InvalidParameter(format!("Invalid xprv: {}", e)))?;
 
         // Create wallet from extended private key
         let wallet =
-            Wallet::from_extended_key(extended_priv_key, network, account_creation_options)
+            Wallet::from_extended_key(extended_priv_key, &[network], account_creation_options)
                 .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
+        // Compute wallet ID from the wallet's root public key
+        let wallet_id = wallet.compute_wallet_id();
+        
+        // Check if wallet already exists
+        if self.wallets.contains_key(&wallet_id) {
+            return Err(WalletError::WalletExists(wallet_id));
+        }
+
         // Create managed wallet info
-        let mut managed_info = T::from_wallet_with_name(&wallet, name);
+        let mut managed_info = T::from_wallet(&wallet);
         managed_info
             .set_birth_height(Some(self.get_or_create_network_state(network).current_height));
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
-        Ok(self.wallet_infos.get(&wallet_id).unwrap())
+        Ok(wallet_id)
     }
 
     /// Import a wallet from an extended public key and add it to the manager
@@ -299,25 +395,20 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// but cannot sign them.
     ///
     /// # Arguments
-    /// * `wallet_id` - Unique identifier for the wallet
-    /// * `name` - Human-readable name for the wallet
     /// * `xpub` - The extended public key string (base58check encoded)
     /// * `network` - Network for the wallet
+    /// * `can_sign_externally` - If true, creates an externally signable wallet (e.g., for hardware wallets).
+    ///   If false, creates a pure watch-only wallet.
     ///
     /// # Returns
-    /// * `Ok(&T)` - Reference to the created wallet info
+    /// * `Ok(WalletId)` - The computed wallet ID
     /// * `Err(WalletError)` - If the wallet already exists or creation fails
     pub fn import_wallet_from_xpub(
         &mut self,
-        wallet_id: WalletId,
-        name: String,
         xpub: &str,
         network: Network,
-    ) -> Result<&T, WalletError> {
-        if self.wallets.contains_key(&wallet_id) {
-            return Err(WalletError::WalletExists(wallet_id));
-        }
-
+        can_sign_externally: bool,
+    ) -> Result<WalletId, WalletError> {
         // Parse the extended public key
         let extended_pub_key = ExtendedPubKey::from_str(xpub)
             .map_err(|e| WalletError::InvalidParameter(format!("Invalid xpub: {}", e)))?;
@@ -325,19 +416,71 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         // Create an empty account collection for the watch-only wallet
         let accounts = alloc::collections::BTreeMap::from([(network, Default::default())]);
 
-        // Create watch-only wallet from extended public key
-        let wallet = Wallet::from_xpub(extended_pub_key, accounts)
+        // Create watch-only or externally signable wallet from extended public key
+        let wallet = Wallet::from_xpub(extended_pub_key, accounts, can_sign_externally)
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?;
 
+        // Compute wallet ID from the wallet's root public key
+        let wallet_id = wallet.compute_wallet_id();
+        
+        // Check if wallet already exists
+        if self.wallets.contains_key(&wallet_id) {
+            return Err(WalletError::WalletExists(wallet_id));
+        }
+
         // Create managed wallet info
-        let mut managed_info = T::from_wallet_with_name(&wallet, name);
+        let mut managed_info = T::from_wallet(&wallet);
         managed_info
             .set_birth_height(Some(self.get_or_create_network_state(network).current_height));
         managed_info.set_first_loaded_at(current_timestamp());
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
-        Ok(self.wallet_infos.get(&wallet_id).unwrap())
+        Ok(wallet_id)
+    }
+
+    /// Import a wallet from serialized bytes
+    ///
+    /// Deserializes a wallet from bincode-encoded bytes and adds it to the manager.
+    /// This is useful for restoring wallets from backups or transferring wallets
+    /// between systems.
+    ///
+    /// # Arguments
+    /// * `wallet_bytes` - The bincode-serialized wallet bytes
+    ///
+    /// # Returns
+    /// * `Ok(WalletId)` - The computed wallet ID of the imported wallet
+    /// * `Err(WalletError)` - If deserialization fails or the wallet already exists
+    #[cfg(feature = "bincode")]
+    pub fn import_wallet_from_bytes(
+        &mut self,
+        wallet_bytes: &[u8],
+    ) -> Result<WalletId, WalletError> {
+        // Deserialize the wallet from bincode
+        let wallet: Wallet = bincode::decode_from_slice(wallet_bytes, bincode::config::standard())
+            .map_err(|e| WalletError::InvalidParameter(format!("Failed to deserialize wallet: {}", e)))?.0;
+
+        // Compute wallet ID from the wallet's root public key
+        let wallet_id = wallet.compute_wallet_id();
+        
+        // Check if wallet already exists
+        if self.wallets.contains_key(&wallet_id) {
+            return Err(WalletError::WalletExists(wallet_id));
+        }
+
+        // Create managed wallet info from the imported wallet
+        let mut managed_info = T::from_wallet(&wallet);
+        
+        // Use the current network's height as the birth height since we don't know when it was originally created
+        if let Some(network) = wallet.accounts.keys().next() {
+            let network_state = self.get_or_create_network_state(*network);
+            managed_info.set_birth_height(Some(network_state.current_height));
+        }
+        managed_info.set_first_loaded_at(current_timestamp());
+
+        self.wallets.insert(wallet_id, wallet);
+        self.wallet_infos.insert(wallet_id, managed_info);
+        Ok(wallet_id)
     }
 
     /// Check a transaction against all wallets and update their states if relevant

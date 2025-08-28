@@ -75,7 +75,7 @@ mod wallet_tests {
 
         // Create watch-only wallet from xpub
         let watch_wallet =
-            unsafe { wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, error) };
+            unsafe { wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, false, error) };
         assert!(!watch_wallet.is_null());
 
         // Verify it's watch-only
@@ -303,7 +303,7 @@ mod wallet_tests {
         };
         let xpub = unsafe { wallet::wallet_get_xpub(source_wallet, FFINetwork::Testnet, 0, error) };
         let watch_wallet =
-            unsafe { wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, error) };
+            unsafe { wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, false, error) };
 
         // Test has_mnemonic - should return false for watch-only
         let has_mnemonic = unsafe { wallet::wallet_has_mnemonic(watch_wallet, error) };

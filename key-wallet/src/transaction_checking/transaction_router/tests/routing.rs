@@ -50,7 +50,7 @@ fn test_transaction_routing_to_bip44_account() {
     let network = Network::Testnet;
 
     // Create a wallet with a BIP44 account
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
@@ -110,7 +110,7 @@ fn test_transaction_routing_to_bip32_account() {
     let network = Network::Testnet;
 
     // Create a wallet with BIP32 accounts
-    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
+    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::None)
         .expect("Failed to create wallet without default accounts");
 
     // Add a BIP32 account
@@ -200,7 +200,7 @@ fn test_transaction_routing_to_coinjoin_account() {
     let network = Network::Testnet;
 
     // Create a wallet and add a CoinJoin account
-    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
+    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::None)
         .expect("Failed to create wallet without default accounts");
 
     let account_type = AccountType::CoinJoin {
@@ -296,7 +296,7 @@ fn test_transaction_affects_multiple_accounts() {
     let network = Network::Testnet;
 
     // Create a wallet with multiple accounts
-    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     // Add another BIP44 account
@@ -421,7 +421,7 @@ fn test_transaction_affects_multiple_accounts() {
 fn test_next_address_method_restrictions() {
     let network = Network::Testnet;
 
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());

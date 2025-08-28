@@ -27,7 +27,7 @@ fn test_improved_watch_only_wallet_creation() {
     // 3. Create a watch-only wallet using the improved implementation
     // This now properly creates an AccountCollection with account 0
     let watch_wallet = unsafe {
-        key_wallet_ffi::wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, error)
+        key_wallet_ffi::wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, false, error)
     };
     assert!(!watch_wallet.is_null());
     assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);

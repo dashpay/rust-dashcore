@@ -46,7 +46,13 @@ pub unsafe extern "C" fn wallet_get_account_xpriv(
     }
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     match wallet.inner().get_bip44_account(network_rust, account_index) {
         Some(account) => {
@@ -96,7 +102,13 @@ pub unsafe extern "C" fn wallet_get_account_xpub(
     }
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     match wallet.inner().get_bip44_account(network_rust, account_index) {
         Some(account) => {
@@ -170,7 +182,13 @@ pub unsafe extern "C" fn wallet_derive_private_key(
     };
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     // Use the new wallet method to derive the private key
     match wallet.inner().derive_private_key(network_rust, &path) {
@@ -240,7 +258,13 @@ pub unsafe extern "C" fn wallet_derive_extended_private_key(
     };
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     // Use the new wallet method to derive the extended private key
     match wallet.inner().derive_extended_private_key(network_rust, &path) {
@@ -309,7 +333,13 @@ pub unsafe extern "C" fn wallet_derive_private_key_as_wif(
     };
 
     let wallet = unsafe { &*wallet };
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     // Use the new wallet method to derive the private key as WIF
     match wallet.inner().derive_private_key_as_wif(network_rust, &path) {
@@ -462,7 +492,13 @@ pub unsafe extern "C" fn private_key_to_wif(
     }
 
     let key = unsafe { &*key };
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     // Convert to WIF format
     use dashcore::PrivateKey as DashPrivateKey;
@@ -537,7 +573,13 @@ pub unsafe extern "C" fn wallet_derive_public_key(
 
     unsafe {
         let wallet = &*wallet;
-        let network_rust: key_wallet::Network = network.into();
+        let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
         // Use the new wallet method to derive the public key
         match wallet.inner().derive_public_key(network_rust, &path) {
@@ -609,7 +651,13 @@ pub unsafe extern "C" fn wallet_derive_extended_public_key(
 
     unsafe {
         let wallet = &*wallet;
-        let network_rust: key_wallet::Network = network.into();
+        let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
         // Use the new wallet method to derive the extended public key
         match wallet.inner().derive_extended_public_key(network_rust, &path) {
@@ -680,7 +728,13 @@ pub unsafe extern "C" fn wallet_derive_public_key_as_hex(
 
     unsafe {
         let wallet = &*wallet;
-        let network_rust: key_wallet::Network = network.into();
+        let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
         // Use the new wallet method to derive the public key as hex
         match wallet.inner().derive_public_key_as_hex(network_rust, &path) {

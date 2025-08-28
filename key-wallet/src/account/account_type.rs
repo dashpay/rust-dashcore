@@ -9,6 +9,7 @@ use crate::Network;
 use bincode_derive::{Decode, Encode};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use crate::transaction_checking::transaction_router::AccountTypeToCheck;
 
 /// Account types supported by the wallet
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,6 +63,28 @@ pub enum AccountType {
     /// Provider platform P2P keys (DIP-3, ED25519)
     /// Path: m/9'/5'/3'/4'/[key_index]
     ProviderPlatformKeys,
+}
+
+impl From<AccountType> for AccountTypeToCheck {
+    fn from(value: AccountType) -> Self {
+        match value {
+            AccountType::Standard { standard_account_type, .. } => {
+                match standard_account_type {
+                    StandardAccountType::BIP44Account => AccountTypeToCheck::StandardBIP44,
+                    StandardAccountType::BIP32Account => AccountTypeToCheck::StandardBIP32,
+                }
+            }
+            AccountType::CoinJoin { .. } => AccountTypeToCheck::CoinJoin,
+            AccountType::IdentityRegistration => AccountTypeToCheck::IdentityRegistration,
+            AccountType::IdentityTopUp { .. } => AccountTypeToCheck::IdentityTopUp,
+            AccountType::IdentityTopUpNotBoundToIdentity => AccountTypeToCheck::IdentityTopUpNotBound,
+            AccountType::IdentityInvitation => AccountTypeToCheck::IdentityInvitation,
+            AccountType::ProviderVotingKeys => AccountTypeToCheck::ProviderVotingKeys,
+            AccountType::ProviderOwnerKeys => AccountTypeToCheck::ProviderOwnerKeys,
+            AccountType::ProviderOperatorKeys => AccountTypeToCheck::ProviderOperatorKeys,
+            AccountType::ProviderPlatformKeys => AccountTypeToCheck::ProviderPlatformKeys,
+        }
+    }
 }
 
 impl AccountType {

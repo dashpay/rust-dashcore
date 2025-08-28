@@ -29,7 +29,7 @@ use crate::types::{FFINetwork, FFIWallet, FFIWalletAccountCreationOptions};
 pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     mnemonic: *const c_char,
     passphrase: *const c_char,
-    network: FFINetwork,
+    networks: FFINetwork,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
@@ -83,7 +83,8 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
         }
     };
 
-    let network_rust: key_wallet::Network = network.into();
+    // Convert networks bit flags to vector
+    let networks_rust = networks.parse_networks();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -93,7 +94,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     };
 
     let wallet = if passphrase_str.is_empty() {
-        match Wallet::from_mnemonic(mnemonic, network_rust, creation_options) {
+        match Wallet::from_mnemonic(mnemonic, &networks_rust, creation_options) {
             Ok(w) => w,
             Err(e) => {
                 FFIError::set_error(
@@ -110,7 +111,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
         match Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             passphrase_str.to_string(),
-            network_rust,
+            &networks_rust,
             creation_options,
         ) {
             Ok(w) => w,
@@ -129,7 +130,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     Box::into_raw(Box::new(FFIWallet::new(wallet)))
 }
 
-/// Create a new wallet from mnemonic (backward compatibility)
+/// Create a new wallet from mnemonic (backward compatibility - single network)
 ///
 /// # Safety
 ///
@@ -166,7 +167,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic(
 pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     seed: *const u8,
     seed_len: usize,
-    network: FFINetwork,
+    networks: FFINetwork,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
@@ -188,7 +189,9 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     let mut seed_array = [0u8; 64];
     seed_array.copy_from_slice(seed_bytes);
     let seed = Seed::new(seed_array);
-    let network_rust: key_wallet::Network = network.into();
+    
+    // Convert networks bit flags to vector
+    let networks_rust = networks.parse_networks();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -197,7 +200,7 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
         (*account_options).to_wallet_options()
     };
 
-    match Wallet::from_seed(seed, network_rust, creation_options) {
+    match Wallet::from_seed(seed, &networks_rust, creation_options) {
         Ok(wallet) => {
             FFIError::set_success(error);
             Box::into_raw(Box::new(FFIWallet::new(wallet)))
@@ -236,159 +239,7 @@ pub unsafe extern "C" fn wallet_create_from_seed(
     )
 }
 
-/// Create a new wallet from seed bytes
-///
-/// # Safety
-///
-/// - `seed_bytes` must be a valid pointer to a byte array of `seed_len` length
-/// - `error` must be a valid pointer to an FFIError structure or null
-/// - The caller must ensure all pointers remain valid for the duration of this call
-/// - The returned pointer must be freed with `wallet_free` when no longer needed
-#[no_mangle]
-pub unsafe extern "C" fn wallet_create_from_seed_bytes(
-    seed_bytes: *const u8,
-    seed_len: usize,
-    network: FFINetwork,
-    error: *mut FFIError,
-) -> *mut FFIWallet {
-    if seed_bytes.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Seed bytes are null".to_string());
-        return ptr::null_mut();
-    }
 
-    let seed_slice = unsafe { slice::from_raw_parts(seed_bytes, seed_len) };
-    let network_rust: key_wallet::Network = network.into();
-
-    // from_seed_bytes expects specific length
-    if seed_len != 64 {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            format!("Invalid seed length: {}, expected 64", seed_len),
-        );
-        return ptr::null_mut();
-    }
-
-    let mut seed_array = [0u8; 64];
-    seed_array.copy_from_slice(seed_slice);
-
-    match Wallet::from_seed(
-        Seed::new(seed_array),
-        network_rust,
-        WalletAccountCreationOptions::Default,
-    ) {
-        Ok(wallet) => {
-            FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIWallet::new(wallet)))
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to create wallet from seed bytes: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
-}
-
-/// Create a watch-only wallet from extended public key
-///
-/// # Safety
-///
-/// - `xpub` must be a valid pointer to a null-terminated C string
-/// - `error` must be a valid pointer to an FFIError structure or null
-/// - The caller must ensure all pointers remain valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn wallet_create_from_xpub(
-    xpub: *const c_char,
-    network: FFINetwork,
-    error: *mut FFIError,
-) -> *mut FFIWallet {
-    if xpub.is_null() {
-        FFIError::set_error(
-            error,
-            FFIErrorCode::InvalidInput,
-            "Extended public key is null".to_string(),
-        );
-        return ptr::null_mut();
-    }
-
-    let xpub_str = match CStr::from_ptr(xpub).to_str() {
-        Ok(s) => s,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Invalid UTF-8 in extended public key".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
-
-    let network_rust: key_wallet::Network = network.into();
-
-    use key_wallet::ExtendedPubKey;
-    use std::str::FromStr;
-
-    let xpub = match ExtendedPubKey::from_str(xpub_str) {
-        Ok(xpub) => xpub,
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                format!("Invalid extended public key: {}", e),
-            );
-            return ptr::null_mut();
-        }
-    };
-
-    // Create a watch-only wallet with the given xpub as account 0
-    use key_wallet::account::StandardAccountType;
-    use key_wallet::{Account, AccountCollection, AccountType};
-
-    let account_type = AccountType::Standard {
-        index: 0,
-        standard_account_type: StandardAccountType::BIP44Account,
-    };
-
-    // Create account 0 with the provided xpub
-    match Account::new(None, account_type, xpub, network_rust) {
-        Ok(account) => {
-            // Create an AccountCollection and add the account
-            let mut account_collection = AccountCollection::new();
-            let _ = account_collection.insert(account);
-
-            // Create the accounts map
-            let mut accounts = std::collections::BTreeMap::new();
-            accounts.insert(network_rust, account_collection);
-
-            // Create the watch-only wallet
-            match Wallet::from_xpub(xpub, accounts) {
-                Ok(wallet) => {
-                    FFIError::set_success(error);
-                    Box::into_raw(Box::new(FFIWallet::new(wallet)))
-                }
-                Err(e) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::WalletError,
-                        format!("Failed to create watch-only wallet: {}", e),
-                    );
-                    ptr::null_mut()
-                }
-            }
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to create account: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
-}
 
 /// Create a new random wallet with options
 ///
@@ -399,11 +250,12 @@ pub unsafe extern "C" fn wallet_create_from_xpub(
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_random_with_options(
-    network: FFINetwork,
+    networks: FFINetwork,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
-    let network_rust: key_wallet::Network = network.into();
+    // Convert networks bit flags to vector
+    let networks_rust = networks.parse_networks();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -412,7 +264,7 @@ pub unsafe extern "C" fn wallet_create_random_with_options(
         (*account_options).to_wallet_options()
     };
 
-    match Wallet::new_random(network_rust, creation_options) {
+    match Wallet::new_random(&networks_rust, creation_options) {
         Ok(wallet) => {
             FFIError::set_success(error);
             Box::into_raw(Box::new(FFIWallet::new(wallet)))
@@ -543,7 +395,20 @@ pub unsafe extern "C" fn wallet_get_xpub(
 
     unsafe {
         let wallet = &*wallet;
-        let network_rust: Network = network.into();
+        
+        use std::convert::TryInto;
+        // Try to convert to a single network
+        let network_rust: Network = match network.try_into() {
+            Ok(n) => n,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    "Must specify exactly one network for getting xpub".to_string(),
+                );
+                return ptr::null_mut();
+            }
+        };
 
         match wallet.inner().get_bip44_account(network_rust, account_index) {
             Some(account) => {
@@ -620,7 +485,7 @@ pub unsafe extern "C" fn wallet_free_const(wallet: *const FFIWallet) {
 pub unsafe extern "C" fn wallet_add_account(
     wallet: *mut FFIWallet,
     network: FFINetwork,
-    account_type: c_uint,
+    account_type: crate::types::FFIAccountType,
     account_index: c_uint,
 ) -> crate::types::FFIAccountResult {
     if wallet.is_null() {
@@ -631,37 +496,25 @@ pub unsafe extern "C" fn wallet_add_account(
     }
 
     let wallet = &mut *wallet;
-    let network_rust: key_wallet::Network = network.into();
-
-    use crate::types::FFIAccountType;
-
-    let account_type_enum = match account_type {
-        0 => FFIAccountType::StandardBIP44,
-        1 => FFIAccountType::StandardBIP32,
-        2 => FFIAccountType::CoinJoin,
-        3 => FFIAccountType::IdentityRegistration,
-        4 => {
-            // IdentityTopUp requires a registration_index
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
-                "IdentityTopUp accounts require a registration_index. Use a specialized function instead".to_string(),
-            );
-        }
-        5 => FFIAccountType::IdentityTopUpNotBoundToIdentity,
-        6 => FFIAccountType::IdentityInvitation,
-        7 => FFIAccountType::ProviderVotingKeys,
-        8 => FFIAccountType::ProviderOwnerKeys,
-        9 => FFIAccountType::ProviderOperatorKeys,
-        10 => FFIAccountType::ProviderPlatformKeys,
-        _ => {
-            return crate::types::FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                format!("Invalid account type: {}", account_type),
+                "Must specify exactly one network".to_string(),
             );
         }
     };
 
-    let account_type = match account_type_enum.to_account_type(account_index, None) {
+    // Check if the account type requires additional parameters
+    if account_type == crate::types::FFIAccountType::IdentityTopUp {
+        return crate::types::FFIAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "IdentityTopUp accounts require a registration_index. Use a specialized function instead".to_string(),
+        );
+    }
+
+    let account_type_rust = match account_type.to_account_type(account_index, None) {
         Some(at) => at,
         None => {
             return crate::types::FFIAccountResult::error(
@@ -674,11 +527,11 @@ pub unsafe extern "C" fn wallet_add_account(
     match wallet.inner_mut() {
         Some(w) => {
             // Use the proper add_account method
-            match w.add_account(account_type, network_rust, None) {
+            match w.add_account(account_type_rust, network_rust, None) {
                 Ok(()) => {
                     // Get the account we just added
                     if let Some(account_collection) = w.accounts.get(&network_rust) {
-                        if let Some(account) = account_collection.account_of_type(account_type) {
+                        if let Some(account) = account_collection.account_of_type(account_type_rust) {
                             let ffi_account = crate::types::FFIAccount::new(account);
                             return crate::types::FFIAccountResult::success(Box::into_raw(
                                 Box::new(ffi_account),
@@ -716,7 +569,7 @@ pub unsafe extern "C" fn wallet_add_account(
 pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     wallet: *mut FFIWallet,
     network: FFINetwork,
-    account_type: c_uint,
+    account_type: crate::types::FFIAccountType,
     account_index: c_uint,
     xpub_bytes: *const u8,
     xpub_len: usize,
@@ -736,42 +589,32 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     }
 
     let wallet = &mut *wallet;
-    let network_rust: key_wallet::Network = network.into();
-
-    use crate::types::FFIAccountType;
-    use key_wallet::ExtendedPubKey;
-
-    let account_type_enum = match account_type {
-        0 => FFIAccountType::StandardBIP44,
-        1 => FFIAccountType::StandardBIP32,
-        2 => FFIAccountType::CoinJoin,
-        3 => FFIAccountType::IdentityRegistration,
-        4 => {
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
-                "IdentityTopUp accounts require a registration_index. Use a specialized function instead".to_string(),
-            );
-        }
-        5 => FFIAccountType::IdentityTopUpNotBoundToIdentity,
-        6 => FFIAccountType::IdentityInvitation,
-        7 => FFIAccountType::ProviderVotingKeys,
-        8 => FFIAccountType::ProviderOwnerKeys,
-        9 => FFIAccountType::ProviderOperatorKeys,
-        10 => FFIAccountType::ProviderPlatformKeys,
-        _ => {
-            return crate::types::FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                format!("Invalid account type: {}", account_type),
+                "Must specify exactly one network".to_string(),
             );
         }
     };
 
-    let account_type = match account_type_enum.to_account_type(account_index, None) {
+    use key_wallet::ExtendedPubKey;
+
+    // Check if the account type requires additional parameters
+    if account_type == crate::types::FFIAccountType::IdentityTopUp {
+        return crate::types::FFIAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "IdentityTopUp accounts require a registration_index. Use a specialized function instead".to_string(),
+        );
+    }
+
+    let account_type_rust = match account_type.to_account_type(account_index, None) {
         Some(at) => at,
         None => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
-                format!("Missing required parameters for account type {}", account_type),
+                format!("Missing required parameters for account type {:?}", account_type),
             );
         }
     };
@@ -799,11 +642,11 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     };
 
     match wallet.inner_mut() {
-        Some(w) => match w.add_account(account_type, network_rust, Some(xpub)) {
+        Some(w) => match w.add_account(account_type_rust, network_rust, Some(xpub)) {
             Ok(()) => {
                 // Get the account we just added
                 if let Some(account_collection) = w.accounts.get(&network_rust) {
-                    if let Some(account) = account_collection.account_of_type(account_type) {
+                    if let Some(account) = account_collection.account_of_type(account_type_rust) {
                         let ffi_account = crate::types::FFIAccount::new(account);
                         return crate::types::FFIAccountResult::success(Box::into_raw(Box::new(
                             ffi_account,
@@ -840,7 +683,7 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
 pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     wallet: *mut FFIWallet,
     network: FFINetwork,
-    account_type: c_uint,
+    account_type: crate::types::FFIAccountType,
     account_index: c_uint,
     xpub_string: *const c_char,
 ) -> crate::types::FFIAccountResult {
@@ -859,42 +702,32 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     }
 
     let wallet = &mut *wallet;
-    let network_rust: key_wallet::Network = network.into();
-
-    use crate::types::FFIAccountType;
-    use key_wallet::ExtendedPubKey;
-
-    let account_type_enum = match account_type {
-        0 => FFIAccountType::StandardBIP44,
-        1 => FFIAccountType::StandardBIP32,
-        2 => FFIAccountType::CoinJoin,
-        3 => FFIAccountType::IdentityRegistration,
-        4 => {
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
-                "IdentityTopUp accounts require a registration_index. Use a specialized function instead".to_string(),
-            );
-        }
-        5 => FFIAccountType::IdentityTopUpNotBoundToIdentity,
-        6 => FFIAccountType::IdentityInvitation,
-        7 => FFIAccountType::ProviderVotingKeys,
-        8 => FFIAccountType::ProviderOwnerKeys,
-        9 => FFIAccountType::ProviderOperatorKeys,
-        10 => FFIAccountType::ProviderPlatformKeys,
-        _ => {
-            return crate::types::FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                format!("Invalid account type: {}", account_type),
+                "Must specify exactly one network".to_string(),
             );
         }
     };
 
-    let account_type = match account_type_enum.to_account_type(account_index, None) {
+    use key_wallet::ExtendedPubKey;
+
+    // Check if the account type requires additional parameters
+    if account_type == crate::types::FFIAccountType::IdentityTopUp {
+        return crate::types::FFIAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "IdentityTopUp accounts require a registration_index. Use a specialized function instead".to_string(),
+        );
+    }
+
+    let account_type_rust = match account_type.to_account_type(account_index, None) {
         Some(at) => at,
         None => {
             return crate::types::FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
-                format!("Missing required parameters for account type {}", account_type),
+                format!("Missing required parameters for account type {:?}", account_type),
             );
         }
     };
@@ -921,11 +754,11 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     };
 
     match wallet.inner_mut() {
-        Some(w) => match w.add_account(account_type, network_rust, Some(xpub)) {
+        Some(w) => match w.add_account(account_type_rust, network_rust, Some(xpub)) {
             Ok(()) => {
                 // Get the account we just added
                 if let Some(account_collection) = w.accounts.get(&network_rust) {
-                    if let Some(account) = account_collection.account_of_type(account_type) {
+                    if let Some(account) = account_collection.account_of_type(account_type_rust) {
                         let ffi_account = crate::types::FFIAccount::new(account);
                         return crate::types::FFIAccountResult::success(Box::into_raw(Box::new(
                             ffi_account,

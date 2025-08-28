@@ -189,13 +189,15 @@ typedef enum {
 } FFILanguage;
 
 /*
- FFI Network type
+ FFI Network type (bit flags for multiple networks)
  */
 typedef enum {
-    DASH = 0,
-    TESTNET = 1,
-    REGTEST = 2,
-    DEVNET = 3,
+    NO_NETWORKS = 0,
+    DASH = 1,
+    TESTNET = 2,
+    REGTEST = 4,
+    DEVNET = 8,
+    ALL_NETWORKS = 15,
 } FFINetwork;
 
 /*
@@ -641,7 +643,7 @@ unsigned int wallet_get_account_count(const FFIWallet *wallet,
 
 bool managed_wallet_get_address_pool_info(const FFIManagedWallet *managed_wallet,
                                           FFINetwork network,
-                                          unsigned int account_type,
+                                          FFIAccountType account_type,
                                           unsigned int account_index,
                                           unsigned int registration_index,
                                           FFIAddressPoolType pool_type,
@@ -688,9 +690,8 @@ bool managed_wallet_set_gap_limit(FFIManagedWallet *managed_wallet,
 bool managed_wallet_generate_addresses_to_index(FFIManagedWallet *managed_wallet,
                                                 const FFIWallet *wallet,
                                                 FFINetwork network,
-                                                unsigned int account_type,
+                                                FFIAccountType account_type,
                                                 unsigned int account_index,
-                                                unsigned int registration_index,
                                                 FFIAddressPoolType pool_type,
                                                 unsigned int target_index,
                                                 FFIError *error)
@@ -1785,13 +1786,13 @@ bool wallet_get_utxos(const FFIWallet *_wallet,
 
 FFIWallet *wallet_create_from_mnemonic_with_options(const char *mnemonic,
                                                     const char *passphrase,
-                                                    FFINetwork network,
+                                                    FFINetwork networks,
                                                     const FFIWalletAccountCreationOptions *account_options,
                                                     FFIError *error)
 ;
 
 /*
- Create a new wallet from mnemonic (backward compatibility)
+ Create a new wallet from mnemonic (backward compatibility - single network)
 
  # Safety
 
@@ -1821,7 +1822,7 @@ FFIWallet *wallet_create_from_mnemonic(const char *mnemonic,
 
 FFIWallet *wallet_create_from_seed_with_options(const uint8_t *seed,
                                                 size_t seed_len,
-                                                FFINetwork network,
+                                                FFINetwork networks,
                                                 const FFIWalletAccountCreationOptions *account_options,
                                                 FFIError *error)
 ;
@@ -1843,34 +1844,6 @@ FFIWallet *wallet_create_from_seed(const uint8_t *seed,
 ;
 
 /*
- Create a new wallet from seed bytes
-
- # Safety
-
- - `seed_bytes` must be a valid pointer to a byte array of `seed_len` length
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure all pointers remain valid for the duration of this call
- - The returned pointer must be freed with `wallet_free` when no longer needed
- */
-
-FFIWallet *wallet_create_from_seed_bytes(const uint8_t *seed_bytes,
-                                         size_t seed_len,
-                                         FFINetwork network,
-                                         FFIError *error)
-;
-
-/*
- Create a watch-only wallet from extended public key
-
- # Safety
-
- - `xpub` must be a valid pointer to a null-terminated C string
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure all pointers remain valid for the duration of this call
- */
- FFIWallet *wallet_create_from_xpub(const char *xpub, FFINetwork network, FFIError *error) ;
-
-/*
  Create a new random wallet with options
 
  # Safety
@@ -1880,7 +1853,7 @@ FFIWallet *wallet_create_from_seed_bytes(const uint8_t *seed_bytes,
  - The caller must ensure all pointers remain valid for the duration of this call
  */
 
-FFIWallet *wallet_create_random_with_options(FFINetwork network,
+FFIWallet *wallet_create_random_with_options(FFINetwork networks,
                                              const FFIWalletAccountCreationOptions *account_options,
                                              FFIError *error)
 ;
@@ -1986,7 +1959,7 @@ char *wallet_get_xpub(const FFIWallet *wallet,
 
 FFIAccountResult wallet_add_account(FFIWallet *wallet,
                                     FFINetwork network,
-                                    unsigned int account_type,
+                                    FFIAccountType account_type,
                                     unsigned int account_index)
 ;
 
@@ -2004,7 +1977,7 @@ FFIAccountResult wallet_add_account(FFIWallet *wallet,
 
 FFIAccountResult wallet_add_account_with_xpub_bytes(FFIWallet *wallet,
                                                     FFINetwork network,
-                                                    unsigned int account_type,
+                                                    FFIAccountType account_type,
                                                     unsigned int account_index,
                                                     const uint8_t *xpub_bytes,
                                                     size_t xpub_len)
@@ -2024,7 +1997,7 @@ FFIAccountResult wallet_add_account_with_xpub_bytes(FFIWallet *wallet,
 
 FFIAccountResult wallet_add_account_with_string_xpub(FFIWallet *wallet,
                                                      FFINetwork network,
-                                                     unsigned int account_type,
+                                                     FFIAccountType account_type,
                                                      unsigned int account_index,
                                                      const char *xpub_string)
 ;
@@ -2071,6 +2044,79 @@ bool wallet_manager_add_wallet_from_mnemonic(FFIWalletManager *manager,
                                              const char *mnemonic,
                                              const char *passphrase,
                                              FFINetwork network,
+                                             FFIError *error)
+;
+
+/*
+ Create a wallet from mnemonic and return serialized bytes
+
+ Creates a wallet from a mnemonic phrase, optionally downgrading it to a pubkey-only wallet
+ (watch-only or externally signable), and returns the serialized wallet bytes.
+
+ # Safety
+
+ - `mnemonic` must be a valid pointer to a null-terminated C string
+ - `passphrase` must be a valid pointer to a null-terminated C string or null
+ - `birth_height` is optional, pass 0 for default
+ - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
+ - `downgrade_to_pubkey_wallet` if true, creates a watch-only or externally signable wallet
+ - `allow_external_signing` if true AND downgrade_to_pubkey_wallet is true, creates an externally signable wallet
+ - `wallet_bytes_out` must be a valid pointer to a pointer that will receive the serialized bytes
+ - `wallet_bytes_len_out` must be a valid pointer that will receive the byte length
+ - `wallet_id_out` must be a valid pointer to a 32-byte array that will receive the wallet ID
+ - `error` must be a valid pointer to an FFIError structure or null
+ - The caller must ensure all pointers remain valid for the duration of this call
+ - The caller must free the returned wallet_bytes using wallet_manager_free_wallet_bytes()
+ */
+
+bool create_wallet_from_mnemonic_return_serialized_bytes(const char *mnemonic,
+                                                         const char *passphrase,
+                                                         FFINetwork network,
+                                                         unsigned int _birth_height,
+                                                         const FFIWalletAccountCreationOptions *account_options,
+                                                         bool downgrade_to_pubkey_wallet,
+                                                         bool allow_external_signing,
+                                                         uint8_t **wallet_bytes_out,
+                                                         size_t *wallet_bytes_len_out,
+                                                         uint8_t *wallet_id_out,
+                                                         FFIError *error)
+;
+
+/*
+ Free wallet bytes buffer
+
+ # Safety
+
+ - `wallet_bytes` must be a valid pointer to a buffer allocated by create_wallet_from_mnemonic_return_serialized_bytes
+ - `bytes_len` must match the original allocation size
+ - The pointer must not be used after calling this function
+ - This function must only be called once per buffer
+ */
+
+void wallet_manager_free_wallet_bytes(uint8_t *wallet_bytes,
+                                      size_t bytes_len)
+;
+
+/*
+ Import a wallet from bincode-serialized bytes
+
+ Deserializes a wallet from bytes and adds it to the manager.
+ Returns a 32-byte wallet ID on success.
+
+ # Safety
+
+ - `manager` must be a valid pointer to an FFIWalletManager instance
+ - `wallet_bytes` must be a valid pointer to bincode-serialized wallet bytes
+ - `wallet_bytes_len` must be the exact length of the wallet bytes
+ - `wallet_id_out` must be a valid pointer to a 32-byte array that will receive the wallet ID
+ - `error` must be a valid pointer to an FFIError structure or null
+ - The caller must ensure all pointers remain valid for the duration of this call
+ */
+
+bool wallet_manager_import_wallet_from_bytes(FFIWalletManager *manager,
+                                             const uint8_t *wallet_bytes,
+                                             size_t wallet_bytes_len,
+                                             uint8_t *wallet_id_out,
                                              FFIError *error)
 ;
 

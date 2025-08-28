@@ -13,7 +13,7 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
 use key_wallet_manager::spv_wallet_manager::{SPVSyncStatus, SPVWalletManager};
 use key_wallet_manager::wallet_interface::WalletInterface;
-use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
+use key_wallet_manager::wallet_manager::WalletManager;
 
 /// Create a test transaction
 fn create_test_transaction(value: u64) -> Transaction {
@@ -69,44 +69,19 @@ fn create_mock_filter(block: &Block) -> BlockFilter {
     BlockFilter::new(&filter_bytes)
 }
 
-#[test]
-fn test_spv_integration_basic() {
-    let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
-
-    // Create a test wallet
-    let wallet_id: WalletId = [1u8; 32];
-    spv.base
-        .create_wallet(
-            wallet_id,
-            "Test Wallet".to_string(),
-            WalletAccountCreationOptions::Default,
-            Network::Testnet,
-        )
-        .ok();
-
-    // Verify initial state
-    assert_eq!(spv.sync_status(Network::Testnet), SPVSyncStatus::Idle);
-    assert_eq!(spv.sync_height(Network::Testnet), 0);
-}
-
 #[tokio::test]
 async fn test_filter_checking() {
     let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
-    // Create a test wallet
-    let wallet_id: WalletId = [1u8; 32];
-
     // Add a test address to monitor - simplified for testing
     // In reality, addresses would be generated from wallet accounts
 
-    spv.base
-        .create_wallet(
-            wallet_id,
-            "Test Wallet".to_string(),
+    let _wallet_id = spv.base
+        .create_wallet_with_random_mnemonic(
             WalletAccountCreationOptions::Default,
             Network::Testnet,
         )
-        .ok();
+        .expect("Failed to create wallet");
 
     // Create a test block with a transaction
     let tx = create_test_transaction(100000);
@@ -128,15 +103,12 @@ async fn test_block_processing() {
     let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Create a test wallet
-    let wallet_id: WalletId = [1u8; 32];
-    spv.base
-        .create_wallet(
-            wallet_id,
-            "Test Wallet".to_string(),
+    let _wallet_id = spv.base
+        .create_wallet_with_random_mnemonic(
             WalletAccountCreationOptions::Default,
             Network::Testnet,
         )
-        .ok();
+        .expect("Failed to create wallet");
 
     // Create a transaction
     let tx = create_test_transaction(100000);
@@ -149,12 +121,6 @@ async fn test_block_processing() {
 
     // Since we're not watching specific addresses, no transactions should be relevant
     assert_eq!(result.len(), 0);
-}
-
-#[test]
-fn test_mempool_transaction() {
-    // This test would need async runtime to work with the async trait
-    // For now, we'll skip this test or make it simpler
 }
 
 #[test]
@@ -232,25 +198,14 @@ fn test_sync_status_tracking() {
     assert_eq!(spv.sync_status(Network::Testnet), SPVSyncStatus::Synced);
 }
 
-#[test]
-fn test_reorg_handling() {
-    // This test requires async runtime
-    // For now, we'll skip the full implementation
-}
-
 #[tokio::test]
 async fn test_multiple_wallets() {
     let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Create and add multiple wallets
-    for i in 0..3 {
-        let mut wallet_id = [0u8; 32];
-        wallet_id[0] = i as u8; // Make each ID unique
-
+    for _i in 0..3 {
         spv.base
-            .create_wallet(
-                wallet_id,
-                format!("Test Wallet {}", i),
+            .create_wallet_with_random_mnemonic(
                 WalletAccountCreationOptions::Default,
                 Network::Testnet,
             )
@@ -283,15 +238,12 @@ async fn test_spent_utxo_tracking() {
     let mut spv = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Create a test wallet
-    let wallet_id: WalletId = [1u8; 32];
-    spv.base
-        .create_wallet(
-            wallet_id,
-            "Test Wallet".to_string(),
+    let _wallet_id = spv.base
+        .create_wallet_with_random_mnemonic(
             WalletAccountCreationOptions::Default,
             Network::Testnet,
         )
-        .ok();
+        .expect("Failed to create wallet");
 
     // Create a transaction
     let tx1 = create_test_transaction(100000);

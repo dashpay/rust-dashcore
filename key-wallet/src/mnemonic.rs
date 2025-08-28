@@ -14,6 +14,7 @@ use bip39 as bip39_crate;
 use rand::{RngCore, SeedableRng};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Language for mnemonic generation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +51,7 @@ impl From<Language> for bip39_crate::Language {
 }
 
 /// BIP39 Mnemonic phrase
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Mnemonic {
     inner: bip39_crate::Mnemonic,

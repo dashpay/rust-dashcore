@@ -65,7 +65,7 @@ fn test_coinbase_transaction_routing_to_bip44_receive_address() {
     let network = Network::Testnet;
 
     // Create a wallet with a BIP44 account
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with BIP44 account for coinbase test");
 
     let mut managed_wallet_info =
@@ -140,7 +140,7 @@ fn test_coinbase_transaction_routing_to_bip44_change_address() {
     let network = Network::Testnet;
 
     // Create a wallet with a BIP44 account
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with BIP44 account for coinbase change test");
 
     let mut managed_wallet_info =
@@ -214,7 +214,7 @@ fn test_coinbase_transaction_routing_to_bip44_change_address() {
 fn test_update_state_flag_behavior() {
     let network = Network::Testnet;
 
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
@@ -349,7 +349,7 @@ fn test_coinbase_routing() {
 fn test_coinbase_transaction_with_payload_routing() {
     // Test coinbase with special payload routing to BIP44 account
     let network = Network::Testnet;
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet");
 
     let mut managed_wallet_info =

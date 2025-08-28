@@ -186,7 +186,7 @@ fn test_watch_only_wallet() {
 
     // 3. Create watch-only wallet from xpub
     let watch_wallet = unsafe {
-        key_wallet_ffi::wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, error)
+        key_wallet_ffi::wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, false, error)
     };
     assert!(!watch_wallet.is_null());
 

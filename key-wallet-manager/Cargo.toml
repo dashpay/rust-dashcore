@@ -9,10 +9,11 @@ readme = "README.md"
 license = "CC0-1.0"
 
 [features]
-default = ["std"]
+default = ["std", "bincode"]
 std = ["key-wallet/std", "dashcore/std", "dashcore_hashes/std", "secp256k1/std"]
 serde = ["dep:serde", "key-wallet/serde", "dashcore/serde"]
 getrandom = ["key-wallet/getrandom"]
+bincode = ["dep:bincode","key-wallet/bincode"]
 
 [dependencies]
 key-wallet = { path = "../key-wallet", default-features = false }
@@ -21,6 +22,8 @@ dashcore_hashes = { path = "../hashes", default-features = false }
 secp256k1 = { version = "0.30.0", default-features = false, features = ["recovery"] }
 serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
 async-trait = "0.1"
+bincode = { version = "=2.0.0-rc.3", optional = true }
+zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
 hex = "0.4"

@@ -70,7 +70,7 @@ fn test_asset_unlock_classification() {
 #[test]
 fn test_asset_unlock_transaction_routing() {
     let network = Network::Testnet;
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
@@ -161,7 +161,7 @@ fn test_asset_unlock_routing_to_bip32_account() {
     let network = Network::Testnet;
 
     // Create wallet with default options (includes both BIP44 and BIP32)
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet");
 
     let mut managed_wallet_info =

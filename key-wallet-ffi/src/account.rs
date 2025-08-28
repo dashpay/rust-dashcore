@@ -24,7 +24,13 @@ pub unsafe extern "C" fn wallet_get_account(
     }
 
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     let account_type_enum = match account_type {
         0 => FFIAccountType::StandardBIP44,
@@ -94,7 +100,13 @@ pub unsafe extern "C" fn wallet_get_top_up_account_with_registration_index(
     }
 
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     // This function is specifically for IdentityTopUp accounts
     let account_type = key_wallet::AccountType::IdentityTopUp {
@@ -172,7 +184,13 @@ pub unsafe extern "C" fn wallet_get_account_count(
     }
 
     let wallet = &*wallet;
-    let network: key_wallet::Network = network.into();
+    let network: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(error, FFIErrorCode::InvalidInput, "Must specify exactly one network".to_string());
+            return ptr::null_mut();
+        }
+    };
 
     match wallet.inner().accounts.get(&network) {
         Some(accounts) => {

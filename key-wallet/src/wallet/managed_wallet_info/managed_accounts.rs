@@ -394,7 +394,7 @@ mod tests {
     fn test_add_managed_account() {
         // Create a test wallet without BLS accounts to avoid that complexity
         let mut wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
         .unwrap();

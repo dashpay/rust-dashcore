@@ -42,6 +42,7 @@ item_types = ["functions", "enums", "structs", "typedefs", "opaque", "constants"
 "FFIExtendedPublicKey" = ""
 "FFIManagedWalletInfo" = ""
 "FFIWalletManager" = ""
+"ManagedWalletInfo" = ""
 
 [export.rename]
 # Rename types to match C conventions
