@@ -799,7 +799,7 @@ impl std::error::Error for Error {
             | UnknownSpentOutput(_)
             | Serialization => None,
             #[cfg(feature = "bitcoinconsensus")]
-            BitcoinConsensus(ref e) => Some(e),
+            BitcoinConsensus(_) => None,
         }
     }
 }

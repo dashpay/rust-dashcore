@@ -78,12 +78,11 @@ const UTXO_3: P2trUtxo = P2trUtxo {
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use dashcore::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey, Fingerprint};
 use dashcore::consensus::encode;
 use dashcore::constants::COIN_VALUE;
+use dashcore::hashes::Hash;
 use dashcore::key::{TapTweak, XOnlyPublicKey};
 use dashcore::opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP};
-use dashcore::psbt::{self, Input, Output, Psbt, PsbtSighashType};
 use dashcore::secp256k1::Secp256k1;
 use dashcore::sighash::{self, SighashCache, TapSighash, TapSighashType};
 use dashcore::taproot::{self, LeafVersion, TapLeafHash, TaprootBuilder, TaprootSpendInfo};
@@ -91,6 +90,10 @@ use dashcore::{
     Address, Amount, Network, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Witness, absolute,
     script,
 };
+use key_wallet::bip32::{
+    ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey, Fingerprint,
+};
+use key_wallet::psbt::{self, Input, Output, Psbt, PsbtSighashType};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let secp = Secp256k1::new();
@@ -785,7 +788,7 @@ fn sign_psbt_taproot(
         Some(_) => keypair, // no tweak for script spend
     };
 
-    let sig = secp.sign_schnorr(&hash.into(), &keypair);
+    let sig = secp.sign_schnorr(hash.as_byte_array(), &keypair);
 
     let final_signature = taproot::Signature {
         sig,

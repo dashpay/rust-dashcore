@@ -79,6 +79,7 @@ bincode = { version= "=2.0.0-rc.3" }
 assert_matches = "1.5.0"
 dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
 criterion = "0.5"
+key-wallet = { path = "../key-wallet" }
 
 
 [[example]]
