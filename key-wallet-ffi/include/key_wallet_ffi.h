@@ -1457,26 +1457,6 @@ bool wallet_generate_provider_key(const FFIWallet *wallet,
  void provider_key_info_free(FFIProviderKeyInfo *info) ;
 
 /*
- Get the address for a provider key
-
- This returns the P2PKH address corresponding to the provider key at
- the specified index. This is useful for funding provider accounts.
-
- # Safety
-
- - `wallet` must be a valid pointer to an FFIWallet
- - `error` must be a valid pointer to an FFIError or null
- - The returned string must be freed by the caller
- */
-
-char *wallet_get_provider_key_address(const FFIWallet *wallet,
-                                      FFINetwork network,
-                                      FFIProviderKeyType key_type,
-                                      unsigned int _key_index,
-                                      FFIError *error)
-;
-
-/*
  Sign data with a provider key
 
  This signs arbitrary data with the provider key at the specified index.
@@ -1518,7 +1498,7 @@ bool wallet_sign_with_provider_key(const FFIWallet *wallet,
  */
 
 bool wallet_build_transaction(FFIWallet *wallet,
-                              FFINetwork network,
+                              FFINetwork _network,
                               unsigned int account_index,
                               const FFITxOutput *outputs,
                               size_t outputs_count,
@@ -1542,7 +1522,7 @@ bool wallet_build_transaction(FFIWallet *wallet,
  */
 
 bool wallet_sign_transaction(const FFIWallet *wallet,
-                             FFINetwork network,
+                             FFINetwork _network,
                              const uint8_t *tx_bytes,
                              size_t tx_len,
                              uint8_t **signed_tx_out,
@@ -2001,13 +1981,14 @@ bool wallet_manager_add_wallet_from_mnemonic(FFIWalletManager *manager,
 ;
 
 /*
- Create a wallet from mnemonic and return serialized bytes
+ Add a wallet from mnemonic to the manager and return serialized bytes
 
- Creates a wallet from a mnemonic phrase, optionally downgrading it to a pubkey-only wallet
- (watch-only or externally signable), and returns the serialized wallet bytes.
+ Creates a wallet from a mnemonic phrase, adds it to the manager, optionally downgrading it
+ to a pubkey-only wallet (watch-only or externally signable), and returns the serialized wallet bytes.
 
  # Safety
 
+ - `manager` must be a valid pointer to an FFIWalletManager instance
  - `mnemonic` must be a valid pointer to a null-terminated C string
  - `passphrase` must be a valid pointer to a null-terminated C string or null
  - `birth_height` is optional, pass 0 for default
@@ -2022,17 +2003,18 @@ bool wallet_manager_add_wallet_from_mnemonic(FFIWalletManager *manager,
  - The caller must free the returned wallet_bytes using wallet_manager_free_wallet_bytes()
  */
 
-bool create_wallet_from_mnemonic_return_serialized_bytes(const char *mnemonic,
-                                                         const char *passphrase,
-                                                         FFINetwork network,
-                                                         unsigned int _birth_height,
-                                                         const FFIWalletAccountCreationOptions *account_options,
-                                                         bool downgrade_to_pubkey_wallet,
-                                                         bool allow_external_signing,
-                                                         uint8_t **wallet_bytes_out,
-                                                         size_t *wallet_bytes_len_out,
-                                                         uint8_t *wallet_id_out,
-                                                         FFIError *error)
+bool wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(FFIWalletManager *manager,
+                                                                     const char *mnemonic,
+                                                                     const char *passphrase,
+                                                                     FFINetwork network,
+                                                                     unsigned int birth_height,
+                                                                     const FFIWalletAccountCreationOptions *account_options,
+                                                                     bool downgrade_to_pubkey_wallet,
+                                                                     bool allow_external_signing,
+                                                                     uint8_t **wallet_bytes_out,
+                                                                     size_t *wallet_bytes_len_out,
+                                                                     uint8_t *wallet_id_out,
+                                                                     FFIError *error)
 ;
 
 /*
@@ -2040,7 +2022,7 @@ bool create_wallet_from_mnemonic_return_serialized_bytes(const char *mnemonic,
 
  # Safety
 
- - `wallet_bytes` must be a valid pointer to a buffer allocated by create_wallet_from_mnemonic_return_serialized_bytes
+ - `wallet_bytes` must be a valid pointer to a buffer allocated by wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes
  - `bytes_len` must match the original allocation size
  - The pointer must not be used after calling this function
  - This function must only be called once per buffer

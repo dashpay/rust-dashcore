@@ -88,7 +88,7 @@ pub unsafe extern "C" fn address_validate(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
     use std::str::FromStr;
@@ -168,7 +168,7 @@ pub unsafe extern "C" fn address_get_type(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return u8::MAX;
         }
     };
     use std::str::FromStr;

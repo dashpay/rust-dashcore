@@ -79,7 +79,7 @@ pub unsafe extern "C" fn wallet_generate_provider_key(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
 
@@ -248,117 +248,6 @@ pub unsafe extern "C" fn provider_key_info_free(info: *mut FFIProviderKeyInfo) {
     }
 }
 
-/// Get the address for a provider key
-///
-/// This returns the P2PKH address corresponding to the provider key at
-/// the specified index. This is useful for funding provider accounts.
-///
-/// # Safety
-///
-/// - `wallet` must be a valid pointer to an FFIWallet
-/// - `error` must be a valid pointer to an FFIError or null
-/// - The returned string must be freed by the caller
-#[no_mangle]
-pub unsafe extern "C" fn wallet_get_provider_key_address(
-    wallet: *const FFIWallet,
-    network: FFINetwork,
-    key_type: FFIProviderKeyType,
-    _key_index: c_uint,
-    error: *mut FFIError,
-) -> *mut c_char {
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return ptr::null_mut();
-    }
-
-    let wallet = &*wallet;
-    let network_rust: key_wallet::Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
-
-    // Determine the account type based on key type
-    let account_type = match key_type {
-        FFIProviderKeyType::VotingKeys => AccountType::ProviderVotingKeys,
-        FFIProviderKeyType::OwnerKeys => AccountType::ProviderOwnerKeys,
-        FFIProviderKeyType::OperatorKeys => AccountType::ProviderOperatorKeys,
-        FFIProviderKeyType::PlatformKeys => AccountType::ProviderPlatformKeys,
-    };
-
-    // Get the account
-    let accounts = match wallet.inner().accounts.get(&network_rust) {
-        Some(accounts) => accounts,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::NotFound,
-                "No accounts for network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
-
-    let account = match &account_type {
-        AccountType::ProviderVotingKeys => accounts.provider_voting_keys.as_ref(),
-        AccountType::ProviderOwnerKeys => accounts.provider_owner_keys.as_ref(),
-        AccountType::ProviderOperatorKeys => None, // BLSAccount not yet supported
-        AccountType::ProviderPlatformKeys => None, // EdDSAAccount not yet supported
-        _ => None,
-    };
-
-    let _account = match account {
-        Some(acc) => acc,
-        None => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::NotFound,
-                format!("Provider account type {:?} not found", account_type),
-            );
-            return ptr::null_mut();
-        }
-    };
-
-    // Get the address at the specified index
-    // For now, return a placeholder address until proper implementation is available
-    // TODO: Implement proper address derivation for provider keys
-    let address_str = "XunknownProviderAddress";
-    let result: Result<String, String> = Ok(address_str.to_string());
-    match result {
-        Ok(address) => {
-            let address_str = address.to_string();
-            match CString::new(address_str) {
-                Ok(c_str) => {
-                    FFIError::set_success(error);
-                    c_str.into_raw()
-                }
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InternalError,
-                        "Failed to convert address to C string".to_string(),
-                    );
-                    ptr::null_mut()
-                }
-            }
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to get provider key address: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
-}
-
 /// Sign data with a provider key
 ///
 /// This signs arbitrary data with the provider key at the specified index.
@@ -400,7 +289,7 @@ pub unsafe extern "C" fn wallet_sign_with_provider_key(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
     let _data_slice = slice::from_raw_parts(data, data_len);

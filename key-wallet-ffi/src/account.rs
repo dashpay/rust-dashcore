@@ -27,12 +27,10 @@ pub unsafe extern "C" fn wallet_get_account(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(
-                error,
+            return FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
         }
     };
 
@@ -73,12 +71,10 @@ pub unsafe extern "C" fn wallet_get_top_up_account_with_registration_index(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
-            FFIError::set_error(
-                error,
+            return FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
         }
     };
 
@@ -166,7 +162,7 @@ pub unsafe extern "C" fn wallet_get_account_count(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return 0;
         }
     };
 

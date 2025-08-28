@@ -26,7 +26,7 @@ pub struct FFITxOutput {
 #[no_mangle]
 pub unsafe extern "C" fn wallet_build_transaction(
     wallet: *mut FFIWallet,
-    network: FFINetwork,
+    _network: FFINetwork,
     account_index: c_uint,
     outputs: *const FFITxOutput,
     outputs_count: usize,
@@ -70,7 +70,7 @@ pub unsafe extern "C" fn wallet_build_transaction(
 #[no_mangle]
 pub unsafe extern "C" fn wallet_sign_transaction(
     wallet: *const FFIWallet,
-    network: FFINetwork,
+    _network: FFINetwork,
     tx_bytes: *const u8,
     tx_len: usize,
     signed_tx_out: *mut *mut u8,
@@ -162,7 +162,7 @@ pub unsafe extern "C" fn wallet_check_transaction(
                     FFIErrorCode::InvalidInput,
                     "Must specify exactly one network".to_string(),
                 );
-                return ptr::null_mut();
+                return false;
             }
         };
         let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);

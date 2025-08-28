@@ -15,6 +15,10 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
+        // Create a wallet manager
+        let manager = wallet_manager::wallet_manager_create(error);
+        assert!(!manager.is_null());
+
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
 
@@ -24,7 +28,8 @@ mod tests {
 
         // Create a full wallet with private keys
         let success = unsafe {
-            wallet_manager::create_wallet_from_mnemonic_return_serialized_bytes(
+            wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
+                manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
                 FFINetwork::Testnet,
@@ -53,6 +58,7 @@ mod tests {
                 wallet_bytes_out,
                 wallet_bytes_len_out,
             );
+            wallet_manager::wallet_manager_free(manager);
         }
     }
 
@@ -60,6 +66,10 @@ mod tests {
     fn test_create_wallet_return_serialized_bytes_watch_only() {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
+
+        // Create a wallet manager
+        let manager = wallet_manager::wallet_manager_create(error);
+        assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
@@ -70,7 +80,8 @@ mod tests {
 
         // Create a watch-only wallet (no private keys)
         let success = unsafe {
-            wallet_manager::create_wallet_from_mnemonic_return_serialized_bytes(
+            wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
+                manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
                 FFINetwork::Testnet,
@@ -96,6 +107,7 @@ mod tests {
                 wallet_bytes_out,
                 wallet_bytes_len_out,
             );
+            wallet_manager::wallet_manager_free(manager);
         }
     }
 
@@ -103,6 +115,10 @@ mod tests {
     fn test_create_wallet_return_serialized_bytes_externally_signable() {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
+
+        // Create a wallet manager
+        let manager = wallet_manager::wallet_manager_create(error);
+        assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
@@ -113,7 +129,8 @@ mod tests {
 
         // Create an externally signable wallet
         let success = unsafe {
-            wallet_manager::create_wallet_from_mnemonic_return_serialized_bytes(
+            wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
+                manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
                 FFINetwork::Testnet,
@@ -139,6 +156,7 @@ mod tests {
                 wallet_bytes_out,
                 wallet_bytes_len_out,
             );
+            wallet_manager::wallet_manager_free(manager);
         }
     }
 
@@ -146,6 +164,10 @@ mod tests {
     fn test_create_wallet_with_passphrase() {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
+
+        // Create a wallet manager
+        let manager = wallet_manager::wallet_manager_create(error);
+        assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("test_passphrase").unwrap();
@@ -156,7 +178,8 @@ mod tests {
 
         // Create wallet with passphrase
         let success = unsafe {
-            wallet_manager::create_wallet_from_mnemonic_return_serialized_bytes(
+            wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
+                manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
                 FFINetwork::Testnet,
@@ -182,6 +205,7 @@ mod tests {
                 wallet_bytes_out,
                 wallet_bytes_len_out,
             );
+            wallet_manager::wallet_manager_free(manager);
         }
     }
 
@@ -189,6 +213,10 @@ mod tests {
     fn test_import_serialized_wallet() {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
+
+        // Create a wallet manager
+        let manager = wallet_manager::wallet_manager_create(error);
+        assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
@@ -199,7 +227,8 @@ mod tests {
 
         // First create and serialize a wallet
         let success = unsafe {
-            wallet_manager::create_wallet_from_mnemonic_return_serialized_bytes(
+            wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
+                manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
                 FFINetwork::Testnet,
@@ -253,6 +282,10 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
+        // Create a wallet manager
+        let manager = wallet_manager::wallet_manager_create(error);
+        assert!(!manager.is_null());
+
         let invalid_mnemonic = CString::new("invalid mnemonic phrase").unwrap();
         let passphrase = CString::new("").unwrap();
 
@@ -261,7 +294,8 @@ mod tests {
         let mut wallet_id_out = [0u8; 32];
 
         let success = unsafe {
-            wallet_manager::create_wallet_from_mnemonic_return_serialized_bytes(
+            wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
+                manager,
                 invalid_mnemonic.as_ptr(),
                 passphrase.as_ptr(),
                 FFINetwork::Testnet,
@@ -287,12 +321,17 @@ mod tests {
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
 
+        // Create a wallet manager
+        let manager = wallet_manager::wallet_manager_create(error);
+        assert!(!manager.is_null());
+
         let mut wallet_bytes_out: *mut u8 = ptr::null_mut();
         let mut wallet_bytes_len_out: usize = 0;
         let mut wallet_id_out = [0u8; 32];
 
         let success = unsafe {
-            wallet_manager::create_wallet_from_mnemonic_return_serialized_bytes(
+            wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
+                manager,
                 ptr::null(),
                 ptr::null(),
                 FFINetwork::Testnet,
@@ -317,6 +356,10 @@ mod tests {
 
         let mut error = FFIError::success();
         let error = &mut error as *mut FFIError;
+
+        // Create a wallet manager
+        let manager = wallet_manager::wallet_manager_create(error);
+        assert!(!manager.is_null());
 
         let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
         let passphrase = CString::new("").unwrap();
@@ -343,7 +386,8 @@ mod tests {
         let mut wallet_id_out = [0u8; 32];
 
         let success = unsafe {
-            wallet_manager::create_wallet_from_mnemonic_return_serialized_bytes(
+            wallet_manager::wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
+                manager,
                 mnemonic.as_ptr(),
                 passphrase.as_ptr(),
                 FFINetwork::Testnet,
@@ -369,6 +413,7 @@ mod tests {
                 wallet_bytes_out,
                 wallet_bytes_len_out,
             );
+            wallet_manager::wallet_manager_free(manager);
         }
     }
 }

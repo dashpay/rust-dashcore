@@ -32,5 +32,6 @@ hex = "0.4"
 cbindgen = "0.29"
 
 [dev-dependencies]
+key-wallet-ffi = { path = ".", features = ["bincode"] }
 tempfile = "3.0"
 hex = "0.4"

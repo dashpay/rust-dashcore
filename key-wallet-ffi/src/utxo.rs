@@ -109,7 +109,7 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
 

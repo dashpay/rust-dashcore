@@ -141,7 +141,7 @@ pub unsafe extern "C" fn managed_wallet_get_address_pool_info(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
 
@@ -271,7 +271,7 @@ pub unsafe extern "C" fn managed_wallet_set_gap_limit(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
 
@@ -392,7 +392,7 @@ pub unsafe extern "C" fn managed_wallet_generate_addresses_to_index(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
 
@@ -563,7 +563,7 @@ pub unsafe extern "C" fn managed_wallet_mark_address_used(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
 

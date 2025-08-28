@@ -16,6 +16,7 @@ use key_wallet::transaction_checking::TransactionContext;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::{ManagedWalletInfo, TransactionRecord};
+use key_wallet::wallet::WalletType;
 use key_wallet::{Account, AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
 use key_wallet::{ExtendedPubKey, WalletBalance};
 use key_wallet::{Utxo, UtxoSet};
@@ -171,7 +172,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
     /// # Arguments
     /// * `mnemonic` - The mnemonic phrase
     /// * `passphrase` - Optional BIP39 passphrase (empty string for no passphrase)
-    /// * `network` - The network for the wallet
+    /// * `networks` - The networks for the wallet
     /// * `birth_height` - Optional birth height for wallet scanning
     /// * `account_creation_options` - Which accounts to create initially
     /// * `downgrade_to_pubkey_wallet` - If true, creates a wallet without private keys
@@ -191,7 +192,7 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         &mut self,
         mnemonic: &str,
         passphrase: &str,
-        network: Network,
+        networks: &[Network],
         birth_height: Option<u32>,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
         downgrade_to_pubkey_wallet: bool,
@@ -202,13 +203,13 @@ impl<T: WalletInfoInterface> WalletManager<T> {
 
         // Create the initial wallet from mnemonic
         let mut wallet = if passphrase.is_empty() {
-            Wallet::from_mnemonic(mnemonic_obj, &[network], account_creation_options)
+            Wallet::from_mnemonic(mnemonic_obj, networks, account_creation_options)
                 .map_err(|e| WalletError::WalletCreation(e.to_string()))?
         } else {
             Wallet::from_mnemonic_with_passphrase(
                 mnemonic_obj,
                 passphrase.to_string(),
-                &[network],
+                networks,
                 account_creation_options,
             )
             .map_err(|e| WalletError::WalletCreation(e.to_string()))?
@@ -218,16 +219,21 @@ impl<T: WalletInfoInterface> WalletManager<T> {
         let final_wallet = if downgrade_to_pubkey_wallet {
             // Extract the public key and accounts from the full wallet
             let root_xpub = wallet.root_extended_pub_key();
-            let master_xpub = root_xpub.to_extended_pub_key(network);
 
             // Copy the accounts structure (but without private keys)
             let accounts = wallet.accounts.clone();
 
+            let wallet_type = if allow_external_signing {
+                WalletType::ExternalSignable(root_xpub)
+            } else {
+                WalletType::WatchOnly(root_xpub)
+            };
             // Create a new wallet with only public keys
-            let pubkey_wallet = Wallet::from_xpub(master_xpub, accounts, allow_external_signing)
-                .map_err(|e| {
-                    WalletError::WalletCreation(format!("Failed to create pubkey wallet: {}", e))
-                })?;
+            let pubkey_wallet = Wallet {
+                wallet_id: wallet.wallet_id,
+                wallet_type,
+                accounts,
+            };
 
             // Zeroize the wallet containing private keys before dropping
             wallet.zeroize();

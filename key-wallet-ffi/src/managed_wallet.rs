@@ -357,7 +357,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
 
@@ -549,7 +549,7 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
 

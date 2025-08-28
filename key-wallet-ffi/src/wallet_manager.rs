@@ -101,7 +101,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
 
@@ -191,13 +191,14 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
     )
 }
 
-/// Create a wallet from mnemonic and return serialized bytes
+/// Add a wallet from mnemonic to the manager and return serialized bytes
 ///
-/// Creates a wallet from a mnemonic phrase, optionally downgrading it to a pubkey-only wallet
-/// (watch-only or externally signable), and returns the serialized wallet bytes.
+/// Creates a wallet from a mnemonic phrase, adds it to the manager, optionally downgrading it
+/// to a pubkey-only wallet (watch-only or externally signable), and returns the serialized wallet bytes.
 ///
 /// # Safety
 ///
+/// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
 /// - `passphrase` must be a valid pointer to a null-terminated C string or null
 /// - `birth_height` is optional, pass 0 for default
@@ -212,11 +213,12 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
 /// - The caller must free the returned wallet_bytes using wallet_manager_free_wallet_bytes()
 #[cfg(feature = "bincode")]
 #[no_mangle]
-pub unsafe extern "C" fn create_wallet_from_mnemonic_return_serialized_bytes(
+pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
+    manager: *mut FFIWalletManager,
     mnemonic: *const c_char,
     passphrase: *const c_char,
     network: FFINetwork,
-    _birth_height: c_uint,
+    birth_height: c_uint,
     account_options: *const crate::types::FFIWalletAccountCreationOptions,
     downgrade_to_pubkey_wallet: bool,
     allow_external_signing: bool,
@@ -226,7 +228,8 @@ pub unsafe extern "C" fn create_wallet_from_mnemonic_return_serialized_bytes(
     error: *mut FFIError,
 ) -> bool {
     // Validate input parameters
-    if mnemonic.is_null()
+    if manager.is_null()
+        || mnemonic.is_null()
         || wallet_bytes_out.is_null()
         || wallet_bytes_len_out.is_null()
         || wallet_id_out.is_null()
@@ -269,18 +272,8 @@ pub unsafe extern "C" fn create_wallet_from_mnemonic_return_serialized_bytes(
         }
     };
 
-    // Convert network
-    let network_rust: Network = match network.try_into() {
-        Ok(n) => n,
-        Err(_) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidInput,
-                "Must specify exactly one network".to_string(),
-            );
-            return ptr::null_mut();
-        }
-    };
+    // Convert networks
+    let networks = network.parse_networks();
 
     // Convert account creation options
     let creation_options = if account_options.is_null() {
@@ -289,112 +282,53 @@ pub unsafe extern "C" fn create_wallet_from_mnemonic_return_serialized_bytes(
         unsafe { (*account_options).to_wallet_options() }
     };
 
-    // Create the wallet
-    use key_wallet::{Mnemonic, Wallet};
-    use std::str::FromStr;
-
-    let mnemonic_parsed = match Mnemonic::from_str(mnemonic_str) {
-        Ok(m) => m,
-        Err(e) => {
+    // Get the manager and call the proper method
+    let manager_ref = unsafe { &*manager };
+    let mut manager_guard = match manager_ref.manager.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
             FFIError::set_error(
                 error,
                 FFIErrorCode::InvalidInput,
-                format!("Invalid mnemonic: {:?}", e),
+                "Failed to lock manager".to_string(),
             );
             return false;
         }
     };
 
-    let wallet = if passphrase_str.is_empty() {
-        match Wallet::from_mnemonic(mnemonic_parsed, network_rust, creation_options) {
-            Ok(w) => w,
-            Err(e) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("Failed to create wallet: {:?}", e),
-                );
-                return false;
-            }
-        }
+    // Convert birth_height: 0 means None, any other value means Some(value)
+    let birth_height = if birth_height == 0 {
+        None
     } else {
-        match Wallet::from_mnemonic_with_passphrase(
-            mnemonic_parsed,
-            passphrase_str.to_string(),
-            network_rust,
+        Some(birth_height)
+    };
+
+    let (serialized, wallet_id) = match manager_guard
+        .create_wallet_from_mnemonic_return_serialized_bytes(
+            mnemonic_str,
+            passphrase_str,
+            &networks,
+            birth_height,
             creation_options,
+            downgrade_to_pubkey_wallet,
+            allow_external_signing,
         ) {
-            Ok(w) => w,
-            Err(e) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("Failed to create wallet with passphrase: {:?}", e),
-                );
-                return false;
-            }
-        }
-    };
-
-    // If downgrade_to_pubkey_wallet is true, create a pubkey-only wallet
-    let final_wallet = if downgrade_to_pubkey_wallet {
-        // Extract the root public key from the created wallet
-        let root_pub_key = match &wallet.wallet_type {
-            key_wallet::wallet::WalletType::Mnemonic {
-                root_extended_private_key,
-                ..
-            }
-            | key_wallet::wallet::WalletType::Seed {
-                root_extended_private_key,
-                ..
-            }
-            | key_wallet::wallet::WalletType::ExtendedPrivKey(root_extended_private_key) => {
-                root_extended_private_key.to_root_extended_pub_key()
-            }
-            key_wallet::wallet::WalletType::MnemonicWithPassphrase {
-                root_extended_public_key,
-                ..
-            }
-            | key_wallet::wallet::WalletType::ExternalSignable(root_extended_public_key)
-            | key_wallet::wallet::WalletType::WatchOnly(root_extended_public_key) => {
-                root_extended_public_key.clone()
-            }
-        };
-
-        // Convert root pub key to ExtendedPubKey
-        let master_xpub = root_pub_key.to_extended_pub_key(network_rust);
-
-        // Create the pubkey-only wallet using the existing accounts
-        match Wallet::from_xpub(master_xpub, wallet.accounts.clone(), allow_external_signing) {
-            Ok(w) => w,
-            Err(e) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("Failed to create pubkey-only wallet: {:?}", e),
-                );
-                return false;
-            }
-        }
-    } else {
-        wallet
-    };
-
-    // Get wallet ID
-    let wallet_id = final_wallet.compute_wallet_id();
-
-    // Serialize the wallet to bincode bytes using the wallet's backup method
-    let serialized = match final_wallet.backup() {
-        Ok(bytes) => bytes,
+        Ok(result) => result,
         Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::SerializationError,
-                format!("Failed to serialize wallet: {:?}", e),
-            );
+            let ffi_error: FFIError = e.into();
+            if !error.is_null() {
+                unsafe {
+                    *error = ffi_error;
+                }
+            }
             return false;
         }
     };
+
+    // Track the wallet ID in the FFI manager
+    if let Ok(mut wallet_ids) = manager_ref.wallet_ids.lock() {
+        wallet_ids.push(wallet_id);
+    }
 
     // Allocate memory for the serialized bytes
     let boxed_bytes = serialized.into_boxed_slice();
@@ -416,7 +350,7 @@ pub unsafe extern "C" fn create_wallet_from_mnemonic_return_serialized_bytes(
 ///
 /// # Safety
 ///
-/// - `wallet_bytes` must be a valid pointer to a buffer allocated by create_wallet_from_mnemonic_return_serialized_bytes
+/// - `wallet_bytes` must be a valid pointer to a buffer allocated by wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes
 /// - `bytes_len` must match the original allocation size
 /// - The pointer must not be used after calling this function
 /// - This function must only be called once per buffer
@@ -1039,7 +973,7 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
 
@@ -1117,7 +1051,7 @@ pub unsafe extern "C" fn wallet_manager_get_monitored_addresses(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
     let mut all_addresses: Vec<*mut c_char> = Vec::new();
@@ -1213,7 +1147,7 @@ pub unsafe extern "C" fn wallet_manager_update_height(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
     manager_guard.update_height(network_rust, height);
@@ -1261,7 +1195,7 @@ pub unsafe extern "C" fn wallet_manager_current_height(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return 0;
         }
     };
 

@@ -150,7 +150,7 @@ pub unsafe extern "C" fn managed_wallet_check_transaction(
                 FFIErrorCode::InvalidInput,
                 "Must specify exactly one network".to_string(),
             );
-            return ptr::null_mut();
+            return false;
         }
     };
     let tx_slice = slice::from_raw_parts(tx_bytes, tx_len);
