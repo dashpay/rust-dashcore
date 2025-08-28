@@ -1,9 +1,11 @@
 #[cfg(test)]
 mod tests {
     use dash_spv_ffi::*;
+    use serial_test::serial;
     use std::ffi::CStr;
 
     #[test]
+    #[serial]
     fn test_error_handling() {
         clear_last_error();
 
@@ -26,6 +28,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_error_codes() {
         assert_eq!(FFIErrorCode::Success as i32, 0);
         assert_eq!(FFIErrorCode::NullPointer as i32, 1);
@@ -41,6 +44,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handle_error() {
         let ok_result: Result<i32, String> = Ok(42);
         let handled = handle_error(ok_result);

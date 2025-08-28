@@ -156,6 +156,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_null_pointer_error_handling() {
         // Test null_check! macro behavior
         unsafe {
@@ -183,6 +184,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_handle_error_helper() {
         // Test Ok case
         let ok_result: Result<i32, String> = Ok(42);
