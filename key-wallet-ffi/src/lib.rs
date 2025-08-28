@@ -28,7 +28,7 @@ pub mod bip38;
 
 // Re-export main types for convenience
 pub use error::{FFIError, FFIErrorCode};
-pub use types::{FFINetwork, FFIWallet};
+pub use types::{FFIBalance, FFINetwork, FFIWallet};
 pub use utxo::FFIUTXO;
 
 // ============================================================================

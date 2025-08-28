@@ -88,6 +88,32 @@ impl From<Network> for FFINetwork {
     }
 }
 
+/// FFI Balance type for representing wallet balances
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FFIBalance {
+    /// Confirmed balance in satoshis
+    pub confirmed: u64,
+    /// Unconfirmed balance in satoshis
+    pub unconfirmed: u64,
+    /// Immature balance in satoshis (e.g., mining rewards)
+    pub immature: u64,
+    /// Total balance (confirmed + unconfirmed) in satoshis
+    pub total: u64,
+}
+
+
+impl From<key_wallet::WalletBalance> for FFIBalance {
+    fn from(balance: key_wallet::WalletBalance) -> Self {
+        FFIBalance {
+            confirmed: balance.confirmed,
+            unconfirmed: balance.unconfirmed,
+            immature: balance.locked, // Map locked to immature for now
+            total: balance.total,
+        }
+    }
+}
+
 /// Opaque wallet handle
 pub struct FFIWallet {
     pub(crate) wallet: Arc<Wallet>,
