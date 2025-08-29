@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use dash_spv::network::MultiPeerNetworkManager;
 use dash_spv::storage::MemoryStorageManager;
 use dash_spv::{ClientConfig, DashSpvClient};
-use dashcore::{Block, Network};
+use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
 use key_wallet_manager::wallet_manager::WalletManager;
@@ -63,7 +63,7 @@ async fn test_spv_client_start_stop() {
 #[tokio::test]
 async fn test_wallet_manager_basic_operations() {
     // Test basic wallet manager operations
-    let mut wallet_manager = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
+    let wallet_manager = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
     // Test that we can create a wallet manager
     // SPVWalletManager doesn't have get_watched_scripts method anymore

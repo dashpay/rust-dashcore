@@ -189,7 +189,6 @@ async fn test_max_peer_limit() {
     let _ = env_logger::builder().is_test(true).try_init();
 
     let temp_dir = TempDir::new().unwrap();
-    let temp_path = temp_dir.path().to_path_buf();
     let mut config = create_test_config(Network::Testnet, Some(temp_dir));
 
     // Add at least one peer to avoid "No peers specified" error

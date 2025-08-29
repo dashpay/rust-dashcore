@@ -65,3 +65,7 @@ path = "src/main.rs"
 [lib]
 name = "dash_spv"
 path = "src/lib.rs"
+
+[features]
+# Gate incomplete mock-dependent tests to avoid "unexpected cfg" warnings.
+skip_mock_implementation_incomplete = []

@@ -173,11 +173,10 @@ mod tests {
             let client = dash_spv_ffi_client_new(config);
 
             let utxos = dash_spv_ffi_client_get_utxos(client);
-            assert!(utxos.len == 0 || !utxos.data.is_null());
-
-            if utxos.len > 0 {
-                let utxos_ptr = Box::into_raw(Box::new(utxos));
-                dash_spv_ffi_array_destroy(utxos_ptr);
+            // adapt to pointer return
+            if !utxos.is_null() {
+                assert_eq!((*utxos).len, 0);
+                dash_spv_ffi_array_destroy(utxos);
             }
 
             dash_spv_ffi_client_destroy(client);

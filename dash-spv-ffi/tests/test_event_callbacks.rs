@@ -1,4 +1,3 @@
-use dash_spv_ffi::callbacks::{BlockCallback, TransactionCallback};
 use dash_spv_ffi::*;
 use serial_test::serial;
 use std::ffi::{c_char, c_void, CStr, CString};
@@ -86,7 +85,7 @@ extern "C" fn test_compact_filter_matched_callback(
     };
 
     // Convert wallet ID to string
-    let wallet_id_str = if wallet_id.is_null() {
+    let _wallet_id_str = if wallet_id.is_null() {
         String::new()
     } else {
         unsafe { CStr::from_ptr(wallet_id).to_string_lossy().into_owned() }
@@ -103,8 +102,8 @@ extern "C" fn test_wallet_transaction_callback(
     txid: *const [u8; 32],
     confirmed: bool,
     amount: i64,
-    addresses: *const c_char,
-    block_height: u32,
+    _addresses: *const c_char,
+    _block_height: u32,
     is_ours: bool,
     user_data: *mut c_void,
 ) {

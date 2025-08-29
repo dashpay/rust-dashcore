@@ -337,7 +337,6 @@ mod tests {
     fn test_process_attempts() {
         let mut pool = OrphanPool::new();
         let header = create_test_header(BlockHash::from([0u8; 32]), 1);
-        let block_hash = header.block_hash();
 
         pool.add_orphan(header);
 

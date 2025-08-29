@@ -6,11 +6,11 @@ mod test_platform_integration {
     #[test]
     fn test_quorum_public_key_buffer_size_validation() {
         // Test that buffer size validation works correctly
-        let client: *mut FFIDashSpvClient = ptr::null_mut();
+        let _client: *mut FFIDashSpvClient = ptr::null_mut();
         let quorum_hash = [0u8; 32];
-        let mut small_buffer = [0u8; 47]; // Too small - should fail
+        let _small_buffer = [0u8; 47]; // Too small - should fail
         let mut correct_buffer = [0u8; 48]; // Correct size - should succeed (if implemented)
-        let mut large_buffer = [0u8; 100]; // Larger than needed - should succeed (if implemented)
+        let _large_buffer = [0u8; 100]; // Larger than needed - should succeed (if implemented)
 
         unsafe {
             // Test with null client - should fail with NullPointer

@@ -33,15 +33,15 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
-use dashcore::bip32::{
-    ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey, Fingerprint, IntoDerivationPath,
-};
 use dashcore::consensus::encode;
-use dashcore::psbt::{self, Input, Psbt, PsbtSighashType};
 use dashcore::secp256k1::{Secp256k1, Signing, Verification};
 use dashcore::{
     Address, Amount, Network, OutPoint, PublicKey, ScriptBuf, Transaction, TxIn, TxOut, Witness,
 };
+use key_wallet::bip32::{
+    ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey, Fingerprint, IntoDerivationPath,
+};
+use key_wallet::psbt::{self, Input, Psbt, PsbtSighashType};
 
 type Result<T> = std::result::Result<T, Error>;
 

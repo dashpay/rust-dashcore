@@ -102,18 +102,6 @@ mod tests {
             let (client, config, _temp_dir) = create_test_client();
             assert!(!client.is_null());
 
-            extern "C" fn null_data_completion(
-                _success: bool,
-                _error: *const c_char,
-                user_data: *mut c_void,
-            ) {
-                // Don't assert here - just verify user_data is what we expect
-                // The callback might not be called if sync fails early
-                if !user_data.is_null() {
-                    panic!("Expected null user_data, got non-null pointer");
-                }
-            }
-
             // Don't call sync_to_tip on unstarted client as it will hang
             // Test null user_data handling in a different way
             println!("Testing null user_data safety without starting client");
@@ -365,7 +353,6 @@ mod tests {
                 race_conditions: Arc<AtomicU32>,
                 concurrent_callbacks: Arc<AtomicU32>,
                 max_concurrent: Arc<AtomicU32>,
-                barrier: Arc<Barrier>,
                 shared_state: Arc<Mutex<Vec<u32>>>,
             }
 
@@ -374,7 +361,6 @@ mod tests {
                 race_conditions: race_conditions.clone(),
                 concurrent_callbacks: concurrent_callbacks.clone(),
                 max_concurrent: max_concurrent.clone(),
-                barrier: barrier.clone(),
                 shared_state: Arc::new(Mutex::new(Vec::new())),
             };
 

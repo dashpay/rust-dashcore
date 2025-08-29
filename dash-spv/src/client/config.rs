@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use dashcore::{Address, Network, ScriptBuf};
+use dashcore::Network;
 // Serialization removed due to complex Address types
 
 use crate::types::ValidationMode;
@@ -22,6 +22,7 @@ pub enum MempoolStrategy {
 
 /// Configuration for the Dash SPV client.
 #[derive(Debug, Clone)]
+#[repr(C)]
 pub struct ClientConfig {
     /// Network to connect to.
     pub network: Network,

@@ -29,16 +29,6 @@ mod tests {
         }
     }
 
-    /// Create a valid test header that connects to previous
-    fn create_valid_header(prev_header: &BlockHeader, time_offset: u32) -> BlockHeader {
-        create_test_header(
-            prev_header.block_hash(),
-            12345,
-            0x1e0fffff, // Easy difficulty for testing
-            prev_header.time + time_offset,
-        )
-    }
-
     #[test]
     fn test_validation_mode_none_always_passes() {
         let validator = HeaderValidator::new(ValidationMode::None);

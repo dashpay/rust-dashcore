@@ -1892,7 +1892,7 @@ impl<
     async fn handle_post_sync_cfilter(
         &mut self,
         cfilter: dashcore::network::message_filter::CFilter,
-        network: &mut N,
+        _network: &mut N,
         storage: &mut S,
     ) -> SyncResult<()> {
         tracing::info!("📥 Processing filter for new block after sync");

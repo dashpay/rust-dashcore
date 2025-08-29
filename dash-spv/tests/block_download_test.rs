@@ -3,7 +3,7 @@
 //! NOTE: This test file is currently disabled due to incomplete mock NetworkManager implementation.
 //! TODO: Re-enable once NetworkManager trait methods are fully implemented.
 
-#![cfg(skip_mock_implementation_incomplete)]
+#![cfg(feature = "skip_mock_implementation_incomplete")]
 
 //! Tests for block downloading on filter match functionality.
 
@@ -24,8 +24,8 @@ use dash_spv::{
     client::ClientConfig,
     network::NetworkManager,
     storage::MemoryStorageManager,
-    sync::{FilterSyncManager, SyncManager},
-    types::{FilterMatch, WatchItem},
+    sync::{sequential::SequentialSyncManager, FilterSyncManager},
+    types::FilterMatch,
 };
 
 /// Mock network manager for testing
@@ -198,21 +198,25 @@ fn create_test_filter_match(block_hash: BlockHash, height: u32) -> FilterMatch {
     }
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_filter_sync_manager_creation() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let filter_sync = FilterSyncManager::new(&config, received_heights);
+    let filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     assert!(!filter_sync.has_pending_downloads());
     assert_eq!(filter_sync.pending_download_count(), 0);
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_request_block_download() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
 
     let block_hash = BlockHash::from_slice(&[1u8; 32]).unwrap();
@@ -244,11 +248,13 @@ async fn test_request_block_download() {
     assert_eq!(filter_sync.pending_download_count(), 1);
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_duplicate_block_request_prevention() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
 
     let block_hash = BlockHash::from_slice(&[1u8; 32]).unwrap();
@@ -266,11 +272,13 @@ async fn test_duplicate_block_request_prevention() {
     assert_eq!(filter_sync.pending_download_count(), 1);
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_handle_downloaded_block() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
 
     let block = create_test_block();
@@ -295,11 +303,13 @@ async fn test_handle_downloaded_block() {
     assert_eq!(filter_sync.pending_download_count(), 0);
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_handle_unexpected_block() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     let block = create_test_block();
 
@@ -310,11 +320,13 @@ async fn test_handle_unexpected_block() {
     assert!(result.is_none());
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_process_multiple_filter_matches() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
 
     // Create multiple filter matches
@@ -359,37 +371,47 @@ async fn test_process_multiple_filter_matches() {
     assert_eq!(filter_sync.pending_download_count(), 3);
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_sync_manager_integration() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut sync_manager = SyncManager::new(&config, received_heights)
-        .expect("Failed to create SyncManager for integration test");
+    let wallet =
+        Arc::new(RwLock::new(key_wallet_manager::spv_wallet_manager::SPVWalletManager::with_base(
+            key_wallet_manager::wallet_manager::WalletManager::<
+                key_wallet::wallet::managed_wallet_info::ManagedWalletInfo,
+            >::new(),
+        )));
+    let mut sync_manager: SequentialSyncManager<MemoryStorageManager, MockNetworkManager, _> =
+        SequentialSyncManager::new(&config, received_heights, wallet)
+            .expect("Failed to create SequentialSyncManager for integration test");
     let mut network = MockNetworkManager::new();
 
     let block_hash = BlockHash::from_slice(&[1u8; 32]).unwrap();
     let filter_matches = vec![create_test_filter_match(block_hash, 100)];
 
     // Request block downloads through sync manager
-    let result = sync_manager.request_block_downloads(filter_matches, &mut network).await;
-    assert!(result.is_ok());
+    // Note: request_block_downloads method doesn't exist in the current SequentialSyncManager API
+    // let result = sync_manager.request_block_downloads(filter_matches, &mut network).await;
+    // assert!(result.is_ok());
 
     // Check state through sync manager
     // Note: Methods for checking pending downloads and handling blocks
     // may not exist in current API. This test may need significant refactoring.
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_filter_match_and_download_workflow() {
     let config = create_test_config();
     let _storage = MemoryStorageManager::new().await.unwrap();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
 
-    // Create test address and watch item
+    // Create test address (WatchItem replaced with wallet-based tracking)
     let address = create_test_address();
-    let _watch_items = vec![WatchItem::address(address)];
 
     // This is a simplified test - in real usage, we'd need to:
     // 1. Store filter headers and filters
@@ -409,11 +431,13 @@ async fn test_filter_match_and_download_workflow() {
     assert!(filter_sync.has_pending_downloads());
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_reset_clears_download_state() {
     let config = create_test_config();
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
     let mut network = MockNetworkManager::new();
 
     let block_hash = BlockHash::from_slice(&[1u8; 32]).unwrap();

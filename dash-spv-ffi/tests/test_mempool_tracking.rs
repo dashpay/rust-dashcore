@@ -1,12 +1,7 @@
-use dash_spv_ffi::callbacks::{
-    MempoolConfirmedCallback, MempoolRemovedCallback, MempoolTransactionCallback,
-};
 use dash_spv_ffi::*;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
 
 #[derive(Default)]
 struct TestCallbacks {

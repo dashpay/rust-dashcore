@@ -4,7 +4,7 @@
 mod tests {
     use crate::client::config::{ClientConfig, MempoolStrategy};
     use crate::types::ValidationMode;
-    use dashcore::{Address, Network};
+    use dashcore::Network;
     use std::net::SocketAddr;
     use std::path::PathBuf;
 
@@ -61,7 +61,6 @@ mod tests {
     #[test]
     fn test_builder_pattern() {
         let path = PathBuf::from("/test/storage");
-        let addr: SocketAddr = "1.2.3.4:9999".parse().unwrap();
 
         let config = ClientConfig::mainnet()
             .with_storage_path(path.clone())

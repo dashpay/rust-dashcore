@@ -350,7 +350,7 @@ mod tests {
                             for _ in 0..10 {
                                 let addresses = dash_spv_ffi_client_get_watched_addresses(client);
                                 if !addresses.is_null() {
-                                    dash_spv_ffi_array_destroy(*addresses);
+                                    dash_spv_ffi_array_destroy(addresses);
                                 }
                                 thread::sleep(Duration::from_millis(100));
                             }
