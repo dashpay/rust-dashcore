@@ -7,7 +7,7 @@ use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{mnemonic::Language, Mnemonic, Network};
-use key_wallet_manager::wallet_manager::{WalletError, WalletId, WalletManager};
+use key_wallet_manager::wallet_manager::{WalletError, WalletManager};
 
 #[test]
 fn test_wallet_manager_creation() {
@@ -25,20 +25,15 @@ fn test_wallet_manager_from_mnemonic() {
     let mnemonic = Mnemonic::generate(12, Language::English).unwrap();
     let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
-    // Create a wallet ID
-    let wallet_id: WalletId = [1u8; 32];
-
     // Create a wallet from mnemonic
-    let wallet = manager.create_wallet_from_mnemonic(
-        wallet_id,
-        "Test Wallet".to_string(),
+    let wallet_result = manager.create_wallet_from_mnemonic(
         &mnemonic.to_string(),
         "",
-        Some(Network::Testnet),
+        &[Network::Testnet],
         None, // birth_height
-        key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
+        WalletAccountCreationOptions::Default,
     );
-    assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
+    assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
     assert_eq!(manager.wallet_count(), 1);
 }
 
@@ -46,17 +41,13 @@ fn test_wallet_manager_from_mnemonic() {
 fn test_account_management() {
     let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
-    // Create a wallet ID
-    let wallet_id: WalletId = [1u8; 32];
-
     // Create a wallet first
-    let wallet = manager.create_wallet(
-        wallet_id,
-        "Test Wallet".to_string(),
+    let wallet_result = manager.create_wallet_with_random_mnemonic(
         WalletAccountCreationOptions::Default,
         Network::Testnet,
     );
-    assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
+    assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
+    let wallet_id = wallet_result.unwrap();
 
     // Add accounts to the wallet
     // Note: Index 0 already exists from wallet creation, so use index 1
@@ -81,17 +72,13 @@ fn test_account_management() {
 fn test_address_generation() {
     let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
-    // Create a wallet ID
-    let wallet_id: WalletId = [1u8; 32];
-
     // Create a wallet first
-    let wallet = manager.create_wallet(
-        wallet_id,
-        "Test Wallet".to_string(),
+    let wallet_result = manager.create_wallet_with_random_mnemonic(
         WalletAccountCreationOptions::Default,
         Network::Testnet,
     );
-    assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
+    assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
+    let wallet_id = wallet_result.unwrap();
 
     // The wallet should already have account 0 from creation
     // But the managed wallet info might not have the account collection initialized
@@ -142,17 +129,13 @@ fn test_utxo_management() {
 
     let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
-    // Create a wallet ID
-    let wallet_id: WalletId = [1u8; 32];
-
     // Create a wallet first
-    let wallet = manager.create_wallet(
-        wallet_id,
-        "Test Wallet".to_string(),
+    let wallet_result = manager.create_wallet_with_random_mnemonic(
         WalletAccountCreationOptions::Default,
         Network::Testnet,
     );
-    assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
+    assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
+    let wallet_id = wallet_result.unwrap();
 
     // For UTXO management, we need to process transactions that create UTXOs
     // The WalletManager doesn't have an add_utxo method directly
@@ -172,17 +155,13 @@ fn test_utxo_management() {
 fn test_balance_calculation() {
     let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
-    // Create a wallet ID
-    let wallet_id: WalletId = [1u8; 32];
-
     // Create a wallet first
-    let wallet = manager.create_wallet(
-        wallet_id,
-        "Test Wallet".to_string(),
+    let wallet_result = manager.create_wallet_with_random_mnemonic(
         WalletAccountCreationOptions::Default,
         Network::Testnet,
     );
-    assert!(wallet.is_ok(), "Failed to create wallet: {:?}", wallet);
+    assert!(wallet_result.is_ok(), "Failed to create wallet: {:?}", wallet_result);
+    let wallet_id = wallet_result.unwrap();
 
     // For balance testing, we would need to process transactions
     // The WalletManager doesn't have add_utxo directly

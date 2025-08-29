@@ -47,7 +47,7 @@ typedef enum {
     /*
      Create no accounts at all
      */
-    NONE = 4,
+    NO_ACCOUNTS = 4,
 } FFIAccountCreationOptionType;
 
 /*
@@ -189,13 +189,15 @@ typedef enum {
 } FFILanguage;
 
 /*
- FFI Network type
+ FFI Network type (bit flags for multiple networks)
  */
 typedef enum {
-    DASH = 0,
-    TESTNET = 1,
-    REGTEST = 2,
-    DEVNET = 3,
+    NO_NETWORKS = 0,
+    DASH = 1,
+    TESTNET = 2,
+    REGTEST = 4,
+    DEVNET = 8,
+    ALL_NETWORKS = 15,
 } FFINetwork;
 
 /*
@@ -244,6 +246,29 @@ typedef enum {
 typedef struct FFIAccount FFIAccount;
 
 /*
+ Opaque handle to an account collection
+ */
+typedef struct FFIAccountCollection FFIAccountCollection;
+
+/*
+ FFI wrapper for an AddressPool from a ManagedAccount
+
+ This is a lightweight wrapper that holds a reference to an AddressPool
+ from within a ManagedAccount. It allows querying addresses and pool information.
+ */
+typedef struct FFIAddressPool FFIAddressPool;
+
+/*
+ Opaque BLS account handle
+ */
+typedef struct FFIBLSAccount FFIBLSAccount;
+
+/*
+ Opaque EdDSA account handle
+ */
+typedef struct FFIEdDSAAccount FFIEdDSAAccount;
+
+/*
  Extended private key structure
  */
 typedef struct FFIExtendedPrivKey FFIExtendedPrivKey;
@@ -262,6 +287,16 @@ typedef struct FFIExtendedPubKey FFIExtendedPubKey;
  Opaque type for an extended public key
  */
 typedef struct FFIExtendedPublicKey FFIExtendedPublicKey;
+
+/*
+ Opaque managed account handle that wraps ManagedAccount
+ */
+typedef struct FFIManagedAccount FFIManagedAccount;
+
+/*
+ Opaque handle to a managed account collection
+ */
+typedef struct FFIManagedAccountCollection FFIManagedAccountCollection;
 
 /*
  FFI wrapper for ManagedWalletInfo
@@ -315,10 +350,81 @@ typedef struct {
 } FFIError;
 
 /*
+ C-compatible summary of all accounts in a collection
+
+ This struct provides Swift with structured data about all accounts
+ that exist in the collection, allowing programmatic access to account
+ indices and presence information.
+ */
+typedef struct {
+    /*
+     Array of BIP44 account indices
+     */
+    unsigned int *bip44_indices;
+    /*
+     Number of BIP44 accounts
+     */
+    size_t bip44_count;
+    /*
+     Array of BIP32 account indices
+     */
+    unsigned int *bip32_indices;
+    /*
+     Number of BIP32 accounts
+     */
+    size_t bip32_count;
+    /*
+     Array of CoinJoin account indices
+     */
+    unsigned int *coinjoin_indices;
+    /*
+     Number of CoinJoin accounts
+     */
+    size_t coinjoin_count;
+    /*
+     Array of identity top-up registration indices
+     */
+    unsigned int *identity_topup_indices;
+    /*
+     Number of identity top-up accounts
+     */
+    size_t identity_topup_count;
+    /*
+     Whether identity registration account exists
+     */
+    bool has_identity_registration;
+    /*
+     Whether identity invitation account exists
+     */
+    bool has_identity_invitation;
+    /*
+     Whether identity top-up not bound account exists
+     */
+    bool has_identity_topup_not_bound;
+    /*
+     Whether provider voting keys account exists
+     */
+    bool has_provider_voting_keys;
+    /*
+     Whether provider owner keys account exists
+     */
+    bool has_provider_owner_keys;
+    /*
+     Whether provider operator keys account exists
+     */
+    bool has_provider_operator_keys;
+    /*
+     Whether provider platform keys account exists
+     */
+    bool has_provider_platform_keys;
+} FFIAccountCollectionSummary;
+
+/*
  FFI wrapper for ManagedWalletInfo that includes transaction checking capabilities
  */
 typedef struct {
     ManagedWalletInfo *inner;
+
 } FFIManagedWallet;
 
 /*
@@ -352,14 +458,180 @@ typedef struct {
 } FFIAddressPoolInfo;
 
 /*
- Balance structure for FFI
+ FFI-compatible version of AddressInfo
  */
 typedef struct {
+    /*
+     Address as string
+     */
+    char *address;
+    /*
+     Script pubkey bytes
+     */
+    uint8_t *script_pubkey;
+    /*
+     Length of script pubkey
+     */
+    size_t script_pubkey_len;
+    /*
+     Public key bytes (nullable)
+     */
+    uint8_t *public_key;
+    /*
+     Length of public key
+     */
+    size_t public_key_len;
+    /*
+     Derivation index
+     */
+    uint32_t index;
+    /*
+     Derivation path as string
+     */
+    char *path;
+    /*
+     Whether address has been used
+     */
+    bool used;
+    /*
+     When generated (timestamp)
+     */
+    uint64_t generated_at;
+    /*
+     When first used (0 if never)
+     */
+    uint64_t used_at;
+    /*
+     Transaction count
+     */
+    uint32_t tx_count;
+    /*
+     Total received
+     */
+    uint64_t total_received;
+    /*
+     Total sent
+     */
+    uint64_t total_sent;
+    /*
+     Current balance
+     */
+    uint64_t balance;
+    /*
+     Custom label (nullable)
+     */
+    char *label;
+} FFIAddressInfo;
+
+/*
+ FFI Result type for ManagedAccount operations
+ */
+typedef struct {
+    /*
+     The managed account handle if successful, NULL if error
+     */
+    FFIManagedAccount *account;
+    /*
+     Error code (0 = success)
+     */
+    int32_t error_code;
+    /*
+     Error message (NULL if success, must be freed by caller if not NULL)
+     */
+    char *error_message;
+} FFIManagedAccountResult;
+
+/*
+ FFI Balance type for representing wallet balances
+ */
+typedef struct {
+    /*
+     Confirmed balance in duffs
+     */
     uint64_t confirmed;
+    /*
+     Unconfirmed balance in duffs
+     */
     uint64_t unconfirmed;
+    /*
+     Immature balance in duffs (e.g., mining rewards)
+     */
     uint64_t immature;
+    /*
+     Total balance (confirmed + unconfirmed) in duffs
+     */
     uint64_t total;
 } FFIBalance;
+
+/*
+ C-compatible summary of all accounts in a managed collection
+
+ This struct provides Swift with structured data about all accounts
+ that exist in the managed collection, allowing programmatic access to account
+ indices and presence information.
+ */
+typedef struct {
+    /*
+     Array of BIP44 account indices
+     */
+    unsigned int *bip44_indices;
+    /*
+     Number of BIP44 accounts
+     */
+    size_t bip44_count;
+    /*
+     Array of BIP32 account indices
+     */
+    unsigned int *bip32_indices;
+    /*
+     Number of BIP32 accounts
+     */
+    size_t bip32_count;
+    /*
+     Array of CoinJoin account indices
+     */
+    unsigned int *coinjoin_indices;
+    /*
+     Number of CoinJoin accounts
+     */
+    size_t coinjoin_count;
+    /*
+     Array of identity top-up registration indices
+     */
+    unsigned int *identity_topup_indices;
+    /*
+     Number of identity top-up accounts
+     */
+    size_t identity_topup_count;
+    /*
+     Whether identity registration account exists
+     */
+    bool has_identity_registration;
+    /*
+     Whether identity invitation account exists
+     */
+    bool has_identity_invitation;
+    /*
+     Whether identity top-up not bound account exists
+     */
+    bool has_identity_topup_not_bound;
+    /*
+     Whether provider voting keys account exists
+     */
+    bool has_provider_voting_keys;
+    /*
+     Whether provider owner keys account exists
+     */
+    bool has_provider_owner_keys;
+    /*
+     Whether provider operator keys account exists
+     */
+    bool has_provider_operator_keys;
+    /*
+     Whether provider platform keys account exists
+     */
+    bool has_provider_platform_keys;
+} FFIManagedAccountCollectionSummary;
 
 /*
  Provider key info
@@ -524,7 +796,7 @@ extern "C" {
 FFIAccountResult wallet_get_account(const FFIWallet *wallet,
                                     FFINetwork network,
                                     unsigned int account_index,
-                                    unsigned int account_type)
+                                    FFIAccountType account_type)
 ;
 
 /*
@@ -555,6 +827,28 @@ FFIAccountResult wallet_get_top_up_account_with_registration_index(const FFIWall
  void account_free(FFIAccount *account) ;
 
 /*
+ Free a BLS account handle
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIBLSAccount
+ - The pointer must not be used after calling this function
+ - This function must only be called once per allocation
+ */
+ void bls_account_free(FFIBLSAccount *account) ;
+
+/*
+ Free an EdDSA account handle
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIEdDSAAccount
+ - The pointer must not be used after calling this function
+ - This function must only be called once per allocation
+ */
+ void eddsa_account_free(FFIEdDSAAccount *account) ;
+
+/*
  Free an account result's error message (if any)
  Note: This does NOT free the account handle itself - use account_free for that
 
@@ -565,6 +859,174 @@ FFIAccountResult wallet_get_top_up_account_with_registration_index(const FFIWall
  - The caller must ensure the result pointer remains valid for the duration of this call
  */
  void account_result_free_error(FFIAccountResult *result) ;
+
+/*
+ Get the extended public key of an account as a string
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIAccount instance
+ - The returned string must be freed by the caller using `string_free`
+ - Returns NULL if the account is null
+ */
+ char *account_get_extended_public_key_as_string(const FFIAccount *account) ;
+
+/*
+ Get the network of an account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIAccount instance
+ - Returns FFINetwork::NoNetworks if the account is null
+ */
+ FFINetwork account_get_network(const FFIAccount *account) ;
+
+/*
+ Get the parent wallet ID of an account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIAccount instance
+ - Returns a pointer to the 32-byte wallet ID, or NULL if not set or account is null
+ - The returned pointer is valid only as long as the account exists
+ - The caller should copy the data if needed for longer use
+ */
+ const uint8_t *account_get_parent_wallet_id(const FFIAccount *account) ;
+
+/*
+ Get the account type of an account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIAccount instance
+ - `out_index` must be a valid pointer to a c_uint where the index will be stored
+ - Returns FFIAccountType::StandardBIP44 with index 0 if the account is null
+ */
+ FFIAccountType account_get_account_type(const FFIAccount *account, unsigned int *out_index) ;
+
+/*
+ Check if an account is watch-only
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIAccount instance
+ - Returns false if the account is null
+ */
+ bool account_get_is_watch_only(const FFIAccount *account) ;
+
+/*
+ Get the extended public key of a BLS account as a string
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIBLSAccount instance
+ - The returned string must be freed by the caller using `string_free`
+ - Returns NULL if the account is null
+ */
+ char *bls_account_get_extended_public_key_as_string(const FFIBLSAccount *account) ;
+
+/*
+ Get the network of a BLS account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIBLSAccount instance
+ - Returns FFINetwork::NoNetworks if the account is null
+ */
+ FFINetwork bls_account_get_network(const FFIBLSAccount *account) ;
+
+/*
+ Get the parent wallet ID of a BLS account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIBLSAccount instance
+ - Returns a pointer to the 32-byte wallet ID, or NULL if not set or account is null
+ - The returned pointer is valid only as long as the account exists
+ - The caller should copy the data if needed for longer use
+ */
+ const uint8_t *bls_account_get_parent_wallet_id(const FFIBLSAccount *account) ;
+
+/*
+ Get the account type of a BLS account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIBLSAccount instance
+ - `out_index` must be a valid pointer to a c_uint where the index will be stored
+ - Returns FFIAccountType::StandardBIP44 with index 0 if the account is null
+ */
+
+FFIAccountType bls_account_get_account_type(const FFIBLSAccount *account,
+                                            unsigned int *out_index)
+;
+
+/*
+ Check if a BLS account is watch-only
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIBLSAccount instance
+ - Returns false if the account is null
+ */
+ bool bls_account_get_is_watch_only(const FFIBLSAccount *account) ;
+
+/*
+ Get the extended public key of an EdDSA account as a string
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIEdDSAAccount instance
+ - The returned string must be freed by the caller using `string_free`
+ - Returns NULL if the account is null
+ */
+ char *eddsa_account_get_extended_public_key_as_string(const FFIEdDSAAccount *account) ;
+
+/*
+ Get the network of an EdDSA account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIEdDSAAccount instance
+ - Returns FFINetwork::NoNetworks if the account is null
+ */
+ FFINetwork eddsa_account_get_network(const FFIEdDSAAccount *account) ;
+
+/*
+ Get the parent wallet ID of an EdDSA account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIEdDSAAccount instance
+ - Returns a pointer to the 32-byte wallet ID, or NULL if not set or account is null
+ - The returned pointer is valid only as long as the account exists
+ - The caller should copy the data if needed for longer use
+ */
+ const uint8_t *eddsa_account_get_parent_wallet_id(const FFIEdDSAAccount *account) ;
+
+/*
+ Get the account type of an EdDSA account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIEdDSAAccount instance
+ - `out_index` must be a valid pointer to a c_uint where the index will be stored
+ - Returns FFIAccountType::StandardBIP44 with index 0 if the account is null
+ */
+
+FFIAccountType eddsa_account_get_account_type(const FFIEdDSAAccount *account,
+                                              unsigned int *out_index)
+;
+
+/*
+ Check if an EdDSA account is watch-only
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIEdDSAAccount instance
+ - Returns false if the account is null
+ */
+ bool eddsa_account_get_is_watch_only(const FFIEdDSAAccount *account) ;
 
 /*
  Get number of accounts
@@ -579,6 +1041,360 @@ FFIAccountResult wallet_get_top_up_account_with_registration_index(const FFIWall
 unsigned int wallet_get_account_count(const FFIWallet *wallet,
                                       FFINetwork network,
                                       FFIError *error)
+;
+
+/*
+ Get account collection for a specific network from wallet
+
+ # Safety
+
+ - `wallet` must be a valid pointer to an FFIWallet instance
+ - `error` must be a valid pointer to an FFIError structure or null
+ - The returned pointer must be freed with `account_collection_free` when no longer needed
+ */
+
+FFIAccountCollection *wallet_get_account_collection(const FFIWallet *wallet,
+                                                    FFINetwork network,
+                                                    FFIError *error)
+;
+
+/*
+ Free an account collection handle
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection created by this library
+ - `collection` must not be used after calling this function
+ */
+ void account_collection_free(FFIAccountCollection *collection) ;
+
+/*
+ Get a BIP44 account by index from the collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned pointer must be freed with `account_free` when no longer needed
+ */
+
+FFIAccount *account_collection_get_bip44_account(const FFIAccountCollection *collection,
+                                                 unsigned int index)
+;
+
+/*
+ Get all BIP44 account indices
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - `out_indices` must be a valid pointer to store the indices array
+ - `out_count` must be a valid pointer to store the count
+ - The returned array must be freed with `free_u32_array` when no longer needed
+ */
+
+bool account_collection_get_bip44_indices(const FFIAccountCollection *collection,
+                                          unsigned int **out_indices,
+                                          size_t *out_count)
+;
+
+/*
+ Get a BIP32 account by index from the collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned pointer must be freed with `account_free` when no longer needed
+ */
+
+FFIAccount *account_collection_get_bip32_account(const FFIAccountCollection *collection,
+                                                 unsigned int index)
+;
+
+/*
+ Get all BIP32 account indices
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - `out_indices` must be a valid pointer to store the indices array
+ - `out_count` must be a valid pointer to store the count
+ - The returned array must be freed with `free_u32_array` when no longer needed
+ */
+
+bool account_collection_get_bip32_indices(const FFIAccountCollection *collection,
+                                          unsigned int **out_indices,
+                                          size_t *out_count)
+;
+
+/*
+ Get a CoinJoin account by index from the collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned pointer must be freed with `account_free` when no longer needed
+ */
+
+FFIAccount *account_collection_get_coinjoin_account(const FFIAccountCollection *collection,
+                                                    unsigned int index)
+;
+
+/*
+ Get all CoinJoin account indices
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - `out_indices` must be a valid pointer to store the indices array
+ - `out_count` must be a valid pointer to store the count
+ - The returned array must be freed with `free_u32_array` when no longer needed
+ */
+
+bool account_collection_get_coinjoin_indices(const FFIAccountCollection *collection,
+                                             unsigned int **out_indices,
+                                             size_t *out_count)
+;
+
+/*
+ Get the identity registration account if it exists
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned pointer must be freed with `account_free` when no longer needed
+ */
+ FFIAccount *account_collection_get_identity_registration(const FFIAccountCollection *collection) ;
+
+/*
+ Check if identity registration account exists
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ */
+ bool account_collection_has_identity_registration(const FFIAccountCollection *collection) ;
+
+/*
+ Get an identity topup account by registration index
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned pointer must be freed with `account_free` when no longer needed
+ */
+
+FFIAccount *account_collection_get_identity_topup(const FFIAccountCollection *collection,
+                                                  unsigned int registration_index)
+;
+
+/*
+ Get all identity topup registration indices
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - `out_indices` must be a valid pointer to store the indices array
+ - `out_count` must be a valid pointer to store the count
+ - The returned array must be freed with `free_u32_array` when no longer needed
+ */
+
+bool account_collection_get_identity_topup_indices(const FFIAccountCollection *collection,
+                                                   unsigned int **out_indices,
+                                                   size_t *out_count)
+;
+
+/*
+ Get the identity topup not bound account if it exists
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned pointer must be freed with `account_free` when no longer needed
+ */
+
+FFIAccount *account_collection_get_identity_topup_not_bound(const FFIAccountCollection *collection)
+;
+
+/*
+ Check if identity topup not bound account exists
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ */
+ bool account_collection_has_identity_topup_not_bound(const FFIAccountCollection *collection) ;
+
+/*
+ Get the identity invitation account if it exists
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned pointer must be freed with `account_free` when no longer needed
+ */
+ FFIAccount *account_collection_get_identity_invitation(const FFIAccountCollection *collection) ;
+
+/*
+ Check if identity invitation account exists
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ */
+ bool account_collection_has_identity_invitation(const FFIAccountCollection *collection) ;
+
+/*
+ Get the provider voting keys account if it exists
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned pointer must be freed with `account_free` when no longer needed
+ */
+ FFIAccount *account_collection_get_provider_voting_keys(const FFIAccountCollection *collection) ;
+
+/*
+ Check if provider voting keys account exists
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ */
+ bool account_collection_has_provider_voting_keys(const FFIAccountCollection *collection) ;
+
+/*
+ Get the provider owner keys account if it exists
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned pointer must be freed with `account_free` when no longer needed
+ */
+ FFIAccount *account_collection_get_provider_owner_keys(const FFIAccountCollection *collection) ;
+
+/*
+ Check if provider owner keys account exists
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ */
+ bool account_collection_has_provider_owner_keys(const FFIAccountCollection *collection) ;
+
+/*
+ Get the provider operator keys account if it exists
+ Note: This function is only available when the `bls` feature is enabled
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned pointer must be freed with `bls_account_free` when no longer needed
+ */
+
+FFIBLSAccount *account_collection_get_provider_operator_keys(const FFIAccountCollection *collection)
+;
+
+/*
+ Get the provider operator keys account if it exists (stub when BLS is disabled)
+ */
+ void *account_collection_get_provider_operator_keys(const FFIAccountCollection *_collection) ;
+
+/*
+ Check if provider operator keys account exists
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ */
+ bool account_collection_has_provider_operator_keys(const FFIAccountCollection *collection) ;
+
+/*
+ Get the provider platform keys account if it exists
+ Note: This function is only available when the `eddsa` feature is enabled
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned pointer must be freed with `eddsa_account_free` when no longer needed
+ */
+
+FFIEdDSAAccount *account_collection_get_provider_platform_keys(const FFIAccountCollection *collection)
+;
+
+/*
+ Get the provider platform keys account if it exists (stub when EdDSA is disabled)
+ */
+ void *account_collection_get_provider_platform_keys(const FFIAccountCollection *_collection) ;
+
+/*
+ Check if provider platform keys account exists
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ */
+ bool account_collection_has_provider_platform_keys(const FFIAccountCollection *collection) ;
+
+/*
+ Free a u32 array allocated by this library
+
+ # Safety
+
+ - `array` must be a valid pointer to an array allocated by this library
+ - `array` must not be used after calling this function
+ */
+ void free_u32_array(unsigned int *array, size_t count) ;
+
+/*
+ Get the total number of accounts in the collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ */
+ unsigned int account_collection_count(const FFIAccountCollection *collection) ;
+
+/*
+ Get a human-readable summary of all accounts in the collection
+
+ Returns a formatted string showing all account types and their indices.
+ The format is designed to be clear and readable for end users.
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned string must be freed with `string_free` when no longer needed
+ - Returns null if the collection pointer is null
+ */
+ char *account_collection_summary(const FFIAccountCollection *collection) ;
+
+/*
+ Get structured account collection summary data
+
+ Returns a struct containing arrays of indices for each account type and boolean
+ flags for special accounts. This provides Swift with programmatic access to
+ account information.
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIAccountCollection
+ - The returned pointer must be freed with `account_collection_summary_free` when no longer needed
+ - Returns null if the collection pointer is null
+ */
+
+FFIAccountCollectionSummary *account_collection_summary_data(const FFIAccountCollection *collection)
+;
+
+/*
+ Free an account collection summary and all its allocated memory
+
+ # Safety
+
+ - `summary` must be a valid pointer to an FFIAccountCollectionSummary created by `account_collection_summary_data`
+ - `summary` must not be used after calling this function
+ */
+
+void account_collection_summary_free(FFIAccountCollectionSummary *summary)
 ;
 
 /*
@@ -630,6 +1446,17 @@ unsigned int wallet_get_account_count(const FFIWallet *wallet,
  unsigned char address_get_type(const char *address, FFINetwork network, FFIError *error) ;
 
 /*
+ Free an address pool handle
+
+ # Safety
+
+ - `pool` must be a valid pointer to an FFIAddressPool that was allocated by this library
+ - The pointer must not be used after calling this function
+ - This function must only be called once per allocation
+ */
+ void address_pool_free(FFIAddressPool *pool) ;
+
+/*
  Get address pool information for an account
 
  # Safety
@@ -641,9 +1468,8 @@ unsigned int wallet_get_account_count(const FFIWallet *wallet,
 
 bool managed_wallet_get_address_pool_info(const FFIManagedWallet *managed_wallet,
                                           FFINetwork network,
-                                          unsigned int account_type,
+                                          FFIAccountType account_type,
                                           unsigned int account_index,
-                                          unsigned int registration_index,
                                           FFIAddressPoolType pool_type,
                                           FFIAddressPoolInfo *info_out,
                                           FFIError *error)
@@ -663,9 +1489,8 @@ bool managed_wallet_get_address_pool_info(const FFIManagedWallet *managed_wallet
 
 bool managed_wallet_set_gap_limit(FFIManagedWallet *managed_wallet,
                                   FFINetwork network,
-                                  unsigned int account_type,
+                                  FFIAccountType account_type,
                                   unsigned int account_index,
-                                  unsigned int registration_index,
                                   FFIAddressPoolType pool_type,
                                   unsigned int gap_limit,
                                   FFIError *error)
@@ -688,9 +1513,8 @@ bool managed_wallet_set_gap_limit(FFIManagedWallet *managed_wallet,
 bool managed_wallet_generate_addresses_to_index(FFIManagedWallet *managed_wallet,
                                                 const FFIWallet *wallet,
                                                 FFINetwork network,
-                                                unsigned int account_type,
+                                                FFIAccountType account_type,
                                                 unsigned int account_index,
-                                                unsigned int registration_index,
                                                 FFIAddressPoolType pool_type,
                                                 unsigned int target_index,
                                                 FFIError *error)
@@ -716,38 +1540,69 @@ bool managed_wallet_mark_address_used(FFIManagedWallet *managed_wallet,
 ;
 
 /*
- Get wallet balance
+ Get a single address info at a specific index from the pool
+
+ Returns detailed information about the address at the given index, or NULL
+ if the index is out of bounds or not generated yet.
 
  # Safety
 
- - `wallet` must be a valid pointer to an FFIWallet instance
- - `balance_out` must be a valid pointer to an FFIBalance structure
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure all pointers remain valid for the duration of this call
+ - `pool` must be a valid pointer to an FFIAddressPool
+ - `error` must be a valid pointer to an FFIError or null
+ - The returned FFIAddressInfo must be freed using `address_info_free`
  */
 
-bool wallet_get_balance(const FFIWallet *wallet,
-                        FFINetwork network,
-                        FFIBalance *balance_out,
-                        FFIError *error)
+FFIAddressInfo *address_pool_get_address_at_index(const FFIAddressPool *pool,
+                                                  uint32_t index,
+                                                  FFIError *error)
 ;
 
 /*
- Get account balance
+ Get a range of addresses from the pool
+
+ Returns an array of FFIAddressInfo structures for addresses in the range [start_index, end_index).
+ The count_out parameter will be set to the actual number of addresses returned.
+
+ Note: This function only reads existing addresses from the pool. It does not generate new addresses.
+ Use managed_wallet_generate_addresses_to_index if you need to generate addresses first.
 
  # Safety
 
- - `wallet` must be a valid pointer to an FFIWallet instance
- - `balance_out` must be a valid pointer to an FFIBalance structure
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure all pointers remain valid for the duration of this call
+ - `pool` must be a valid pointer to an FFIAddressPool
+ - `count_out` must be a valid pointer to store the count
+ - `error` must be a valid pointer to an FFIError or null
+ - The returned array must be freed using `address_info_array_free`
  */
 
-bool wallet_get_account_balance(const FFIWallet *wallet,
-                                FFINetwork network,
-                                unsigned int account_index,
-                                FFIBalance *balance_out,
-                                FFIError *error)
+FFIAddressInfo **address_pool_get_addresses_in_range(const FFIAddressPool *pool,
+                                                     uint32_t start_index,
+                                                     uint32_t end_index,
+                                                     size_t *count_out,
+                                                     FFIError *error)
+;
+
+/*
+ Free a single FFIAddressInfo structure
+
+ # Safety
+
+ - `info` must be a valid pointer to an FFIAddressInfo allocated by this library or null
+ - The pointer must not be used after calling this function
+ */
+ void address_info_free(FFIAddressInfo *info) ;
+
+/*
+ Free an array of FFIAddressInfo structures
+
+ # Safety
+
+ - `infos` must be a valid pointer to an array of FFIAddressInfo pointers allocated by this library or null
+ - `count` must be the exact number of elements in the array
+ - The pointers must not be used after calling this function
+ */
+
+void address_info_array_free(FFIAddressInfo **infos,
+                             size_t count)
 ;
 
 /*
@@ -1267,6 +2122,596 @@ bool derivation_path_parse(const char *path,
  void derivation_path_free(uint32_t *indices, bool *hardened, size_t count) ;
 
 /*
+ Get a managed account from a managed wallet
+
+ This function gets a ManagedAccount from the wallet manager's managed wallet info,
+ returning a managed account handle that wraps the ManagedAccount.
+
+ # Safety
+
+ - `manager` must be a valid pointer to an FFIWalletManager instance
+ - `wallet_id` must be a valid pointer to a 32-byte wallet ID
+ - `network` must specify exactly one network
+ - The caller must ensure all pointers remain valid for the duration of this call
+ - The returned account must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccountResult managed_wallet_get_account(const FFIWalletManager *manager,
+                                                   const uint8_t *wallet_id,
+                                                   FFINetwork network,
+                                                   unsigned int account_index,
+                                                   FFIAccountType account_type)
+;
+
+/*
+ Get a managed IdentityTopUp account with a specific registration index
+
+ This is used for top-up accounts that are bound to a specific identity.
+ Returns a managed account handle that wraps the ManagedAccount.
+
+ # Safety
+
+ - `manager` must be a valid pointer to an FFIWalletManager instance
+ - `wallet_id` must be a valid pointer to a 32-byte wallet ID
+ - `network` must specify exactly one network
+ - The caller must ensure all pointers remain valid for the duration of this call
+ - The returned account must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccountResult managed_wallet_get_top_up_account_with_registration_index(const FFIWalletManager *manager,
+                                                                                  const uint8_t *wallet_id,
+                                                                                  FFINetwork network,
+                                                                                  unsigned int registration_index)
+;
+
+/*
+ Get the network of a managed account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedAccount instance
+ */
+ FFINetwork managed_account_get_network(const FFIManagedAccount *account) ;
+
+/*
+ Get the parent wallet ID of a managed account
+
+ Note: ManagedAccount doesn't store the parent wallet ID directly.
+ The wallet ID is typically known from the context (e.g., when getting the account from a managed wallet).
+
+ # Safety
+
+ - `wallet_id` must be a valid pointer to a 32-byte wallet ID buffer that was provided by the caller
+ - The returned pointer is the same as the input pointer for convenience
+ - The caller must not free the returned pointer as it's the same as the input
+ */
+
+const uint8_t *managed_account_get_parent_wallet_id(const uint8_t *wallet_id)
+;
+
+/*
+ Get the account type of a managed account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `index_out` must be a valid pointer to receive the account index (or null)
+ */
+
+FFIAccountType managed_account_get_account_type(const FFIManagedAccount *account,
+                                                unsigned int *index_out)
+;
+
+/*
+ Check if a managed account is watch-only
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedAccount instance
+ */
+ bool managed_account_get_is_watch_only(const FFIManagedAccount *account) ;
+
+/*
+ Get the balance of a managed account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `balance_out` must be a valid pointer to an FFIBalance structure
+ */
+ bool managed_account_get_balance(const FFIManagedAccount *account, FFIBalance *balance_out) ;
+
+/*
+ Get the number of transactions in a managed account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedAccount instance
+ */
+ unsigned int managed_account_get_transaction_count(const FFIManagedAccount *account) ;
+
+/*
+ Get the number of UTXOs in a managed account
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedAccount instance
+ */
+ unsigned int managed_account_get_utxo_count(const FFIManagedAccount *account) ;
+
+/*
+ Free a managed account handle
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedAccount that was allocated by this library
+ - The pointer must not be used after calling this function
+ - This function must only be called once per allocation
+ */
+ void managed_account_free(FFIManagedAccount *account) ;
+
+/*
+ Free a managed account result's error message (if any)
+ Note: This does NOT free the account handle itself - use managed_account_free for that
+
+ # Safety
+
+ - `result` must be a valid pointer to an FFIManagedAccountResult
+ - The error_message field must be either null or a valid CString allocated by this library
+ - The caller must ensure the result pointer remains valid for the duration of this call
+ */
+ void managed_account_result_free_error(FFIManagedAccountResult *result) ;
+
+/*
+ Get number of accounts in a managed wallet
+
+ # Safety
+
+ - `manager` must be a valid pointer to an FFIWalletManager instance
+ - `wallet_id` must be a valid pointer to a 32-byte wallet ID
+ - `network` must specify exactly one network
+ - `error` must be a valid pointer to an FFIError structure or null
+ - The caller must ensure all pointers remain valid for the duration of this call
+ */
+
+unsigned int managed_wallet_get_account_count(const FFIWalletManager *manager,
+                                              const uint8_t *wallet_id,
+                                              FFINetwork network,
+                                              FFIError *error)
+;
+
+/*
+ Get the account index from a managed account
+
+ Returns the primary account index for Standard and CoinJoin accounts.
+ Returns 0 for account types that don't have an index (like Identity or Provider accounts).
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedAccount instance
+ */
+ unsigned int managed_account_get_index(const FFIManagedAccount *account) ;
+
+/*
+ Get the external address pool from a managed account
+
+ This function returns the external (receive) address pool for Standard accounts.
+ Returns NULL for account types that don't have separate external/internal pools.
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedAccount instance
+ - The returned pool must be freed with `address_pool_free` when no longer needed
+ */
+ FFIAddressPool *managed_account_get_external_address_pool(const FFIManagedAccount *account) ;
+
+/*
+ Get the internal address pool from a managed account
+
+ This function returns the internal (change) address pool for Standard accounts.
+ Returns NULL for account types that don't have separate external/internal pools.
+
+ # Safety
+
+ - `account` must be a valid pointer to an FFIManagedAccount instance
+ - The returned pool must be freed with `address_pool_free` when no longer needed
+ */
+ FFIAddressPool *managed_account_get_internal_address_pool(const FFIManagedAccount *account) ;
+
+/*
+ Get an address pool from a managed account by type
+
+ This function returns the appropriate address pool based on the pool type parameter.
+ For Standard accounts with External/Internal pool types, returns the corresponding pool.
+ For non-standard accounts with Single pool type, returns their single address pool.
+
+ # Safety
+
+ - `manager` must be a valid pointer to an FFIWalletManager instance
+ - `account` must be a valid pointer to an FFIManagedAccount instance
+ - `wallet_id` must be a valid pointer to a 32-byte wallet ID
+ - The returned pool must be freed with `address_pool_free` when no longer needed
+ */
+
+FFIAddressPool *managed_account_get_address_pool(const FFIManagedAccount *account,
+                                                 FFIAddressPoolType pool_type)
+;
+
+/*
+ Get managed account collection for a specific network from wallet manager
+
+ # Safety
+
+ - `manager` must be a valid pointer to an FFIWalletManager instance
+ - `wallet_id` must be a valid pointer to a 32-byte wallet ID
+ - `error` must be a valid pointer to an FFIError structure or null
+ - The returned pointer must be freed with `managed_account_collection_free` when no longer needed
+ */
+
+FFIManagedAccountCollection *managed_wallet_get_account_collection(const FFIWalletManager *manager,
+                                                                   const uint8_t *wallet_id,
+                                                                   FFINetwork network,
+                                                                   FFIError *error)
+;
+
+/*
+ Free a managed account collection handle
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection created by this library
+ - `collection` must not be used after calling this function
+ */
+ void managed_account_collection_free(FFIManagedAccountCollection *collection) ;
+
+/*
+ Get a BIP44 account by index from the managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned pointer must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccount *managed_account_collection_get_bip44_account(const FFIManagedAccountCollection *collection,
+                                                                unsigned int index)
+;
+
+/*
+ Get all BIP44 account indices from managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `out_indices` must be a valid pointer to store the indices array
+ - `out_count` must be a valid pointer to store the count
+ - The returned array must be freed with `free_u32_array` when no longer needed
+ */
+
+bool managed_account_collection_get_bip44_indices(const FFIManagedAccountCollection *collection,
+                                                  unsigned int **out_indices,
+                                                  size_t *out_count)
+;
+
+/*
+ Get a BIP32 account by index from the managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned pointer must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccount *managed_account_collection_get_bip32_account(const FFIManagedAccountCollection *collection,
+                                                                unsigned int index)
+;
+
+/*
+ Get all BIP32 account indices from managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `out_indices` must be a valid pointer to store the indices array
+ - `out_count` must be a valid pointer to store the count
+ - The returned array must be freed with `free_u32_array` when no longer needed
+ */
+
+bool managed_account_collection_get_bip32_indices(const FFIManagedAccountCollection *collection,
+                                                  unsigned int **out_indices,
+                                                  size_t *out_count)
+;
+
+/*
+ Get a CoinJoin account by index from the managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned pointer must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccount *managed_account_collection_get_coinjoin_account(const FFIManagedAccountCollection *collection,
+                                                                   unsigned int index)
+;
+
+/*
+ Get all CoinJoin account indices from managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `out_indices` must be a valid pointer to store the indices array
+ - `out_count` must be a valid pointer to store the count
+ - The returned array must be freed with `free_u32_array` when no longer needed
+ */
+
+bool managed_account_collection_get_coinjoin_indices(const FFIManagedAccountCollection *collection,
+                                                     unsigned int **out_indices,
+                                                     size_t *out_count)
+;
+
+/*
+ Get the identity registration account if it exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned pointer must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccount *managed_account_collection_get_identity_registration(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Check if identity registration account exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ */
+
+bool managed_account_collection_has_identity_registration(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Get an identity topup account by registration index from managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned pointer must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccount *managed_account_collection_get_identity_topup(const FFIManagedAccountCollection *collection,
+                                                                 unsigned int registration_index)
+;
+
+/*
+ Get all identity topup registration indices from managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `out_indices` must be a valid pointer to store the indices array
+ - `out_count` must be a valid pointer to store the count
+ - The returned array must be freed with `free_u32_array` when no longer needed
+ */
+
+bool managed_account_collection_get_identity_topup_indices(const FFIManagedAccountCollection *collection,
+                                                           unsigned int **out_indices,
+                                                           size_t *out_count)
+;
+
+/*
+ Get the identity topup not bound account if it exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `manager` must be a valid pointer to an FFIWalletManager
+ - The returned pointer must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccount *managed_account_collection_get_identity_topup_not_bound(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Check if identity topup not bound account exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ */
+
+bool managed_account_collection_has_identity_topup_not_bound(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Get the identity invitation account if it exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned pointer must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccount *managed_account_collection_get_identity_invitation(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Check if identity invitation account exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ */
+
+bool managed_account_collection_has_identity_invitation(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Get the provider voting keys account if it exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned pointer must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccount *managed_account_collection_get_provider_voting_keys(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Check if provider voting keys account exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ */
+
+bool managed_account_collection_has_provider_voting_keys(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Get the provider owner keys account if it exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned pointer must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccount *managed_account_collection_get_provider_owner_keys(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Check if provider owner keys account exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ */
+
+bool managed_account_collection_has_provider_owner_keys(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Get the provider operator keys account if it exists in managed collection
+ Note: This function is only available when the `bls` feature is enabled
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned pointer must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccount *managed_account_collection_get_provider_operator_keys(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Get the provider operator keys account if it exists (stub when BLS is disabled)
+ */
+
+FFIManagedAccount *managed_account_collection_get_provider_operator_keys(const FFIManagedAccountCollection *_collection)
+;
+
+/*
+ Check if provider operator keys account exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ */
+
+bool managed_account_collection_has_provider_operator_keys(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Get the provider platform keys account if it exists in managed collection
+ Note: This function is only available when the `eddsa` feature is enabled
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - `manager` must be a valid pointer to an FFIWalletManager
+ - The returned pointer must be freed with `managed_account_free` when no longer needed
+ */
+
+FFIManagedAccount *managed_account_collection_get_provider_platform_keys(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Get the provider platform keys account if it exists (stub when EdDSA is disabled)
+ */
+
+FFIManagedAccount *managed_account_collection_get_provider_platform_keys(const FFIManagedAccountCollection *_collection)
+;
+
+/*
+ Check if provider platform keys account exists in managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ */
+
+bool managed_account_collection_has_provider_platform_keys(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Get the total number of accounts in the managed collection
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ */
+ unsigned int managed_account_collection_count(const FFIManagedAccountCollection *collection) ;
+
+/*
+ Get a human-readable summary of all accounts in the managed collection
+
+ Returns a formatted string showing all account types and their indices.
+ The format is designed to be clear and readable for end users.
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned string must be freed with `string_free` when no longer needed
+ - Returns null if the collection pointer is null
+ */
+ char *managed_account_collection_summary(const FFIManagedAccountCollection *collection) ;
+
+/*
+ Get structured account collection summary data for managed collection
+
+ Returns a struct containing arrays of indices for each account type and boolean
+ flags for special accounts. This provides Swift with programmatic access to
+ account information.
+
+ # Safety
+
+ - `collection` must be a valid pointer to an FFIManagedAccountCollection
+ - The returned pointer must be freed with `managed_account_collection_summary_free` when no longer needed
+ - Returns null if the collection pointer is null
+ */
+
+FFIManagedAccountCollectionSummary *managed_account_collection_summary_data(const FFIManagedAccountCollection *collection)
+;
+
+/*
+ Free a managed account collection summary and all its allocated memory
+
+ # Safety
+
+ - `summary` must be a valid pointer to an FFIManagedAccountCollectionSummary created by `managed_account_collection_summary_data`
+ - `summary` must not be used after calling this function
+ */
+
+void managed_account_collection_summary_free(FFIManagedAccountCollectionSummary *summary)
+;
+
+/*
  Get the next unused receive address
 
  Generates the next unused receive address for the specified account.
@@ -1503,26 +2948,6 @@ bool wallet_generate_provider_key(const FFIWallet *wallet,
  void provider_key_info_free(FFIProviderKeyInfo *info) ;
 
 /*
- Get the address for a provider key
-
- This returns the P2PKH address corresponding to the provider key at
- the specified index. This is useful for funding provider accounts.
-
- # Safety
-
- - `wallet` must be a valid pointer to an FFIWallet
- - `error` must be a valid pointer to an FFIError or null
- - The returned string must be freed by the caller
- */
-
-char *wallet_get_provider_key_address(const FFIWallet *wallet,
-                                      FFINetwork network,
-                                      FFIProviderKeyType key_type,
-                                      unsigned int _key_index,
-                                      FFIError *error)
-;
-
-/*
  Sign data with a provider key
 
  This signs arbitrary data with the provider key at the specified index.
@@ -1564,7 +2989,7 @@ bool wallet_sign_with_provider_key(const FFIWallet *wallet,
  */
 
 bool wallet_build_transaction(FFIWallet *wallet,
-                              FFINetwork network,
+                              FFINetwork _network,
                               unsigned int account_index,
                               const FFITxOutput *outputs,
                               size_t outputs_count,
@@ -1588,7 +3013,7 @@ bool wallet_build_transaction(FFIWallet *wallet,
  */
 
 bool wallet_sign_transaction(const FFIWallet *wallet,
-                             FFINetwork network,
+                             FFINetwork _network,
                              const uint8_t *tx_bytes,
                              size_t tx_len,
                              uint8_t **signed_tx_out,
@@ -1785,13 +3210,13 @@ bool wallet_get_utxos(const FFIWallet *_wallet,
 
 FFIWallet *wallet_create_from_mnemonic_with_options(const char *mnemonic,
                                                     const char *passphrase,
-                                                    FFINetwork network,
+                                                    FFINetwork networks,
                                                     const FFIWalletAccountCreationOptions *account_options,
                                                     FFIError *error)
 ;
 
 /*
- Create a new wallet from mnemonic (backward compatibility)
+ Create a new wallet from mnemonic (backward compatibility - single network)
 
  # Safety
 
@@ -1821,7 +3246,7 @@ FFIWallet *wallet_create_from_mnemonic(const char *mnemonic,
 
 FFIWallet *wallet_create_from_seed_with_options(const uint8_t *seed,
                                                 size_t seed_len,
-                                                FFINetwork network,
+                                                FFINetwork networks,
                                                 const FFIWalletAccountCreationOptions *account_options,
                                                 FFIError *error)
 ;
@@ -1843,34 +3268,6 @@ FFIWallet *wallet_create_from_seed(const uint8_t *seed,
 ;
 
 /*
- Create a new wallet from seed bytes
-
- # Safety
-
- - `seed_bytes` must be a valid pointer to a byte array of `seed_len` length
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure all pointers remain valid for the duration of this call
- - The returned pointer must be freed with `wallet_free` when no longer needed
- */
-
-FFIWallet *wallet_create_from_seed_bytes(const uint8_t *seed_bytes,
-                                         size_t seed_len,
-                                         FFINetwork network,
-                                         FFIError *error)
-;
-
-/*
- Create a watch-only wallet from extended public key
-
- # Safety
-
- - `xpub` must be a valid pointer to a null-terminated C string
- - `error` must be a valid pointer to an FFIError structure or null
- - The caller must ensure all pointers remain valid for the duration of this call
- */
- FFIWallet *wallet_create_from_xpub(const char *xpub, FFINetwork network, FFIError *error) ;
-
-/*
  Create a new random wallet with options
 
  # Safety
@@ -1880,7 +3277,7 @@ FFIWallet *wallet_create_from_seed_bytes(const uint8_t *seed_bytes,
  - The caller must ensure all pointers remain valid for the duration of this call
  */
 
-FFIWallet *wallet_create_random_with_options(FFINetwork network,
+FFIWallet *wallet_create_random_with_options(FFINetwork networks,
                                              const FFIWalletAccountCreationOptions *account_options,
                                              FFIError *error)
 ;
@@ -1986,7 +3383,7 @@ char *wallet_get_xpub(const FFIWallet *wallet,
 
 FFIAccountResult wallet_add_account(FFIWallet *wallet,
                                     FFINetwork network,
-                                    unsigned int account_type,
+                                    FFIAccountType account_type,
                                     unsigned int account_index)
 ;
 
@@ -2004,7 +3401,7 @@ FFIAccountResult wallet_add_account(FFIWallet *wallet,
 
 FFIAccountResult wallet_add_account_with_xpub_bytes(FFIWallet *wallet,
                                                     FFINetwork network,
-                                                    unsigned int account_type,
+                                                    FFIAccountType account_type,
                                                     unsigned int account_index,
                                                     const uint8_t *xpub_bytes,
                                                     size_t xpub_len)
@@ -2024,7 +3421,7 @@ FFIAccountResult wallet_add_account_with_xpub_bytes(FFIWallet *wallet,
 
 FFIAccountResult wallet_add_account_with_string_xpub(FFIWallet *wallet,
                                                      FFINetwork network,
-                                                     unsigned int account_type,
+                                                     FFIAccountType account_type,
                                                      unsigned int account_index,
                                                      const char *xpub_string)
 ;
@@ -2071,6 +3468,81 @@ bool wallet_manager_add_wallet_from_mnemonic(FFIWalletManager *manager,
                                              const char *mnemonic,
                                              const char *passphrase,
                                              FFINetwork network,
+                                             FFIError *error)
+;
+
+/*
+ Add a wallet from mnemonic to the manager and return serialized bytes
+
+ Creates a wallet from a mnemonic phrase, adds it to the manager, optionally downgrading it
+ to a pubkey-only wallet (watch-only or externally signable), and returns the serialized wallet bytes.
+
+ # Safety
+
+ - `manager` must be a valid pointer to an FFIWalletManager instance
+ - `mnemonic` must be a valid pointer to a null-terminated C string
+ - `passphrase` must be a valid pointer to a null-terminated C string or null
+ - `birth_height` is optional, pass 0 for default
+ - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
+ - `downgrade_to_pubkey_wallet` if true, creates a watch-only or externally signable wallet
+ - `allow_external_signing` if true AND downgrade_to_pubkey_wallet is true, creates an externally signable wallet
+ - `wallet_bytes_out` must be a valid pointer to a pointer that will receive the serialized bytes
+ - `wallet_bytes_len_out` must be a valid pointer that will receive the byte length
+ - `wallet_id_out` must be a valid pointer to a 32-byte array that will receive the wallet ID
+ - `error` must be a valid pointer to an FFIError structure or null
+ - The caller must ensure all pointers remain valid for the duration of this call
+ - The caller must free the returned wallet_bytes using wallet_manager_free_wallet_bytes()
+ */
+
+bool wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(FFIWalletManager *manager,
+                                                                     const char *mnemonic,
+                                                                     const char *passphrase,
+                                                                     FFINetwork network,
+                                                                     unsigned int birth_height,
+                                                                     const FFIWalletAccountCreationOptions *account_options,
+                                                                     bool downgrade_to_pubkey_wallet,
+                                                                     bool allow_external_signing,
+                                                                     uint8_t **wallet_bytes_out,
+                                                                     size_t *wallet_bytes_len_out,
+                                                                     uint8_t *wallet_id_out,
+                                                                     FFIError *error)
+;
+
+/*
+ Free wallet bytes buffer
+
+ # Safety
+
+ - `wallet_bytes` must be a valid pointer to a buffer allocated by wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes
+ - `bytes_len` must match the original allocation size
+ - The pointer must not be used after calling this function
+ - This function must only be called once per buffer
+ */
+
+void wallet_manager_free_wallet_bytes(uint8_t *wallet_bytes,
+                                      size_t bytes_len)
+;
+
+/*
+ Import a wallet from bincode-serialized bytes
+
+ Deserializes a wallet from bytes and adds it to the manager.
+ Returns a 32-byte wallet ID on success.
+
+ # Safety
+
+ - `manager` must be a valid pointer to an FFIWalletManager instance
+ - `wallet_bytes` must be a valid pointer to bincode-serialized wallet bytes
+ - `wallet_bytes_len` must be the exact length of the wallet bytes
+ - `wallet_id_out` must be a valid pointer to a 32-byte array that will receive the wallet ID
+ - `error` must be a valid pointer to an FFIError structure or null
+ - The caller must ensure all pointers remain valid for the duration of this call
+ */
+
+bool wallet_manager_import_wallet_from_bytes(FFIWalletManager *manager,
+                                             const uint8_t *wallet_bytes,
+                                             size_t wallet_bytes_len,
+                                             uint8_t *wallet_id_out,
                                              FFIError *error)
 ;
 

@@ -2,20 +2,20 @@
 //!
 //! A seed is a 512-bit (64 bytes) value used to derive HD wallet keys.
 
+use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use core::fmt;
 use core::str::FromStr;
+use dashcore_hashes::hex::FromHex;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-use crate::error::{Error, Result};
-use dashcore_hashes::hex::FromHex;
+use zeroize::Zeroize;
 
 /// A BIP32 seed (512 bits / 64 bytes)
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Zeroize)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct Seed([u8; 64]);
 

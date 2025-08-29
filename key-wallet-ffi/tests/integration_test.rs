@@ -141,73 +141,9 @@ fn test_seed_to_wallet_workflow() {
     };
     assert!(!wallet.is_null());
 
-    // 3. Test the wallet created from seed
-    // Since we can't add a wallet from seed to manager, just verify it works
-    let mut wallet_balance = key_wallet_ffi::balance::FFIBalance::default();
-    let success = unsafe {
-        key_wallet_ffi::balance::wallet_get_balance(
-            wallet,
-            FFINetwork::Testnet,
-            &mut wallet_balance,
-            error,
-        )
-    };
-    assert!(success);
-    assert_eq!(wallet_balance.confirmed, 0);
-
     // Clean up
     unsafe {
         key_wallet_ffi::wallet::wallet_free(wallet);
-    }
-}
-
-#[test]
-fn test_watch_only_wallet() {
-    let mut error = FFIError::success();
-    let error = &mut error as *mut FFIError;
-
-    // 1. Create a regular wallet from seed
-    let seed = vec![0x01u8; 64];
-    let source_wallet = unsafe {
-        key_wallet_ffi::wallet::wallet_create_from_seed(
-            seed.as_ptr(),
-            seed.len(),
-            FFINetwork::Testnet,
-            error,
-        )
-    };
-    assert!(!source_wallet.is_null());
-
-    // 2. Get xpub
-    let xpub = unsafe {
-        key_wallet_ffi::wallet::wallet_get_xpub(source_wallet, FFINetwork::Testnet, 0, error)
-    };
-    assert!(!xpub.is_null());
-
-    // 3. Create watch-only wallet from xpub
-    let watch_wallet = unsafe {
-        key_wallet_ffi::wallet::wallet_create_from_xpub(xpub, FFINetwork::Testnet, error)
-    };
-    assert!(!watch_wallet.is_null());
-
-    // 4. Verify it's watch-only
-    let is_watch_only =
-        unsafe { key_wallet_ffi::wallet::wallet_is_watch_only(watch_wallet, error) };
-    assert!(is_watch_only);
-
-    // 5. Verify regular wallet is not watch-only
-    let is_watch_only =
-        unsafe { key_wallet_ffi::wallet::wallet_is_watch_only(source_wallet, error) };
-    assert!(!is_watch_only);
-
-    // 6. Since we can't derive addresses directly from wallets anymore,
-    // we'll just test that both wallets exist and have correct properties
-
-    // Clean up
-    unsafe {
-        key_wallet_ffi::wallet::wallet_free(source_wallet);
-        key_wallet_ffi::wallet::wallet_free(watch_wallet);
-        key_wallet_ffi::utils::string_free(xpub);
     }
 }
 

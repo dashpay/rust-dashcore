@@ -18,16 +18,13 @@ use std::collections::BTreeSet;
 
 /// Trait that wallet info types must implement to work with WalletManager
 pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccountOperations {
-    /// Create a new wallet info with the given ID and name
-    fn with_name(wallet_id: [u8; 32], name: String) -> Self;
+    /// Create a wallet info from an existing wallet
+    /// This properly initializes the wallet info from the wallet's state
+    fn from_wallet(wallet: &Wallet) -> Self;
 
     /// Create a wallet info from an existing wallet with proper account initialization
     /// Default implementation just uses with_name (backward compatibility)
-    fn from_wallet_with_name(wallet: &Wallet, name: String) -> Self {
-        // Default implementation for backward compatibility
-        // Types can override this to properly initialize from wallet accounts
-        Self::with_name(wallet.wallet_id, name)
-    }
+    fn from_wallet_with_name(wallet: &Wallet, name: String) -> Self;
 
     /// Get the wallet's unique ID
     fn wallet_id(&self) -> [u8; 32];
@@ -114,8 +111,8 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
 /// Default implementation for ManagedWalletInfo
 impl WalletInfoInterface for ManagedWalletInfo {
-    fn with_name(wallet_id: [u8; 32], name: String) -> Self {
-        Self::with_name(wallet_id, name)
+    fn from_wallet(wallet: &Wallet) -> Self {
+        Self::from_wallet_with_name(wallet, String::new())
     }
 
     fn from_wallet_with_name(wallet: &Wallet, name: String) -> Self {

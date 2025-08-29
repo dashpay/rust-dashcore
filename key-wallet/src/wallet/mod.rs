@@ -31,6 +31,7 @@ use core::fmt;
 use dashcore_hashes::{sha256, Hash};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 /// Type of wallet based on how it was created
 #[derive(Debug, Clone)]
@@ -89,7 +90,9 @@ pub struct WalletScanResult {
 
 impl Wallet {
     /// Compute wallet ID from root public key
-    pub fn compute_wallet_id(root_pub_key: &RootExtendedPubKey) -> [u8; 32] {
+    pub fn compute_wallet_id_from_root_extended_pub_key(
+        root_pub_key: &RootExtendedPubKey,
+    ) -> [u8; 32] {
         let mut data = Vec::new();
         data.extend_from_slice(&root_pub_key.root_public_key.serialize());
         data.extend_from_slice(&root_pub_key.root_chain_code[..]);
@@ -97,6 +100,11 @@ impl Wallet {
         // Compute SHA256 hash
         let hash = sha256::Hash::hash(&data);
         hash.to_byte_array()
+    }
+
+    /// Compute wallet ID
+    pub fn compute_wallet_id(&self) -> [u8; 32] {
+        Self::compute_wallet_id_from_root_extended_pub_key(&self.root_extended_pub_key_cow())
     }
 }
 
@@ -123,6 +131,59 @@ impl fmt::Display for Wallet {
     }
 }
 
+// Manual implementation of Zeroize for Wallet
+impl Zeroize for Wallet {
+    fn zeroize(&mut self) {
+        // Zeroize the wallet ID
+        self.wallet_id.zeroize();
+
+        // Zeroize the wallet type - handle each variant's sensitive data
+        match &mut self.wallet_type {
+            WalletType::Mnemonic {
+                mnemonic,
+                root_extended_private_key,
+            } => {
+                // Zeroize the mnemonic (now possible since it implements Zeroize)
+                mnemonic.zeroize();
+                // We can't zeroize SecretKey directly, but we can zeroize the chain code
+                root_extended_private_key.zeroize();
+                // Note: root_extended_private_key.root_private_key (SecretKey) doesn't implement Zeroize
+            }
+            WalletType::MnemonicWithPassphrase {
+                mnemonic,
+                root_extended_public_key,
+            } => {
+                // Zeroize the mnemonic
+                mnemonic.zeroize();
+                // Zeroize the public key structure (best effort)
+                root_extended_public_key.zeroize();
+            }
+            WalletType::Seed {
+                seed,
+                root_extended_private_key,
+            } => {
+                // We can't zeroize Seed directly as it doesn't implement Zeroize yet
+                // But we can zeroize the RootExtendedPrivKey
+                root_extended_private_key.zeroize();
+                seed.zeroize();
+            }
+            WalletType::ExtendedPrivKey(root_extended_private_key) => {
+                // Zeroize the chain code
+                root_extended_private_key.zeroize();
+                // Note: root_private_key (SecretKey) doesn't implement Zeroize
+            }
+            WalletType::ExternalSignable(root_extended_public_key)
+            | WalletType::WatchOnly(root_extended_public_key) => {
+                // Public keys are not sensitive, but zeroize for consistency
+                root_extended_public_key.zeroize();
+            }
+        }
+
+        // Clear the accounts map, only public keys here so no need to go hardcore on zeroization
+        self.accounts.clear();
+    }
+}
+
 #[cfg(test)]
 mod passphrase_test;
 
@@ -136,7 +197,7 @@ mod tests {
     #[test]
     fn test_wallet_creation() {
         let wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -155,7 +216,7 @@ mod tests {
 
         let wallet = Wallet::from_mnemonic(
             mnemonic,
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -180,7 +241,7 @@ mod tests {
         let mut bip44_set = BTreeSet::new();
         bip44_set.insert(0);
         let mut wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::BIP44AccountsOnly(bip44_set),
         )
         .unwrap();
@@ -216,7 +277,7 @@ mod tests {
         // where Account holds immutable state and ManagedAccount holds mutable state
 
         let wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -236,7 +297,7 @@ mod tests {
 
         let wallet = Wallet::from_mnemonic(
             mnemonic,
-            Network::Dash,
+            &[Network::Dash],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -255,7 +316,7 @@ mod tests {
         // Create first wallet
         let wallet1 = Wallet::from_mnemonic(
             mnemonic.clone(),
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -263,7 +324,7 @@ mod tests {
         // Create second wallet from same mnemonic (simulating recovery)
         let wallet2 = Wallet::from_mnemonic(
             mnemonic,
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -288,7 +349,7 @@ mod tests {
     #[test]
     fn test_multiple_account_creation() {
         let mut wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -337,7 +398,7 @@ mod tests {
     #[test]
     fn test_wallet_with_managed_info() {
         let wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -369,7 +430,7 @@ mod tests {
         // Create a regular wallet first to get the root xpub
 
         let wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -379,7 +440,8 @@ mod tests {
         let root_xpub_as_extended = root_xpub.to_extended_pub_key(Network::Testnet);
 
         // Create watch-only wallet from root xpub
-        let mut watch_only = Wallet::from_xpub(root_xpub_as_extended, BTreeMap::new()).unwrap();
+        let mut watch_only =
+            Wallet::from_xpub(root_xpub_as_extended, BTreeMap::new(), false).unwrap();
 
         assert!(watch_only.is_watch_only());
         assert!(!watch_only.has_mnemonic());
@@ -421,7 +483,7 @@ mod tests {
         // Create wallet without passphrase - use regular from_mnemonic for empty passphrase
         let wallet1 = Wallet::from_mnemonic(
             mnemonic.clone(),
-            network,
+            &[network],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -430,7 +492,7 @@ mod tests {
         let wallet2 = Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             "TREZOR".to_string(),
-            network,
+            &[network],
             initialization::WalletAccountCreationOptions::None,
         )
         .unwrap();
@@ -445,7 +507,7 @@ mod tests {
     #[test]
     fn test_account_management() {
         let mut wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::BIP44AccountsOnly([0].into()),
         )
         .unwrap();
@@ -485,7 +547,7 @@ mod tests {
     #[test]
     fn test_wallet_error_conditions() {
         let mut wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -509,7 +571,7 @@ mod tests {
     #[test]
     fn test_wallet_id_generation() {
         let wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
@@ -518,8 +580,7 @@ mod tests {
         assert_ne!(wallet.wallet_id, [0u8; 32]);
 
         // Wallet ID should be deterministic based on root public key
-        let root_pub_key = wallet.root_extended_pub_key();
-        let computed_id = Wallet::compute_wallet_id(&root_pub_key);
+        let computed_id = wallet.compute_wallet_id();
         assert_eq!(wallet.wallet_id, computed_id);
 
         // Test that wallets from the same mnemonic have the same ID
@@ -530,13 +591,13 @@ mod tests {
 
         let wallet1 = Wallet::from_mnemonic(
             mnemonic.clone(),
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
         let wallet2 = Wallet::from_mnemonic(
             mnemonic,
-            Network::Testnet,
+            &[Network::Testnet],
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();

@@ -80,7 +80,17 @@ pub unsafe extern "C" fn address_validate(
         }
     };
 
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return false;
+        }
+    };
     use std::str::FromStr;
 
     match key_wallet::Address::from_str(address_str) {
@@ -150,7 +160,17 @@ pub unsafe extern "C" fn address_get_type(
         }
     };
 
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return u8::MAX;
+        }
+    };
     use std::str::FromStr;
 
     match key_wallet::Address::from_str(address_str) {

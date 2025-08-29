@@ -295,7 +295,7 @@ mod tests {
         let other_network = Network::Dash;
 
         // Create wallet on testnet but check transaction on mainnet
-        let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+        let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
             .expect("Should create wallet");
 
         let mut managed_wallet =
@@ -326,7 +326,7 @@ mod tests {
         let network = Network::Testnet;
 
         // Create wallet with multiple account types
-        let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
+        let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::None)
             .expect("Should create wallet");
 
         // Add different types of accounts
@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn test_wallet_checker_coinbase_immature_handling() {
         let network = Network::Testnet;
-        let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+        let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
             .expect("Should create wallet");
 
         let mut managed_wallet =
@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn test_wallet_checker_mempool_context() {
         let network = Network::Testnet;
-        let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+        let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
             .expect("Should create wallet");
 
         let mut managed_wallet =

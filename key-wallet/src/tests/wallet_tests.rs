@@ -18,7 +18,7 @@ const TEST_MNEMONIC: &str =
 #[test]
 fn test_wallet_creation_random() {
     let wallet = Wallet::new_random(
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -41,7 +41,7 @@ fn test_wallet_creation_from_mnemonic() {
 
     let wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -69,7 +69,7 @@ fn test_wallet_creation_from_seed() {
 
     let wallet = Wallet::from_seed(
         seed.clone(),
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -101,7 +101,7 @@ fn test_wallet_creation_from_extended_key() {
 
     let wallet = Wallet::from_extended_key(
         master_key.clone(),
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -130,7 +130,7 @@ fn test_wallet_creation_watch_only() {
     let root_pub_key = root_priv_key.to_root_extended_pub_key();
     let master_xpub = root_pub_key.to_extended_pub_key(Network::Testnet);
 
-    let wallet = Wallet::from_xpub(master_xpub, BTreeMap::new()).unwrap();
+    let wallet = Wallet::from_xpub(master_xpub, BTreeMap::new(), false).unwrap();
 
     // Verify wallet properties
     assert!(wallet.is_watch_only());
@@ -159,7 +159,7 @@ fn test_wallet_creation_with_passphrase() {
     let wallet = Wallet::from_mnemonic_with_passphrase(
         mnemonic.clone(),
         passphrase.to_string(),
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -190,17 +190,17 @@ fn test_wallet_id_computation() {
     let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
     let root_pub_key = root_priv_key.to_root_extended_pub_key();
 
-    let wallet_id = Wallet::compute_wallet_id(&root_pub_key);
+    let wallet_id = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
 
     // Wallet ID should be deterministic
-    let wallet_id_2 = Wallet::compute_wallet_id(&root_pub_key);
+    let wallet_id_2 = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
     assert_eq!(wallet_id, wallet_id_2);
 
     // Create wallet and verify ID matches
 
     let wallet = Wallet::from_mnemonic(
         mnemonic,
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -214,13 +214,13 @@ fn test_wallet_recovery_same_mnemonic() {
     // Create two wallets from the same mnemonic
     let wallet1 = Wallet::from_mnemonic(
         mnemonic.clone(),
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
     let wallet2 = Wallet::from_mnemonic(
         mnemonic,
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -250,7 +250,7 @@ fn test_wallet_multiple_networks() {
     // Create wallet with Testnet account
     let mut wallet = Wallet::from_mnemonic(
         mnemonic,
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -287,7 +287,7 @@ fn test_wallet_multiple_networks() {
 #[test]
 fn test_wallet_account_addition() {
     let mut wallet = Wallet::new_random(
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -326,7 +326,7 @@ fn test_wallet_account_addition() {
 #[test]
 fn test_wallet_duplicate_account_error() {
     let mut wallet = Wallet::new_random(
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -359,7 +359,7 @@ fn test_wallet_duplicate_account_error() {
 #[test]
 fn test_wallet_to_watch_only() {
     let wallet = Wallet::new_random(
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -377,7 +377,7 @@ fn test_wallet_to_watch_only() {
 #[test]
 fn test_wallet_special_accounts() {
     let mut wallet = Wallet::new_random(
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -405,7 +405,7 @@ fn test_wallet_deterministic_key_derivation() {
 
     let wallet = Wallet::from_mnemonic(
         mnemonic,
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -416,7 +416,7 @@ fn test_wallet_deterministic_key_derivation() {
 
         let mut test_wallet = Wallet::from_mnemonic(
             mnemonic,
-            Network::Testnet,
+            &[Network::Testnet],
             crate::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();

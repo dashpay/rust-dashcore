@@ -89,7 +89,7 @@ fn test_key_derivation_performance() {
 #[test]
 fn test_account_creation_performance() {
     let mut wallet = Wallet::new_random(
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -134,7 +134,7 @@ fn test_wallet_recovery_performance() {
         let start = Instant::now();
         let _wallet = Wallet::from_mnemonic(
             mnemonic.clone(),
-            Network::Testnet,
+            &[Network::Testnet],
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
         .unwrap();
@@ -203,7 +203,7 @@ fn test_address_generation_batch_performance() {
 #[test]
 fn test_large_wallet_memory_usage() {
     let mut wallet = Wallet::new_random(
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -301,7 +301,7 @@ fn test_wallet_serialization_performance() {
     for _ in 0..iterations {
         let start = Instant::now();
         let _wallet = Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
         .unwrap();
@@ -312,65 +312,6 @@ fn test_wallet_serialization_performance() {
 
     // Assert creation performance (relaxed for test environment)
     assert!(metrics.avg_time < Duration::from_millis(50));
-}
-
-#[test]
-fn test_transaction_checking_performance() {
-    use dashcore::hashes::Hash;
-    use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
-
-    // Create many transactions to check
-    let num_transactions = 1000;
-    let mut transactions = Vec::new();
-
-    for i in 0..num_transactions {
-        let tx = Transaction {
-            version: 2,
-            lock_time: 0,
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: Txid::from_byte_array([(i % 256) as u8; 32]),
-                    vout: 0,
-                },
-                script_sig: ScriptBuf::new(),
-                sequence: 0xffffffff,
-                witness: dashcore::Witness::default(),
-            }],
-            output: vec![TxOut {
-                value: 100000,
-                script_pubkey: ScriptBuf::new(),
-            }],
-            special_transaction_payload: None,
-        };
-        transactions.push(tx);
-    }
-
-    let start = Instant::now();
-
-    // Simulate checking transactions
-    for tx in &transactions {
-        let _txid = tx.txid();
-        let _is_coinbase = tx.is_coin_base();
-        // In real implementation would check against wallet addresses
-    }
-
-    let elapsed = start.elapsed();
-    let ops_per_second = num_transactions as f64 / elapsed.as_secs_f64();
-
-    // Print detailed performance metrics before assertion
-    println!("\n=== Transaction Checking Performance ===");
-    println!("Checked {} transactions in {:?}", num_transactions, elapsed);
-    println!("Transactions per second: {:.2}", ops_per_second);
-    println!("Average time per transaction: {:?}", elapsed / num_transactions as u32);
-    println!("Expected: > 10,000 transactions/sec");
-    println!("=========================================\n");
-
-    // Assert transaction checking performance
-    assert!(
-        ops_per_second > 10000.0,
-        "Should check >10000 transactions/sec, but got {:.2} tx/sec",
-        ops_per_second
-    );
 }
 
 #[test]

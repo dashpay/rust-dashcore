@@ -21,7 +21,7 @@ mod tests {
         let wallet = Wallet::from_mnemonic_with_passphrase(
             mnemonic.clone(),
             passphrase.to_string(),
-            network,
+            &[network],
             WalletAccountCreationOptions::None,
         )
         .expect("Should create wallet with passphrase");
@@ -70,7 +70,7 @@ mod tests {
         let wallet = Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             passphrase.to_string(),
-            network,
+            &[network],
             WalletAccountCreationOptions::None,
         )
         .expect("Should create wallet");
@@ -104,7 +104,7 @@ mod tests {
         let mut wallet = Wallet::from_mnemonic_with_passphrase(
             mnemonic,
             passphrase.to_string(),
-            network,
+            &[network],
             WalletAccountCreationOptions::None,
         )
         .expect("Should create wallet");
@@ -150,7 +150,7 @@ mod tests {
 
         // Create regular wallet WITHOUT passphrase
         let mut wallet =
-            Wallet::from_mnemonic(mnemonic, network, WalletAccountCreationOptions::Default)
+            Wallet::from_mnemonic(mnemonic, &[network], WalletAccountCreationOptions::Default)
                 .expect("Should create wallet");
 
         // Try to use add_account_with_passphrase - should fail

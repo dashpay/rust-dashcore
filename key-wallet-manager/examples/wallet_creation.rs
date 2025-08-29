@@ -13,7 +13,7 @@ use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePr
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{AccountType, Network};
 use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
-use key_wallet_manager::wallet_manager::{WalletId, WalletManager};
+use key_wallet_manager::wallet_manager::WalletManager;
 
 fn main() {
     println!("=== Wallet Creation Example ===\n");
@@ -23,54 +23,48 @@ fn main() {
 
     let mut manager = WalletManager::<ManagedWalletInfo>::new();
 
-    // Create a wallet ID (32 bytes)
-    let wallet_id: WalletId = [1u8; 32];
-
-    let result = manager.create_wallet(
-        wallet_id,
-        "My First Wallet".to_string(),
+    let result = manager.create_wallet_with_random_mnemonic(
         WalletAccountCreationOptions::Default,
         Network::Testnet,
     );
 
-    match result {
-        Ok(_) => {
+    let wallet_id = match result {
+        Ok(wallet_id) => {
             println!("✅ Wallet created successfully!");
             println!("   Wallet ID: {}", hex::encode(wallet_id));
             println!("   Total wallets: {}", manager.wallet_count());
+            wallet_id
         }
         Err(e) => {
             println!("❌ Failed to create wallet: {:?}", e);
             return;
         }
-    }
+    };
 
     // Example 2: Create wallet from mnemonic
     println!("\n2. Creating wallet from mnemonic...");
 
     let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
-    let wallet_id2: WalletId = [2u8; 32];
-
     let result = manager.create_wallet_from_mnemonic(
-        wallet_id2,
-        "Restored Wallet".to_string(),
         test_mnemonic,
         "", // No passphrase
-        Some(Network::Testnet),
+        &[Network::Testnet],
         Some(100_000), // Birth height
         key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
     );
 
-    match result {
-        Ok(_) => {
+    let wallet_id2 = match result {
+        Ok(wallet_id2) => {
             println!("✅ Wallet created from mnemonic!");
             println!("   Wallet ID: {}", hex::encode(wallet_id2));
+            wallet_id2
         }
         Err(e) => {
             println!("❌ Failed to create wallet from mnemonic: {:?}", e);
+            return;
         }
-    }
+    };
 
     // Example 3: Managing accounts
     println!("\n3. Managing wallet accounts...");
@@ -135,19 +129,16 @@ fn main() {
 
     let mut spv_manager = SPVWalletManager::with_base(WalletManager::<ManagedWalletInfo>::new());
 
-    let wallet_id3: WalletId = [3u8; 32];
-
     // Create a wallet through SPVWalletManager
-    let spv_result = spv_manager.base.create_wallet(
-        wallet_id3,
-        "SPV Wallet".to_string(),
+    let spv_result = spv_manager.base.create_wallet_with_random_mnemonic(
         WalletAccountCreationOptions::Default,
         Network::Testnet,
     );
 
     match spv_result {
-        Ok(_) => {
+        Ok(wallet_id3) => {
             println!("✅ SPV wallet created!");
+            println!("   Wallet ID: {}", hex::encode(wallet_id3));
             println!("   Sync status: {:?}", spv_manager.sync_status(Network::Testnet));
             println!("   Sync height: {}", spv_manager.sync_height(Network::Testnet));
 

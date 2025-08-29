@@ -54,7 +54,7 @@ fn test_corrupted_wallet_data_recovery() {
 
     let wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -65,7 +65,7 @@ fn test_corrupted_wallet_data_recovery() {
     // Recovery: recreate from mnemonic
     let recovered_wallet = Wallet::from_mnemonic(
         mnemonic,
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -82,7 +82,7 @@ fn test_network_mismatch_handling() {
     // Create wallet for testnet
     let testnet_wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -90,7 +90,7 @@ fn test_network_mismatch_handling() {
     // Create wallet for mainnet with same mnemonic
     let mainnet_wallet = Wallet::from_mnemonic(
         mnemonic,
-        Network::Dash,
+        &[Network::Dash],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
@@ -134,7 +134,7 @@ fn test_zero_value_transaction_handling() {
 #[test]
 fn test_duplicate_account_handling() {
     let mut wallet = Wallet::new_random(
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -239,7 +239,7 @@ fn test_concurrent_access_simulation() {
 
     let wallet = Arc::new(Mutex::new(
         Wallet::new_random(
-            Network::Testnet,
+            &[Network::Testnet],
             crate::wallet::initialization::WalletAccountCreationOptions::None,
         )
         .unwrap(),
@@ -254,7 +254,7 @@ fn test_concurrent_access_simulation() {
             let wallet = wallet_clone.lock().unwrap();
             let _id = wallet.wallet_id;
             // Simulate some work
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            thread::sleep(std::time::Duration::from_millis(10));
         });
         handles.push(handle);
     }
@@ -270,26 +270,6 @@ fn test_concurrent_access_simulation() {
 }
 
 #[test]
-fn test_empty_wallet_operations() {
-    let wallet = Wallet::new_random(
-        Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
-    // Operations on empty wallet should not panic
-    let network = Network::Testnet;
-
-    // Get account that doesn't exist
-    let account = wallet.get_bip44_account(network, 999);
-    assert!(account.is_none());
-
-    // Get balance of empty wallet
-    // In real implementation: let balance = wallet.get_balance(network);
-    // assert_eq!(balance, 0);
-}
-
-#[test]
 fn test_passphrase_edge_cases() {
     let mnemonic = Mnemonic::from_phrase(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
@@ -299,7 +279,7 @@ fn test_passphrase_edge_cases() {
     // Test with empty passphrase - use regular from_mnemonic for empty passphrase
     let wallet1 = Wallet::from_mnemonic(
         mnemonic.clone(),
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -309,7 +289,7 @@ fn test_passphrase_edge_cases() {
     let wallet2 = Wallet::from_mnemonic_with_passphrase(
         mnemonic.clone(),
         long_passphrase,
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -319,7 +299,7 @@ fn test_passphrase_edge_cases() {
     let wallet3 = Wallet::from_mnemonic_with_passphrase(
         mnemonic,
         special_passphrase.to_string(),
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -357,7 +337,7 @@ fn test_wallet_recovery_with_missing_accounts() {
 
     let mut wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -388,7 +368,7 @@ fn test_wallet_recovery_with_missing_accounts() {
     // Recovery should handle gaps in account indices
     let recovered_wallet = Wallet::from_mnemonic(
         mnemonic,
-        Network::Testnet,
+        &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();

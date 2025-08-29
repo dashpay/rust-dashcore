@@ -125,10 +125,10 @@ fn test_provider_registration_transaction_routing_check_owner_only() {
     let network = Network::Testnet;
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -261,10 +261,10 @@ fn test_provider_registration_transaction_routing_check_voting_only() {
     let network = Network::Testnet;
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -397,10 +397,10 @@ fn test_provider_registration_transaction_routing_check_operator_only() {
     let network = Network::Testnet;
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -579,10 +579,10 @@ fn test_provider_registration_transaction_routing_check_platform_only() {
     let network = Network::Testnet;
 
     // We create another wallet that will hold keys not in our main wallet
-    let other_wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let other_wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
@@ -781,7 +781,7 @@ fn test_provider_update_service_with_operator_key() {
 fn test_provider_update_registrar_with_voting_and_operator() {
     // Test provider update registrar classification and routing
     let network = Network::Testnet;
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
@@ -853,7 +853,7 @@ fn test_provider_update_registrar_with_voting_and_operator() {
 fn test_provider_revocation_classification_and_routing() {
     // Test that provider revocation transactions are properly classified and routed
     let network = Network::Testnet;
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =

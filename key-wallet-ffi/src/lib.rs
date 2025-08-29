@@ -5,12 +5,14 @@
 
 // Module declarations
 pub mod account;
+pub mod account_collection;
 pub mod address;
 pub mod address_pool;
-pub mod balance;
 pub mod derivation;
 pub mod error;
 pub mod keys;
+pub mod managed_account;
+pub mod managed_account_collection;
 pub mod managed_wallet;
 pub mod mnemonic;
 pub mod provider_keys;
@@ -28,9 +30,8 @@ pub mod bip38;
 // Test modules are now included in each source file
 
 // Re-export main types for convenience
-pub use balance::FFIBalance;
 pub use error::{FFIError, FFIErrorCode};
-pub use types::{FFINetwork, FFIWallet};
+pub use types::{FFIBalance, FFINetwork, FFIWallet};
 pub use utxo::FFIUTXO;
 
 // ============================================================================

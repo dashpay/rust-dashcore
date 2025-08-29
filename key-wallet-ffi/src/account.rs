@@ -1,9 +1,75 @@
 //! Account management functions
 
 use std::os::raw::c_uint;
+use std::sync::Arc;
 
 use crate::error::{FFIError, FFIErrorCode};
-use crate::types::{FFIAccount, FFIAccountResult, FFIAccountType, FFINetwork, FFIWallet};
+use crate::types::{FFIAccountResult, FFIAccountType, FFINetwork, FFIWallet};
+#[cfg(feature = "bls")]
+use key_wallet::account::BLSAccount;
+#[cfg(feature = "eddsa")]
+use key_wallet::account::EdDSAAccount;
+
+/// Opaque account handle
+pub struct FFIAccount {
+    pub(crate) account: Arc<key_wallet::Account>,
+}
+
+impl FFIAccount {
+    /// Create a new FFI account handle
+    pub fn new(account: &key_wallet::Account) -> Self {
+        FFIAccount {
+            account: Arc::new(account.clone()),
+        }
+    }
+
+    /// Get a reference to the inner account
+    pub fn inner(&self) -> &key_wallet::Account {
+        self.account.as_ref()
+    }
+}
+
+/// Opaque BLS account handle
+#[cfg(feature = "bls")]
+pub struct FFIBLSAccount {
+    pub(crate) account: Arc<BLSAccount>,
+}
+
+#[cfg(feature = "bls")]
+impl FFIBLSAccount {
+    /// Create a new FFI BLS account handle
+    pub fn new(account: &BLSAccount) -> Self {
+        FFIBLSAccount {
+            account: Arc::new(account.clone()),
+        }
+    }
+
+    /// Get a reference to the inner BLS account
+    pub fn inner(&self) -> &BLSAccount {
+        self.account.as_ref()
+    }
+}
+
+/// Opaque EdDSA account handle
+#[cfg(feature = "eddsa")]
+pub struct FFIEdDSAAccount {
+    pub(crate) account: Arc<EdDSAAccount>,
+}
+
+#[cfg(feature = "eddsa")]
+impl FFIEdDSAAccount {
+    /// Create a new FFI EdDSA account handle
+    pub fn new(account: &EdDSAAccount) -> Self {
+        FFIEdDSAAccount {
+            account: Arc::new(account.clone()),
+        }
+    }
+
+    /// Get a reference to the inner EdDSA account
+    pub fn inner(&self) -> &EdDSAAccount {
+        self.account.as_ref()
+    }
+}
 
 /// Get an account handle for a specific account type
 /// Returns a result containing either the account handle or an error
@@ -17,55 +83,29 @@ pub unsafe extern "C" fn wallet_get_account(
     wallet: *const FFIWallet,
     network: FFINetwork,
     account_index: c_uint,
-    account_type: c_uint,
+    account_type: FFIAccountType,
 ) -> FFIAccountResult {
     if wallet.is_null() {
         return FFIAccountResult::error(FFIErrorCode::InvalidInput, "Wallet is null".to_string());
     }
 
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = network.into();
-
-    let account_type_enum = match account_type {
-        0 => FFIAccountType::StandardBIP44,
-        1 => FFIAccountType::StandardBIP32,
-        2 => FFIAccountType::CoinJoin,
-        3 => FFIAccountType::IdentityRegistration,
-        4 => {
-            // IdentityTopUp requires a registration_index
-            return FFIAccountResult::error(
-                    FFIErrorCode::InvalidInput,
-                    "IdentityTopUp accounts require a registration_index. Use wallet_get_top_up_account_with_registration_index instead".to_string(),
-                );
-        }
-        5 => FFIAccountType::IdentityTopUpNotBoundToIdentity,
-        6 => FFIAccountType::IdentityInvitation,
-        7 => FFIAccountType::ProviderVotingKeys,
-        8 => FFIAccountType::ProviderOwnerKeys,
-        9 => FFIAccountType::ProviderOperatorKeys,
-        10 => FFIAccountType::ProviderPlatformKeys,
-        _ => {
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
             return FFIAccountResult::error(
                 FFIErrorCode::InvalidInput,
-                format!("Invalid account type: {}", account_type),
+                "Must specify exactly one network".to_string(),
             );
         }
     };
 
-    let account_type = match account_type_enum.to_account_type(account_index, None) {
-        Some(at) => at,
-        None => {
-            return FFIAccountResult::error(
-                FFIErrorCode::InvalidInput,
-                format!("Missing required parameters for account type {}", account_type),
-            );
-        }
-    };
+    let account_type_rust = account_type.to_account_type(account_index);
 
     match wallet
         .inner()
         .accounts_on_network(network_rust)
-        .and_then(|account_collection| account_collection.account_of_type(account_type))
+        .and_then(|account_collection| account_collection.account_of_type(account_type_rust))
     {
         Some(account) => {
             let ffi_account = FFIAccount::new(account);
@@ -94,7 +134,15 @@ pub unsafe extern "C" fn wallet_get_top_up_account_with_registration_index(
     }
 
     let wallet = &*wallet;
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            return FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+        }
+    };
 
     // This function is specifically for IdentityTopUp accounts
     let account_type = key_wallet::AccountType::IdentityTopUp {
@@ -134,6 +182,36 @@ pub unsafe extern "C" fn account_free(account: *mut FFIAccount) {
     }
 }
 
+/// Free a BLS account handle
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIBLSAccount
+/// - The pointer must not be used after calling this function
+/// - This function must only be called once per allocation
+#[cfg(feature = "bls")]
+#[no_mangle]
+pub unsafe extern "C" fn bls_account_free(account: *mut FFIBLSAccount) {
+    if !account.is_null() {
+        let _ = Box::from_raw(account);
+    }
+}
+
+/// Free an EdDSA account handle
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIEdDSAAccount
+/// - The pointer must not be used after calling this function
+/// - This function must only be called once per allocation
+#[cfg(feature = "eddsa")]
+#[no_mangle]
+pub unsafe extern "C" fn eddsa_account_free(account: *mut FFIEdDSAAccount) {
+    if !account.is_null() {
+        let _ = Box::from_raw(account);
+    }
+}
+
 /// Free an account result's error message (if any)
 /// Note: This does NOT free the account handle itself - use account_free for that
 ///
@@ -151,6 +229,346 @@ pub unsafe extern "C" fn account_result_free_error(result: *mut FFIAccountResult
             result.error_message = std::ptr::null_mut();
         }
     }
+}
+
+/// Get the extended public key of an account as a string
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIAccount instance
+/// - The returned string must be freed by the caller using `string_free`
+/// - Returns NULL if the account is null
+#[no_mangle]
+pub unsafe extern "C" fn account_get_extended_public_key_as_string(
+    account: *const FFIAccount,
+) -> *mut std::os::raw::c_char {
+    if account.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let account = &*account;
+    let xpub = account.inner().extended_public_key();
+
+    match std::ffi::CString::new(xpub.to_string()) {
+        Ok(c_str) => c_str.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Get the network of an account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIAccount instance
+/// - Returns FFINetwork::NoNetworks if the account is null
+#[no_mangle]
+pub unsafe extern "C" fn account_get_network(account: *const FFIAccount) -> FFINetwork {
+    if account.is_null() {
+        return FFINetwork::NoNetworks;
+    }
+
+    let account = &*account;
+    account.inner().network.into()
+}
+
+/// Get the parent wallet ID of an account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIAccount instance
+/// - Returns a pointer to the 32-byte wallet ID, or NULL if not set or account is null
+/// - The returned pointer is valid only as long as the account exists
+/// - The caller should copy the data if needed for longer use
+#[no_mangle]
+pub unsafe extern "C" fn account_get_parent_wallet_id(account: *const FFIAccount) -> *const u8 {
+    if account.is_null() {
+        return std::ptr::null();
+    }
+
+    let account = &*account;
+    match account.inner().parent_wallet_id {
+        Some(ref id) => id.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+/// Get the account type of an account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIAccount instance
+/// - `out_index` must be a valid pointer to a c_uint where the index will be stored
+/// - Returns FFIAccountType::StandardBIP44 with index 0 if the account is null
+#[no_mangle]
+pub unsafe extern "C" fn account_get_account_type(
+    account: *const FFIAccount,
+    out_index: *mut c_uint,
+) -> FFIAccountType {
+    if account.is_null() || out_index.is_null() {
+        if !out_index.is_null() {
+            *out_index = 0;
+        }
+        return FFIAccountType::StandardBIP44;
+    }
+
+    let account = &*account;
+    let (account_type, index, registration_index) =
+        FFIAccountType::from_account_type(&account.inner().account_type);
+
+    // For IdentityTopUp, the registration_index is the relevant index
+    *out_index = registration_index.unwrap_or(index);
+
+    account_type
+}
+
+/// Check if an account is watch-only
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIAccount instance
+/// - Returns false if the account is null
+#[no_mangle]
+pub unsafe extern "C" fn account_get_is_watch_only(account: *const FFIAccount) -> bool {
+    if account.is_null() {
+        return false;
+    }
+
+    let account = &*account;
+    account.inner().is_watch_only
+}
+
+// BLS account getter functions
+/// Get the extended public key of a BLS account as a string
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIBLSAccount instance
+/// - The returned string must be freed by the caller using `string_free`
+/// - Returns NULL if the account is null
+#[cfg(feature = "bls")]
+#[no_mangle]
+pub unsafe extern "C" fn bls_account_get_extended_public_key_as_string(
+    account: *const FFIBLSAccount,
+) -> *mut std::os::raw::c_char {
+    if account.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let account = &*account;
+    // For BLS accounts, we need to encode the extended public key bytes
+    // There's no standard string representation for BLS extended keys
+    let bytes = account.inner().bls_public_key.to_bytes();
+    let hex_string = hex::encode(bytes);
+
+    match std::ffi::CString::new(hex_string) {
+        Ok(c_str) => c_str.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Get the network of a BLS account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIBLSAccount instance
+/// - Returns FFINetwork::NoNetworks if the account is null
+#[cfg(feature = "bls")]
+#[no_mangle]
+pub unsafe extern "C" fn bls_account_get_network(account: *const FFIBLSAccount) -> FFINetwork {
+    if account.is_null() {
+        return FFINetwork::NoNetworks;
+    }
+
+    let account = &*account;
+    account.inner().network.into()
+}
+
+/// Get the parent wallet ID of a BLS account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIBLSAccount instance
+/// - Returns a pointer to the 32-byte wallet ID, or NULL if not set or account is null
+/// - The returned pointer is valid only as long as the account exists
+/// - The caller should copy the data if needed for longer use
+#[cfg(feature = "bls")]
+#[no_mangle]
+pub unsafe extern "C" fn bls_account_get_parent_wallet_id(
+    account: *const FFIBLSAccount,
+) -> *const u8 {
+    if account.is_null() {
+        return std::ptr::null();
+    }
+
+    let account = &*account;
+    match &account.inner().parent_wallet_id {
+        Some(id) => id.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+/// Get the account type of a BLS account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIBLSAccount instance
+/// - `out_index` must be a valid pointer to a c_uint where the index will be stored
+/// - Returns FFIAccountType::StandardBIP44 with index 0 if the account is null
+#[cfg(feature = "bls")]
+#[no_mangle]
+pub unsafe extern "C" fn bls_account_get_account_type(
+    account: *const FFIBLSAccount,
+    out_index: *mut c_uint,
+) -> FFIAccountType {
+    if account.is_null() || out_index.is_null() {
+        if !out_index.is_null() {
+            *out_index = 0;
+        }
+        return FFIAccountType::StandardBIP44;
+    }
+
+    let account = &*account;
+    let (account_type, index, registration_index) =
+        FFIAccountType::from_account_type(&account.inner().account_type);
+
+    // For IdentityTopUp, the registration_index is the relevant index
+    *out_index = registration_index.unwrap_or(index);
+
+    account_type
+}
+
+/// Check if a BLS account is watch-only
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIBLSAccount instance
+/// - Returns false if the account is null
+#[cfg(feature = "bls")]
+#[no_mangle]
+pub unsafe extern "C" fn bls_account_get_is_watch_only(account: *const FFIBLSAccount) -> bool {
+    if account.is_null() {
+        return false;
+    }
+
+    let account = &*account;
+    account.inner().is_watch_only
+}
+
+// EdDSA account getter functions
+/// Get the extended public key of an EdDSA account as a string
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIEdDSAAccount instance
+/// - The returned string must be freed by the caller using `string_free`
+/// - Returns NULL if the account is null
+#[cfg(feature = "eddsa")]
+#[no_mangle]
+pub unsafe extern "C" fn eddsa_account_get_extended_public_key_as_string(
+    account: *const FFIEdDSAAccount,
+) -> *mut std::os::raw::c_char {
+    if account.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let account = &*account;
+    // For EdDSA accounts, we need to encode the extended public key
+    // There's no standard string representation for Ed25519 extended keys
+    let bytes = account.inner().ed25519_public_key.encode();
+    let hex_string = hex::encode(bytes);
+
+    match std::ffi::CString::new(hex_string) {
+        Ok(c_str) => c_str.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Get the network of an EdDSA account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIEdDSAAccount instance
+/// - Returns FFINetwork::NoNetworks if the account is null
+#[cfg(feature = "eddsa")]
+#[no_mangle]
+pub unsafe extern "C" fn eddsa_account_get_network(account: *const FFIEdDSAAccount) -> FFINetwork {
+    if account.is_null() {
+        return FFINetwork::NoNetworks;
+    }
+
+    let account = &*account;
+    account.inner().network.into()
+}
+
+/// Get the parent wallet ID of an EdDSA account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIEdDSAAccount instance
+/// - Returns a pointer to the 32-byte wallet ID, or NULL if not set or account is null
+/// - The returned pointer is valid only as long as the account exists
+/// - The caller should copy the data if needed for longer use
+#[cfg(feature = "eddsa")]
+#[no_mangle]
+pub unsafe extern "C" fn eddsa_account_get_parent_wallet_id(
+    account: *const FFIEdDSAAccount,
+) -> *const u8 {
+    if account.is_null() {
+        return std::ptr::null();
+    }
+
+    let account = &*account;
+    match &account.inner().parent_wallet_id {
+        Some(id) => id.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+/// Get the account type of an EdDSA account
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIEdDSAAccount instance
+/// - `out_index` must be a valid pointer to a c_uint where the index will be stored
+/// - Returns FFIAccountType::StandardBIP44 with index 0 if the account is null
+#[cfg(feature = "eddsa")]
+#[no_mangle]
+pub unsafe extern "C" fn eddsa_account_get_account_type(
+    account: *const FFIEdDSAAccount,
+    out_index: *mut c_uint,
+) -> FFIAccountType {
+    if account.is_null() || out_index.is_null() {
+        if !out_index.is_null() {
+            *out_index = 0;
+        }
+        return FFIAccountType::StandardBIP44;
+    }
+
+    let account = &*account;
+    let (account_type, index, registration_index) =
+        FFIAccountType::from_account_type(&account.inner().account_type);
+
+    // For IdentityTopUp, the registration_index is the relevant index
+    *out_index = registration_index.unwrap_or(index);
+
+    account_type
+}
+
+/// Check if an EdDSA account is watch-only
+///
+/// # Safety
+///
+/// - `account` must be a valid pointer to an FFIEdDSAAccount instance
+/// - Returns false if the account is null
+#[cfg(feature = "eddsa")]
+#[no_mangle]
+pub unsafe extern "C" fn eddsa_account_get_is_watch_only(account: *const FFIEdDSAAccount) -> bool {
+    if account.is_null() {
+        return false;
+    }
+
+    let account = &*account;
+    account.inner().is_watch_only
 }
 
 /// Get number of accounts
@@ -172,7 +590,17 @@ pub unsafe extern "C" fn wallet_get_account_count(
     }
 
     let wallet = &*wallet;
-    let network: key_wallet::Network = network.into();
+    let network: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return 0;
+        }
+    };
 
     match wallet.inner().accounts.get(&network) {
         Some(accounts) => {

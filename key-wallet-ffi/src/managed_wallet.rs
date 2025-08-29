@@ -70,7 +70,17 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_receive_address(
 
     let managed_wallet = unsafe { &mut *managed_wallet };
     let wallet = unsafe { &*wallet };
-    let network = network.into();
+    let network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return ptr::null_mut();
+        }
+    };
 
     // Get the account collection for the network
     let account_collection = match managed_wallet.inner.accounts.get_mut(&network) {
@@ -190,7 +200,17 @@ pub unsafe extern "C" fn managed_wallet_get_next_bip44_change_address(
 
     let managed_wallet = unsafe { &mut *managed_wallet };
     let wallet = unsafe { &*wallet };
-    let network = network.into();
+    let network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return ptr::null_mut();
+        }
+    };
 
     // Get the account collection for the network
     let account_collection = match managed_wallet.inner.accounts.get_mut(&network) {
@@ -329,7 +349,19 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_external_address_range(
 
     let managed_wallet = unsafe { &mut *managed_wallet };
     let wallet = unsafe { &*wallet };
-    let network = network.into();
+    let network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            *count_out = 0;
+            *addresses_out = ptr::null_mut();
+            return false;
+        }
+    };
 
     // Get the account collection for the network
     let account_collection = match managed_wallet.inner.accounts.get_mut(&network) {
@@ -511,7 +543,19 @@ pub unsafe extern "C" fn managed_wallet_get_bip_44_internal_address_range(
 
     let managed_wallet = unsafe { &mut *managed_wallet };
     let wallet = unsafe { &*wallet };
-    let network = network.into();
+    let network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            *count_out = 0;
+            *addresses_out = ptr::null_mut();
+            return false;
+        }
+    };
 
     // Get the account collection for the network
     let account_collection = match managed_wallet.inner.accounts.get_mut(&network) {

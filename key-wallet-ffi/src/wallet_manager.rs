@@ -4,6 +4,10 @@
 #[path = "wallet_manager_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "wallet_manager_serialization_tests.rs"]
+mod serialization_tests;
+
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
@@ -89,17 +93,7 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
         }
     };
 
-    // Generate wallet ID from mnemonic + passphrase
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(mnemonic_str.as_bytes());
-    hasher.update(passphrase_str.as_bytes());
-    let hash = hasher.finalize();
-    let mut wallet_id = [0u8; 32];
-    wallet_id.copy_from_slice(&hash);
-
-    let network_rust: Network = network.into();
-    let name = format!("Wallet {}", hex::encode(&wallet_id[0..4]));
+    let networks_rust = network.parse_networks();
 
     unsafe {
         let manager_ref = &*manager;
@@ -115,16 +109,6 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
             }
         };
 
-        // Check if wallet already exists
-        if manager_guard.get_wallet(&wallet_id).is_some() {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                "Wallet already exists".to_string(),
-            );
-            return false;
-        }
-
         // Convert account creation options
         let creation_options = if account_options.is_null() {
             key_wallet::wallet::initialization::WalletAccountCreationOptions::Default
@@ -134,15 +118,13 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_with_options(
 
         // Use the WalletManager's public method to create the wallet
         match manager_guard.create_wallet_from_mnemonic(
-            wallet_id,
-            name,
             mnemonic_str,
             passphrase_str,
-            Some(network_rust),
+            networks_rust.as_slice(),
             None, // birth_height
             creation_options,
         ) {
-            Ok(_) => {
+            Ok(wallet_id) => {
                 // Track the wallet ID
                 let mut ids_guard = match manager_ref.wallet_ids.lock() {
                     Ok(g) => g,
@@ -197,6 +179,291 @@ pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic(
         ptr::null(), // Use default options
         error,
     )
+}
+
+/// Add a wallet from mnemonic to the manager and return serialized bytes
+///
+/// Creates a wallet from a mnemonic phrase, adds it to the manager, optionally downgrading it
+/// to a pubkey-only wallet (watch-only or externally signable), and returns the serialized wallet bytes.
+///
+/// # Safety
+///
+/// - `manager` must be a valid pointer to an FFIWalletManager instance
+/// - `mnemonic` must be a valid pointer to a null-terminated C string
+/// - `passphrase` must be a valid pointer to a null-terminated C string or null
+/// - `birth_height` is optional, pass 0 for default
+/// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
+/// - `downgrade_to_pubkey_wallet` if true, creates a watch-only or externally signable wallet
+/// - `allow_external_signing` if true AND downgrade_to_pubkey_wallet is true, creates an externally signable wallet
+/// - `wallet_bytes_out` must be a valid pointer to a pointer that will receive the serialized bytes
+/// - `wallet_bytes_len_out` must be a valid pointer that will receive the byte length
+/// - `wallet_id_out` must be a valid pointer to a 32-byte array that will receive the wallet ID
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
+/// - The caller must free the returned wallet_bytes using wallet_manager_free_wallet_bytes()
+#[cfg(feature = "bincode")]
+#[no_mangle]
+pub unsafe extern "C" fn wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes(
+    manager: *mut FFIWalletManager,
+    mnemonic: *const c_char,
+    passphrase: *const c_char,
+    network: FFINetwork,
+    birth_height: c_uint,
+    account_options: *const crate::types::FFIWalletAccountCreationOptions,
+    downgrade_to_pubkey_wallet: bool,
+    allow_external_signing: bool,
+    wallet_bytes_out: *mut *mut u8,
+    wallet_bytes_len_out: *mut usize,
+    wallet_id_out: *mut u8,
+    error: *mut FFIError,
+) -> bool {
+    // Validate input parameters
+    if manager.is_null()
+        || mnemonic.is_null()
+        || wallet_bytes_out.is_null()
+        || wallet_bytes_len_out.is_null()
+        || wallet_id_out.is_null()
+    {
+        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
+        return false;
+    }
+
+    // Parse mnemonic string
+    let mnemonic_str = unsafe {
+        match CStr::from_ptr(mnemonic).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    "Invalid UTF-8 in mnemonic".to_string(),
+                );
+                return false;
+            }
+        }
+    };
+
+    // Parse passphrase string
+    let passphrase_str = if passphrase.is_null() {
+        ""
+    } else {
+        unsafe {
+            match CStr::from_ptr(passphrase).to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidInput,
+                        "Invalid UTF-8 in passphrase".to_string(),
+                    );
+                    return false;
+                }
+            }
+        }
+    };
+
+    // Convert networks
+    let networks = network.parse_networks();
+
+    // Convert account creation options
+    let creation_options = if account_options.is_null() {
+        key_wallet::wallet::initialization::WalletAccountCreationOptions::Default
+    } else {
+        unsafe { (*account_options).to_wallet_options() }
+    };
+
+    // Get the manager and call the proper method
+    let manager_ref = unsafe { &*manager };
+    let mut manager_guard = match manager_ref.manager.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Failed to lock manager".to_string(),
+            );
+            return false;
+        }
+    };
+
+    // Convert birth_height: 0 means None, any other value means Some(value)
+    let birth_height = if birth_height == 0 {
+        None
+    } else {
+        Some(birth_height)
+    };
+
+    let (serialized, wallet_id) = match manager_guard
+        .create_wallet_from_mnemonic_return_serialized_bytes(
+            mnemonic_str,
+            passphrase_str,
+            &networks,
+            birth_height,
+            creation_options,
+            downgrade_to_pubkey_wallet,
+            allow_external_signing,
+        ) {
+        Ok(result) => result,
+        Err(e) => {
+            let ffi_error: FFIError = e.into();
+            if !error.is_null() {
+                unsafe {
+                    *error = ffi_error;
+                }
+            }
+            return false;
+        }
+    };
+
+    // Track the wallet ID in the FFI manager
+    if let Ok(mut wallet_ids) = manager_ref.wallet_ids.lock() {
+        wallet_ids.push(wallet_id);
+    }
+
+    // Allocate memory for the serialized bytes
+    let boxed_bytes = serialized.into_boxed_slice();
+    let bytes_len = boxed_bytes.len();
+    let bytes_ptr = Box::into_raw(boxed_bytes) as *mut u8;
+
+    // Write output values
+    unsafe {
+        *wallet_bytes_out = bytes_ptr;
+        *wallet_bytes_len_out = bytes_len;
+        ptr::copy_nonoverlapping(wallet_id.as_ptr(), wallet_id_out, 32);
+    }
+
+    FFIError::set_success(error);
+    true
+}
+
+/// Free wallet bytes buffer
+///
+/// # Safety
+///
+/// - `wallet_bytes` must be a valid pointer to a buffer allocated by wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes
+/// - `bytes_len` must match the original allocation size
+/// - The pointer must not be used after calling this function
+/// - This function must only be called once per buffer
+#[cfg(feature = "bincode")]
+#[no_mangle]
+pub unsafe extern "C" fn wallet_manager_free_wallet_bytes(wallet_bytes: *mut u8, bytes_len: usize) {
+    if !wallet_bytes.is_null() && bytes_len > 0 {
+        unsafe {
+            // Reconstruct the boxed slice with the correct DST pointer
+            ptr::write_bytes(wallet_bytes, 0, bytes_len);
+            let _ = Box::from_raw(ptr::slice_from_raw_parts_mut(wallet_bytes, bytes_len));
+        }
+    }
+}
+
+/// Import a wallet from bincode-serialized bytes
+///
+/// Deserializes a wallet from bytes and adds it to the manager.
+/// Returns a 32-byte wallet ID on success.
+///
+/// # Safety
+///
+/// - `manager` must be a valid pointer to an FFIWalletManager instance
+/// - `wallet_bytes` must be a valid pointer to bincode-serialized wallet bytes
+/// - `wallet_bytes_len` must be the exact length of the wallet bytes
+/// - `wallet_id_out` must be a valid pointer to a 32-byte array that will receive the wallet ID
+/// - `error` must be a valid pointer to an FFIError structure or null
+/// - The caller must ensure all pointers remain valid for the duration of this call
+#[cfg(feature = "bincode")]
+#[no_mangle]
+pub unsafe extern "C" fn wallet_manager_import_wallet_from_bytes(
+    manager: *mut FFIWalletManager,
+    wallet_bytes: *const u8,
+    wallet_bytes_len: usize,
+    wallet_id_out: *mut u8,
+    error: *mut FFIError,
+) -> bool {
+    // Validate input parameters
+    if manager.is_null()
+        || wallet_bytes.is_null()
+        || wallet_bytes_len == 0
+        || wallet_id_out.is_null()
+    {
+        FFIError::set_error(
+            error,
+            FFIErrorCode::InvalidInput,
+            "Null pointer or invalid length provided".to_string(),
+        );
+        return false;
+    }
+
+    // Create a byte slice from the raw pointer
+    let wallet_bytes_slice = unsafe { std::slice::from_raw_parts(wallet_bytes, wallet_bytes_len) };
+
+    // Get the manager reference
+    let manager_ref = unsafe { &*manager };
+
+    // Lock the manager
+    let mut manager_guard = match manager_ref.manager.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::WalletError,
+                "Failed to lock wallet manager".to_string(),
+            );
+            return false;
+        }
+    };
+
+    // Import the wallet
+    match manager_guard.import_wallet_from_bytes(wallet_bytes_slice) {
+        Ok(wallet_id) => {
+            // Copy the wallet ID to the output buffer
+            unsafe {
+                ptr::copy_nonoverlapping(wallet_id.as_ptr(), wallet_id_out, 32);
+            }
+
+            // Track the wallet ID in our FFI manager
+            let mut ids_guard = match manager_ref.wallet_ids.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        "Failed to lock wallet IDs".to_string(),
+                    );
+                    return false;
+                }
+            };
+            ids_guard.push(wallet_id);
+
+            FFIError::set_success(error);
+            true
+        }
+        Err(e) => {
+            // Convert the error to FFI error
+            match e {
+                key_wallet_manager::wallet_manager::WalletError::WalletExists(_) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::InvalidState,
+                        "Wallet already exists in the manager".to_string(),
+                    );
+                }
+                key_wallet_manager::wallet_manager::WalletError::InvalidParameter(msg) => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::SerializationError,
+                        format!("Failed to deserialize wallet: {}", msg),
+                    );
+                }
+                _ => {
+                    FFIError::set_error(
+                        error,
+                        FFIErrorCode::WalletError,
+                        format!("Failed to import wallet: {:?}", e),
+                    );
+                }
+            }
+            false
+        }
+    }
 }
 
 /// Get wallet IDs
@@ -415,7 +682,17 @@ pub unsafe extern "C" fn wallet_manager_get_receive_address(
         }
     };
 
-    let network_rust: Network = network.into();
+    let network_rust: Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return ptr::null_mut();
+        }
+    };
 
     // Use the WalletManager's public method to get next receive address
     use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
@@ -498,7 +775,17 @@ pub unsafe extern "C" fn wallet_manager_get_change_address(
         }
     };
 
-    let network_rust: Network = network.into();
+    let network_rust: Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return ptr::null_mut();
+        }
+    };
 
     // Use the WalletManager's public method to get next change address
     use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
@@ -669,7 +956,17 @@ pub unsafe extern "C" fn wallet_manager_process_transaction(
     };
 
     // Convert FFINetwork to Network
-    let network = network.into();
+    let network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return false;
+        }
+    };
 
     // Convert FFI context to native TransactionContext
     let context = unsafe { (*context).to_transaction_context() };
@@ -737,7 +1034,17 @@ pub unsafe extern "C" fn wallet_manager_get_monitored_addresses(
         }
     };
 
-    let network_rust: Network = network.into();
+    let network_rust: Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return false;
+        }
+    };
     let mut all_addresses: Vec<*mut c_char> = Vec::new();
 
     // Collect addresses from all wallets for this network
@@ -823,7 +1130,17 @@ pub unsafe extern "C" fn wallet_manager_update_height(
         }
     };
 
-    let network_rust: Network = network.into();
+    let network_rust: Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return false;
+        }
+    };
     manager_guard.update_height(network_rust, height);
 
     FFIError::set_success(error);
@@ -861,7 +1178,17 @@ pub unsafe extern "C" fn wallet_manager_current_height(
         }
     };
 
-    let network_rust: Network = network.into();
+    let network_rust: Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return 0;
+        }
+    };
 
     // Get current height from network state if it exists
     let height = manager_guard

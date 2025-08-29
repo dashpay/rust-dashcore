@@ -57,7 +57,7 @@ fn test_identity_registration() {
 fn test_identity_registration_account_routing() {
     let network = Network::Testnet;
 
-    let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::None)
+    let mut wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::None)
         .expect("Failed to create wallet without default accounts");
 
     // Add identity registration account
@@ -178,7 +178,7 @@ fn test_identity_registration_account_routing() {
 fn test_normal_payment_to_identity_address_not_detected() {
     let network = Network::Testnet;
 
-    let wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
+    let wallet = Wallet::new_random(&[network], WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
         ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());

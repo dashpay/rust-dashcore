@@ -1,12 +1,12 @@
 //! BIP32 and DIP9 derivation path functions
 
+use crate::error::{FFIError, FFIErrorCode};
+use crate::types::FFINetwork;
+use dash_network::Network;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
 use std::slice;
-
-use crate::error::{FFIError, FFIErrorCode};
-use crate::types::FFINetwork;
 
 /// Derivation path type for DIP9
 #[repr(C)]
@@ -61,7 +61,17 @@ pub unsafe extern "C" fn derivation_new_master_key(
     }
 
     let seed_slice = slice::from_raw_parts(seed, seed_len);
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return ptr::null_mut();
+        }
+    };
 
     match key_wallet::bip32::ExtendedPrivKey::new_master(network_rust, seed_slice) {
         Ok(xpriv) => {
@@ -99,7 +109,17 @@ pub extern "C" fn derivation_bip44_account_path(
         return false;
     }
 
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return false;
+        }
+    };
 
     use key_wallet::bip32::DerivationPath;
     let derivation = DerivationPath::bip_44_account(network_rust, account_index);
@@ -156,7 +176,17 @@ pub extern "C" fn derivation_bip44_payment_path(
         return false;
     }
 
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return false;
+        }
+    };
 
     use key_wallet::bip32::DerivationPath;
     let derivation =
@@ -212,7 +242,17 @@ pub extern "C" fn derivation_coinjoin_path(
         return false;
     }
 
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return false;
+        }
+    };
 
     use key_wallet::bip32::DerivationPath;
     let derivation = DerivationPath::coinjoin_path(network_rust, account_index);
@@ -267,7 +307,17 @@ pub extern "C" fn derivation_identity_registration_path(
         return false;
     }
 
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return false;
+        }
+    };
 
     use key_wallet::bip32::DerivationPath;
     let derivation = DerivationPath::identity_registration_path(network_rust, identity_index);
@@ -323,7 +373,17 @@ pub extern "C" fn derivation_identity_topup_path(
         return false;
     }
 
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return false;
+        }
+    };
 
     use key_wallet::bip32::DerivationPath;
     let derivation =
@@ -380,7 +440,17 @@ pub extern "C" fn derivation_identity_authentication_path(
         return false;
     }
 
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: key_wallet::Network = match network.try_into() {
+        Ok(n) => n,
+        Err(_) => {
+            FFIError::set_error(
+                error,
+                FFIErrorCode::InvalidInput,
+                "Must specify exactly one network".to_string(),
+            );
+            return false;
+        }
+    };
 
     use key_wallet::bip32::{DerivationPath, KeyDerivationType};
     let derivation = DerivationPath::identity_authentication_path(
@@ -444,7 +514,7 @@ pub unsafe extern "C" fn derivation_derive_private_key_from_seed(
     }
 
     let seed_slice = slice::from_raw_parts(seed, seed_len);
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: Network = network.try_into().unwrap_or(Network::Dash);
 
     let path_str = match CStr::from_ptr(path).to_str() {
         Ok(s) => s,
@@ -720,7 +790,7 @@ pub unsafe extern "C" fn dip9_derive_identity_key(
     }
 
     let seed_slice = slice::from_raw_parts(seed, seed_len);
-    let network_rust: key_wallet::Network = network.into();
+    let network_rust: Network = network.try_into().unwrap_or(Network::Dash);
 
     use key_wallet::bip32::{ChildNumber, DerivationPath};
     use key_wallet::dip9::{

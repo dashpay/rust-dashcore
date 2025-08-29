@@ -111,6 +111,14 @@ impl fmt::Debug for ChainCode {
     }
 }
 
+// Manual implementation of Zeroize for ChainCode
+// Note: ChainCode is Copy, so this won't prevent copies in registers/stack
+impl zeroize::Zeroize for ChainCode {
+    fn zeroize(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
 impl fmt::LowerHex for ChainCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for &byte in &self.0 {

@@ -4,23 +4,73 @@ use key_wallet::{Network, Wallet};
 use std::os::raw::c_uint;
 use std::sync::Arc;
 
-/// FFI Network type
+/// FFI Network type (bit flags for multiple networks)
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FFINetwork {
-    Dash = 0,
-    Testnet = 1,
-    Regtest = 2,
-    Devnet = 3,
+    NoNetworks = 0,
+    Dash = 1,
+    Testnet = 2,
+    Regtest = 4,
+    Devnet = 8,
+    AllNetworks = 15, // Dash | Testnet | Regtest | Devnet
 }
 
-impl From<FFINetwork> for Network {
-    fn from(n: FFINetwork) -> Self {
-        match n {
-            FFINetwork::Dash => Network::Dash,
-            FFINetwork::Testnet => Network::Testnet,
-            FFINetwork::Regtest => Network::Regtest,
-            FFINetwork::Devnet => Network::Devnet,
+impl FFINetwork {
+    /// Parse bit flags into a vector of networks
+    pub fn parse_networks(&self) -> Vec<Network> {
+        // Handle special cases
+        if self == &FFINetwork::NoNetworks {
+            return vec![];
+        }
+
+        let flags = *self as c_uint;
+
+        let mut networks = Vec::new();
+
+        if flags & (FFINetwork::Dash as c_uint) != 0 {
+            networks.push(Network::Dash);
+        }
+        if flags & (FFINetwork::Testnet as c_uint) != 0 {
+            networks.push(Network::Testnet);
+        }
+        if flags & (FFINetwork::Regtest as c_uint) != 0 {
+            networks.push(Network::Regtest);
+        }
+        if flags & (FFINetwork::Devnet as c_uint) != 0 {
+            networks.push(Network::Devnet);
+        }
+
+        networks
+    }
+}
+
+impl FFINetwork {
+    /// Try to convert to a single Network
+    /// Returns None if multiple networks are set or if NoNetworks is set
+    pub fn try_into_single_network(&self) -> Option<Network> {
+        let flags = *self as c_uint;
+
+        // Check if it's a single network
+        match flags {
+            x if x == FFINetwork::Dash as c_uint => Some(Network::Dash),
+            x if x == FFINetwork::Testnet as c_uint => Some(Network::Testnet),
+            x if x == FFINetwork::Regtest as c_uint => Some(Network::Regtest),
+            x if x == FFINetwork::Devnet as c_uint => Some(Network::Devnet),
+            _ => None, // Multiple networks or NoNetworks
+        }
+    }
+}
+
+use std::convert::TryFrom;
+
+impl TryFrom<FFINetwork> for Network {
+    type Error = &'static str;
+
+    fn try_from(value: FFINetwork) -> Result<Self, Self::Error> {
+        match value.try_into_single_network() {
+            Some(network) => Ok(network),
+            None => Err("FFINetwork must represent exactly one network"),
         }
     }
 }
@@ -33,6 +83,31 @@ impl From<Network> for FFINetwork {
             Network::Regtest => FFINetwork::Regtest,
             Network::Devnet => FFINetwork::Devnet,
             _ => FFINetwork::Dash, // Default to Dash for unknown networks
+        }
+    }
+}
+
+/// FFI Balance type for representing wallet balances
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FFIBalance {
+    /// Confirmed balance in duffs
+    pub confirmed: u64,
+    /// Unconfirmed balance in duffs
+    pub unconfirmed: u64,
+    /// Immature balance in duffs (e.g., mining rewards)
+    pub immature: u64,
+    /// Total balance (confirmed + unconfirmed) in duffs
+    pub total: u64,
+}
+
+impl From<key_wallet::WalletBalance> for FFIBalance {
+    fn from(balance: key_wallet::WalletBalance) -> Self {
+        FFIBalance {
+            confirmed: balance.confirmed,
+            unconfirmed: balance.unconfirmed,
+            immature: balance.locked, // Map locked to immature for now
+            total: balance.total,
         }
     }
 }
@@ -97,24 +172,12 @@ impl FFIAccountResult {
     }
 }
 
-/// Opaque account handle
-pub struct FFIAccount {
-    pub(crate) account: Arc<key_wallet::Account>,
-}
-
-impl FFIAccount {
-    /// Create a new FFI account handle
-    pub fn new(account: &key_wallet::Account) -> Self {
-        FFIAccount {
-            account: Arc::new(account.clone()),
-        }
-    }
-
-    /// Get a reference to the inner account
-    pub fn inner(&self) -> &key_wallet::Account {
-        self.account.as_ref()
-    }
-}
+/// Forward declaration for FFIAccount (defined in account.rs)
+pub use crate::account::FFIAccount;
+#[cfg(feature = "bls")]
+pub use crate::account::FFIBLSAccount;
+#[cfg(feature = "eddsa")]
+pub use crate::account::FFIEdDSAAccount;
 
 /// Standard account subtype
 #[repr(C)]
@@ -134,7 +197,7 @@ pub enum FFIStandardAccountType {
 /// - Identity accounts: Registration, top-up, and invitation funding
 /// - Provider accounts: Various masternode provider key types (voting, owner, operator, platform)
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FFIAccountType {
     /// Standard BIP44 account (m/44'/coin_type'/account'/x/x)
     StandardBIP44 = 0,
@@ -161,47 +224,37 @@ pub enum FFIAccountType {
 }
 
 impl FFIAccountType {
-    /// Convert to AccountType with optional indices
-    /// Returns None if required parameters are missing (e.g., registration_index for IdentityTopUp)
-    pub fn to_account_type(
-        self,
-        index: u32,
-        registration_index: Option<u32>,
-    ) -> Option<key_wallet::AccountType> {
+    /// Convert to AccountType with the provided index (used where applicable).
+    /// For types needing an index (e.g., IdentityTopUp.registration_index), the provided index is used.
+    pub fn to_account_type(self, index: u32) -> key_wallet::AccountType {
         use key_wallet::account::account_type::StandardAccountType;
         match self {
-            FFIAccountType::StandardBIP44 => Some(key_wallet::AccountType::Standard {
+            FFIAccountType::StandardBIP44 => key_wallet::AccountType::Standard {
                 index,
                 standard_account_type: StandardAccountType::BIP44Account,
-            }),
-            FFIAccountType::StandardBIP32 => Some(key_wallet::AccountType::Standard {
+            },
+            FFIAccountType::StandardBIP32 => key_wallet::AccountType::Standard {
                 index,
                 standard_account_type: StandardAccountType::BIP32Account,
-            }),
-            FFIAccountType::CoinJoin => Some(key_wallet::AccountType::CoinJoin {
+            },
+            FFIAccountType::CoinJoin => key_wallet::AccountType::CoinJoin {
                 index,
-            }),
-            FFIAccountType::IdentityRegistration => {
-                Some(key_wallet::AccountType::IdentityRegistration)
-            }
+            },
+            FFIAccountType::IdentityRegistration => key_wallet::AccountType::IdentityRegistration,
             FFIAccountType::IdentityTopUp => {
                 // IdentityTopUp requires a registration_index
-                registration_index.map(|reg_idx| key_wallet::AccountType::IdentityTopUp {
-                    registration_index: reg_idx,
-                })
+                key_wallet::AccountType::IdentityTopUp {
+                    registration_index: index,
+                }
             }
             FFIAccountType::IdentityTopUpNotBoundToIdentity => {
-                Some(key_wallet::AccountType::IdentityTopUpNotBoundToIdentity)
+                key_wallet::AccountType::IdentityTopUpNotBoundToIdentity
             }
-            FFIAccountType::IdentityInvitation => Some(key_wallet::AccountType::IdentityInvitation),
-            FFIAccountType::ProviderVotingKeys => Some(key_wallet::AccountType::ProviderVotingKeys),
-            FFIAccountType::ProviderOwnerKeys => Some(key_wallet::AccountType::ProviderOwnerKeys),
-            FFIAccountType::ProviderOperatorKeys => {
-                Some(key_wallet::AccountType::ProviderOperatorKeys)
-            }
-            FFIAccountType::ProviderPlatformKeys => {
-                Some(key_wallet::AccountType::ProviderPlatformKeys)
-            }
+            FFIAccountType::IdentityInvitation => key_wallet::AccountType::IdentityInvitation,
+            FFIAccountType::ProviderVotingKeys => key_wallet::AccountType::ProviderVotingKeys,
+            FFIAccountType::ProviderOwnerKeys => key_wallet::AccountType::ProviderOwnerKeys,
+            FFIAccountType::ProviderOperatorKeys => key_wallet::AccountType::ProviderOperatorKeys,
+            FFIAccountType::ProviderPlatformKeys => key_wallet::AccountType::ProviderPlatformKeys,
         }
     }
 
@@ -294,7 +347,7 @@ pub enum FFIAccountCreationOptionType {
     /// Create specific accounts with full control
     SpecificAccounts = 3,
     /// Create no accounts at all
-    None = 4,
+    NoAccounts = 4,
 }
 
 /// FFI structure for wallet account creation options
@@ -359,7 +412,7 @@ impl FFIWalletAccountCreationOptions {
 
         match self.option_type {
             FFIAccountCreationOptionType::Default => WalletAccountCreationOptions::Default,
-            FFIAccountCreationOptionType::None => WalletAccountCreationOptions::None,
+            FFIAccountCreationOptionType::NoAccounts => WalletAccountCreationOptions::None,
             FFIAccountCreationOptionType::BIP44AccountsOnly => {
                 let mut bip44_set = BTreeSet::new();
                 if !self.bip44_indices.is_null() && self.bip44_count > 0 {
@@ -440,11 +493,7 @@ impl FFIWalletAccountCreationOptions {
                     );
                     let mut accounts = Vec::new();
                     for &ffi_type in slice {
-                        // Use a dummy index for special accounts that don't need one
-                        // Skip accounts that require parameters we don't have
-                        if let Some(account_type) = ffi_type.to_account_type(0, None) {
-                            accounts.push(account_type);
-                        }
+                        accounts.push(ffi_type.to_account_type(0));
                     }
                     Some(accounts)
                 } else {
