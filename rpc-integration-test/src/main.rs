@@ -1405,7 +1405,6 @@ fn test_get_quorum_info(cl: &Client) {
 
     let quorum_info = cl.get_quorum_info(quorum_type, &quorum_hash, None).unwrap();
     assert!(quorum_info.height > 0);
-    assert!(quorum_info.members.len() >= 0);
 }
 
 fn test_get_quorum_dkgstatus(cl: &Client) {
