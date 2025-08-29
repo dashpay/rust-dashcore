@@ -1,6 +1,7 @@
 //! Tests for AccountCollection with different account types
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::account::{
         Account, AccountCollection, AccountType, BLSAccount, EdDSAAccount, StandardAccountType,

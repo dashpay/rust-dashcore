@@ -96,7 +96,7 @@ mod tests {
                 index: 0,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
-            public_key_bytes.try_into().expect("Failed to convert BLS public key bytes to array"),
+            public_key_bytes,
             Network::Testnet,
         )
         .expect("Failed to create BLS account from public key bytes");

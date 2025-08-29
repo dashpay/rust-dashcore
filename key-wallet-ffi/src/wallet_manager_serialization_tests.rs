@@ -365,7 +365,7 @@ mod tests {
         let passphrase = CString::new("").unwrap();
 
         // Create custom account options (BIP44 accounts only)
-        let bip44_indices = vec![0u32, 1u32, 2u32];
+        let bip44_indices = [0u32, 1u32, 2u32];
 
         let account_options = FFIWalletAccountCreationOptions {
             option_type: FFIAccountCreationOptionType::BIP44AccountsOnly,

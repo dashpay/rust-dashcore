@@ -235,7 +235,7 @@ mod tests {
 
         let tx = builder.build().unwrap();
 
-        assert!(tx.input.len() > 0);
+        assert!(!tx.input.is_empty());
         assert_eq!(tx.output.len(), 2); // recipient + change
 
         // With BIP-69 sorting, outputs are sorted by amount

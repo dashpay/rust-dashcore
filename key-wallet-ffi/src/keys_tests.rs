@@ -1,6 +1,7 @@
 //! Tests for key derivation FFI functions
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::keys::*;

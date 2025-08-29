@@ -331,7 +331,7 @@ fn parse_and_verify_keys(
         let ext_derived = ext_priv.derive_priv(secp, &path).expect("failed to derive ext priv key");
         let derived_priv = PrivateKey {
             compressed: true,
-            network: ext_derived.network.into(),
+            network: ext_derived.network,
             inner: ext_derived.private_key,
         };
         assert_eq!(wif_priv, derived_priv);

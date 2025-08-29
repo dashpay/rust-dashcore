@@ -7,7 +7,7 @@ fn test_address_simple() {
     let error = &mut error as *mut FFIError;
 
     // Create a wallet to get a valid address
-    let seed = vec![0x42u8; 64];
+    let seed = [0x42u8; 64];
     let wallet = unsafe {
         key_wallet_ffi::wallet::wallet_create_from_seed(
             seed.as_ptr(),

@@ -875,11 +875,11 @@ fn test_provider_revocation_classification_and_routing() {
         .next_receive_address(Some(&xpub), true)
         .expect("Failed to generate receive address");
 
-    let mut tx = create_test_transaction(1, vec![1000_000_000]); // 10 DASH returned collateral
+    let mut tx = create_test_transaction(1, vec![1_000_000_000]); // 10 DASH returned collateral
 
     // Add output for returned collateral
     tx.output.push(TxOut {
-        value: 1000_000_000,
+        value: 1_000_000_000,
         script_pubkey: return_address.script_pubkey(),
     });
 
@@ -929,7 +929,7 @@ fn test_provider_revocation_classification_and_routing() {
 
     // Should have received the collateral
     assert_eq!(
-        result.total_received, 1000_000_000,
+        result.total_received, 1_000_000_000,
         "Should have received 10 DASH collateral return"
     );
 

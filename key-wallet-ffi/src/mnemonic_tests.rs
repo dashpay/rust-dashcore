@@ -1,6 +1,7 @@
 //! Unit tests for mnemonic FFI module
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::mnemonic;
@@ -380,7 +381,7 @@ mod tests {
         let mut error = FFIError::success();
 
         // Create invalid UTF-8 string
-        let invalid_utf8 = vec![0xFF, 0xFE, 0xFD, 0x00];
+        let invalid_utf8 = [0xFF, 0xFE, 0xFD, 0x00];
         let count = unsafe {
             mnemonic::mnemonic_word_count(
                 invalid_utf8.as_ptr() as *const std::os::raw::c_char,
@@ -467,7 +468,7 @@ mod tests {
         let mut seed_len = 0usize;
 
         // Test invalid UTF-8 in mnemonic
-        let invalid_utf8 = vec![0xFF, 0xFE, 0xFD, 0x00];
+        let invalid_utf8 = [0xFF, 0xFE, 0xFD, 0x00];
         let success = unsafe {
             mnemonic::mnemonic_to_seed(
                 invalid_utf8.as_ptr() as *const std::os::raw::c_char,
@@ -500,7 +501,7 @@ mod tests {
         let mut error = FFIError::success();
 
         // Create invalid UTF-8 string
-        let invalid_utf8 = vec![0xFF, 0xFE, 0xFD, 0x00];
+        let invalid_utf8 = [0xFF, 0xFE, 0xFD, 0x00];
         let is_valid = unsafe {
             mnemonic::mnemonic_validate(
                 invalid_utf8.as_ptr() as *const std::os::raw::c_char,

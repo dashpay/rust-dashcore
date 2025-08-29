@@ -1,6 +1,6 @@
 //! BIP38 encryption support
 
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::ptr;
 
@@ -8,11 +8,18 @@ use crate::error::{FFIError, FFIErrorCode};
 use crate::types::FFINetwork;
 
 /// Encrypt a private key with BIP38
+///
+/// # Safety
+///
+/// This function is unsafe because it dereferences raw pointers:
+/// - `private_key` must be a valid, null-terminated C string
+/// - `passphrase` must be a valid, null-terminated C string
+/// - `error` must be a valid pointer to an FFIError or null
 #[no_mangle]
-pub extern "C" fn bip38_encrypt_private_key(
+pub unsafe extern "C" fn bip38_encrypt_private_key(
     private_key: *const c_char,
     passphrase: *const c_char,
-    network: FFINetwork,
+    _network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut c_char {
     #[cfg(feature = "bip38")]
@@ -26,31 +33,27 @@ pub extern "C" fn bip38_encrypt_private_key(
             return ptr::null_mut();
         }
 
-        let privkey_str = unsafe {
-            match CStr::from_ptr(private_key).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidInput,
-                        "Invalid UTF-8 in private key".to_string(),
-                    );
-                    return ptr::null_mut();
-                }
+        let _privkey_str = match CStr::from_ptr(private_key).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    "Invalid UTF-8 in private key".to_string(),
+                );
+                return ptr::null_mut();
             }
         };
 
-        let passphrase_str = unsafe {
-            match CStr::from_ptr(passphrase).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidInput,
-                        "Invalid UTF-8 in passphrase".to_string(),
-                    );
-                    return ptr::null_mut();
-                }
+        let _passphrase_str = match CStr::from_ptr(passphrase).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    "Invalid UTF-8 in passphrase".to_string(),
+                );
+                return ptr::null_mut();
             }
         };
 
@@ -75,8 +78,15 @@ pub extern "C" fn bip38_encrypt_private_key(
 }
 
 /// Decrypt a BIP38 encrypted private key
+///
+/// # Safety
+///
+/// This function is unsafe because it dereferences raw pointers:
+/// - `encrypted_key` must be a valid, null-terminated C string
+/// - `passphrase` must be a valid, null-terminated C string
+/// - `error` must be a valid pointer to an FFIError or null
 #[no_mangle]
-pub extern "C" fn bip38_decrypt_private_key(
+pub unsafe extern "C" fn bip38_decrypt_private_key(
     encrypted_key: *const c_char,
     passphrase: *const c_char,
     error: *mut FFIError,
@@ -92,31 +102,27 @@ pub extern "C" fn bip38_decrypt_private_key(
             return ptr::null_mut();
         }
 
-        let encrypted_str = unsafe {
-            match CStr::from_ptr(encrypted_key).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidInput,
-                        "Invalid UTF-8 in encrypted key".to_string(),
-                    );
-                    return ptr::null_mut();
-                }
+        let _encrypted_str = match CStr::from_ptr(encrypted_key).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    "Invalid UTF-8 in encrypted key".to_string(),
+                );
+                return ptr::null_mut();
             }
         };
 
-        let passphrase_str = unsafe {
-            match CStr::from_ptr(passphrase).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidInput,
-                        "Invalid UTF-8 in passphrase".to_string(),
-                    );
-                    return ptr::null_mut();
-                }
+        let _passphrase_str = match CStr::from_ptr(passphrase).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                FFIError::set_error(
+                    error,
+                    FFIErrorCode::InvalidInput,
+                    "Invalid UTF-8 in passphrase".to_string(),
+                );
+                return ptr::null_mut();
             }
         };
 

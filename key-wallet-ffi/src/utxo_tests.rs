@@ -655,32 +655,14 @@ mod utxo_tests {
     #[test]
     fn test_utxo_array_free_with_mixed_content() {
         // Create UTXOs with different properties
-        let mut utxos = Vec::new();
-
-        // UTXO with normal values
-        utxos.push(FFIUTXO::new(
-            [0x01u8; 32],
-            0,
-            10000,
-            "address1".to_string(),
-            vec![0x76, 0xa9],
-            100,
-            10,
-        ));
-
-        // UTXO with empty script
-        utxos.push(FFIUTXO::new([0x02u8; 32], 1, 20000, "address2".to_string(), vec![], 200, 20));
-
-        // UTXO with large script
-        utxos.push(FFIUTXO::new(
-            [0x03u8; 32],
-            2,
-            30000,
-            "address3".to_string(),
-            vec![0xAB; 500],
-            300,
-            30,
-        ));
+        let utxos = vec![
+            // UTXO with normal values
+            FFIUTXO::new([0x01u8; 32], 0, 10000, "address1".to_string(), vec![0x76, 0xa9], 100, 10),
+            // UTXO with empty script
+            FFIUTXO::new([0x02u8; 32], 1, 20000, "address2".to_string(), vec![], 200, 20),
+            // UTXO with large script
+            FFIUTXO::new([0x03u8; 32], 2, 30000, "address3".to_string(), vec![0xAB; 500], 300, 30),
+        ];
 
         let count = utxos.len();
         let mut boxed_utxos = utxos.into_boxed_slice();

@@ -1151,7 +1151,7 @@ mod tests {
             options.option_type = crate::types::FFIAccountCreationOptionType::AllAccounts;
 
             // Add provider operator keys account type
-            let special_types = vec![crate::types::FFIAccountType::ProviderOperatorKeys];
+            let special_types = [crate::types::FFIAccountType::ProviderOperatorKeys];
             options.special_account_types = special_types.as_ptr();
             options.special_account_types_count = special_types.len();
 
@@ -1199,7 +1199,7 @@ mod tests {
             options.option_type = crate::types::FFIAccountCreationOptionType::AllAccounts;
 
             // Add provider platform keys account type
-            let special_types = vec![crate::types::FFIAccountType::ProviderPlatformKeys];
+            let special_types = [crate::types::FFIAccountType::ProviderPlatformKeys];
             options.special_account_types = special_types.as_ptr();
             options.special_account_types_count = special_types.len();
 
@@ -1248,7 +1248,7 @@ mod tests {
             options.option_type = crate::types::FFIAccountCreationOptionType::AllAccounts;
 
             // Add various special accounts
-            let special_types = vec![
+            let special_types = [
                 crate::types::FFIAccountType::ProviderVotingKeys,
                 crate::types::FFIAccountType::ProviderOwnerKeys,
                 crate::types::FFIAccountType::IdentityRegistration,
@@ -1258,10 +1258,10 @@ mod tests {
             options.special_account_types_count = special_types.len();
 
             // Configure standard accounts - store vectors in variables to keep them alive
-            let bip44_indices = vec![0, 4, 5, 8];
-            let bip32_indices = vec![0];
-            let coinjoin_indices = vec![0, 1];
-            let topup_indices = vec![0, 1, 2];
+            let bip44_indices = [0, 4, 5, 8];
+            let bip32_indices = [0];
+            let coinjoin_indices = [0, 1];
+            let topup_indices = [0, 1, 2];
 
             options.bip44_indices = bip44_indices.as_ptr();
             options.bip44_count = bip44_indices.len();
@@ -1392,7 +1392,7 @@ mod tests {
             options.option_type = crate::types::FFIAccountCreationOptionType::AllAccounts;
 
             // Add various special accounts
-            let special_types = vec![
+            let special_types = [
                 crate::types::FFIAccountType::ProviderVotingKeys,
                 crate::types::FFIAccountType::ProviderOwnerKeys,
                 crate::types::FFIAccountType::IdentityRegistration,
@@ -1402,10 +1402,10 @@ mod tests {
             options.special_account_types_count = special_types.len();
 
             // Configure standard accounts
-            let bip44_indices = vec![0, 4, 5, 8];
-            let bip32_indices = vec![0];
-            let coinjoin_indices = vec![0, 1];
-            let topup_indices = vec![0, 1, 2];
+            let bip44_indices = [0, 4, 5, 8];
+            let bip32_indices = [0];
+            let coinjoin_indices = [0, 1];
+            let topup_indices = [0, 1, 2];
 
             options.bip44_indices = bip44_indices.as_ptr();
             options.bip44_count = bip44_indices.len();

@@ -1,6 +1,7 @@
 //! Tests for derivation path FFI functions
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::derivation::*;
     use crate::error::{FFIError, FFIErrorCode};

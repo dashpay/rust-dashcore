@@ -360,7 +360,7 @@ mod tests {
         };
         
         // Create invalid UTF-8 string
-        let invalid_utf8 = vec![0xFF, 0xFE, 0xFD, 0x00]; // Invalid UTF-8 bytes with null terminator
+        let invalid_utf8 = [0xFF, 0xFE, 0xFD, 0x00]; // Invalid UTF-8 bytes with null terminator
         let success = unsafe {
             managed_wallet_mark_address_used(
                 managed_wallet,

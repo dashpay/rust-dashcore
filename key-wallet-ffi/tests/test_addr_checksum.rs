@@ -9,7 +9,7 @@ fn test_address_checksum() {
     match base58::decode_check(test_addr) {
         Ok(data) => {
             println!("Base58 decode successful, {} bytes", data.len());
-            if data.len() > 0 {
+            if !data.is_empty() {
                 println!("Version byte: 0x{:02x}", data[0]);
             }
         }

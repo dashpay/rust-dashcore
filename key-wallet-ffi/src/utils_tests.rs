@@ -1,6 +1,7 @@
 //! Unit tests for utils FFI module
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod util_tests {
     use crate::utils;
     use std::ffi::CString;

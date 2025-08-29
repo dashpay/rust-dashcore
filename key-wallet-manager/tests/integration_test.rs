@@ -114,10 +114,7 @@ fn test_address_generation() {
     // Same check for change address
     if let Err(ref e) = change {
         match e {
-            WalletError::InvalidNetwork => {
-                // This is expected given the current implementation
-                return;
-            }
+            WalletError::InvalidNetwork => {}
             _ => panic!("Unexpected error: {:?}", e),
         }
     }

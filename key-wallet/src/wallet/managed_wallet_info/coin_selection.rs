@@ -783,7 +783,7 @@ mod tests {
         let result = selector.select_coins(&utxos, 1500, fee_rate, 200).unwrap();
 
         // OptimalConsolidation should work and produce a valid selection
-        assert!(result.selected.len() > 0);
+        assert!(!result.selected.is_empty());
         assert!(result.total_value >= 1500 + result.estimated_fee);
         assert_eq!(result.target_amount, 1500);
 

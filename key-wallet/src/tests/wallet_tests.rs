@@ -68,7 +68,7 @@ fn test_wallet_creation_from_seed() {
     let seed = Seed::new([0x42; 64]);
 
     let wallet = Wallet::from_seed(
-        seed.clone(),
+        seed,
         &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
@@ -100,7 +100,7 @@ fn test_wallet_creation_from_extended_key() {
     let master_key = root_key.to_extended_priv_key(Network::Testnet);
 
     let wallet = Wallet::from_extended_key(
-        master_key.clone(),
+        master_key,
         &[Network::Testnet],
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
@@ -280,8 +280,8 @@ fn test_wallet_multiple_networks() {
         .unwrap();
 
     // Verify accounts exist for both networks
-    assert!(wallet.accounts.get(&Network::Testnet).is_some());
-    assert!(wallet.accounts.get(&Network::Dash).is_some());
+    assert!(wallet.accounts.contains_key(&Network::Testnet));
+    assert!(wallet.accounts.contains_key(&Network::Dash));
 }
 
 #[test]

@@ -226,7 +226,7 @@ fn test_error_handling() {
     assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
     // 3. Invalid seed size
-    let invalid_seed = vec![0u8; 10]; // Too small
+    let invalid_seed = [0u8; 10]; // Too small
     let wallet = unsafe {
         key_wallet_ffi::wallet::wallet_create_from_seed(
             invalid_seed.as_ptr(),

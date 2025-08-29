@@ -1,6 +1,7 @@
 //! Unit tests for wallet_manager FFI module
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::types::FFINetwork;
@@ -537,8 +538,8 @@ mod tests {
         let wallet_count = 3;
         let mnemonics = [TEST_MNEMONIC, TEST_MNEMONIC_2, TEST_MNEMONIC_3];
         unsafe {
-            for i in 0..wallet_count {
-                let mnemonic = CString::new(mnemonics[i]).unwrap();
+            for mnemonic_str in &mnemonics[..wallet_count] {
+                let mnemonic = CString::new(*mnemonic_str).unwrap();
 
                 let success = wallet_manager::wallet_manager_add_wallet_from_mnemonic(
                     manager,
@@ -998,7 +999,7 @@ mod tests {
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Test with invalid wallet ID (all zeros which won't match any wallet)
-        let invalid_wallet_id = vec![0u8; 32];
+        let invalid_wallet_id = [0u8; 32];
         let success = unsafe {
             wallet_manager::wallet_manager_get_wallet_balance(
                 manager,
@@ -1043,7 +1044,7 @@ mod tests {
 
         // Create a sample transaction bytes (this is a minimal valid transaction structure)
         // This is a simplified transaction for testing - in real use you'd have actual transaction data
-        let tx_bytes = vec![
+        let tx_bytes = [
             0x02, 0x00, 0x00, 0x00, // version
             0x00, // input count
             0x00, // output count
@@ -1164,7 +1165,7 @@ mod tests {
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
 
         // Test with invalid transaction bytes
-        let invalid_tx = vec![0xFF, 0xFF, 0xFF];
+        let invalid_tx = [0xFF, 0xFF, 0xFF];
         let processed = unsafe {
             wallet_manager::wallet_manager_process_transaction(
                 manager,
@@ -1246,7 +1247,7 @@ mod tests {
         assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
 
         // Test with invalid wallet ID (all zeros)
-        let invalid_wallet_id = vec![0u8; 32];
+        let invalid_wallet_id = [0u8; 32];
 
         let wallet = unsafe {
             wallet_manager::wallet_manager_get_wallet(manager, invalid_wallet_id.as_ptr(), error)
