@@ -778,7 +778,7 @@ pub trait RpcApi: Sized {
         &self,
         rawtxs: &[R],
     ) -> Result<Vec<json::TestMempoolAcceptResult>> {
-        let hexes: Vec<Value> = rawtxs.to_vec().into_iter().map(|r| r.raw_hex().into()).collect();
+        let hexes: Vec<Value> = rawtxs.iter().cloned().map(|r| r.raw_hex().into()).collect();
         self.call("testmempoolaccept", &[hexes.into()])
     }
 

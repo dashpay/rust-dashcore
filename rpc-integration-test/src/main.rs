@@ -201,10 +201,9 @@ fn main() {
     trace!(target: "integration_test", "Evo node RPC URL: {}", &evo_node_rpc_url);
     trace!(target: "integration_test", "Evo node RPC Auth: {:?}", evo_node_auth_type);
 
-    let faucet_rpc_url =
-        format!("{}/wallet/{}", wallet_node_rpc_url, FAUCET_WALLET_NAME.to_string());
-    let wallet_rpc_url = format!("{}/wallet/{}", wallet_node_rpc_url, TEST_WALLET_NAME.to_string());
-    let evo_rpc_url = format!("{}/wallet/{}", evo_node_rpc_url, TEST_WALLET_NAME.to_string());
+    let faucet_rpc_url = format!("{}/wallet/{}", wallet_node_rpc_url, FAUCET_WALLET_NAME);
+    let wallet_rpc_url = format!("{}/wallet/{}", wallet_node_rpc_url, TEST_WALLET_NAME);
+    let evo_rpc_url = format!("{}/wallet/{}", evo_node_rpc_url, TEST_WALLET_NAME);
 
     let faucet_client = Client::new(&faucet_rpc_url, wallet_node_auth.clone().clone()).unwrap();
     let wallet_client = Client::new(&wallet_rpc_url, wallet_node_auth).unwrap();
@@ -225,17 +224,17 @@ fn main() {
         Err(e) => match e {
             dashcore_rpc::Error::JsonRpc(JsonRpcError::Rpc(ref e)) if e.code == -18 => {
                 wallet_client.create_wallet(&TEST_WALLET_NAME, None, None, None, None).unwrap();
-                trace!(target: "integration_test", "Wallet \"{}\" created", TEST_WALLET_NAME.to_string());
+                trace!(target: "integration_test", "Wallet \"{}\" created", TEST_WALLET_NAME);
             }
             dashcore_rpc::Error::JsonRpc(JsonRpcError::Rpc(ref e)) if e.code == -35 => {
-                trace!(target: "integration_test", "Wallet \"{}\" already loaded", TEST_WALLET_NAME.to_string());
+                trace!(target: "integration_test", "Wallet \"{}\" already loaded", TEST_WALLET_NAME);
             }
             _ => {
                 panic!("Error loading wallet: {:?}", e);
             }
         },
         Ok(_) => {
-            trace!(target: "integration_test", "Loaded wallet \"{}\"", TEST_WALLET_NAME.to_string());
+            trace!(target: "integration_test", "Loaded wallet \"{}\"", TEST_WALLET_NAME);
         }
     }
 
@@ -259,7 +258,7 @@ fn main() {
         .unwrap();
 
     let balance = wallet_client.get_balance(None, None).unwrap();
-    trace!(target: "integration_test", "Funded wallet \"{}\". Total balance: {}", TEST_WALLET_NAME.to_string(), balance);
+    trace!(target: "integration_test", "Funded wallet \"{}\". Total balance: {}", TEST_WALLET_NAME, balance);
     faucet_client.generate_to_address(8, &test_wallet_address).unwrap();
     test_wallet_node_endpoints(&wallet_client);
     test_evo_node_endpoints(&evo_client, &wallet_client);
@@ -1244,14 +1243,8 @@ fn test_create_wallet(cl: &Client) {
     wallet_list.sort();
 
     // Main wallet created for tests
-    assert!(
-        wallet_list
-            .iter()
-            .any(|w| w == &TEST_WALLET_NAME.to_string() || w == &FAUCET_WALLET_NAME.to_string())
-    );
-    wallet_list.retain(|w| {
-        w != &TEST_WALLET_NAME.to_string() && !w.is_empty() && w != &FAUCET_WALLET_NAME.to_string()
-    });
+    assert!(wallet_list.iter().any(|w| w == &TEST_WALLET_NAME || w == &FAUCET_WALLET_NAME));
+    wallet_list.retain(|w| w != &TEST_WALLET_NAME && !w.is_empty() && w != &FAUCET_WALLET_NAME);
 
     // Created wallets
     assert!(wallet_list.iter().zip(wallet_names).all(|(a, b)| a == b));
@@ -1540,23 +1533,18 @@ fn test_get_protx_info(cl: &Client) {
             .unwrap();
     let protx_info = cl.get_protx_info(&pro_tx_hash, None).unwrap();
 
-    match protx_info {
-        ProTxInfo {
-            pro_tx_hash: _,
-            collateral_hash: _,
-            collateral_index,
-            collateral_address: _,
-            operator_reward,
-            state: _,
-            confirmations: _,
-            wallet: _,
-            meta_info: _,
-            ..
-        } => {
-            // assert!(collateral_index >= 0);
-            // assert!(operator_reward >= 0);
-        }
-    }
+    let ProTxInfo {
+        pro_tx_hash: _,
+        collateral_hash: _,
+        collateral_index,
+        collateral_address: _,
+        operator_reward,
+        state: _,
+        confirmations: _,
+        wallet: _,
+        meta_info: _,
+        ..
+    } = protx_info;
 }
 
 fn test_get_protx_list(cl: &Client) {
