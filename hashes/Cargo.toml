@@ -16,7 +16,7 @@ exclude = ["tests", "contrib"]
 default = ["std"]
 std = ["alloc", "internals/std"]
 alloc = ["internals/alloc"]
-schemars = ["actual-schemars", "dyn-clone"]
+schemars = ["actual-schemars"]
 serde-std = ["serde/std"]
 x11 = ["rs-x11-hash"]
 
@@ -31,10 +31,7 @@ core2 = { version = "0.4.0", default-features = false, optional = true }
 # Only enable this if you explicitly do not want to use "std", otherwise enable "serde-std".
 serde = { version = "1.0.219", default-features = false, optional = true }
 # Do NOT use this as a feature! Use the `schemars` feature instead. Can only be used with "std" enabled.
-actual-schemars = { package = "schemars", version = "<=0.8.3", optional = true }
-# Do NOT enable this dependency, this is just to pin dyn-clone (transitive dep from schemars)
-# because 1.0.8 does not build with Rust 1.41.1 (because of useage of `Arc::as_ptr`).
-dyn-clone = { version = "<=1.0.7", default-features = false, optional = true }
+actual-schemars = { package = "schemars", version = "1.0", optional = true }
 secp256k1 = { default-features = false, features = ["hashes"], version= "0.30.0" }
 
 rs-x11-hash = { version = "0.1.8", optional = true }
