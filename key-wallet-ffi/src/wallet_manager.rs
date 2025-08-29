@@ -350,7 +350,8 @@ pub unsafe extern "C" fn wallet_manager_free_wallet_bytes(wallet_bytes: *mut u8,
     if !wallet_bytes.is_null() && bytes_len > 0 {
         unsafe {
             // Reconstruct the boxed slice with the correct DST pointer
-            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(wallet_bytes, bytes_len));
+            ptr::write_bytes(wallet_bytes, 0, bytes_len);
+            let _ = Box::from_raw(ptr::slice_from_raw_parts_mut(wallet_bytes, bytes_len));
         }
     }
 }

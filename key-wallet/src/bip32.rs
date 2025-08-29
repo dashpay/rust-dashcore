@@ -115,7 +115,7 @@ impl fmt::Debug for ChainCode {
 // Note: ChainCode is Copy, so this won't prevent copies in registers/stack
 impl zeroize::Zeroize for ChainCode {
     fn zeroize(&mut self) {
-        self.0.zeroize();
+        zeroize::Zeroize::zeroize(&mut self.0);
     }
 }
 

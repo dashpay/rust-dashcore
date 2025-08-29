@@ -166,15 +166,13 @@ pub unsafe extern "C" fn managed_account_collection_free(
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - `manager` must be a valid pointer to an FFIWalletManager
 /// - The returned pointer must be freed with `managed_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_bip44_account(
     collection: *const FFIManagedAccountCollection,
-    manager: *const FFIWalletManager,
     index: c_uint,
 ) -> *mut FFIManagedAccount {
-    if collection.is_null() || manager.is_null() {
+    if collection.is_null() {
         return ptr::null_mut();
     }
 
@@ -208,7 +206,7 @@ pub unsafe extern "C" fn managed_account_collection_get_bip44_indices(
     }
 
     let collection = &*collection;
-    let indices: Vec<c_uint> =
+    let mut indices: Vec<c_uint> =
         collection.collection.standard_bip44_accounts.keys().copied().collect();
 
     if indices.is_empty() {
@@ -216,6 +214,8 @@ pub unsafe extern "C" fn managed_account_collection_get_bip44_indices(
         *out_count = 0;
         return true;
     }
+
+    indices.sort();
 
     let mut boxed_slice = indices.into_boxed_slice();
     let ptr = boxed_slice.as_mut_ptr();
@@ -234,15 +234,13 @@ pub unsafe extern "C" fn managed_account_collection_get_bip44_indices(
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - `manager` must be a valid pointer to an FFIWalletManager
 /// - The returned pointer must be freed with `managed_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_bip32_account(
     collection: *const FFIManagedAccountCollection,
-    manager: *const FFIWalletManager,
     index: c_uint,
 ) -> *mut FFIManagedAccount {
-    if collection.is_null() || manager.is_null() {
+    if collection.is_null() {
         return ptr::null_mut();
     }
 
@@ -301,15 +299,13 @@ pub unsafe extern "C" fn managed_account_collection_get_bip32_indices(
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - `manager` must be a valid pointer to an FFIWalletManager
 /// - The returned pointer must be freed with `managed_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_coinjoin_account(
     collection: *const FFIManagedAccountCollection,
-    manager: *const FFIWalletManager,
     index: c_uint,
 ) -> *mut FFIManagedAccount {
-    if collection.is_null() || manager.is_null() {
+    if collection.is_null() {
         return ptr::null_mut();
     }
 
@@ -342,13 +338,16 @@ pub unsafe extern "C" fn managed_account_collection_get_coinjoin_indices(
     }
 
     let collection = &*collection;
-    let indices: Vec<c_uint> = collection.collection.coinjoin_accounts.keys().copied().collect();
+    let mut indices: Vec<c_uint> =
+        collection.collection.coinjoin_accounts.keys().copied().collect();
 
     if indices.is_empty() {
         *out_indices = ptr::null_mut();
         *out_count = 0;
         return true;
     }
+
+    indices.sort();
 
     let mut boxed_slice = indices.into_boxed_slice();
     let ptr = boxed_slice.as_mut_ptr();
@@ -367,14 +366,12 @@ pub unsafe extern "C" fn managed_account_collection_get_coinjoin_indices(
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - `manager` must be a valid pointer to an FFIWalletManager
 /// - The returned pointer must be freed with `managed_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_identity_registration(
     collection: *const FFIManagedAccountCollection,
-    manager: *const FFIWalletManager,
 ) -> *mut FFIManagedAccount {
-    if collection.is_null() || manager.is_null() {
+    if collection.is_null() {
         return ptr::null_mut();
     }
 
@@ -410,15 +407,13 @@ pub unsafe extern "C" fn managed_account_collection_has_identity_registration(
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - `manager` must be a valid pointer to an FFIWalletManager
 /// - The returned pointer must be freed with `managed_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_identity_topup(
     collection: *const FFIManagedAccountCollection,
-    manager: *const FFIWalletManager,
     registration_index: c_uint,
 ) -> *mut FFIManagedAccount {
-    if collection.is_null() || manager.is_null() {
+    if collection.is_null() {
         return ptr::null_mut();
     }
 
@@ -451,13 +446,15 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_topup_indices(
     }
 
     let collection = &*collection;
-    let indices: Vec<c_uint> = collection.collection.identity_topup.keys().copied().collect();
+    let mut indices: Vec<c_uint> = collection.collection.identity_topup.keys().copied().collect();
 
     if indices.is_empty() {
         *out_indices = ptr::null_mut();
         *out_count = 0;
         return true;
     }
+
+    indices.sort();
 
     let mut boxed_slice = indices.into_boxed_slice();
     let ptr = boxed_slice.as_mut_ptr();
@@ -479,9 +476,8 @@ pub unsafe extern "C" fn managed_account_collection_get_identity_topup_indices(
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_identity_topup_not_bound(
     collection: *const FFIManagedAccountCollection,
-    manager: *const FFIWalletManager,
 ) -> *mut FFIManagedAccount {
-    if collection.is_null() || manager.is_null() {
+    if collection.is_null() {
         return ptr::null_mut();
     }
 
@@ -517,14 +513,12 @@ pub unsafe extern "C" fn managed_account_collection_has_identity_topup_not_bound
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - `manager` must be a valid pointer to an FFIWalletManager
 /// - The returned pointer must be freed with `managed_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_identity_invitation(
     collection: *const FFIManagedAccountCollection,
-    manager: *const FFIWalletManager,
 ) -> *mut FFIManagedAccount {
-    if collection.is_null() || manager.is_null() {
+    if collection.is_null() {
         return ptr::null_mut();
     }
 
@@ -562,14 +556,12 @@ pub unsafe extern "C" fn managed_account_collection_has_identity_invitation(
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - `manager` must be a valid pointer to an FFIWalletManager
 /// - The returned pointer must be freed with `managed_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_provider_voting_keys(
     collection: *const FFIManagedAccountCollection,
-    manager: *const FFIWalletManager,
 ) -> *mut FFIManagedAccount {
-    if collection.is_null() || manager.is_null() {
+    if collection.is_null() {
         return ptr::null_mut();
     }
 
@@ -605,14 +597,12 @@ pub unsafe extern "C" fn managed_account_collection_has_provider_voting_keys(
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - `manager` must be a valid pointer to an FFIWalletManager
 /// - The returned pointer must be freed with `managed_account_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_provider_owner_keys(
     collection: *const FFIManagedAccountCollection,
-    manager: *const FFIWalletManager,
 ) -> *mut FFIManagedAccount {
-    if collection.is_null() || manager.is_null() {
+    if collection.is_null() {
         return ptr::null_mut();
     }
 
@@ -649,15 +639,13 @@ pub unsafe extern "C" fn managed_account_collection_has_provider_owner_keys(
 /// # Safety
 ///
 /// - `collection` must be a valid pointer to an FFIManagedAccountCollection
-/// - `manager` must be a valid pointer to an FFIWalletManager
 /// - The returned pointer must be freed with `managed_account_free` when no longer needed
 #[cfg(feature = "bls")]
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_provider_operator_keys(
     collection: *const FFIManagedAccountCollection,
-    manager: *const FFIWalletManager,
 ) -> *mut FFIManagedAccount {
-    if collection.is_null() || manager.is_null() {
+    if collection.is_null() {
         return ptr::null_mut();
     }
 
@@ -676,7 +664,6 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_operator_keys(
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_provider_operator_keys(
     _collection: *const FFIManagedAccountCollection,
-    _manager: *const FFIWalletManager,
 ) -> *mut FFIManagedAccount {
     // BLS feature not enabled, always return null
     ptr::null_mut()
@@ -719,9 +706,8 @@ pub unsafe extern "C" fn managed_account_collection_has_provider_operator_keys(
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_provider_platform_keys(
     collection: *const FFIManagedAccountCollection,
-    manager: *const FFIWalletManager,
 ) -> *mut FFIManagedAccount {
-    if collection.is_null() || manager.is_null() {
+    if collection.is_null() {
         return ptr::null_mut();
     }
 
@@ -740,7 +726,6 @@ pub unsafe extern "C" fn managed_account_collection_get_provider_platform_keys(
 #[no_mangle]
 pub unsafe extern "C" fn managed_account_collection_get_provider_platform_keys(
     _collection: *const FFIManagedAccountCollection,
-    _manager: *const FFIWalletManager,
 ) -> *mut FFIManagedAccount {
     // EdDSA feature not enabled, always return null
     ptr::null_mut()

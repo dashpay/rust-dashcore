@@ -19,13 +19,12 @@ pub enum FFINetwork {
 impl FFINetwork {
     /// Parse bit flags into a vector of networks
     pub fn parse_networks(&self) -> Vec<Network> {
-        let flags = *self as c_uint;
-
         // Handle special cases
-        if flags == FFINetwork::NoNetworks as c_uint || flags == 0 {
-            // If no networks specified, default to testnet
-            return vec![Network::Testnet];
+        if self == &FFINetwork::NoNetworks {
+            return vec![];
         }
+
+        let flags = *self as c_uint;
 
         let mut networks = Vec::new();
 
@@ -92,13 +91,13 @@ impl From<Network> for FFINetwork {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FFIBalance {
-    /// Confirmed balance in satoshis
+    /// Confirmed balance in duffs
     pub confirmed: u64,
-    /// Unconfirmed balance in satoshis
+    /// Unconfirmed balance in duffs
     pub unconfirmed: u64,
-    /// Immature balance in satoshis (e.g., mining rewards)
+    /// Immature balance in duffs (e.g., mining rewards)
     pub immature: u64,
-    /// Total balance (confirmed + unconfirmed) in satoshis
+    /// Total balance (confirmed + unconfirmed) in duffs
     pub total: u64,
 }
 
@@ -225,8 +224,8 @@ pub enum FFIAccountType {
 }
 
 impl FFIAccountType {
-    /// Convert to AccountType with optional indices
-    /// Returns None if required parameters are missing (e.g., registration_index for IdentityTopUp)
+    /// Convert to AccountType with the provided index (used where applicable).
+    /// For types needing an index (e.g., IdentityTopUp.registration_index), the provided index is used.
     pub fn to_account_type(self, index: u32) -> key_wallet::AccountType {
         use key_wallet::account::account_type::StandardAccountType;
         match self {

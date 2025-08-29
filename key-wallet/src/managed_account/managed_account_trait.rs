@@ -8,9 +8,9 @@ use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletBalance;
 use crate::Network;
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::collections::BTreeMap;
 use dashcore::blockdata::transaction::OutPoint;
-use dashcore::{Address, Txid};
+use dashcore::Txid;
 
 /// Common trait for all managed account types
 pub trait ManagedAccountTrait {
@@ -43,12 +43,6 @@ pub trait ManagedAccountTrait {
 
     /// Get mutable transactions
     fn transactions_mut(&mut self) -> &mut BTreeMap<Txid, TransactionRecord>;
-
-    /// Get monitored addresses
-    fn monitored_addresses(&self) -> &BTreeSet<Address>;
-
-    /// Get mutable monitored addresses
-    fn monitored_addresses_mut(&mut self) -> &mut BTreeSet<Address>;
 
     /// Get UTXOs
     fn utxos(&self) -> &BTreeMap<OutPoint, Utxo>;

@@ -424,6 +424,7 @@ typedef struct {
  */
 typedef struct {
     ManagedWalletInfo *inner;
+
 } FFIManagedWallet;
 
 /*
@@ -545,19 +546,19 @@ typedef struct {
  */
 typedef struct {
     /*
-     Confirmed balance in satoshis
+     Confirmed balance in duffs
      */
     uint64_t confirmed;
     /*
-     Unconfirmed balance in satoshis
+     Unconfirmed balance in duffs
      */
     uint64_t unconfirmed;
     /*
-     Immature balance in satoshis (e.g., mining rewards)
+     Immature balance in duffs (e.g., mining rewards)
      */
     uint64_t immature;
     /*
-     Total balance (confirmed + unconfirmed) in satoshis
+     Total balance (confirmed + unconfirmed) in duffs
      */
     uint64_t total;
 } FFIBalance;
@@ -2369,12 +2370,10 @@ FFIManagedAccountCollection *managed_wallet_get_account_collection(const FFIWall
  # Safety
 
  - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - `manager` must be a valid pointer to an FFIWalletManager
  - The returned pointer must be freed with `managed_account_free` when no longer needed
  */
 
 FFIManagedAccount *managed_account_collection_get_bip44_account(const FFIManagedAccountCollection *collection,
-                                                                const FFIWalletManager *manager,
                                                                 unsigned int index)
 ;
 
@@ -2400,12 +2399,10 @@ bool managed_account_collection_get_bip44_indices(const FFIManagedAccountCollect
  # Safety
 
  - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - `manager` must be a valid pointer to an FFIWalletManager
  - The returned pointer must be freed with `managed_account_free` when no longer needed
  */
 
 FFIManagedAccount *managed_account_collection_get_bip32_account(const FFIManagedAccountCollection *collection,
-                                                                const FFIWalletManager *manager,
                                                                 unsigned int index)
 ;
 
@@ -2431,12 +2428,10 @@ bool managed_account_collection_get_bip32_indices(const FFIManagedAccountCollect
  # Safety
 
  - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - `manager` must be a valid pointer to an FFIWalletManager
  - The returned pointer must be freed with `managed_account_free` when no longer needed
  */
 
 FFIManagedAccount *managed_account_collection_get_coinjoin_account(const FFIManagedAccountCollection *collection,
-                                                                   const FFIWalletManager *manager,
                                                                    unsigned int index)
 ;
 
@@ -2462,12 +2457,10 @@ bool managed_account_collection_get_coinjoin_indices(const FFIManagedAccountColl
  # Safety
 
  - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - `manager` must be a valid pointer to an FFIWalletManager
  - The returned pointer must be freed with `managed_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_identity_registration(const FFIManagedAccountCollection *collection,
-                                                                        const FFIWalletManager *manager)
+FFIManagedAccount *managed_account_collection_get_identity_registration(const FFIManagedAccountCollection *collection)
 ;
 
 /*
@@ -2487,12 +2480,10 @@ bool managed_account_collection_has_identity_registration(const FFIManagedAccoun
  # Safety
 
  - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - `manager` must be a valid pointer to an FFIWalletManager
  - The returned pointer must be freed with `managed_account_free` when no longer needed
  */
 
 FFIManagedAccount *managed_account_collection_get_identity_topup(const FFIManagedAccountCollection *collection,
-                                                                 const FFIWalletManager *manager,
                                                                  unsigned int registration_index)
 ;
 
@@ -2522,8 +2513,7 @@ bool managed_account_collection_get_identity_topup_indices(const FFIManagedAccou
  - The returned pointer must be freed with `managed_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_identity_topup_not_bound(const FFIManagedAccountCollection *collection,
-                                                                           const FFIWalletManager *manager)
+FFIManagedAccount *managed_account_collection_get_identity_topup_not_bound(const FFIManagedAccountCollection *collection)
 ;
 
 /*
@@ -2543,12 +2533,10 @@ bool managed_account_collection_has_identity_topup_not_bound(const FFIManagedAcc
  # Safety
 
  - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - `manager` must be a valid pointer to an FFIWalletManager
  - The returned pointer must be freed with `managed_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_identity_invitation(const FFIManagedAccountCollection *collection,
-                                                                      const FFIWalletManager *manager)
+FFIManagedAccount *managed_account_collection_get_identity_invitation(const FFIManagedAccountCollection *collection)
 ;
 
 /*
@@ -2568,12 +2556,10 @@ bool managed_account_collection_has_identity_invitation(const FFIManagedAccountC
  # Safety
 
  - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - `manager` must be a valid pointer to an FFIWalletManager
  - The returned pointer must be freed with `managed_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_provider_voting_keys(const FFIManagedAccountCollection *collection,
-                                                                       const FFIWalletManager *manager)
+FFIManagedAccount *managed_account_collection_get_provider_voting_keys(const FFIManagedAccountCollection *collection)
 ;
 
 /*
@@ -2593,12 +2579,10 @@ bool managed_account_collection_has_provider_voting_keys(const FFIManagedAccount
  # Safety
 
  - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - `manager` must be a valid pointer to an FFIWalletManager
  - The returned pointer must be freed with `managed_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_provider_owner_keys(const FFIManagedAccountCollection *collection,
-                                                                      const FFIWalletManager *manager)
+FFIManagedAccount *managed_account_collection_get_provider_owner_keys(const FFIManagedAccountCollection *collection)
 ;
 
 /*
@@ -2619,20 +2603,17 @@ bool managed_account_collection_has_provider_owner_keys(const FFIManagedAccountC
  # Safety
 
  - `collection` must be a valid pointer to an FFIManagedAccountCollection
- - `manager` must be a valid pointer to an FFIWalletManager
  - The returned pointer must be freed with `managed_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_provider_operator_keys(const FFIManagedAccountCollection *collection,
-                                                                         const FFIWalletManager *manager)
+FFIManagedAccount *managed_account_collection_get_provider_operator_keys(const FFIManagedAccountCollection *collection)
 ;
 
 /*
  Get the provider operator keys account if it exists (stub when BLS is disabled)
  */
 
-FFIManagedAccount *managed_account_collection_get_provider_operator_keys(const FFIManagedAccountCollection *_collection,
-                                                                         const FFIWalletManager *_manager)
+FFIManagedAccount *managed_account_collection_get_provider_operator_keys(const FFIManagedAccountCollection *_collection)
 ;
 
 /*
@@ -2657,16 +2638,14 @@ bool managed_account_collection_has_provider_operator_keys(const FFIManagedAccou
  - The returned pointer must be freed with `managed_account_free` when no longer needed
  */
 
-FFIManagedAccount *managed_account_collection_get_provider_platform_keys(const FFIManagedAccountCollection *collection,
-                                                                         const FFIWalletManager *manager)
+FFIManagedAccount *managed_account_collection_get_provider_platform_keys(const FFIManagedAccountCollection *collection)
 ;
 
 /*
  Get the provider platform keys account if it exists (stub when EdDSA is disabled)
  */
 
-FFIManagedAccount *managed_account_collection_get_provider_platform_keys(const FFIManagedAccountCollection *_collection,
-                                                                         const FFIWalletManager *_manager)
+FFIManagedAccount *managed_account_collection_get_provider_platform_keys(const FFIManagedAccountCollection *_collection)
 ;
 
 /*

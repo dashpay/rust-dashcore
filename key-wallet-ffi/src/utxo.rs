@@ -67,10 +67,8 @@ impl FFIUTXO {
         }
         if !self.script_pubkey.is_null() && self.script_len > 0 {
             // Reconstruct the boxed slice with DST pointer
-            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
-                self.script_pubkey,
-                self.script_len,
-            ));
+            let _ =
+                Box::from_raw(ptr::slice_from_raw_parts_mut(self.script_pubkey, self.script_len));
             self.script_pubkey = ptr::null_mut();
             self.script_len = 0;
         }
@@ -104,6 +102,8 @@ pub unsafe extern "C" fn managed_wallet_get_utxos(
     let network_rust: key_wallet::Network = match network.try_into() {
         Ok(n) => n,
         Err(_) => {
+            *count_out = 0;
+            *utxos_out = ptr::null_mut();
             FFIError::set_error(
                 error,
                 FFIErrorCode::InvalidInput,
@@ -213,7 +213,7 @@ pub unsafe extern "C" fn utxo_array_free(utxos: *mut FFIUTXO, count: usize) {
         }
 
         // Free the array itself by reconstructing the boxed slice with DST pointer
-        let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(utxos, count));
+        let _ = Box::from_raw(ptr::slice_from_raw_parts_mut(utxos, count));
     }
 }
 

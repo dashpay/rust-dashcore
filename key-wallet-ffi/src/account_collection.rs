@@ -179,7 +179,7 @@ pub unsafe extern "C" fn account_collection_get_bip44_indices(
     }
 
     let collection = &*collection;
-    let indices: Vec<c_uint> =
+    let mut indices: Vec<c_uint> =
         collection.collection.standard_bip44_accounts.keys().copied().collect();
 
     if indices.is_empty() {
@@ -187,6 +187,8 @@ pub unsafe extern "C" fn account_collection_get_bip44_indices(
         *out_count = 0;
         return true;
     }
+
+    indices.sort();
 
     let mut boxed_slice = indices.into_boxed_slice();
     let ptr = boxed_slice.as_mut_ptr();
@@ -309,13 +311,16 @@ pub unsafe extern "C" fn account_collection_get_coinjoin_indices(
     }
 
     let collection = &*collection;
-    let indices: Vec<c_uint> = collection.collection.coinjoin_accounts.keys().copied().collect();
+    let mut indices: Vec<c_uint> =
+        collection.collection.coinjoin_accounts.keys().copied().collect();
 
     if indices.is_empty() {
         *out_indices = ptr::null_mut();
         *out_count = 0;
         return true;
     }
+
+    indices.sort();
 
     let mut boxed_slice = indices.into_boxed_slice();
     let ptr = boxed_slice.as_mut_ptr();
@@ -414,13 +419,15 @@ pub unsafe extern "C" fn account_collection_get_identity_topup_indices(
     }
 
     let collection = &*collection;
-    let indices: Vec<c_uint> = collection.collection.identity_topup.keys().copied().collect();
+    let mut indices: Vec<c_uint> = collection.collection.identity_topup.keys().copied().collect();
 
     if indices.is_empty() {
         *out_indices = ptr::null_mut();
         *out_count = 0;
         return true;
     }
+
+    indices.sort();
 
     let mut boxed_slice = indices.into_boxed_slice();
     let ptr = boxed_slice.as_mut_ptr();

@@ -19,7 +19,7 @@ use crate::wallet::balance::WalletBalance;
 #[cfg(feature = "eddsa")]
 use crate::AddressInfo;
 use crate::{ExtendedPubKey, Network};
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::collections::BTreeMap;
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::Txid;
 use dashcore::{Address, ScriptBuf};
@@ -56,8 +56,6 @@ pub struct ManagedAccount {
     pub transactions: BTreeMap<Txid, TransactionRecord>,
     /// UTXO set for this account
     pub utxos: BTreeMap<OutPoint, Utxo>,
-    /// Monitored addresses for this account
-    pub monitored_addresses: BTreeSet<Address>,
 }
 
 impl ManagedAccount {
@@ -71,7 +69,6 @@ impl ManagedAccount {
             balance: WalletBalance::default(),
             transactions: BTreeMap::new(),
             utxos: BTreeMap::new(),
-            monitored_addresses: BTreeSet::new(),
         }
     }
 
@@ -825,13 +822,5 @@ impl ManagedAccountTrait for ManagedAccount {
 
     fn utxos_mut(&mut self) -> &mut BTreeMap<OutPoint, Utxo> {
         &mut self.utxos
-    }
-
-    fn monitored_addresses(&self) -> &BTreeSet<Address> {
-        &self.monitored_addresses
-    }
-
-    fn monitored_addresses_mut(&mut self) -> &mut BTreeSet<Address> {
-        &mut self.monitored_addresses
     }
 }

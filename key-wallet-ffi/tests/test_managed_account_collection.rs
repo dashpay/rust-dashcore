@@ -76,7 +76,7 @@ fn test_managed_account_collection_basic() {
         assert!(indices_count > 0);
 
         // Get first BIP44 account
-        let account = managed_account_collection_get_bip44_account(collection, manager, 0);
+        let account = managed_account_collection_get_bip44_account(collection, 0);
         assert!(!account.is_null());
 
         // Clean up
@@ -107,7 +107,7 @@ fn test_managed_account_collection_with_special_accounts() {
         options.option_type = FFIAccountCreationOptionType::AllAccounts;
 
         // Add various special accounts
-        let special_types = vec![
+        let special_types = [
             key_wallet_ffi::types::FFIAccountType::ProviderVotingKeys,
             key_wallet_ffi::types::FFIAccountType::ProviderOwnerKeys,
             key_wallet_ffi::types::FFIAccountType::IdentityRegistration,
@@ -117,10 +117,10 @@ fn test_managed_account_collection_with_special_accounts() {
         options.special_account_types_count = special_types.len();
 
         // Configure standard accounts
-        let bip44_indices = vec![0, 4, 5, 8];
-        let bip32_indices = vec![0];
-        let coinjoin_indices = vec![0, 1];
-        let topup_indices = vec![0, 1, 2];
+        let bip44_indices = [0, 4, 5, 8];
+        let bip32_indices = [0];
+        let coinjoin_indices = [0, 1];
+        let topup_indices = [0, 1, 2];
 
         options.bip44_indices = bip44_indices.as_ptr();
         options.bip44_count = bip44_indices.len();
@@ -207,12 +207,11 @@ fn test_managed_account_collection_with_special_accounts() {
         assert!(managed_account_collection_has_provider_owner_keys(collection));
 
         // Get specific accounts
-        let identity_reg =
-            managed_account_collection_get_identity_registration(collection, manager);
+        let identity_reg = managed_account_collection_get_identity_registration(collection);
         assert!(!identity_reg.is_null());
         key_wallet_ffi::managed_account::managed_account_free(identity_reg);
 
-        let voting_keys = managed_account_collection_get_provider_voting_keys(collection, manager);
+        let voting_keys = managed_account_collection_get_provider_voting_keys(collection);
         assert!(!voting_keys.is_null());
         key_wallet_ffi::managed_account::managed_account_free(voting_keys);
 
@@ -242,7 +241,7 @@ fn test_managed_account_collection_summary() {
         options.option_type = FFIAccountCreationOptionType::AllAccounts;
 
         // Add various special accounts
-        let special_types = vec![
+        let special_types = [
             key_wallet_ffi::types::FFIAccountType::ProviderVotingKeys,
             key_wallet_ffi::types::FFIAccountType::ProviderOwnerKeys,
             key_wallet_ffi::types::FFIAccountType::IdentityRegistration,
@@ -251,8 +250,8 @@ fn test_managed_account_collection_summary() {
         options.special_account_types_count = special_types.len();
 
         // Configure standard accounts
-        let bip44_indices = vec![0, 1, 2];
-        let bip32_indices = vec![0];
+        let bip44_indices = [0, 1, 2];
+        let bip32_indices = [0];
 
         options.bip44_indices = bip44_indices.as_ptr();
         options.bip44_count = bip44_indices.len();
@@ -329,7 +328,7 @@ fn test_managed_account_collection_summary_data() {
         options.option_type = FFIAccountCreationOptionType::AllAccounts;
 
         // Add various special accounts
-        let special_types = vec![
+        let special_types = [
             key_wallet_ffi::types::FFIAccountType::IdentityRegistration,
             key_wallet_ffi::types::FFIAccountType::IdentityInvitation,
         ];
@@ -337,10 +336,10 @@ fn test_managed_account_collection_summary_data() {
         options.special_account_types_count = special_types.len();
 
         // Configure standard accounts
-        let bip44_indices = vec![0, 1, 2, 5];
-        let bip32_indices = vec![0];
-        let coinjoin_indices = vec![0, 1];
-        let topup_indices = vec![0, 1, 2];
+        let bip44_indices = [0, 1, 2, 5];
+        let bip32_indices = [0];
+        let coinjoin_indices = [0, 1];
+        let topup_indices = [0, 1, 2];
 
         options.bip44_indices = bip44_indices.as_ptr();
         options.bip44_count = bip44_indices.len();
@@ -437,7 +436,7 @@ fn test_managed_account_collection_null_safety() {
         // Test with null collection for various functions
         assert_eq!(managed_account_collection_count(ptr::null()), 0);
         assert!(!managed_account_collection_has_identity_registration(ptr::null()));
-        assert!(managed_account_collection_get_bip44_account(ptr::null(), ptr::null(), 0).is_null());
+        assert!(managed_account_collection_get_bip44_account(ptr::null(), 0).is_null());
         assert!(managed_account_collection_summary(ptr::null()).is_null());
         assert!(managed_account_collection_summary_data(ptr::null()).is_null());
 
@@ -489,16 +488,16 @@ fn test_managed_account_collection_nonexistent_accounts() {
         assert!(!collection.is_null());
 
         // Try to get non-existent accounts
-        let account = managed_account_collection_get_bip44_account(collection, manager, 999);
+        let account = managed_account_collection_get_bip44_account(collection, 999);
         assert!(account.is_null());
 
-        let account = managed_account_collection_get_bip32_account(collection, manager, 999);
+        let account = managed_account_collection_get_bip32_account(collection, 999);
         assert!(account.is_null());
 
-        let account = managed_account_collection_get_coinjoin_account(collection, manager, 999);
+        let account = managed_account_collection_get_coinjoin_account(collection, 999);
         assert!(account.is_null());
 
-        let account = managed_account_collection_get_identity_topup(collection, manager, 999);
+        let account = managed_account_collection_get_identity_topup(collection, 999);
         assert!(account.is_null());
 
         // Clean up
