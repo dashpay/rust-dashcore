@@ -134,7 +134,7 @@ mod tests {
         #[test]
         fn test_real_operator_key_compatibility() {
             // Real operator public keys from mainnet quorum at height 2300832
-            let real_keys = vec![
+            let real_keys = [
                 hex!(
                     "86e7ea34cc084da3ed0e90649ad444df0ca25d638164a596b4fbec9567bbcf3e635a8d8457107e7fe76326f3816e34d9"
                 ),
@@ -294,7 +294,7 @@ mod tests {
                     println!("Verification with modern sig format: {:?}", result);
 
                     // Try with reversed block hash (endianness)
-                    let mut reversed_hash = block_hash.clone();
+                    let mut reversed_hash = block_hash;
                     reversed_hash.reverse();
                     let result_reversed = sig.verify(&pk, &reversed_hash);
                     println!("Verification with reversed block hash: {:?}", result_reversed);
@@ -399,7 +399,7 @@ mod tests {
             for _ in 0..10 {
                 let _ = verify_secure_basic_with_mode::<Bls12381G2Impl, _>(
                     &operator_keys,
-                    inner_sig.clone(),
+                    inner_sig,
                     msg,
                     SerializationFormat::Modern,
                 );
@@ -412,7 +412,7 @@ mod tests {
             for _ in 0..iterations {
                 let _ = verify_secure_basic_with_mode::<Bls12381G2Impl, _>(
                     &operator_keys,
-                    inner_sig.clone(),
+                    inner_sig,
                     msg,
                     SerializationFormat::Modern,
                 );

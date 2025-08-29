@@ -3789,16 +3789,30 @@ void wallet_manager_free_addresses(char **addresses,
 
 /*
  Encrypt a private key with BIP38
+
+ # Safety
+
+ This function is unsafe because it dereferences raw pointers:
+ - `private_key` must be a valid, null-terminated C string
+ - `passphrase` must be a valid, null-terminated C string
+ - `error` must be a valid pointer to an FFIError or null
  */
 
 char *bip38_encrypt_private_key(const char *private_key,
                                 const char *passphrase,
-                                FFINetwork network,
+                                FFINetwork _network,
                                 FFIError *error)
 ;
 
 /*
  Decrypt a BIP38 encrypted private key
+
+ # Safety
+
+ This function is unsafe because it dereferences raw pointers:
+ - `encrypted_key` must be a valid, null-terminated C string
+ - `passphrase` must be a valid, null-terminated C string
+ - `error` must be a valid pointer to an FFIError or null
  */
 
 char *bip38_decrypt_private_key(const char *encrypted_key,

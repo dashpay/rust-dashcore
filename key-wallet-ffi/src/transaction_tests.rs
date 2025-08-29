@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod transaction_tests {
     use super::super::*;
     use crate::error::{FFIError, FFIErrorCode};
@@ -89,7 +90,7 @@ mod transaction_tests {
     fn test_sign_transaction_with_null_wallet() {
         let mut error = FFIError::success();
 
-        let tx_bytes = vec![0u8; 100];
+        let tx_bytes = [0u8; 100];
         let mut signed_tx_out: *mut u8 = ptr::null_mut();
         let mut signed_len_out: usize = 0;
 
@@ -225,7 +226,7 @@ mod transaction_tests {
             )
         };
 
-        let tx_bytes = vec![0u8; 100];
+        let tx_bytes = [0u8; 100];
         let mut signed_tx_out: *mut u8 = ptr::null_mut();
         let mut signed_len_out: usize = 0;
 

@@ -601,7 +601,7 @@ mod tests {
         let mut height = 1;
         let mut ntx = tx_count;
         while ntx > 1 {
-            ntx = (ntx + 1) / 2;
+            ntx = ntx.div_ceil(2);
             height += 1;
         }
 
@@ -629,7 +629,7 @@ mod tests {
 
             // Verify PartialMerkleTree's size guarantees
             let n = min(tx_count, 1 + match_txid1.len() * height);
-            assert!(serialized.len() <= 10 + (258 * n + 7) / 8);
+            assert!(serialized.len() <= 10 + (258 * n).div_ceil(8));
 
             // Deserialize into a tester copy
             let pmt2: PartialMerkleTree =

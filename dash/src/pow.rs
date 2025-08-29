@@ -1490,7 +1490,7 @@ mod tests {
 
             let config = bincode::config::standard();
 
-            let bin_encoded = bincode::encode_to_vec(&uint, config).unwrap();
+            let bin_encoded = bincode::encode_to_vec(uint, config).unwrap();
             let bin_decoded: U256 = bincode::decode_from_slice(&bin_encoded, config).unwrap().0;
             assert_eq!(bin_decoded, uint);
         };

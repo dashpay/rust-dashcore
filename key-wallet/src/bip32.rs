@@ -2734,14 +2734,14 @@ mod tests {
 
         // Test to_priv() method
         let priv_key = ext_priv.to_priv();
-        assert_eq!(priv_key.compressed, true);
+        assert!(priv_key.compressed);
         assert_eq!(priv_key.network, dashcore::Network::Testnet);
         assert_eq!(priv_key.inner, ext_priv.private_key);
 
         // Test to_pub() method
         let ext_pub = ExtendedPubKey::from_priv(&secp, &ext_priv);
         let pub_key = ext_pub.to_pub();
-        assert_eq!(pub_key.compressed, true);
+        assert!(pub_key.compressed);
         assert_eq!(pub_key.inner, ext_pub.public_key);
 
         // Verify the keys match

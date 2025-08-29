@@ -906,7 +906,7 @@ mod tests {
 
         // Create managed wallet info from the wallet
         let wallet_rust = unsafe { &(*wallet).wallet };
-        let managed_info = ManagedWalletInfo::from_wallet(&wallet_rust);
+        let managed_info = ManagedWalletInfo::from_wallet(wallet_rust);
         let mut ffi_managed = FFIManagedWalletInfo::new(managed_info);
 
         // Test get_next_receive_address with valid pointers
@@ -995,7 +995,7 @@ mod tests {
 
         // We need to work with the existing wallet structure
         // Create managed wallet info from the existing wallet
-        let mut managed_info = ManagedWalletInfo::from_wallet(&wallet_arc);
+        let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc);
 
         let network = key_wallet::Network::Testnet;
 
@@ -1177,7 +1177,7 @@ mod tests {
 
         // Create managed wallet info
         let wallet_arc = unsafe { &(*wallet_ptr).wallet };
-        let mut managed_info = ManagedWalletInfo::from_wallet(&wallet_arc);
+        let mut managed_info = ManagedWalletInfo::from_wallet(wallet_arc);
 
         // Set some test balance values
         managed_info.balance = WalletBalance {

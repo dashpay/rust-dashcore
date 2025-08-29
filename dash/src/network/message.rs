@@ -994,7 +994,7 @@ mod test {
         // Verify
         match decoded.payload {
             NetworkMessage::SendDsq(wants_dsq) => {
-                assert_eq!(wants_dsq, true);
+                assert!(wants_dsq);
             }
             _ => panic!("Expected SendDsq message"),
         }
@@ -1015,7 +1015,7 @@ mod test {
         // Verify
         match decoded.payload {
             NetworkMessage::SendDsq(wants_dsq) => {
-                assert_eq!(wants_dsq, false);
+                assert!(!wants_dsq);
             }
             _ => panic!("Expected SendDsq message"),
         }

@@ -9,8 +9,8 @@ use dashcore::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::collections::{BTreeMap, HashMap};
 
 /// Helper to create a test UTXO
-fn create_test_utxo(txid: Txid, vout: u32, value: u64, height: Option<u32>) -> UTXO {
-    UTXO {
+fn create_test_utxo(txid: Txid, vout: u32, value: u64, height: Option<u32>) -> Utxo {
+    Utxo {
         outpoint: OutPoint {
             txid,
             vout,
@@ -60,7 +60,7 @@ fn test_utxo_creation_from_transaction() {
     // Create UTXOs from transaction outputs
     let mut utxos = Vec::new();
     for (vout, output) in tx.output.iter().enumerate() {
-        let utxo = UTXO {
+        let utxo = Utxo {
             outpoint: OutPoint {
                 txid,
                 vout: vout as u32,
@@ -321,7 +321,7 @@ fn test_utxo_dust_filtering() {
 mod mock {
     use super::*;
 
-    pub struct UTXO {
+    pub struct Utxo {
         pub outpoint: OutPoint,
         pub value: u64,
         pub script_pubkey: ScriptBuf,
@@ -335,7 +335,7 @@ mod mock {
     }
 
     pub struct UTXOCollection {
-        utxos: HashMap<OutPoint, UTXO>,
+        utxos: HashMap<OutPoint, Utxo>,
     }
 
     impl UTXOCollection {
@@ -345,15 +345,15 @@ mod mock {
             }
         }
 
-        pub fn add(&mut self, utxo: UTXO) {
-            self.utxos.insert(utxo.outpoint.clone(), utxo);
+        pub fn add(&mut self, utxo: Utxo) {
+            self.utxos.insert(utxo.outpoint, utxo);
         }
 
-        pub fn remove(&mut self, outpoint: &OutPoint) -> Option<UTXO> {
+        pub fn remove(&mut self, outpoint: &OutPoint) -> Option<Utxo> {
             self.utxos.remove(outpoint)
         }
 
-        pub fn spend(&mut self, outpoint: &OutPoint) -> Option<UTXO> {
+        pub fn spend(&mut self, outpoint: &OutPoint) -> Option<Utxo> {
             self.remove(outpoint)
         }
 
@@ -397,7 +397,7 @@ mod mock {
             }
         }
 
-        pub fn select_utxos(&self, target: u64, _fee_per_input: u64) -> Option<(Vec<UTXO>, u64)> {
+        pub fn select_utxos(&self, target: u64, _fee_per_input: u64) -> Option<(Vec<Utxo>, u64)> {
             let mut selected = Vec::new();
             let mut total = 0u64;
 
@@ -424,7 +424,7 @@ mod mock {
             self.utxos.values().filter(|u| !u.is_change).map(|u| u.value).sum()
         }
 
-        pub fn get_non_dust_utxos(&self, dust_limit: u64) -> Vec<&UTXO> {
+        pub fn get_non_dust_utxos(&self, dust_limit: u64) -> Vec<&Utxo> {
             self.utxos.values().filter(|u| u.value >= dust_limit).collect()
         }
 
@@ -439,10 +439,10 @@ mod mock {
         }
     }
 
-    impl Clone for UTXO {
+    impl Clone for Utxo {
         fn clone(&self) -> Self {
             Self {
-                outpoint: self.outpoint.clone(),
+                outpoint: self.outpoint,
                 value: self.value,
                 script_pubkey: self.script_pubkey.clone(),
                 address: self.address.clone(),
@@ -458,4 +458,4 @@ mod mock {
 }
 
 // Use the mock structures for testing
-use mock::{UTXOCollection, UTXO};
+use mock::{UTXOCollection, Utxo};

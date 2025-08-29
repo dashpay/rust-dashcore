@@ -63,10 +63,8 @@ fn test_coinbase_detection() {
     use crate::Network;
 
     // Create a test address
-    let address = Address::p2pkh(
-        &dashcore::PublicKey::from_slice(&[0x02; 33]).unwrap(),
-        Network::Testnet.into(),
-    );
+    let address =
+        Address::p2pkh(&dashcore::PublicKey::from_slice(&[0x02; 33]).unwrap(), Network::Testnet);
 
     // Create a coinbase transaction
     let tx = create_coinbase_transaction(&address, 100000);

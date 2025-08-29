@@ -1278,19 +1278,19 @@ mod tests {
         let block_container_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/block_container_2240504.dat");
         let block_container: MasternodeListEngineBlockContainer =
-            bincode::decode_from_slice(&block_container_bytes, bincode::config::standard())
+            bincode::decode_from_slice(block_container_bytes, bincode::config::standard())
                 .expect("expected to decode")
                 .0;
         let mn_list_diffs_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/mnlistdiffs_2240504.dat");
         let mn_list_diffs: BTreeMap<(CoreBlockHeight, CoreBlockHeight), MnListDiff> =
-            bincode::decode_from_slice(&mn_list_diffs_bytes, bincode::config::standard())
+            bincode::decode_from_slice(mn_list_diffs_bytes, bincode::config::standard())
                 .expect("expected to decode")
                 .0;
         let qr_info_bytes: &[u8] =
             include_bytes!("../../../tests/data/test_DML_diffs/qrinfo_2240504.dat");
         let qr_info: QRInfo =
-            bincode::decode_from_slice(&qr_info_bytes, bincode::config::standard())
+            bincode::decode_from_slice(qr_info_bytes, bincode::config::standard())
                 .expect("expected to decode")
                 .0;
 
@@ -1403,10 +1403,9 @@ mod tests {
 
         for (cycle_hash, quorums) in mn_list_engine.rotated_quorums_per_cycle.iter() {
             for (i, quorum) in quorums.iter().enumerate() {
-                mn_list_engine.validate_quorum(quorum).expect(
-                    format!("expected to validate quorum {} in cycle hash {}", i, cycle_hash)
-                        .as_str(),
-                );
+                mn_list_engine.validate_quorum(quorum).unwrap_or_else(|_| {
+                    panic!("expected to validate quorum {} in cycle hash {}", i, cycle_hash)
+                });
             }
         }
     }

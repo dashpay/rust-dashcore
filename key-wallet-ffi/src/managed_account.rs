@@ -856,7 +856,7 @@ mod tests {
 
             let mut options = FFIWalletAccountCreationOptions::default_options();
             options.option_type = FFIAccountCreationOptionType::BIP44AccountsOnly;
-            let bip44_indices = vec![0];
+            let bip44_indices = [0];
             options.bip44_indices = bip44_indices.as_ptr();
             options.bip44_count = bip44_indices.len();
 
@@ -929,9 +929,9 @@ mod tests {
             let mut options = FFIWalletAccountCreationOptions::default_options();
             options.option_type = FFIAccountCreationOptionType::AllAccounts;
 
-            let bip44_indices = vec![0, 1, 2];
-            let bip32_indices = vec![0];
-            let coinjoin_indices = vec![0];
+            let bip44_indices = [0, 1, 2];
+            let bip32_indices = [0];
+            let coinjoin_indices = [0];
 
             options.bip44_indices = bip44_indices.as_ptr();
             options.bip44_count = bip44_indices.len();
@@ -1046,7 +1046,7 @@ mod tests {
 
             // Test get_is_watch_only
             let is_watch_only = managed_account_get_is_watch_only(account);
-            assert_eq!(is_watch_only, false);
+            assert!(!is_watch_only);
 
             // Test get_balance
             let mut balance_out = crate::types::FFIBalance {
@@ -1094,7 +1094,7 @@ mod tests {
             assert_eq!(account_type, FFIAccountType::StandardBIP44); // Default type
 
             let is_watch_only = managed_account_get_is_watch_only(ptr::null());
-            assert_eq!(is_watch_only, false);
+            assert!(!is_watch_only);
 
             let tx_count = managed_account_get_transaction_count(ptr::null());
             assert_eq!(tx_count, 0);
@@ -1261,7 +1261,7 @@ mod tests {
             // Create wallet with CoinJoin account
             let mut options = FFIWalletAccountCreationOptions::default_options();
             options.option_type = FFIAccountCreationOptionType::SpecificAccounts;
-            let coinjoin_indices = vec![0];
+            let coinjoin_indices = [0];
             options.coinjoin_indices = coinjoin_indices.as_ptr();
             options.coinjoin_count = coinjoin_indices.len();
 

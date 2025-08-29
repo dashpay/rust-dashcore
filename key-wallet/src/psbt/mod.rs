@@ -1174,7 +1174,6 @@ mod tests {
                     PsbtParseError::PsbtEncoding(err) => err,
                     PsbtParseError::Base64Encoding(_) => panic!("PSBT Base64 decoding failed")
                 })
-                .map_err(Error::from)
                 .unwrap();
         }
 

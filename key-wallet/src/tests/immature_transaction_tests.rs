@@ -211,7 +211,7 @@ fn test_immature_transaction_ordering() {
     let block_hash = BlockHash::from_slice(&[0u8; 32]).unwrap();
 
     // Add transactions in random order with different maturity heights
-    let heights = vec![100, 0, 200, 50];
+    let heights = [100, 0, 200, 50];
     let mut txids = Vec::new();
 
     for (i, height) in heights.iter().enumerate() {

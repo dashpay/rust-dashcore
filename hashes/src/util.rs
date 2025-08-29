@@ -583,19 +583,18 @@ macro_rules! hash_newtype_known_attrs {
 
 #[cfg(feature = "schemars")]
 pub mod json_hex_string {
-    use schemars::gen::SchemaGenerator;
-    use schemars::schema::{Schema, SchemaObject};
-    use schemars::JsonSchema;
+    use schemars::SchemaGenerator;
+    use schemars::{Schema, json_schema};
     macro_rules! define_custom_hex {
         ($name:ident, $len:expr) => {
-            pub fn $name(generator: &mut SchemaGenerator) -> Schema {
-                let mut schema: SchemaObject = <String>::json_schema(generator).into();
-                schema.string = Some(Box::new(schemars::schema::StringValidation {
-                    max_length: Some($len * 2),
-                    min_length: Some($len * 2),
-                    pattern: Some("[0-9a-fA-F]+".to_owned()),
-                }));
-                schema.into()
+            pub fn $name(_generator: &mut SchemaGenerator) -> Schema {
+                // In schemars 1.0, we can use the json_schema! macro to create schemas
+                json_schema!({
+                    "type": "string",
+                    "minLength": $len * 2,
+                    "maxLength": $len * 2,
+                    "pattern": "^[0-9a-fA-F]+$"
+                })
             }
         };
     }

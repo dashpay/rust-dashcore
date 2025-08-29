@@ -1563,7 +1563,6 @@ mod tests {
 
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
-
         struct KpsGiven {
             #[serde(with = "con_serde::With::<con_serde::Hex>")]
             raw_unsigned_tx: Transaction,
@@ -1572,7 +1571,6 @@ mod tests {
 
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
-
         struct KpsIntermediary {
             hash_prevouts: sha256::Hash,
             hash_outputs: sha256::Hash,
@@ -1583,7 +1581,6 @@ mod tests {
 
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
-
         struct KpsInputSpendingGiven {
             txin_index: usize,
             internal_privkey: SecretKey,
@@ -1594,7 +1591,6 @@ mod tests {
 
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
-
         struct KpsInputSpendingIntermediary {
             internal_pubkey: XOnlyPublicKey,
             tweak: TapTweakHash,
@@ -1606,14 +1602,12 @@ mod tests {
 
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
-
         struct KpsInputSpendingExpected {
             witness: Vec<String>,
         }
 
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
-
         struct KpsInputSpending {
             given: KpsInputSpendingGiven,
             intermediary: KpsInputSpendingIntermediary,
@@ -1623,7 +1617,6 @@ mod tests {
 
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
-
         struct KeyPathSpending {
             given: KpsGiven,
             intermediary: KpsIntermediary,
@@ -1632,7 +1625,6 @@ mod tests {
 
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
-
         struct TestData {
             version: u64,
             key_path_spending: Vec<KeyPathSpending>,

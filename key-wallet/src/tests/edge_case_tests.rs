@@ -30,7 +30,7 @@ fn test_account_index_overflow() {
 #[test]
 fn test_invalid_derivation_paths() {
     // Test various invalid derivation path scenarios
-    let _test_cases = vec![
+    let _test_cases = [
         "",                      // Empty path
         "m",                     // Just master
         "m/",                    // Trailing slash

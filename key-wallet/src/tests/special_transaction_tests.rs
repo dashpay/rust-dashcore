@@ -16,6 +16,7 @@ use std::net::SocketAddr;
 
 /// Special transaction types in Dash
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(clippy::enum_variant_names)]
 enum SpecialTransactionType {
     ProviderRegistration = 1,    // ProRegTx
     ProviderUpdate = 2,          // ProUpServTx
