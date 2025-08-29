@@ -62,6 +62,7 @@ async fn check_node_availability() -> bool {
 }
 
 #[tokio::test]
+#[ignore = "requires local Dash Core node"]
 async fn test_real_node_connectivity() {
     let _ = env_logger::try_init();
 
@@ -104,6 +105,7 @@ async fn test_real_node_connectivity() {
 }
 
 #[tokio::test]
+#[ignore = "requires local Dash Core node"]
 async fn test_real_header_sync_genesis_to_1000() {
     let _ = env_logger::try_init();
 
@@ -178,6 +180,7 @@ async fn test_real_header_sync_genesis_to_1000() {
 }
 
 #[tokio::test]
+#[ignore = "requires local Dash Core node"]
 async fn test_real_header_sync_up_to_10k() {
     let _ = env_logger::try_init();
 
@@ -328,6 +331,7 @@ async fn test_real_header_sync_up_to_10k() {
 }
 
 #[tokio::test]
+#[ignore = "requires local Dash Core node"]
 async fn test_real_header_validation_with_node() {
     let _ = env_logger::try_init();
 
@@ -390,6 +394,7 @@ async fn test_real_header_validation_with_node() {
 }
 
 #[tokio::test]
+#[ignore = "requires local Dash Core node"]
 async fn test_real_header_chain_continuity() {
     let _ = env_logger::try_init();
 
@@ -462,6 +467,7 @@ async fn test_real_header_chain_continuity() {
 }
 
 #[tokio::test]
+#[ignore = "requires local Dash Core node"]
 async fn test_real_node_sync_resumption() {
     let _ = env_logger::try_init();
 
@@ -527,6 +533,7 @@ async fn test_real_node_sync_resumption() {
 }
 
 #[tokio::test]
+#[ignore = "requires local Dash Core node"]
 async fn test_real_node_performance_benchmarks() {
     let _ = env_logger::try_init();
 

@@ -17,7 +17,7 @@ async fn test_smart_fetch_basic_dkg_windows() {
     assert!(!windows.is_empty());
 
     // Each window should be within our range
-    for (height, window_list) in &windows {
+    for (_height, window_list) in &windows {
         for window in window_list {
             // Mining window should overlap with our range
             assert!(window.mining_end >= 1000 || window.mining_start <= 1100);

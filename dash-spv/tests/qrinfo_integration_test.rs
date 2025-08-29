@@ -11,7 +11,6 @@ use dashcore::{
     BlockHash, Network, QuorumHash, Transaction,
 };
 use dashcore_hashes::Hash;
-use log::info;
 use std::time::Duration;
 
 /// Helper to generate test QRInfo data

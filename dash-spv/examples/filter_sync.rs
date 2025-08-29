@@ -3,7 +3,7 @@
 use dash_spv::network::MultiPeerNetworkManager;
 use dash_spv::storage::MemoryStorageManager;
 use dash_spv::{init_logging, ClientConfig, DashSpvClient};
-use dashcore::{Address, Network};
+use dashcore::Address;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::spv_wallet_manager::SPVWalletManager;
 use key_wallet_manager::wallet_manager::WalletManager;

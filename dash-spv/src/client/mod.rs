@@ -135,24 +135,6 @@ impl<
         )
     }
 
-    /// Helper to process balance changes with error handling.
-    async fn process_address_balance<T, F>(
-        &self,
-        address: &dashcore::Address,
-        success_handler: F,
-    ) -> Option<T>
-    where
-        F: FnOnce(AddressBalance) -> T,
-    {
-        match self.get_address_balance(address).await {
-            Ok(balance) => Some(success_handler(balance)),
-            Err(e) => {
-                tracing::error!("Failed to get balance for address {}: {}", address, e);
-                None
-            }
-        }
-    }
-
     // UTXO mismatch checking removed - handled by external wallet
 
     // Address mismatch checking removed - handled by external wallet
@@ -208,7 +190,7 @@ impl<
         // Create sync manager
         let received_filter_heights = stats.read().await.received_filter_heights.clone();
         tracing::info!("Creating sequential sync manager");
-        let mut sync_manager =
+        let sync_manager =
             SequentialSyncManager::new(&config, received_filter_heights, wallet.clone())
                 .map_err(SpvError::Sync)?;
 
@@ -554,6 +536,7 @@ impl<
     }
 
     /// Update mempool filter with wallet's monitored addresses.
+    #[allow(dead_code)]
     async fn update_mempool_filter(&mut self) {
         // TODO: Get monitored addresses from wallet
         // For now, create empty filter until wallet integration is complete

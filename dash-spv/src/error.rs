@@ -112,6 +112,21 @@ pub enum StorageError {
     LockPoisoned(String),
 }
 
+impl Clone for StorageError {
+    fn clone(&self) -> Self {
+        match self {
+            StorageError::Corruption(s) => StorageError::Corruption(s.clone()),
+            StorageError::NotFound(s) => StorageError::NotFound(s.clone()),
+            StorageError::WriteFailed(s) => StorageError::WriteFailed(s.clone()),
+            StorageError::ReadFailed(s) => StorageError::ReadFailed(s.clone()),
+            StorageError::Io(err) => StorageError::Io(io::Error::new(err.kind(), err.to_string())),
+            StorageError::Serialization(s) => StorageError::Serialization(s.clone()),
+            StorageError::InconsistentState(s) => StorageError::InconsistentState(s.clone()),
+            StorageError::LockPoisoned(s) => StorageError::LockPoisoned(s.clone()),
+        }
+    }
+}
+
 /// Validation-related errors.
 #[derive(Debug, Error)]
 pub enum ValidationError {

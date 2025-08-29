@@ -315,9 +315,9 @@ bool dash_spv_ffi_client_is_filter_sync_available(struct FFIDashSpvClient *clien
 FFIBalance *dash_spv_ffi_client_get_address_balance(struct FFIDashSpvClient *client,
                                                     const char *address);
 
-struct FFIArray dash_spv_ffi_client_get_utxos(struct FFIDashSpvClient *client);
+struct FFIArray *dash_spv_ffi_client_get_utxos(struct FFIDashSpvClient *client);
 
-struct FFIArray dash_spv_ffi_client_get_utxos_for_address(struct FFIDashSpvClient *client,
+struct FFIArray *dash_spv_ffi_client_get_utxos_for_address(struct FFIDashSpvClient *client,
                                                           const char *address);
 
 int32_t dash_spv_ffi_client_set_event_callbacks(struct FFIDashSpvClient *client,
@@ -337,7 +337,7 @@ int32_t dash_spv_ffi_client_watch_script(struct FFIDashSpvClient *client, const 
 
 int32_t dash_spv_ffi_client_unwatch_script(struct FFIDashSpvClient *client, const char *script_hex);
 
-struct FFIArray dash_spv_ffi_client_get_address_history(struct FFIDashSpvClient *client,
+struct FFIArray *dash_spv_ffi_client_get_address_history(struct FFIDashSpvClient *client,
                                                         const char *address);
 
 struct FFITransaction *dash_spv_ffi_client_get_transaction(struct FFIDashSpvClient *client,
@@ -346,9 +346,9 @@ struct FFITransaction *dash_spv_ffi_client_get_transaction(struct FFIDashSpvClie
 int32_t dash_spv_ffi_client_broadcast_transaction(struct FFIDashSpvClient *client,
                                                   const char *tx_hex);
 
-struct FFIArray dash_spv_ffi_client_get_watched_addresses(struct FFIDashSpvClient *client);
+struct FFIArray *dash_spv_ffi_client_get_watched_addresses(struct FFIDashSpvClient *client);
 
-struct FFIArray dash_spv_ffi_client_get_watched_scripts(struct FFIDashSpvClient *client);
+struct FFIArray *dash_spv_ffi_client_get_watched_scripts(struct FFIDashSpvClient *client);
 
 FFIBalance *dash_spv_ffi_client_get_total_balance(struct FFIDashSpvClient *client);
 
@@ -363,7 +363,7 @@ int32_t dash_spv_ffi_client_is_transaction_confirmed(struct FFIDashSpvClient *cl
 
 void dash_spv_ffi_transaction_destroy(struct FFITransaction *tx);
 
-struct FFIArray dash_spv_ffi_client_get_address_utxos(struct FFIDashSpvClient *client,
+struct FFIArray *dash_spv_ffi_client_get_address_utxos(struct FFIDashSpvClient *client,
                                                       const char *address);
 
 int32_t dash_spv_ffi_client_enable_mempool_tracking(struct FFIDashSpvClient *client,

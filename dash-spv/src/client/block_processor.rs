@@ -1,12 +1,12 @@
 //! Block processing functionality for the Dash SPV client.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
 use crate::error::{Result, SpvError};
 use crate::storage::StorageManager;
-use crate::types::{AddressBalance, SpvEvent, SpvStats};
+use crate::types::{SpvEvent, SpvStats};
 use key_wallet_manager::wallet_interface::WalletInterface;
 
 /// Task for the block processing worker.
@@ -571,19 +571,8 @@ impl<W: WalletInterface + Send + Sync + 'static, S: StorageManager + Send + Sync
 
         Ok(())
     }
-    */
 
-    /// Get the balance for a specific address.
-    async fn get_address_balance(&self, _address: &dashcore::Address) -> Result<AddressBalance> {
-        // WalletInterface doesn't expose per-address balance
-        // Return empty balance for now
-        Ok(AddressBalance {
-            confirmed: dashcore::Amount::from_sat(0),
-            unconfirmed: dashcore::Amount::from_sat(0),
-            pending: dashcore::Amount::from_sat(0),
-            pending_instant: dashcore::Amount::from_sat(0),
-        })
-    }
+    */
 
     /// Update chain state with information from the processed block.
     async fn update_chain_state_with_block(&mut self, block: &dashcore::Block) -> Result<()> {

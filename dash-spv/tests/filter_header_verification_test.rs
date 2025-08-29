@@ -3,7 +3,7 @@
 //! NOTE: This test file is currently disabled due to incomplete mock NetworkManager implementation.
 //! TODO: Re-enable once NetworkManager trait methods are fully implemented.
 
-#![cfg(skip_mock_implementation_incomplete)]
+#![cfg(feature = "skip_mock_implementation_incomplete")]
 
 //! Test to replicate the filter header chain verification failure observed in production.
 //!
@@ -202,6 +202,7 @@ fn calculate_expected_filter_header(
     FilterHeader::from_byte_array(sha256d::Hash::hash(&data).to_byte_array())
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_filter_header_verification_failure_reproduction() {
     let _ = env_logger::try_init();
@@ -214,7 +215,8 @@ async fn test_filter_header_verification_failure_reproduction() {
 
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     // Step 1: Store initial headers to simulate having a synced header chain
     println!("Step 1: Setting up initial header chain...");
@@ -354,6 +356,7 @@ async fn test_filter_header_verification_failure_reproduction() {
     println!("different values for previous_filter_header, breaking chain continuity.");
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_overlapping_batches_from_different_peers() {
     let _ = env_logger::try_init();
@@ -374,7 +377,8 @@ async fn test_overlapping_batches_from_different_peers() {
 
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     // Step 1: Set up headers for the full range we'll need
     println!("Step 1: Setting up header chain (heights 1-3000)...");
@@ -532,6 +536,7 @@ async fn test_overlapping_batches_from_different_peers() {
     );
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_filter_header_verification_overlapping_batches() {
     let _ = env_logger::try_init();
@@ -546,7 +551,8 @@ async fn test_filter_header_verification_overlapping_batches() {
 
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     // Set up initial headers - start from 1 for proper sync
     let initial_headers = create_test_headers_range(1, 2000);
@@ -626,6 +632,7 @@ async fn test_filter_header_verification_overlapping_batches() {
     assert!(final_filter_tip >= batch1_end); // Should be at least as high as before
 }
 
+#[ignore = "mock implementation incomplete"]
 #[tokio::test]
 async fn test_filter_header_verification_race_condition_simulation() {
     let _ = env_logger::try_init();
@@ -640,7 +647,8 @@ async fn test_filter_header_verification_race_condition_simulation() {
 
     let config = ClientConfig::new(Network::Dash);
     let received_heights = Arc::new(Mutex::new(HashSet::new()));
-    let mut filter_sync = FilterSyncManager::new(&config, received_heights);
+    let mut filter_sync: FilterSyncManager<MemoryStorageManager, MockNetworkManager> =
+        FilterSyncManager::new(&config, received_heights);
 
     // Set up headers - need enough for batch B (up to height 3000)
     let initial_headers = create_test_headers_range(1, 3001);

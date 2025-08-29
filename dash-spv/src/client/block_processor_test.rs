@@ -8,22 +8,19 @@ mod tests {
     use crate::storage::StorageManager;
     use crate::types::{SpvEvent, SpvStats};
     use dashcore::{blockdata::constants::genesis_block, Block, Network, Transaction};
-    use std::collections::HashSet;
 
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
     // Mock WalletInterface implementation for testing
     struct MockWallet {
-        network: Network,
         processed_blocks: Arc<Mutex<Vec<(dashcore::BlockHash, u32)>>>,
         processed_transactions: Arc<Mutex<Vec<dashcore::Txid>>>,
     }
 
     impl MockWallet {
-        fn new(network: Network) -> Self {
+        fn new() -> Self {
             Self {
-                network,
                 processed_blocks: Arc::new(Mutex::new(Vec::new())),
                 processed_transactions: Arc::new(Mutex::new(Vec::new())),
             }
@@ -83,7 +80,7 @@ mod tests {
         let (task_tx, task_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
-        let wallet = Arc::new(RwLock::new(MockWallet::new(Network::Dash)));
+        let wallet = Arc::new(RwLock::new(MockWallet::new()));
         let storage = Arc::new(Mutex::new(MemoryStorageManager::new().await.unwrap()));
         let processor = BlockProcessor::new(
             task_rx,
@@ -215,9 +212,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_compact_filter_no_match() {
         // Create a custom mock wallet that returns false for filter checks
-        struct NonMatchingWallet {
-            network: Network,
-        }
+        struct NonMatchingWallet {}
 
         #[async_trait::async_trait]
         impl key_wallet_manager::wallet_interface::WalletInterface for NonMatchingWallet {
@@ -258,9 +253,7 @@ mod tests {
         let (task_tx, task_rx) = mpsc::unbounded_channel();
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let stats = Arc::new(RwLock::new(SpvStats::default()));
-        let wallet = Arc::new(RwLock::new(NonMatchingWallet {
-            network: Network::Dash,
-        }));
+        let wallet = Arc::new(RwLock::new(NonMatchingWallet {}));
         let storage = Arc::new(Mutex::new(MemoryStorageManager::new().await.unwrap()));
 
         let processor =
@@ -305,7 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_mempool_transaction() {
-        let (processor, task_tx, event_rx, wallet, _storage) = setup_processor().await;
+        let (processor, task_tx, _event_rx, wallet, _storage) = setup_processor().await;
 
         // Create a test transaction
         let block = create_test_block(Network::Dash);

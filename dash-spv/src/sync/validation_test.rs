@@ -210,33 +210,13 @@ mod tests {
 mod perf_tests {
 
     use crate::sync::chainlock_validation::{ChainLockValidationConfig, ChainLockValidator};
-    use crate::sync::validation::{ValidationConfig, ValidationEngine};
 
     use dashcore::BlockHash;
     use std::time::Instant;
 
-    #[tokio::test]
-    #[ignore] // Run with --ignored flag for performance tests
-    async fn test_validation_performance() {
-        let config = ValidationConfig::default();
-        let engine = ValidationEngine::new(config);
-
-        let start = Instant::now();
-
-        // Create large QRInfo for performance testing
-        let mut qr_info = super::tests::create_mock_qr_info();
-
-        // Add 1000 diffs
-        for i in 0..1000 {
-            qr_info.mn_list_diff_list.push(super::tests::create_mock_mn_list_diff(i));
-        }
-
-        let duration = start.elapsed();
-        println!("Created test data in {:?}", duration);
-
-        // Note: Actual validation would require proper engine setup
-        // This test demonstrates the performance testing framework
-    }
+    // TODO: Implement performance test for validation
+    // This test should measure performance of validation with large QRInfo datasets
+    // and verify that validation completes within acceptable time limits
 
     #[tokio::test]
     #[ignore]
@@ -250,7 +230,7 @@ mod perf_tests {
 
         // Simulate many cache operations
         for i in 0..10000 {
-            let hash = BlockHash::from([i as u8; 32]);
+            let _hash = BlockHash::from([i as u8; 32]);
             // Cache operations would happen during validation
         }
 

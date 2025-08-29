@@ -14,7 +14,8 @@ pub struct FFIString {
 impl FFIString {
     pub fn new(s: &str) -> Self {
         let c_string = CString::new(s).unwrap_or_else(|_| CString::new("").unwrap());
-        let length = s.len();
+        // Compute length from the finalized CString to avoid mismatches when input contains NULs
+        let length = c_string.as_bytes().len();
         FFIString {
             ptr: c_string.into_raw(),
             length,
@@ -288,6 +289,8 @@ pub struct FFIArray {
     pub data: *mut c_void,
     pub len: usize,
     pub capacity: usize,
+    pub elem_size: usize,
+    pub elem_align: usize,
 }
 
 impl FFIArray {
@@ -309,6 +312,8 @@ impl FFIArray {
             data,
             len,
             capacity,
+            elem_size: std::mem::size_of::<T>(),
+            elem_align: std::mem::align_of::<T>(),
         }
     }
 
@@ -331,11 +336,47 @@ pub unsafe extern "C" fn dash_spv_ffi_string_destroy(s: FFIString) {
 #[no_mangle]
 pub unsafe extern "C" fn dash_spv_ffi_array_destroy(arr: *mut FFIArray) {
     if !arr.is_null() {
-        let arr = Box::from_raw(arr);
-        if !arr.data.is_null() && arr.capacity > 0 {
-            Vec::from_raw_parts(arr.data as *mut u8, arr.len, arr.capacity);
+        // Only deallocate the vector buffer recorded in the struct; do not free the struct itself.
+        // This makes it safe to pass pointers to stack-allocated FFIArray values returned by-value.
+        if !(*arr).data.is_null() && (*arr).capacity > 0 {
+            // Deallocate the vector buffer using the original layout
+            use std::alloc::{dealloc, Layout};
+            let size = (*arr).elem_size.saturating_mul((*arr).capacity);
+            if size > 0 && (*arr).elem_align.is_power_of_two() && (*arr).elem_align > 0 {
+                // Safety: elem_size/elem_align were recorded from the original Vec<T>
+                let layout = Layout::from_size_align_unchecked(size, (*arr).elem_align);
+                unsafe { dealloc((*arr).data as *mut u8, layout) };
+            }
         }
     }
+}
+
+/// Destroy an array of FFIString pointers (Vec<*mut FFIString>) and their contents.
+///
+/// This function:
+/// - Iterates the array elements as pointers to FFIString and destroys each via dash_spv_ffi_string_destroy
+/// - Frees the underlying vector buffer stored in FFIArray
+/// - Does not free the FFIArray struct itself (safe for both stack- and heap-allocated structs)
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_string_array_destroy(arr: *mut FFIArray) {
+    if arr.is_null() {
+        return;
+    }
+
+    // Destroy each FFIString pointed to by the array elements
+    if !(*arr).data.is_null() && (*arr).len > 0 {
+        let slice = std::slice::from_raw_parts((*arr).data as *const *mut FFIString, (*arr).len);
+        for &ffi_string_ptr in slice.iter() {
+            if !ffi_string_ptr.is_null() {
+                // Take ownership and destroy
+                let boxed = Box::from_raw(ffi_string_ptr);
+                dash_spv_ffi_string_destroy(*boxed);
+            }
+        }
+    }
+
+    // Free the vector buffer itself
+    dash_spv_ffi_array_destroy(arr);
 }
 
 #[repr(C)]

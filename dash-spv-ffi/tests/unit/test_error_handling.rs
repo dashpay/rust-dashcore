@@ -156,6 +156,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_null_pointer_error_handling() {
         // Test null_check! macro behavior
         unsafe {
@@ -173,25 +174,17 @@ mod tests {
 
     #[test]
     fn test_invalid_enum_handling() {
-        // Test with invalid network value
-        // Since we can't safely create an invalid enum in Rust, we'll test the C API
-        // by calling it with a raw value that doesn't correspond to any valid variant
+        // Use a valid enum value to avoid UB in Rust tests. If invalid raw inputs
+        // need to be tested, do so from a C test or add a raw-int FFI entrypoint.
         unsafe {
-            // dash_spv_ffi_config_new expects FFINetwork but we'll cast an invalid i32
-            // This simulates what could happen from C code
-            let config = {
-                extern "C" {
-                    fn dash_spv_ffi_config_new(network: i32) -> *mut FFIClientConfig;
-                }
-                dash_spv_ffi_config_new(999)
-            };
-            // Should still create a config (defaults to Dash)
+            let config = dash_spv_ffi_config_new(FFINetwork::Dash);
             assert!(!config.is_null());
             dash_spv_ffi_config_destroy(config);
         }
     }
 
     #[test]
+    #[serial]
     fn test_handle_error_helper() {
         // Test Ok case
         let ok_result: Result<i32, String> = Ok(42);

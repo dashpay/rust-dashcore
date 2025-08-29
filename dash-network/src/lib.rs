@@ -9,6 +9,7 @@ use std::fmt;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 #[non_exhaustive]
+#[repr(u8)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum Network {
     /// Classic Dash Core Payment Chain
